@@ -52,6 +52,13 @@ from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 
+DEFAULT_HTTP_TIMEOUT: int = 600
+"""Default HTTP timeout in seconds for API requests.
+
+This matches the default timeout used by OpenAI's Python client.
+See https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9
+"""
+
 KnownModelName = TypeAliasType(
     'KnownModelName',
     Literal[
@@ -109,6 +116,7 @@ KnownModelName = TypeAliasType(
         'bedrock:mistral.mistral-large-2402-v1:0',
         'bedrock:mistral.mistral-large-2407-v1:0',
         'bedrock:mistral.mixtral-8x7b-instruct-v0:1',
+        'bedrock:us.amazon.nova-2-lite-v1:0',
         'bedrock:us.amazon.nova-lite-v1:0',
         'bedrock:us.amazon.nova-micro-v1:0',
         'bedrock:us.amazon.nova-pro-v1:0',
@@ -198,6 +206,7 @@ KnownModelName = TypeAliasType(
         'gateway/bedrock:mistral.mistral-large-2402-v1:0',
         'gateway/bedrock:mistral.mistral-large-2407-v1:0',
         'gateway/bedrock:mistral.mixtral-8x7b-instruct-v0:1',
+        'gateway/bedrock:us.amazon.nova-2-lite-v1:0',
         'gateway/bedrock:us.amazon.nova-lite-v1:0',
         'gateway/bedrock:us.amazon.nova-micro-v1:0',
         'gateway/bedrock:us.amazon.nova-pro-v1:0',
@@ -367,6 +376,7 @@ KnownModelName = TypeAliasType(
         'grok:grok-3-mini',
         'grok:grok-3',
         'grok:grok-4-0709',
+        'grok:grok-4-latest',
         'grok:grok-4-1-fast-non-reasoning',
         'grok:grok-4-1-fast-reasoning',
         'grok:grok-4-1-fast',
@@ -375,6 +385,27 @@ KnownModelName = TypeAliasType(
         'grok:grok-4-fast',
         'grok:grok-4',
         'grok:grok-code-fast-1',
+        'xai:grok-3',
+        'xai:grok-3-fast',
+        'xai:grok-3-fast-latest',
+        'xai:grok-3-latest',
+        'xai:grok-3-mini',
+        'xai:grok-3-mini-fast',
+        'xai:grok-3-mini-fast-latest',
+        'xai:grok-4',
+        'xai:grok-4-0709',
+        'xai:grok-4-1-fast',
+        'xai:grok-4-1-fast-non-reasoning',
+        'xai:grok-4-1-fast-non-reasoning-latest',
+        'xai:grok-4-1-fast-reasoning',
+        'xai:grok-4-1-fast-reasoning-latest',
+        'xai:grok-4-fast',
+        'xai:grok-4-fast-non-reasoning',
+        'xai:grok-4-fast-non-reasoning-latest',
+        'xai:grok-4-fast-reasoning',
+        'xai:grok-4-fast-reasoning-latest',
+        'xai:grok-4-latest',
+        'xai:grok-code-fast-1',
         'groq:llama-3.1-8b-instant',
         'groq:llama-3.3-70b-versatile',
         'groq:meta-llama/llama-guard-4-12b',
@@ -525,35 +556,37 @@ KnownModelName = TypeAliasType(
 OpenAIChatCompatibleProvider = TypeAliasType(
     'OpenAIChatCompatibleProvider',
     Literal[
+        'alibaba',
         'azure',
-        'deepseek',
         'cerebras',
+        'deepseek',
         'fireworks',
         'github',
         'grok',
         'heroku',
+        'litellm',
         'moonshotai',
+        'nebius',
         'ollama',
         'openrouter',
+        'ovhcloud',
+        'sambanova',
         'together',
         'vercel',
-        'litellm',
-        'nebius',
-        'ovhcloud',
-        'alibaba',
     ],
 )
 OpenAIResponsesCompatibleProvider = TypeAliasType(
     'OpenAIResponsesCompatibleProvider',
     Literal[
-        'deepseek',
         'azure',
-        'openrouter',
-        'grok',
+        'deepseek',
         'fireworks',
-        'together',
+        'grok',
         'nebius',
+        'openrouter',
         'ovhcloud',
+        'sambanova',
+        'together',
     ],
 )
 
@@ -1157,11 +1190,17 @@ def infer_model(  # noqa: C901
         from .huggingface import HuggingFaceModel
 
         return HuggingFaceModel(model_name, provider=provider)
+    elif model_kind == 'xai':
+        from .xai import XaiModel
+
+        return XaiModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
 
-def cached_async_http_client(*, provider: str | None = None, timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
+def cached_async_http_client(
+    *, provider: str | None = None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
+) -> httpx.AsyncClient:
     """Cached HTTPX async client that creates a separate client for each provider.
 
     The client is cached based on the provider parameter. If provider is None, it's used for non-provider specific
@@ -1177,7 +1216,7 @@ def cached_async_http_client(*, provider: str | None = None, timeout: int = 600,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
     """
     client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
-    if client.is_closed:
+    if client.is_closed:  # pragma: no cover
         # This happens if the context manager is used, so we need to create a new client.
         # Since there is no API from `functools.cache` to clear the cache for a specific
         #  key, clear the entire cache here as a workaround.
@@ -1187,7 +1226,9 @@ def cached_async_http_client(*, provider: str | None = None, timeout: int = 600,
 
 
 @cache
-def _cached_async_http_client(provider: str | None, timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
+def _cached_async_http_client(
+    provider: str | None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
+) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},

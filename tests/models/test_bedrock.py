@@ -10,6 +10,8 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     CachePoint,
     DocumentUrl,
     FinalResultEvent,
@@ -35,8 +37,13 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
+from pydantic_ai.builtin_tools import CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UsageLimitExceeded, UserError
-from pydantic_ai.messages import AgentStreamEvent
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
+    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.providers import Provider
@@ -59,6 +66,12 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='bedrock not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
+    pytest.mark.filterwarnings(
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+    ),
+    pytest.mark.filterwarnings(
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+    ),
 ]
 
 
@@ -389,6 +402,7 @@ async def test_bedrock_model_stream(allow_model_requests: None, bedrock_provider
     assert data == snapshot(
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, among many other attractions.'
     )
+    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=13, output_tokens=61))
 
 
 async def test_bedrock_model_anthropic_model_with_tools(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -1379,11 +1393,31 @@ async def test_bedrock_model_thinking_part_from_other_model(
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(content=IsStr(), id='rs_68c1ffe148588191812b659c6dc35ce60003919771fccd27'),
-                    ThinkingPart(content=IsStr(), id='rs_68c1ffe148588191812b659c6dc35ce60003919771fccd27'),
-                    ThinkingPart(content=IsStr(), id='rs_68c1ffe148588191812b659c6dc35ce60003919771fccd27'),
-                    ThinkingPart(content=IsStr(), id='rs_68c1ffe148588191812b659c6dc35ce60003919771fccd27'),
-                    TextPart(content=IsStr(), id='msg_68c200091ccc8191b38e07ea231e862d0003919771fccd27'),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1ffe148588191812b659c6dc35ce60003919771fccd27',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1ffe148588191812b659c6dc35ce60003919771fccd27',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1ffe148588191812b659c6dc35ce60003919771fccd27',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1ffe148588191812b659c6dc35ce60003919771fccd27',
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_68c200091ccc8191b38e07ea231e862d0003919771fccd27',
+                        provider_name='openai',
+                    ),
                 ],
                 usage=RequestUsage(input_tokens=23, output_tokens=2030, details={'reasoning_tokens': 1728}),
                 model_name='gpt-5-2025-08-07',
@@ -1813,7 +1847,21 @@ async def test_bedrock_cache_point_adds_cache_control(
     # Different tokens usage depending on a model - could be written or read depending on the cassette read/write
     usage = result.usage()
     assert usage.cache_write_tokens >= 1000 or usage.cache_read_tokens >= 1000
-    assert usage.input_tokens <= 20
+    assert usage.input_tokens >= usage.cache_write_tokens + usage.cache_read_tokens
+
+
+async def test_bedrock_cache_usage_includes_cache_tokens(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(
+        model,
+        system_prompt='YOU MUST RESPONSE ONLY WITH SINGLE NUMBER\n' * 50,  # More tokens to activate a cache
+        model_settings=BedrockModelSettings(bedrock_cache_instructions=True),
+    )
+    long_context = 'ONLY SINGLE NUMBER IN RESPONSE\n' * 100  # More tokens to activate a cache
+
+    result = await agent.run([long_context, CachePoint(), 'Response only number What is 2 + 3'])
+    assert result.output == snapshot('5')
+    assert result.usage() == snapshot(RunUsage(input_tokens=1517, cache_read_tokens=1504, output_tokens=5, requests=1))
 
 
 @pytest.mark.vcr()
@@ -1850,12 +1898,12 @@ async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_
     first = await agent.run(run_args)
     assert first.output == snapshot('21')
     first_usage = first.usage()
-    assert first_usage == snapshot(RunUsage(input_tokens=2, cache_write_tokens=1322, output_tokens=5, requests=1))
+    assert first_usage == snapshot(RunUsage(input_tokens=1324, cache_write_tokens=1322, output_tokens=5, requests=1))
 
     second = await agent.run(run_args)
     assert second.output == snapshot('21')
     second_usage = second.usage()
-    assert second_usage == snapshot(RunUsage(input_tokens=2, output_tokens=5, cache_read_tokens=1322, requests=1))
+    assert second_usage == snapshot(RunUsage(input_tokens=1324, output_tokens=5, cache_read_tokens=1322, requests=1))
 
 
 async def test_bedrock_cache_point_as_first_content_raises_error(
@@ -2287,5 +2335,398 @@ async def test_bedrock_empty_model_response_skipped(bedrock_provider: BedrockPro
     assert bedrock_messages == snapshot(
         [
             {'role': 'user', 'content': [{'text': 'Hello'}, {'text': 'Follow up question'}]},
+        ]
+    )
+
+
+async def test_bedrock_map_messages_builtin_tool_provider_filtering(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
+
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                # BuiltinToolCallPart (w/dict) for bedrock (should be included)
+                BuiltinToolCallPart(
+                    provider_name='bedrock',
+                    tool_name=CodeExecutionTool.kind,
+                    args={'snippet': 'print("hello")'},
+                    tool_call_id='call_1',
+                ),
+                # BuiltinToolReturnPart for bedrock with empty provider_details (should be included)
+                BuiltinToolReturnPart(
+                    provider_name='bedrock',
+                    tool_name=CodeExecutionTool.kind,
+                    content={'stdOut': 'hello', 'stdErr': '', 'exitCode': 0, 'isError': False},
+                    tool_call_id='call_1',
+                    provider_details={},
+                ),
+                # BuiltinToolCallPart for the other provider (should NOT be included)
+                BuiltinToolCallPart(
+                    provider_name='anthropic',
+                    tool_name=CodeExecutionTool.kind,
+                    args={'code': 'print("other")'},
+                    tool_call_id='call_2',
+                ),
+                # BuiltinToolReturnPart for the other provider (should NOT be included)
+                BuiltinToolReturnPart(
+                    provider_name='anthropic',
+                    tool_name=CodeExecutionTool.kind,
+                    content={'stdOut': 'other', 'stdErr': '', 'exitCode': 0, 'isError': False},
+                    tool_call_id='call_2',
+                ),
+                # BuiltinToolCallPart (w/str) for bedrock (should be included)
+                BuiltinToolCallPart(
+                    provider_name='bedrock',
+                    tool_name=CodeExecutionTool.kind,
+                    args='{"snippet": "10*5"}',
+                    tool_call_id='call_3',
+                ),
+                # BuiltinToolReturnPart for the bedrock provider with status (should be included)
+                BuiltinToolReturnPart(
+                    provider_name='bedrock',
+                    tool_name=CodeExecutionTool.kind,
+                    content={'stdOut': '50', 'stdErr': '', 'exitCode': 0, 'isError': False},
+                    tool_call_id='call_3',
+                    provider_details={'status': 'success'},
+                ),
+                # BuiltinToolCallPart for the bedrock provider but unmapped tool (should NOT be included)
+                BuiltinToolCallPart(
+                    provider_name='bedrock',
+                    tool_name='foo',
+                    args={'snippet': 'print("unknown")'},
+                    tool_call_id='call_4',
+                ),
+                # BuiltinToolReturnPart for the bedrock provider but unmapped tool (should NOT be included)
+                BuiltinToolReturnPart(
+                    provider_name='bedrock',
+                    tool_name='foo',
+                    content={'other': 'content'},
+                    tool_call_id='call_4',
+                    provider_details={'status': 'success'},
+                ),
+            ]
+        )
+    ]
+
+    _, bedrock_messages = await model._map_messages(  # type: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(
+            function_tools=[],
+            allow_text_output=True,
+            builtin_tools=[CodeExecutionTool()],
+        ),
+        None,
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'toolUse': {
+                            'toolUseId': 'call_1',
+                            'name': 'nova_code_interpreter',
+                            'input': {'snippet': 'print("hello")'},
+                            'type': 'server_tool_use',
+                        }
+                    },
+                    {
+                        'toolResult': {
+                            'toolUseId': 'call_1',
+                            'content': [{'json': {'stdOut': 'hello', 'stdErr': '', 'exitCode': 0, 'isError': False}}],
+                            'type': 'nova_code_interpreter_result',
+                        }
+                    },
+                    {
+                        'toolUse': {
+                            'toolUseId': 'call_3',
+                            'name': 'nova_code_interpreter',
+                            'input': {'snippet': '10*5'},
+                            'type': 'server_tool_use',
+                        }
+                    },
+                    {
+                        'toolResult': {
+                            'toolUseId': 'call_3',
+                            'content': [{'json': {'stdOut': '50', 'stdErr': '', 'exitCode': 0, 'isError': False}}],
+                            'type': 'nova_code_interpreter_result',
+                            'status': 'success',
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', builtin_tools=[CodeExecutionTool()])
+
+    class Response(TypedDict):
+        result: float
+
+    # First turn
+    result1 = await agent.run('What is 1234 * 5678?', output_type=Response)
+    assert result1.output == snapshot({'result': 7006652.0})
+    assert result1.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
+                    UserPromptPart(content='What is 1234 * 5678?', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={'snippet': '1234 * 5678'},
+                        tool_call_id='tooluse_dV5ehBNfl1hUE-UTM9cIww',
+                        provider_name='bedrock',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={'stdOut': '7006652', 'stdErr': '', 'exitCode': 0, 'isError': False},
+                        tool_call_id='tooluse_dV5ehBNfl1hUE-UTM9cIww',
+                        timestamp=IsDatetime(),
+                        provider_name='bedrock',
+                        provider_details={'status': 'success'},
+                    ),
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'result': 7006652.0},
+                        tool_call_id='tooluse_DaRsVjwcShCI_3pOsIsWqg',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=1002, output_tokens=59),
+                model_name='us.amazon.nova-2-lite-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='tooluse_DaRsVjwcShCI_3pOsIsWqg',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    # Second turn
+    result2 = await agent.run('Now multiply that by 2', message_history=result1.new_messages(), output_type=Response)
+    assert result2.output == snapshot({'result': 14013304.0})
+    assert result2.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Now multiply that by 2', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={'snippet': '7006652 * 2'},
+                        tool_call_id='tooluse_VYEuMWAFChlHdy6-56IQ4g',
+                        provider_name='bedrock',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={'stdOut': '14013304', 'stdErr': '', 'exitCode': 0, 'isError': False},
+                        tool_call_id='tooluse_VYEuMWAFChlHdy6-56IQ4g',
+                        timestamp=IsDatetime(),
+                        provider_name='bedrock',
+                        provider_details={'status': 'success'},
+                    ),
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'result': 14013304.0},
+                        tool_call_id='tooluse_RyG7SphVTsuS_8GFmX9hIA',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=1148, output_tokens=59),
+                model_name='us.amazon.nova-2-lite-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='tooluse_RyG7SphVTsuS_8GFmX9hIA',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', builtin_tools=[CodeExecutionTool()])
+
+    class Response(TypedDict):
+        result: float
+
+    event_parts: list[Any] = []
+    async with agent.iter('What is 1234 * 5678?', output_type=Response) as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert agent_run.result is not None
+    assert agent_run.result.output == snapshot({'result': 7006652.0})
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
+                    UserPromptPart(content='What is 1234 * 5678?', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args='{"snippet":"1234 * 5678"}',
+                        tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
+                        provider_name='bedrock',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={'stdOut': '7006652', 'stdErr': '', 'exitCode': 0, 'isError': False},
+                        tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
+                        timestamp=IsDatetime(),
+                        provider_name='bedrock',
+                        provider_details={'status': 'success'},
+                    ),
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"result":7006652.0}',
+                        tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=1002, output_tokens=59),
+                model_name='us.amazon.nova-2-lite-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution', tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og', provider_name='bedrock'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta='{"snippet":"1234 * 5678"}', tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og'
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args='{"snippet":"1234 * 5678"}',
+                    tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
+                    provider_name='bedrock',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolReturnPart(
+                    tool_name='code_execution',
+                    content={'stdOut': '7006652', 'stdErr': '', 'exitCode': 0, 'isError': False},
+                    tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
+                    timestamp=IsDatetime(),
+                    provider_name='bedrock',
+                    provider_details={'status': 'success'},
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=2,
+                part=ToolCallPart(tool_name='final_result', tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw'),
+                previous_part_kind='builtin-tool-return',
+            ),
+            FinalResultEvent(tool_name='final_result', tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw'),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta='{"result":7006652.0}', tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw'
+                ),
+            ),
+            PartEndEvent(
+                index=2,
+                part=ToolCallPart(
+                    tool_name='final_result', args='{"result":7006652.0}', tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw'
+                ),
+            ),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args='{"snippet":"1234 * 5678"}',
+                    tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
+                    provider_name='bedrock',
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='code_execution',
+                    content={'stdOut': '7006652', 'stdErr': '', 'exitCode': 0, 'isError': False},
+                    tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
+                    timestamp=IsDatetime(),
+                    provider_name='bedrock',
+                    provider_details={'status': 'success'},
+                )
+            ),
         ]
     )

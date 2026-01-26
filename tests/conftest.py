@@ -19,12 +19,13 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
+from inline_snapshot import customize_repr  # pyright: ignore[reportUnknownVariableType]
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
-from pydantic_ai.models import Model, cached_async_http_client
+from pydantic_ai.models import Model
 
 __all__ = (
     'IsDatetime',
@@ -38,6 +39,7 @@ __all__ = (
     'TestEnv',
     'ClientWithHandler',
     'try_import',
+    'SNAPSHOT_BYTES_COLLAPSE_THRESHOLD',
 )
 
 # Configure VCR logger to WARNING as it is too verbose by default
@@ -52,6 +54,7 @@ if TYPE_CHECKING:
     from typing import TypeVar
 
     from pydantic_ai.providers.bedrock import BedrockProvider
+    from pydantic_ai.providers.xai import XaiProvider
 
     T = TypeVar('T')
 
@@ -110,6 +113,29 @@ else:
                 return super().equals(other)
             else:
                 return other == self._first_other
+
+
+SNAPSHOT_BYTES_COLLAPSE_THRESHOLD = 50
+
+
+def sanitize_filename(name: str, max_len: int) -> str:
+    """Sanitize a string for safe use as a filename across platforms."""
+    # Windows does not allow these characters in paths. Linux bans slashes only.
+    return re.sub('[' + re.escape('<>:"/\\|?*') + ']', '-', name)[:max_len]
+
+
+@customize_repr
+def _(value: bytes):  # pragma: no cover
+    """Use IsBytes() for large byte sequences in snapshots."""
+    if len(value) > SNAPSHOT_BYTES_COLLAPSE_THRESHOLD:
+        return 'IsBytes()'
+    return bytes.__repr__(value)
+
+
+@customize_repr
+def _(value: datetime):  # pragma: no cover
+    """Use IsDatetime() for datetime values in snapshots."""
+    return 'IsDatetime()'
 
 
 class TestEnv:
@@ -196,8 +222,7 @@ def create_module(tmp_path: Path, request: pytest.FixtureRequest) -> Callable[[s
 
         # Max path length in Windows is 260. Leaving some buffer here
         max_name_len = 240 - len(str(tmp_path))
-        # Windows does not allow these characters in paths. Linux bans slashes only.
-        sanitized_name = re.sub('[' + re.escape('<>:"/\\|?*') + ']', '-', request.node.name)[:max_name_len]
+        sanitized_name = sanitize_filename(request.node.name, max_name_len)
         module_name = f'{sanitized_name}_{secrets.token_hex(5)}'
         path = tmp_path / f'{module_name}.py'
         path.write_text(source_code, encoding='utf-8')
@@ -279,6 +304,16 @@ def pytest_recording_configure(config: Any, vcr: VCR):
     vcr.register_matcher('method', method_matcher)
 
 
+def pytest_addoption(parser: Any) -> None:
+    parser.addoption(
+        '--xai-proto-include-json',
+        action='store_true',
+        default=True,
+        dest='xai_proto_include_json',
+        help='Include JSON representations in xAI proto cassette YAML files.',
+    )
+
+
 @pytest.fixture(autouse=True)
 def mock_vcr_aiohttp_content(mocker: MockerFixture):
     try:
@@ -307,21 +342,32 @@ def vcr_config():
 
 
 @pytest.fixture(autouse=True)
-async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
+async def close_cached_httpx_client(anyio_backend: str, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[None]:
+    """Track and close cached httpx clients created during each test.
+
+    Prevents reusing AsyncClient instances across tests (and event loops),
+    which can cause 'Event loop is closed' errors, without touching prod code.
+    """
+    created_clients: set[httpx.AsyncClient] = set()
+
+    # Patch the cached factory to record returned clients while preserving caching.
+    original_cached_func = pydantic_ai.models._cached_async_http_client  # type: ignore[reportPrivateUsage]
+
+    def tracked_cached_async_http_client(*args: Any, **kwargs: Any):
+        client = original_cached_func(*args, **kwargs)
+        created_clients.add(client)
+        return client
+
+    monkeypatch.setattr(pydantic_ai.models, '_cached_async_http_client', tracked_cached_async_http_client)
+
     yield
-    for provider in [
-        'openai',
-        'anthropic',
-        'azure',
-        'google-gla',
-        'google-vertex',
-        'groq',
-        'mistral',
-        'cohere',
-        'deepseek',
-        None,
-    ]:
-        await cached_async_http_client(provider=provider).aclose()
+
+    # Close only the clients that were actually created/accessed in this test
+    for client in created_clients:
+        await client.aclose()
+
+    # Ensure no stale cached clients persist between tests (new event loop per test)
+    original_cached_func.cache_clear()
 
 
 @pytest.fixture(scope='session')
@@ -391,6 +437,11 @@ def co_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def voyage_api_key() -> str:
+    return os.getenv('VOYAGE_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def mistral_api_key() -> str:
     return os.getenv('MISTRAL_API_KEY', 'mock-api-key')
 
@@ -416,21 +467,69 @@ def cerebras_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def xai_api_key() -> str:
+    return os.getenv('XAI_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='function')  # Needs to be function scoped to get the request node name
+def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider]:
+    """xAI provider fixture backed by protobuf cassettes.
+
+    Mirrors the `bedrock_provider` pattern: yields a provider, and callers can use `provider.client`.
+    """
+
+    try:
+        from pydantic_ai.providers.xai import XaiProvider
+        from tests.models.xai_proto_cassettes import xai_proto_cassette_session
+    except ImportError:  # pragma: no cover
+        pytest.skip('xai_sdk not installed')
+
+    cassette_name = sanitize_filename(request.node.name, 240)
+    cassette_path = Path(__file__).parent / 'models' / 'cassettes' / 'test_xai' / f'{cassette_name}.xai.yaml'
+    record_mode: str | None
+    try:
+        # Provided by `pytest-recording` as `--record-mode=...` (dest is typically `record_mode`).
+        record_mode = cast(Any, request.config).getoption('record_mode')
+    except Exception:  # pragma: no cover
+        record_mode = None
+    include_debug_json = bool(cast(Any, request.config).getoption('xai_proto_include_json'))
+    session = xai_proto_cassette_session(
+        cassette_path,
+        record_mode=record_mode,
+        include_debug_json=include_debug_json,
+    )
+    provider = XaiProvider(xai_client=cast(Any, session.client))
+    try:
+        yield provider
+    finally:
+        session.dump_if_recording()
+
+
+@pytest.fixture(scope='session')
 def bedrock_provider():
     try:
         import boto3
 
         from pydantic_ai.providers.bedrock import BedrockProvider
 
-        bedrock_client = boto3.client(
-            'bedrock-runtime',
-            region_name=os.getenv('AWS_REGION', 'us-east-1'),
-            aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID', 'AKIA6666666666666666'),
-            aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'),
-            aws_session_token=os.getenv('AWS_SESSION_TOKEN', None),
-        )
-        yield BedrockProvider(bedrock_client=bedrock_client)
-        bedrock_client.close()
+        bearer_token = os.getenv('AWS_BEARER_TOKEN_BEDROCK')
+        if bearer_token:  # pragma: no cover
+            provider = BedrockProvider(
+                api_key=bearer_token,
+                region_name=os.getenv('AWS_REGION', 'us-east-1'),
+            )
+            yield provider
+            provider.client.close()
+        else:
+            bedrock_client = boto3.client(
+                'bedrock-runtime',
+                region_name=os.getenv('AWS_REGION', 'us-east-1'),
+                aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID', 'AKIA6666666666666666'),
+                aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'),
+                aws_session_token=os.getenv('AWS_SESSION_TOKEN', None),
+            )
+            yield BedrockProvider(bedrock_client=bedrock_client)
+            bedrock_client.close()
     except ImportError:  # pragma: lax no cover
         pytest.skip('boto3 is not installed')
 
@@ -458,6 +557,7 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
 
     return_value = (NoOpCredentials(), 'pydantic-ai')
     mocker.patch.object(_api_client, 'load_auth', return_value=return_value)
+    mocker.patch('pydantic_ai.providers.google_vertex.google.auth.default', return_value=return_value)
 
 
 @pytest.fixture()

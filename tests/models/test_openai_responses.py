@@ -2,6 +2,7 @@ import json
 import re
 from dataclasses import replace
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Literal, cast
 
 import pytest
@@ -39,7 +40,7 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import CodeExecutionTool, ImageAspectRatio, MCPServerTool, WebSearchTool
+from pydantic_ai.builtin_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -55,6 +56,7 @@ from ..conftest import IsBytes, IsDatetime, IsFloat, IsInt, IsNow, IsStr, TestEn
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
+    from openai import AsyncOpenAI
     from openai.types.responses import ResponseFunctionWebSearch
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
     from openai.types.responses.response_reasoning_item import (
@@ -316,12 +318,14 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                         args='{"loc_name":"Londos"}',
                         tool_call_id=IsStr(),
                         id='fc_67e547c540648191bc7505ac667e023f0ae6111e84dd5c08',
+                        provider_name='openai',
                     ),
                     ToolCallPart(
                         tool_name='get_location',
                         args='{"loc_name":"London"}',
                         tool_call_id=IsStr(),
                         id='fc_67e547c55c3081919da7a3f7fe81a1030ae6111e84dd5c08',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(details={'reasoning_tokens': 0}),
@@ -364,6 +368,7 @@ It seems "Londos" might be incorrect or unknown. If you meant something else, pl
 For **London**, it's located at approximately latitude 51° N and longitude 0° W.\
 """,
                         id='msg_67e547c615ec81918d6671a184f82a1803a2086afed73b47',
+                        provider_name='openai',
                     )
                 ],
                 usage=RequestUsage(input_tokens=335, output_tokens=44, details={'reasoning_tokens': 0}),
@@ -383,7 +388,6 @@ For **London**, it's located at approximately latitude 51° N and longitude 0° 
     )
 
 
-@pytest.mark.vcr()
 async def test_image_as_binary_content_tool_response(
     allow_model_requests: None, image_content: BinaryContent, openai_api_key: str
 ):
@@ -414,6 +418,7 @@ async def test_image_as_binary_content_tool_response(
                         args='{}',
                         tool_call_id=IsStr(),
                         id='fc_023a281a6afcb9a000694a982c56e48194bcf3664373c8dc4b',
+                        provider_name='openai',
                     )
                 ],
                 usage=RequestUsage(input_tokens=40, output_tokens=11, details={'reasoning_tokens': 0}),
@@ -444,6 +449,7 @@ async def test_image_as_binary_content_tool_response(
                     TextPart(
                         content='The fruit in the image is a kiwi.',
                         id='msg_002c332eac8db08d00694a982fc6f081a2ac774015989ab025',
+                        provider_name='openai',
                     )
                 ],
                 usage=RequestUsage(input_tokens=839, output_tokens=11, details={'reasoning_tokens': 0}),
@@ -547,6 +553,7 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
                             TextPart(
                                 content='The capital of France is Paris.',
                                 id='msg_67e554a28bec8191b56d3e2331eff88006c52f0e511c76ed',
+                                provider_name='openai',
                             )
                         ],
                         usage=RequestUsage(input_tokens=278, output_tokens=9, details={'reasoning_tokens': 0}),
@@ -725,6 +732,7 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                     TextPart(
                         content=IsStr(),
                         id='msg_0e3d55e9502941380068c4aada6d8c8195b8b6f92edbb53b4f',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(
@@ -749,7 +757,6 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
     )
 
 
-@pytest.mark.vcr()
 async def test_openai_responses_model_instructions(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m, instructions='You are a helpful assistant.')
@@ -768,6 +775,7 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
                     TextPart(
                         content='The capital of France is Paris.',
                         id='msg_67f3fdfe15b881918d7b865e6a5f4fb1003bc73febb56d77',
+                        provider_name='openai',
                     )
                 ],
                 usage=RequestUsage(input_tokens=24, output_tokens=8, details={'reasoning_tokens': 0}),
@@ -835,6 +843,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                     TextPart(
                         content=IsStr(),
                         id='msg_028829e50fbcad090068c9c8362ef08195a8a69090feef1ac8',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(
@@ -900,6 +909,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                     TextPart(
                         content='Today (Tuesday, September 16, 2025) in Mexico City: mostly cloudy, around 73°F (23°C) now. High near 74°F (23°C), low around 57°F (14°C) tonight.',
                         id='msg_028829e50fbcad090068c9c8422f108195b9836a498cc32b98',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(
@@ -975,6 +985,7 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
                     TextPart(
                         content=IsStr(),
                         id='msg_0b385a0fdc82fd920068c4ab0996c08197a1adfce3593080f0',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(
@@ -1051,6 +1062,7 @@ async def test_openai_responses_model_web_search_tool_with_invalid_region(
                     TextPart(
                         content=IsStr(),
                         id='msg_0b4f29854724a3120068c4ab22122081918f25e06f1368274e',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(
@@ -1137,6 +1149,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     TextPart(
                         content='San Francisco weather today (Tuesday, September 16, 2025): Mostly sunny and pleasant. Current conditions around 71°F; expected high near 73°F and low around 58°F. A light jacket is useful for the cooler evening. ',
                         id='msg_00a60507bf41223d0068c9d30b055481a0b0ee28a021919c94',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(
@@ -1240,58 +1253,192 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
             ),
             PartStartEvent(
                 index=4,
-                part=TextPart(content='San Francisco', id='msg_00a60507bf41223d0068c9d30b055481a0b0ee28a021919c94'),
+                part=TextPart(
+                    content='San Francisco',
+                    id='msg_00a60507bf41223d0068c9d30b055481a0b0ee28a021919c94',
+                    provider_name='openai',
+                ),
                 previous_part_kind='thinking',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' weather')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' today')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' (')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='Tuesday')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' September')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='16')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='202')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='5')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='):')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Mostly')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' sunny')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' pleasant')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Current')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' conditions')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' around')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='71')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='°F')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=';')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' expected')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' high')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' near')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='73')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='°F')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' low')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' around')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='58')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='°F')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' A light jacket')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' is useful')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' for the')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' cooler evening')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='. ')),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' weather'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' today'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' ('),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='Tuesday'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=','),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' September'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' '),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='16'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=','),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' '),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='202'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='5'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='):'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' Mostly'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' sunny'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' and'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' pleasant'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='.'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' Current'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' conditions'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' around'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' '),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='71'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='°F'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=';'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' expected'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' high'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' near'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' '),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='73'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='°F'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' and'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' low'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' around'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' '),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='58'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='°F'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='.'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' A light jacket'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' is useful'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' for the'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=' cooler evening'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='. '),
+            ),
             PartEndEvent(
                 index=4,
                 part=TextPart(
                     content='San Francisco weather today (Tuesday, September 16, 2025): Mostly sunny and pleasant. Current conditions around 71°F; expected high near 73°F and low around 58°F. A light jacket is useful for the cooler evening. ',
                     id='msg_00a60507bf41223d0068c9d30b055481a0b0ee28a021919c94',
+                    provider_name='openai',
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
@@ -1361,6 +1508,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     TextPart(
                         content='Mexico City weather today (Tuesday, September 16, 2025): Cloudy. Current around 73°F; high near 74°F and low around 56°F. Showers return midweek. ',
                         id='msg_00a60507bf41223d0068c9d326034881a0bb60d6d5d39347bd',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(
@@ -1425,7 +1573,6 @@ def test_model_profile_strict_not_supported():
     )
 
 
-@pytest.mark.vcr()
 async def test_reasoning_model_with_temperature(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m, model_settings=OpenAIResponsesModelSettings(temperature=0.5))
@@ -1435,7 +1582,6 @@ async def test_reasoning_model_with_temperature(allow_model_requests: None, open
     )
 
 
-@pytest.mark.vcr()
 async def test_gpt5_pro(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-5-pro', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
@@ -1443,7 +1589,6 @@ async def test_gpt5_pro(allow_model_requests: None, openai_api_key: str):
     assert result.output == snapshot('Mexico City (Ciudad de México).')
 
 
-@pytest.mark.vcr()
 async def test_tool_output(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -1479,6 +1624,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                         args='{}',
                         tool_call_id=IsStr(),
                         id='fc_68477f0bb8e4819cba6d781e174d77f8001fd29e2d5573f7',
+                        provider_name='openai',
                     )
                 ],
                 usage=RequestUsage(input_tokens=62, output_tokens=12, details={'reasoning_tokens': 0}),
@@ -1513,6 +1659,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                         args='{"city":"Mexico City","country":"Mexico"}',
                         tool_call_id='call_iFBd0zULhSZRR908DfH73VwN',
                         id='fc_68477f0c91cc819e8024e7e633f0f09401dc81d4bc91f560',
+                        provider_name='openai',
                     )
                 ],
                 usage=RequestUsage(input_tokens=85, output_tokens=20, details={'reasoning_tokens': 0}),
@@ -1544,7 +1691,6 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
     )
 
 
-@pytest.mark.vcr()
 async def test_text_output_function(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -1579,6 +1725,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                         args='{}',
                         tool_call_id='call_aTJhYjzmixZaVGqwl5gn2Ncr',
                         id='fc_68477f0dff5c819ea17a1ffbaea621e00356a60c98816d6a',
+                        provider_name='openai',
                     )
                 ],
                 usage=RequestUsage(input_tokens=36, output_tokens=12, details={'reasoning_tokens': 0}),
@@ -1611,6 +1758,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                     TextPart(
                         content='The largest city in Mexico is Mexico City.',
                         id='msg_68477f0ebf54819d88a44fa87aadaff503434b607c02582d',
+                        provider_name='openai',
                     )
                 ],
                 usage=RequestUsage(input_tokens=59, output_tokens=11, details={'reasoning_tokens': 0}),
@@ -1630,7 +1778,6 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
     )
 
 
-@pytest.mark.vcr()
 async def test_native_output(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -1668,6 +1815,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                         args='{}',
                         tool_call_id=IsStr(),
                         id='fc_68477f0fa7c081a19a525f7c6f180f310b8591d9001d2329',
+                        provider_name='openai',
                     )
                 ],
                 usage=RequestUsage(input_tokens=66, output_tokens=12, details={'reasoning_tokens': 0}),
@@ -1700,6 +1848,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                     TextPart(
                         content='{"city":"Mexico City","country":"Mexico"}',
                         id='msg_68477f10846c81929f1e833b0785e6f3020197534e39cc1f',
+                        provider_name='openai',
                     )
                 ],
                 usage=RequestUsage(input_tokens=89, output_tokens=16, details={'reasoning_tokens': 0}),
@@ -1719,7 +1868,6 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
     )
 
 
-@pytest.mark.vcr()
 async def test_native_output_multiple(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -1759,6 +1907,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                         args='{}',
                         tool_call_id=IsStr(),
                         id='fc_68477f1168a081a3981e847cd94275080dd57d732903c563',
+                        provider_name='openai',
                     )
                 ],
                 usage=RequestUsage(input_tokens=153, output_tokens=12, details={'reasoning_tokens': 0}),
@@ -1791,6 +1940,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                     TextPart(
                         content='{"result":{"kind":"CityLocation","data":{"city":"Mexico City","country":"Mexico"}}}',
                         id='msg_68477f1235b8819d898adc64709c7ebf061ad97e2eef7871',
+                        provider_name='openai',
                     )
                 ],
                 usage=RequestUsage(input_tokens=176, output_tokens=26, details={'reasoning_tokens': 0}),
@@ -1810,7 +1960,6 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
     )
 
 
-@pytest.mark.vcr()
 async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -1846,6 +1995,7 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                         args='{}',
                         tool_call_id=IsStr(),
                         id='fc_68482f1b0ff081a1b37b9170ee740d1e02f8ef7f2fb42b50',
+                        provider_name='openai',
                     )
                 ],
                 usage=RequestUsage(input_tokens=107, output_tokens=12, details={'reasoning_tokens': 0}),
@@ -1878,6 +2028,7 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                     TextPart(
                         content='{"city":"Mexico City","country":"Mexico"}',
                         id='msg_68482f1c159081918a2405f458009a6a044fdb7d019d4115',
+                        provider_name='openai',
                     )
                 ],
                 usage=RequestUsage(input_tokens=130, output_tokens=12, details={'reasoning_tokens': 0}),
@@ -1897,7 +2048,6 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
     )
 
 
-@pytest.mark.vcr()
 async def test_prompted_output_multiple(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -1937,6 +2087,7 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                         args='{}',
                         tool_call_id=IsStr(),
                         id='fc_68482f2889d481a199caa61de7ccb62c08e79646fe74d5ee',
+                        provider_name='openai',
                     )
                 ],
                 usage=RequestUsage(input_tokens=283, output_tokens=12, details={'reasoning_tokens': 0}),
@@ -1969,6 +2120,7 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                     TextPart(
                         content='{"result":{"kind":"CityLocation","data":{"city":"Mexico City","country":"Mexico"}}}',
                         id='msg_68482f296bfc81a18665547d4008ab2c06b4ab2d00d03024',
+                        provider_name='openai',
                     )
                 ],
                 usage=RequestUsage(input_tokens=306, output_tokens=22, details={'reasoning_tokens': 0}),
@@ -1988,7 +2140,6 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
     )
 
 
-@pytest.mark.vcr()
 async def test_openai_responses_verbosity(allow_model_requests: None, openai_api_key: str):
     """Test that verbosity setting is properly passed to the OpenAI API"""
     # Following GPT-5 + verbosity documentation pattern
@@ -2002,7 +2153,6 @@ async def test_openai_responses_verbosity(allow_model_requests: None, openai_api
     assert result.output == snapshot('4')
 
 
-@pytest.mark.vcr()
 async def test_openai_previous_response_id(allow_model_requests: None, openai_api_key: str):
     """Test if previous responses are detected via previous_response_id in settings"""
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
@@ -2013,7 +2163,6 @@ async def test_openai_previous_response_id(allow_model_requests: None, openai_ap
     assert result.output == snapshot('sesame')
 
 
-@pytest.mark.vcr()
 async def test_openai_previous_response_id_auto_mode(allow_model_requests: None, openai_api_key: str):
     """Test if invalid previous response id is ignored when history contains non-OpenAI responses"""
     history = [
@@ -2186,7 +2335,7 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='4', id='123')],
+                parts=[TextPart(content='4', id='123', provider_name='openai')],
                 usage=RequestUsage(input_tokens=14, output_tokens=1, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
@@ -2225,14 +2374,35 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(content=IsStr(), id='rs_68c42c90b950819c9e32c46d4f8326ca07460311b0c8d3de'),
-                    ThinkingPart(content=IsStr(), id='rs_68c42c90b950819c9e32c46d4f8326ca07460311b0c8d3de'),
-                    ThinkingPart(content=IsStr(), id='rs_68c42c90b950819c9e32c46d4f8326ca07460311b0c8d3de'),
-                    ThinkingPart(content=IsStr(), id='rs_68c42c90b950819c9e32c46d4f8326ca07460311b0c8d3de'),
-                    ThinkingPart(content=IsStr(), id='rs_68c42c90b950819c9e32c46d4f8326ca07460311b0c8d3de'),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c42c90b950819c9e32c46d4f8326ca07460311b0c8d3de',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c42c90b950819c9e32c46d4f8326ca07460311b0c8d3de',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c42c90b950819c9e32c46d4f8326ca07460311b0c8d3de',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c42c90b950819c9e32c46d4f8326ca07460311b0c8d3de',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c42c90b950819c9e32c46d4f8326ca07460311b0c8d3de',
+                        provider_name='openai',
+                    ),
                     TextPart(
                         content=IsStr(),
                         id='msg_68c42cb1aaec819cb992bd92a8c7766007460311b0c8d3de',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=13, output_tokens=2199, details={'reasoning_tokens': 1920}),
@@ -2275,13 +2445,30 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(content=IsStr(), id='rs_68c42cb43d3c819caf078978cc2514ea07460311b0c8d3de'),
-                    ThinkingPart(content=IsStr(), id='rs_68c42cb43d3c819caf078978cc2514ea07460311b0c8d3de'),
-                    ThinkingPart(content=IsStr(), id='rs_68c42cb43d3c819caf078978cc2514ea07460311b0c8d3de'),
-                    ThinkingPart(content=IsStr(), id='rs_68c42cb43d3c819caf078978cc2514ea07460311b0c8d3de'),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c42cb43d3c819caf078978cc2514ea07460311b0c8d3de',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c42cb43d3c819caf078978cc2514ea07460311b0c8d3de',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c42cb43d3c819caf078978cc2514ea07460311b0c8d3de',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c42cb43d3c819caf078978cc2514ea07460311b0c8d3de',
+                        provider_name='openai',
+                    ),
                     TextPart(
                         content=IsStr(),
                         id='msg_68c42cd36134819c800463490961f7df07460311b0c8d3de',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=314, output_tokens=2737, details={'reasoning_tokens': 2112}),
@@ -2384,12 +2571,36 @@ async def test_openai_responses_thinking_part_from_other_model(
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(content=IsStr(), id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc'),
-                    ThinkingPart(content=IsStr(), id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc'),
-                    ThinkingPart(content=IsStr(), id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc'),
-                    ThinkingPart(content=IsStr(), id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc'),
-                    ThinkingPart(content=IsStr(), id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc'),
-                    TextPart(content=IsStr(), id='msg_68c42d0b5e5c819385352dde1f447d910ad492c7955fc6fc'),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc',
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_68c42d0b5e5c819385352dde1f447d910ad492c7955fc6fc',
+                        provider_name='openai',
+                    ),
                 ],
                 usage=RequestUsage(input_tokens=306, output_tokens=3134, details={'reasoning_tokens': 2496}),
                 model_name='gpt-5-2025-08-07',
@@ -2445,18 +2656,22 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
                     ThinkingPart(
                         content=IsStr(),
                         id='rs_68c42d1d0878819d8266007cd3d1402c08fbf9b1584184ff',
+                        provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
                         id='rs_68c42d1d0878819d8266007cd3d1402c08fbf9b1584184ff',
+                        provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
                         id='rs_68c42d1d0878819d8266007cd3d1402c08fbf9b1584184ff',
+                        provider_name='openai',
                     ),
                     TextPart(
                         content=IsStr(),
                         id='msg_68c42d26866c819da8d5c606621c911608fbf9b1584184ff',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=13, output_tokens=1680, details={'reasoning_tokens': 1408}),
@@ -2525,15 +2740,32 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(content=IsStr(), id='rs_68c42d29124881968e24c1ca8c1fc7860e8bc41441c948f6'),
-                    ThinkingPart(content=IsStr(), id='rs_68c42d29124881968e24c1ca8c1fc7860e8bc41441c948f6'),
-                    ThinkingPart(content=IsStr(), id='rs_68c42d29124881968e24c1ca8c1fc7860e8bc41441c948f6'),
-                    ThinkingPart(content=IsStr(), id='rs_68c42d29124881968e24c1ca8c1fc7860e8bc41441c948f6'),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c42d29124881968e24c1ca8c1fc7860e8bc41441c948f6',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c42d29124881968e24c1ca8c1fc7860e8bc41441c948f6',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c42d29124881968e24c1ca8c1fc7860e8bc41441c948f6',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c42d29124881968e24c1ca8c1fc7860e8bc41441c948f6',
+                        provider_name='openai',
+                    ),
                     ToolCallPart(
                         tool_name='update_plan',
                         args=IsStr(),
                         tool_call_id='call_gL7JE6GDeGGsFubqO2XGytyO',
                         id='fc_68c42d3e9e4881968b15fbb8253f58540e8bc41441c948f6',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=124, output_tokens=1926, details={'reasoning_tokens': 1792}),
@@ -2563,7 +2795,13 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content=IsStr(), id='msg_68c42d408eec8196ae1c5883e07c093e0e8bc41441c948f6')],
+                parts=[
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_68c42d408eec8196ae1c5883e07c093e0e8bc41441c948f6',
+                        provider_name='openai',
+                    )
+                ],
                 usage=RequestUsage(
                     input_tokens=2087, cache_read_tokens=2048, output_tokens=124, details={'reasoning_tokens': 0}
                 ),
@@ -2621,7 +2859,7 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
             ModelResponse(
                 parts=[
                     ThinkingPart(content='', id='rs_123', signature='123', provider_name='openai'),
-                    TextPart(content='4', id='msg_123'),
+                    TextPart(content='4', id='msg_123', provider_name='openai'),
                 ],
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
@@ -2697,10 +2935,10 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
             ModelResponse(
                 parts=[
                     ThinkingPart(content='1', id='rs_123', signature='123', provider_name='openai'),
-                    ThinkingPart(content='2', id='rs_123'),
-                    ThinkingPart(content='3', id='rs_123'),
-                    ThinkingPart(content='4', id='rs_123'),
-                    TextPart(content='4', id='msg_123'),
+                    ThinkingPart(content='2', id='rs_123', provider_name='openai'),
+                    ThinkingPart(content='3', id='rs_123', provider_name='openai'),
+                    ThinkingPart(content='4', id='rs_123', provider_name='openai'),
+                    TextPart(content='4', id='msg_123', provider_name='openai'),
                 ],
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
@@ -2770,7 +3008,11 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    TextPart(content=IsStr(), id='msg_68c42de31d348194a251b43ad913ef140202c9ad459e0d23'),
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_68c42de31d348194a251b43ad913ef140202c9ad459e0d23',
+                        provider_name='openai',
+                    ),
                 ],
                 usage=RequestUsage(input_tokens=13, output_tokens=248, details={'reasoning_tokens': 64}),
                 model_name='gpt-5-2025-08-07',
@@ -2828,7 +3070,11 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    TextPart(content=IsStr(), id='msg_68c42de8a410819faf7a9cbebd2b4bc4051f82c608a83beb'),
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_68c42de8a410819faf7a9cbebd2b4bc4051f82c608a83beb',
+                        provider_name='openai',
+                    ),
                 ],
                 usage=RequestUsage(input_tokens=142, output_tokens=355, details={'reasoning_tokens': 128}),
                 model_name='gpt-5-2025-08-07',
@@ -2915,6 +3161,7 @@ Using standard order of operations (multiplication before addition/subtraction):
 If you intended different grouping with parentheses, let me know.\
 """,
                         id='msg_68cdba6652ac81a3a58625883261465809b7445677780c8f',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(
@@ -2957,7 +3204,9 @@ If you intended different grouping with parentheses, let me know.\
                         signature='gAAAAABozbpuOXVfjIYw7Gw6uSeadpkyaqMU1Frav7mTaf9LP8p8YuC8CWR9fYa02yZ5oYr1mqmYraD8ViOE33zqO2HBCdiWpOkVdNX-s4SGuPPB7ewyM7bDD4XbaSzo-Q5I6MgZmvVGWDGodqa3MfSKKNcGyD4aEfryQRLi4ObvHE5yuOqRo8FzGXMqe_pFdnvJXXD7njyfUofhWNvQPsLVLQFA_g_e7WKXtJJf_2JY183oi7-jNQ6rD9wGhM81HWSv0sTSBIHMpcE44rvlVQMFuh_rOPVUHUhT7vED7fYtrMoaPl46yDBc148T3MfXTnS-zm163zBOa34Yy_VXjyXw04a8Ig32y72bJY7-PRpZdBaeqD3BLvXfMuY4C911Z7FSxVze36mUxVO62g0uqV4PRw9qFA9mG37KF2j0ZsRzfyAClK1tu5omrYpenVKuRlrOO6JFtgyyE9OtLJxqvRNRKgULe2-cOQlo5S74t9lSMgcSGQFqF4JKG0A4XbzlliIcvC3puEzObHz-jArn_2BVUL_OPqx9ohJ9ZxAkXYgf0IRNYiKF4fOwKufYa5scL1kx2VAmsmEv5Yp5YcWlriB9L9Mpg3IguNBmq9DeJPiEQBtlnuOpSNEaNMTZQl4jTHVLgA5eRoCSbDdqGtQWgQB5wa7eH085HktejdxFeG7g-Fc1neHocRoGARxwhwcTT0U-re2ooJp99c0ujZtym-LiflSQUICi59VMAO8dNBE3CqXhG6S_ZicUmAvguo1iGKaKElMBv1Tv5qWcs41eAQkhRPBXQXoBD6MtBLBK1M-7jhidVrco0uTFhHBUTqx3jTGzE15YUJAwR69WvIOuZOvJdcBNObYWF9k84j0bZjJfRRbJG0C7XbU=',
                         provider_name='openai',
                     ),
-                    TextPart(content='256', id='msg_68cdba6e02c881a3802ed88715e0be4709b7445677780c8f'),
+                    TextPart(
+                        content='256', id='msg_68cdba6e02c881a3802ed88715e0be4709b7445677780c8f', provider_name='openai'
+                    ),
                 ],
                 usage=RequestUsage(input_tokens=793, output_tokens=7, details={'reasoning_tokens': 0}),
                 model_name='gpt-5-2025-08-07',
@@ -3058,6 +3307,7 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
                     TextPart(
                         content=IsStr(),
                         id='msg_68c350a75ddc819ea5406470460be7850f2d670b80edc507',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(
@@ -3081,7 +3331,10 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
     assert event_parts == snapshot(
         [
             PartStartEvent(
-                index=0, part=ThinkingPart(content='', id='rs_68c3509b2ee0819eba32735182d275ad0f2d670b80edc507')
+                index=0,
+                part=ThinkingPart(
+                    content='', id='rs_68c3509b2ee0819eba32735182d275ad0f2d670b80edc507', provider_name='openai'
+                ),
             ),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='**Calcul')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='ating')),
@@ -3186,10 +3439,7 @@ I\
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='!')),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(
-                    signature_delta=IsStr(),
-                    provider_name='openai',
-                ),
+                delta=ThinkingPartDelta(signature_delta=IsStr()),
             ),
             PartEndEvent(
                 index=0,
@@ -3494,224 +3744,868 @@ I\
             ),
             PartStartEvent(
                 index=7,
-                part=TextPart(content='123', id='msg_68c350a75ddc819ea5406470460be7850f2d670b80edc507'),
+                part=TextPart(
+                    content='123', id='msg_68c350a75ddc819ea5406470460be7850f2d670b80edc507', provider_name='openai'
+                ),
                 previous_part_kind='builtin-tool-return',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='456')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='^')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='123')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' equals')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=':\n')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='180')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='302')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='106')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='304')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='044')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='807')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='508')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='140')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='927')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='865')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='938')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='572')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='807')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='342')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='688')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='638')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='559')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='680')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='488')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='440')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='159')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='857')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='958')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='502')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='360')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='813')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='732')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='502')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='197')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='826')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='969')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='863')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='225')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='730')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='871')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='630')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='436')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='419')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='794')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='758')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='932')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='074')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='350')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='380')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='367')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='697')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='649')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='814')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='626')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='542')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='926')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='602')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='664')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='707')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='275')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='874')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='269')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='201')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='777')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='743')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='912')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='313')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='197')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='516')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='323')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='690')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='221')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='274')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='713')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='845')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='895')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='457')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='748')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='735')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='309')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='484')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='337')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='191')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='373')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='255')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='527')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='928')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='271')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='785')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='206')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='382')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='967')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='998')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='984')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='330')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='482')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='105')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='350')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='942')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='229')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='970')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='677')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='054')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='940')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='838')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='210')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='936')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='952')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='303')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='939')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='401')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='656')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='756')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='127')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='607')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='778')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='599')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='667')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='243')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='702')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='814')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='072')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='746')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='219')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='431')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='942')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='293')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='005')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='416')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='411')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='635')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='076')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='021')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='296')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='045')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='493')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='305')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='133')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='645')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='615')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='566')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='590')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='735')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='965')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='652')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='587')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='934')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='290')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='425')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='473')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='827')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='719')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='935')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='012')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='870')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='093')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='575')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='987')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='789')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='431')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='818')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='047')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='013')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='404')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='691')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='795')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='773')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='170')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='405')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='764')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='614')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='646')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='054')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='949')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='298')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='846')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='184')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='678')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='296')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='813')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='625')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='595')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='333')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='311')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='611')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='385')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='251')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='735')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='244')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='505')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='448')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='443')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='050')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='050')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='547')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='161')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='779')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='229')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='749')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='134')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='489')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='643')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='622')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='579')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='100')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='908')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='331')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='839')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='817')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='426')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='366')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='854')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='332')),
-            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='416')),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='456'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='^'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='123'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta=' equals'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta=':\n'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='180'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='302'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='106'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='304'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='044'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='807'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='508'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='140'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='927'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='865'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='938'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='572'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='807'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='342'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='688'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='638'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='559'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='680'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='488'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='440'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='159'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='857'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='958'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='502'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='360'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='813'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='732'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='502'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='197'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='826'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='969'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='863'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='225'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='730'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='871'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='630'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='436'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='419'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='794'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='758'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='932'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='074'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='350'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='380'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='367'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='697'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='649'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='814'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='626'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='542'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='926'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='602'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='664'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='707'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='275'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='874'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='269'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='201'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='777'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='743'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='912'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='313'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='197'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='516'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='323'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='690'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='221'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='274'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='713'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='845'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='895'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='457'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='748'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='735'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='309'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='484'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='337'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='191'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='373'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='255'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='527'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='928'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='271'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='785'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='206'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='382'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='967'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='998'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='984'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='330'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='482'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='105'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='350'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='942'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='229'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='970'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='677'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='054'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='940'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='838'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='210'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='936'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='952'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='303'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='939'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='401'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='656'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='756'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='127'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='607'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='778'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='599'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='667'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='243'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='702'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='814'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='072'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='746'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='219'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='431'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='942'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='293'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='005'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='416'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='411'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='635'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='076'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='021'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='296'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='045'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='493'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='305'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='133'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='645'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='615'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='566'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='590'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='735'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='965'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='652'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='587'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='934'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='290'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='425'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='473'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='827'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='719'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='935'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='012'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='870'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='093'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='575'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='987'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='789'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='431'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='818'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='047'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='013'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='404'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='691'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='795'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='773'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='170'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='405'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='764'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='614'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='646'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='054'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='949'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='298'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='846'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='184'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='678'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='296'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='813'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='625'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='595'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='333'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='311'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='611'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='385'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='251'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='735'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='244'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='505'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='448'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='443'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='050'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='050'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='547'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='161'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='779'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='229'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='749'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='134'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='489'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='643'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='622'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='579'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='100'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='908'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='331'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='839'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='817'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='426'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='366'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='854'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='332'),
+            ),
+            PartDeltaEvent(
+                index=7,
+                delta=TextPartDelta(content_delta='416'),
+            ),
             PartEndEvent(
                 index=7,
                 part=TextPart(
@@ -3720,6 +4614,7 @@ I\
 180302106304044807508140927865938572807342688638559680488440159857958502360813732502197826969863225730871630436419794758932074350380367697649814626542926602664707275874269201777743912313197516323690221274713845895457748735309484337191373255527928271785206382967998984330482105350942229970677054940838210936952303939401656756127607778599667243702814072746219431942293005416411635076021296045493305133645615566590735965652587934290425473827719935012870093575987789431818047013404691795773170405764614646054949298846184678296813625595333311611385251735244505448443050050547161779229749134489643622579100908331839817426366854332416\
 """,
                     id='msg_68c350a75ddc819ea5406470460be7850f2d670b80edc507',
+                    provider_name='openai',
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
@@ -3840,6 +4735,7 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                         args='{}',
                         tool_call_id='call_3WCunBU7lCG1HHaLmnnRJn8I',
                         id='fc_68cc4fa649ac8195b0c6c239cd2c14470548824120ffcf74',
+                        provider_name='openai',
                     )
                 ],
                 usage=RequestUsage(input_tokens=36, output_tokens=15, details={'reasoning_tokens': 0}),
@@ -3876,6 +4772,7 @@ The meaning of life, according to popular culture and famously in Douglas Adams'
 If you're looking for a deeper or philosophical answer, let me know your perspective or context, and I can elaborate further.\
 """,
                         id='msg_68cc4fa7693081a184ff6f32e5209ab00307c6d4d2ee5985',
+                        provider_name='openai',
                     )
                 ],
                 usage=RequestUsage(input_tokens=61, output_tokens=56, details={'reasoning_tokens': 0}),
@@ -4011,6 +4908,7 @@ plt.show()\r
                     TextPart(
                         content=IsStr(),
                         id='msg_68cdc398d3bc8190bbcf78c0293a4ca60187028ba77f15f7',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(
@@ -4175,6 +5073,7 @@ Download the image: [y_equals_x_squared_futuristic.png](sandbox:/mnt/data/y_equa
 If you want different colors or a holographic gradient background, tell me your preferred palette.\
 """,
                         id='msg_68cdc3d0303c8190b2a86413acbedbe60187028ba77f15f7',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(
@@ -4267,6 +5166,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                     TextPart(
                         content=IsStr(),
                         id='msg_06c1a26fd89d07f20068dd937ecbd48197bd91dc501bd4a4d4',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=2772, output_tokens=1166, details={'reasoning_tokens': 896}),
@@ -5631,7 +6531,9 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
             ),
             PartStartEvent(
                 index=4,
-                part=TextPart(content='Here', id='msg_06c1a26fd89d07f20068dd937ecbd48197bd91dc501bd4a4d4'),
+                part=TextPart(
+                    content='Here', id='msg_06c1a26fd89d07f20068dd937ecbd48197bd91dc501bd4a4d4', provider_name='openai'
+                ),
                 previous_part_kind='builtin-tool-return',
             ),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=IsStr())),
@@ -5676,8 +6578,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
             PartEndEvent(
                 index=4,
                 part=TextPart(
-                    content=IsStr(),
-                    id='msg_06c1a26fd89d07f20068dd937ecbd48197bd91dc501bd4a4d4',
+                    content=IsStr(), id='msg_06c1a26fd89d07f20068dd937ecbd48197bd91dc501bd4a4d4', provider_name='openai'
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
@@ -5761,7 +6662,9 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
-                    TextPart(content='', id='msg_68cdc42eae2c81918eeacdbceb60d7fa08537600f5445fc6'),
+                    TextPart(
+                        content='', id='msg_68cdc42eae2c81918eeacdbceb60d7fa08537600f5445fc6', provider_name='openai'
+                    ),
                 ],
                 usage=RequestUsage(
                     input_tokens=2746,
@@ -5838,7 +6741,9 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
-                    TextPart(content='', id='msg_68cdc4c5951c8191ace8044f1e89571508537600f5445fc6'),
+                    TextPart(
+                        content='', id='msg_68cdc4c5951c8191ace8044f1e89571508537600f5445fc6', provider_name='openai'
+                    ),
                 ],
                 usage=RequestUsage(
                     input_tokens=2804,
@@ -6122,7 +7027,9 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
-                    TextPart(content='', id='msg_68cdec605234819fab332bfc0ba35a5d079003437d26d0c0'),
+                    TextPart(
+                        content='', id='msg_68cdec605234819fab332bfc0ba35a5d079003437d26d0c0', provider_name='openai'
+                    ),
                 ],
                 usage=RequestUsage(
                     input_tokens=2799, cache_read_tokens=2048, output_tokens=1390, details={'reasoning_tokens': 1216}
@@ -6184,7 +7091,9 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
-                    TextPart(content='', id='msg_68cdecb54530819f9e25118291f5d1fe079003437d26d0c0'),
+                    TextPart(
+                        content='', id='msg_68cdecb54530819f9e25118291f5d1fe079003437d26d0c0', provider_name='openai'
+                    ),
                 ],
                 usage=RequestUsage(
                     input_tokens=2858, cache_read_tokens=1920, output_tokens=1071, details={'reasoning_tokens': 896}
@@ -6295,7 +7204,9 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
-                    TextPart(content='', id='msg_0360827931d9421b0068dd836f4de881a0ae6d58054d203eb2'),
+                    TextPart(
+                        content='', id='msg_0360827931d9421b0068dd836f4de881a0ae6d58054d203eb2', provider_name='openai'
+                    ),
                 ],
                 usage=RequestUsage(input_tokens=2253, output_tokens=1755, details={'reasoning_tokens': 1600}),
                 model_name='gpt-5-2025-08-07',
@@ -6334,6 +7245,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         args='{"species":"Axolotl","name":"Axie"}',
                         tool_call_id='call_eE7MHM5WMJnMt5srV69NmBJk',
                         id='fc_0360827931d9421b0068dd83918a8c81a08a765e558fd5e071',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=587, output_tokens=2587, details={'reasoning_tokens': 2560}),
@@ -6424,6 +7336,7 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
                     TextPart(
                         content='{"species":"Ambystoma mexicanum","name":"Axolotl"}',
                         id='msg_09b7ce6df817433c0068dd8455d66481a0a265a59089859b56',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=1789, output_tokens=1312, details={'reasoning_tokens': 1152}),
@@ -6502,6 +7415,7 @@ async def test_openai_responses_image_generation_with_prompted_output(allow_mode
                     TextPart(
                         content='{"species":"axolotl","name":"Axel"}',
                         id='msg_0d14a5e3c26c21180068dd8763b4508190bb7487109f73e1f4',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=1812, output_tokens=1313, details={'reasoning_tokens': 1152}),
@@ -6562,6 +7476,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                         args='{}',
                         tool_call_id='call_t76xO1K2zqrJkawkU3tur8vj',
                         id='fc_0481074da98340df0068dd88f000688191afaf54f799b1dfaf',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=389, output_tokens=721, details={'reasoning_tokens': 704}),
@@ -6617,7 +7532,9 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
-                    TextPart(content='', id='msg_0481074da98340df0068dd8934b3f48191920fd2feb9de2332'),
+                    TextPart(
+                        content='', id='msg_0481074da98340df0068dd8934b3f48191920fd2feb9de2332', provider_name='openai'
+                    ),
                 ],
                 usage=RequestUsage(input_tokens=1294, output_tokens=65, details={'reasoning_tokens': 0}),
                 model_name='gpt-5-2025-08-07',
@@ -6721,7 +7638,9 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
-                    TextPart(content='', id='msg_0b6169df6e16e9690068dd8163a99c8191ae96a95eaa8e6365'),
+                    TextPart(
+                        content='', id='msg_0b6169df6e16e9690068dd8163a99c8191ae96a95eaa8e6365', provider_name='openai'
+                    ),
                 ],
                 usage=RequestUsage(
                     input_tokens=2675,
@@ -6803,7 +7722,9 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
-                    TextPart(content='', id='msg_08acbdf1ae54befc0068dd9d468248819786f55b61db3a9a60'),
+                    TextPart(
+                        content='', id='msg_08acbdf1ae54befc0068dd9d468248819786f55b61db3a9a60', provider_name='openai'
+                    ),
                 ],
                 usage=RequestUsage(input_tokens=1889, output_tokens=1434, details={'reasoning_tokens': 1280}),
                 model_name='gpt-5-2025-08-07',
@@ -6890,6 +7811,7 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                         args='{"city":"Mexico City","country":"Mexico"}',
                         tool_call_id='call_LIXPi261Xx3dGYzlDsOoyHGk',
                         id='fc_001fd29e2d5573f70068ece2ecc140819c97ca83bd4647a717',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=103, output_tokens=409, details={'reasoning_tokens': 384}),
@@ -7070,6 +7992,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-brief-summar
                     TextPart(
                         content=IsStr(),
                         id='msg_0083938b3a28070e0068fabd989bb481a08c61416ab343ef49',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=1207, output_tokens=535, details={'reasoning_tokens': 320}),
@@ -7122,6 +8045,7 @@ The monorepo is organized into these main packages:  \n\
 • examples\u2003\u2003\u2003\u2003– sample apps & demos showing real-world usage\
 """,
                         id='msg_0083938b3a28070e0068fabda04de881a089010e6710637ab3',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=1109, output_tokens=444, details={'reasoning_tokens': 320}),
@@ -7347,6 +8271,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
                     TextPart(
                         content=IsStr(),
                         id='msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=1401, output_tokens=480, details={'reasoning_tokens': 256}),
@@ -7730,6 +8655,7 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                     TextPart(
                         content=IsStr(),
                         id='msg_0558010cf1416a490068faa103e6c481a0930eda4f04bb3f2a',
+                        provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=1065, output_tokens=760, details={'reasoning_tokens': 576}),
@@ -7845,7 +8771,7 @@ async def test_openai_responses_raw_cot_only(allow_model_requests: None):
                         provider_name='openai',
                         provider_details={'raw_content': ['Let me think about this...', 'The answer is 4.']},
                     ),
-                    TextPart(content='4', id='msg_123'),
+                    TextPart(content='4', id='msg_123', provider_name='openai'),
                 ],
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
@@ -7912,7 +8838,7 @@ async def test_openai_responses_raw_cot_with_summary(allow_model_requests: None)
                         provider_name='openai',
                         provider_details={'raw_content': ['Raw thinking step 1', 'Raw thinking step 2']},
                     ),
-                    TextPart(content='4', id='msg_123'),
+                    TextPart(content='4', id='msg_123', provider_name='openai'),
                 ],
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
@@ -7981,9 +8907,9 @@ async def test_openai_responses_multiple_summaries(allow_model_requests: None):
                         provider_name='openai',
                         provider_details={'raw_content': ['Raw thinking step 1']},
                     ),
-                    ThinkingPart(content='Second summary', id='rs_123'),
-                    ThinkingPart(content='Third summary', id='rs_123'),
-                    TextPart(content='Done', id='msg_123'),
+                    ThinkingPart(content='Second summary', id='rs_123', provider_name='openai'),
+                    ThinkingPart(content='Third summary', id='rs_123', provider_name='openai'),
+                    TextPart(content='Done', id='msg_123', provider_name='openai'),
                 ],
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
@@ -7997,7 +8923,6 @@ async def test_openai_responses_multiple_summaries(allow_model_requests: None):
     )
 
 
-@pytest.mark.vcr()
 async def test_openai_responses_raw_cot_stream_openrouter(allow_model_requests: None, openrouter_api_key: str):
     """Test streaming raw CoT content from gpt-oss via OpenRouter.
 
@@ -8028,13 +8953,14 @@ async def test_openai_responses_raw_cot_stream_openrouter(allow_model_requests: 
                     ThinkingPart(
                         content='',
                         id='rs_tmp_2kbe7x16sax',
+                        provider_name='openrouter',
                         provider_details={
                             'raw_content': [
                                 'The user asks: "What is 2+2?" They expect a straightforward answer: 4. Just answer 4.'
                             ]
                         },
                     ),
-                    TextPart(content='4', id='msg_tmp_8cjof4f6zpw'),
+                    TextPart(content='4', id='msg_tmp_8cjof4f6zpw', provider_name='openrouter'),
                 ],
                 usage=RequestUsage(
                     input_tokens=78,
@@ -8174,7 +9100,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                         provider_name='openai',
                         provider_details={'raw_content': ['Raw CoT step 1', 'Raw CoT step 2']},
                     ),
-                    TextPart(content='4', id='msg_123'),
+                    TextPart(content='4', id='msg_123', provider_name='openai'),
                 ],
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
@@ -8209,7 +9135,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                         provider_name='openai',
                         provider_details={'raw_content': ['Raw CoT step 1', 'Raw CoT step 2']},
                     ),
-                    TextPart(content='4', id='msg_123'),
+                    TextPart(content='4', id='msg_123', provider_name='openai'),
                 ],
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
@@ -8238,8 +9164,8 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                         provider_name='openai',
                         provider_details={'raw_content': ['More raw thinking']},
                     ),
-                    ThinkingPart(content='Second summary', id='rs_456'),
-                    TextPart(content='9', id='msg_456'),
+                    ThinkingPart(content='Second summary', id='rs_456', provider_name='openai'),
+                    TextPart(content='9', id='msg_456', provider_name='openai'),
                 ],
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
@@ -8274,7 +9200,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                         provider_name='openai',
                         provider_details={'raw_content': ['Raw CoT step 1', 'Raw CoT step 2']},
                     ),
-                    TextPart(content='4', id='msg_123'),
+                    TextPart(content='4', id='msg_123', provider_name='openai'),
                 ],
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
@@ -8303,8 +9229,8 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                         provider_name='openai',
                         provider_details={'raw_content': ['More raw thinking']},
                     ),
-                    ThinkingPart(content='Second summary', id='rs_456'),
-                    TextPart(content='9', id='msg_456'),
+                    ThinkingPart(content='Second summary', id='rs_456', provider_name='openai'),
+                    TextPart(content='9', id='msg_456', provider_name='openai'),
                 ],
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
@@ -8332,7 +9258,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                         signature='encrypted_sig_xyz',
                         provider_name='openai',
                     ),
-                    TextPart(content='42', id='msg_789'),
+                    TextPart(content='42', id='msg_789', provider_name='openai'),
                 ],
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
@@ -8397,33 +9323,20 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
     )
 
 
-@pytest.mark.vcr()
-async def test_openai_responses_model_file_search_tool(allow_model_requests: None, openai_api_key: str):
-    import asyncio
-    import os
-    import tempfile
-
-    from openai import AsyncOpenAI
-
-    from pydantic_ai.builtin_tools import FileSearchTool
-    from pydantic_ai.providers.openai import OpenAIProvider
-
+async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_model_requests: None, openai_api_key: str):
     async_client = AsyncOpenAI(api_key=openai_api_key)
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
-        f.write('Paris is the capital of France. It is known for the Eiffel Tower.')
-        test_file_path = f.name
+    test_file_path = tmp_path / 'file.txt'
+    test_file_path.touch()
+    test_file_path.write_text('Paris is the capital of France. It is known for the Eiffel Tower.')
 
     file = None
     vector_store = None
     try:
-        with open(test_file_path, 'rb') as f:
-            file = await async_client.files.create(file=f, purpose='assistants')
+        file = await async_client.files.create(file=test_file_path, purpose='assistants')
 
         vector_store = await async_client.vector_stores.create(name='test-file-search')
         await async_client.vector_stores.files.create(vector_store_id=vector_store.id, file_id=file.id)
-
-        await asyncio.sleep(2)
 
         m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=async_client))
         agent = Agent(
@@ -8461,10 +9374,7 @@ async def test_openai_responses_model_file_search_tool(allow_model_requests: Non
                             timestamp=IsDatetime(),
                             provider_name='openai',
                         ),
-                        TextPart(
-                            content='The capital of France is Paris.',
-                            id=IsStr(),
-                        ),
+                        TextPart(content='The capital of France is Paris.', id=IsStr(), provider_name='openai'),
                     ],
                     usage=RequestUsage(input_tokens=870, output_tokens=30, details={'reasoning_tokens': 0}),
                     model_name='gpt-4o-2024-08-06',
@@ -8512,6 +9422,7 @@ async def test_openai_responses_model_file_search_tool(allow_model_requests: Non
                         TextPart(
                             content='The Eiffel Tower is a famous landmark in Paris, the capital of France. It is widely recognized and serves as an iconic symbol of the city.',
                             id=IsStr(),
+                            provider_name='openai',
                         ),
                     ],
                     usage=RequestUsage(input_tokens=1188, output_tokens=55, details={'reasoning_tokens': 0}),
@@ -8528,7 +9439,6 @@ async def test_openai_responses_model_file_search_tool(allow_model_requests: Non
         )
 
     finally:
-        os.unlink(test_file_path)
         await _cleanup_openai_resources(file, vector_store, async_client)
 
 
@@ -8588,34 +9498,22 @@ def test_map_file_search_tool_call():
     )
 
 
-@pytest.mark.vcr()
-async def test_openai_responses_model_file_search_tool_stream(allow_model_requests: None, openai_api_key: str):
-    import asyncio
-    import os
-    import tempfile
-    from typing import Any
-
-    from openai import AsyncOpenAI
-
-    from pydantic_ai.builtin_tools import FileSearchTool
-    from pydantic_ai.providers.openai import OpenAIProvider
-
+async def test_openai_responses_model_file_search_tool_stream(
+    tmp_path: Path, allow_model_requests: None, openai_api_key: str
+):
     async_client = AsyncOpenAI(api_key=openai_api_key)
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
-        f.write('Paris is the capital of France. It is known for the Eiffel Tower.')
-        test_file_path = f.name
+    test_file_path = tmp_path / 'file.txt'
+    test_file_path.touch()
+    test_file_path.write_text('Paris is the capital of France. It is known for the Eiffel Tower.')
 
     file = None
     vector_store = None
     try:
-        with open(test_file_path, 'rb') as f:
-            file = await async_client.files.create(file=f, purpose='assistants')
+        file = await async_client.files.create(file=test_file_path, purpose='assistants')
 
         vector_store = await async_client.vector_stores.create(name='test-file-search-stream')
         await async_client.vector_stores.files.create(vector_store_id=vector_store.id, file_id=file.id)
-
-        await asyncio.sleep(2)
 
         m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=async_client))
         agent = Agent(
@@ -8662,10 +9560,7 @@ async def test_openai_responses_model_file_search_tool_stream(allow_model_reques
                             timestamp=IsDatetime(),
                             provider_name='openai',
                         ),
-                        TextPart(
-                            content='The capital of France is Paris.',
-                            id=IsStr(),
-                        ),
+                        TextPart(content='The capital of France is Paris.', id=IsStr(), provider_name='openai'),
                     ],
                     usage=RequestUsage(input_tokens=1177, output_tokens=37, details={'reasoning_tokens': 0}),
                     model_name='gpt-4o-2024-08-06',
@@ -8720,7 +9615,7 @@ async def test_openai_responses_model_file_search_tool_stream(allow_model_reques
                 ),
                 PartStartEvent(
                     index=2,
-                    part=TextPart(content='The', id=IsStr()),
+                    part=TextPart(content='The', id=IsStr(), provider_name='openai'),
                     previous_part_kind='builtin-tool-return',
                 ),
                 FinalResultEvent(tool_name=None, tool_call_id=None),
@@ -8732,10 +9627,7 @@ async def test_openai_responses_model_file_search_tool_stream(allow_model_reques
                 PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='.')),
                 PartEndEvent(
                     index=2,
-                    part=TextPart(
-                        content='The capital of France is Paris.',
-                        id=IsStr(),
-                    ),
+                    part=TextPart(content='The capital of France is Paris.', id=IsStr(), provider_name='openai'),
                 ),
                 BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                     part=BuiltinToolCallPart(
@@ -8758,27 +9650,18 @@ async def test_openai_responses_model_file_search_tool_stream(allow_model_reques
         )
 
     finally:
-        os.unlink(test_file_path)
         await _cleanup_openai_resources(file, vector_store, async_client)
 
 
-@pytest.mark.vcr()
-async def test_openai_responses_model_file_search_tool_with_results(allow_model_requests: None, openai_api_key: str):
+async def test_openai_responses_model_file_search_tool_with_results(
+    tmp_path: Path, allow_model_requests: None, openai_api_key: str
+):
     """Test that openai_include_file_search_results setting includes file search results in the response."""
-    import asyncio
-    import os
-    import tempfile
-
-    from openai import AsyncOpenAI
-
-    from pydantic_ai.builtin_tools import FileSearchTool
-    from pydantic_ai.providers.openai import OpenAIProvider
-
     async_client = AsyncOpenAI(api_key=openai_api_key)
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
-        f.write('Paris is the capital of France. It is known for the Eiffel Tower.')
-        test_file_path = f.name
+    test_file_path = tmp_path / 'file.txt'
+    test_file_path.touch()
+    test_file_path.write_text('Paris is the capital of France. It is known for the Eiffel Tower.')
 
     file = None
     vector_store = None
@@ -8788,8 +9671,6 @@ async def test_openai_responses_model_file_search_tool_with_results(allow_model_
 
         vector_store = await async_client.vector_stores.create(name='test-file-search-with-results')
         await async_client.vector_stores.files.create(vector_store_id=vector_store.id, file_id=file.id)
-
-        await asyncio.sleep(2)
 
         m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=async_client))
         agent = Agent(
@@ -8844,10 +9725,7 @@ async def test_openai_responses_model_file_search_tool_with_results(allow_model_
                             timestamp=IsDatetime(),
                             provider_name='openai',
                         ),
-                        TextPart(
-                            content=IsStr(),
-                            id=IsStr(),
-                        ),
+                        TextPart(content=IsStr(), id=IsStr(), provider_name='openai'),
                     ],
                     usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt(), details={'reasoning_tokens': 0}),
                     model_name='gpt-4o-2024-08-06',
@@ -8863,7 +9741,6 @@ async def test_openai_responses_model_file_search_tool_with_results(allow_model_
         )
 
     finally:
-        os.unlink(test_file_path)
         await _cleanup_openai_resources(file, vector_store, async_client)
 
 
