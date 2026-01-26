@@ -33,6 +33,8 @@ def prefectify_toolset(
     mcp_task_config: TaskConfig,
     tool_task_config: TaskConfig,
     tool_task_config_by_name: dict[str, TaskConfig | None],
+    *,
+    log_tool_calls: bool = False,
 ) -> AbstractToolset[AgentDepsT]:
     """Wrap a toolset to integrate it with Prefect.
 
@@ -41,6 +43,7 @@ def prefectify_toolset(
         mcp_task_config: The Prefect task config to use for MCP server tasks.
         tool_task_config: The default Prefect task config to use for tool calls.
         tool_task_config_by_name: Per-tool task configuration. Keys are tool names, values are TaskConfig or None.
+        log_tool_calls: If True, log tool arguments and results to Prefect logs.
     """
     if isinstance(toolset, FunctionToolset):
         from ._function_toolset import PrefectFunctionToolset
@@ -49,6 +52,7 @@ def prefectify_toolset(
             wrapped=toolset,
             task_config=tool_task_config,
             tool_task_config=tool_task_config_by_name,
+            log_tool_calls=log_tool_calls,
         )
 
     try:
@@ -62,6 +66,7 @@ def prefectify_toolset(
             return PrefectMCPServer(
                 wrapped=toolset,
                 task_config=mcp_task_config,
+                log_tool_calls=log_tool_calls,
             )
 
     return toolset

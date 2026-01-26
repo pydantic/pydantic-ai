@@ -52,10 +52,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         tool_task_config: TaskConfig | None = None,
         tool_task_config_by_name: dict[str, TaskConfig | None] | None = None,
         event_stream_handler_task_config: TaskConfig | None = None,
-        prefectify_toolset_func: Callable[
-            [AbstractToolset[AgentDepsT], TaskConfig, TaskConfig, dict[str, TaskConfig | None]],
-            AbstractToolset[AgentDepsT],
-        ] = prefectify_toolset,
+        log_tool_calls: bool = False,
+        prefectify_toolset_func: Callable[..., AbstractToolset[AgentDepsT]] = prefectify_toolset,
     ):
         """Wrap an agent to enable it with Prefect durable flows, by automatically offloading model requests, tool calls, and MCP server communication to Prefect tasks.
 
@@ -70,6 +68,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             tool_task_config: The default Prefect task config to use for tool calls. If no config is provided, use the default settings of Prefect.
             tool_task_config_by_name: Per-tool task configuration. Keys are tool names, values are TaskConfig or None (None disables task wrapping for that tool).
             event_stream_handler_task_config: The Prefect task config to use for the event stream handler task. If no config is provided, use the default settings of Prefect.
+            log_tool_calls: If True, log tool arguments and results to Prefect logs. Defaults to False.
             prefectify_toolset_func: Optional function to use to prepare toolsets for Prefect by wrapping them in a `PrefectWrapperToolset` that moves methods that require IO to Prefect tasks.
                 If not provided, only `FunctionToolset` and `MCPServer` will be prepared for Prefect.
                 The function takes the toolset, the task config, the tool-specific task config, and the tool-specific task config by name.
@@ -89,6 +88,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self._tool_task_config = default_task_config | (tool_task_config or {})
         self._tool_task_config_by_name = tool_task_config_by_name or {}
         self._event_stream_handler_task_config = default_task_config | (event_stream_handler_task_config or {})
+        self._log_tool_calls = log_tool_calls
 
         if not isinstance(wrapped.model, Model):
             raise UserError(
@@ -109,6 +109,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 self._mcp_task_config,
                 self._tool_task_config,
                 self._tool_task_config_by_name,
+                log_tool_calls=self._log_tool_calls,
             )
 
         prefect_toolsets = [toolset.visit_and_replace(_prefectify_toolset) for toolset in wrapped.toolsets]

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from prefect import task
+from prefect import get_run_logger, task
 
 from pydantic_ai import FunctionToolset, ToolsetTool
 from pydantic_ai.tools import AgentDepsT, RunContext
 
+from ._logging import format_tool_args, format_tool_result
 from ._toolset import PrefectWrapperToolset
 from ._types import TaskConfig, default_task_config
 
@@ -20,10 +21,12 @@ class PrefectFunctionToolset(PrefectWrapperToolset[AgentDepsT]):
         *,
         task_config: TaskConfig,
         tool_task_config: dict[str, TaskConfig | None],
+        log_tool_calls: bool = False,
     ):
         super().__init__(wrapped)
         self._task_config = default_task_config | (task_config or {})
         self._tool_task_config = tool_task_config or {}
+        self._log_tool_calls = log_tool_calls
 
         @task
         async def _call_tool_task(
@@ -32,7 +35,19 @@ class PrefectFunctionToolset(PrefectWrapperToolset[AgentDepsT]):
             ctx: RunContext[AgentDepsT],
             tool: ToolsetTool[AgentDepsT],
         ) -> Any:
-            return await super(PrefectFunctionToolset, self).call_tool(tool_name, tool_args, ctx, tool)
+            if self._log_tool_calls:
+                logger = get_run_logger()
+                args_str = format_tool_args(tool_args)
+                logger.info(f'Calling tool: {tool_name} with args: {args_str}')
+
+            result = await super(PrefectFunctionToolset, self).call_tool(tool_name, tool_args, ctx, tool)
+
+            if self._log_tool_calls:
+                logger = get_run_logger()
+                result_str = format_tool_result(result)
+                logger.info(f'Tool {tool_name} returned: {result_str}')
+
+            return result
 
         self._call_tool_task = _call_tool_task
 
