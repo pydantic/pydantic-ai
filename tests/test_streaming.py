@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import datetime
 import json
 import re
@@ -4107,3 +4108,143 @@ class TestIncompleteToolCallsNotSentToApi:
             assert tc.args_incomplete is False, f'Incomplete tool call was sent to model: {tc}'
             # Also verify the args are valid JSON
             tc.args_as_dict()  # Should not raise
+
+
+class TestRunStreamEventsCancellation:
+    """Tests for run_stream_events cancellation via break.
+
+    run_stream_events() is an async generator that yields events. When the user breaks
+    from the loop, the receive_stream closes, causing send_stream.send() to fail with
+    ClosedResourceError. The event_stream_handler catches this and cancels the underlying stream.
+    """
+
+    async def test_break_stops_event_iteration(self):
+        """Breaking from run_stream_events should stop the event iteration."""
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            for i in range(100):
+                yield f'chunk {i} '
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        async for event in agent.run_stream_events('test'):
+            events.append(event)
+            if len(events) >= 3:
+                break
+
+        # Should have exactly 3 events (we broke at 3)
+        assert len(events) == 3
+        # Should NOT have completed with AgentRunResultEvent
+        assert not any(isinstance(e, AgentRunResultEvent) for e in events)
+
+    async def test_break_does_not_yield_result(self):
+        """Breaking from run_stream_events should NOT yield AgentRunResultEvent."""
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            for i in range(100):
+                yield f'chunk {i} '
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        async for event in agent.run_stream_events('test'):
+            events.append(event)
+            if len(events) >= 3:
+                break
+
+        # Should NOT have AgentRunResultEvent since we broke early
+        assert not any(isinstance(e, AgentRunResultEvent) for e in events)
+
+    async def test_normal_completion_yields_result(self):
+        """Normal completion of run_stream_events should yield AgentRunResultEvent."""
+        agent = Agent(TestModel())
+
+        events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        async for event in agent.run_stream_events('Hello'):
+            events.append(event)
+
+        # Last event should be AgentRunResultEvent
+        assert len(events) > 0
+        assert isinstance(events[-1], AgentRunResultEvent)
+
+    async def test_break_marks_tool_call_args_incomplete(self):
+        """Breaking during tool call streaming marks args_incomplete=True."""
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+            # Stream a tool call with args in multiple chunks
+            yield {0: DeltaToolCall(name='my_tool', json_args='{"arg1": ')}
+            yield {0: DeltaToolCall(json_args='"value1", ')}
+            yield {0: DeltaToolCall(json_args='"arg2": ')}
+            # These would complete the JSON but we'll cancel before reaching them
+            yield {0: DeltaToolCall(json_args='"value2"}')}
+
+        agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+        @agent.tool_plain
+        def my_tool(arg1: str, arg2: str) -> str:
+            return f'{arg1}-{arg2}'
+
+        events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        saw_part_start = False
+        async for event in agent.run_stream_events('Call my_tool'):
+            events.append(event)
+            # Break after seeing a PartStartEvent for the tool call
+            if isinstance(event, PartStartEvent) and isinstance(event.part, ToolCallPart):
+                saw_part_start = True
+            # Break after we've seen the first delta (partial args)
+            if saw_part_start and isinstance(event, PartDeltaEvent):
+                break
+
+        # Should NOT have AgentRunResultEvent since we broke early
+        assert not any(isinstance(e, AgentRunResultEvent) for e in events)
+
+        # Find the tool call part from PartStartEvent
+        tool_call_events = [e for e in events if isinstance(e, PartStartEvent) and isinstance(e.part, ToolCallPart)]
+        assert len(tool_call_events) >= 1
+
+    async def test_break_during_text_streaming(self):
+        """Breaking during text streaming stops the stream properly."""
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            for word in ['Hello ', 'world, ', 'this ', 'is ', 'a ', 'very ', 'long ', 'response ', 'that ', 'continues']:
+                yield word
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        async for event in agent.run_stream_events('test'):
+            events.append(event)
+            # Break after a few events
+            if len(events) >= 5:
+                break
+
+        # Should have events but not the final AgentRunResultEvent
+        assert len(events) == 5
+        assert not any(isinstance(e, AgentRunResultEvent) for e in events)
+
+    async def test_break_is_detected_via_closed_resource_error(self):
+        """Verify that breaking triggers ClosedResourceError handling in event_stream_handler."""
+        stream_completed = False
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            nonlocal stream_completed
+            try:
+                for i in range(100):
+                    yield f'chunk {i} '
+                stream_completed = True
+            except asyncio.CancelledError:
+                # Stream was cancelled - this is expected
+                raise
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        async for event in agent.run_stream_events('test'):
+            if isinstance(event, PartDeltaEvent):
+                break
+
+        # Give a moment for the cancellation to propagate
+        await asyncio.sleep(0.01)
+
+        # Stream should NOT have completed naturally
+        assert not stream_completed, 'Stream completed when it should have been cancelled'

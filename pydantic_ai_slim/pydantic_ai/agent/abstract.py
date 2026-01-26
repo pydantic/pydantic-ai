@@ -940,8 +940,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         async def event_stream_handler(
             _: RunContext[AgentDepsT], events: AsyncIterable[_messages.AgentStreamEvent]
         ) -> None:
-            async for event in events:
-                await send_stream.send(event)
+            try:
+                async for event in events:
+                    await send_stream.send(event)
+            except anyio.BrokenResourceError:
+                # Receiver closed (user broke from loop), so we cancel the stream
+                if isinstance(events, AgentStream):
+                    await events.cancel()
 
         async def run_agent() -> AgentRunResult[Any]:
             async with send_stream:
