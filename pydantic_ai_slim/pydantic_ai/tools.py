@@ -228,7 +228,7 @@ class DeferredToolResults:
         default_factory=dict[str, bool | DeferredToolApprovalResult]
     )
     """Map of tool call IDs to results for tool calls that required human-in-the-loop approval."""
-    metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
+    metadata: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     """Metadata for deferred tool calls, keyed by `tool_call_id`. Each value will be available in the tool's RunContext as `tool_call_metadata`."""
 
 

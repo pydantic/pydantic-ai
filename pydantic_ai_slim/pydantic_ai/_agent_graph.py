@@ -1135,18 +1135,19 @@ async def _call_tools(  # noqa: C901
                 )
                 for call in tool_calls
             ]
+            try:
+                pending: set[
+                    asyncio.Task[
+                        tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]
+                    ]
+                ] = set(tasks)  # pyright: ignore[reportAssignmentType]
+                while pending:
+                    done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                    for task in done:
+                        index = tasks.index(task)  # pyright: ignore[reportArgumentType]
+                        if event := await handle_call_or_result(coro_or_task=task, index=index):  # pyright: ignore[reportArgumentType]
+                            yield event
 
-            pending: set[
-                asyncio.Task[
-                    tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]
-                ]
-            ] = set(tasks)  # pyright: ignore[reportAssignmentType]
-            while pending:
-                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                for task in done:
-                    index = tasks.index(task)  # pyright: ignore[reportArgumentType]
-                    if event := await handle_call_or_result(coro_or_task=task, index=index):  # pyright: ignore[reportArgumentType]
-                        yield event
             except asyncio.CancelledError as e:
                 for task in tasks:
                     task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
