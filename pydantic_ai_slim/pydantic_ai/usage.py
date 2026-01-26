@@ -267,7 +267,7 @@ class UsageLimits:
     """The maximum number of tokens allowed in requests and responses combined."""
     count_tokens_before_request: bool = False
     """If True, perform a token counting pass before sending the request to the model,
-    to enforce `request_tokens_limit` ahead of time.
+    to enforce `input_tokens_limit` ahead of time.
 
     This may incur additional overhead (from calling the model's `count_tokens` API before making the actual request)
     and is disabled by default.

@@ -82,7 +82,6 @@ try:
         AsyncStream,
         NotGiven,
         Omit,
-        RequestOptions,
         omit,
     )
     from openai.types import AllModels, chat, responses
@@ -282,9 +281,25 @@ class _ResponsesRequestInput:
     tool_choice: Literal['none', 'required', 'auto'] | None
     previous_response_id: str | None
     instructions: str | Omit
-    openai_messages: list[responses.ResponseInputItemParam]
+    messages: list[responses.ResponseInputItemParam]
     reasoning: Reasoning | Omit
     text: responses.ResponseTextConfigParam | None
+
+
+@dataclass
+class _ResponsesRequestParams:
+    """Typed request parameters shared by Responses API calls."""
+
+    model: OpenAIModelName
+    input: list[responses.ResponseInputItemParam]
+    instructions: str | Omit
+    parallel_tool_calls: bool | Omit
+    tools: list[responses.ToolParam] | Omit
+    tool_choice: Literal['none', 'required', 'auto'] | Omit
+    previous_response_id: str | Omit
+    reasoning: Reasoning | Omit
+    text: responses.ResponseTextConfigParam | Omit
+    truncation: Literal['auto', 'disabled'] | Omit
 
 
 class OpenAIChatModelSettings(ModelSettings, total=False):
@@ -1305,25 +1320,34 @@ class OpenAIResponsesModel(Model):
         )
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
 
-        request_input = await self._build_request_input(messages, settings, model_request_parameters)
-        self._ensure_request_input(request_input, allow_instructions_only=True)
-        request_kwargs = self._build_responses_request_kwargs(
+        request_input = await self._build_request_input(
+            messages,
+            settings,
+            model_request_parameters,
+            allow_instructions_only=True,
+        )
+        request_params = self._build_responses_request_params(
             request_input,
             settings,
             include_text_verbosity=False,
         )
-        body = self._request_body_from_kwargs(request_kwargs)
 
         try:
             extra_headers, timeout = self._build_request_options(settings)
-            options: RequestOptions = {'headers': extra_headers}
-            if not isinstance(timeout, NotGiven):
-                options['timeout'] = timeout
-            response: object = await self.client.post(
-                '/responses/input_tokens',
-                cast_to=object,
-                body=body,
-                options=options,
+            response: responses.InputTokenCountResponse = await self.client.responses.input_tokens.count(
+                model=request_params.model,
+                input=request_params.input,
+                instructions=request_params.instructions,
+                parallel_tool_calls=request_params.parallel_tool_calls,
+                tools=request_params.tools,
+                tool_choice=request_params.tool_choice,
+                previous_response_id=request_params.previous_response_id,
+                reasoning=request_params.reasoning,
+                text=request_params.text,
+                truncation=request_params.truncation,
+                extra_headers=extra_headers,
+                extra_body=settings.get('extra_body'),
+                timeout=timeout,
             )
         except APIStatusError as e:  # pragma: no cover
             if (status_code := e.status_code) >= 400:
@@ -1332,19 +1356,8 @@ class OpenAIResponsesModel(Model):
         except APIConnectionError as e:  # pragma: no cover
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
-        if not isinstance(response, dict):
-            raise UnexpectedModelBehavior(  # pragma: no cover
-                'Input tokens missing from OpenAI response', str(response)
-            )
-
-        response_dict = cast(dict[str, Any], response)
-        input_tokens = response_dict.get('input_tokens')
-        if not isinstance(input_tokens, int):
-            raise UnexpectedModelBehavior(  # pragma: no cover
-                'Input tokens missing from OpenAI response', str(response_dict)
-            )
         return usage.RequestUsage(
-            input_tokens=input_tokens,
+            input_tokens=response.input_tokens,
         )
 
     @asynccontextmanager
@@ -1515,6 +1528,8 @@ class OpenAIResponsesModel(Model):
         messages: list[ModelRequest | ModelResponse],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
+        *,
+        allow_instructions_only: bool,
     ) -> _ResponsesRequestInput:
         """Build common request input parameters for the Responses API.
 
@@ -1537,7 +1552,7 @@ class OpenAIResponsesModel(Model):
         if previous_response_id == 'auto':
             previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
 
-        instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
+        instructions, response_messages = await self._map_messages(messages, model_settings, model_request_parameters)
         reasoning = self._get_reasoning(model_settings)
 
         text: responses.ResponseTextConfigParam | None = None
@@ -1552,66 +1567,56 @@ class OpenAIResponsesModel(Model):
             # > Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'.
             # Apparently they're only checking input messages for "JSON", not instructions.
             assert isinstance(instructions, str)
-            system_prompt_count = sum(1 for m in openai_messages if m.get('role') == 'system')
-            openai_messages.insert(
+            system_prompt_count = sum(1 for m in response_messages if m.get('role') == 'system')
+            response_messages.insert(
                 system_prompt_count, responses.EasyInputMessageParam(role='system', content=instructions)
             )
             instructions = OMIT
 
-        return _ResponsesRequestInput(
-            tools=tools,
-            tool_choice=tool_choice,
-            previous_response_id=previous_response_id,
-            instructions=instructions,
-            openai_messages=openai_messages,
-            reasoning=reasoning,
-            text=text,
-        )
-
-    def _ensure_request_input(
-        self,
-        request_input: _ResponsesRequestInput,
-        *,
-        allow_instructions_only: bool,
-    ) -> None:
-        if not request_input.openai_messages and not request_input.previous_response_id:
-            if allow_instructions_only and request_input.instructions is OMIT:
+        if not response_messages and not previous_response_id:
+            if allow_instructions_only and instructions is OMIT:
                 raise UserError('Cannot count tokens without any messages or a previous response ID.')
-            request_input.openai_messages.append(
+            response_messages.append(
                 responses.EasyInputMessageParam(
                     role='user',
                     content='',
                 )
             )
 
-    def _build_responses_request_kwargs(
+        return _ResponsesRequestInput(
+            tools=tools,
+            tool_choice=tool_choice,
+            previous_response_id=previous_response_id,
+            instructions=instructions,
+            messages=response_messages,
+            reasoning=reasoning,
+            text=text,
+        )
+
+    def _build_responses_request_params(
         self,
         request_input: _ResponsesRequestInput,
         model_settings: OpenAIResponsesModelSettings,
         *,
         include_text_verbosity: bool,
-    ) -> dict[str, Any]:
+    ) -> _ResponsesRequestParams:
         text = request_input.text
         if include_text_verbosity and (verbosity := model_settings.get('openai_text_verbosity')):
             text = text or {}
             text['verbosity'] = verbosity
 
-        return {
-            'model': self.model_name,
-            'input': request_input.openai_messages,
-            'instructions': request_input.instructions,
-            'parallel_tool_calls': model_settings.get('parallel_tool_calls', OMIT),
-            'tools': request_input.tools or OMIT,
-            'tool_choice': request_input.tool_choice or OMIT,
-            'previous_response_id': request_input.previous_response_id or OMIT,
-            'reasoning': request_input.reasoning,
-            'text': text or OMIT,
-            'truncation': model_settings.get('openai_truncation', OMIT),
-        }
-
-    @staticmethod
-    def _request_body_from_kwargs(request_kwargs: dict[str, Any]) -> dict[str, Any]:
-        return {k: v for k, v in request_kwargs.items() if v is not None and v is not OMIT and v is not NOT_GIVEN}
+        return _ResponsesRequestParams(
+            model=self.model_name,
+            input=request_input.messages,
+            instructions=request_input.instructions,
+            parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
+            tools=request_input.tools or OMIT,
+            tool_choice=request_input.tool_choice or OMIT,
+            previous_response_id=request_input.previous_response_id or OMIT,
+            reasoning=request_input.reasoning,
+            text=text or OMIT,
+            truncation=model_settings.get('openai_truncation', OMIT),
+        )
 
     @staticmethod
     def _build_request_options(
@@ -1647,8 +1652,12 @@ class OpenAIResponsesModel(Model):
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
-        request_input = await self._build_request_input(messages, model_settings, model_request_parameters)
-        self._ensure_request_input(request_input, allow_instructions_only=False)
+        request_input = await self._build_request_input(
+            messages,
+            model_settings,
+            model_request_parameters,
+            allow_instructions_only=False,
+        )
 
         profile = OpenAIModelProfile.from_profile(self.profile)
         unsupported_model_settings = profile.openai_unsupported_model_settings
@@ -1667,38 +1676,42 @@ class OpenAIResponsesModel(Model):
         if model_settings.get('openai_logprobs'):
             include.append('message.output_text.logprobs')
 
-        request_kwargs = self._build_responses_request_kwargs(
+        request_params = self._build_responses_request_params(
             request_input,
             model_settings,
             include_text_verbosity=True,
         )
-        request_kwargs.update(
-            max_output_tokens=model_settings.get('max_tokens', OMIT),
-            stream=stream,
-            temperature=model_settings.get('temperature', OMIT),
-            top_p=model_settings.get('top_p', OMIT),
-            service_tier=model_settings.get('openai_service_tier', OMIT),
-            top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
-            user=model_settings.get('openai_user', OMIT),
-            include=include or OMIT,
-            prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
-            prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
-        )
         extra_headers, timeout = self._build_request_options(model_settings)
-        request_kwargs.update(
-            timeout=timeout,
-            extra_headers=extra_headers,
-            extra_body=model_settings.get('extra_body'),
-        )
 
         try:
-            response = cast(
-                responses.Response | AsyncStream[responses.ResponseStreamEvent],
-                await self.client.responses.create(**request_kwargs),
+            response = await self.client.responses.create(
+                model=request_params.model,
+                input=request_params.input,
+                instructions=request_params.instructions,
+                parallel_tool_calls=request_params.parallel_tool_calls,
+                tools=request_params.tools,
+                tool_choice=request_params.tool_choice,
+                previous_response_id=request_params.previous_response_id,
+                reasoning=request_params.reasoning,
+                text=request_params.text,
+                truncation=request_params.truncation,
+                max_output_tokens=model_settings.get('max_tokens', OMIT),
+                stream=stream,
+                temperature=model_settings.get('temperature', OMIT),
+                top_p=model_settings.get('top_p', OMIT),
+                service_tier=model_settings.get('openai_service_tier', OMIT),
+                top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
+                user=model_settings.get('openai_user', OMIT),
+                include=include or OMIT,
+                prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
+                prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
+                timeout=timeout,
+                extra_headers=extra_headers,
+                extra_body=model_settings.get('extra_body'),
             )
             if stream:
-                return cast(AsyncStream[responses.ResponseStreamEvent], response)
-            return cast(responses.Response, response)
+                return response
+            return response
         except APIStatusError as e:
             if model_response := _check_azure_content_filter(e, self.system, self.model_name):
                 return model_response
