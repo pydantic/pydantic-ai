@@ -46,7 +46,9 @@ from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..conftest import IsDatetime, IsInstance, IsStr, raise_if_exception, try_import
@@ -5796,7 +5798,7 @@ async def test_groq_native_with_tools_falls_back_to_tool_output(allow_model_requ
     agent = Agent(m, output_type=CityLocation)
 
     @agent.tool_plain
-    def get_weather(city: str) -> str:
+    def get_weather(city: str) -> str:  # pragma: no cover
         return f'Sunny in {city}'
 
     result = await agent.run('What is the capital of France?')
@@ -5808,3 +5810,27 @@ async def test_groq_native_with_tools_falls_back_to_tool_output(allow_model_requ
     assert any(isinstance(part, ToolCallPart) for part in response.parts), (
         f'Expected tool output fallback when native + tools: {response.parts}'
     )
+
+
+def test_groq_prepare_request_auto_mode_non_native_profile():
+    """Test that auto mode with non-native-default profile resolves to tool via base class.
+
+    When output_mode='auto' and profile defaults to 'tool', Groq's prepare_request
+    should NOT force tool mode (that's only for native-default profiles). The base
+    class then resolves 'auto' to the profile's default ('tool').
+    """
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key='test-key'))
+    assert m.profile.default_structured_output_mode == 'tool'
+
+    dummy_tool = ToolDefinition(
+        name='dummy',
+        description='A dummy tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    params = ModelRequestParameters(
+        function_tools=[dummy_tool],
+        output_mode='auto',
+    )
+
+    _, result_params = m.prepare_request(None, params)
+    assert result_params.output_mode == 'tool'
