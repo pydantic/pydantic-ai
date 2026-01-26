@@ -616,7 +616,7 @@ class BedrockConverseModel(Model):
             if isinstance(message, ModelRequest):
                 for part in message.parts:
                     if isinstance(part, SystemPromptPart):
-                        if part.content:
+                        if part.content:  # pragma: no branch
                             system_prompt.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
                         bedrock_messages.extend(
