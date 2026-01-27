@@ -59,6 +59,25 @@ def test_wrapper_model_settings_delegation():
     assert wrapper_no_settings.settings is None
 
 
+def test_wrapper_model_customize_request_parameters_delegation():
+    class CustomParamsTestModel(TestModel):
+        def __init__(self) -> None:
+            super().__init__(call_tools=[])
+            self.customize_called = False
+
+        def customize_request_parameters(
+            self, model_request_parameters: ModelRequestParameters
+        ) -> ModelRequestParameters:
+            self.customize_called = True
+            return model_request_parameters
+
+    model = CustomParamsTestModel()
+    wrapper = WrapperModel(model)
+    mrp = ModelRequestParameters()
+    assert wrapper.customize_request_parameters(mrp) is mrp
+    assert model.customize_called is True
+
+
 def test_instrumented_model_settings_delegation():
     """Test that InstrumentedModel correctly delegates settings to wrapped model."""
     # Create a base model with settings

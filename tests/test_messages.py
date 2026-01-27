@@ -21,9 +21,11 @@ from pydantic_ai import (
     ModelResponse,
     RequestUsage,
     TextPart,
+    TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
     ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
     VideoUrl,
 )
@@ -435,6 +437,8 @@ def test_thinking_part_delta_callable_provider_details_overwrites_noncallable_pr
     result = delta_callable.apply(original_delta)
     assert callable(result.provider_details)
     assert result.provider_details is provider_details_fn
+    assert provider_details_fn({'foo': 2}) == {'foo': 2, 'from_callable': 1}
+    assert provider_details_fn(None) == {'from_callable': 1}
 
 
 def test_thinking_part_delta_apply_invalid_part_raises():
@@ -442,6 +446,17 @@ def test_thinking_part_delta_apply_invalid_part_raises():
     delta = ThinkingPartDelta(content_delta='x')
     with pytest.raises(ValueError, match='Cannot apply ThinkingPartDeltas'):
         delta.apply(TextPart(content='hi'))
+
+
+def test_text_part_delta_apply_non_text_part_raises():
+    delta = TextPartDelta(content_delta='x')
+    with pytest.raises(ValueError, match='Cannot apply TextPartDeltas to non-TextParts'):
+        delta.apply(ThinkingPart(content=''))
+
+
+def test_tool_return_part_has_content():
+    assert ToolReturnPart(tool_name='tool', content=None).has_content() is False
+    assert ToolReturnPart(tool_name='tool', content='x').has_content() is True
 
 
 def test_pre_usage_refactor_messages_deserializable():

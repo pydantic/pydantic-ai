@@ -35,7 +35,14 @@ from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, U
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
+from pydantic_ai.tools import (
+    DeferredToolRequests,
+    DeferredToolResults,
+    GenerateToolJsonSchema,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+)
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsStr
@@ -89,6 +96,30 @@ def test_builtin_tool_registration():
     ):
         agent = Agent(TestModel())
         agent.tool_plain(max)
+
+
+def test_generate_tool_json_schema_additional_properties_true_for_allow_without_extras_schema():
+    schema = core_schema.typed_dict_schema({}, extra_behavior='allow')
+
+    assert GenerateJsonSchema().generate(schema) == {'properties': {}, 'type': 'object'}
+    assert GenerateToolJsonSchema().generate(schema) == {
+        'additionalProperties': True,
+        'properties': {},
+        'type': 'object',
+    }
+
+
+def test_tool_call_positional_only_arg_is_passed_positionally():
+    agent = Agent(TestModel(call_tools=['positional_only']))
+
+    @agent.tool_plain
+    async def positional_only(foo: int, /) -> str:
+        return f'foo={foo}'
+
+    result = agent.run_sync('x')
+    output = json.loads(result.output)
+    assert set(output) == {'positional_only'}
+    assert re.fullmatch(r'foo=\d+', output['positional_only'])
 
 
 def test_tool_ctx_second():
