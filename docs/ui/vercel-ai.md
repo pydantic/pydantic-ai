@@ -87,7 +87,7 @@ async def chat(request: Request) -> Response:
 !!! note
     Tool approval requires AI SDK UI v6 or later on the frontend.
 
-Pydantic AI supports human-in-the-loop tool approval workflows with AI SDK UI, allowing users to approve or deny tool executions before they run. See the [deferred tool calls documentation](../deferred-tools.md) for details on setting up tools that require approval.
+Pydantic AI supports human-in-the-loop tool approval workflows with AI SDK UI, allowing users to approve or deny tool executions before they run. See the [deferred tool calls documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for details on setting up tools that require approval.
 
 To enable tool approval streaming, pass `enable_tool_approval=True` when creating the adapter:
 
