@@ -61,7 +61,7 @@ class MockXai:
     responses: Sequence[chat_types.Response | Exception] | None = None
     stream_data: Sequence[Sequence[tuple[chat_types.Response, Any]]] | None = None
     index: int = 0
-    chat_create_kwargs: list[dict[str, Any]] = field(default_factory=list)
+    chat_create_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     api_key: str = 'test-api-key'
 
     @cached_property
