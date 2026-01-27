@@ -1,8 +1,9 @@
 from __future__ import annotations as _annotations
 
+import logging
 from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Literal, cast, overload
 
@@ -39,6 +40,7 @@ from ..messages import (
 )
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider
+from ..providers.huggingface import HfRouterProvider, get_router_info, select_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests
@@ -67,6 +69,8 @@ except ImportError as _import_error:
         'Please install `huggingface_hub` to use Hugging Face Inference Providers, '
         'you can use the `huggingface` optional group — `pip install "pydantic-ai-slim[huggingface]"`'
     ) from _import_error
+
+_logger = logging.getLogger(__name__)
 
 __all__ = (
     'HuggingFaceModel',
@@ -123,6 +127,8 @@ class HuggingFaceModel(Model):
 
     _model_name: str = field(repr=False)
     _provider: Provider[AsyncInferenceClient] = field(repr=False)
+    _router_initialized: bool = field(default=False, repr=False)
+    _selected_provider_info: HfRouterProvider | None = field(default=None, repr=False)
 
     def __init__(
         self,
@@ -149,6 +155,8 @@ class HuggingFaceModel(Model):
 
         super().__init__(settings=settings, profile=profile or provider_profile)
         self.client = provider.client
+        self._router_initialized = False
+        self._selected_provider_info = None
 
     @property
     def base_url(self) -> str:
@@ -165,6 +173,77 @@ class HuggingFaceModel(Model):
         """The system / model provider."""
         return self._provider.name
 
+    async def _ensure_router_initialized(self) -> None:
+        """Lazily fetch router info and update client/profile on first request.
+
+        This is called at the start of request() and request_stream()
+        """
+        if self._router_initialized:
+            return
+
+        self._router_initialized = True
+
+        model_name_lower = self._model_name.lower()
+        router_info = await _utils.run_in_executor(get_router_info, model_name_lower)
+
+        if not router_info:
+            return
+
+        providers = router_info['providers']
+
+        from ..providers.huggingface import HuggingFaceProvider
+
+        user_provider_name: str | None = None
+        if isinstance(self._provider, HuggingFaceProvider):
+            user_provider_name = self._provider.provider_name
+
+        # Select the best provider
+        if user_provider_name:
+            for p in providers:
+                if p['provider'] == user_provider_name:
+                    self._selected_provider_info = p
+                    break
+            if self._selected_provider_info is None:
+                self._selected_provider_info = select_provider(providers)
+        else:
+            self._selected_provider_info = select_provider(providers)
+
+        if self._selected_provider_info is None:
+            return
+
+        # Create a model specific client with the selected provider
+        if isinstance(self._provider, HuggingFaceProvider):
+            self.client = AsyncInferenceClient(
+                token=self._provider.api_key,
+                provider=self._selected_provider_info['provider'],  # type: ignore
+            )
+
+        selected_provider_name = self._selected_provider_info['provider']
+        supports_tools = self._selected_provider_info['supports_tools']
+        supports_structured_output = self._selected_provider_info['supports_structured_output']
+
+        if not supports_structured_output:
+            _logger.warning(
+                f'Provider {selected_provider_name} does not support structured output (NativeOutput).',
+            )
+        if not supports_tools:
+            _logger.warning(f"Provider '{selected_provider_name}' does not support tools.")
+
+        current_profile = self._profile
+        if callable(current_profile):
+            current_profile = current_profile(self._model_name)
+        if current_profile is None:
+            current_profile = ModelProfile()
+
+        self._profile = replace(
+            current_profile,
+            supports_tools=supports_tools,
+            supports_json_schema_output=supports_structured_output,
+            supports_json_object_output=supports_structured_output,
+        )
+        if 'profile' in self.__dict__:
+            del self.__dict__['profile']
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -172,6 +251,7 @@ class HuggingFaceModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         check_allow_model_requests()
+        await self._ensure_router_initialized()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -191,6 +271,7 @@ class HuggingFaceModel(Model):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
+        await self._ensure_router_initialized()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,

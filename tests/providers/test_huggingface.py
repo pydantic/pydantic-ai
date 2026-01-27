@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import logging
 import re
 from unittest.mock import MagicMock, Mock, patch
 
@@ -18,7 +17,7 @@ from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers.huggingface import (
     HfRouterProvider,
     HuggingFaceProvider,
-    _get_router_info,  # type: ignore
+    get_router_info,
     select_provider,
 )
 
@@ -155,14 +154,11 @@ def test_huggingface_provider_base_url():
 
 
 def test_huggingface_provider_model_profile(mocker: MockerFixture):
-    from pydantic_ai.providers.huggingface import _get_router_info  # type: ignore
+    """Test model_profile returns base profile without making HTTP requests.
 
-    # Clear lru_cache before mocking to ensure no cached results interfere
-    _get_router_info.cache_clear()
-
+    Router info fetching is now deferred to HuggingFaceModel.request().
+    """
     ns = 'pydantic_ai.providers.huggingface'
-    # Mock _get_router_info to return None (no network calls)
-    mocker.patch(f'{ns}._get_router_info', return_value=None)
 
     mock_client = Mock(spec=AsyncInferenceClient)
     provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
@@ -252,8 +248,8 @@ def test_select_provider_no_live_fallback():
 
 
 def test_get_router_info_success(mocker: MockerFixture):
-    """Test _get_router_info successfully parses response."""
-    _get_router_info.cache_clear()
+    """Test get_router_info successfully parses response."""
+    get_router_info.cache_clear()
 
     mock_response = Mock()
     mock_response.status_code = 200
@@ -261,159 +257,32 @@ def test_get_router_info_success(mocker: MockerFixture):
 
     mocker.patch('pydantic_ai.providers.huggingface.httpx.get', return_value=mock_response)
 
-    result = _get_router_info('test/model')
+    result = get_router_info('test/model')
     assert result is not None
     assert result['id'] == 'test/model'
 
 
 def test_get_router_info_http_error(mocker: MockerFixture):
-    """Test _get_router_info handles HTTP errors."""
-    _get_router_info.cache_clear()
+    """Test get_router_info handles HTTP errors."""
+    get_router_info.cache_clear()
 
     mocker.patch('pydantic_ai.providers.huggingface.httpx.get', side_effect=httpx.HTTPError('error'))
 
-    result = _get_router_info('test/model')
+    result = get_router_info('test/model')
     assert result is None
 
 
 def test_get_router_info_non_200(mocker: MockerFixture):
-    """Test _get_router_info handles non-200 status."""
-    _get_router_info.cache_clear()
+    """Test get_router_info handles non-200 status."""
+    get_router_info.cache_clear()
 
     mock_response = Mock()
     mock_response.status_code = 404
 
     mocker.patch('pydantic_ai.providers.huggingface.httpx.get', return_value=mock_response)
 
-    result = _get_router_info('test/model')
+    result = get_router_info('test/model')
     assert result is None
-
-
-def test_model_profile_with_router_info(mocker: MockerFixture):
-    """Test model_profile uses router info to select provider and set capabilities.
-
-    This also tests that when base_profile is None (unknown prefix), a new ModelProfile is created.
-    """
-    _get_router_info.cache_clear()
-
-    ns = 'pydantic_ai.providers.huggingface'
-    router_info = {
-        'id': 'unknown/model',
-        'providers': [
-            {'provider': 'test-provider', 'status': 'live', 'supports_tools': True, 'supports_structured_output': True},
-        ],
-    }
-    mocker.patch(f'{ns}._get_router_info', return_value=router_info)
-    mock_client_class = mocker.patch(f'{ns}.AsyncInferenceClient')
-
-    mock_client = Mock(spec=AsyncInferenceClient)
-    provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
-
-    # 'unknown' prefix doesn't match any known provider, so base_profile starts as None
-    # Router info is found, so a fresh ModelProfile is created
-    profile = provider.model_profile('unknown/model')
-
-    assert profile is not None
-    assert profile.supports_tools is True
-    assert profile.supports_json_schema_output is True
-    assert profile.supports_json_object_output is True
-    # Verify the client was updated with the selected provider
-    mock_client_class.assert_called_with(token='test-api-key', provider='test-provider')
-    # Verify the provider's client was updated
-    assert provider.client is mock_client_class.return_value
-
-
-def test_model_profile_with_provider_name_override(mocker: MockerFixture):
-    """Test model_profile respects provider_name override."""
-    _get_router_info.cache_clear()
-
-    ns = 'pydantic_ai.providers.huggingface'
-    router_info = {
-        'id': 'unknown/model',
-        'providers': [
-            {'provider': 'default', 'status': 'live', 'supports_tools': True, 'supports_structured_output': True},
-            {'provider': 'override', 'status': 'live', 'supports_tools': False, 'supports_structured_output': False},
-        ],
-    }
-    mocker.patch(f'{ns}._get_router_info', return_value=router_info)
-    mock_client_class = mocker.patch(f'{ns}.AsyncInferenceClient')
-
-    provider = HuggingFaceProvider(api_key='test-api-key', provider_name='override')
-
-    profile = provider.model_profile('unknown/model')
-
-    assert profile is not None
-    assert profile.supports_tools is False
-    mock_client_class.assert_called_with(token='test-api-key', provider='override')
-
-
-def test_model_profile_provider_name_not_found_fallback(mocker: MockerFixture):
-    """Test model_profile falls back to select_provider when provider_name not found."""
-    _get_router_info.cache_clear()
-
-    ns = 'pydantic_ai.providers.huggingface'
-    router_info = {
-        'id': 'unknown/model',
-        'providers': [
-            {'provider': 'available', 'status': 'live', 'supports_tools': True, 'supports_structured_output': True},
-        ],
-    }
-    mocker.patch(f'{ns}._get_router_info', return_value=router_info)
-    mock_client_class = mocker.patch(f'{ns}.AsyncInferenceClient')
-
-    provider = HuggingFaceProvider(api_key='test-api-key', provider_name='nonexistent')
-
-    profile = provider.model_profile('unknown/model')
-
-    assert profile is not None
-    # Falls back to 'available' since 'nonexistent' not found
-    mock_client_class.assert_called_with(token='test-api-key', provider='available')
-
-
-def test_model_profile_logs_warning_no_structured_output(mocker: MockerFixture, caplog: pytest.LogCaptureFixture):
-    """Test model_profile logs warning when provider doesn't support structured output."""
-    _get_router_info.cache_clear()
-
-    ns = 'pydantic_ai.providers.huggingface'
-    router_info = {
-        'id': 'unknown/model',
-        'providers': [
-            {'provider': 'limited', 'status': 'live', 'supports_tools': True, 'supports_structured_output': False},
-        ],
-    }
-    mocker.patch(f'{ns}._get_router_info', return_value=router_info)
-    mocker.patch(f'{ns}.AsyncInferenceClient')
-
-    mock_client = Mock(spec=AsyncInferenceClient)
-    provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
-
-    with caplog.at_level(logging.WARNING):
-        provider.model_profile('unknown/model')
-
-    assert 'Provider limited does not support structured output' in caplog.text
-
-
-def test_model_profile_logs_warning_no_tools(mocker: MockerFixture, caplog: pytest.LogCaptureFixture):
-    """Test model_profile logs warning when provider doesn't support tools."""
-    _get_router_info.cache_clear()
-
-    ns = 'pydantic_ai.providers.huggingface'
-    router_info = {
-        'id': 'unknown/model',
-        'providers': [
-            {'provider': 'limited', 'status': 'live', 'supports_tools': False, 'supports_structured_output': True},
-        ],
-    }
-    mocker.patch(f'{ns}._get_router_info', return_value=router_info)
-    mocker.patch(f'{ns}.AsyncInferenceClient')
-
-    mock_client = Mock(spec=AsyncInferenceClient)
-    provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
-
-    with caplog.at_level(logging.WARNING):
-        provider.model_profile('unknown/model')
-
-    assert "Provider 'limited' does not support tools" in caplog.text
 
 
 def test_huggingface_provider_api_key_from_hf_client(monkeypatch: pytest.MonkeyPatch):
@@ -427,30 +296,11 @@ def test_huggingface_provider_api_key_from_hf_client(monkeypatch: pytest.MonkeyP
     assert provider.api_key == 'client-token'
 
 
-def test_model_profile_with_router_info_and_known_prefix(mocker: MockerFixture):
-    """Test model_profile when base_profile exists (known prefix) AND router info is found.
-
-    This covers the branch where base_profile is NOT None but we still update capabilities from router.
-    """
-    _get_router_info.cache_clear()
-
-    ns = 'pydantic_ai.providers.huggingface'
-    router_info = {
-        'id': 'qwen/qwen-model',
-        'providers': [
-            {'provider': 'test-provider', 'status': 'live', 'supports_tools': True, 'supports_structured_output': True},
-        ],
-    }
-    mocker.patch(f'{ns}._get_router_info', return_value=router_info)
-    mock_client_class = mocker.patch(f'{ns}.AsyncInferenceClient')
-
+def test_huggingface_provider_name_property():
+    """Test provider_name property returns the user-specified provider name."""
     mock_client = Mock(spec=AsyncInferenceClient)
     provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
+    assert provider.provider_name is None
 
-    profile = provider.model_profile('Qwen/qwen-model')
-
-    assert profile is not None
-    assert profile.supports_tools is True
-    assert profile.supports_json_schema_output is True
-    assert profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
-    mock_client_class.assert_called_with(token='test-api-key', provider='test-provider')
+    provider_with_name = HuggingFaceProvider(api_key='test-api-key', provider_name='test-provider')
+    assert provider_with_name.provider_name == 'test-provider'

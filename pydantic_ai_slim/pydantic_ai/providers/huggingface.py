@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import logging
 import os
-from dataclasses import replace
 from functools import lru_cache
 from typing import overload
 
@@ -70,7 +69,17 @@ class HfRouterResponseData(TypedDict):
 
 
 @lru_cache(maxsize=128)
-def _get_router_info(model_id: str) -> HfRouterModelInfo | None:
+def get_router_info(model_id: str) -> HfRouterModelInfo | None:
+    """Fetch model info from the HuggingFace router API.
+
+    This function is cached to avoid repeated HTTP requests for the same model.
+
+    Args:
+        model_id: The model ID to fetch info for (e.g., 'Qwen/Qwen2.5-72B-Instruct').
+
+    Returns:
+        The router model info if found, None otherwise.
+    """
     try:
         resp = httpx.get(f'{HF_ROUTER_MODELS_URL}/{model_id}', timeout=5.0, follow_redirects=True)
         if resp.status_code != 200:
@@ -116,7 +125,17 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
     def client(self) -> AsyncInferenceClient:
         return self._client
 
+    @property
+    def provider_name(self) -> str | None:
+        """The user-specified provider name, if any."""
+        return self._provider
+
     def model_profile(self, model_name: str) -> ModelProfile | None:
+        """Return the base model profile without fetching router info.
+
+        Router info fetching is deferred to HuggingFaceModel.request() to avoid
+        making HTTP requests during synchronous initialization.
+        """
         provider_to_profile = {
             'deepseek-ai': deepseek_model_profile,
             'google': google_model_profile,
@@ -132,53 +151,10 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
         model_name = model_name.lower()
         model_prefix, model_suffix = model_name.split('/', 1)
 
-        base_profile: ModelProfile | None = None
         if model_prefix in provider_to_profile:
-            base_profile = provider_to_profile[model_prefix](model_suffix)
+            return provider_to_profile[model_prefix](model_suffix)
 
-        # fetch model capabilities
-        router_info = _get_router_info(model_name)
-
-        selected_provider_info: HfRouterProvider | None = None
-        if router_info:
-            providers = router_info['providers']
-            if self._provider:
-                for p in providers:
-                    if p['provider'] == self._provider:
-                        selected_provider_info = p
-                        break
-                if selected_provider_info is None:
-                    selected_provider_info = select_provider(providers)
-            else:
-                # Auto select using router preference
-                selected_provider_info = select_provider(providers)
-
-        if selected_provider_info:
-            if base_profile is None:
-                base_profile = ModelProfile()
-
-            # Update the client to use the selected provider
-            self._client = AsyncInferenceClient(
-                token=self.api_key,
-                provider=selected_provider_info['provider'],  # type: ignore
-            )
-
-            provider_name = selected_provider_info['provider']
-            if not selected_provider_info['supports_structured_output']:
-                _logger.warning(
-                    f'Provider {provider_name} does not support structured output (NativeOutput).',
-                )
-            if not selected_provider_info['supports_tools']:
-                _logger.warning(f"Provider '{provider_name}' does not support tools.")
-
-            return replace(
-                base_profile,
-                supports_tools=selected_provider_info['supports_tools'],
-                supports_json_schema_output=selected_provider_info['supports_structured_output'],
-                supports_json_object_output=selected_provider_info['supports_structured_output'],
-            )
-
-        return base_profile
+        return None
 
     @overload
     def __init__(self, *, base_url: str, api_key: str | None = None) -> None: ...

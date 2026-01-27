@@ -10,6 +10,7 @@ from unittest.mock import Mock
 
 import pytest
 from inline_snapshot import snapshot
+from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
@@ -1168,3 +1169,379 @@ async def test_prompted_output_json_object_response(allow_model_requests: None):
     response_format = kwargs['response_format']
     assert response_format is not None
     assert response_format['type'] == 'json_object'
+
+
+# Tests for lazy router initialization (moved from provider tests)
+
+
+async def test_router_init_updates_client_and_profile(allow_model_requests: None, mocker: MockerFixture):
+    """Test that _ensure_router_initialized updates client and profile based on router info."""
+    from pydantic_ai.providers.huggingface import get_router_info
+
+    get_router_info.cache_clear()
+
+    router_info = {
+        'id': 'unknown/model',
+        'providers': [
+            {'provider': 'test-provider', 'status': 'live', 'supports_tools': True, 'supports_structured_output': True},
+        ],
+    }
+    mocker.patch('pydantic_ai.models.huggingface.get_router_info', return_value=router_info)
+    mock_client_class = mocker.patch('pydantic_ai.models.huggingface.AsyncInferenceClient')
+
+    mock_client = Mock(spec=AsyncInferenceClient)
+    provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
+    model = HuggingFaceModel('unknown/model', provider=provider)
+
+    # Profile should not have router-derived capabilities yet
+    assert model._router_initialized is False  # pyright: ignore[reportPrivateUsage]
+
+    # Manually call _ensure_router_initialized
+    await model._ensure_router_initialized()  # pyright: ignore[reportPrivateUsage]
+
+    assert model._router_initialized is True  # pyright: ignore[reportPrivateUsage]
+    assert model._selected_provider_info is not None  # pyright: ignore[reportPrivateUsage]
+    assert model._selected_provider_info['provider'] == 'test-provider'  # pyright: ignore[reportPrivateUsage]
+
+    # Client should be updated
+    mock_client_class.assert_called_with(token='test-api-key', provider='test-provider')
+    assert model.client is mock_client_class.return_value
+
+    # Profile should be updated
+    assert model.profile.supports_tools is True
+    assert model.profile.supports_json_schema_output is True
+    assert model.profile.supports_json_object_output is True
+
+
+async def test_router_init_respects_provider_name_override(allow_model_requests: None, mocker: MockerFixture):
+    """Test that _ensure_router_initialized respects user-specified provider name."""
+    from pydantic_ai.providers.huggingface import get_router_info
+
+    get_router_info.cache_clear()
+
+    router_info = {
+        'id': 'unknown/model',
+        'providers': [
+            {'provider': 'default', 'status': 'live', 'supports_tools': True, 'supports_structured_output': True},
+            {'provider': 'override', 'status': 'live', 'supports_tools': False, 'supports_structured_output': False},
+        ],
+    }
+    mocker.patch('pydantic_ai.models.huggingface.get_router_info', return_value=router_info)
+    mock_client_class = mocker.patch('pydantic_ai.models.huggingface.AsyncInferenceClient')
+
+    provider = HuggingFaceProvider(api_key='test-api-key', provider_name='override')
+    model = HuggingFaceModel('unknown/model', provider=provider)
+
+    await model._ensure_router_initialized()  # pyright: ignore[reportPrivateUsage]
+
+    assert model._selected_provider_info is not None  # pyright: ignore[reportPrivateUsage]
+    assert model._selected_provider_info['provider'] == 'override'  # pyright: ignore[reportPrivateUsage]
+    assert model.profile.supports_tools is False
+    mock_client_class.assert_called_with(token='test-api-key', provider='override')
+
+
+async def test_router_init_fallback_when_provider_not_found(allow_model_requests: None, mocker: MockerFixture):
+    """Test that _ensure_router_initialized falls back to select_provider when provider_name not found."""
+    from pydantic_ai.providers.huggingface import get_router_info
+
+    get_router_info.cache_clear()
+
+    router_info = {
+        'id': 'unknown/model',
+        'providers': [
+            {'provider': 'available', 'status': 'live', 'supports_tools': True, 'supports_structured_output': True},
+        ],
+    }
+    mocker.patch('pydantic_ai.models.huggingface.get_router_info', return_value=router_info)
+    mock_client_class = mocker.patch('pydantic_ai.models.huggingface.AsyncInferenceClient')
+
+    provider = HuggingFaceProvider(api_key='test-api-key', provider_name='nonexistent')
+    model = HuggingFaceModel('unknown/model', provider=provider)
+
+    await model._ensure_router_initialized()  # pyright: ignore[reportPrivateUsage]
+
+    # Falls back to 'available' since 'nonexistent' not found
+    assert model._selected_provider_info is not None  # pyright: ignore[reportPrivateUsage]
+    assert model._selected_provider_info['provider'] == 'available'  # pyright: ignore[reportPrivateUsage]
+    mock_client_class.assert_called_with(token='test-api-key', provider='available')
+
+
+async def test_router_init_logs_warning_no_structured_output(
+    allow_model_requests: None, mocker: MockerFixture, caplog: pytest.LogCaptureFixture
+):
+    """Test that _ensure_router_initialized logs warning when provider doesn't support structured output."""
+    import logging
+
+    from pydantic_ai.providers.huggingface import get_router_info
+
+    get_router_info.cache_clear()
+
+    router_info = {
+        'id': 'unknown/model',
+        'providers': [
+            {'provider': 'limited', 'status': 'live', 'supports_tools': True, 'supports_structured_output': False},
+        ],
+    }
+    mocker.patch('pydantic_ai.models.huggingface.get_router_info', return_value=router_info)
+    mocker.patch('pydantic_ai.models.huggingface.AsyncInferenceClient')
+
+    mock_client = Mock(spec=AsyncInferenceClient)
+    provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
+    model = HuggingFaceModel('unknown/model', provider=provider)
+
+    with caplog.at_level(logging.WARNING):
+        await model._ensure_router_initialized()  # pyright: ignore[reportPrivateUsage]
+
+    assert 'Provider limited does not support structured output' in caplog.text
+
+
+async def test_router_init_logs_warning_no_tools(
+    allow_model_requests: None, mocker: MockerFixture, caplog: pytest.LogCaptureFixture
+):
+    """Test that _ensure_router_initialized logs warning when provider doesn't support tools."""
+    import logging
+
+    from pydantic_ai.providers.huggingface import get_router_info
+
+    get_router_info.cache_clear()
+
+    router_info = {
+        'id': 'unknown/model',
+        'providers': [
+            {'provider': 'limited', 'status': 'live', 'supports_tools': False, 'supports_structured_output': True},
+        ],
+    }
+    mocker.patch('pydantic_ai.models.huggingface.get_router_info', return_value=router_info)
+    mocker.patch('pydantic_ai.models.huggingface.AsyncInferenceClient')
+
+    mock_client = Mock(spec=AsyncInferenceClient)
+    provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
+    model = HuggingFaceModel('unknown/model', provider=provider)
+
+    with caplog.at_level(logging.WARNING):
+        await model._ensure_router_initialized()  # pyright: ignore[reportPrivateUsage]
+
+    assert "Provider 'limited' does not support tools" in caplog.text
+
+
+async def test_router_init_with_known_prefix_updates_capabilities(allow_model_requests: None, mocker: MockerFixture):
+    """Test _ensure_router_initialized when base_profile exists (known prefix) AND router info is found."""
+    from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
+    from pydantic_ai.providers.huggingface import get_router_info
+
+    get_router_info.cache_clear()
+
+    router_info = {
+        'id': 'qwen/qwen-model',
+        'providers': [
+            {'provider': 'test-provider', 'status': 'live', 'supports_tools': True, 'supports_structured_output': True},
+        ],
+    }
+    mocker.patch('pydantic_ai.models.huggingface.get_router_info', return_value=router_info)
+    mock_client_class = mocker.patch('pydantic_ai.models.huggingface.AsyncInferenceClient')
+
+    mock_client = Mock(spec=AsyncInferenceClient)
+    provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
+    model = HuggingFaceModel('Qwen/qwen-model', provider=provider)
+
+    await model._ensure_router_initialized()  # pyright: ignore[reportPrivateUsage]
+
+    assert model.profile.supports_tools is True
+    assert model.profile.supports_json_schema_output is True
+    # Base profile attributes should be preserved
+    assert model.profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    mock_client_class.assert_called_with(token='test-api-key', provider='test-provider')
+
+
+async def test_router_init_no_router_info(allow_model_requests: None, mocker: MockerFixture):
+    """Test _ensure_router_initialized when no router info is available."""
+    from pydantic_ai.providers.huggingface import get_router_info
+
+    get_router_info.cache_clear()
+
+    mocker.patch('pydantic_ai.models.huggingface.get_router_info', return_value=None)
+
+    mock_client = Mock(spec=AsyncInferenceClient)
+    provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
+    model = HuggingFaceModel('unknown/model', provider=provider)
+
+    await model._ensure_router_initialized()  # pyright: ignore[reportPrivateUsage]
+
+    assert model._router_initialized is True  # pyright: ignore[reportPrivateUsage]
+    assert model._selected_provider_info is None  # pyright: ignore[reportPrivateUsage]
+    # Client should not be changed
+    assert model.client is mock_client
+
+
+async def test_router_init_called_only_once(allow_model_requests: None, mocker: MockerFixture):
+    """Test that _ensure_router_initialized is only called once."""
+    from pydantic_ai.providers.huggingface import get_router_info
+
+    get_router_info.cache_clear()
+
+    router_info = {
+        'id': 'unknown/model',
+        'providers': [
+            {'provider': 'test-provider', 'status': 'live', 'supports_tools': True, 'supports_structured_output': True},
+        ],
+    }
+    mock_get_router_info = mocker.patch('pydantic_ai.models.huggingface.get_router_info', return_value=router_info)
+    mocker.patch('pydantic_ai.models.huggingface.AsyncInferenceClient')
+
+    mock_client = Mock(spec=AsyncInferenceClient)
+    provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
+    model = HuggingFaceModel('unknown/model', provider=provider)
+
+    # Call multiple times
+    await model._ensure_router_initialized()  # pyright: ignore[reportPrivateUsage]
+    await model._ensure_router_initialized()  # pyright: ignore[reportPrivateUsage]
+    await model._ensure_router_initialized()  # pyright: ignore[reportPrivateUsage]
+
+    # Should only call get_router_info once
+    mock_get_router_info.assert_called_once()
+
+
+async def test_router_init_select_provider_returns_none(allow_model_requests: None, mocker: MockerFixture):
+    """Test _ensure_router_initialized when select_provider returns None (empty providers list)."""
+    from pydantic_ai.providers.huggingface import get_router_info
+
+    get_router_info.cache_clear()
+
+    # Router info with empty providers list
+    router_info = {
+        'id': 'unknown/model',
+        'providers': [],
+    }
+    mocker.patch('pydantic_ai.models.huggingface.get_router_info', return_value=router_info)
+
+    mock_client = Mock(spec=AsyncInferenceClient)
+    provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
+    model = HuggingFaceModel('unknown/model', provider=provider)
+
+    await model._ensure_router_initialized()  # pyright: ignore[reportPrivateUsage]
+
+    assert model._router_initialized is True  # pyright: ignore[reportPrivateUsage]
+    assert model._selected_provider_info is None  # pyright: ignore[reportPrivateUsage]
+    # Client should not be changed
+    assert model.client is mock_client
+
+
+async def test_router_init_with_callable_profile(allow_model_requests: None, mocker: MockerFixture):
+    """Test _ensure_router_initialized when profile is a callable."""
+    from pydantic_ai.providers.huggingface import get_router_info
+
+    get_router_info.cache_clear()
+
+    router_info = {
+        'id': 'unknown/model',
+        'providers': [
+            {'provider': 'test-provider', 'status': 'live', 'supports_tools': True, 'supports_structured_output': True},
+        ],
+    }
+    mocker.patch('pydantic_ai.models.huggingface.get_router_info', return_value=router_info)
+    mocker.patch('pydantic_ai.models.huggingface.AsyncInferenceClient')
+
+    mock_client = Mock(spec=AsyncInferenceClient)
+    provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
+
+    # Create model with a callable profile
+    def profile_func(model_name: str) -> ModelProfile:
+        return ModelProfile(supports_tools=False)
+
+    model = HuggingFaceModel('unknown/model', provider=provider, profile=profile_func)
+
+    await model._ensure_router_initialized()  # pyright: ignore[reportPrivateUsage]
+
+    # Profile should be updated with router capabilities
+    assert model.profile.supports_tools is True
+    assert model.profile.supports_json_schema_output is True
+
+
+async def test_router_init_clears_cached_profile(allow_model_requests: None, mocker: MockerFixture):
+    """Test _ensure_router_initialized clears the cached profile property."""
+    from pydantic_ai.providers.huggingface import get_router_info
+
+    get_router_info.cache_clear()
+
+    router_info = {
+        'id': 'unknown/model',
+        'providers': [
+            {'provider': 'test-provider', 'status': 'live', 'supports_tools': True, 'supports_structured_output': True},
+        ],
+    }
+    mocker.patch('pydantic_ai.models.huggingface.get_router_info', return_value=router_info)
+    mocker.patch('pydantic_ai.models.huggingface.AsyncInferenceClient')
+
+    mock_client = Mock(spec=AsyncInferenceClient)
+    provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
+    model = HuggingFaceModel('unknown/model', provider=provider)
+
+    # Access profile to cache it
+    _ = model.profile
+
+    # Verify it's cached
+    assert 'profile' in model.__dict__
+
+    await model._ensure_router_initialized()  # pyright: ignore[reportPrivateUsage]
+
+    # Cached profile should be cleared
+    assert 'profile' not in model.__dict__
+
+
+def test_huggingface_model_with_string_provider(mocker: MockerFixture):
+    """Test HuggingFaceModel when provider is passed as a string."""
+    mock_infer_provider = mocker.patch('pydantic_ai.models.huggingface.infer_provider')
+    mock_provider = Mock()
+    mock_provider.model_profile.return_value = None
+    mock_provider.client = Mock(spec=AsyncInferenceClient)
+    mock_infer_provider.return_value = mock_provider
+
+    model = HuggingFaceModel('test/model', provider='huggingface')
+
+    mock_infer_provider.assert_called_once_with('huggingface')
+    assert model._provider is mock_provider  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_router_init_with_non_huggingface_provider(allow_model_requests: None, mocker: MockerFixture):
+    """Test _ensure_router_initialized when provider is not a HuggingFaceProvider.
+
+    This covers the branches where isinstance(self._provider, HuggingFaceProvider) is False.
+    """
+    from pydantic_ai.providers.huggingface import get_router_info
+
+    get_router_info.cache_clear()
+
+    router_info = {
+        'id': 'unknown/model',
+        'providers': [
+            {'provider': 'test-provider', 'status': 'live', 'supports_tools': True, 'supports_structured_output': True},
+        ],
+    }
+    mocker.patch('pydantic_ai.models.huggingface.get_router_info', return_value=router_info)
+
+    # Create a mock provider that is NOT a HuggingFaceProvider
+    mock_provider = Mock()
+    mock_provider.model_profile.return_value = None
+    mock_provider.client = Mock(spec=AsyncInferenceClient)
+    mock_provider.name = 'mock-provider'
+
+    # Bypass infer_provider by passing the mock directly
+    mocker.patch('pydantic_ai.models.huggingface.infer_provider', return_value=mock_provider)
+
+    model = HuggingFaceModel('unknown/model', provider='huggingface')
+
+    # Verify the provider is not a HuggingFaceProvider
+    assert not isinstance(model._provider, HuggingFaceProvider)  # pyright: ignore[reportPrivateUsage]
+
+    await model._ensure_router_initialized()  # pyright: ignore[reportPrivateUsage]
+
+    # Router should be initialized
+    assert model._router_initialized is True  # pyright: ignore[reportPrivateUsage]
+    assert model._selected_provider_info is not None  # pyright: ignore[reportPrivateUsage]
+
+    # Client should NOT be changed (since provider is not HuggingFaceProvider)
+    assert model.client is mock_provider.client
+
+    # Profile should still be updated
+    assert model.profile.supports_tools is True
+    assert model.profile.supports_json_schema_output is True
