@@ -140,7 +140,7 @@ async def run_demo():
                     message_history=result.all_messages(),
                     toolsets=[code_mode],
                     output_type=[str, DeferredToolRequests],
-                    deferred_tool_results=DeferredToolResults(approvals=approvals, metadata=deferred.metadata),
+                    deferred_tool_results=DeferredToolResults(approvals=approvals),
                 )
 
     print('\n' + '=' * 60)
