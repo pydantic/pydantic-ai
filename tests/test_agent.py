@@ -367,9 +367,9 @@ def test_output_validator():
 
 
 def test_output_validator_retries():
-    """Test that output_retries and max_output_retries are correctly tracked in RunContext."""
-    output_retries_log: list[int] = []
-    max_output_retries_log: list[int] = []
+    """Test that ctx.retry and ctx.max_retries are correctly tracked in RunContext for output validators."""
+    retries_log: list[int] = []
+    max_retries_log: list[int] = []
     target_retries = 3
 
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -382,20 +382,20 @@ def test_output_validator_retries():
 
     @agent.output_validator
     def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
-        output_retries_log.append(ctx.output_retries)
-        max_output_retries_log.append(ctx.max_output_retries)
+        retries_log.append(ctx.retry)
+        max_retries_log.append(ctx.max_retries)
         # Succeed on the last retry
-        if ctx.output_retries == target_retries:
+        if ctx.retry == target_retries:
             return o
         else:
-            raise ModelRetry(f'Retry {ctx.output_retries}')
+            raise ModelRetry(f'Retry {ctx.retry}')
 
     result = agent.run_sync('Hello')
     assert isinstance(result.output, Foo)
 
     # Should have been called target_retries + 1 times (0, 1, 2, 3)
-    assert output_retries_log == [0, 1, 2, 3]
-    assert max_output_retries_log == [target_retries] * (target_retries + 1)
+    assert retries_log == [0, 1, 2, 3]
+    assert max_retries_log == [target_retries] * (target_retries + 1)
 
 
 class TestPartialOutput:

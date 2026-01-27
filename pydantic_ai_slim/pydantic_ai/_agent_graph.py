@@ -850,8 +850,8 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         if ctx.deps.instrumentation_settings
         else DEFAULT_INSTRUMENTATION_VERSION,
         run_step=ctx.state.run_step,
-        output_retries=ctx.state.retries,
-        max_output_retries=ctx.deps.max_result_retries,
+        retry=ctx.state.retries,
+        max_retries=ctx.deps.max_result_retries,
         run_id=ctx.state.run_id,
         metadata=ctx.state.metadata,
     )
