@@ -29,8 +29,7 @@ class RunResult:
 
 
 async def run_mode(mode: str, github: MCPServerStreamableHTTP, model: str) -> RunResult:
-    with logfire.span(f'demo_run.{mode}', mode=mode, model=model):
-        logfire.info('start_run', mode=mode, model=model)
+    with logfire.span('demo_run.{mode}', mode=mode, model=model):
         if mode == 'code_mode':
             agent = create_code_mode_agent(github, model=model)
             code_toolset = agent.toolsets[0]
@@ -65,55 +64,29 @@ async def run_mode(mode: str, github: MCPServerStreamableHTTP, model: str) -> Ru
     )
 
 
-def print_summary(result: RunResult) -> None:
-    total_tokens = result.total_input_tokens + result.total_output_tokens
-    print(
-        f'{result.mode:<12} requests={result.request_count} tokens={total_tokens} retries={result.retry_count}'
-    )
-
-
-def print_model_header(model: str) -> None:
-    print('=' * 70)
-    print(f'MODEL: {model}')
-    print('=' * 70)
-
-
 async def main() -> None:
-    with logfire.span('discussion_intensity_demo'):
-        print('=' * 70)
-        print('Discussion Intensity Demo: Code Mode vs Traditional Mode')
-        print('=' * 70)
-        print()
-        print(PROMPT)
-        print()
+    github: MCPServerStreamableHTTP = create_github_mcp()
 
-        github: MCPServerStreamableHTTP = create_github_mcp()
+    async with github:
+        for model in MODELS:
+            with logfire.span('model_run {model}', model=model):
+                tool_calling_result = await run_mode('tool_calling', github, model)
+                code_mode_result = await run_mode('code_mode', github, model)
 
-        async with github:
-            for model in MODELS:
-                print_model_header(model)
-                with logfire.span('model_run', model=model):
-                    traditional_result = await run_mode('traditional', github, model)
-                    code_mode_result = await run_mode('code_mode', github, model)
-
-                print('=' * 70)
-                print('RESULTS')
-                print('=' * 70)
-                print_summary(traditional_result)
-                print_summary(code_mode_result)
-                print()
-                print('=' * 70)
-                print('TRADITIONAL OUTPUT')
-                print('=' * 70)
-                print(traditional_result.output or 'No output')
-                print()
-                print('=' * 70)
-                print('CODE MODE OUTPUT')
-                print('=' * 70)
-                print(code_mode_result.output or 'No output')
-                print()
-
-    print('View traces at https://logfire.pydantic.dev')
+            logfire.info(
+                'tool_calling_result: {request_count=} {token_count=} {retry_count=}',
+                request_count=tool_calling_result.request_count,
+                token_count=tool_calling_result.total_input_tokens + tool_calling_result.total_output_tokens,
+                retry_count=tool_calling_result.retry_count,
+                output=tool_calling_result.output,
+            )
+            logfire.info(
+                'code_mode_result: {request_count=} {token_count=} {token_count=}',
+                request_count=code_mode_result.request_count,
+                token_count=code_mode_result.total_input_tokens + code_mode_result.total_output_tokens,
+                retry_count=code_mode_result.retry_count,
+                output=code_mode_result.output,
+            )
 
 
 if __name__ == '__main__':

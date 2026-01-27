@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import os
 
-from pydantic_ai import Agent
-from pydantic_ai.models import ModelSettings
+from pydantic_ai import Agent, ModelSettings
 from pydantic_ai.mcp import MCPServerStreamableHTTP
+from pydantic_ai.models import ModelSettings
 from pydantic_ai.toolsets.code_mode import CodeModeToolset
 
 # Demo intent: nested PR -> files/reviews/comments fan-out; code mode does it in one run.
@@ -74,9 +74,7 @@ def create_traditional_agent(github: MCPServerStreamableHTTP, model: str = DEFAU
         model,
         toolsets=[github],
         model_settings=ModelSettings(parallel_tool_calls=False),
-        system_prompt=(
-            'You are a GitHub PR analyst. Use the available tools to analyze PRs.'
-        ),
+        system_prompt=('You are a GitHub PR analyst. Use the available tools to analyze PRs.'),
     )
     return agent
 
@@ -88,8 +86,6 @@ def create_code_mode_agent(github: MCPServerStreamableHTTP, model: str = DEFAULT
         model,
         toolsets=[code_toolset],
         model_settings=ModelSettings(parallel_tool_calls=False),
-        system_prompt=(
-            'You are a GitHub PR analyst. Use the available tools to analyze PRs.'
-        ),
+        system_prompt=('You are a GitHub PR analyst. Use the available tools to analyze PRs.'),
     )
     return agent

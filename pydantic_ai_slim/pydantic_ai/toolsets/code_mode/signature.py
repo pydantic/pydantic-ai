@@ -22,7 +22,7 @@ from typing import Any, Union, cast, get_origin
 from pydantic import BaseModel, TypeAdapter
 from pydantic._internal import _typing_extra
 
-from ._run_context import RunContext
+from ..._run_context import RunContext
 
 
 def _is_run_context(annotation: Any) -> bool:
@@ -503,9 +503,11 @@ def _generate_typeddict(name: str, schema: dict[str, Any], context: _ConversionC
                 type_str = f'NotRequired[{type_str}]'
             desc = prop_schema.get('description', '')
             if desc:
-                lines.append(f'    {prop_name}: {type_str}  # {desc}')
-            else:
-                lines.append(f'    {prop_name}: {type_str}')
+                # Handle multiline descriptions by putting them as comments above the field
+                desc_lines = desc.split('\n')
+                for desc_line in desc_lines:
+                    lines.append(f'    # {desc_line}')
+            lines.append(f'    {prop_name}: {type_str}')
 
     definition = '\n'.join(lines)
     context.add_typeddict(name, definition)

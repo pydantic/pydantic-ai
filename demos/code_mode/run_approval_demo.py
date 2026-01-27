@@ -23,6 +23,7 @@ import logfire
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.tools import (
+    DeferredToolApprovalResult,
     DeferredToolRequests,
     DeferredToolResults,
     RunContext,
@@ -118,7 +119,7 @@ async def run_demo():
                     print(f'   Args: {approval.args}')
 
                 # Auto-approve all with optional override
-                approvals = {}
+                approvals: dict[str, bool | DeferredToolApprovalResult] = {}
                 for approval in deferred.approvals:
                     tool_call_id = approval.tool_call_id
 
