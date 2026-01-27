@@ -106,7 +106,7 @@ cli = [
     "pyperclip>=1.9.0",
 ]
 # MCP
-mcp = ["mcp>=1.25.0"]
+mcp = ["mcp>=1.25.0,<2.0"]
 # FastMCP
 fastmcp = ["fastmcp>=2.14.0"]
 # Evals
