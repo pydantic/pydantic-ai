@@ -234,6 +234,16 @@ class FileUrl(ABC):
         """The file format."""
         raise NotImplementedError
 
+    @property
+    def media_type_category(self) -> str:
+        """Return the category part of the media type (e.g., 'image' from 'image/png')."""
+        return self.media_type.split('/')[0]
+
+    @property
+    def media_type_subtype(self) -> str:
+        """Return the subtype part of the media type (e.g., 'png' from 'image/png')."""
+        return self.media_type.split('/', 1)[1]
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
@@ -614,6 +624,16 @@ class BinaryContent:
         except KeyError as e:
             raise ValueError(f'Unknown media type: {self.media_type}') from e
 
+    @property
+    def media_type_category(self) -> str:
+        """Return the category part of the media type (e.g., 'image' from 'image/png')."""
+        return self.media_type.split('/')[0]
+
+    @property
+    def media_type_subtype(self) -> str:
+        """Return the subtype part of the media type (e.g., 'png' from 'image/png')."""
+        return self.media_type.split('/', 1)[1]
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
@@ -663,6 +683,10 @@ class CachePoint:
     * Anthropic (automatically omitted for Bedrock, as it does not support explicit TTL). See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
 
 
+UploadedFileProviderName: TypeAlias = Literal['anthropic', 'openai', 'google-gla', 'google-vertex', 'bedrock', 'xai']
+"""Provider names supported by [`UploadedFile`][pydantic_ai.messages.UploadedFile]."""
+
+
 @dataclass(init=False, repr=False)
 class UploadedFile:
     """A reference to a file uploaded to a provider's file storage by ID.
@@ -672,27 +696,24 @@ class UploadedFile:
 
     Supported by:
 
-    - [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel]: via [Anthropic Files API](https://docs.anthropic.com/en/docs/build-with-claude/files)
-    - [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]: via [OpenAI Files API](https://platform.openai.com/docs/api-reference/files)
-    - [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]: via [OpenAI Files API](https://platform.openai.com/docs/api-reference/files)
-    - [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel]: via S3 URLs (`s3://bucket/key`)
-    - [`GoogleModel`][pydantic_ai.models.google.GoogleModel]: via Google Files API [Google Files API](https://ai.google.dev/gemini-api/docs/files)
-
+    - [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel]
+    - [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]
+    - [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]
+    - [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel]
+    - [`GoogleModel`][pydantic_ai.models.google.GoogleModel]
+    - [`XaiModel`][pydantic_ai.models.xai.XaiModel]
     """
 
     file_id: str
-    """The provider-specific file identifier.
+    """The provider-specific file identifier."""
 
-    This can be a file ID (e.g., 'file-abc123' for Anthropic/OpenAI), a file URI
-    (e.g., 'https://generativelanguage.googleapis.com/v1beta/files/abc123' for Google),
-    or an S3 URL (e.g., 's3://bucket/key' for Bedrock).
-    """
-
-    provider_name: str
-    """The provider this file belongs to (e.g., 'anthropic', 'openai', 'google-gla', 'bedrock').
+    provider_name: UploadedFileProviderName
+    """The provider this file belongs to.
 
     This is required because file IDs are not portable across providers, and using a file ID
     with the wrong provider will always result in an error.
+
+    Tip: Use `model.system` to get the provider name dynamically.
     """
 
     _: KW_ONLY
@@ -719,7 +740,7 @@ class UploadedFile:
     def __init__(
         self,
         file_id: str,
-        provider_name: str,
+        provider_name: UploadedFileProviderName,
         *,
         media_type: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
@@ -741,7 +762,10 @@ class UploadedFile:
     def media_type(self) -> str | None:
         """Return the media type of the file, inferred from `file_id` if not explicitly provided.
 
-        Required by some providers (e.g., Google) for certain file types.
+        Note: Automatic inference only works if `file_id` is a URL or path with a recognizable file extension.
+        For opaque file IDs (e.g., `'file-abc123'`), you must provide the `media_type` explicitly.
+
+        Required by some providers (e.g., Bedrock) for certain file types.
         """
         if self._media_type:
             return self._media_type
@@ -762,6 +786,45 @@ class UploadedFile:
         e.g. "This is file <identifier>:" preceding the `UploadedFile`.
         """
         return self._identifier or _multi_modal_content_identifier(self.file_id)
+
+    @property
+    def media_type_category(self) -> str | None:
+        """Return the category part of the media type (e.g., 'image' from 'image/png').
+
+        Returns None if media_type is not set.
+        """
+        if self.media_type is None:
+            return None
+        return self.media_type.split('/')[0]
+
+    @property
+    def media_type_subtype(self) -> str | None:
+        """Return the subtype part of the media type (e.g., 'png' from 'image/png').
+
+        Returns None if media_type is not set.
+        """
+        if self.media_type is None:
+            return None
+        return self.media_type.split('/', 1)[1]
+
+    @property
+    def format(self) -> str | None:
+        """The file format based on media type.
+
+        Returns None if media_type is not set or not recognized.
+
+        The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
+        """
+        if self.media_type is None:
+            return None
+        if self.media_type_category == 'image':
+            return _image_format_lookup.get(self.media_type)
+        elif self.media_type_category == 'video':
+            return _video_format_lookup.get(self.media_type)
+        elif self.media_type_category == 'audio':
+            return _audio_format_lookup.get(self.media_type)
+        else:
+            return _document_format_lookup.get(self.media_type)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -890,14 +953,11 @@ class UserPromptPart:
             elif isinstance(part, UploadedFile):
                 # UploadedFile references provider-hosted files by file_id (OTel GenAI spec FilePart)
                 # Infer modality from media_type - OTel spec defines: image, video, audio (or any string)
-                modality = 'document'  # default for PDFs, text, etc.
-                if part.media_type:
-                    if part.media_type.startswith('image/'):
-                        modality = 'image'
-                    elif part.media_type.startswith('audio/'):
-                        modality = 'audio'
-                    elif part.media_type.startswith('video/'):
-                        modality = 'video'
+                category = part.media_type_category
+                if category in ('image', 'audio', 'video'):
+                    modality = category
+                else:
+                    modality = 'document'  # default for PDFs, text, etc.
                 file_part = _otel_messages.FilePart(type='file', modality=modality)
                 if settings.include_content:
                     file_part['file_id'] = part.file_id

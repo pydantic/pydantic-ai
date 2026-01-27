@@ -2406,7 +2406,7 @@ async def test_uploaded_file_ambiguous_extension(allow_model_requests: None, bed
     model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
     agent = Agent(model)
 
-    with pytest.raises(UserError, match='UploadedFile for Bedrock requires a media_type'):
+    with pytest.raises(UserError, match='Unsupported media type for Bedrock UploadedFile: None'):
         await agent.run(
             [
                 'Analyze this file',
@@ -3016,7 +3016,7 @@ async def test_uploaded_file_unsupported_video_media_type(
     model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
     agent = Agent(model)
 
-    with pytest.raises(UserError, match='Unsupported video media type for Bedrock UploadedFile: video/avi'):
+    with pytest.raises(UserError, match='Unsupported media type for Bedrock UploadedFile: video/avi'):
         await agent.run(
             [
                 'Describe this video',

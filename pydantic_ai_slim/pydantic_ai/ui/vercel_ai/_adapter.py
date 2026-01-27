@@ -31,6 +31,7 @@ from ...messages import (
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
+    UploadedFileProviderName,
     UserContent,
     UserPromptPart,
     VideoUrl,
@@ -113,9 +114,16 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         try:
                             file = BinaryContent.from_data_uri(part.url)
                         except ValueError:
-                            uploaded_file = _uploaded_file_from_uri(part.url, part.media_type)
-                            if uploaded_file is not None:
-                                file = uploaded_file
+                            # Check provider_metadata for UploadedFile data
+                            provider_meta = load_provider_metadata(part.provider_metadata)
+                            uploaded_file_id = provider_meta.get('uploaded_file_id')
+                            uploaded_file_provider = provider_meta.get('uploaded_file_provider')
+                            if uploaded_file_id and uploaded_file_provider:
+                                file = UploadedFile(
+                                    file_id=uploaded_file_id,
+                                    provider_name=cast(UploadedFileProviderName, uploaded_file_provider),
+                                    media_type=part.media_type,
+                                )
                             else:
                                 media_type_prefix = part.media_type.split('/', 1)[0]
                                 match media_type_prefix:
@@ -544,7 +552,13 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
                 ui_parts.append(FileUIPart(url=item.url, media_type=item.media_type))
             elif isinstance(item, UploadedFile):
                 media_type = item.media_type or 'application/octet-stream'
-                ui_parts.append(FileUIPart(url=_uploaded_file_uri(item), media_type=media_type))
+                # Store uploaded file info in provider_metadata for round-trip support
+                provider_metadata = dump_provider_metadata(
+                    uploaded_file_id=item.file_id, uploaded_file_provider=item.provider_name
+                )
+                ui_parts.append(
+                    FileUIPart(url=item.file_id, media_type=media_type, provider_metadata=provider_metadata)
+                )
             elif isinstance(item, CachePoint):
                 # CachePoint is metadata for prompt caching, skip for UI conversion
                 pass
@@ -552,23 +566,3 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
                 assert_never(item)
 
     return ui_parts
-
-
-_UPLOADED_FILE_SCHEME_PREFIX = 'x-'
-_UPLOADED_FILE_SCHEME_SUFFIX = '-file-id'
-
-
-def _uploaded_file_uri(item: UploadedFile) -> str:
-    return f'{_UPLOADED_FILE_SCHEME_PREFIX}{item.provider_name}{_UPLOADED_FILE_SCHEME_SUFFIX}:{item.file_id}'
-
-
-def _uploaded_file_from_uri(url: str, media_type: str) -> UploadedFile | None:
-    scheme, separator, rest = url.partition(':')
-    if not separator:
-        return None
-    if not (scheme.startswith(_UPLOADED_FILE_SCHEME_PREFIX) and scheme.endswith(_UPLOADED_FILE_SCHEME_SUFFIX)):
-        return None
-    provider_name = scheme[len(_UPLOADED_FILE_SCHEME_PREFIX) : -len(_UPLOADED_FILE_SCHEME_SUFFIX)]
-    if not provider_name:
-        return None
-    return UploadedFile(file_id=rest, provider_name=provider_name, media_type=media_type)

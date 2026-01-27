@@ -44,10 +44,6 @@ from pydantic_ai import (
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
-from pydantic_ai.messages import (
-    _document_format_lookup,  # pyright: ignore[reportPrivateUsage]
-    _video_format_lookup,  # pyright: ignore[reportPrivateUsage]
-)
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BEDROCK_GEO_PREFIXES, BedrockModelProfile
@@ -846,19 +842,19 @@ class BedrockConverseModel(Model):
                         source = {'bytes': downloaded_item['data']}
 
                     if item.kind == 'image-url':
-                        content.append(_make_image_block(item.media_type.split('/')[1], source))
+                        content.append(_make_image_block(item.media_type_subtype, source))
                     elif item.kind == 'document-url':
                         content.append(_make_document_block(f'Document {next(document_count)}', item.format, source))
                     elif item.kind == 'video-url':  # pragma: no branch
-                        content.append(_make_video_block(item.media_type.split('/')[1], source))
+                        content.append(_make_video_block(item.media_type_subtype, source))
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
                 elif isinstance(item, UploadedFile):
                     # Verify provider matches
                     if item.provider_name != self.system:
                         raise UserError(
-                            f'UploadedFile with provider_name={item.provider_name!r} cannot be used with BedrockConverseModel. '
-                            f'Expected provider_name to be "bedrock".'
+                            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with BedrockConverseModel. '
+                            f'Expected `provider_name` to be `{self.system!r}`.'
                         )
                     # UploadedFile.file_id should be an S3 URL for Bedrock
                     if not item.file_id.startswith('s3://'):
@@ -867,23 +863,15 @@ class BedrockConverseModel(Model):
                         )
                     source = _parse_s3_source(item.file_id)
 
-                    media_type = item.media_type
-                    if not media_type:
-                        raise UserError(
-                            'UploadedFile for Bedrock requires a media_type when the file extension is ambiguous.'
-                        )
+                    format = item.format
+                    if format is None:
+                        raise UserError(f'Unsupported media type for Bedrock UploadedFile: {item.media_type}')
 
-                    if media_type.startswith('image/'):
-                        content.append(_make_image_block(media_type.split('/')[1], source))
-                    elif media_type.startswith('video/'):
-                        format = _video_format_lookup.get(media_type)
-                        if format is None:
-                            raise UserError(f'Unsupported video media type for Bedrock UploadedFile: {media_type}')
+                    if item.media_type_category == 'image':
+                        content.append(_make_image_block(format, source))
+                    elif item.media_type_category == 'video':
                         content.append(_make_video_block(format, source))
                     else:
-                        format = _document_format_lookup.get(media_type)
-                        if format is None:
-                            raise UserError(f'Unsupported media type for Bedrock UploadedFile: {media_type}')
                         content.append(_make_document_block(item.identifier, format, source))
                 elif isinstance(item, CachePoint):
                     if not supports_prompt_caching:

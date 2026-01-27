@@ -1149,8 +1149,8 @@ class OpenAIChatModel(Model):
                     # Verify provider matches
                     if item.provider_name != self.system:
                         raise UserError(
-                            f'UploadedFile with provider_name={item.provider_name!r} cannot be used with OpenAIChatModel. '
-                            f'Expected provider_name to be "openai".'
+                            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with OpenAIChatModel. '
+                            f'Expected `provider_name` to be `{self.system!r}`.'
                         )
                     content.append(
                         File(
@@ -2070,8 +2070,8 @@ class OpenAIResponsesModel(Model):
                     # Verify provider matches
                     if item.provider_name != self.system:
                         raise UserError(
-                            f'UploadedFile with provider_name={item.provider_name!r} cannot be used with OpenAIResponsesModel. '
-                            f'Expected provider_name to be "openai".'
+                            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with OpenAIResponsesModel. '
+                            f'Expected `provider_name` to be `{self.system!r}`.'
                         )
                     content.append(
                         responses.ResponseInputFileParam(

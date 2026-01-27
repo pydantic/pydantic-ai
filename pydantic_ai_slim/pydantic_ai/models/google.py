@@ -752,8 +752,8 @@ class GoogleModel(Model):
                     # Verify provider matches
                     if item.provider_name != self.system:
                         raise UserError(
-                            f'UploadedFile with provider_name={item.provider_name!r} cannot be used with GoogleModel. '
-                            f'Expected provider_name to be "google-gla"'
+                            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with GoogleModel. '
+                            f'Expected `provider_name` to be `{self.system!r}`.'
                         )
                     # UploadedFile.file_id should be a file URI from the Google Files API
                     # e.g., 'https://generativelanguage.googleapis.com/v1beta/files/abc123'

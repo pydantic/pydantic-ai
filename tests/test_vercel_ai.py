@@ -3114,13 +3114,19 @@ async def test_convert_user_prompt_part_uploaded_file():
     ui_parts = _convert_user_prompt_part(part)
     assert ui_parts == snapshot(
         [
-            FileUIPart(media_type='application/pdf', url='x-openai-file-id:file-abc123'),
+            FileUIPart(
+                media_type='application/pdf',
+                url='file-abc123',
+                provider_metadata={
+                    'pydantic_ai': {'uploaded_file_id': 'file-abc123', 'uploaded_file_provider': 'openai'}
+                },
+            ),
         ]
     )
 
 
 async def test_adapter_load_messages_uploaded_file():
-    """Test loading UploadedFile from custom URI scheme."""
+    """Test loading UploadedFile from provider_metadata."""
     ui_messages = [
         UIMessage(
             id='msg1',
@@ -3128,7 +3134,10 @@ async def test_adapter_load_messages_uploaded_file():
             parts=[
                 FileUIPart(
                     media_type='application/pdf',
-                    url='x-openai-file-id:file-abc123',
+                    url='file-abc123',
+                    provider_metadata={
+                        'pydantic_ai': {'uploaded_file_id': 'file-abc123', 'uploaded_file_provider': 'openai'}
+                    },
                 )
             ],
         )
@@ -3144,6 +3153,7 @@ async def test_adapter_load_messages_uploaded_file():
                             UploadedFile(
                                 file_id='file-abc123',
                                 provider_name='openai',
+                                _media_type='application/pdf',
                                 media_type='application/pdf',
                             )
                         ],
@@ -3155,18 +3165,38 @@ async def test_adapter_load_messages_uploaded_file():
     )
 
 
-async def test_uploaded_file_from_uri_missing_separator():
-    """Ensure invalid URIs without separators return None."""
-    from pydantic_ai.ui.vercel_ai._adapter import _uploaded_file_from_uri  # pyright: ignore[reportPrivateUsage]
+async def test_adapter_load_messages_file_url_without_metadata():
+    """Test loading FileUIPart without provider_metadata falls back to URL-based detection."""
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='user',
+            parts=[
+                FileUIPart(
+                    media_type='image/png',
+                    url='https://example.com/image.png',
+                )
+            ],
+        )
+    ]
 
-    assert _uploaded_file_from_uri('x-openai-file-id', 'application/pdf') is None
-
-
-async def test_uploaded_file_from_uri_missing_provider():
-    """Ensure URIs with no provider name return None."""
-    from pydantic_ai.ui.vercel_ai._adapter import _uploaded_file_from_uri  # pyright: ignore[reportPrivateUsage]
-
-    assert _uploaded_file_from_uri('x--file-id:file-abc123', 'application/pdf') is None
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            ImageUrl(
+                                url='https://example.com/image.png', _media_type='image/png', media_type='image/png'
+                            ),
+                        ],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            )
+        ]
+    )
 
 
 async def test_adapter_dump_messages_thinking_with_metadata():

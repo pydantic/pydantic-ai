@@ -135,8 +135,10 @@ DocumentUrl(url='https://example.com/doc.pdf', force_download=True)
 
 Some model providers have their own file storage APIs where you can upload files and reference them by ID or URL.
 
-- For all supported providers (Anthropic, OpenAI, Google Files API, S3 URLs with Bedrock, xAI), you can use [`UploadedFile`][pydantic_ai.UploadedFile]
-- For providers that return a **file URL** (Google Files API), you can also use [`DocumentUrl`][pydantic_ai.DocumentUrl]
+Use [`UploadedFile`][pydantic_ai.messages.UploadedFile] to reference files that have been uploaded to a provider's file storage API.
+
+!!! tip "Fun fact"
+    For providers that return a file URL (like Google Files API), you can also use [`DocumentUrl`][pydantic_ai.messages.DocumentUrl] directly, but we recommend using `UploadedFile` for consistent provider name validation.
 
 ### Supported Models
 
@@ -145,47 +147,66 @@ Some model providers have their own file storage APIs where you can upload files
 | [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | ✅ `UploadedFile` via [Anthropic Files API](https://docs.anthropic.com/en/docs/build-with-claude/files) |
 | [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | ✅ `UploadedFile` via [OpenAI Files API](https://platform.openai.com/docs/api-reference/files) |
 | [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | ✅ `UploadedFile` via [OpenAI Files API](https://platform.openai.com/docs/api-reference/files) |
-| [`GoogleModel`][pydantic_ai.models.google.GoogleModel] | ✅ `DocumentUrl` via [Google Files API](https://ai.google.dev/gemini-api/docs/files) |
+| [`GoogleModel`][pydantic_ai.models.google.GoogleModel] | ✅ `UploadedFile` via [Google Files API](https://ai.google.dev/gemini-api/docs/files) |
 | [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | ✅ `UploadedFile` via S3 URLs (`s3://bucket/key`) |
 | [`XaiModel`][pydantic_ai.models.xai.XaiModel] | ✅ `UploadedFile` via [xAI Files API](https://docs.x.ai/docs/guides/files) |
 | Other models | ❌ Not supported |
 
+### Provider Name Requirement
+
+When using [`UploadedFile`][pydantic_ai.messages.UploadedFile] you must set the `provider_name`. Uploaded files are specific to the system they are uploaded to and are not transferable across providers. Trying to use a message that contains an `UploadedFile` with a different provider will result in an error.
+
+!!! tip "Getting the provider name"
+    Use `model.system` to get the correct provider name dynamically. This ensures your code works correctly even if the provider name changes. All examples below demonstrate this pattern.
+
+If you want to introduce portability into your agent logic to allow the same prompt history to work with different provider backends, you can use a [history processor][pydantic_ai.agent.Agent.history_processors] to remove or rewrite `UploadedFile` parts from messages before sending them to a provider that does not support them. Be aware that stripping out `UploadedFile` instances might confuse the model, especially if references to those files remain in the text.
+
 ### Anthropic
 
-When using [`UploadedFile`][pydantic_ai.UploadedFile] you must set the provider name. Uploaded files are specific to the system they are uploaded to and are not transferrable across providers. Trying to use a message that contains an `UploadedFile` in a different provider will result in an error.
-
-If you want to introduce portability into your agent logic to allow the same prompt history to work with different provider backends you can use a [history processor][pydantic_ai.agent.Agent.history_processors] to remove or rewrite `UploadedFile` parts from messages before sending them to a provider that does not support them. Be aware that stripping out `UploadedFile` instances might confuse the model, especially if references to those files remain in the text.
+Upload files using `provider.client` (the underlying [Anthropic client](https://docs.anthropic.com/en/docs/build-with-claude/files)).
 
 !!! note "Beta Feature"
     The Anthropic Files API is currently in beta. You need to include the beta header `anthropic-beta: files-api-2025-04-14` when making requests.
 
 ```py {title="uploaded_file_anthropic.py" test="skip"}
+import asyncio
+
 from pydantic_ai import Agent, ModelSettings, UploadedFile
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
-provider = AnthropicProvider()
-model = AnthropicModel('claude-sonnet-4-5', provider=provider)
 
-# Upload a file using the provider's client
-with open('document.pdf', 'rb') as f:
-    uploaded_file = provider.client.beta.files.upload(file=f.read())
+async def main():
+    provider = AnthropicProvider()
+    model = AnthropicModel('claude-sonnet-4-5', provider=provider)
 
-# Reference the uploaded file, including the required beta header
-agent = Agent(model)
-result = agent.run_sync(
-    [
-        'Summarize this document',
-        UploadedFile(file_id=uploaded_file.id, provider_name=model.system),
-    ],
-    model_settings=ModelSettings(extra_headers={'anthropic-beta': 'files-api-2025-04-14'}),
-)
-print(result.output)
+    # Upload a file using the provider's client (Anthropic client)
+    with open('document.pdf', 'rb') as f:
+        uploaded_file = await provider.client.beta.files.upload(file=f.read())
+
+    # Reference the uploaded file, including the required beta header
+    agent = Agent(model)
+    result = await agent.run(
+        [
+            'Summarize this document',
+            UploadedFile(file_id=uploaded_file.id, provider_name=model.system),
+        ],
+        model_settings=ModelSettings(extra_headers={'anthropic-beta': 'files-api-2025-04-14'}),
+    )
+    print(result.output)
+    #> The document discusses the main topics and key findings...
+
+
+asyncio.run(main())
 ```
 
 ### OpenAI
 
+Upload files using `provider.client` (the underlying [OpenAI client](https://platform.openai.com/docs/api-reference/files/create)).
+
 ```py {title="uploaded_file_openai.py" test="skip"}
+import asyncio
+
 from pydantic_ai import Agent, UploadedFile
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -193,95 +214,130 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 async def main():
     provider = OpenAIProvider()
-    model = OpenAIChatModel('gpt-4o', provider=provider)
+    model = OpenAIChatModel('gpt-5', provider=provider)
 
-    # Upload a file using the provider's client
+    # Upload a file using the provider's client (OpenAI client)
     with open('document.pdf', 'rb') as f:
         uploaded_file = await provider.client.files.create(file=f.read(), purpose='user_data')
 
     # Reference the uploaded file
     agent = Agent(model)
-    result = agent.run_sync(
+    result = await agent.run(
         [
             'Summarize this document',
             UploadedFile(file_id=uploaded_file.id, provider_name=model.system),
         ]
     )
     print(result.output)
+    #> The document discusses the main topics and key findings...
+
+
+asyncio.run(main())
 ```
-(This example is complete, it can be run "as is" — you'll need to add asyncio.run(main()) to run main)
 
 ### Google
 
+Upload files using `provider.client` (the underlying [Google GenAI client](https://ai.google.dev/gemini-api/docs/files)).
+
 ```py {title="uploaded_file_google.py" test="skip"}
+import asyncio
+
 from pydantic_ai import Agent, UploadedFile
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 
-provider = GoogleProvider()
-model = GoogleModel('gemini-2.0-flash', provider=provider)
 
-# Upload a file using the provider's client
-with open('document.pdf', 'rb') as f:
-    file = provider.client.files.upload(file=f.read())
-    assert file.uri is not None
+async def main():
+    provider = GoogleProvider()
+    model = GoogleModel('gemini-2.5-flash', provider=provider)
 
-# Reference the uploaded file by URI
-agent = Agent(model)
-result = agent.run_sync(
-    [
-        'Summarize this document',
-        UploadedFile(file_id=file.uri, media_type=file.mime_type, provider_name=model.system),
-    ]
-)
-print(result.output)
+    # Upload a file using the provider's client (Google GenAI client)
+    with open('document.pdf', 'rb') as f:
+        file = provider.client.files.upload(file=f.read())
+        assert file.uri is not None
+
+    # Reference the uploaded file by URI (media_type is optional for Google)
+    agent = Agent(model)
+    result = await agent.run(
+        [
+            'Summarize this document',
+            UploadedFile(file_id=file.uri, media_type=file.mime_type, provider_name=model.system),
+        ]
+    )
+    print(result.output)
+    #> The document discusses the main topics and key findings...
+
+
+asyncio.run(main())
 ```
 
 ### Bedrock (S3)
 
+For Bedrock, files must be uploaded to S3 separately (e.g., using [boto3](https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/s3/client/put_object.html)). The assumed role must have `s3:GetObject` permission on the bucket.
+
+!!! note "`media_type` may be required"
+    Bedrock requires `media_type` when the file extension is ambiguous or missing. For S3 URLs with clear extensions like `.pdf`, `.png`, etc., it can be inferred automatically.
+
 ```py {title="uploaded_file_bedrock.py" test="skip"}
+import asyncio
+
 from pydantic_ai import Agent, UploadedFile
 from pydantic_ai.models.bedrock import BedrockConverseModel
 
-# Files must be uploaded to S3 separately (e.g., using boto3)
-# The assumed role must have s3:GetObject permission on the bucket
 
-agent = Agent(BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0'))
-result = agent.run_sync([
-    'Summarize this document',
-    UploadedFile(
-        file_id='s3://my-bucket/document.pdf',
-        provider_name='bedrock',
-        media_type='application/pdf',
-    ),
-])
-print(result.output)
+async def main():
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0')
+
+    agent = Agent(model)
+    result = await agent.run([
+        'Summarize this document',
+        UploadedFile(
+            file_id='s3://my-bucket/document.pdf',
+            provider_name=model.system,  # 'bedrock'
+            media_type='application/pdf',  # Optional for .pdf, but recommended
+        ),
+    ])
+    print(result.output)
+    #> The document discusses the main topics and key findings...
+
+
+asyncio.run(main())
 ```
 
 !!! note
-    For Bedrock, you can optionally specify a `bucketOwner` query parameter if the bucket is not owned by the account making the request: `s3://my-bucket/document.pdf?bucketOwner=123456789012`
+    You can optionally specify a `bucketOwner` query parameter if the bucket is not owned by the account making the request: `s3://my-bucket/document.pdf?bucketOwner=123456789012`
 
 ### xAI
 
+Upload files using `provider.client` (the underlying [xAI client](https://docs.x.ai/docs/guides/files)).
+
 ```py {title="uploaded_file_xai.py" test="skip"}
+import asyncio
+
 from pydantic_ai import Agent, UploadedFile
 from pydantic_ai.models.xai import XaiModel
 from pydantic_ai.providers.xai import XaiProvider
 
-provider = XaiProvider()
-model = XaiModel('grok-4-fast', provider=provider)
 
-# Upload a file using the provider's client
-with open('document.pdf', 'rb') as f:
-    uploaded_file = provider.client.files.upload(f.read(), filename='document.pdf')
+async def main():
+    provider = XaiProvider()
+    model = XaiModel('grok-4-fast', provider=provider)
 
-# Reference the uploaded file
-agent = Agent(model)
-result = agent.run_sync(
-    [
-        'Summarize this document',
-        UploadedFile(file_id=uploaded_file.id, provider_name=model.system),
-    ]
-)
-print(result.output)
+    # Upload a file using the provider's client (xAI client)
+    with open('document.pdf', 'rb') as f:
+        uploaded_file = provider.client.files.upload(f.read(), filename='document.pdf')
+
+    # Reference the uploaded file
+    agent = Agent(model)
+    result = await agent.run(
+        [
+            'Summarize this document',
+            UploadedFile(file_id=uploaded_file.id, provider_name=model.system),
+        ]
+    )
+    print(result.output)
+    #> The document discusses the main topics and key findings...
+
+
+asyncio.run(main())
 ```

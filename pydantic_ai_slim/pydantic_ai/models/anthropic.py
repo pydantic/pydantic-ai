@@ -1118,8 +1118,8 @@ class AnthropicModel(Model):
                     # Verify provider matches
                     if item.provider_name != self.system:
                         raise UserError(
-                            f'UploadedFile with provider_name={item.provider_name!r} cannot be used with AnthropicModel. '
-                            f'Expected provider_name to be "anthropic"'
+                            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with AnthropicModel. '
+                            f'Expected `provider_name` to be `{self.system!r}`.'
                         )
                     yield BetaRequestDocumentBlockParam(
                         source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),

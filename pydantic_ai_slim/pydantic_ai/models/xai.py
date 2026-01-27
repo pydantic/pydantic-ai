@@ -477,8 +477,8 @@ class XaiModel(Model):
             elif isinstance(item, UploadedFile):
                 if item.provider_name != self.system:
                     raise UserError(
-                        f'UploadedFile with provider_name={item.provider_name!r} cannot be used with XaiModel. '
-                        f'Expected provider_name to be "xai".'
+                        f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with XaiModel. '
+                        f'Expected `provider_name` to be `{self.system!r}`.'
                     )
                 content_items.append(file(item.file_id))
 

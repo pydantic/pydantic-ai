@@ -43,6 +43,16 @@ def test_image_url():
     assert image_url.format == 'jpeg'
 
 
+def test_image_url_media_type_helpers():
+    image_url = ImageUrl(url='https://example.com/image.png')
+    assert image_url.media_type_category == 'image'
+    assert image_url.media_type_subtype == 'png'
+
+    image_url = ImageUrl(url='https://example.com/image', media_type='image/webp')
+    assert image_url.media_type_category == 'image'
+    assert image_url.media_type_subtype == 'webp'
+
+
 def test_video_url():
     video_url = VideoUrl(url='https://example.com/video.mp4')
     assert video_url.media_type == 'video/mp4'
@@ -51,6 +61,29 @@ def test_video_url():
     video_url = VideoUrl(url='https://example.com/video', media_type='video/mp4')
     assert video_url.media_type == 'video/mp4'
     assert video_url.format == 'mp4'
+
+
+def test_video_url_media_type_helpers():
+    video_url = VideoUrl(url='https://example.com/video.webm')
+    assert video_url.media_type_category == 'video'
+    assert video_url.media_type_subtype == 'webm'
+
+
+def test_audio_url_media_type_helpers():
+    audio_url = AudioUrl(url='https://example.com/audio.mp3')
+    assert audio_url.media_type_category == 'audio'
+    assert audio_url.media_type_subtype == 'mpeg'
+
+
+def test_document_url_media_type_helpers():
+    doc_url = DocumentUrl(url='https://example.com/document.pdf')
+    assert doc_url.media_type_category == 'application'
+    assert doc_url.media_type_subtype == 'pdf'
+
+    # Test with complex subtype
+    doc_url = DocumentUrl(url='https://example.com/document.docx')
+    assert doc_url.media_type_category == 'application'
+    assert doc_url.media_type_subtype == 'vnd.openxmlformats-officedocument.wordprocessingml.document'
 
 
 @pytest.mark.parametrize(
@@ -316,6 +349,24 @@ def test_binary_content_base64():
     assert bc.base64 == 'SGVsbG8sIHdvcmxkIQ=='
     assert not bc.base64.startswith('data:')
     assert bc.data_uri == 'data:image/png;base64,SGVsbG8sIHdvcmxkIQ=='
+
+
+def test_binary_content_media_type_helpers():
+    bc = BinaryContent(data=b'test', media_type='image/png')
+    assert bc.media_type_category == 'image'
+    assert bc.media_type_subtype == 'png'
+
+    bc = BinaryContent(data=b'test', media_type='audio/mpeg')
+    assert bc.media_type_category == 'audio'
+    assert bc.media_type_subtype == 'mpeg'
+
+    bc = BinaryContent(data=b'test', media_type='video/mp4')
+    assert bc.media_type_category == 'video'
+    assert bc.media_type_subtype == 'mp4'
+
+    bc = BinaryContent(data=b'test', media_type='application/pdf')
+    assert bc.media_type_category == 'application'
+    assert bc.media_type_subtype == 'pdf'
 
 
 @pytest.mark.xdist_group(name='url_formats')
@@ -748,6 +799,57 @@ def test_uploaded_file_identifier_property():
         provider_name='google-gla',
     )
     assert uploaded_file_url.identifier == snapshot('d8d637')
+
+
+def test_uploaded_file_media_type_helpers():
+    """Test UploadedFile media_type_category and media_type_subtype helpers."""
+    # Test with media_type
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='image/png')
+    assert uploaded_file.media_type_category == 'image'
+    assert uploaded_file.media_type_subtype == 'png'
+
+    # Test with video media_type
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='video/mp4')
+    assert uploaded_file.media_type_category == 'video'
+    assert uploaded_file.media_type_subtype == 'mp4'
+
+    # Test without media_type - should return None
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic')
+    assert uploaded_file.media_type_category is None
+    assert uploaded_file.media_type_subtype is None
+
+    # Test with S3 URL that has extension (media_type can be inferred)
+    uploaded_file = UploadedFile(file_id='s3://bucket/image.png', provider_name='bedrock')
+    assert uploaded_file.media_type == 'image/png'
+    assert uploaded_file.media_type_category == 'image'
+    assert uploaded_file.media_type_subtype == 'png'
+
+
+def test_uploaded_file_format():
+    """Test UploadedFile.format property for different media types."""
+    # Test with no media_type - should return None
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic')
+    assert uploaded_file.format is None
+
+    # Test with image media_type
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='image/png')
+    assert uploaded_file.format == 'png'
+
+    # Test with video media_type
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='video/mp4')
+    assert uploaded_file.format == 'mp4'
+
+    # Test with audio media_type
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='audio/wav')
+    assert uploaded_file.format == 'wav'
+
+    # Test with document media_type
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='application/pdf')
+    assert uploaded_file.format == 'pdf'
+
+    # Test with unknown media_type - should return None
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='application/custom')
+    assert uploaded_file.format is None
 
 
 def test_uploaded_file_in_otel_message_parts():
