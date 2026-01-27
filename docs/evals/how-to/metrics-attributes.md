@@ -525,9 +525,9 @@ from pydantic_evals import Case, Dataset
 # Module constants as single source of truth
 MODEL_NAME = 'openai:gpt-5-mini'
 TEMPERATURE = 0.7
-SYSTEM_PROMPT = 'You are a helpful assistant.'
+INSTRUCTIONS = 'You are a helpful assistant.'
 
-agent = Agent(MODEL_NAME, model_settings={'temperature': TEMPERATURE}, system_prompt=SYSTEM_PROMPT)
+agent = Agent(MODEL_NAME, model_settings={'temperature': TEMPERATURE}, instructions=INSTRUCTIONS)
 
 
 async def task(inputs: str) -> str:
@@ -544,7 +544,7 @@ async def main():
         metadata={
             'model': MODEL_NAME,
             'temperature': TEMPERATURE,
-            'system_prompt': SYSTEM_PROMPT,
+            'instructions': INSTRUCTIONS,
         },
     )
 ```

@@ -338,7 +338,7 @@ async def test_streamed_text_stream():
         # typehint to test (via static typing) that the stream type is correctly inferred
         chunks: list[str] = [c async for c in result.stream_output()]
         # two chunks with `stream()` due to not-final vs. final
-        assert chunks == snapshot(['The cat sat on the mat.'])
+        assert chunks == snapshot(['The cat sat on the mat.', 'The cat sat on the mat.'])
         assert result.is_complete
 
     async with agent.run_stream('Hello') as result:
@@ -369,7 +369,15 @@ async def test_streamed_text_stream():
 
     async with agent.run_stream('Hello', output_type=TextOutput(upcase)) as result:
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
-            ['THE ', 'THE CAT ', 'THE CAT SAT ', 'THE CAT SAT ON ', 'THE CAT SAT ON THE ', 'THE CAT SAT ON THE MAT.']
+            [
+                'THE ',
+                'THE CAT ',
+                'THE CAT SAT ',
+                'THE CAT SAT ON ',
+                'THE CAT SAT ON THE ',
+                'THE CAT SAT ON THE MAT.',
+                'THE CAT SAT ON THE MAT.',
+            ]
         )
 
     async with agent.run_stream('Hello') as result:
@@ -452,7 +460,7 @@ def test_streamed_text_stream_sync():
     # typehint to test (via static typing) that the stream type is correctly inferred
     chunks: list[str] = [c for c in result.stream_output()]
     # two chunks with `stream()` due to not-final vs. final
-    assert chunks == snapshot(['The cat sat on the mat.'])
+    assert chunks == snapshot(['The cat sat on the mat.', 'The cat sat on the mat.'])
     assert result.is_complete
 
     result = agent.run_stream_sync('Hello')
@@ -483,7 +491,15 @@ def test_streamed_text_stream_sync():
 
     result = agent.run_stream_sync('Hello', output_type=TextOutput(upcase))
     assert [c for c in result.stream_output(debounce_by=None)] == snapshot(
-        ['THE ', 'THE CAT ', 'THE CAT SAT ', 'THE CAT SAT ON ', 'THE CAT SAT ON THE ', 'THE CAT SAT ON THE MAT.']
+        [
+            'THE ',
+            'THE CAT ',
+            'THE CAT SAT ',
+            'THE CAT SAT ON ',
+            'THE CAT SAT ON THE ',
+            'THE CAT SAT ON THE MAT.',
+            'THE CAT SAT ON THE MAT.',
+        ]
     )
 
     result = agent.run_stream_sync('Hello')
@@ -947,6 +963,50 @@ class TestPartialOutput:
                 (Foo(a=21, b='foo'), True),
                 (Foo(a=21, b='foo'), False),
             ],
+        )
+
+    async def test_stream_output_partial_then_final_validation(self):
+        """Test that stream_output() calls validators with partial_output=True during streaming, then False at the end.
+
+        This verifies the critical invariant: output validators/functions are called multiple times with
+        partial_output=True as chunks arrive, followed by exactly one call with partial_output=False
+        for final validation. The final yield may have the same content as the last partial yield,
+        but the validation semantics differ (partial validation may accept incomplete data).
+        """
+        call_log: list[tuple[Foo, bool]] = []
+
+        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+            call_log.append((foo, ctx.partial_output))
+            return Foo(a=foo.a * 2, b=foo.b.upper())
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"a": 21')}
+            yield {0: DeltaToolCall(json_args=', "b": "f')}
+            yield {0: DeltaToolCall(json_args='oo"}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=ToolOutput(process_foo, name='my_output'))
+
+        async with agent.run_stream('test') as result:
+            outputs = [output async for output in result.stream_output(debounce_by=None)]
+
+        assert outputs[-1] == Foo(a=42, b='FOO')
+
+        # Verify the pattern: multiple True calls, exactly one False call at the end
+        partial_output_flags = [partial for _, partial in call_log]
+        assert partial_output_flags[-1] is False, 'Last call must have partial_output=False'
+        assert all(flag is True for flag in partial_output_flags[:-1]), (
+            'All calls except last must have partial_output=True'
+        )
+        assert len([f for f in partial_output_flags if f is False]) == 1, 'Exactly one partial_output=False call'
+
+        # The full call log shows progressive partial outputs followed by final validation
+        assert call_log == snapshot(
+            [
+                (Foo(a=21, b='f'), True),
+                (Foo(a=21, b='foo'), True),
+                (Foo(a=21, b='foo'), False),  # Final validation - same content, different validation mode
+            ]
         )
 
     # NOTE: When changing tests in this class:
@@ -2300,6 +2360,7 @@ async def test_iter_stream_output():
             'The bat sat on ',
             'The bat sat on the ',
             'The bat sat on the mat.',
+            'The bat sat on the mat.',
         ]
     )
 
@@ -2469,7 +2530,7 @@ async def test_stream_iter_structured_validator() -> None:
                 async with node.stream(run.ctx) as stream:
                     async for output in stream.stream_output(debounce_by=None):
                         outputs.append(output)
-    assert outputs == snapshot([OutputType(value='a (validated)')])
+    assert outputs == snapshot([OutputType(value='a (validated)'), OutputType(value='a (validated)')])
 
 
 async def test_unknown_tool_call_events():
@@ -2607,6 +2668,7 @@ async def test_stream_structured_output():
                 CityLocation(city='Mexico City'),
                 CityLocation(city='Mexico City'),
                 CityLocation(city='Mexico City', country='Mexico'),
+                CityLocation(city='Mexico City', country='Mexico'),
             ]
         )
         assert result.is_complete
@@ -2630,6 +2692,7 @@ async def test_iter_stream_structured_output():
                             CityLocation(city='Mexico '),
                             CityLocation(city='Mexico City'),
                             CityLocation(city='Mexico City'),
+                            CityLocation(city='Mexico City', country='Mexico'),
                             CityLocation(city='Mexico City', country='Mexico'),
                         ]
                     )
@@ -2665,6 +2728,7 @@ async def test_iter_stream_output_tool_dont_hit_retry_limit():
                             CityLocation(city='Mex'),
                             CityLocation(city='Mexico City'),
                             CityLocation(city='Mexico City'),
+                            CityLocation(city='Mexico City', country='Mexico'),
                             CityLocation(city='Mexico City', country='Mexico'),
                         ]
                     )
@@ -3039,7 +3103,7 @@ async def test_run_stream_event_stream_handler():
 
     async with test_agent.run_stream('Hello', event_stream_handler=event_stream_handler) as result:
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
-            ['{"ret_a":', '{"ret_a":"a-apple"}']
+            ['{"ret_a":', '{"ret_a":"a-apple"}', '{"ret_a":"a-apple"}']
         )
 
     assert events == snapshot(
@@ -3197,7 +3261,7 @@ async def test_get_output_after_stream_output():
         o = await result.get_output()
         outputs.append(o)
 
-    assert outputs == snapshot([False, False])
+    assert outputs == snapshot([False, False, False])
     assert result.all_messages() == snapshot(
         [
             ModelRequest(

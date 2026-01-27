@@ -46,7 +46,7 @@ requires-python = ">=3.10"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,google,groq,anthropic,mistral,cohere,bedrock,huggingface,cli,mcp,fastmcp,evals,ag-ui,retries,temporal,logfire,ui]=={{ version }}",
+    "pydantic-ai-slim[openai,vertexai,google,xai,groq,anthropic,mistral,cohere,bedrock,huggingface,cli,mcp,fastmcp,evals,ag-ui,retries,temporal,logfire,ui]=={{ version }}",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -60,6 +60,7 @@ outlines-mlxlm = ["pydantic-ai-slim[outlines-mlxlm]=={{ version }}; platform_sys
 outlines-sglang = ["pydantic-ai-slim[outlines-sglang]=={{ version }}"]
 outlines-vllm-offline = ["pydantic-ai-slim[outlines-vllm-offline]=={{ version }}"]
 sentence-transformers = ["pydantic-ai-slim[sentence-transformers]=={{ version }}"]
+voyageai = ["pydantic-ai-slim[voyageai]=={{ version }}"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
@@ -98,6 +99,7 @@ dev = [
     "coverage[toml]>=7.10.7",
     "dirty-equals>=0.9.0",
     "duckduckgo-search>=7.0.0",
+    "exa-py>=2.0.0",
     "inline-snapshot>=0.19.3",
     "pytest>=9.0.0",
     "pytest-examples>=0.0.18",
@@ -112,8 +114,9 @@ dev = [
     "pip>=25.2",
     "genai-prices>=0.0.28",
     "mcp-run-python>=0.0.20",
+    "brotli>=1.2.0",
 ]
-lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
+lint = ["mypy>=1.11.2", "pyright>=1.1.408", "ruff>=0.14.14"]
 docs = [
     "pydantic-ai[a2a]",
     "black>=24.10.0",
@@ -221,6 +224,7 @@ executionEnvironments = [
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
     "pydantic_ai_slim/pydantic_ai/ext/aci.py",               # aci-sdk is too niche to be added as an (optional) dependency
+    "pydantic_ai_slim/pydantic_ai/embeddings/voyageai.py",   # voyageai package has no type stubs
 ]
 
 [tool.mypy]
@@ -262,10 +266,12 @@ include = [
 ]
 omit = [
     "tests/example_modules/*.py",
-    "pydantic_ai_slim/pydantic_ai/ext/aci.py", # aci-sdk is too niche to be added as an (optional) dependency
+    "pydantic_ai_slim/pydantic_ai/ext/aci.py",  # aci-sdk is too niche to be added as an (optional) dependency
+    "pydantic_ai_slim/pydantic_ai/common_tools/exa.py",  # exa-py integration with external API calls
     # TODO(Marcelo): Enable prefect coverage again.
     "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/*.py",
     "tests/test_prefect.py",
+    "tests/models/xai_proto_cassettes.py", # dev-only helpers for recording/replaying xAI gRPC protobuf cassettes
 ]
 branch = true
 # Disable include-ignored warnings as --source is enabled automatically causing a self conflict as per:

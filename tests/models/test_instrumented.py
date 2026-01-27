@@ -108,6 +108,14 @@ class MyModel(Model):
     ) -> AsyncIterator[StreamedResponse]:
         yield MyResponseStream(model_request_parameters=model_request_parameters)
 
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        return RequestUsage(input_tokens=10)
+
 
 class MyResponseStream(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -176,6 +184,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 'end_time': 16000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
+                    'gen_ai.provider.name': 'openai',
                     'gen_ai.system': 'openai',
                     'gen_ai.request.model': 'gpt-4o',
                     'server.address': 'example.com',
@@ -416,6 +425,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                 'end_time': 6000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
+                    'gen_ai.provider.name': 'openai',
                     'gen_ai.system': 'openai',
                     'gen_ai.request.model': 'gpt-4o',
                     'server.address': 'example.com',
@@ -516,6 +526,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                 'end_time': 7000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
+                    'gen_ai.provider.name': 'openai',
                     'gen_ai.system': 'openai',
                     'gen_ai.request.model': 'gpt-4o',
                     'server.address': 'example.com',
@@ -638,6 +649,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire, instr
                     'end_time': 2000000000,
                     'attributes': {
                         'gen_ai.operation.name': 'chat',
+                        'gen_ai.provider.name': 'openai',
                         'gen_ai.system': 'openai',
                         'gen_ai.request.model': 'gpt-4o',
                         'server.address': 'example.com',
@@ -772,6 +784,7 @@ Fix the errors and try again.\
                     'end_time': 2000000000,
                     'attributes': {
                         'gen_ai.operation.name': 'chat',
+                        'gen_ai.provider.name': 'openai',
                         'gen_ai.system': 'openai',
                         'gen_ai.request.model': 'gpt-4o',
                         'server.address': 'example.com',
@@ -881,6 +894,7 @@ Fix the errors and try again.\
                     'data_points': [
                         {
                             'attributes': {
+                                'gen_ai.provider.name': 'openai',
                                 'gen_ai.system': 'openai',
                                 'gen_ai.operation.name': 'chat',
                                 'gen_ai.request.model': 'gpt-4o',
@@ -902,6 +916,7 @@ Fix the errors and try again.\
                         },
                         {
                             'attributes': {
+                                'gen_ai.provider.name': 'openai',
                                 'gen_ai.system': 'openai',
                                 'gen_ai.operation.name': 'chat',
                                 'gen_ai.request.model': 'gpt-4o',
@@ -933,6 +948,7 @@ Fix the errors and try again.\
                     'data_points': [
                         {
                             'attributes': {
+                                'gen_ai.provider.name': 'openai',
                                 'gen_ai.system': 'openai',
                                 'gen_ai.operation.name': 'chat',
                                 'gen_ai.request.model': 'gpt-4o',
@@ -954,6 +970,7 @@ Fix the errors and try again.\
                         },
                         {
                             'attributes': {
+                                'gen_ai.provider.name': 'openai',
                                 'gen_ai.system': 'openai',
                                 'gen_ai.operation.name': 'chat',
                                 'gen_ai.request.model': 'gpt-4o',
@@ -1504,6 +1521,7 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                 'end_time': 2000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
+                    'gen_ai.provider.name': 'openai',
                     'gen_ai.system': 'openai',
                     'gen_ai.request.model': 'gpt-4o',
                     'server.address': 'example.com',
@@ -1711,3 +1729,64 @@ def test_cache_point_in_user_prompt():
             }
         ]
     )
+
+
+def test_build_tool_definitions():
+    """Test _build_tool_definitions with various tool configurations."""
+    from pydantic_ai.models.instrumented import _build_tool_definitions  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.tools import ToolDefinition
+
+    tool_without_params = ToolDefinition(
+        name='no_params_tool',
+        description='A tool without parameters',
+        parameters_json_schema={},
+    )
+
+    tool_with_params = ToolDefinition(
+        name='with_params_tool',
+        description='A tool with parameters',
+        parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+    )
+
+    tool_no_description = ToolDefinition(
+        name='no_desc_tool',
+        description=None,
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+
+    params = ModelRequestParameters(
+        function_tools=[tool_without_params, tool_with_params, tool_no_description],
+        builtin_tools=[],
+        output_tools=[],
+        output_mode='text',
+        output_object=None,
+        prompted_output_template=None,
+        allow_text_output=True,
+        allow_image_output=False,
+    )
+
+    result = _build_tool_definitions(params)
+
+    assert result == [
+        {'type': 'function', 'name': 'no_params_tool', 'description': 'A tool without parameters'},
+        {
+            'type': 'function',
+            'name': 'with_params_tool',
+            'description': 'A tool with parameters',
+            'parameters': {'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+        },
+        {
+            'type': 'function',
+            'name': 'no_desc_tool',
+            'parameters': {'type': 'object', 'properties': {}},
+        },
+    ]
+
+
+async def test_instrumented_model_count_tokens(capfire: CaptureLogfire):
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hello, world!')], timestamp=IsDatetime())]
+    model = InstrumentedModel(MyModel())
+    usage = await model.count_tokens(
+        messages, model_settings=ModelSettings(), model_request_parameters=ModelRequestParameters()
+    )
+    assert usage == RequestUsage(input_tokens=10)
