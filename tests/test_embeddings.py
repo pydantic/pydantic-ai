@@ -168,12 +168,20 @@ class TestOpenAI:
 
         mock_client.embeddings.create.return_value = mock_response
 
-        provider = OpenAIProvider(api_key='test')
-        provider._client = mock_client  # pyright: ignore[reportPrivateUsage]
+        provider = OpenAIProvider(openai_client=mock_client)
         model = OpenAIEmbeddingModel('test-model', provider=provider)
 
         result = await model.embed('test', input_type='query')
-        assert result.usage == RequestUsage()
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=[[0.1, 0.2, 0.3]],
+                inputs=['test'],
+                input_type='query',
+                model_name='test-model',
+                provider_name='openai',
+                timestamp=IsDatetime(),
+            )
+        )
 
     @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
     async def test_instrumentation(self, openai_api_key: str, capfire: CaptureLogfire):
