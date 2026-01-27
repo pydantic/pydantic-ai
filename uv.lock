@@ -6392,8 +6392,8 @@ docs-upload = [
 ]
 lint = [
     { name = "mypy", specifier = ">=1.11.2" },
-    { name = "pyright", specifier = ">=1.1.390" },
-    { name = "ruff", specifier = ">=0.6.9" },
+    { name = "pyright", specifier = ">=1.1.408" },
+    { name = "ruff", specifier = ">=0.14.14" },
 ]
 
 [[package]]
