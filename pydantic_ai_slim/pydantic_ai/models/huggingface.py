@@ -1,14 +1,16 @@
 from __future__ import annotations as _annotations
 
+import logging
 from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Literal, cast, overload
 
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id
@@ -38,21 +40,20 @@ from ..messages import (
 )
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider
+from ..providers.huggingface import HfRouterProvider, get_router_info, select_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-    check_allow_model_requests,
-)
+from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests
 
 try:
     import aiohttp
     from huggingface_hub import (
         AsyncInferenceClient,
+        ChatCompletionInputGrammarType,
         ChatCompletionInputMessage,
         ChatCompletionInputMessageChunk,
+        ChatCompletionInputResponseFormatJSONObject,
+        ChatCompletionInputResponseFormatJSONSchema,
         ChatCompletionInputTool,
         ChatCompletionInputToolCall,
         ChatCompletionInputURL,
@@ -69,6 +70,8 @@ except ImportError as _import_error:
         'you can use the `huggingface` optional group — `pip install "pydantic-ai-slim[huggingface]"`'
     ) from _import_error
 
+_logger = logging.getLogger(__name__)
+
 __all__ = (
     'HuggingFaceModel',
     'HuggingFaceModelSettings',
@@ -79,10 +82,11 @@ HFSystemPromptRole = Literal['system', 'user']
 
 LatestHuggingFaceModelNames = Literal[
     'deepseek-ai/DeepSeek-R1',
-    'meta-llama/Llama-3.3-70B-Instruct',
-    'meta-llama/Llama-4-Maverick-17B-128E-Instruct',
-    'meta-llama/Llama-4-Scout-17B-16E-Instruct',
-    'Qwen/QwQ-32B',
+    'meta-llama/Llama-3.1-8B-Instruct',
+    'MiniMaxAI/MiniMax-M2',
+    'openai/gpt-oss-20b',
+    'openai/gpt-oss-120b',
+    'Qwen/Qwen3-Coder-30B-A3B-Instruct',
     'Qwen/Qwen2.5-72B-Instruct',
     'Qwen/Qwen3-235B-A22B',
     'Qwen/Qwen3-32B',
@@ -123,6 +127,8 @@ class HuggingFaceModel(Model):
 
     _model_name: str = field(repr=False)
     _provider: Provider[AsyncInferenceClient] = field(repr=False)
+    _router_initialized: bool = field(default=False, repr=False)
+    _selected_provider_info: HfRouterProvider | None = field(default=None, repr=False)
 
     def __init__(
         self,
@@ -141,13 +147,16 @@ class HuggingFaceModel(Model):
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             settings: Model-specific settings that will be used as defaults for this model.
         """
-        self._model_name = model_name
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self._provider = provider
-        self.client = provider.client
+        provider_profile = provider.model_profile(model_name)
+        self._model_name = model_name.rsplit(':', 1)[0]
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile)
+        super().__init__(settings=settings, profile=profile or provider_profile)
+        self.client = provider.client
+        self._router_initialized = False
+        self._selected_provider_info = None
 
     @property
     def base_url(self) -> str:
@@ -164,6 +173,77 @@ class HuggingFaceModel(Model):
         """The system / model provider."""
         return self._provider.name
 
+    async def _ensure_router_initialized(self) -> None:
+        """Lazily fetch router info and update client/profile on first request.
+
+        This is called at the start of request() and request_stream()
+        """
+        if self._router_initialized:
+            return
+
+        self._router_initialized = True
+
+        model_name_lower = self._model_name.lower()
+        router_info = await _utils.run_in_executor(get_router_info, model_name_lower)
+
+        if not router_info:
+            return
+
+        providers = router_info['providers']
+
+        from ..providers.huggingface import HuggingFaceProvider
+
+        user_provider_name: str | None = None
+        if isinstance(self._provider, HuggingFaceProvider):
+            user_provider_name = self._provider.provider_name
+
+        # Select the best provider
+        if user_provider_name:
+            for p in providers:
+                if p['provider'] == user_provider_name:
+                    self._selected_provider_info = p
+                    break
+            if self._selected_provider_info is None:
+                self._selected_provider_info = select_provider(providers)
+        else:
+            self._selected_provider_info = select_provider(providers)
+
+        if self._selected_provider_info is None:
+            return
+
+        # Create a model specific client with the selected provider
+        if isinstance(self._provider, HuggingFaceProvider):
+            self.client = AsyncInferenceClient(
+                token=self._provider.api_key,
+                provider=self._selected_provider_info['provider'],  # type: ignore
+            )
+
+        selected_provider_name = self._selected_provider_info['provider']
+        supports_tools = self._selected_provider_info['supports_tools']
+        supports_structured_output = self._selected_provider_info['supports_structured_output']
+
+        if not supports_structured_output:
+            _logger.warning(
+                f'Provider {selected_provider_name} does not support structured output (NativeOutput).',
+            )
+        if not supports_tools:
+            _logger.warning(f"Provider '{selected_provider_name}' does not support tools.")
+
+        current_profile = self._profile
+        if callable(current_profile):
+            current_profile = current_profile(self._model_name)
+        if current_profile is None:
+            current_profile = ModelProfile()
+
+        self._profile = replace(
+            current_profile,
+            supports_tools=supports_tools,
+            supports_json_schema_output=supports_structured_output,
+            supports_json_object_output=supports_structured_output,
+        )
+        if 'profile' in self.__dict__:
+            del self.__dict__['profile']
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -171,6 +251,7 @@ class HuggingFaceModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         check_allow_model_requests()
+        await self._ensure_router_initialized()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -190,6 +271,7 @@ class HuggingFaceModel(Model):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
+        await self._ensure_router_initialized()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -234,6 +316,15 @@ class HuggingFaceModel(Model):
             tool_choice = 'auto'
 
         hf_messages = await self._map_messages(messages, model_request_parameters)
+        response_format: ChatCompletionInputGrammarType | None = None
+        if model_request_parameters.output_mode == 'native':
+            output_object = model_request_parameters.output_object
+            assert output_object is not None
+            response_format = self._map_json_schema(output_object)
+        elif (
+            model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
+        ):  # pragma: no branch
+            response_format = ChatCompletionInputResponseFormatJSONObject.parse_obj_as_instance({'type': 'json_object'})  # type: ignore
 
         try:
             return await self.client.chat.completions.create(  # type: ignore
@@ -246,6 +337,7 @@ class HuggingFaceModel(Model):
                 temperature=model_settings.get('temperature', None),
                 top_p=model_settings.get('top_p', None),
                 seed=model_settings.get('seed', None),
+                response_format=response_format or None,
                 presence_penalty=model_settings.get('presence_penalty', None),
                 frequency_penalty=model_settings.get('frequency_penalty', None),
                 logit_bias=model_settings.get('logit_bias', None),  # type: ignore
@@ -376,6 +468,19 @@ class HuggingFaceModel(Model):
                 },
             }
         )
+
+    def _map_json_schema(self, o: OutputObjectDefinition) -> ChatCompletionInputGrammarType:
+        response_format_param: ChatCompletionInputResponseFormatJSONSchema = {  # type: ignore
+            'type': 'json_schema',
+            'json_schema': {
+                'name': o.name or DEFAULT_OUTPUT_TOOL_NAME,
+                'schema': o.json_schema,
+                'strict': o.strict,
+            },
+        }
+        if o.description:  # pragma: no branch
+            response_format_param['json_schema']['description'] = o.description
+        return response_format_param
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ChatCompletionInputTool:

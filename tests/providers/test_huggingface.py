@@ -14,13 +14,17 @@ from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_mode
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.providers.huggingface import (
+    HfRouterProvider,
+    HuggingFaceProvider,
+    get_router_info,
+    select_provider,
+)
 
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     from huggingface_hub import AsyncInferenceClient
-
-    from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='huggingface_hub not installed')
@@ -150,10 +154,15 @@ def test_huggingface_provider_base_url():
 
 
 def test_huggingface_provider_model_profile(mocker: MockerFixture):
+    """Test model_profile returns base profile without making HTTP requests.
+
+    Router info fetching is now deferred to HuggingFaceModel.request().
+    """
+    ns = 'pydantic_ai.providers.huggingface'
+
     mock_client = Mock(spec=AsyncInferenceClient)
     provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
 
-    ns = 'pydantic_ai.providers.huggingface'
     deepseek_model_profile_mock = mocker.patch(f'{ns}.deepseek_model_profile', wraps=deepseek_model_profile)
     meta_model_profile_mock = mocker.patch(f'{ns}.meta_model_profile', wraps=meta_model_profile)
     qwen_model_profile_mock = mocker.patch(f'{ns}.qwen_model_profile', wraps=qwen_model_profile)
@@ -187,3 +196,111 @@ def test_huggingface_provider_model_profile(mocker: MockerFixture):
 
     unknown_profile = provider.model_profile('unknown/model')
     assert unknown_profile is None
+
+
+def test_select_provider_both_capabilities():
+    """Test select_provider prefers providers with both tools and structured output."""
+    providers: list[HfRouterProvider] = [
+        {'provider': 'p1', 'status': 'live', 'supports_tools': False, 'supports_structured_output': False},
+        {'provider': 'p2', 'status': 'live', 'supports_tools': True, 'supports_structured_output': True},
+        {'provider': 'p3', 'status': 'live', 'supports_tools': True, 'supports_structured_output': False},
+    ]
+    result = select_provider(providers)
+    assert result is not None
+    assert result['provider'] == 'p2'
+
+
+def test_select_provider_either_capability():
+    """Test select_provider falls back to providers with either capability."""
+    providers: list[HfRouterProvider] = [
+        {'provider': 'p1', 'status': 'live', 'supports_tools': False, 'supports_structured_output': False},
+        {'provider': 'p2', 'status': 'live', 'supports_tools': True, 'supports_structured_output': False},
+    ]
+    result = select_provider(providers)
+    assert result is not None
+    assert result['provider'] == 'p2'
+
+
+def test_select_provider_any():
+    """Test select_provider falls back to any provider."""
+    providers: list[HfRouterProvider] = [
+        {'provider': 'p1', 'status': 'live', 'supports_tools': False, 'supports_structured_output': False},
+    ]
+    result = select_provider(providers)
+    assert result is not None
+    assert result['provider'] == 'p1'
+
+
+def test_select_provider_empty():
+    """Test select_provider returns None for empty list."""
+    result = select_provider([])
+    assert result is None
+
+
+def test_select_provider_no_live_fallback():
+    """Test select_provider falls back to non-live providers if no live ones."""
+    providers: list[HfRouterProvider] = [
+        {'provider': 'p1', 'status': 'pending', 'supports_tools': True, 'supports_structured_output': True},
+    ]
+    result = select_provider(providers)
+    assert result is not None
+    assert result['provider'] == 'p1'
+
+
+def test_get_router_info_success(mocker: MockerFixture):
+    """Test get_router_info successfully parses response."""
+    get_router_info.cache_clear()
+
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.content = b'{"data": {"id": "test/model", "providers": []}}'
+
+    mocker.patch('pydantic_ai.providers.huggingface.httpx.get', return_value=mock_response)
+
+    result = get_router_info('test/model')
+    assert result is not None
+    assert result['id'] == 'test/model'
+
+
+def test_get_router_info_http_error(mocker: MockerFixture):
+    """Test get_router_info handles HTTP errors."""
+    get_router_info.cache_clear()
+
+    mocker.patch('pydantic_ai.providers.huggingface.httpx.get', side_effect=httpx.HTTPError('error'))
+
+    result = get_router_info('test/model')
+    assert result is None
+
+
+def test_get_router_info_non_200(mocker: MockerFixture):
+    """Test get_router_info handles non-200 status."""
+    get_router_info.cache_clear()
+
+    mock_response = Mock()
+    mock_response.status_code = 404
+
+    mocker.patch('pydantic_ai.providers.huggingface.httpx.get', return_value=mock_response)
+
+    result = get_router_info('test/model')
+    assert result is None
+
+
+def test_huggingface_provider_api_key_from_hf_client(monkeypatch: pytest.MonkeyPatch):
+    """Test api_key is extracted from hf_client.token when not provided."""
+    monkeypatch.delenv('HF_TOKEN', raising=False)
+
+    mock_client = Mock(spec=AsyncInferenceClient)
+    mock_client.token = 'client-token'
+
+    provider = HuggingFaceProvider(hf_client=mock_client)
+    assert provider.api_key == 'client-token'
+
+
+def test_huggingface_provider_name_property():
+    """Test provider_name property returns the user-specified provider name."""
+    mock_client = Mock(spec=AsyncInferenceClient)
+    provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
+    assert provider.provider_name is None
+
+    provider_with_name = HuggingFaceProvider(api_key='test-api-key', provider_name='test-provider')
+    assert provider_with_name.provider_name == 'test-provider'
