@@ -191,9 +191,6 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     """
 
 
-# ==================== Model Configuration Constants ====================
-
-
 # Max input tokens lookup (keys are normalized model names as returned by remove_bedrock_geo_prefix)
 _MAX_INPUT_TOKENS: dict[str, int] = {
     'amazon.titan-embed-text-v1': 8192,
@@ -218,9 +215,6 @@ def _extract_version(model_name: str) -> int | None:
         return int(match.group(1))
     else:  # pragma: no cover
         return None
-
-
-# ==================== Embedding Handlers ====================
 
 
 class _BedrockEmbeddingHandler(ABC):
@@ -464,17 +458,12 @@ class _NovaEmbeddingHandler(_BedrockEmbeddingHandler):
         return [embedding], None
 
 
-# ==================== Handler Prefix Mapping ====================
-
 # Mapping of model name prefixes to handler classes
 _HANDLER_PREFIXES: dict[str, type[_BedrockEmbeddingHandler]] = {
     'amazon.titan-embed': _TitanEmbeddingHandler,
     'cohere.embed': _CohereEmbeddingHandler,
     'amazon.nova': _NovaEmbeddingHandler,
 }
-
-
-# ==================== Handler Factory ====================
 
 
 def _get_handler_for_model(model_name: str) -> _BedrockEmbeddingHandler:

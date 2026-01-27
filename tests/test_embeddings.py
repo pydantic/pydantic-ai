@@ -499,9 +499,7 @@ class TestVoyageAI:
 @pytest.mark.skipif(not bedrock_imports_successful(), reason='Bedrock not installed')
 @pytest.mark.vcr
 class TestBedrock:
-    """Integration tests for Bedrock embedding models."""
-
-    def test_infer_model(self):
+    async def test_infer_model(self):
         with patch.dict(
             os.environ,
             {
@@ -514,9 +512,7 @@ class TestBedrock:
         assert isinstance(model, BedrockEmbeddingModel)
         assert model.model_name == 'amazon.titan-embed-text-v2:0'
         assert model.system == 'bedrock'
-
-    # ==================== Titan V1 Tests ====================
-    # Titan V1 has fixed 1536 dimensions and does not support normalize or dimensions settings
+        assert model.base_url == 'https://bedrock-runtime.us-east-1.amazonaws.com'
 
     async def test_titan_v1_minimal(self, bedrock_provider: BedrockProvider):
         """Test Titan V1 with default settings (fixed 1536 dimensions)."""
@@ -534,9 +530,6 @@ class TestBedrock:
                 usage=RequestUsage(input_tokens=4),
             )
         )
-
-    # ==================== Titan V2 Tests ====================
-    # Titan V2 supports: dimensions (default: 1024), normalize (default: True)
 
     async def test_titan_v2_minimal(self, bedrock_provider: BedrockProvider):
         """Test Titan V2 with default settings (1024 dimensions, normalize=True)."""
@@ -627,10 +620,6 @@ class TestBedrock:
             )
         )
 
-    # ==================== Cohere V3 Tests ====================
-    # Cohere V3 supports: input_type, truncate (default: NONE)
-    # Does NOT support: dimensions (fixed 1024), max_tokens
-
     async def test_cohere_v3_minimal(self, bedrock_provider: BedrockProvider):
         """Test Cohere V3 with default settings (1024 dimensions, truncate=NONE)."""
         model = BedrockEmbeddingModel('cohere.embed-english-v3', provider=bedrock_provider)
@@ -705,9 +694,6 @@ class TestBedrock:
                 provider_response_id=IsStr(),
             )
         )
-
-    # ==================== Cohere V4 Tests ====================
-    # Cohere V4 supports: dimensions (default: 1536), max_tokens, input_type, truncate (default: NONE)
 
     async def test_cohere_v4_minimal(self, bedrock_provider: BedrockProvider):
         """Test Cohere V4 with default settings (1536 dimensions, truncate=NONE)."""
@@ -860,9 +846,6 @@ class TestBedrock:
             )
         )
 
-    # ==================== Nova Tests ====================
-    # Nova supports: dimensions (default: 3072), truncate (default: NONE), embedding_purpose
-
     async def test_nova_minimal(self, bedrock_provider: BedrockProvider):
         """Test Nova with default settings (3072 dimensions, truncate=NONE)."""
         model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
@@ -997,8 +980,6 @@ class TestBedrock:
             )
         )
 
-    # ==================== Max Input Tokens Tests ====================
-
     async def test_titan_v1_max_input_tokens(self, bedrock_provider: BedrockProvider):
         model = BedrockEmbeddingModel('amazon.titan-embed-text-v1', provider=bedrock_provider)
         embedder = Embedder(model)
@@ -1028,8 +1009,6 @@ class TestBedrock:
         embedder = Embedder(model)
         max_input_tokens = await embedder.max_input_tokens()
         assert max_input_tokens == snapshot(8192)
-
-    # ==================== Utility Tests ====================
 
     async def test_base_url_property(self, bedrock_provider: BedrockProvider):
         """Test that base_url property returns the endpoint URL."""
@@ -1121,6 +1100,57 @@ class TestBedrock:
                 await model.embed(['test'], input_type='query')
             assert len(exc_info.value.exceptions) == 1
             assert isinstance(exc_info.value.exceptions[0], ModelAPIError)
+
+    async def test_count_tokens_not_implemented(self, bedrock_provider: BedrockProvider):
+        """Test that count_tokens raises NotImplementedError (Bedrock doesn't support it)."""
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        embedder = Embedder(model)
+        with pytest.raises(NotImplementedError):
+            await embedder.count_tokens('Hello, world!')
+
+    @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+    async def test_instrumentation(self, bedrock_provider: BedrockProvider, capfire: CaptureLogfire):
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        embedder = Embedder(model, instrument=True)
+        await embedder.embed_query('Hello, world!', settings={'dimensions': 256})
+
+        spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+        span = next(span for span in spans if 'embeddings' in span['name'])
+
+        assert span == snapshot(
+            {
+                'name': 'embeddings amazon.titan-embed-text-v2:0',
+                'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'parent': None,
+                'start_time': IsInt(),
+                'end_time': IsInt(),
+                'attributes': {
+                    'gen_ai.operation.name': 'embeddings',
+                    'gen_ai.provider.name': 'bedrock',
+                    'gen_ai.request.model': 'amazon.titan-embed-text-v2:0',
+                    'input_type': 'query',
+                    'server.address': 'bedrock-runtime.us-east-1.amazonaws.com',
+                    'inputs_count': 1,
+                    'embedding_settings': {'dimensions': 256},
+                    'inputs': ['Hello, world!'],
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'input_type': {'type': 'string'},
+                            'inputs_count': {'type': 'integer'},
+                            'embedding_settings': {'type': 'object'},
+                            'inputs': {'type': ['array']},
+                            'embeddings': {'type': 'array'},
+                        },
+                    },
+                    'logfire.span_type': 'span',
+                    'logfire.msg': 'embeddings amazon.titan-embed-text-v2:0',
+                    'gen_ai.usage.input_tokens': 5,
+                    'gen_ai.response.model': 'amazon.titan-embed-text-v2:0',
+                    'gen_ai.embeddings.dimension.count': 256,
+                },
+            }
+        )
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
