@@ -220,7 +220,7 @@ def function_schema(  # noqa: C901
 
     return_annotation = type_hints.get('return')
     return_schema = None
-    # Check if origin of return annotation is ToolReturn which needs special handling
+    # Check if origin of return annotation is ToolReturn which needs special handling.
     if get_origin(return_annotation) is ToolReturn or return_annotation is ToolReturn:
         type_args = get_args(return_annotation)
         inner_type = type_args[0] if type_args else Any
