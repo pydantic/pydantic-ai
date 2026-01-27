@@ -177,6 +177,12 @@ class FileUrl(ABC):
     - `XaiModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     """
 
+    provider_name: str | None = None
+    """The name of the provider that generated the response.
+
+    This is set when the URL is part of a model response to identify the originating provider.
+    """
+
     _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
         compare=False, default=None
     )
@@ -193,12 +199,14 @@ class FileUrl(ABC):
         identifier: str | None = None,
         force_download: bool = False,
         vendor_metadata: dict[str, Any] | None = None,
+        provider_name: str | None = None,
     ) -> None:
         self.url = url
         self._media_type = media_type
         self._identifier = identifier
         self.force_download = force_download
         self.vendor_metadata = vendor_metadata
+        self.provider_name = provider_name
 
     @pydantic.computed_field
     @property
@@ -1266,7 +1274,7 @@ def _response_part_discriminator(v: Any) -> str:
     URL types (ImageUrl, AudioUrl, etc.) use 'kind'.
     """
     if isinstance(v, dict):
-        d: dict[str, Any] = v
+        d = cast('dict[str, Any]', v)
         return d.get('part_kind') or d.get('kind') or ''
     return getattr(v, 'part_kind', None) or getattr(v, 'kind', None) or ''
 
