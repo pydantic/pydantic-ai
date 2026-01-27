@@ -144,6 +144,7 @@ def test_list_models(capfd: CaptureFixture[str]):
     assert output[:3] == snapshot([IsStr(regex='clai - Pydantic AI CLI .*'), '', 'Available models:'])
 
     providers = (
+        'alibaba',
         'openai',
         'anthropic',
         'bedrock',
