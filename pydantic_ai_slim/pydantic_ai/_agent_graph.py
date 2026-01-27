@@ -86,7 +86,7 @@ Can optionally accept a `RunContext` as a parameter.
 class GraphAgentState:
     """State kept across the execution of the agent graph."""
 
-    message_history: list[_messages.ModelMessage] = dataclasses.field(default_factory=list)
+    message_history: list[_messages.ModelMessage] = dataclasses.field(default_factory=list[_messages.ModelMessage])
     usage: _usage.RunUsage = dataclasses.field(default_factory=_usage.RunUsage)
     retries: int = 0
     run_step: int = 0
@@ -187,12 +187,16 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     deferred_tool_results: DeferredToolResults | None = None
 
     instructions: str | None = None
-    instructions_functions: list[_system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(default_factory=list)
+    instructions_functions: list[_system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(
+        default_factory=list[_system_prompt.SystemPromptRunner[DepsT]]
+    )
 
     system_prompts: tuple[str, ...] = dataclasses.field(default_factory=tuple)
-    system_prompt_functions: list[_system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(default_factory=list)
+    system_prompt_functions: list[_system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(
+        default_factory=list[_system_prompt.SystemPromptRunner[DepsT]]
+    )
     system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(
-        default_factory=dict
+        default_factory=dict[str, _system_prompt.SystemPromptRunner[DepsT]]
     )
 
     async def run(  # noqa: C901
@@ -1131,14 +1135,17 @@ async def _call_tools(  # noqa: C901
                 )
                 for call in tool_calls
             ]
-
             try:
-                pending = tasks
+                pending: set[
+                    asyncio.Task[
+                        tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]
+                    ]
+                ] = set(tasks)  # pyright: ignore[reportAssignmentType]
                 while pending:
                     done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
                     for task in done:
-                        index = tasks.index(task)
-                        if event := await handle_call_or_result(coro_or_task=task, index=index):
+                        index = tasks.index(task)  # pyright: ignore[reportArgumentType]
+                        if event := await handle_call_or_result(coro_or_task=task, index=index):  # pyright: ignore[reportArgumentType]
                             yield event
 
             except asyncio.CancelledError as e:
@@ -1360,8 +1367,7 @@ async def _process_message_history(
             if takes_ctx:
                 messages = await processor(run_context, messages)
             else:
-                async_processor = cast(_HistoryProcessorAsync, processor)
-                messages = await async_processor(messages)
+                messages = await processor(messages)
         else:
             if takes_ctx:
                 sync_processor_with_ctx = cast(_HistoryProcessorSyncWithCtx[DepsT], processor)
