@@ -75,6 +75,13 @@ class OpenAIModelProfile(ModelProfile):
     - `'uri'`: Data URI (e.g. `data:audio/wav;base64,...`).
     """
 
+    openai_chat_supports_file_urls: bool = False
+    """Whether the Chat API supports file URLs directly in the `file_data` field.
+
+    OpenAI's native Chat API only supports base64-encoded data, but some providers
+    like OpenRouter support passing URLs directly.
+    """
+
     openai_supports_encrypted_reasoning_content: bool = False
     """Whether the model supports including encrypted reasoning content in the response."""
 
