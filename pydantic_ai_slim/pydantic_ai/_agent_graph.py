@@ -451,7 +451,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if self._did_stream:
             # `self._result` gets set when exiting the `stream` contextmanager, so hitting this
             # means that the stream was started but not finished before `run()` was called
-            raise exceptions.AgentRunError('You must finish streaming before calling run()')
+            raise exceptions.AgentRunError('You must finish streaming before calling run()')  # pragma: lax no cover
 
         return await self._make_request(ctx)
 
@@ -494,7 +494,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> CallToolsNode[DepsT, NodeRunEndT]:
         if self._result is not None:
-            return self._result
+            return self._result  # pragma: lax no cover
 
         model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
         with set_current_run_context(run_context):

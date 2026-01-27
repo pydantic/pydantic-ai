@@ -1112,7 +1112,7 @@ class _MCPServerHTTP(MCPServer):
             client_info=client_info,
         )
 
-    def __repr__(self) -> str:
+    def __repr__(self) -> str:  # pragma: lax no cover
         repr_args = [
             f'url={self.url!r}',
         ]

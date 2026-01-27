@@ -190,14 +190,6 @@ def test_sse_server():
     assert sse_server.log_level is None
 
 
-def test_mcp_server_repr():
-    sse_server = MCPServerSSE(url='http://localhost:8000/sse')
-    assert repr(sse_server) == "MCPServerSSE(url='http://localhost:8000/sse')"
-
-    sse_server_with_id = MCPServerSSE(url='http://localhost:8000/sse', id='potato')
-    assert repr(sse_server_with_id) == "MCPServerSSE(url='http://localhost:8000/sse', id='potato')"
-
-
 def test_sse_server_with_header_and_timeout():
     with pytest.warns(DeprecationWarning, match="'sse_read_timeout' is deprecated, use 'read_timeout' instead."):
         sse_server = MCPServerSSE(

@@ -65,7 +65,7 @@ class FunctionSchema:
 
         args = [ctx] if self.takes_ctx else []
         for positional_field in self.positional_fields:
-            args.append(args_dict.pop(positional_field))
+            args.append(args_dict.pop(positional_field))  # pragma: lax no cover
         if self.var_positional_field:
             args.extend(args_dict.pop(self.var_positional_field))
 

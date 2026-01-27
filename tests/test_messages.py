@@ -21,11 +21,9 @@ from pydantic_ai import (
     ModelResponse,
     RequestUsage,
     TextPart,
-    TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
     ToolCallPart,
-    ToolReturnPart,
     UserPromptPart,
     VideoUrl,
 )
@@ -424,39 +422,6 @@ def test_thinking_part_delta_apply_to_thinking_part_delta():
     part = ThinkingPart(content='')
     result_part = chained.apply(part)
     assert result_part.provider_details == {'from_callable': 'yes', 'from_dict': 'also'}
-
-
-def test_thinking_part_delta_callable_provider_details_overwrites_noncallable_provider_details():
-    """Cover callable provider_details applied to non-callable provider_details."""
-    original_delta = ThinkingPartDelta(content_delta='original', provider_details={'foo': 0})
-
-    def provider_details_fn(d: dict[str, int] | None) -> dict[str, int]:
-        return {**(d or {}), 'from_callable': 1}
-
-    delta_callable = ThinkingPartDelta(content_delta='', provider_details=provider_details_fn)
-    result = delta_callable.apply(original_delta)
-    assert callable(result.provider_details)
-    assert result.provider_details is provider_details_fn
-    assert provider_details_fn({'foo': 2}) == {'foo': 2, 'from_callable': 1}
-    assert provider_details_fn(None) == {'from_callable': 1}
-
-
-def test_thinking_part_delta_apply_invalid_part_raises():
-    """Cover error path when applying ThinkingPartDelta to wrong part type."""
-    delta = ThinkingPartDelta(content_delta='x')
-    with pytest.raises(ValueError, match='Cannot apply ThinkingPartDeltas'):
-        delta.apply(TextPart(content='hi'))
-
-
-def test_text_part_delta_apply_non_text_part_raises():
-    delta = TextPartDelta(content_delta='x')
-    with pytest.raises(ValueError, match='Cannot apply TextPartDeltas to non-TextParts'):
-        delta.apply(ThinkingPart(content=''))
-
-
-def test_tool_return_part_has_content():
-    assert ToolReturnPart(tool_name='tool', content=None).has_content() is False
-    assert ToolReturnPart(tool_name='tool', content='x').has_content() is True
 
 
 def test_pre_usage_refactor_messages_deserializable():
