@@ -2121,43 +2121,6 @@ async def test_bedrock_cache_messages(allow_model_requests: None, bedrock_provid
     )
 
 
-async def test_bedrock_cache_messages_with_binary_content(
-    allow_model_requests: None, bedrock_provider: BedrockProvider
-):
-    """Test that bedrock_cache_messages adds newline workaround for non-text content."""
-    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
-    messages: list[ModelMessage] = [
-        ModelRequest(
-            parts=[
-                UserPromptPart(
-                    content=[
-                        BinaryContent(data=b'Test document content', media_type='text/plain'),
-                    ]
-                )
-            ]
-        )
-    ]
-    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        messages,
-        ModelRequestParameters(),
-        BedrockModelSettings(bedrock_cache_messages=True),
-    )
-    # Should add newline text block before cache point when last content is not text
-    assert bedrock_messages[0]['content'] == snapshot(
-        [
-            {
-                'document': {
-                    'name': 'Document 1',
-                    'format': 'txt',
-                    'source': {'bytes': b'Test document content'},
-                }
-            },
-            {'text': '\n'},
-            {'cachePoint': {'type': 'default'}},
-        ]
-    )
-
-
 async def test_bedrock_cache_messages_does_not_duplicate(allow_model_requests: None, bedrock_provider: BedrockProvider):
     """Test that bedrock_cache_messages does not add duplicate cache point if already present."""
     model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
