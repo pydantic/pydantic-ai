@@ -615,8 +615,9 @@ class BedrockConverseModel(Model):
         for message in messages:
             if isinstance(message, ModelRequest):
                 for part in message.parts:
-                    if isinstance(part, SystemPromptPart) and part.content:
-                        system_prompt.append({'text': part.content})
+                    if isinstance(part, SystemPromptPart):
+                        if part.content:  # pragma: no branch
+                            system_prompt.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
                         bedrock_messages.extend(
                             await self._map_user_prompt(part, document_count, profile.bedrock_supports_prompt_caching)
@@ -642,8 +643,7 @@ class BedrockConverseModel(Model):
                             }
                         )
                     elif isinstance(part, RetryPromptPart):
-                        # TODO(Marcelo): We need to add a test here.
-                        if part.tool_name is None:  # pragma: no cover
+                        if part.tool_name is None:
                             bedrock_messages.append({'role': 'user', 'content': [{'text': part.model_response()}]})
                         else:
                             assert part.tool_call_id is not None
@@ -661,6 +661,8 @@ class BedrockConverseModel(Model):
                                     ],
                                 }
                             )
+                    else:
+                        assert_never(part)
             elif isinstance(message, ModelResponse):
                 content: list[ContentBlockOutputTypeDef] = []
                 for item in message.parts:
