@@ -158,6 +158,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'model_request_parameters': {
                         'function_tools': [],
                         'builtin_tools': [],
+                        'model_settings': None,
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -268,6 +269,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'model_request_parameters': {
                         'function_tools': [],
                         'builtin_tools': [],
+                        'model_settings': None,
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -380,6 +382,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'model_request_parameters': {
                         'function_tools': [],
                         'builtin_tools': [],
+                        'model_settings': None,
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -860,6 +863,7 @@ Don't include any text or Markdown fencing before or after.
                     'model_request_parameters': {
                         'function_tools': [],
                         'builtin_tools': [],
+                        'model_settings': None,
                         'output_mode': 'prompted',
                         'output_object': {
                             'json_schema': {

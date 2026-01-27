@@ -559,6 +559,7 @@ def test_logfire(
                             }
                         ],
                         'builtin_tools': [],
+                        'model_settings': None,
                         'output_mode': 'text',
                         'output_tools': [],
                         'output_object': None,
@@ -1022,6 +1023,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                     {
                         'function_tools': [],
                         'builtin_tools': [],
+                        'model_settings': None,
                         'output_mode': 'tool',
                         'output_object': None,
                         'output_tools': [
@@ -1147,6 +1149,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'model_request_parameters': {
                         'function_tools': [],
                         'builtin_tools': [],
+                        'model_settings': None,
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],

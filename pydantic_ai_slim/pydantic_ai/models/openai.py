@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
+import io
 import itertools
 import json
 import warnings
@@ -59,9 +60,13 @@ from ..messages import (
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from . import (
+    Batch,
+    BatchError,
+    BatchResult,
+    BatchStatus,
     Model,
     ModelRequestParameters,
     OpenAIChatCompatibleProvider,
@@ -71,6 +76,7 @@ from . import (
     download_item,
     get_user_agent,
 )
+from ._batch_utils import BatchResultBuilder, parse_batch_datetime, validate_batch_complete
 
 try:
     from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, Omit, omit
@@ -125,6 +131,7 @@ __all__ = (
     'OpenAIChatModelSettings',
     'OpenAIResponsesModelSettings',
     'OpenAIModelName',
+    'OpenAIBatch',
 )
 
 OpenAIModelName = str | AllModels
@@ -261,6 +268,51 @@ def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str)
         except ValidationError:
             pass
     return None
+
+
+@dataclass
+class OpenAIBatch(Batch):
+    """OpenAI-specific batch job information.
+
+    Extends the base Batch class with OpenAI-specific fields like file IDs.
+    Use this with `OpenAIChatModel.batch_create()` to submit batch requests
+    at 50% reduced cost.
+
+    Example:
+        ```python test="skip"
+        from pydantic_ai.messages import ModelRequest
+        from pydantic_ai.models import ModelRequestParameters
+        from pydantic_ai.models.openai import OpenAIChatModel
+
+
+        async def main():
+            model = OpenAIChatModel('gpt-4o-mini')
+            requests = [
+                ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
+                ('req-2', [ModelRequest.user_text_prompt('World')], ModelRequestParameters()),
+            ]
+            batch = await model.batch_create(requests)
+            print(f'Batch {batch.id} created with {batch.request_count} requests')
+        ```
+    """
+
+    input_file_id: str = ''
+    """ID of the uploaded JSONL file containing requests."""
+
+    output_file_id: str | None = None
+    """ID of the results file (available when completed)."""
+
+    error_file_id: str | None = None
+    """ID of the errors file (if any requests failed)."""
+
+    endpoint: str = '/v1/chat/completions'
+    """API endpoint for the batch requests."""
+
+    completion_window: str = '24h'
+    """Time window for batch completion."""
+
+    metadata: dict[str, str] | None = None
+    """User-provided metadata for the batch."""
 
 
 class OpenAIChatModelSettings(ModelSettings, total=False):
@@ -1172,6 +1224,445 @@ class OpenAIChatModel(Model):
             ]
         )
         return ChatCompletionContentPartTextParam(text=text, type='text')
+
+    # --- Batch Processing Methods ---
+
+    async def _build_request_params(  # noqa: C901  # pragma: lax no cover
+        self,
+        messages: list[ModelMessage],
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> dict[str, Any]:
+        """Build OpenAI API parameters without making the request.
+
+        This method extracts the parameter-building logic from _completions_create()
+        so it can be reused for both regular requests and batch requests.
+
+        Note: The same logic exists in _completions_create() and is covered there.
+        This method is marked pragma: lax no cover to avoid duplicate coverage requirements.
+
+        Returns:
+            Dictionary of parameters ready for chat.completions.create() or batch.
+        """
+        tools = self._get_tools(model_request_parameters)
+        web_search_options = self._get_web_search_options(model_request_parameters)
+
+        if not tools:
+            tool_choice: Literal['none', 'required', 'auto'] | None = None
+        elif (
+            not model_request_parameters.allow_text_output
+            and OpenAIModelProfile.from_profile(self.profile).openai_supports_tool_choice_required
+        ):
+            tool_choice = 'required'
+        else:
+            tool_choice = 'auto'
+
+        openai_messages = await self._map_messages(messages, model_request_parameters)
+
+        response_format: chat.completion_create_params.ResponseFormat | None = None
+        if model_request_parameters.output_mode == 'native':
+            output_object = model_request_parameters.output_object
+            assert output_object is not None
+            response_format = self._map_json_schema(output_object)
+        elif (
+            model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
+        ):  # pragma: no branch
+            response_format = {'type': 'json_object'}
+
+        # Make a copy to avoid modifying the original
+        settings_copy = dict(model_settings)
+        unsupported_model_settings = OpenAIModelProfile.from_profile(self.profile).openai_unsupported_model_settings
+        for setting in unsupported_model_settings:
+            settings_copy.pop(setting, None)
+
+        # Build parameters dict
+        params: dict[str, Any] = {
+            'model': self.model_name,
+            'messages': openai_messages,
+        }
+
+        if tools:
+            params['tools'] = tools
+        if tool_choice:
+            params['tool_choice'] = tool_choice
+        if response_format:
+            params['response_format'] = response_format
+        if web_search_options:
+            params['web_search_options'] = web_search_options
+
+        # Add model settings
+        if 'parallel_tool_calls' in settings_copy:
+            params['parallel_tool_calls'] = settings_copy['parallel_tool_calls']
+        if 'stop_sequences' in settings_copy:
+            params['stop'] = settings_copy['stop_sequences']
+        if 'max_tokens' in settings_copy:
+            params['max_completion_tokens'] = settings_copy['max_tokens']
+        if 'seed' in settings_copy:
+            params['seed'] = settings_copy['seed']
+        if 'openai_reasoning_effort' in settings_copy:
+            params['reasoning_effort'] = settings_copy['openai_reasoning_effort']
+        if 'openai_user' in settings_copy:
+            params['user'] = settings_copy['openai_user']
+        if 'openai_service_tier' in settings_copy:
+            params['service_tier'] = settings_copy['openai_service_tier']
+        if 'openai_prediction' in settings_copy:
+            params['prediction'] = settings_copy['openai_prediction']
+        if 'temperature' in settings_copy:
+            params['temperature'] = settings_copy['temperature']
+        if 'top_p' in settings_copy:
+            params['top_p'] = settings_copy['top_p']
+        if 'presence_penalty' in settings_copy:
+            params['presence_penalty'] = settings_copy['presence_penalty']
+        if 'frequency_penalty' in settings_copy:
+            params['frequency_penalty'] = settings_copy['frequency_penalty']
+        if 'logit_bias' in settings_copy:
+            params['logit_bias'] = settings_copy['logit_bias']
+        if 'openai_logprobs' in settings_copy:
+            params['logprobs'] = settings_copy['openai_logprobs']
+        if 'openai_top_logprobs' in settings_copy:
+            params['top_logprobs'] = settings_copy['openai_top_logprobs']
+        if 'openai_prompt_cache_key' in settings_copy:
+            params['prompt_cache_key'] = settings_copy['openai_prompt_cache_key']
+        if 'openai_prompt_cache_retention' in settings_copy:
+            params['prompt_cache_retention'] = settings_copy['openai_prompt_cache_retention']
+
+        return params
+
+    async def batch_create(
+        self,
+        requests: Sequence[tuple[str, list[ModelMessage], ModelRequestParameters]],
+        model_settings: ModelSettings | None = None,
+        *,
+        metadata: dict[str, str] | None = None,
+        completion_window: Literal['24h'] = '24h',
+    ) -> OpenAIBatch:
+        """Submit a batch of chat completion requests to OpenAI.
+
+        Batch processing offers 50% cost reduction compared to regular API calls.
+        Batches are processed within the specified completion window (default 24h).
+
+        See [OpenAI Batch API docs](https://platform.openai.com/docs/guides/batch) for details.
+
+        Args:
+            requests: List of (custom_id, messages, parameters) tuples.
+                - custom_id: Unique identifier to match results to requests
+                - messages: Message history for this request
+                - parameters: Tool definitions, output schema, etc.
+            model_settings: Settings applied to all requests in batch.
+            metadata: Optional metadata to attach to the batch.
+            completion_window: Time window for completion ('24h').
+
+        Returns:
+            OpenAIBatch with job information.
+
+        Raises:
+            ValueError: If batch contains fewer than 2 requests.
+
+        Example:
+            ```python test="skip"
+            from pydantic_ai.messages import ModelRequest
+            from pydantic_ai.models import ModelRequestParameters
+            from pydantic_ai.models.openai import OpenAIChatModel
+
+
+            async def main():
+                model = OpenAIChatModel('gpt-4o-mini')
+                requests = [
+                    ('req-1', [ModelRequest.user_text_prompt('Hello')], ModelRequestParameters()),
+                    ('req-2', [ModelRequest.user_text_prompt('World')], ModelRequestParameters()),
+                ]
+                batch = await model.batch_create(requests)
+                return batch
+            ```
+        """
+        check_allow_model_requests()
+
+        if len(requests) < 2:
+            raise ValueError('Batch must contain at least 2 requests')
+
+        # Prepare model settings once
+        base_settings = cast(OpenAIChatModelSettings, model_settings or {})
+
+        # Build JSONL content
+        jsonl_lines: list[str] = []
+        for custom_id, messages, params in requests:
+            # Merge batch-wide settings with per-request settings
+            effective_settings = merge_model_settings(base_settings, params.model_settings)
+
+            # Prepare request parameters using the same logic as regular requests
+            prepared_settings, prepared_params = self.prepare_request(
+                cast(OpenAIChatModelSettings, effective_settings or {}), params
+            )
+
+            # Build request params using shared logic
+            request_params = await self._build_request_params(
+                messages,
+                cast(OpenAIChatModelSettings, prepared_settings or {}),
+                prepared_params,
+            )
+
+            # Format as batch request line
+            batch_request = {
+                'custom_id': custom_id,
+                'method': 'POST',
+                'url': '/v1/chat/completions',
+                'body': request_params,
+            }
+            jsonl_lines.append(json.dumps(batch_request))
+
+        jsonl_content = '\n'.join(jsonl_lines)
+
+        try:
+            # Upload the JSONL file
+            file_obj = await self.client.files.create(
+                file=io.BytesIO(jsonl_content.encode('utf-8')),
+                purpose='batch',
+            )
+
+            # Create the batch job
+            batch_response = await self.client.batches.create(
+                input_file_id=file_obj.id,
+                endpoint='/v1/chat/completions',
+                completion_window=completion_window,
+                metadata=metadata,
+            )
+        except APIStatusError as e:
+            if e.status_code >= 400:
+                raise ModelHTTPError(status_code=e.status_code, model_name=self.model_name, body=e.body) from e
+            raise  # pragma: no cover
+        except APIConnectionError as e:
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+
+        return self._parse_batch_response(batch_response)
+
+    async def batch_status(self, batch: Batch) -> OpenAIBatch:
+        """Get current status of an OpenAI batch job.
+
+        Args:
+            batch: Batch object from batch_create() or previous batch_status().
+
+        Returns:
+            Updated OpenAIBatch object with current status.
+        """
+        check_allow_model_requests()
+
+        try:
+            batch_response = await self.client.batches.retrieve(batch.id)
+        except APIStatusError as e:
+            if e.status_code >= 400:
+                raise ModelHTTPError(status_code=e.status_code, model_name=self.model_name, body=e.body) from e
+            raise  # pragma: no cover
+        except APIConnectionError as e:
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+
+        return self._parse_batch_response(batch_response)
+
+    async def batch_results(self, batch: Batch) -> list[BatchResult]:
+        """Retrieve results from a completed OpenAI batch.
+
+        This method downloads the output file, parses each result,
+        and converts responses using the same `_process_response()` logic
+        used for regular API calls.
+
+        Args:
+            batch: Batch object that has is_complete=True.
+
+        Returns:
+            List of BatchResult objects, one per request in the batch.
+
+        Raises:
+            ValueError: If batch is not complete.
+            TypeError: If batch is not an OpenAIBatch.
+        """
+        check_allow_model_requests()
+
+        validate_batch_complete(batch, 'retrieve results')
+
+        if not isinstance(batch, OpenAIBatch):  # pragma: no cover
+            raise TypeError(f'Expected OpenAIBatch, got {type(batch).__name__}')
+
+        builder = BatchResultBuilder()
+
+        # Download and parse output file
+        if batch.output_file_id:
+            content = await self._fetch_batch_file(batch.output_file_id)
+            self._parse_batch_output_content(content, builder)
+
+        # Check error file for requests that failed validation/processing.
+        # OpenAI may include errors in the output file (inline with results) OR in a separate
+        # error file. BatchResultBuilder tracks processed_ids to avoid duplicates when both files exist.
+        # See: https://platform.openai.com/docs/guides/batch#4-check-the-status-of-a-batch
+        if batch.error_file_id:  # pragma: lax no cover
+            error_content = await self._fetch_batch_file(batch.error_file_id)
+            self._parse_batch_error_content(error_content, builder)
+
+        # Clean up batch files to avoid storage leaks
+        await self._cleanup_batch_files(batch)
+
+        return builder.results
+
+    async def _fetch_batch_file(self, file_id: str) -> str:
+        """Fetch content of a batch file from OpenAI."""
+        try:
+            response = await self.client.files.content(file_id)
+            return response.text
+        except APIStatusError as e:
+            if e.status_code >= 400:
+                raise ModelHTTPError(status_code=e.status_code, model_name=self.model_name, body=e.body) from e
+            raise  # pragma: no cover
+        except APIConnectionError as e:
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+
+    async def _cleanup_batch_files(self, batch: Batch) -> None:  # pragma: no cover
+        """Clean up batch files from OpenAI storage to avoid leaks.
+
+        This is called after retrieving results or cancelling a batch.
+        File deletion failures are silently ignored (best-effort cleanup).
+        """
+        if not isinstance(batch, OpenAIBatch):
+            return
+
+        file_ids = [batch.input_file_id, batch.output_file_id, batch.error_file_id]
+        for file_id in file_ids:
+            if file_id:
+                try:
+                    await self.client.files.delete(file_id)
+                except Exception:
+                    # Ignore cleanup failures - file might not exist or lack permissions
+                    pass
+
+    def _parse_batch_output_content(self, content: str, builder: BatchResultBuilder) -> None:
+        """Parse batch output file content and add results to builder."""
+        for line in content.strip().split('\n'):
+            if not line:
+                continue
+
+            try:
+                result_data = json.loads(line)
+            except json.JSONDecodeError as e:
+                builder.add_error(
+                    f'parse_error_{len(builder.results)}',
+                    BatchError(code='json_parse_error', message=f'Failed to parse result line: {e}'),
+                    skip_duplicate=False,  # Parse errors always get added
+                )
+                continue
+
+            # Reject entries with missing/empty custom_id
+            custom_id = str(result_data.get('custom_id', ''))
+            if not custom_id:
+                builder.add_error(
+                    f'missing_id_{len(builder.results)}',
+                    BatchError(code='missing_custom_id', message='Result has missing or empty custom_id'),
+                    skip_duplicate=False,
+                )
+                continue
+
+            # Check for top-level error (batch-level failures)
+            if result_data.get('error'):
+                builder.add_error_from_dict(custom_id, result_data)
+            else:
+                # Check for per-request failures (status_code >= 400)
+                response = result_data.get('response', {})
+                status_code = response.get('status_code')
+                response_body = response.get('body', {})
+
+                if isinstance(status_code, int) and status_code >= 400:
+                    # This is an inline per-request error (4xx/5xx)
+                    error_body = response_body.get('error', {})
+                    error_message = error_body.get('message', 'Request failed')
+                    error_type = error_body.get('type', 'api_error')
+                    error_code = error_body.get('code', str(status_code))
+                    builder.add_error(
+                        custom_id,
+                        BatchError(code=error_code, message=f'{error_type}: {error_message}'),
+                    )
+                else:
+                    # Success case - validate and process response
+                    try:
+                        chat_completion = chat.ChatCompletion.model_validate(response_body)
+                        model_response = self._process_response(chat_completion)
+                        builder.add_success(custom_id, model_response)
+                    except ValidationError as e:
+                        builder.add_error(
+                            custom_id,
+                            BatchError(code='validation_error', message=f'Failed to validate response: {e}'),
+                        )
+
+    def _parse_batch_error_content(self, content: str, builder: BatchResultBuilder) -> None:  # pragma: lax no cover
+        """Parse batch error file content and add results for unprocessed IDs."""
+        for line in content.strip().split('\n'):
+            if not line:
+                continue
+
+            try:
+                error_data = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # Skip malformed error lines
+
+            custom_id = str(error_data.get('custom_id', ''))
+            # BatchResultBuilder handles duplicate detection automatically
+            builder.add_error_from_dict(custom_id, error_data)
+
+    async def batch_cancel(self, batch: Batch) -> OpenAIBatch:
+        """Cancel an OpenAI batch job.
+
+        Args:
+            batch: Batch object to cancel.
+
+        Returns:
+            Updated OpenAIBatch object with cancellation status.
+        """
+        check_allow_model_requests()
+
+        try:
+            batch_response = await self.client.batches.cancel(batch.id)
+        except APIStatusError as e:
+            if e.status_code >= 400:
+                raise ModelHTTPError(status_code=e.status_code, model_name=self.model_name, body=e.body) from e
+            raise  # pragma: no cover
+        except APIConnectionError as e:
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+
+        # Clean up batch files after cancellation
+        await self._cleanup_batch_files(batch)
+
+        return self._parse_batch_response(batch_response)
+
+    def _parse_batch_response(self, response: Any) -> OpenAIBatch:
+        """Convert OpenAI batch response to OpenAIBatch object."""
+        # Map OpenAI status to our normalized enum
+        status_map: dict[str, BatchStatus] = {
+            'validating': BatchStatus.VALIDATING,
+            'failed': BatchStatus.FAILED,
+            'in_progress': BatchStatus.IN_PROGRESS,
+            'finalizing': BatchStatus.FINALIZING,
+            'completed': BatchStatus.COMPLETED,
+            'expired': BatchStatus.EXPIRED,
+            'cancelling': BatchStatus.CANCELLING,
+            'cancelled': BatchStatus.CANCELLED,
+        }
+
+        # Extract request counts safely using getattr
+        request_counts = response.request_counts
+        request_count = getattr(request_counts, 'total', 0) or 0
+        completed_count = getattr(request_counts, 'completed', 0) or 0
+        failed_count = getattr(request_counts, 'failed', 0) or 0
+
+        return OpenAIBatch(
+            id=response.id,
+            status=status_map.get(response.status, BatchStatus.PENDING),
+            created_at=parse_batch_datetime(response.created_at) or _now_utc(),
+            completed_at=parse_batch_datetime(response.completed_at),
+            request_count=request_count,
+            completed_count=completed_count,
+            failed_count=failed_count,
+            input_file_id=response.input_file_id,
+            output_file_id=response.output_file_id,
+            error_file_id=response.error_file_id,
+            endpoint=response.endpoint,
+            completion_window=response.completion_window,
+            metadata=response.metadata,
+        )
 
 
 @deprecated(

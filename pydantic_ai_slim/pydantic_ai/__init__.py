@@ -93,6 +93,8 @@ from .messages import (
     VideoMediaType,
     VideoUrl,
 )
+from .models import Batch, BatchCapable, BatchError, BatchResult, BatchStatus, ModelRequestParameters, supports_batch
+from .models.batch import BatchModel
 from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
 from .profiles import (
     DEFAULT_PROFILE,
@@ -246,6 +248,15 @@ __all__ = (
     'format_as_xml',
     # settings
     'ModelSettings',
+    # models (batch processing)
+    'Batch',
+    'BatchCapable',
+    'BatchError',
+    'BatchModel',
+    'BatchResult',
+    'BatchStatus',
+    'ModelRequestParameters',
+    'supports_batch',
     # usage
     'RunUsage',
     'RequestUsage',
