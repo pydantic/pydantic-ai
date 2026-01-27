@@ -493,17 +493,17 @@ class GroqModel(Model):
                     tool_call_id=_guard_tool_call_id(t=part),
                     content=part.model_response_str(),
                 )
-            elif isinstance(part, RetryPromptPart):  # pragma: no branch
+            elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
-                    yield chat.ChatCompletionUserMessageParam(  # pragma: no cover
-                        role='user', content=part.model_response()
-                    )
+                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
                 else:
                     yield chat.ChatCompletionToolMessageParam(
                         role='tool',
                         tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
+            else:
+                assert_never(part)
 
     @staticmethod
     def _map_user_prompt(part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:
