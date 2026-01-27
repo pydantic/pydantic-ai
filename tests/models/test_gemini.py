@@ -25,7 +25,6 @@ from pydantic_ai import (
     ModelResponse,
     ModelRetry,
     RetryPromptPart,
-    SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -678,7 +677,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
     ]
     gemini_client = get_gemini_client(responses)
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
-    agent = Agent(m, system_prompt='this is the system prompt')
+    agent = Agent(m, instructions='this is the system prompt')
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
@@ -695,9 +694,9 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
@@ -722,6 +721,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
@@ -753,6 +753,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                         tool_call_id=IsStr(),
                     ),
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
@@ -779,7 +780,7 @@ async def test_unexpected_response(client_with_handler: ClientWithHandler, env: 
 
     gemini_client = client_with_handler(handler)
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
-    agent = Agent(m, system_prompt='this is the system prompt')
+    agent = Agent(m, instructions='this is the system prompt')
 
     with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('Hello')
@@ -1225,9 +1226,47 @@ async def test_image_as_binary_content_tool_response(
                 run_id=IsStr(),
             ),
             ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_image',
+                        args={'parameters': {}},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=33, output_tokens=181, details={'thoughts_tokens': 168, 'text_prompt_tokens': 33}
+                ),
+                model_name='gemini-3-pro-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content=[
+                            {
+                                'type': 'extra_forbidden',
+                                'loc': ('parameters',),
+                                'msg': 'Extra inputs are not permitted',
+                                'input': {},
+                            }
+                        ],
+                        tool_name='get_image',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(
-                    input_tokens=33, output_tokens=155, details={'thoughts_tokens': 145, 'text_prompt_tokens': 33}
+                    input_tokens=130, output_tokens=1221, details={'thoughts_tokens': 1211, 'text_prompt_tokens': 130}
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -1258,15 +1297,27 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content='6'),
+                    TextPart(content='1'),
                     TextPart(
-                        content='The fruit in the image is a **kiwi** (specifically, a cross-section showing its green flesh, black seeds, and white core).'
+                        content="""\
+AM
+
+The fruit in the image is a **kiwi**. It is sliced in half, showing its bright green flesh, small black seeds, and white core.
+
+Would you like to know more about kiwis, such as their nutritional benefits?
+
+**Source:**
+- *Image generated from tool output.*\
+"""
+                    ),
+                    TextPart(
+                        content='The fruit in the image is a **kiwi** (or kiwifruit). It shows the cross-section of a sliced kiwi, featuring its characteristic bright green flesh, ring of small black seeds, and white center core, surrounded by fuzzy brown skin.'
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1166,
-                    output_tokens=215,
-                    details={'thoughts_tokens': 184, 'image_prompt_tokens': 1088, 'text_prompt_tokens': 78},
+                    input_tokens=1263,
+                    output_tokens=116,
+                    details={'image_prompt_tokens': 1088, 'text_prompt_tokens': 175},
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -1318,36 +1369,49 @@ async def test_image_url_input(allow_model_requests: None, gemini_api_key: str) 
 async def test_video_as_binary_content_input(
     allow_model_requests: None, gemini_api_key: str, video_content: BinaryContent
 ) -> None:
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     result = await agent.run(['Explain me this video', video_content])
     assert result.output.strip() == snapshot(
-        "That's a picture of a small, portable monitor attached to a camera, likely used for filming. The monitor displays a scene of a canyon or similar rocky landscape.  This suggests the camera is being used to film this landscape. The camera itself is mounted on a tripod, indicating a stable and likely professional setup.  The background is out of focus, but shows the same canyon as seen on the monitor. This makes it clear that the image shows the camera's viewfinder or recording output, rather than an unrelated display."
+        """\
+The video at 0:00 shows a **professional camera setup** in a stunning natural landscape, likely a desert or mountainous canyon area.
+
+Here's a breakdown:
+
+1.  **Foreground (Left):** A **camera is mounted on a tripod**. Attached to the camera setup is a prominent **external monitor**.
+2.  **On the Monitor:** The monitor is displaying the **live feed or a recorded shot from the camera**. It shows a captivating scene: a winding dirt path or road leading through a rugged canyon or rocky terrain. The light in the shot is warm and golden, suggesting either sunrise or sunset, with distant mountains illuminated.
+3.  **Background (Right & Surrounding):** The camera itself is placed in a very similar environment to what's displayed on its monitor. The background is softly blurred (shallow depth of field), but you can discern the warm, earthy tones of a vast, open landscape with what looks like a road or path extending into the distance, surrounded by natural rock formations or hills. The lighting in the actual environment also appears to be soft and golden, matching the scene on the monitor.
+
+**In essence, the image is a "behind-the-scenes" shot, showing a videographer or photographer actively capturing beautiful outdoor scenery, with the external monitor providing a clear view of the shot being composed or recorded.** The scene on the monitor almost perfectly mirrors the environment the camera is in, emphasizing the art of landscape videography/photography.\
+"""
     )
 
 
 @pytest.mark.vcr()
 async def test_video_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     video_url = VideoUrl(url='https://data.grepit.app/assets/tiny_video.mp4')
 
     result = await agent.run(['Explain me this video', video_url])
     assert result.output.strip() == snapshot(
-        """That's a lovely picture!  It shows a picturesque outdoor cafe or restaurant situated in a narrow, whitewashed alleyway.
+        """\
+This video is a beautiful, static shot (or appears to be a still image) of a picturesque Mediterranean scene.
 
+Here's a breakdown:
 
-Here's a breakdown of what we see:
+*   **Setting:** It depicts a narrow, charming alleyway or street, likely in a coastal town or island.
+*   **Architecture:** The buildings on both sides are traditional, whitewashed stucco, characteristic of Cycladic architecture often found in the Greek islands. There are minimal details on the walls, with some simple light fixtures on the left and a blue-painted window frame on the right.
+*   **Cafe/Restaurant:** Along the left side of the alley, several rustic wooden tables and chairs are set up, suggesting an outdoor cafe or restaurant. On the far left wall, there are also some woven baskets hanging or placed.
+*   **Pathway:** The ground is paved with a distinctive pattern of light-colored stones, adding to the quaint aesthetic.
+*   **The Sea View:** The alley opens up directly to a stunning view of the sea. The water is a vibrant blue, with noticeable waves gently breaking.
+*   **Horizon:** In the distance, across the sparkling water, another landmass or island can be seen under a clear, bright blue sky.
+*   **Atmosphere:** The overall impression is one of serenity, beauty, and a quintessential Mediterranean vacation spot, perfect for enjoying a meal or drink with a breathtaking ocean view.
 
-* **Location:** The cafe is nestled between two white buildings, typical of Greek island architecture (possibly Mykonos or a similar island, judging by the style).  The alleyway opens up to a view of the Aegean Sea, which is visible in the background. The sea appears somewhat choppy.
-
-* **Setting:** The cafe has several wooden tables and chairs set out along the alley. The tables are simple and seem to be made of light-colored wood. There are cushions on a built-in bench along one wall providing seating. Small potted plants are on some tables, adding to the ambiance. The cobblestone ground in the alley adds to the charming, traditional feel.
-
-* **Atmosphere:** The overall feel is relaxed and serene, despite the somewhat windy conditions indicated by the sea. The bright white buildings and the blue sea create a classic Mediterranean vibe. The picture evokes a sense of calmness and escape.
-
-In short, the image depicts an idyllic scene of a charming seaside cafe in a picturesque Greek island setting."""
+It strongly evokes places like Mykonos or Santorini in Greece, known for their iconic white buildings and narrow pathways leading to the sea.\
+"""
     )
 
 
@@ -1375,7 +1439,7 @@ async def test_gemini_drop_exclusive_maximum(allow_model_requests: None, gemini_
     assert result.output == snapshot('Your Chinese zodiac is Dragon.\n')
 
     result = await agent.run('I want to know my chinese zodiac. I am 17 years old.')
-    assert result.output == snapshot('I am sorry, I cannot fulfill this request. The age needs to be greater than 18.')
+    assert result.output == snapshot('I am sorry, I cannot fulfill this request. The age must be greater than 18.')
 
 
 @pytest.mark.vcr()
@@ -1439,7 +1503,9 @@ async def test_gemini_additional_properties_is_true(allow_model_requests: None, 
         return 20.0
 
     result = await agent.run('What is the temperature in Tokyo?')
-    assert result.output == snapshot('I need the latitude and longitude for Tokyo. Can you please provide them?')
+    assert result.output == snapshot(
+        "I'm sorry, I'm having trouble getting the temperature for Tokyo. Can you please try again?"
+    )
 
 
 @pytest.mark.vcr()
@@ -1794,7 +1860,7 @@ It's the capital of Mexico and one of the largest metropolitan areas in the worl
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='TT9IaNfGN_DmqtsPzKnE4AE',
+                provider_response_id=IsStr(),
                 run_id=IsStr(),
             ),
         ]
