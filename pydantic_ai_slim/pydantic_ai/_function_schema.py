@@ -43,7 +43,7 @@ class FunctionSchema:
     takes_ctx: bool
     is_async: bool
     single_arg_name: str | None = None
-    positional_fields: list[str] = field(default_factory=list)
+    positional_fields: list[str] = field(default_factory=list[str])
     var_positional_field: str | None = None
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
