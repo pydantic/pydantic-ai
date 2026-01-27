@@ -686,3 +686,19 @@ async def test_openrouter_document_url_no_force_download(
             'type': 'file',
         }
     )
+
+
+async def test_openrouter_kimi_k2_5(allow_model_requests: None, openrouter_api_key: str) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('moonshotai/kimi-k2.5', provider=provider)
+    response = await model_request(model, [ModelRequest.user_text_prompt('What is 2+2? Answer with just the number.')])
+    text_part = cast(TextPart, response.parts[0])
+    assert '4' in text_part.content
+
+
+async def test_openrouter_qwen3_235b(allow_model_requests: None, openrouter_api_key: str) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('qwen/qwen3-235b-a22b', provider=provider)
+    response = await model_request(model, [ModelRequest.user_text_prompt('What is 2+2? Answer with just the number.')])
+    text_part = cast(TextPart, response.parts[0])
+    assert '4' in text_part.content

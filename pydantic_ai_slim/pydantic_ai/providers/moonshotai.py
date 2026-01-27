@@ -26,6 +26,7 @@ MoonshotAIModelName = Literal[
     'kimi-latest',
     'kimi-thinking-preview',
     'kimi-k2-0711-preview',
+    'kimi-k2.5-preview',
 ]
 
 
