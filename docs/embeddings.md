@@ -455,7 +455,7 @@ embedder = Embedder(
 
 If you need more control over model initialization:
 
-```python {title="sentence_transformers_instance.py"}
+```python {title="sentence_transformers_instance.py" test="skip"}
 from sentence_transformers import SentenceTransformer
 
 from pydantic_ai import Embedder
