@@ -412,6 +412,7 @@ def test_logfire(
                             'data_points': [
                                 {
                                     'attributes': {
+                                        'gen_ai.provider.name': 'test',
                                         'gen_ai.system': 'test',
                                         'gen_ai.operation.name': 'chat',
                                         'gen_ai.request.model': 'test',
@@ -436,6 +437,7 @@ def test_logfire(
                                 },
                                 {
                                     'attributes': {
+                                        'gen_ai.provider.name': 'test',
                                         'gen_ai.system': 'test',
                                         'gen_ai.operation.name': 'chat',
                                         'gen_ai.request.model': 'test',
@@ -532,6 +534,7 @@ def test_logfire(
     assert chat_span_attributes == snapshot(
         {
             'gen_ai.operation.name': 'chat',
+            'gen_ai.provider.name': 'test',
             'gen_ai.system': 'test',
             'gen_ai.request.model': 'test',
             'model_request_parameters': IsJson(
@@ -565,6 +568,7 @@ def test_logfire(
                     }
                 )
             ),
+            'gen_ai.tool.definitions': '[{"type": "function", "name": "my_ret", "parameters": {"additionalProperties": false, "properties": {"x": {"type": "integer"}}, "required": ["x"], "type": "object"}}]',
             'logfire.json_schema': IsJson(),
             'logfire.span_type': 'span',
             'logfire.msg': 'chat test',
@@ -1010,6 +1014,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
     assert chat_span_attributes == snapshot(
         {
             'gen_ai.operation.name': 'chat',
+            'gen_ai.provider.name': 'test',
             'gen_ai.system': 'test',
             'gen_ai.request.model': 'test',
             'model_request_parameters': IsJson(
@@ -1043,6 +1048,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                     }
                 )
             ),
+            'gen_ai.tool.definitions': '[{"type": "function", "name": "final_result", "description": "The final response which ends this conversation", "parameters": {"properties": {"content": {"type": "string"}}, "required": ["content"], "title": "MyOutput", "type": "object"}}]',
             'logfire.span_type': 'span',
             'logfire.msg': 'chat test',
             'gen_ai.input.messages': IsJson(snapshot([{'role': 'user', 'parts': [{'type': 'text'}]}])),
@@ -1135,6 +1141,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                 'end_time': 3000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
+                    'gen_ai.provider.name': 'test',
                     'gen_ai.system': 'test',
                     'gen_ai.request.model': 'test',
                     'model_request_parameters': {

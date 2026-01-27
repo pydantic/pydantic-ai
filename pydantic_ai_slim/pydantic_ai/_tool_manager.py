@@ -33,7 +33,7 @@ class ToolManager(Generic[AgentDepsT]):
     """The agent run context for a specific run step."""
     tools: dict[str, ToolsetTool[AgentDepsT]] | None = None
     """The cached tools for this run step."""
-    failed_tools: set[str] = field(default_factory=set)
+    failed_tools: set[str] = field(default_factory=set[str])
     """Names of tools that failed in this run step."""
     default_max_retries: int = 1
     """Default number of times to retry a tool"""
