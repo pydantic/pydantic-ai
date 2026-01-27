@@ -125,7 +125,7 @@ def sanitize_filename(name: str, max_len: int) -> str:
 
 
 @customize_repr
-def _(value: bytes):  # pragma: lax no cover
+def _(value: bytes):  # pragma: no cover
     """Use IsBytes() for large byte sequences in snapshots."""
     if len(value) > SNAPSHOT_BYTES_COLLAPSE_THRESHOLD:
         return 'IsBytes()'
@@ -133,7 +133,7 @@ def _(value: bytes):  # pragma: lax no cover
 
 
 @customize_repr
-def _(value: datetime):  # pragma: lax no cover
+def _(value: datetime):  # pragma: no cover
     """Use IsDatetime() for datetime values in snapshots."""
     return 'IsDatetime()'
 
@@ -513,7 +513,7 @@ def bedrock_provider():
         from pydantic_ai.providers.bedrock import BedrockProvider
 
         bearer_token = os.getenv('AWS_BEARER_TOKEN_BEDROCK')
-        if bearer_token:  # pragma: lax no cover
+        if bearer_token:  # pragma: no cover
             provider = BedrockProvider(
                 api_key=bearer_token,
                 region_name=os.getenv('AWS_REGION', 'us-east-1'),

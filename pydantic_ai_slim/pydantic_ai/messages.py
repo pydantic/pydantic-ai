@@ -863,7 +863,7 @@ class BaseToolReturnPart:
 
     def has_content(self) -> bool:
         """Return `True` if the tool return has content."""
-        return self.content is not None  # pragma: lax no cover
+        return self.content is not None  # pragma: no cover
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -1570,7 +1570,7 @@ class TextPartDelta:
             ValueError: If `part` is not a `TextPart`.
         """
         if not isinstance(part, TextPart):
-            raise ValueError('Cannot apply TextPartDeltas to non-TextParts')  # pragma: lax no cover
+            raise ValueError('Cannot apply TextPartDeltas to non-TextParts')  # pragma: no cover
         return replace(
             part,
             content=part.content + self.content_delta,
@@ -1670,7 +1670,7 @@ class ThinkingPartDelta:
 
                         part = replace(part, provider_details=chained_both)
                     else:
-                        part = replace(part, provider_details=self.provider_details)  # pragma: lax no cover
+                        part = replace(part, provider_details=self.provider_details)  # pragma: no cover
                 elif callable(part.provider_details):
                     existing_fn = part.provider_details
                     new_dict = self.provider_details
@@ -1683,7 +1683,7 @@ class ThinkingPartDelta:
                     existing = part.provider_details if isinstance(part.provider_details, dict) else {}
                     part = replace(part, provider_details={**existing, **self.provider_details})
             return part
-        raise ValueError(  # pragma: lax no cover
+        raise ValueError(  # pragma: no cover
             f'Cannot apply ThinkingPartDeltas to non-ThinkingParts or non-ThinkingPartDeltas ({part=}, {self=})'
         )
 
@@ -1969,7 +1969,7 @@ class FunctionToolCallEvent:
     @deprecated('`call_id` is deprecated, use `tool_call_id` instead.')
     def call_id(self) -> str:
         """An ID used for matching details about the call to its result."""
-        return self.part.tool_call_id  # pragma: lax no cover
+        return self.part.tool_call_id  # pragma: no cover
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
