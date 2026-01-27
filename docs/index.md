@@ -1,7 +1,7 @@
 ---
-title: "Pydantic AI: Python Agent Framework for GenAI"
-description: "Build production-grade GenAI apps with Pydantic AI. A Python agent framework offering strict type safety, structured output validation, and LLM integration."
+title: Pydantic AI
 ---
+
 # Pydantic AI {.hide}
 
 --8<-- "docs/.partials/index-header.html"
@@ -208,7 +208,7 @@ support_agent = Agent(
     'openai:gpt-5',
     deps_type=SupportDependencies,
     output_type=SupportOutput,
-    system_prompt=(
+    instructions=(
         'You are a support agent in our bank, give the '
         'customer support and judge the risk level of their query.'
     ),

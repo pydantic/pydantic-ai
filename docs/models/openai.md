@@ -1,7 +1,3 @@
----
-title: "Pydantic AI: OpenAI Models & Configuration"
-description: "Seamlessly integrate OpenAI with Pydantic AI. Configure API keys, base URLs, and model settings for GPT-4o using the OpenAIModel class for Python agents."
----
 # OpenAI
 
 ## Install
@@ -454,34 +450,6 @@ from pydantic_ai.providers.vercel import VercelProvider
 model = OpenAIChatModel(
     'anthropic/claude-4-sonnet',
     provider=VercelProvider(api_key='your-vercel-ai-gateway-api-key'),
-)
-agent = Agent(model)
-...
-```
-
-### Grok (xAI)
-
-Go to [xAI API Console](https://console.x.ai/) and create an API key.
-
-You can set the `GROK_API_KEY` environment variable and use [`GrokProvider`][pydantic_ai.providers.grok.GrokProvider] by name:
-
-```python
-from pydantic_ai import Agent
-
-agent = Agent('grok:grok-2-1212')
-...
-```
-
-Or initialise the model and provider directly:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.grok import GrokProvider
-
-model = OpenAIChatModel(
-    'grok-2-1212',
-    provider=GrokProvider(api_key='your-xai-api-key'),
 )
 agent = Agent(model)
 ...

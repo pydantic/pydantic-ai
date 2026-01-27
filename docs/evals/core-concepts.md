@@ -1,7 +1,3 @@
----
-title: "Pydantic Evals: Core Concepts"
-description: "Understand the fundamental architecture of Pydantic Evals. Learn about evaluators, datasets, and the logic behind effective AI performance testing."
----
 # Core Concepts
 
 This page explains the key concepts in Pydantic Evals and how they work together.

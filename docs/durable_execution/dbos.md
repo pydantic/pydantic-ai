@@ -1,7 +1,3 @@
----
-title: "Pydantic AI: Durable Execution with DBOS"
-description: "Implement durable execution for AI agents using DBOS. Ensure reliable, stateful agent workflows that can recover from crashes and handle long tasks."
----
 # Durable Execution with DBOS
 
 [DBOS](https://www.dbos.dev/) is a lightweight [durable execution](https://docs.dbos.dev/architecture) library natively integrated with Pydantic AI.
