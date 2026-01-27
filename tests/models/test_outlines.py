@@ -649,15 +649,6 @@ def test_input_format(transformers_multimodal_model: OutlinesModel, binary_image
     with pytest.raises(UserError, match='Tool calls are not supported for Outlines models yet.'):
         agent.run_sync('How are you doing?', message_history=tool_call_message_history)
 
-    # unsupported: tool returns
-    tool_return_message_history: list[ModelMessage] = [
-        ModelRequest(
-            parts=[ToolReturnPart(tool_name='get_location', content='London', tool_call_id='1')], timestamp=IsDatetime()
-        )
-    ]
-    with pytest.raises(UserError, match='Tool calls are not supported for Outlines models yet.'):
-        agent.run_sync('How are you doing?', message_history=tool_return_message_history)
-
     # unsupported: non-image file parts
     file_part_message_history: list[ModelMessage] = [
         ModelResponse(parts=[FilePart(content=BinaryContent(data=b'test', media_type='text/plain'))])

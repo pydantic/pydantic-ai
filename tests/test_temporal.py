@@ -2101,6 +2101,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
+                ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
                 ModelRequest(
                     parts=[
                         ToolReturnPart(

@@ -593,9 +593,14 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 # So we call `process_tool_calls` directly and then end the run with the found final result.
 
                                 parts: list[_messages.ModelRequestPart] = []
+                                tool_call_groups = _agent_graph.model_response_to_tool_call_groups(
+                                    graph_ctx.deps.tool_manager, stream.response, graph_ctx.deps.end_strategy
+                                )
+
                                 async for _event in _agent_graph.process_tool_calls(
                                     tool_manager=graph_ctx.deps.tool_manager,
-                                    tool_calls=stream.response.tool_calls,
+                                    tool_call_groups=tool_call_groups,
+                                    resume_tool_group=None,
                                     tool_call_results=None,
                                     tool_call_metadata=None,
                                     final_result=final_result,
@@ -604,14 +609,35 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 ):
                                     pass
 
-                                # To allow this message history to be used in a future run without dangling tool calls,
-                                # append a new ModelRequest using the tool returns and retries
-                                if parts:
-                                    messages.append(
-                                        _messages.ModelRequest(
-                                            parts, run_id=graph_ctx.state.run_id, timestamp=_utils.now_utc()
+                                # The `process_tool_calls` call may fail to run all calls due to deferred tool calls.
+                                # In streaming mode, when this happens, all the remaining calls are skipped
+                                # even when end_strategy=exhaustive.
+
+                                requested_tool_calls = {
+                                    tool_call.tool_call_id: tool_call
+                                    for group in tool_call_groups
+                                    for tool_call in group.tool_calls
+                                }
+                                found_tool_call_ids = {
+                                    part.tool_call_id
+                                    for part in parts
+                                    if isinstance(part, _messages.ToolReturnPart | _messages.RetryPromptPart)
+                                }
+
+                                missing_tool_calls = requested_tool_calls.keys() - found_tool_call_ids
+                                for tool_call_id in missing_tool_calls:
+                                    tool_call = requested_tool_calls[tool_call_id]
+                                    parts.append(
+                                        _messages.ToolReturnPart(
+                                            tool_name=tool_call.tool_name,
+                                            content='Tool not executed - a final result was already processed.',
+                                            tool_call_id=tool_call.tool_call_id,
                                         )
                                     )
+
+                                _agent_graph.handle_final_result_after_tool_call(
+                                    graph_ctx, final_result, parts, messages=messages
+                                )
 
                                 await agent_run.next(_agent_graph.SetFinalResult(final_result))
 

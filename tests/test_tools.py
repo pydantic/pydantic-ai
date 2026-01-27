@@ -1391,6 +1391,7 @@ def test_tool_raises_approval_required():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
+            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
@@ -1644,6 +1645,262 @@ def test_mixed_deferred_tools_with_metadata():
         ),
     )
     assert result.output == 'Done!'
+
+
+def test_mixed_deferred_and_output_exhaustive_deferred_first():
+    class MyOutput(BaseModel):
+        value: str
+
+    tool_calls: list[int] = []
+
+    def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(
+            parts=[
+                ToolCallPart('deferred_tool', {'x': 1}, tool_call_id='deferred_tool'),
+                ToolCallPart('final_result', {'value': 'final'}, tool_call_id='final_result'),
+            ],
+        )
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=[MyOutput, DeferredToolRequests],
+        end_strategy='exhaustive',
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def deferred_tool(x: int) -> int:
+        tool_calls.append(x)
+        return x * 2
+
+    result = agent.run_sync('test exhaustive output tool with deferred tool')
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='deferred_tool', args={'x': 1}, tool_call_id='deferred_tool')]
+        )
+    )
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='test exhaustive output tool with deferred tool', timestamp=IsDatetime())
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='deferred_tool', args={'x': 1}, tool_call_id='deferred_tool'),
+                    ToolCallPart(tool_name='final_result', args={'value': 'final'}, tool_call_id='final_result'),
+                ],
+                usage=RequestUsage(input_tokens=57, output_tokens=9),
+                model_name='function:return_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
+        ]
+    )
+
+    result = agent.run_sync(
+        message_history=messages, deferred_tool_results=DeferredToolResults(approvals={'deferred_tool': ToolApproved()})
+    )
+    assert result.output == snapshot(MyOutput(value='final'))
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='test exhaustive output tool with deferred tool', timestamp=IsDatetime())
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='deferred_tool', args={'x': 1}, tool_call_id='deferred_tool'),
+                    ToolCallPart(tool_name='final_result', args={'value': 'final'}, tool_call_id='final_result'),
+                ],
+                usage=RequestUsage(input_tokens=57, output_tokens=9),
+                model_name='function:return_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='deferred_tool', content=2, tool_call_id='deferred_tool', timestamp=IsDatetime()
+                    ),
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='final_result',
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_mixed_deferred_and_output_exhaustive_output_first():
+    class MyOutput(BaseModel):
+        value: str
+
+    tool_calls: list[int] = []
+
+    def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(
+            parts=[
+                ToolCallPart('final_result', {'value': 'final'}, tool_call_id='final_result'),
+                ToolCallPart('deferred_tool', {'x': 1}, tool_call_id='deferred_tool'),
+            ],
+        )
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=[MyOutput, DeferredToolRequests],
+        end_strategy='exhaustive',
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def deferred_tool(x: int) -> int:
+        tool_calls.append(x)
+        return x * 2
+
+    result = agent.run_sync('test exhaustive output tool with deferred tool')
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='deferred_tool', args={'x': 1}, tool_call_id='deferred_tool')]
+        )
+    )
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='test exhaustive output tool with deferred tool', timestamp=IsDatetime())
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='final_result', args={'value': 'final'}, tool_call_id='final_result'),
+                    ToolCallPart(tool_name='deferred_tool', args={'x': 1}, tool_call_id='deferred_tool'),
+                ],
+                usage=RequestUsage(input_tokens=57, output_tokens=9),
+                model_name='function:return_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content=MyOutput(value='final'),
+                        tool_call_id='final_result',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    result = agent.run_sync(
+        message_history=messages, deferred_tool_results=DeferredToolResults(approvals={'deferred_tool': ToolApproved()})
+    )
+    assert result.output == snapshot(MyOutput(value='final'))
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='test exhaustive output tool with deferred tool', timestamp=IsDatetime())
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='final_result', args={'value': 'final'}, tool_call_id='final_result'),
+                    ToolCallPart(tool_name='deferred_tool', args={'x': 1}, tool_call_id='deferred_tool'),
+                ],
+                usage=RequestUsage(input_tokens=57, output_tokens=9),
+                model_name='function:return_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='final_result',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='deferred_tool', content=2, tool_call_id='deferred_tool', timestamp=IsDatetime()
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_error_on_missing_deferred_tool_results():
+    tool_calls: list[int] = []
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart('external_tool', {'x': 1}, tool_call_id='external_tool'),
+                ToolCallPart('function_tool', {'x': 2}, tool_call_id='function_tool'),
+            ]
+        )
+
+    external_toolset = ExternalToolset(
+        [
+            ToolDefinition(
+                name='external_tool',
+                description='',
+                parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
+            ),
+        ]
+    )
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests], toolsets=[external_toolset])
+
+    @agent.tool_plain
+    def function_tool(x: int) -> int:
+        tool_calls.append(x)
+        return x + 1
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, DeferredToolRequests)
+    assert tool_calls == [2]
+
+    msg = 'Tool call results need to be provided for all deferred tool calls.'
+    with pytest.raises(UserError, match=msg):
+        # Calling `run_sync` without providing `deferred_tool_results` should raise an error
+        agent.run_sync(message_history=result.all_messages())
+
+    # Check that the non-deferred tool did not executed again
+    assert tool_calls == [2]
 
 
 def test_deferred_tool_with_output_type():

@@ -355,14 +355,30 @@ print(repr(result.output))
 
 _(This example is complete, it can be run "as is")_
 
-##### Parallel Output Tool Calls
+##### Output Tool Calls and `end_strategy`
 
-When the model calls other tools in parallel with an output tool, you can control how tool calls are executed by setting the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy]:
+When the model calls other tools with an output tool, you can control how tool calls are executed by setting the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy]:
 
-- `'early'` (default): Output tools are executed first. Once a valid final result is found, remaining function and output tool calls are skipped
-- `'exhaustive'`: Output tools are executed first, then all function tools are executed. The first valid output tool result becomes the final output
+- `'early'` (default): Output tools are prioritized and executed first. Once a valid final result is found, remaining function and output tool calls are skipped.
+- `'exhaustive'`: Tools are executed in order. Output tools run in sequence with other tools, and the first valid output tool result becomes the final output.
 
 The `'exhaustive'` strategy is useful when tools have important side effects (like logging, sending notifications, or updating metrics) that should always execute.
+
+###### Tool Call Ordering and Parallelism
+
+Output tools are always executed sequentially. They never run in parallel with other tools. Parallelism for non-output tools is determined by whether any called tool is marked [`sequential`][pydantic_ai.tools.ToolDefinition.sequential] in the tool call set.
+
+In `'early'` mode, output tools are pulled forward and tried one by one. If one succeeds, the run ends and remaining tool calls are skipped. If all output tool calls fail, the remaining tools run afterward. They run in parallel or sequentially based on their `sequential` setting.
+
+In `'exhaustive'` mode, tool calls run in model order; output tools act as a parallel barrier between batches of non-output tools.
+
+**Example:** Model returns `fn1 → fn2 → output → fn3 → fn4`
+
+- With `'early'` (default): The agent tries `output` first.
+    - If `output` succeeds, it becomes the final result. `fn1`, `fn2`, `fn3`, `fn4` are skipped.
+    - If `output` fails, the remaining non-output tools run afterward as a single batch (`fn1` + `fn2` + `fn3` + `fn4` in parallel, unless any are marked `sequential`).
+- With `'exhaustive'`: Tools run in model order, with `output` acting as a barrier.
+    - `fn1` + `fn2` run in parallel, then `output`, then `fn3` + `fn4` in parallel.
 
 !!! warning "Priority of output and deferred tools in streaming methods"
     The [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] methods will consider the first output that matches the [output type](output.md#structured-output) (which could be text, an [output tool](output.md#tool-output) call, or a [deferred](deferred-tools.md) tool call) to be the final output of the agent run, even when the model generates (additional) tool calls after this "final" output.
