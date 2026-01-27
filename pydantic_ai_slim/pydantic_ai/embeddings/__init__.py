@@ -36,6 +36,10 @@ __all__ = [
 KnownEmbeddingModelName = TypeAliasType(
     'KnownEmbeddingModelName',
     Literal[
+        'google-gla:gemini-embedding-001',
+        'google-vertex:gemini-embedding-001',
+        'google-vertex:text-embedding-005',
+        'google-vertex:text-multilingual-embedding-002',
         'openai:text-embedding-ada-002',
         'openai:text-embedding-3-small',
         'openai:text-embedding-3-large',
@@ -44,6 +48,16 @@ KnownEmbeddingModelName = TypeAliasType(
         'cohere:embed-english-light-v3.0',
         'cohere:embed-multilingual-v3.0',
         'cohere:embed-multilingual-light-v3.0',
+        'voyageai:voyage-4-large',
+        'voyageai:voyage-4',
+        'voyageai:voyage-4-lite',
+        'voyageai:voyage-3-large',
+        'voyageai:voyage-3.5',
+        'voyageai:voyage-3.5-lite',
+        'voyageai:voyage-code-3',
+        'voyageai:voyage-finance-2',
+        'voyageai:voyage-law-2',
+        'voyageai:voyage-code-2',
     ],
 )
 """Known model names that can be used with the `model` parameter of [`Embedder`][pydantic_ai.embeddings.Embedder].
@@ -92,10 +106,18 @@ def infer_embedding_model(
         from .cohere import CohereEmbeddingModel
 
         return CohereEmbeddingModel(model_name, provider=provider)
+    elif model_kind in ('google-gla', 'google-vertex'):
+        from .google import GoogleEmbeddingModel
+
+        return GoogleEmbeddingModel(model_name, provider=provider)
     elif model_kind == 'sentence-transformers':
         from .sentence_transformers import SentenceTransformerEmbeddingModel
 
         return SentenceTransformerEmbeddingModel(model_name)
+    elif model_kind == 'voyageai':
+        from .voyageai import VoyageAIEmbeddingModel
+
+        return VoyageAIEmbeddingModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown embeddings model: {model}')  # pragma: no cover
 
