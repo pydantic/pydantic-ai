@@ -27,7 +27,9 @@ class Step(BaseModel):
 class Plan(BaseModel):
     """Represents a plan with multiple steps."""
 
-    steps: list[Step] = Field(default_factory=list, description='The steps in the plan')
+    steps: list[Step] = Field(
+        default_factory=list[Step], description='The steps in the plan'
+    )
 
 
 class JSONPatchOp(BaseModel):
