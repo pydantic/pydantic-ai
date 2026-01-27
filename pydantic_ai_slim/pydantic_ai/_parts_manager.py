@@ -223,7 +223,9 @@ class ModelResponsePartsManager:
     `ThinkingPart`s that are created via embedded thinking will stop being tracked once their closing tag is seen.
     """
 
-    _partial_tags_list: list[PartialStartTag | PartialEndTag] = field(default_factory=list, init=False)
+    _partial_tags_list: list[PartialStartTag | PartialEndTag] = field(
+        default_factory=list[PartialStartTag | PartialEndTag], init=False
+    )
     """Tracks active partial thinking tags. Tags contain their own previous_part_index and vendor_part_id."""
 
     def _append_and_track_new_part(self, part: ManagedPart, vendor_part_id: VendorId | None) -> int:
