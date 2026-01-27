@@ -695,3 +695,132 @@ def test_handle_part():
     event = manager.handle_part(vendor_part_id=None, part=part3)
     assert event == snapshot(PartStartEvent(index=1, part=part3))
     assert manager.get_parts() == snapshot([part2, part3])
+
+
+class TestGetPartsWithCancellation:
+    """Tests for get_parts(cancelled=True) marking incomplete args."""
+
+    def test_cancelled_marks_invalid_json_args_incomplete(self):
+        """Tool calls with invalid/truncated JSON args should have args_incomplete=True when cancelled."""
+        manager = ModelResponsePartsManager()
+
+        # Add a tool call with truncated JSON args
+        manager.handle_tool_call_delta(vendor_part_id='tool1', tool_name='my_tool', args='{"arg1":', tool_call_id='tc1')
+
+        # Without cancelled flag, args_incomplete should be False (default)
+        parts = manager.get_parts(cancelled=False)
+        assert len(parts) == 1
+        assert isinstance(parts[0], ToolCallPart)
+        assert parts[0].args_incomplete is False
+
+        # With cancelled flag, args_incomplete should be True for invalid JSON
+        parts = manager.get_parts(cancelled=True)
+        assert len(parts) == 1
+        assert isinstance(parts[0], ToolCallPart)
+        assert parts[0].args_incomplete is True
+        assert parts[0].args == '{"arg1":'
+
+    def test_cancelled_keeps_valid_json_args_not_incomplete(self):
+        """Tool calls with valid JSON args should have args_incomplete=False even when cancelled."""
+        manager = ModelResponsePartsManager()
+
+        # Add a tool call with valid JSON args
+        manager.handle_tool_call_delta(
+            vendor_part_id='tool1', tool_name='my_tool', args='{"arg1": "value"}', tool_call_id='tc1'
+        )
+
+        # With cancelled flag, args_incomplete should still be False for valid JSON
+        parts = manager.get_parts(cancelled=True)
+        assert len(parts) == 1
+        assert isinstance(parts[0], ToolCallPart)
+        assert parts[0].args_incomplete is False
+        assert parts[0].args == '{"arg1": "value"}'
+
+    def test_cancelled_with_mixed_tool_calls(self):
+        """Only tool calls with invalid args should be marked incomplete, valid ones should not."""
+        manager = ModelResponsePartsManager()
+
+        # Add a tool call with valid JSON args
+        manager.handle_tool_call_delta(
+            vendor_part_id='tool1', tool_name='valid_tool', args='{"complete": true}', tool_call_id='tc1'
+        )
+
+        # Add a tool call with invalid/truncated JSON args
+        manager.handle_tool_call_delta(
+            vendor_part_id='tool2', tool_name='incomplete_tool', args='{"incomplete":', tool_call_id='tc2'
+        )
+
+        parts = manager.get_parts(cancelled=True)
+        assert len(parts) == 2
+
+        # First tool call should NOT be marked incomplete (valid JSON)
+        assert isinstance(parts[0], ToolCallPart)
+        assert parts[0].tool_name == 'valid_tool'
+        assert parts[0].args_incomplete is False
+
+        # Second tool call SHOULD be marked incomplete (invalid JSON)
+        assert isinstance(parts[1], ToolCallPart)
+        assert parts[1].tool_name == 'incomplete_tool'
+        assert parts[1].args_incomplete is True
+
+    def test_cancelled_with_text_parts(self):
+        """Text parts should be unaffected by cancelled flag."""
+        manager = ModelResponsePartsManager()
+
+        # Add a text part - must consume the iterator
+        for _event in manager.handle_text_delta(vendor_part_id=None, content='Hello world'):
+            pass
+
+        # Add a tool call with invalid args (using different vendor_part_id)
+        manager.handle_tool_call_delta(vendor_part_id=0, tool_name='my_tool', args='{"truncated', tool_call_id='tc1')
+
+        parts = manager.get_parts(cancelled=True)
+        assert len(parts) == 2
+
+        # Text part should be unchanged
+        assert isinstance(parts[0], TextPart)
+        assert parts[0].content == 'Hello world'
+
+        # Tool call should be marked incomplete
+        assert isinstance(parts[1], ToolCallPart)
+        assert parts[1].args_incomplete is True
+
+    def test_cancelled_with_builtin_tool_call(self):
+        """BuiltinToolCallPart with invalid args should also be marked incomplete."""
+        manager = ModelResponsePartsManager()
+
+        # Add a builtin tool call with invalid args
+        part = BuiltinToolCallPart(tool_name='builtin_tool', args='{"incomplete":')
+        manager.handle_part(vendor_part_id='builtin', part=part)
+
+        parts = manager.get_parts(cancelled=True)
+        assert len(parts) == 1
+        assert isinstance(parts[0], BuiltinToolCallPart)
+        assert parts[0].args_incomplete is True
+
+    def test_cancelled_with_dict_args(self):
+        """Tool calls with dict args (already parsed) should not be marked incomplete."""
+        manager = ModelResponsePartsManager()
+
+        # Add a tool call with dict args (some providers send pre-parsed dicts)
+        manager.handle_tool_call_delta(
+            vendor_part_id='tool1', tool_name='my_tool', args={'arg1': 'value'}, tool_call_id='tc1'
+        )
+
+        parts = manager.get_parts(cancelled=True)
+        assert len(parts) == 1
+        assert isinstance(parts[0], ToolCallPart)
+        assert parts[0].args_incomplete is False
+        assert parts[0].args == {'arg1': 'value'}
+
+    def test_cancelled_with_empty_args(self):
+        """Tool calls with empty/None args should not be marked incomplete."""
+        manager = ModelResponsePartsManager()
+
+        # Add a tool call with no args
+        manager.handle_tool_call_delta(vendor_part_id='tool1', tool_name='my_tool', args=None, tool_call_id='tc1')
+
+        parts = manager.get_parts(cancelled=True)
+        assert len(parts) == 1
+        assert isinstance(parts[0], ToolCallPart)
+        assert parts[0].args_incomplete is False

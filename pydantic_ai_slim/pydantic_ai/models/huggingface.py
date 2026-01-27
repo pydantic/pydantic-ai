@@ -316,6 +316,7 @@ class HuggingFaceModel(Model):
             _provider_name=self._provider.name,
             _provider_url=self.base_url,
             _provider_timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
+            _stream_to_close=response,
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ChatCompletionInputTool]:
@@ -467,6 +468,15 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _stream_to_close: AsyncIterable[ChatCompletionStreamOutput] | None = field(default=None)
+
+    async def cancel(self) -> None:
+        """Cancel the streaming response and close the underlying HTTP connection."""
+        await super().cancel()
+        if self._stream_to_close is not None:
+            # huggingface_hub.AsyncInferenceClient.chat.completions.create is typed as AsyncIterable but
+            # returns an AsyncGenerator at runtime
+            await self._stream_to_close.aclose()  # type: ignore[attr-defined]
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         if self._provider_timestamp is not None:  # pragma: no branch

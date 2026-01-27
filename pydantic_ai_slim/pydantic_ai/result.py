@@ -57,6 +57,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _agent_stream_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
     _cached_output: OutputDataT | None = field(default=None, init=False)
+    _cancelled: bool = field(default=False, init=False)
 
     def __post_init__(self):
         self._initial_run_ctx_usage = deepcopy(self._run_ctx.usage)
@@ -172,6 +173,68 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         """Get the timestamp of the response."""
         return self._raw_stream_response.timestamp
 
+    async def cancel(self) -> None:
+        """Cancel the streaming response.
+
+        After calling this method:
+        - Iteration will stop immediately
+        - The underlying HTTP connection will be closed
+        - response will return a ModelResponse with incomplete=True
+        """
+        self._cancelled = True
+        await self._raw_stream_response.cancel()
+
+    @property
+    def is_cancelled(self) -> bool:
+        """Returns True if the stream was cancelled."""
+        return self._cancelled
+
+    async def _stream_text_deltas_ungrouped(self) -> AsyncIterator[tuple[str, int]]:
+        """Yield text deltas with their part indices from the stream.
+
+        This is a helper for _stream_response_text that yields tuples of (text_content, part_index).
+        We don't currently make use of the part_index, but retain it for possible future refactors.
+        """
+        msg = self.response
+        for i, part in enumerate(msg.parts):
+            if self._cancelled:
+                return
+            if isinstance(part, _messages.TextPart) and part.content:
+                yield part.content, i
+
+        last_text_index: int | None = None
+        try:
+            async for event in self._raw_stream_response:
+                if self._cancelled:
+                    return
+                if (
+                    isinstance(event, _messages.PartStartEvent)
+                    and isinstance(event.part, _messages.TextPart)
+                    and event.part.content
+                ):
+                    last_text_index = event.index
+                    yield event.part.content, event.index
+                elif (
+                    isinstance(event, _messages.PartDeltaEvent)
+                    and isinstance(event.delta, _messages.TextPartDelta)
+                    and event.delta.content_delta
+                ):
+                    last_text_index = event.index
+                    yield event.delta.content_delta, event.index
+                elif (
+                    isinstance(event, _messages.PartStartEvent)
+                    and isinstance(event.part, _messages.BuiltinToolCallPart)
+                    and last_text_index is not None
+                ):
+                    # Text parts that are interrupted by a built-in tool call should not be joined together directly
+                    yield '\n\n', event.index
+                    last_text_index = None
+        except Exception:
+            # Closing the stream mid-read can raise exceptions
+            if self._cancelled:
+                return
+            raise
+
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate the output and return it."""
         if self._cached_output is not None:
@@ -246,45 +309,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     ) -> AsyncIterator[str]:
         """Stream the response as an async iterable of text."""
 
-        # Define a "merged" version of the iterator that will yield items that have already been retrieved
-        # and items that we receive while streaming. We define a dedicated async iterator for this so we can
-        # pass the combined stream to the group_by_temporal function within `_stream_text_deltas` below.
-        async def _stream_text_deltas_ungrouped() -> AsyncIterator[tuple[str, int]]:
-            # yields tuples of (text_content, part_index)
-            # we don't currently make use of the part_index, but in principle this may be useful
-            # so we retain it here for now to make possible future refactors simpler
-            msg = self.response
-            for i, part in enumerate(msg.parts):
-                if isinstance(part, _messages.TextPart) and part.content:
-                    yield part.content, i
-
-            last_text_index: int | None = None
-            async for event in self._raw_stream_response:
-                if (
-                    isinstance(event, _messages.PartStartEvent)
-                    and isinstance(event.part, _messages.TextPart)
-                    and event.part.content
-                ):
-                    last_text_index = event.index
-                    yield event.part.content, event.index
-                elif (
-                    isinstance(event, _messages.PartDeltaEvent)
-                    and isinstance(event.delta, _messages.TextPartDelta)
-                    and event.delta.content_delta
-                ):
-                    last_text_index = event.index
-                    yield event.delta.content_delta, event.index
-                elif (
-                    isinstance(event, _messages.PartStartEvent)
-                    and isinstance(event.part, _messages.BuiltinToolCallPart)
-                    and last_text_index is not None
-                ):
-                    # Text parts that are interrupted by a built-in tool call should not be joined together directly
-                    yield '\n\n', event.index
-                    last_text_index = None
-
         async def _stream_text_deltas() -> AsyncIterator[str]:
-            async with _utils.group_by_temporal(_stream_text_deltas_ungrouped(), debounce_by) as group_iter:
+            async with _utils.group_by_temporal(self._stream_text_deltas_ungrouped(), debounce_by) as group_iter:
                 async for items in group_iter:
                     # Note: we are currently just dropping the part index on the group here
                     yield ''.join([content for content, _ in items])
@@ -303,9 +329,23 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Stream [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""
         if self._agent_stream_iterator is None:
-            self._agent_stream_iterator = _get_usage_checking_stream_response(
+            base_iterator = _get_usage_checking_stream_response(
                 self._raw_stream_response, self._usage_limits, self.usage
             )
+
+            async def _cancellation_aware_iterator() -> AsyncIterator[ModelResponseStreamEvent]:
+                try:
+                    async for event in base_iterator:
+                        if self._cancelled:
+                            break
+                        yield event
+                except Exception:
+                    # Closing the stream mid-read can raise exceptions. Reraise if not cancelled.
+                    if self._cancelled:
+                        return
+                    raise
+
+            self._agent_stream_iterator = _cancellation_aware_iterator()
 
         return self._agent_stream_iterator
 
@@ -617,6 +657,33 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             self._all_messages.append(message)
         if self._on_complete is not None:
             await self._on_complete()
+
+    async def cancel(self) -> None:
+        """Cancel the streaming response.
+
+        After calling this method:
+        - Iteration will stop immediately
+        - The underlying HTTP connection will be closed
+        - response will return a ModelResponse with incomplete=True
+        - The incomplete response will be added to all_messages()
+        """
+        if self._stream_response is not None:
+            await self._stream_response.cancel()
+            # Add the incomplete response to message history immediately.
+            # We don't call _marked_completed here because its _on_complete callback
+            # may try to validate the partial output, which will fail for incomplete data.
+            if not self.is_complete:
+                self.is_complete = True
+                response = self.response
+                response.run_id = self._stream_response.run_id
+                self._all_messages.append(response)
+
+    @property
+    def is_cancelled(self) -> bool:
+        """Returns True if the stream was cancelled."""
+        if self._stream_response is not None:
+            return self._stream_response.is_cancelled
+        return False
 
 
 @dataclass(init=False)

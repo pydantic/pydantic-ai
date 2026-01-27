@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import datetime
 import json
 import re
@@ -20,6 +21,7 @@ from pydantic_ai import (
     AgentRunResult,
     AgentRunResultEvent,
     AgentStreamEvent,
+    BuiltinToolCallPart,
     ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -35,6 +37,7 @@ from pydantic_ai import (
     RunContext,
     TextPart,
     TextPartDelta,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UnexpectedModelBehavior,
@@ -43,7 +46,11 @@ from pydantic_ai import (
     capture_run_messages,
     models,
 )
-from pydantic_ai._agent_graph import GraphAgentState
+from pydantic_ai._agent_graph import (
+    GraphAgentState,
+    _clean_message_history,  # pyright: ignore[reportPrivateUsage]
+    _filter_incomplete_tool_calls,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai._output import TextOutputProcessor, TextOutputSchema
 from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.agent import AgentRun
@@ -3302,3 +3309,953 @@ async def test_get_output_after_stream_output():
             ),
         ]
     )
+
+
+class TestStreamCancellation:
+    """Tests for streaming cancellation functionality."""
+
+    async def test_stream_cancel_basic(self):
+        """Test that cancel() stops iteration and sets incomplete=True."""
+        agent = Agent(TestModel())
+
+        async with agent.run_stream('Hello') as result:
+            chunks: list[str] = []
+            # Use debounce_by=None to ensure we get individual chunks from TestModel
+            async for text in result.stream_text(delta=True, debounce_by=None):
+                chunks.append(text)
+                if len(chunks) >= 2:
+                    await result.cancel()
+                    break
+
+            assert result.is_cancelled
+            assert result.response.incomplete
+
+    async def test_stream_cancel_idempotent(self):
+        """Test that calling cancel() multiple times is safe."""
+        agent = Agent(TestModel())
+
+        async with agent.run_stream('Hello') as result:
+            await result.cancel()
+            await result.cancel()  # Should not raise
+            await result.cancel()  # Should not raise
+
+            assert result.is_cancelled
+            assert result.response.incomplete
+
+    async def test_stream_cancel_in_stream_text(self):
+        """Test cancellation during stream_text()."""
+        agent = Agent(TestModel())
+
+        async with agent.run_stream('Hello') as result:
+            chunks: list[str] = []
+            async for text in result.stream_text():
+                chunks.append(text)
+                if len(chunks) >= 1:
+                    await result.cancel()
+                    break
+
+            assert result.is_cancelled
+            assert len(chunks) >= 1
+
+    async def test_stream_cancel_message_history(self):
+        """Test that cancelled response appears in all_messages() with incomplete=True."""
+        agent = Agent(TestModel())
+
+        async with agent.run_stream('Hello') as result:
+            # Use debounce_by=None to ensure we get individual chunks from TestModel
+            async for _ in result.stream_text(delta=True, debounce_by=None):
+                await result.cancel()
+                break
+
+            messages = result.all_messages()
+            # Should have request + incomplete response
+            assert len(messages) == 2
+            # Find the ModelResponse - it should be present and marked incomplete
+            responses = [m for m in messages if isinstance(m, ModelResponse)]
+            assert len(responses) == 1, 'Cancelled response should be in all_messages()'
+            assert responses[0].incomplete, 'Cancelled response should be marked incomplete'
+
+    async def test_stream_cancel_before_iteration(self):
+        """Test that cancel() works before iteration starts."""
+        agent = Agent(TestModel())
+
+        async with agent.run_stream('Hello') as result:
+            await result.cancel()
+
+            # Iteration should complete immediately
+            chunks: list[str] = []
+            # Use debounce_by=None to ensure we get individual chunks from TestModel
+            async for text in result.stream_text(delta=True, debounce_by=None):
+                chunks.append(text)
+
+            assert result.is_cancelled
+            # May or may not have any chunks depending on timing
+            assert result.response.incomplete
+
+    async def test_stream_cancel_structured_output(self):
+        """Test that cancel() works with structured output streaming via stream_output()."""
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"a": 42')}
+            yield {0: DeltaToolCall(json_args=', "b": "h')}
+            yield {0: DeltaToolCall(json_args='el')}
+            yield {0: DeltaToolCall(json_args='lo')}
+            yield {0: DeltaToolCall(json_args='"}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=Foo)
+
+        async with agent.run_stream('test') as result:
+            outputs: list[Foo] = []
+            async for output in result.stream_output(debounce_by=None):
+                outputs.append(output)
+                if len(outputs) >= 2:
+                    await result.cancel()
+                    break
+
+            assert result.is_cancelled
+            assert result.response.incomplete
+            assert len(outputs) >= 2
+
+    async def test_stream_cancel_stream_responses(self):
+        """Test that cancel() works with stream_responses() iteration."""
+        agent = Agent(TestModel())
+
+        async with agent.run_stream('Hello') as result:
+            responses: list[tuple[ModelResponse, bool]] = []
+            async for response_tuple in result.stream_responses():
+                responses.append(response_tuple)
+                if len(responses) >= 2:
+                    await result.cancel()
+                    break
+
+            assert result.is_cancelled
+            assert result.response.incomplete
+            assert len(responses) >= 2
+
+    async def test_stream_cancel_agent_iter(self):
+        """Test that cancel() works when using Agent.iter() with node.stream()."""
+        agent = Agent(TestModel())
+
+        async with agent.iter('Hello') as run:
+            async for node in run:
+                if agent.is_model_request_node(node):
+                    async with node.stream(run.ctx) as stream:
+                        chunks: list[str] = []
+                        async for text in stream.stream_text(delta=True, debounce_by=None):
+                            chunks.append(text)
+                            if len(chunks) >= 2:
+                                await stream.cancel()
+                                break
+
+                        assert stream.is_cancelled
+                        assert stream.response.incomplete
+                        assert len(chunks) >= 2
+
+    async def test_stream_cancel_tool_call_with_run_stream(self):
+        """Test that cancelling during tool call streaming works with run_stream API.
+
+        Note: run_stream + stream_responses() accumulates deltas before yielding,
+        so this tests cancellation at the response level, not mid-delta.
+        See test_stream_cancel_tool_call_marks_args_incomplete_agent_iter for
+        fine-grained delta-level cancellation testing.
+        """
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            # First yield a complete tool call
+            yield {0: DeltaToolCall(name='my_tool', json_args='{"arg1": "value1", "arg2": "value2"}')}
+            # Then yield text that we'll cancel during
+            yield 'Starting '
+            yield 'response '
+            yield 'text'
+
+        agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+        @agent.tool_plain
+        def my_tool(arg1: str, arg2: str) -> str:
+            return f'{arg1}-{arg2}'
+
+        # Use run_stream - cancel after seeing some responses
+        async with agent.run_stream('Call my_tool') as result:
+            response_count = 0
+            async for _response, _is_last in result.stream_responses(debounce_by=None):
+                response_count += 1
+                if response_count >= 2:
+                    await result.cancel()
+                    break
+
+            assert result.is_cancelled
+            assert result.response.incomplete
+
+            # The tool call was complete before cancellation, so args_incomplete should be False
+            tool_call_parts = [p for p in result.response.parts if isinstance(p, ToolCallPart)]
+            assert len(tool_call_parts) == 1
+            tool_call = tool_call_parts[0]
+            assert tool_call.args_incomplete is False  # Complete args
+            assert tool_call.args_as_dict() == {'arg1': 'value1', 'arg2': 'value2'}
+
+    async def test_stream_cancel_tool_call_marks_args_incomplete_agent_iter(self):
+        """Test that cancelling during tool call streaming marks args_incomplete=True (agent.iter API)."""
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+            # Stream a tool call with args in multiple chunks
+            yield {0: DeltaToolCall(name='my_tool', json_args='{"arg1": ')}
+            yield {0: DeltaToolCall(json_args='"value1", ')}
+            yield {0: DeltaToolCall(json_args='"arg2": ')}
+            # These would complete the JSON but we'll cancel before reaching them
+            yield {0: DeltaToolCall(json_args='"value2"}')}
+
+        agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+        @agent.tool_plain
+        def my_tool(arg1: str, arg2: str) -> str:
+            return f'{arg1}-{arg2}'
+
+        # Use agent.iter() to get fine-grained control over streaming
+        async with agent.iter('Call my_tool') as run:
+            async for node in run:
+                if agent.is_model_request_node(node):
+                    async with node.stream(run.ctx) as stream:
+                        event_count = 0
+                        async for _ in stream:
+                            event_count += 1
+                            if event_count >= 2:  # Cancel after receiving partial tool call args
+                                await stream.cancel()
+                                break
+
+                        assert stream.is_cancelled
+                        assert stream.response.incomplete
+
+                        # Check that tool call parts have args_incomplete=True if args are truncated
+                        tool_call_parts = [p for p in stream.response.parts if isinstance(p, ToolCallPart)]
+                        assert len(tool_call_parts) == 1
+                        tool_call = tool_call_parts[0]
+
+                        # The args should be incomplete (truncated JSON)
+                        assert tool_call.args_incomplete is True
+                        # The args string should be truncated (not valid JSON)
+                        assert tool_call.args is not None
+                        with pytest.raises(Exception):  # Should fail to parse
+                            tool_call.args_as_dict()
+                    break  # Don't continue the agent loop
+
+    async def test_stream_cancel_tool_call_complete_args_not_marked_incomplete_run_stream(self):
+        """Test that tool calls with complete args before cancellation are not marked incomplete (run_stream API)."""
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            # First yield a complete tool call
+            yield {0: DeltaToolCall(name='tool1', json_args='{"complete": true}')}
+            # Then stream text that we'll cancel during
+            yield 'Some '
+            yield 'text '
+            yield 'response'
+
+        agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+        @agent.tool_plain
+        def tool1(complete: bool) -> str:
+            return 'done'
+
+        # Use run_stream with stream_responses() to iterate over raw model responses
+        async with agent.run_stream('Call tool1') as result:
+            response_count = 0
+            async for _ in result.stream_responses():
+                response_count += 1
+                if response_count >= 3:  # Cancel after tool call is complete but during text
+                    await result.cancel()
+                    break
+
+            assert result.is_cancelled
+            assert result.response.incomplete
+
+            # Check that the complete tool call is NOT marked as args_incomplete
+            tool_call_parts = [p for p in result.response.parts if isinstance(p, ToolCallPart)]
+            assert len(tool_call_parts) == 1
+            tool_call = tool_call_parts[0]
+
+            # The args are complete (valid JSON), so should NOT be marked incomplete
+            assert tool_call.args_incomplete is False
+            assert tool_call.args_as_dict() == {'complete': True}
+
+    async def test_stream_cancel_tool_call_complete_args_not_marked_incomplete_agent_iter(self):
+        """Test that tool calls with complete args before cancellation are not marked incomplete (agent.iter API)."""
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            # First yield a complete tool call
+            yield {0: DeltaToolCall(name='tool1', json_args='{"complete": true}')}
+            # Then stream text that we'll cancel during
+            yield 'Some '
+            yield 'text '
+            yield 'response'
+
+        agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+        @agent.tool_plain
+        def tool1(complete: bool) -> str:
+            return 'done'
+
+        # Use agent.iter() to get fine-grained control over streaming
+        async with agent.iter('Call tool1') as run:
+            async for node in run:
+                if agent.is_model_request_node(node):
+                    async with node.stream(run.ctx) as stream:
+                        event_count = 0
+                        async for _ in stream:
+                            event_count += 1
+                            if event_count >= 3:  # Cancel after tool call is complete but during text
+                                await stream.cancel()
+                                break
+
+                        assert stream.is_cancelled
+                        assert stream.response.incomplete
+
+                        # Check that the complete tool call is NOT marked as args_incomplete
+                        tool_call_parts = [p for p in stream.response.parts if isinstance(p, ToolCallPart)]
+                        assert len(tool_call_parts) == 1
+                        tool_call = tool_call_parts[0]
+
+                        # The args are complete (valid JSON), so should NOT be marked incomplete
+                        assert tool_call.args_incomplete is False
+                        assert tool_call.args_as_dict() == {'complete': True}
+                    break  # Don't continue the agent loop
+
+    async def test_stream_cancel_all_messages_has_incomplete_marked(self):
+        """Verify all_messages() returns responses with args_incomplete properly set after cancellation.
+
+        Uses run_stream API to test the user-facing all_messages() interface.
+        """
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            # Stream a tool call with args in multiple chunks
+            yield {0: DeltaToolCall(name='my_tool', json_args='{"arg1": ')}
+            yield {0: DeltaToolCall(json_args='"value1", ')}
+            yield {0: DeltaToolCall(json_args='"arg2": ')}
+            yield {0: DeltaToolCall(json_args='"value2"}')}
+            # Add text to prevent agent from looping
+            yield 'Done!'
+
+        agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+        @agent.tool_plain
+        def my_tool(arg1: str, arg2: str) -> str:
+            return f'{arg1}-{arg2}'
+
+        # Use run_stream to test the user-facing all_messages() API
+        async with agent.run_stream('Call my_tool') as result:
+            # Cancel after receiving first response in stream_responses
+            async for _, _ in result.stream_responses(debounce_by=None):
+                await result.cancel()
+                break
+
+            assert result.is_cancelled
+            assert result.response.incomplete
+
+            # After cancellation, check all_messages()
+            messages = result.all_messages()
+
+            # Find the ModelResponse in the message history
+            model_responses = [m for m in messages if isinstance(m, ModelResponse)]
+            assert len(model_responses) == 1
+
+            response = model_responses[0]
+            assert response.incomplete is True
+
+            # Check that the response has tool call parts
+            tool_calls = [p for p in response.parts if isinstance(p, ToolCallPart)]
+            assert len(tool_calls) == 1
+            # With run_stream + stream_responses, deltas are accumulated before yielding,
+            # so the tool call may have complete args depending on timing.
+            # The key point is that incomplete=True is set on the response.
+
+
+class TestFilterIncompleteToolCalls:
+    """Tests for _filter_incomplete_tool_calls helper function."""
+
+    def test_filter_incomplete_tool_calls_from_incomplete_response(self):
+        """Tool calls with args_incomplete=True should be filtered from incomplete responses."""
+        response = ModelResponse(
+            parts=[
+                TextPart(content='Some text'),
+                ToolCallPart(tool_name='complete_tool', args='{"valid": true}', tool_call_id='tc1'),
+                ToolCallPart(
+                    tool_name='incomplete_tool', args='{"truncated":', tool_call_id='tc2', args_incomplete=True
+                ),
+            ],
+            incomplete=True,
+        )
+
+        filtered = _filter_incomplete_tool_calls(response)
+
+        # Incomplete tool call should be filtered out
+        assert len(filtered.parts) == 2
+        assert isinstance(filtered.parts[0], TextPart)
+        assert isinstance(filtered.parts[1], ToolCallPart)
+        assert filtered.parts[1].tool_name == 'complete_tool'
+
+    def test_no_filter_for_complete_response(self):
+        """Tool calls should NOT be filtered from complete (non-incomplete) responses."""
+        response = ModelResponse(
+            parts=[
+                TextPart(content='Some text'),
+                ToolCallPart(
+                    tool_name='incomplete_tool', args='{"truncated":', tool_call_id='tc1', args_incomplete=True
+                ),
+            ],
+            incomplete=False,  # Response is complete
+        )
+
+        filtered = _filter_incomplete_tool_calls(response)
+
+        # Nothing should be filtered since response.incomplete is False
+        assert len(filtered.parts) == 2
+        assert filtered is response  # Should return same object
+
+    def test_filter_preserves_complete_tool_calls(self):
+        """Tool calls with args_incomplete=False should be preserved."""
+        response = ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='tool1', args='{"valid": true}', tool_call_id='tc1', args_incomplete=False),
+                ToolCallPart(tool_name='tool2', args='{"also_valid": 1}', tool_call_id='tc2', args_incomplete=False),
+            ],
+            incomplete=True,
+        )
+
+        filtered = _filter_incomplete_tool_calls(response)
+
+        # Both tool calls should be preserved
+        assert len(filtered.parts) == 2
+        assert filtered is response  # Should return same object if nothing filtered
+
+    def test_filter_all_incomplete_tool_calls(self):
+        """If all tool calls are incomplete, result should have only text parts."""
+        response = ModelResponse(
+            parts=[
+                TextPart(content='Hello'),
+                ToolCallPart(tool_name='tool1', args='{"incomplete1":', tool_call_id='tc1', args_incomplete=True),
+                ToolCallPart(tool_name='tool2', args='{"incomplete2":', tool_call_id='tc2', args_incomplete=True),
+            ],
+            incomplete=True,
+        )
+
+        filtered = _filter_incomplete_tool_calls(response)
+
+        # Only the text part should remain
+        assert len(filtered.parts) == 1
+        assert isinstance(filtered.parts[0], TextPart)
+        assert filtered.parts[0].content == 'Hello'
+
+    def test_filter_empty_parts_list(self):
+        """Filtering empty parts list should work correctly."""
+        response = ModelResponse(parts=[], incomplete=True)
+
+        filtered = _filter_incomplete_tool_calls(response)
+
+        assert len(filtered.parts) == 0
+        assert filtered is response  # Should return same object
+
+    def test_filter_builtin_tool_call_parts(self):
+        """BuiltinToolCallPart with args_incomplete=True should also be filtered."""
+        response = ModelResponse(
+            parts=[
+                TextPart(content='Some text'),
+                BuiltinToolCallPart(
+                    tool_name='builtin_tool',
+                    args='{"truncated":',
+                    tool_call_id='tc1',
+                    args_incomplete=True,
+                ),
+                ToolCallPart(tool_name='regular_tool', args='{"valid": true}', tool_call_id='tc2'),
+            ],
+            incomplete=True,
+        )
+
+        filtered = _filter_incomplete_tool_calls(response)
+
+        # BuiltinToolCallPart with args_incomplete=True should be filtered
+        assert len(filtered.parts) == 2
+        assert isinstance(filtered.parts[0], TextPart)
+        assert isinstance(filtered.parts[1], ToolCallPart)
+        assert filtered.parts[1].tool_name == 'regular_tool'
+
+    def test_filter_preserves_thinking_parts(self):
+        """ThinkingPart should be preserved during filtering."""
+        response = ModelResponse(
+            parts=[
+                ThinkingPart(content='Let me think about this...'),
+                TextPart(content='Here is my response'),
+                ToolCallPart(
+                    tool_name='incomplete_tool', args='{"truncated":', tool_call_id='tc1', args_incomplete=True
+                ),
+            ],
+            incomplete=True,
+        )
+
+        filtered = _filter_incomplete_tool_calls(response)
+
+        # ThinkingPart and TextPart should be preserved, incomplete tool call filtered
+        assert len(filtered.parts) == 2
+        assert isinstance(filtered.parts[0], ThinkingPart)
+        assert filtered.parts[0].content == 'Let me think about this...'
+        assert isinstance(filtered.parts[1], TextPart)
+
+
+class TestCleanMessageHistoryFiltersIncomplete:
+    """Tests for _clean_message_history filtering incomplete tool calls."""
+
+    def test_clean_message_history_filters_incomplete_tool_calls(self):
+        """_clean_message_history should filter incomplete tool calls from incomplete responses."""
+        messages = [
+            ModelRequest(parts=[UserPromptPart(content='Hello')]),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Some text'),
+                    ToolCallPart(tool_name='complete_tool', args='{"valid": true}', tool_call_id='tc1'),
+                    ToolCallPart(
+                        tool_name='incomplete_tool', args='{"truncated":', tool_call_id='tc2', args_incomplete=True
+                    ),
+                ],
+                incomplete=True,
+            ),
+        ]
+
+        cleaned = _clean_message_history(messages)
+
+        # The incomplete tool call should be filtered out
+        assert len(cleaned) == 2
+        response = cleaned[1]
+        assert isinstance(response, ModelResponse)
+        assert len(response.parts) == 2
+        assert isinstance(response.parts[0], TextPart)
+        assert isinstance(response.parts[1], ToolCallPart)
+        assert response.parts[1].tool_name == 'complete_tool'
+
+    def test_clean_message_history_preserves_complete_responses(self):
+        """_clean_message_history should NOT filter tool calls from complete responses."""
+        messages = [
+            ModelRequest(parts=[UserPromptPart(content='Hello')]),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='tool_with_incomplete_flag',
+                        args='{"truncated":',
+                        tool_call_id='tc1',
+                        args_incomplete=True,
+                    ),
+                ],
+                incomplete=False,  # Response is complete, so no filtering should happen
+            ),
+        ]
+
+        cleaned = _clean_message_history(messages)
+
+        # Nothing should be filtered since response.incomplete is False
+        assert len(cleaned) == 2
+        response = cleaned[1]
+        assert isinstance(response, ModelResponse)
+        assert len(response.parts) == 1  # Tool call preserved
+
+    def test_clean_message_history_merges_after_filtering(self):
+        """_clean_message_history should still merge consecutive messages after filtering."""
+        messages = [
+            ModelRequest(parts=[UserPromptPart(content='First')]),
+            ModelRequest(parts=[UserPromptPart(content='Second')]),  # Should merge with first
+            ModelResponse(
+                parts=[
+                    TextPart(content='Response'),
+                    ToolCallPart(tool_name='incomplete', args='{"bad":', tool_call_id='tc1', args_incomplete=True),
+                ],
+                incomplete=True,
+            ),
+        ]
+
+        cleaned = _clean_message_history(messages)
+
+        # Two requests should be merged, incomplete tool call filtered
+        assert len(cleaned) == 2
+        # First message should have both user prompts merged
+        assert isinstance(cleaned[0], ModelRequest)
+        assert len(cleaned[0].parts) == 2
+        # Response should have incomplete tool call filtered
+        assert isinstance(cleaned[1], ModelResponse)
+        assert len(cleaned[1].parts) == 1
+        assert isinstance(cleaned[1].parts[0], TextPart)
+
+    def test_clean_message_history_multiple_responses(self):
+        """_clean_message_history should filter incomplete tool calls from multiple responses."""
+        messages = [
+            ModelRequest(parts=[UserPromptPart(content='First request')]),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='tool1', args='{"complete": true}', tool_call_id='tc1'),
+                ],
+                incomplete=False,  # Complete response - no filtering
+            ),
+            ModelRequest(parts=[ToolReturnPart(tool_name='tool1', content='result', tool_call_id='tc1')]),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Partial response'),
+                    ToolCallPart(tool_name='tool2', args='{"incomplete":', tool_call_id='tc2', args_incomplete=True),
+                ],
+                incomplete=True,  # Incomplete response - should filter
+            ),
+            ModelRequest(parts=[UserPromptPart(content='Continue')]),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='tool3', args='{"also_incomplete":', tool_call_id='tc3', args_incomplete=True
+                    ),
+                ],
+                incomplete=True,  # Another incomplete response - should filter
+            ),
+        ]
+
+        cleaned = _clean_message_history(messages)
+
+        # Should have 6 messages (requests and responses don't merge across types)
+        assert len(cleaned) == 6
+
+        # First response (complete) - tool call preserved
+        assert isinstance(cleaned[1], ModelResponse)
+        assert len(cleaned[1].parts) == 1
+        assert isinstance(cleaned[1].parts[0], ToolCallPart)
+        assert cleaned[1].parts[0].tool_name == 'tool1'
+
+        # Second response (incomplete) - incomplete tool call filtered, text preserved
+        assert isinstance(cleaned[3], ModelResponse)
+        assert len(cleaned[3].parts) == 1
+        assert isinstance(cleaned[3].parts[0], TextPart)
+
+        # Third response (incomplete) - all incomplete tool calls filtered, empty parts
+        assert isinstance(cleaned[5], ModelResponse)
+        assert len(cleaned[5].parts) == 0
+
+
+class TestIncompleteToolCallsNotSentToApi:
+    """Integration tests verifying the complete pipeline filters incomplete tool calls."""
+
+    def test_cancelled_stream_message_history_filters_incomplete_tool_calls(self):
+        """Simulate a cancelled stream's message history going through _clean_message_history.
+
+        This test constructs a message history that matches what would result from a
+        cancelled stream (ModelResponse with incomplete=True and tool calls with
+        args_incomplete=True), then verifies that _clean_message_history filters
+        out the incomplete tool calls before they would be sent to the model API.
+        """
+        # Simulate message history from a cancelled stream with mixed tool calls
+        message_history = [
+            ModelRequest(parts=[UserPromptPart(content='Get some data')]),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Let me fetch that data'),
+                    # This tool call completed streaming before cancellation
+                    ToolCallPart(
+                        tool_name='get_user',
+                        args='{"user_id": 123}',
+                        tool_call_id='tc1',
+                        args_incomplete=False,
+                    ),
+                    # This tool call was truncated due to cancellation
+                    ToolCallPart(
+                        tool_name='get_orders',
+                        args='{"user_id": 123, "limit":',  # Truncated JSON
+                        tool_call_id='tc2',
+                        args_incomplete=True,
+                    ),
+                ],
+                incomplete=True,  # Response was incomplete due to cancellation
+            ),
+        ]
+
+        # Run through _clean_message_history (called before sending to model API)
+        cleaned = _clean_message_history(message_history)
+
+        # Verify the incomplete tool call was filtered out
+        assert len(cleaned) == 2
+        response = cleaned[1]
+        assert isinstance(response, ModelResponse)
+
+        # Only the text part and complete tool call should remain
+        assert len(response.parts) == 2
+        assert isinstance(response.parts[0], TextPart)
+        assert response.parts[0].content == 'Let me fetch that data'
+        assert isinstance(response.parts[1], ToolCallPart)
+        assert response.parts[1].tool_name == 'get_user'
+        assert response.parts[1].args_incomplete is False
+
+        # The incomplete tool call should NOT be present
+        tool_names = [p.tool_name for p in response.parts if isinstance(p, ToolCallPart)]
+        assert 'get_orders' not in tool_names
+
+    def test_complete_response_tool_calls_preserved(self):
+        """Tool calls in complete responses should NOT be filtered, even with args_incomplete=True.
+
+        This tests that the filtering only happens for incomplete responses (cancelled streams),
+        not for complete responses where args_incomplete might be incorrectly set.
+        """
+        message_history = [
+            ModelRequest(parts=[UserPromptPart(content='Test')]),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='some_tool',
+                        args='{"truncated":',
+                        tool_call_id='tc1',
+                        args_incomplete=True,  # Set but should be ignored since response is complete
+                    ),
+                ],
+                incomplete=False,  # Response is complete
+            ),
+        ]
+
+        cleaned = _clean_message_history(message_history)
+
+        # Tool call should be preserved since response.incomplete is False
+        assert len(cleaned) == 2
+        response = cleaned[1]
+        assert isinstance(response, ModelResponse)
+        assert len(response.parts) == 1
+        assert isinstance(response.parts[0], ToolCallPart)
+        assert response.parts[0].tool_name == 'some_tool'
+
+    async def test_end_to_end_cancel_then_continue_conversation(self):
+        """True end-to-end test: cancel stream → continue conversation → verify model doesn't receive incomplete tool calls.
+
+        This tests the complete user journey:
+        1. Start a streaming run that returns a tool call
+        2. Cancel mid-way through the tool call args (creating incomplete args)
+        3. Continue the conversation using the message history
+        4. Verify the model does NOT receive the incomplete tool call in step 3
+        """
+        # Track what messages the model receives on each call
+        call_count = 0
+        received_messages_per_call: list[list[ModelMessage]] = []
+
+        async def stream_model_function(
+            messages: list[ModelMessage], info: AgentInfo
+        ) -> AsyncIterator[DeltaToolCalls | str]:
+            nonlocal call_count
+            call_count += 1
+            received_messages_per_call.append(deepcopy(messages))
+
+            if call_count == 1:
+                # First call: stream a tool call in chunks (will be cancelled mid-stream)
+                yield {0: DeltaToolCall(name='fetch_data', json_args='{"query": ')}
+                yield {0: DeltaToolCall(json_args='"test", ')}
+                yield {0: DeltaToolCall(json_args='"limit": ')}
+                # These would complete the JSON but we'll cancel before reaching them
+                yield {0: DeltaToolCall(json_args='10}')}
+                yield 'Done fetching'
+            else:
+                # Second call: just return text
+                yield 'Continuing the conversation'
+
+        def sync_model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            received_messages_per_call.append(deepcopy(messages))
+            return ModelResponse(parts=[TextPart(content='Continuing the conversation')])
+
+        agent = Agent(model=FunctionModel(function=sync_model_function, stream_function=stream_model_function))
+
+        @agent.tool_plain
+        def fetch_data(query: str, limit: int) -> str:
+            return f'Results for {query}'
+
+        # Step 1 & 2: Start streaming and cancel mid-tool-call
+        cancelled_messages: list[ModelMessage] = []
+        async with agent.iter('Fetch some data') as run:
+            async for node in run:
+                if agent.is_model_request_node(node):
+                    async with node.stream(run.ctx) as stream:
+                        event_count = 0
+                        async for _ in stream:
+                            event_count += 1
+                            if event_count >= 2:  # Cancel after partial args
+                                await stream.cancel()
+                                break
+
+                        # Verify we got an incomplete tool call
+                        assert stream.is_cancelled
+                        assert stream.response.incomplete
+                        tool_calls = [p for p in stream.response.parts if isinstance(p, ToolCallPart)]
+                        assert len(tool_calls) == 1
+                        assert tool_calls[0].args_incomplete is True
+
+                    break
+
+            # Get the message history from the cancelled run
+            cancelled_messages = run.result.all_messages() if run.result else list(run.ctx.state.message_history)
+
+        # Step 3: Continue the conversation with the message history
+        await agent.run('Please continue', message_history=cancelled_messages)
+
+        # Step 4: Verify the model did NOT receive the incomplete tool call
+        assert call_count == 2, 'Model should have been called twice'
+
+        # Check the messages sent to the model on the second call
+        second_call_messages = received_messages_per_call[1]
+
+        # Find all tool calls in the messages sent to the model
+        tool_calls_sent_to_model: list[ToolCallPart] = []
+        for msg in second_call_messages:
+            if isinstance(msg, ModelResponse):
+                for part in msg.parts:
+                    if isinstance(part, ToolCallPart):
+                        tool_calls_sent_to_model.append(part)
+
+        # The incomplete tool call should NOT be in the messages sent to the model
+        for tc in tool_calls_sent_to_model:
+            assert tc.args_incomplete is False, f'Incomplete tool call was sent to model: {tc}'
+            # Also verify the args are valid JSON
+            tc.args_as_dict()  # Should not raise
+
+
+class TestRunStreamEventsCancellation:
+    """Tests for run_stream_events cancellation via break.
+
+    run_stream_events() is an async generator that yields events. When the user breaks
+    from the loop, the receive_stream closes, causing send_stream.send() to fail with
+    ClosedResourceError. The event_stream_handler catches this and cancels the underlying stream.
+    """
+
+    async def test_break_stops_event_iteration(self):
+        """Breaking from run_stream_events should stop the event iteration."""
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            for i in range(100):
+                yield f'chunk {i} '
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        async for event in agent.run_stream_events('test'):
+            events.append(event)
+            if len(events) >= 3:
+                break
+
+        # Should have exactly 3 events (we broke at 3)
+        assert len(events) == 3
+        # Should NOT have completed with AgentRunResultEvent
+        assert not any(isinstance(e, AgentRunResultEvent) for e in events)
+
+    async def test_break_does_not_yield_result(self):
+        """Breaking from run_stream_events should NOT yield AgentRunResultEvent."""
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            for i in range(100):
+                yield f'chunk {i} '
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        async for event in agent.run_stream_events('test'):
+            events.append(event)
+            if len(events) >= 3:
+                break
+
+        # Should NOT have AgentRunResultEvent since we broke early
+        assert not any(isinstance(e, AgentRunResultEvent) for e in events)
+
+    async def test_normal_completion_yields_result(self):
+        """Normal completion of run_stream_events should yield AgentRunResultEvent."""
+        agent = Agent(TestModel())
+
+        events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        async for event in agent.run_stream_events('Hello'):
+            events.append(event)
+
+        # Last event should be AgentRunResultEvent
+        assert len(events) > 0
+        assert isinstance(events[-1], AgentRunResultEvent)
+
+    async def test_break_marks_tool_call_args_incomplete(self):
+        """Breaking during tool call streaming marks args_incomplete=True."""
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+            # Stream a tool call with args in multiple chunks
+            yield {0: DeltaToolCall(name='my_tool', json_args='{"arg1": ')}
+            yield {0: DeltaToolCall(json_args='"value1", ')}
+            yield {0: DeltaToolCall(json_args='"arg2": ')}
+            # These would complete the JSON but we'll cancel before reaching them
+            yield {0: DeltaToolCall(json_args='"value2"}')}
+
+        agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+        @agent.tool_plain
+        def my_tool(arg1: str, arg2: str) -> str:
+            return f'{arg1}-{arg2}'
+
+        events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        saw_part_start = False
+        async for event in agent.run_stream_events('Call my_tool'):
+            events.append(event)
+            # Break after seeing a PartStartEvent for the tool call
+            if isinstance(event, PartStartEvent) and isinstance(event.part, ToolCallPart):
+                saw_part_start = True
+            # Break after we've seen the first delta (partial args)
+            if saw_part_start and isinstance(event, PartDeltaEvent):
+                break
+
+        # Should NOT have AgentRunResultEvent since we broke early
+        assert not any(isinstance(e, AgentRunResultEvent) for e in events)
+
+        # Find the tool call part from PartStartEvent
+        tool_call_events = [e for e in events if isinstance(e, PartStartEvent) and isinstance(e.part, ToolCallPart)]
+        assert len(tool_call_events) >= 1
+
+    async def test_break_during_text_streaming(self):
+        """Breaking during text streaming stops the stream properly."""
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            for word in [
+                'Hello ',
+                'world, ',
+                'this ',
+                'is ',
+                'a ',
+                'very ',
+                'long ',
+                'response ',
+                'that ',
+                'continues',
+            ]:
+                yield word
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        async for event in agent.run_stream_events('test'):
+            events.append(event)
+            # Break after a few events
+            if len(events) >= 5:
+                break
+
+        # Should have events but not the final AgentRunResultEvent
+        assert len(events) == 5
+        assert not any(isinstance(e, AgentRunResultEvent) for e in events)
+
+    async def test_break_is_detected_via_closed_resource_error(self):
+        """Verify that breaking triggers ClosedResourceError handling in event_stream_handler."""
+        stream_completed = False
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            nonlocal stream_completed
+            try:
+                for i in range(100):
+                    yield f'chunk {i} '
+                stream_completed = True
+            except asyncio.CancelledError:
+                # Stream was cancelled - this is expected
+                raise
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        async for event in agent.run_stream_events('test'):
+            if isinstance(event, PartDeltaEvent):
+                break
+
+        # Give a moment for the cancellation to propagate
+        await asyncio.sleep(0.01)
+
+        # Stream should NOT have completed naturally
+        assert not stream_completed, 'Stream completed when it should have been cancelled'

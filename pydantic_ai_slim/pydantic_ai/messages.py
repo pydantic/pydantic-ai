@@ -1203,6 +1203,12 @@ class BaseToolCallPart:
     When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
+    args_incomplete: bool = False
+    """Whether the arguments are incomplete.
+
+    Incomplete arguments can occur when the agent run is cancelled or interrupted.
+    """
+
     def args_as_dict(self) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
 
@@ -1322,6 +1328,9 @@ class ModelResponse:
 
     metadata: dict[str, Any] | None = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
+    incomplete: bool = False
+    """Whether the response was cancelled/incomplete."""
 
     @property
     def text(self) -> str | None:
