@@ -97,6 +97,7 @@ class WebSearchTool(AbstractBuiltinTool):
     * Groq
     * Google
     * xAI
+    * OpenRouter
     """
 
     search_context_size: Literal['low', 'medium', 'high'] = 'medium'
@@ -105,6 +106,7 @@ class WebSearchTool(AbstractBuiltinTool):
     Supported by:
 
     * OpenAI Responses
+    * OpenRouter
     """
 
     user_location: WebSearchUserLocation | None = None
@@ -146,6 +148,35 @@ class WebSearchTool(AbstractBuiltinTool):
     Supported by:
 
     * Anthropic
+    """
+
+    engine: Literal['native', 'exa'] | None = None
+    """Which search engine to use with OpenRouter.
+
+    - `'native'`: Uses the provider's native web search when available (OpenAI, Anthropic, Perplexity, xAI).
+    - `'exa'`: Uses Exa search for all other providers.
+
+    If not specified, OpenRouter will automatically select the best engine.
+
+    Supported by:
+
+    * OpenRouter
+    """
+
+    max_results: int | None = None
+    """Maximum number of search results to return with OpenRouter. Defaults to 5.
+
+    Supported by:
+
+    * OpenRouter
+    """
+
+    search_prompt: str | None = None
+    """Custom prompt for attaching web search results with OpenRouter.
+
+    Supported by:
+
+    * OpenRouter
     """
 
     kind: str = 'web_search'

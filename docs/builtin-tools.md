@@ -76,6 +76,7 @@ making it ideal for queries that require up-to-date data.
 | Google | ✅ | No parameter support. No [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] is generated when streaming. Using built-in tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
 | xAI | ✅ | Supports `blocked_domains` and `allowed_domains` parameters. |
 | Groq | ✅ | Limited parameter support. To use web search capabilities with Groq, you need to use the [compound models](https://console.groq.com/docs/compound). |
+| OpenRouter | ✅ | Web search via [plugins](https://openrouter.ai/docs/features/web-search). Supports `search_context_size`. Uses native search for supported providers (OpenAI, Anthropic, Perplexity, xAI), Exa for others. |
 | OpenAI Chat Completions | ❌ | Not supported |
 | Bedrock | ❌ | Not supported |
 | Mistral | ❌ | Not supported |
@@ -145,13 +146,16 @@ _(This example is complete, it can be run "as is")_
 
 #### Provider Support
 
-| Parameter | OpenAI | Anthropic | xAI | Groq |
-|-----------|--------|-----------|-----|------|
-| `search_context_size` | ✅ | ❌ | ❌ | ❌ |
-| `user_location` | ✅ | ✅ | ❌ | ❌ |
-| `blocked_domains` | ❌ | ✅ | ✅ | ✅ |
-| `allowed_domains` | ❌ | ✅ | ✅ | ✅ |
-| `max_uses` | ❌ | ✅ | ❌ | ❌ |
+| Parameter | OpenAI | Anthropic | xAI | Groq | OpenRouter |
+|-----------|--------|-----------|-----|------|------------|
+| `search_context_size` | ✅ | ❌ | ❌ | ❌ | ✅ |
+| `user_location` | ✅ | ✅ | ❌ | ❌ | ❌ |
+| `blocked_domains` | ❌ | ✅ | ✅ | ✅ | ❌ |
+| `allowed_domains` | ❌ | ✅ | ✅ | ✅ | ❌ |
+| `max_uses` | ❌ | ✅ | ❌ | ❌ | ❌ |
+| `engine` | ❌ | ❌ | ❌ | ❌ | ✅ |
+| `max_results` | ❌ | ❌ | ❌ | ❌ | ✅ |
+| `search_prompt` | ❌ | ❌ | ❌ | ❌ | ✅ |
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
