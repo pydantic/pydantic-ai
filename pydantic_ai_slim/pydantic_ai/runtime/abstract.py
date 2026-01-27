@@ -39,16 +39,18 @@ class CodeRuntimeError(CodeExecutionError):
     """Code raised an exception at runtime."""
     pass
 
-class CodeExecution():
+class CodeExecution:
     """Handle for one running code execution. Created by CodeRuntime.execute() or .restore().
 
     This is a concrete class, not abstract. Runtimes inject behavior through
     the private callable fields. Consumers only use the public methods.
     """
 
-    _next_impl: Callable[[], Awaitable[FunctionCall | ExecutionResult]]
-    _provide_result_impl: Callable[[Any], Awaitable[ExecutionResult]]
-    _dump_impl: Callable[[], bytes | None] = lambda: None
+    # Injected by the runtime at construction time — these are the actual behavior.
+    # Public methods below delegate to these callables.
+    _next: Callable[[], Awaitable[FunctionCall | ExecutionResult]]
+    _provide_result: Callable[[Any], Awaitable[ExecutionResult]]
+    _dump: Callable[[], bytes | None] = lambda: None
 
     async def next(self) -> FunctionCall | ExecutionResult:
         """Pull the next event: either a FunctionCall (code wants a tool) or ExecutionResult (code finished).
@@ -59,7 +61,7 @@ class CodeExecution():
         Raises:
             CodeRuntimeError: If the code raises an exception during execution.
         """
-        return await self._next_impl()
+        return await self._next()
 
     async def provide_result(self, result: Any) -> None:
         """Feed a tool's return value back into the execution.
@@ -68,14 +70,14 @@ class CodeExecution():
         The next call to next() will resume the code from where it paused, with
         this value as the return value of the function call.
         """
-        await self._provide_result_impl(result)
+        await self._provide_result(result)
 
     def dump(self) -> bytes | None:
         """Serialize execution state for checkpointing (approval flow).
 
         Returns bytes if checkpointing is supported, None otherwise.
         """
-        return self._dump_impl()
+        return self._dump()
 
 
 
