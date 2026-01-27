@@ -11,13 +11,13 @@ from urllib.parse import urlparse
 
 from genai_prices.types import PriceCalculation
 from opentelemetry._logs import (
-    Logger,  # pyright: ignore [reportPrivateImportUsage]
-    LoggerProvider,  # pyright: ignore [reportPrivateImportUsage]
-    LogRecord,  # pyright: ignore [reportPrivateImportUsage]
-    get_logger_provider,  # pyright: ignore [reportPrivateImportUsage]
+    Logger,
+    LoggerProvider,
+    LogRecord,
+    get_logger_provider,
 )
 from opentelemetry.metrics import MeterProvider, get_meter_provider
-from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provider
+from opentelemetry.trace import Span, SpanKind, Tracer, TracerProvider, get_tracer_provider
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
 
@@ -228,6 +228,7 @@ class InstrumentationSettings:
                     for part in group:
                         if hasattr(part, 'otel_message_parts'):
                             message_parts.extend(part.otel_message_parts(self))
+
                     result.append(
                         _otel_messages.ChatMessage(role='system' if is_system else 'user', parts=message_parts)
                     )
@@ -268,8 +269,10 @@ class InstrumentationSettings:
             output_messages = self.messages_to_otel_messages([response])
             assert len(output_messages) == 1
             output_message = output_messages[0]
+
             instructions = InstrumentedModel._get_instructions(input_messages, parameters)  # pyright: ignore [reportPrivateUsage]
             system_instructions_attributes = self.system_instructions_attributes(instructions)
+
             attributes: dict[str, AttributeValue] = {
                 'gen_ai.input.messages': json.dumps(self.messages_to_otel_messages(input_messages)),
                 'gen_ai.output.messages': json.dumps([output_message]),
@@ -338,6 +341,30 @@ class InstrumentationSettings:
 
 GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
 GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
+GEN_AI_PROVIDER_NAME_ATTRIBUTE = 'gen_ai.provider.name'
+
+
+def _build_tool_definitions(model_request_parameters: ModelRequestParameters) -> list[dict[str, Any]]:
+    """Build OTel-compliant tool definitions from model request parameters.
+
+    Extracts tool metadata from function_tools and output_tools into a list of
+    tool definition dicts following the OTel GenAI semantic conventions format.
+    """
+    all_tools = itertools.chain(
+        model_request_parameters.function_tools or [],
+        model_request_parameters.output_tools or [],
+    )
+
+    tool_definitions: list[dict[str, Any]] = []
+    for tool in all_tools:
+        tool_def: dict[str, Any] = {'type': 'function', 'name': tool.name}
+        if tool.description:
+            tool_def['description'] = tool.description
+        if tool.parameters_json_schema:
+            tool_def['parameters'] = tool.parameters_json_schema
+        tool_definitions.append(tool_def)
+
+    return tool_definitions
 
 
 @dataclass(init=False)
@@ -420,6 +447,10 @@ class InstrumentedModel(WrapperModel):
             ),
         }
 
+        tool_definitions = _build_tool_definitions(model_request_parameters)
+        if tool_definitions:
+            attributes['gen_ai.tool.definitions'] = json.dumps(tool_definitions)
+
         if model_settings:
             for key in MODEL_SETTING_ATTRIBUTES:
                 if isinstance(value := model_settings.get(key), float | int):
@@ -427,7 +458,9 @@ class InstrumentedModel(WrapperModel):
 
         record_metrics: Callable[[], None] | None = None
         try:
-            with self.instrumentation_settings.tracer.start_as_current_span(span_name, attributes=attributes) as span:
+            with self.instrumentation_settings.tracer.start_as_current_span(
+                span_name, attributes=attributes, kind=SpanKind.CLIENT
+            ) as span:
 
                 def finish(response: ModelResponse, parameters: ModelRequestParameters):
                     # FallbackModel updates these span attributes.
@@ -440,7 +473,8 @@ class InstrumentedModel(WrapperModel):
 
                     def _record_metrics():
                         metric_attributes = {
-                            GEN_AI_SYSTEM_ATTRIBUTE: system,
+                            GEN_AI_PROVIDER_NAME_ATTRIBUTE: system,  # New OTel standard attribute
+                            GEN_AI_SYSTEM_ATTRIBUTE: system,  # Preserved for backward compatibility (deprecated)
                             'gen_ai.operation.name': operation,
                             'gen_ai.request.model': request_model,
                             'gen_ai.response.model': response_model,
@@ -488,7 +522,8 @@ class InstrumentedModel(WrapperModel):
     @staticmethod
     def model_attributes(model: Model) -> dict[str, AttributeValue]:
         attributes: dict[str, AttributeValue] = {
-            GEN_AI_SYSTEM_ATTRIBUTE: model.system,
+            GEN_AI_PROVIDER_NAME_ATTRIBUTE: model.system,  # New OTel standard attribute
+            GEN_AI_SYSTEM_ATTRIBUTE: model.system,  # Preserved for backward compatibility (deprecated)
             GEN_AI_REQUEST_MODEL_ATTRIBUTE: model.model_name,
         }
         if base_url := model.base_url:
