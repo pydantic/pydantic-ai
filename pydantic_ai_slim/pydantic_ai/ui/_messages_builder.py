@@ -9,7 +9,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelRequestPart, M
 class MessagesBuilder:
     """Helper class to build Pydantic AI messages from request/response parts."""
 
-    messages: list[ModelMessage] = field(default_factory=list)
+    messages: list[ModelMessage] = field(default_factory=list[ModelMessage])
 
     def add(self, part: ModelRequestPart | ModelResponsePart) -> None:
         """Add a new part, creating a new request or response message if necessary."""
