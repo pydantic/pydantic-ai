@@ -4,7 +4,7 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
@@ -26,17 +26,17 @@ interactions:
         parts:
         - text: You are a helpful chatbot.
         role: user
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1209'
+      - '2173'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1891
+      - gfet4t7; dur=11862
       transfer-encoding:
       - chunked
       vary:
@@ -45,26 +45,35 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.7721506292169744
-        content:
+      - content:
           parts:
-          - text: |
-              That's a picture of a small, portable monitor attached to a camera, likely used for filming. The monitor displays a scene of a canyon or similar rocky landscape.  This suggests the camera is being used to film this landscape. The camera itself is mounted on a tripod, indicating a stable and likely professional setup.  The background is out of focus, but shows the same canyon as seen on the monitor. This makes it clear that the image shows the camera's viewfinder or recording output, rather than an unrelated display.
+          - text: |-
+              The video at 0:00 shows a **professional camera setup** in a stunning natural landscape, likely a desert or mountainous canyon area.
+
+              Here's a breakdown:
+
+              1.  **Foreground (Left):** A **camera is mounted on a tripod**. Attached to the camera setup is a prominent **external monitor**.
+              2.  **On the Monitor:** The monitor is displaying the **live feed or a recorded shot from the camera**. It shows a captivating scene: a winding dirt path or road leading through a rugged canyon or rocky terrain. The light in the shot is warm and golden, suggesting either sunrise or sunset, with distant mountains illuminated.
+              3.  **Background (Right & Surrounding):** The camera itself is placed in a very similar environment to what's displayed on its monitor. The background is softly blurred (shallow depth of field), but you can discern the warm, earthy tones of a vast, open landscape with what looks like a road or path extending into the distance, surrounded by natural rock formations or hills. The lighting in the actual environment also appears to be soft and golden, matching the scene on the monitor.
+
+              **In essence, the image is a "behind-the-scenes" shot, showing a videographer or photographer actively capturing beautiful outdoor scenery, with the external monitor providing a clear view of the shot being composed or recorded.** The scene on the monitor almost perfectly mirrors the environment the camera is in, emphasizing the art of landscape videography/photography.
           role: model
         finishReason: STOP
-      modelVersion: gemini-1.5-flash
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: 1DxXaayiNcyhqtsPnsrP6A0
       usageMetadata:
-        candidatesTokenCount: 110
-        candidatesTokensDetails:
-        - modality: TEXT
-          tokenCount: 110
-        promptTokenCount: 270
+        candidatesTokenCount: 305
+        promptTokenCount: 582
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 10
+          tokenCount: 12
         - modality: VIDEO
-          tokenCount: 260
-        totalTokenCount: 380
+          tokenCount: 526
+        - modality: AUDIO
+          tokenCount: 44
+        thoughtsTokenCount: 1053
+        totalTokenCount: 1940
     status:
       code: 200
       message: OK
