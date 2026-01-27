@@ -29,7 +29,6 @@ from pydantic_ai import (
     ModelResponse,
     ModelRetry,
     RetryPromptPart,
-    SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -41,7 +40,7 @@ from pydantic_ai import (
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.exceptions import ContentFilterError
-from pydantic_ai.messages import VideoUrl
+from pydantic_ai.messages import SystemPromptPart, VideoUrl
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -411,7 +410,7 @@ async def test_request_tool_call(allow_model_requests: None):
     ]
     mock_client = MockOpenAI.create_mock(responses)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m, system_prompt='this is the system prompt')
+    agent = Agent(m, instructions='this is the system prompt')
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
@@ -426,9 +425,9 @@ async def test_request_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
@@ -466,6 +465,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
@@ -503,6 +503,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),

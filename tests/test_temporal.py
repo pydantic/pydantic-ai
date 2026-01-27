@@ -318,7 +318,7 @@ class ComplexAgentWorkflow:
 @dataclass
 class BasicSpan:
     content: str
-    children: list[BasicSpan] = field(default_factory=list)
+    children: list[BasicSpan] = field(default_factory=list['BasicSpan'])
     parent_id: int | None = field(repr=False, compare=False, default=None)
 
 
@@ -2526,7 +2526,7 @@ async def test_fastmcp_toolset(allow_model_requests: None, client: Client):
 class GraphState:
     """State for the graph execution test."""
 
-    values: list[int] = field(default_factory=list)
+    values: list[int] = field(default_factory=list[int])
 
 
 # Create a graph with parallel execution using the beta API
