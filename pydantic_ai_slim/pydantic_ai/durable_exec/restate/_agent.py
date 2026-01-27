@@ -131,7 +131,7 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             # FastMCP toolsets require I/O, so they must be wrapped for durability.
             try:
                 from pydantic_ai.toolsets.fastmcp import FastMCPToolset
-            except ImportError:  # pragma: no cover
+            except ImportError:
                 pass
             else:
                 if isinstance(toolset, FastMCPToolset):

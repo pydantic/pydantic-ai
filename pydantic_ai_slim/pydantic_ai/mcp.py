@@ -1112,7 +1112,7 @@ class _MCPServerHTTP(MCPServer):
             client_info=client_info,
         )
 
-    def __repr__(self) -> str:  # pragma: no cover
+    def __repr__(self) -> str:
         repr_args = [
             f'url={self.url!r}',
         ]
@@ -1157,10 +1157,8 @@ class MCPServerSSE(_MCPServerHTTP):
 
     # sse_client has a hang bug (https://github.com/modelcontextprotocol/python-sdk/issues/1811)
     # that prevents testing SSE transport in CI.
-    # TODO: Remove pragma and add a test
-    # once https://github.com/modelcontextprotocol/python-sdk/pull/1838 is released.
     @asynccontextmanager
-    async def client_streams(  # pragma: no cover
+    async def client_streams(
         self,
     ) -> AsyncIterator[
         tuple[

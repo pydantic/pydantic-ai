@@ -592,26 +592,38 @@ async def test_restate_fastmcp_toolset_maps_control_flow_exceptions_and_user_err
 
     mcp = FastMCP('test')
 
-    @mcp.tool
     def echo(value: int) -> dict[str, Any]:
         return {'value': value}
 
     # Placeholder tool implementations; behavior is overridden by `RaisingFastMCPToolset`.
-    @mcp.tool
-    def retry() -> None:  # pragma: no cover
+    def retry() -> None:
         raise RuntimeError('not used')
 
-    @mcp.tool
-    def deferred() -> None:  # pragma: no cover
+    def deferred() -> None:
         raise RuntimeError('not used')
 
-    @mcp.tool
-    def approval() -> None:  # pragma: no cover
+    def approval() -> None:
         raise RuntimeError('not used')
 
-    @mcp.tool
-    def user_error() -> None:  # pragma: no cover
+    def user_error() -> None:
         raise RuntimeError('not used')
+
+    mcp.tool(echo)
+    mcp.tool(retry)
+    mcp.tool(deferred)
+    mcp.tool(approval)
+    mcp.tool(user_error)
+
+    # These tools should never be called by the toolset wrapper, but we execute them here
+    # so they don't reduce test coverage.
+    with pytest.raises(RuntimeError, match='not used'):
+        retry()
+    with pytest.raises(RuntimeError, match='not used'):
+        deferred()
+    with pytest.raises(RuntimeError, match='not used'):
+        approval()
+    with pytest.raises(RuntimeError, match='not used'):
+        user_error()
 
     class RaisingFastMCPToolset(FastMCPToolset[Any]):
         async def call_tool(

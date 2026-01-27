@@ -39,6 +39,6 @@ if TYPE_CHECKING:
         def deserialize(self, buf: bytes) -> T | None: ...
 
         def serialize(self, obj: T | None) -> bytes: ...
-else:  # pragma: no cover
+else:
     from restate import Context, RunOptions, TerminalError
     from restate.serde import Serde
