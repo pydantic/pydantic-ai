@@ -138,7 +138,6 @@ class SkillsToolset(FunctionToolset):
         max_depth: int | None = 3,
         id: str | None = None,
         instruction_template: str | None = None,
-        exclude_tools: set[str] | list[str] | None = None,
     ) -> None:
         """Initialize the skills toolset.
 
@@ -153,9 +152,6 @@ class SkillsToolset(FunctionToolset):
             instruction_template: Custom instruction template for skills system prompt.
                 Must include `{skills_list}` placeholder. If None, uses default template.
                 Tool usage guidance is provided in the tool docstrings themselves.
-            exclude_tools: Set or list of tool names to exclude from registration (e.g., ['run_skill_script']).
-                Useful for security or capability restrictions such as disabling script execution.
-                Valid tool names: 'list_skills', 'load_skill', 'read_skill_resource', 'run_skill_script'.
 
         Example:
             ```python
@@ -177,29 +173,11 @@ class SkillsToolset(FunctionToolset):
             # Using SkillsDirectory instances directly
             dir1 = SkillsDirectory(path="./skills")
             toolset = SkillsToolset(directories=[dir1])
-
-            # Excluding specific tools (disable script execution with a set)
-            toolset = SkillsToolset(exclude_tools=['run_skill_script'])
             ```
         """
         super().__init__(id=id)
 
         self._instruction_template = instruction_template
-
-        # Validate and initialize exclude_tools
-        valid_tools = {'list_skills', 'load_skill', 'read_skill_resource', 'run_skill_script'}
-        self._exclude_tools: set[str] = set(exclude_tools or [])
-        invalid = self._exclude_tools - valid_tools
-        if invalid:
-            raise ValueError(f'Unknown tools: {invalid}. Valid: {valid_tools}')
-
-        if 'load_skill' in self._exclude_tools:
-            warnings.warn(
-                "'load_skill' is a critical tool for skills usage and has been excluded. "
-                'Agents will not be able to load skill instructions, which severely limits skill functionality.',
-                UserWarning,
-                stacklevel=2,
-            )
 
         # Initialize the skills dict and directories list (for refresh)
         self._skills: dict[str, Skill] = {}
@@ -361,19 +339,20 @@ class SkillsToolset(FunctionToolset):
         return None
 
     def _register_tools(self) -> None:
-        """Register skill management tools with the toolset.
+        """Register all skill management tools with the toolset.
 
-        This method registers skill management tools, excluding any specified in exclude_tools.
-        Available tools: list_skills, load_skill, read_skill_resource, run_skill_script.
+        Registers the following tools:
+        - list_skills: List all available skills
+        - load_skill: Load a skill's complete instructions
+        - read_skill_resource: Access skill resources
+        - run_skill_script: Execute skill scripts
+
+        To exclude specific tools, use the filtered() composition method.
         """
-        if 'list_skills' not in self._exclude_tools:
-            self._register_list_skills()
-        if 'load_skill' not in self._exclude_tools:
-            self._register_load_skill()
-        if 'read_skill_resource' not in self._exclude_tools:
-            self._register_read_skill_resource()
-        if 'run_skill_script' not in self._exclude_tools:
-            self._register_run_skill_script()
+        self._register_list_skills()
+        self._register_load_skill()
+        self._register_read_skill_resource()
+        self._register_run_skill_script()
 
     def _register_list_skills(self) -> None:
         """Register the list_skills tool."""

@@ -2039,67 +2039,58 @@ async def test_skill_decorator_combined_with_directory_skills(sample_skills_dir:
     assert 'Programmatic content' in result
 
 
-# ==================== exclude_tools Tests ====================
+# ==================== Tool Filtering via filtered() ====================
 
 
-def test_exclude_tools_run_skill_script(sample_skills_dir: Path) -> None:
-    """Test excluding run_skill_script tool for security."""
-    toolset = SkillsToolset(directories=[sample_skills_dir], exclude_tools={'run_skill_script'})
+async def test_filtered_exclude_run_skill_script(sample_skills_dir: Path) -> None:
+    """Test excluding run_skill_script tool via filtered() composition."""
+    toolset = SkillsToolset(directories=[sample_skills_dir])
+    filtered_toolset = toolset.filtered(lambda ctx, tool_def: tool_def.name != 'run_skill_script')
 
-    # Check that run_skill_script is not registered
-    assert 'run_skill_script' not in toolset.tools
-    assert 'load_skill' in toolset.tools
-    assert 'read_skill_resource' in toolset.tools
-    assert 'list_skills' in toolset.tools
-
-
-def test_exclude_tools_invalid_tool_names(sample_skills_dir: Path) -> None:
-    """Test that invalid tool names raise ValueError."""
-    with pytest.raises(ValueError, match='Unknown tools'):
-        SkillsToolset(directories=[sample_skills_dir], exclude_tools={'invalid_tool', 'run_skill_script'})
-
-    with pytest.raises(ValueError, match='Unknown tools'):
-        SkillsToolset(directories=[sample_skills_dir], exclude_tools={'nonexistent'})
+    ctx = InternalRunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
+    tools = await filtered_toolset.get_tools(ctx)
+    
+    # Check that run_skill_script is not in filtered tools
+    assert 'run_skill_script' not in tools
+    assert 'load_skill' in tools
+    assert 'read_skill_resource' in tools
+    assert 'list_skills' in tools
 
 
-def test_exclude_multiple_tools(sample_skills_dir: Path) -> None:
-    """Test excluding multiple tools."""
-    toolset = SkillsToolset(directories=[sample_skills_dir], exclude_tools={'run_skill_script', 'read_skill_resource'})
+async def test_filtered_exclude_multiple_tools(sample_skills_dir: Path) -> None:
+    """Test excluding multiple tools via filtered()."""
+    toolset = SkillsToolset(directories=[sample_skills_dir])
+    filtered_toolset = toolset.filtered(
+        lambda ctx, tool_def: tool_def.name not in {'run_skill_script', 'read_skill_resource'}
+    )
 
-    # Check that excluded tools are not registered
-    assert 'run_skill_script' not in toolset.tools
-    assert 'read_skill_resource' not in toolset.tools
-    assert 'load_skill' in toolset.tools
-    assert 'list_skills' in toolset.tools
+    ctx = InternalRunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
+    tools = await filtered_toolset.get_tools(ctx)
 
-
-def test_exclude_all_tools_except_list_skills(sample_skills_dir: Path) -> None:
-    """Test excluding all tools except list_skills."""
-    with pytest.warns(UserWarning, match="'load_skill' is a critical tool"):
-        toolset = SkillsToolset(
-            directories=[sample_skills_dir], exclude_tools={'load_skill', 'read_skill_resource', 'run_skill_script'}
-        )
-
-    # Only list_skills should remain
-    assert 'list_skills' in toolset.tools
-    assert 'load_skill' not in toolset.tools
-    assert 'read_skill_resource' not in toolset.tools
-    assert 'run_skill_script' not in toolset.tools
+    # Check that excluded tools are not in filtered tools
+    assert 'run_skill_script' not in tools
+    assert 'read_skill_resource' not in tools
+    assert 'load_skill' in tools
+    assert 'list_skills' in tools
 
 
-def test_exclude_tools_empty_set(sample_skills_dir: Path) -> None:
-    """Test that empty exclude_tools set doesn't exclude anything."""
-    toolset = SkillsToolset(directories=[sample_skills_dir], exclude_tools=set())
+async def test_filtered_exclude_all_tools_except_list_skills(sample_skills_dir: Path) -> None:
+    """Test excluding all tools except list_skills via filtered()."""
+    toolset = SkillsToolset(directories=[sample_skills_dir])
+    filtered_toolset = toolset.filtered(lambda ctx, tool_def: tool_def.name == 'list_skills')
 
-    # All tools should be registered
-    assert 'list_skills' in toolset.tools
-    assert 'load_skill' in toolset.tools
-    assert 'read_skill_resource' in toolset.tools
-    assert 'run_skill_script' in toolset.tools
+    ctx = InternalRunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
+    tools = await filtered_toolset.get_tools(ctx)
+
+    # Only list_skills should remain in filtered tools
+    assert 'list_skills' in tools
+    assert 'load_skill' not in tools
+    assert 'read_skill_resource' not in tools
+    assert 'run_skill_script' not in tools
 
 
-def test_exclude_tools_none_default(sample_skills_dir: Path) -> None:
-    """Test that None (default) excludes nothing."""
+def test_unfiltered_all_tools_available(sample_skills_dir: Path) -> None:
+    """Test that all tools are available when no filtering is applied."""
     toolset = SkillsToolset(directories=[sample_skills_dir])
 
     # All tools should be registered
@@ -2109,12 +2100,13 @@ def test_exclude_tools_none_default(sample_skills_dir: Path) -> None:
     assert 'run_skill_script' in toolset.tools
 
 
-async def test_exclude_tools_instructions_run_script(sample_skills_dir: Path) -> None:
-    """Test that instructions include core guidance when scripts are excluded."""
-    toolset = SkillsToolset(directories=[sample_skills_dir], exclude_tools={'run_skill_script'})
+async def test_filtered_run_skill_script_instructions(sample_skills_dir: Path) -> None:
+    """Test that instructions include core guidance with filtered toolset."""
+    toolset = SkillsToolset(directories=[sample_skills_dir])
+    filtered_toolset = toolset.filtered(lambda ctx, tool_def: tool_def.name != 'run_skill_script')
 
     ctx = InternalRunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
-    instructions = await toolset.get_instructions(ctx)
+    instructions = await filtered_toolset.get_instructions(ctx)
 
     assert instructions is not None
     # Should include guidance about loading skills
@@ -2123,26 +2115,8 @@ async def test_exclude_tools_instructions_run_script(sample_skills_dir: Path) ->
     assert 'progressive disclosure' in instructions.lower()
 
 
-async def test_exclude_tools_instructions_all_tools(sample_skills_dir: Path) -> None:
-    """Test instructions when all execution tools are excluded."""
-    with pytest.warns(UserWarning, match="'load_skill' is a critical tool"):
-        toolset = SkillsToolset(
-            directories=[sample_skills_dir], exclude_tools={'load_skill', 'read_skill_resource', 'run_skill_script'}
-        )
-
-    ctx = InternalRunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
-    instructions = await toolset.get_instructions(ctx)
-
-    assert instructions is not None
-    # Header should still be present (skills list is shown)
-    assert 'collection of skills' in instructions
-    assert '<available_skills>' in instructions
-    # Skills should still be listed
-    assert 'skill-one' in instructions
-
-
-async def test_exclude_tools_instructions_no_exclusions(sample_skills_dir: Path) -> None:
-    """Test instructions contain core guidance when nothing is excluded."""
+async def test_unfiltered_instructions_all_tools(sample_skills_dir: Path) -> None:
+    """Test instructions contain full guidance when no filtering is applied."""
     toolset = SkillsToolset(directories=[sample_skills_dir])
 
     ctx = InternalRunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
@@ -2157,84 +2131,78 @@ async def test_exclude_tools_instructions_no_exclusions(sample_skills_dir: Path)
     assert 'progressive disclosure' in instructions.lower()
 
 
-async def test_exclude_tools_with_custom_template(sample_skills_dir: Path) -> None:
-    """Test that custom instruction_template bypasses exclude_tools filtering."""
-    custom_template = 'Custom instructions with {skills_list}'
-    toolset = SkillsToolset(
-        directories=[sample_skills_dir], exclude_tools={'run_skill_script'}, instruction_template=custom_template
+def test_filtered_skills_still_loaded(sample_skills_dir: Path) -> None:
+    """Test that skills are still loaded when tools are filtered."""
+    toolset = SkillsToolset(directories=[sample_skills_dir])
+    filtered_toolset = toolset.filtered(
+        lambda ctx, tool_def: tool_def.name not in {'run_skill_script', 'read_skill_resource'}
     )
 
-    ctx = InternalRunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
-    instructions = await toolset.get_instructions(ctx)
-
-    assert instructions is not None
-    # Custom template should be used as-is
-    assert instructions.startswith('Custom instructions')
-    # Skills list should still be formatted
-    assert '<skill>' in instructions
-
-
-def test_exclude_tools_skills_still_loaded(sample_skills_dir: Path) -> None:
-    """Test that skills are still loaded even when tools are excluded."""
-    toolset = SkillsToolset(directories=[sample_skills_dir], exclude_tools={'run_skill_script', 'read_skill_resource'})
-
-    # Skills should still be loaded
-    assert 'skill-one' in toolset.skills
-    assert 'skill-two' in toolset.skills
-    assert 'skill-three' in toolset.skills
+    # Skills should still be loaded (filtering only affects tools, not skill data)
+    assert 'skill-one' in filtered_toolset.skills
+    assert 'skill-two' in filtered_toolset.skills
+    assert 'skill-three' in filtered_toolset.skills
 
     # Accessing skills programmatically should still work
-    skill_one = toolset.get_skill('skill-one')
+    skill_one = filtered_toolset.get_skill('skill-one')
     assert skill_one.name == 'skill-one'
 
 
-async def test_exclude_tools_excluded_tool_raises_error(sample_skills_dir: Path) -> None:
-    """Test that excluded tools are not callable."""
-    toolset = SkillsToolset(directories=[sample_skills_dir], exclude_tools={'run_skill_script'})
+async def test_filtered_excluded_tool_not_callable(sample_skills_dir: Path) -> None:
+    """Test that filtered tools are not callable."""
+    toolset = SkillsToolset(directories=[sample_skills_dir])
+    filtered_toolset = toolset.filtered(lambda ctx, tool_def: tool_def.name != 'run_skill_script')
 
-    # The tool should not be in the tools dictionary
-    assert 'run_skill_script' not in toolset.tools
+    ctx = InternalRunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
+    tools = await filtered_toolset.get_tools(ctx)
+
+    # The tool should not be in the filtered toolset's tools
+    assert 'run_skill_script' not in tools
     # Trying to access it should fail
     with pytest.raises(KeyError):
-        toolset.tools['run_skill_script']
+        tools['run_skill_script']
 
 
-def test_exclude_tools_with_programmatic_skills() -> None:
-    """Test exclude_tools with programmatically defined skills."""
+def test_filtered_with_programmatic_skills() -> None:
+    """Test filtering with programmatically defined skills."""
     skill = Skill(name='test-skill', uri='./test', description='Test skill', content='Instructions here')
 
-    toolset = SkillsToolset(skills=[skill], exclude_tools={'run_skill_script'})
+    toolset = SkillsToolset(skills=[skill])
+    filtered_toolset = toolset.filtered(lambda ctx, tool_def: tool_def.name != 'run_skill_script')
 
-    # Skill should be loaded
+    # Skill should be loaded in both original and filtered toolset
+    assert 'test-skill' in filtered_toolset.skills
     assert 'test-skill' in toolset.skills
-    # Tool should be excluded
-    assert 'run_skill_script' not in toolset.tools
+    # Original toolset has all tools
+    assert 'run_skill_script' in toolset.tools
     assert 'load_skill' in toolset.tools
 
 
-def test_exclude_tools_with_decorator(sample_skills_dir: Path) -> None:
-    """Test exclude_tools with decorator-defined skills."""
-    toolset = SkillsToolset(directories=[sample_skills_dir], exclude_tools={'run_skill_script'})
+def test_filtered_with_decorator(sample_skills_dir: Path) -> None:
+    """Test filtering with decorator-defined skills."""
+    toolset = SkillsToolset(directories=[sample_skills_dir])
 
     @toolset.skill
     def programmatic_skill() -> str:
         """Programmatic skill."""
         return 'Content.'
 
+    filtered_toolset = toolset.filtered(lambda ctx, tool_def: tool_def.name != 'run_skill_script')
+
     # Skill should be registered
     assert 'programmatic-skill' in toolset.skills
-    # Tool should still be excluded
-    assert 'run_skill_script' not in toolset.tools
+    # The original toolset still has all tools
+    assert 'run_skill_script' in toolset.tools
 
 
-async def test_exclude_tools_with_agent(sample_skills_dir: Path) -> None:
-    """Test exclude_tools integration with Agent."""
-    toolset = SkillsToolset(directories=[sample_skills_dir], exclude_tools={'run_skill_script'})
+async def test_filtered_with_agent(sample_skills_dir: Path) -> None:
+    """Test filtering integration with Agent."""
+    toolset = SkillsToolset(directories=[sample_skills_dir])
+    filtered_toolset = toolset.filtered(lambda ctx, tool_def: tool_def.name != 'run_skill_script')
 
-    agent = Agent(model=TestModel(), toolsets=[toolset])
+    # Create an agent with the filtered toolset
+    agent = Agent(model=TestModel(), toolsets=[filtered_toolset])
 
-    # run_skill_script should not be available in the toolset
-    # The toolset manages its own tools, and excluded tools won't be in the dictionary
-    toolset_tool_names = {tool.name for tool in toolset.tools.values()}
-    assert 'run_skill_script' not in toolset_tool_names
-    assert 'load_skill' in toolset_tool_names
+    # Verify the filtered toolset is properly integrated with the agent
+    # The toolset should be in the agent's toolsets list
+    assert filtered_toolset in agent.toolsets
