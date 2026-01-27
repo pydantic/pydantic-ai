@@ -1,7 +1,3 @@
----
-title: Pydantic AI Model Usage within MCP Servers
-description: "Guide to building MCP servers with Pydantic AI. Provide tools and resources to other AI clients using a standardized, production-ready framework."
----
 # Server
 
 Pydantic AI models can also be used within MCP Servers.
@@ -17,7 +13,7 @@ from pydantic_ai import Agent
 
 server = FastMCP('Pydantic AI Server')
 server_agent = Agent(
-    'anthropic:claude-haiku-4-5', system_prompt='always reply in rhyme'
+    'anthropic:claude-haiku-4-5', instructions='always reply in rhyme'
 )
 
 
@@ -81,7 +77,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 
 server = FastMCP('Pydantic AI Server with sampling')
-server_agent = Agent(system_prompt='always reply in rhyme')
+server_agent = Agent(instructions='always reply in rhyme')
 
 
 @server.tool()
@@ -131,6 +127,7 @@ async def sampling_callback(
                 annotations=None,
                 meta=None,
             ),
+            meta=None,
         )
     ]
     """

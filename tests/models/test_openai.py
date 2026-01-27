@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Any, Literal, cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -29,7 +29,6 @@ from pydantic_ai import (
     ModelResponse,
     ModelRetry,
     RetryPromptPart,
-    SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -41,6 +40,7 @@ from pydantic_ai import (
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.exceptions import ContentFilterError
+from pydantic_ai.messages import SystemPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
@@ -409,7 +409,7 @@ async def test_request_tool_call(allow_model_requests: None):
     ]
     mock_client = MockOpenAI.create_mock(responses)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m, system_prompt='this is the system prompt')
+    agent = Agent(m, instructions='this is the system prompt')
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
@@ -424,9 +424,9 @@ async def test_request_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
@@ -464,6 +464,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
@@ -501,6 +502,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
@@ -1042,8 +1044,6 @@ async def test_document_url_input_force_download_response_api(allow_model_reques
 
 async def test_image_url_force_download_chat() -> None:
     """Test that force_download=True calls download_item for ImageUrl in OpenAIChatModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
@@ -1077,8 +1077,6 @@ async def test_image_url_force_download_chat() -> None:
 
 async def test_image_url_no_force_download_chat() -> None:
     """Test that force_download=False does not call download_item for ImageUrl in OpenAIChatModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
@@ -1106,8 +1104,6 @@ async def test_image_url_no_force_download_chat() -> None:
 
 async def test_document_url_force_download_responses() -> None:
     """Test that force_download=True calls download_item for DocumentUrl in OpenAIResponsesModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
@@ -1141,8 +1137,6 @@ async def test_document_url_force_download_responses() -> None:
 
 async def test_document_url_no_force_download_responses() -> None:
     """Test that force_download=False does not call download_item for DocumentUrl in OpenAIResponsesModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
@@ -1170,8 +1164,6 @@ async def test_document_url_no_force_download_responses() -> None:
 
 async def test_audio_url_force_download_responses() -> None:
     """Test that force_download=True calls download_item for AudioUrl in OpenAIResponsesModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
@@ -2529,8 +2521,16 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(content=IsStr(), id='rs_68c1fa166e9c81979ff56b16882744f1093f57e27128848a'),
-                    TextPart(content=IsStr(), id='msg_68c1fa1ec9448197b5c8f78a90999360093f57e27128848a'),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fa166e9c81979ff56b16882744f1093f57e27128848a',
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_68c1fa1ec9448197b5c8f78a90999360093f57e27128848a',
+                        provider_name='openai',
+                    ),
                 ],
                 usage=RequestUsage(input_tokens=13, output_tokens=1915, details={'reasoning_tokens': 1600}),
                 model_name='o3-mini-2025-01-31',
@@ -2853,6 +2853,7 @@ def test_openai_response_timestamp_milliseconds(allow_model_requests: None):
     result = agent.run_sync('Hello')
     response = cast(ModelResponse, result.all_messages()[-1])
     assert response.timestamp == IsNow(tz=timezone.utc)
+    assert response.provider_name == 'openai'
     assert response.provider_details == snapshot(
         {'finish_reason': 'stop', 'timestamp': datetime(2025, 6, 1, 3, 7, 48, tzinfo=timezone.utc)}
     )
@@ -4050,3 +4051,12 @@ async def test_openai_chat_audio_url_uri_encoding(allow_model_requests: None):
     # Expect Data URI with correct MIME type for mp3
     assert audio_part['input_audio']['data'] == data_uri
     assert audio_part['input_audio']['format'] == 'mp3'
+
+
+def test_transformer_adds_properties_to_object_schemas():
+    """OpenAI drops object schemas without a 'properties' key. The transformer must add it."""
+
+    schema = {'type': 'object', 'additionalProperties': {'type': 'string'}}
+    result = OpenAIJsonSchemaTransformer(schema, strict=None).walk()
+
+    assert result['properties'] == {}

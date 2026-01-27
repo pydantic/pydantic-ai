@@ -1,7 +1,3 @@
----
-title: "Pydantic Graph: AI Graph Framework for Python"
-description: "Build complex agentic workflows with Pydantic Graph. A type-safe framework for creating stateful, graph-based AI applications and multi-step logic."
----
 # Graphs
 
 !!! danger "Don't use a nail gun unless you need a nail gun"
@@ -389,7 +385,7 @@ class State:
 email_writer_agent = Agent(
     'google-gla:gemini-2.5-pro',
     output_type=Email,
-    system_prompt='Write a welcome email to our tech blog.',
+    instructions='Write a welcome email to our tech blog.',
 )
 
 
@@ -429,7 +425,7 @@ class EmailOk(BaseModel):
 feedback_agent = Agent[None, EmailRequiresWrite | EmailOk](
     'openai:gpt-5',
     output_type=EmailRequiresWrite | EmailOk,  # type: ignore
-    system_prompt=(
+    instructions=(
         'Review the email and provide feedback, email must reference the users specific interests.'
     ),
 )
@@ -712,7 +708,7 @@ class EvaluationResult(BaseModel, use_attribute_docstrings=True):
 evaluate_agent = Agent(
     'openai:gpt-5',
     output_type=EvaluationResult,
-    system_prompt='Given a question and answer, evaluate if the answer is correct.',
+    instructions='Given a question and answer, evaluate if the answer is correct.',
 )
 
 
@@ -955,7 +951,7 @@ class EvaluationResult(BaseModel, use_attribute_docstrings=True):
 evaluate_agent = Agent(
     'openai:gpt-5',
     output_type=EvaluationResult,
-    system_prompt='Given a question and answer, evaluate if the answer is correct.',
+    instructions='Given a question and answer, evaluate if the answer is correct.',
 )
 
 
