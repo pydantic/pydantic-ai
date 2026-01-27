@@ -942,14 +942,12 @@ async def process_tool_calls(  # noqa: C901
                     )
                     raise e  # pragma: lax no cover
 
-            # Emit event with accurate validation status
-            yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
-
             if not validated.args_valid:
                 # Validation failed
                 assert validated.validation_error is not None
                 if final_result:
                     # Already have a result, just note that this tool wasn't used
+                    yield _messages.FunctionToolCallEvent(call, args_valid=False)
                     part = _messages.ToolReturnPart(
                         tool_name=call.tool_name,
                         content='Output tool not used - output failed validation.',
@@ -963,6 +961,7 @@ async def process_tool_calls(  # noqa: C901
                         error=validated.validation_error,
                         model_settings=ctx.deps.model_settings,
                     )
+                    yield _messages.FunctionToolCallEvent(call, args_valid=False)
                     output_parts.append(validated.validation_error.tool_retry)
                     yield _messages.FunctionToolResultEvent(validated.validation_error.tool_retry)
             else:
@@ -973,6 +972,7 @@ async def process_tool_calls(  # noqa: C901
                     # Max retries exceeded during execution
                     if final_result:
                         # Already have a result, just note that this tool wasn't used
+                        yield _messages.FunctionToolCallEvent(call, args_valid=True)
                         part = _messages.ToolReturnPart(
                             tool_name=call.tool_name,
                             content='Output tool not used - output failed validation.',
@@ -992,6 +992,7 @@ async def process_tool_calls(  # noqa: C901
                         ctx.state.increment_retries(
                             ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
                         )
+                    yield _messages.FunctionToolCallEvent(call, args_valid=True)
                     output_parts.append(e.tool_retry)
                     yield _messages.FunctionToolResultEvent(e.tool_retry)
                 else:
