@@ -916,14 +916,13 @@ async def process_tool_calls(  # noqa: C901
         # Early strategy is chosen and final result is not yet set
         # Or exhaustive strategy is chosen
         else:
+            # Validate first to get accurate args_valid status
             try:
-                result_data = await tool_manager.handle_call(call)
+                validated = await tool_manager.validate_tool_call(call)
             except exceptions.UnexpectedModelBehavior as e:
-                # If we already have a valid final result, don't fail the entire run
-                # This allows exhaustive strategy to complete successfully when at least one output tool is valid
+                # Max retries exceeded
                 if final_result:
-                    # If output tool fails when we already have a final result, skip it without retrying
-                    # Validation already failed in handle_call, so args_valid=False
+                    # If we already have a valid final result, skip without failing
                     yield _messages.FunctionToolCallEvent(call, args_valid=False)
                     part = _messages.ToolReturnPart(
                         tool_name=call.tool_name,
@@ -932,34 +931,76 @@ async def process_tool_calls(  # noqa: C901
                     )
                     output_parts.append(part)
                     yield _messages.FunctionToolResultEvent(part)
+                    continue
                 else:
-                    # No valid result yet, so this is a real failure
                     ctx.state.increment_retries(
                         ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
                     )
                     raise e  # pragma: lax no cover
-            except ToolRetryError as e:
-                # If we already have a valid final result, don't increment retries for invalid output tools
-                # This allows the run to succeed if at least one output tool returned a valid result
-                if not final_result:
-                    ctx.state.increment_retries(
-                        ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
-                    )
-                # ToolRetryError means validation failed in handle_call, so args_valid=False
-                yield _messages.FunctionToolCallEvent(call, args_valid=False)
-                output_parts.append(e.tool_retry)
-                yield _messages.FunctionToolResultEvent(e.tool_retry)
-            else:
-                part = _messages.ToolReturnPart(
-                    tool_name=call.tool_name,
-                    content='Final result processed.',
-                    tool_call_id=call.tool_call_id,
-                )
-                output_parts.append(part)
 
-                # In both `early` and `exhaustive` modes, use the first output tool's result as the final result
-                if not final_result:
-                    final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
+            # Emit event with accurate validation status
+            yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
+
+            if not validated.args_valid:
+                # Validation failed
+                assert validated.validation_error is not None
+                if final_result:
+                    # Already have a result, just note that this tool wasn't used
+                    part = _messages.ToolReturnPart(
+                        tool_name=call.tool_name,
+                        content='Output tool not used - output failed validation.',
+                        tool_call_id=call.tool_call_id,
+                    )
+                    output_parts.append(part)
+                    yield _messages.FunctionToolResultEvent(part)
+                else:
+                    ctx.state.increment_retries(
+                        ctx.deps.max_result_retries,
+                        error=validated.validation_error,
+                        model_settings=ctx.deps.model_settings,
+                    )
+                    output_parts.append(validated.validation_error.tool_retry)
+                    yield _messages.FunctionToolResultEvent(validated.validation_error.tool_retry)
+            else:
+                # Validation passed - execute the tool
+                try:
+                    result_data = await tool_manager.execute_tool_call(validated)
+                except exceptions.UnexpectedModelBehavior as e:
+                    # Max retries exceeded during execution
+                    if final_result:
+                        # Already have a result, just note that this tool wasn't used
+                        part = _messages.ToolReturnPart(
+                            tool_name=call.tool_name,
+                            content='Output tool not used - output failed validation.',
+                            tool_call_id=call.tool_call_id,
+                        )
+                        output_parts.append(part)
+                        yield _messages.FunctionToolResultEvent(part)
+                    else:
+                        ctx.state.increment_retries(
+                            ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                        )
+                        raise e  # pragma: lax no cover
+                except ToolRetryError as e:
+                    # Execution failed (e.g., ModelRetry from inside the tool)
+                    # If we already have a valid final result, don't increment retries
+                    if not final_result:
+                        ctx.state.increment_retries(
+                            ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                        )
+                    output_parts.append(e.tool_retry)
+                    yield _messages.FunctionToolResultEvent(e.tool_retry)
+                else:
+                    part = _messages.ToolReturnPart(
+                        tool_name=call.tool_name,
+                        content='Final result processed.',
+                        tool_call_id=call.tool_call_id,
+                    )
+                    output_parts.append(part)
+
+                    # In both `early` and `exhaustive` modes, use the first output tool's result as the final result
+                    if not final_result:
+                        final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
 
     # Then, we handle function tool calls
     calls_to_run: list[_messages.ToolCallPart] = []
@@ -1032,12 +1073,47 @@ async def process_tool_calls(  # noqa: C901
                         )
                     )
         elif calls:
-            deferred_calls['external'].extend(tool_calls_by_kind['external'])
-            deferred_calls['unapproved'].extend(tool_calls_by_kind['unapproved'])
-
+            # Validate deferred tools before deferring them
+            # If validation fails, trace the error and add retry prompt
+            # If validation passes, just emit event and defer
             for call in calls:
-                args_valid = await tool_manager.validate_tool_args(call)
-                yield _messages.FunctionToolCallEvent(call, args_valid=args_valid)
+                try:
+                    validated = await tool_manager.validate_tool_call(call)
+                except exceptions.UnexpectedModelBehavior:
+                    # Max retries exceeded - re-raise
+                    raise
+
+                yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
+
+                if validated.args_valid:
+                    # Validation passed - defer the call
+                    if call in tool_calls_by_kind['external']:
+                        deferred_calls['external'].append(call)
+                    else:
+                        deferred_calls['unapproved'].append(call)
+                else:
+                    # Validation failed - execute to create trace span and get error
+                    ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.deps.model_settings)
+                    include_content = (
+                        ctx.deps.instrumentation_settings is not None
+                        and ctx.deps.instrumentation_settings.include_content
+                    )
+                    instrumentation_version = (
+                        ctx.deps.instrumentation_settings.version
+                        if ctx.deps.instrumentation_settings
+                        else DEFAULT_INSTRUMENTATION_VERSION
+                    )
+                    try:
+                        await tool_manager.execute_tool_call(
+                            validated,
+                            tracer=ctx.deps.tracer,
+                            include_content=include_content,
+                            instrumentation_version=instrumentation_version,
+                            usage=ctx.state.usage,
+                        )
+                    except ToolRetryError as e:
+                        output_parts.append(e.tool_retry)
+                        yield _messages.FunctionToolResultEvent(e.tool_retry)
 
     if not final_result and deferred_calls:
         if not ctx.deps.output_schema.allows_deferred_tools:
