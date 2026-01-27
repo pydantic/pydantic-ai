@@ -125,7 +125,7 @@ def sanitize_filename(name: str, max_len: int) -> str:
 
 
 @customize_repr
-def _(value: bytes):
+def _(value: bytes):  # pragma: lax no cover
     """Use IsBytes() for large byte sequences in snapshots."""
     if len(value) > SNAPSHOT_BYTES_COLLAPSE_THRESHOLD:
         return 'IsBytes()'
@@ -133,7 +133,7 @@ def _(value: bytes):
 
 
 @customize_repr
-def _(value: datetime):
+def _(value: datetime):  # pragma: lax no cover
     """Use IsDatetime() for datetime values in snapshots."""
     return 'IsDatetime()'
 

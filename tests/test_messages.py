@@ -424,6 +424,26 @@ def test_thinking_part_delta_apply_to_thinking_part_delta():
     assert result_part.provider_details == {'from_callable': 'yes', 'from_dict': 'also'}
 
 
+def test_thinking_part_delta_callable_provider_details_overwrites_noncallable_provider_details():
+    """Cover callable provider_details applied to non-callable provider_details."""
+    original_delta = ThinkingPartDelta(content_delta='original', provider_details={'foo': 0})
+
+    def provider_details_fn(d: dict[str, int] | None) -> dict[str, int]:
+        return {**(d or {}), 'from_callable': 1}
+
+    delta_callable = ThinkingPartDelta(content_delta='', provider_details=provider_details_fn)
+    result = delta_callable.apply(original_delta)
+    assert callable(result.provider_details)
+    assert result.provider_details is provider_details_fn
+
+
+def test_thinking_part_delta_apply_invalid_part_raises():
+    """Cover error path when applying ThinkingPartDelta to wrong part type."""
+    delta = ThinkingPartDelta(content_delta='x')
+    with pytest.raises(ValueError, match='Cannot apply ThinkingPartDeltas'):
+        delta.apply(TextPart(content='hi'))
+
+
 def test_pre_usage_refactor_messages_deserializable():
     # https://github.com/pydantic/pydantic-ai/pull/2378 changed the `ModelResponse` fields,
     # but we as tell people to store those in the DB we want to be very careful not to break deserialization.

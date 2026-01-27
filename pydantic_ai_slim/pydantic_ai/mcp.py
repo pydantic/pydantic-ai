@@ -1158,7 +1158,7 @@ class MCPServerSSE(_MCPServerHTTP):
     # sse_client has a hang bug (https://github.com/modelcontextprotocol/python-sdk/issues/1811)
     # that prevents testing SSE transport in CI.
     @asynccontextmanager
-    async def client_streams(
+    async def client_streams(  # pragma: lax no cover
         self,
     ) -> AsyncIterator[
         tuple[
