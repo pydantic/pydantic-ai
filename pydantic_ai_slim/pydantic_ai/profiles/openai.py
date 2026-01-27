@@ -16,8 +16,8 @@ SAMPLING_PARAMS = (
     'presence_penalty',
     'frequency_penalty',
     'logit_bias',
-    'logprobs',
-    'top_logprobs',
+    'openai_logprobs',
+    'openai_top_logprobs',
 )
 """Sampling parameter names that are incompatible with reasoning.
 
