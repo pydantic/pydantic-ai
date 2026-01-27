@@ -1,7 +1,3 @@
----
-title: "Data Analyst SQL Agent: Pydantic AI Example"
-description: "Build an AI-powered data analyst. Example shows how to use Pydantic AI for natural language to SQL conversion and data visualization tasks."
----
 # Data Analyst
 
 Sometimes in an agent workflow, the agent does not need to know the exact tool

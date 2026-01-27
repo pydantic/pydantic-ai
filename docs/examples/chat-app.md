@@ -1,7 +1,3 @@
----
-title: "Pydantic AI: Chat App with FastAPI Example"
-description: "Build a full-stack chat application using Pydantic AI and FastAPI. Complete example including frontend integration and streaming agent responses."
----
 # Chat App with FastAPI
 
 Simple chat app example build with FastAPI.

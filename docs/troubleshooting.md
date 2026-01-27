@@ -1,7 +1,3 @@
----
-title: "Pydantic AI Error Handling & Troubleshooting"
-description: "Fix common issues in Pydantic AI. Guide to resolving validation errors, connection timeouts, and model configuration problems in your agents."
----
 # Troubleshooting
 
 Below are suggestions on how to fix some common errors you might encounter while using Pydantic AI. If the issue you're experiencing is not listed below or addressed in the documentation, please feel free to ask in the [Pydantic Slack](help.md) or create an issue on [GitHub](https://github.com/pydantic/pydantic-ai/issues).

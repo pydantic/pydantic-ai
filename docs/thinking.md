@@ -1,7 +1,3 @@
----
-title: "Pydantic AI: Thinking & Reasoning Effort Guide"
-description: Optimize reasoning models like OpenAI o1 with Pydantic AI. Configure thinking effort levels to balance reasoning depth and response speed in your agents.
----
 # Thinking
 
 Thinking (or reasoning) is the process by which a model works through a problem step-by-step before
@@ -71,6 +67,20 @@ from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 
 model = GoogleModel('gemini-2.5-pro')
 settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True})
+agent = Agent(model, model_settings=settings)
+...
+```
+
+## xAI
+
+xAI reasoning models (Grok) support native thinking. To preserve the thinking content for multi-turn conversations, enable [`XaiModelSettings.xai_include_encrypted_content`][pydantic_ai.models.xai.XaiModelSettings.xai_include_encrypted_content].
+
+```python {title="xai_thinking_part.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.xai import XaiModel, XaiModelSettings
+
+model = XaiModel('grok-4-fast-reasoning')
+settings = XaiModelSettings(xai_include_encrypted_content=True)
 agent = Agent(model, model_settings=settings)
 ...
 ```

@@ -1,7 +1,3 @@
----
-description: "Technical API reference for embeddings in Pydantic AI.
----
-
 # `pydantic_ai.embeddings`
 
 ::: pydantic_ai.embeddings
@@ -15,6 +11,10 @@ description: "Technical API reference for embeddings in Pydantic AI.
 ::: pydantic_ai.embeddings.openai
 
 ::: pydantic_ai.embeddings.cohere
+
+::: pydantic_ai.embeddings.google
+
+::: pydantic_ai.embeddings.voyageai
 
 ::: pydantic_ai.embeddings.sentence_transformers
 
