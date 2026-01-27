@@ -141,7 +141,7 @@ class MockAnthropic:
     messages_: MockAnthropicMessage | Sequence[MockAnthropicMessage] | None = None
     stream: Sequence[MockRawMessageStreamEvent] | Sequence[Sequence[MockRawMessageStreamEvent]] | None = None
     index = 0
-    chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
+    chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     base_url: str = 'https://api.anthropic.com'
 
     @cached_property
@@ -1114,7 +1114,7 @@ async def test_request_tool_call(allow_model_requests: None):
 
     mock_client = MockAnthropic.create_mock(responses)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m, system_prompt='this is the system prompt')
+    agent = Agent(m, instructions='this is the system prompt')
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
@@ -1129,9 +1129,9 @@ async def test_request_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -1162,6 +1162,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -1192,6 +1193,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -2317,22 +2319,19 @@ async def test_anthropic_model_thinking_part_from_other_model(
     provider = OpenAIProvider(api_key=openai_api_key)
     m = OpenAIResponsesModel('gpt-5', provider=provider)
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
-    agent = Agent(m, system_prompt='You are a helpful assistant.', model_settings=settings)
+    agent = Agent(m, instructions='You are a helpful assistant.', model_settings=settings)
 
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='You are a helpful assistant.',
-                        timestamp=IsDatetime(),
-                    ),
                     UserPromptPart(
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     ),
                 ],
+                instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -2344,12 +2343,36 @@ async def test_anthropic_model_thinking_part_from_other_model(
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(content=IsStr(), id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7'),
-                    ThinkingPart(content=IsStr(), id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7'),
-                    ThinkingPart(content=IsStr(), id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7'),
-                    ThinkingPart(content=IsStr(), id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7'),
-                    ThinkingPart(content=IsStr(), id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7'),
-                    TextPart(content=IsStr(), id='msg_68c1fdbecbf081a18085a084257a9aef06da9901a3d98ab7'),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_68c1fdbecbf081a18085a084257a9aef06da9901a3d98ab7',
+                        provider_name='openai',
+                    ),
                 ],
                 usage=RequestUsage(input_tokens=23, output_tokens=2211, details={'reasoning_tokens': 1920}),
                 model_name='gpt-5-2025-08-07',
@@ -2385,6 +2408,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
+                instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -2495,39 +2519,29 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                     content_delta="""\
 .)
 2. Look\
-""",
-                    provider_name='anthropic',
+"""
                 ),
             ),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta=' both ways (left-', provider_name='anthropic')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta='right-left in countries', provider_name='anthropic')
-            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' both ways (left-')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='right-left in countries')),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' where cars drive on the right;', provider_name='anthropic'),
+                delta=ThinkingPartDelta(content_delta=' where cars drive on the right;'),
             ),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta=' right-left-right where', provider_name='anthropic')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta=' they drive on the left)', provider_name='anthropic')
-            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' right-left-right where')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' they drive on the left)')),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
                     content_delta="""\
 
 3. Wait for\
-""",
-                    provider_name='anthropic',
+"""
                 ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' traffic to stop or for a clear', provider_name='anthropic'),
+                delta=ThinkingPartDelta(content_delta=' traffic to stop or for a clear'),
             ),
             PartDeltaEvent(
                 index=0,
@@ -2535,13 +2549,12 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                     content_delta="""\
  gap in traffic
 4\
-""",
-                    provider_name='anthropic',
+"""
                 ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta='. Make eye contact with drivers if', provider_name='anthropic'),
+                delta=ThinkingPartDelta(content_delta='. Make eye contact with drivers if'),
             ),
             PartDeltaEvent(
                 index=0,
@@ -2549,8 +2562,7 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                     content_delta="""\
  possible
 5. Cross at\
-""",
-                    provider_name='anthropic',
+"""
                 ),
             ),
             PartDeltaEvent(
@@ -2559,8 +2571,7 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                     content_delta="""\
  a steady pace without running
 6. Continue\
-""",
-                    provider_name='anthropic',
+"""
                 ),
             ),
             PartDeltaEvent(
@@ -2569,13 +2580,12 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                     content_delta="""\
  watching for traffic while crossing
 7\
-""",
-                    provider_name='anthropic',
+"""
                 ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta='. Use pedestrian signals where', provider_name='anthropic'),
+                delta=ThinkingPartDelta(content_delta='. Use pedestrian signals where'),
             ),
             PartDeltaEvent(
                 index=0,
@@ -2584,31 +2594,25 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
  available
 
 I'll also mention\
-""",
-                    provider_name='anthropic',
+"""
                 ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=' some additional safety tips and considerations for', provider_name='anthropic'
-                ),
+                delta=ThinkingPartDelta(content_delta=' some additional safety tips and considerations for'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta=' different situations (busy streets, streets'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta=' with traffic signals, etc.).'),
             ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    content_delta=' different situations (busy streets, streets', provider_name='anthropic'
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' with traffic signals, etc.).', provider_name='anthropic'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    signature_delta='ErUBCkYIBhgCIkA/Y+JwNMtmQyHcoo4/v2dpY6ruQifcu3pAzHbzIwpIrjIyaWaYdJOp9/0vUmBPj+LmqgiDSTktRcn0U75AlpXOEgwzVmYdHgDaZfeyBGcaDFSIZCHzzrZQkolJKCIwhMETosYLx+Dw/vKa83hht943z9R3/ViOqokT25JmMfaGOntuo+33Zxqf5rqUbkQ3Kh34rIqqnKaFSVr7Nn85z8OFN3Cwzz+HmXl2FgCXOxgC',
-                    provider_name='anthropic',
+                    signature_delta='ErUBCkYIBhgCIkA/Y+JwNMtmQyHcoo4/v2dpY6ruQifcu3pAzHbzIwpIrjIyaWaYdJOp9/0vUmBPj+LmqgiDSTktRcn0U75AlpXOEgwzVmYdHgDaZfeyBGcaDFSIZCHzzrZQkolJKCIwhMETosYLx+Dw/vKa83hht943z9R3/ViOqokT25JmMfaGOntuo+33Zxqf5rqUbkQ3Kh34rIqqnKaFSVr7Nn85z8OFN3Cwzz+HmXl2FgCXOxgC'
                 ),
             ),
             PartEndEvent(
@@ -3545,41 +3549,29 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
             PartStartEvent(index=0, part=ThinkingPart(content='', signature='', provider_name='anthropic')),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(
-                    content_delta='The user is asking about the weather', provider_name='anthropic'
-                ),
+                delta=ThinkingPartDelta(content_delta='The user is asking about the weather'),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=' in San Francisco today. This is clearly a request', provider_name='anthropic'
-                ),
+                delta=ThinkingPartDelta(content_delta=' in San Francisco today. This is clearly a request'),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' for current, real-time information', provider_name='anthropic'),
+                delta=ThinkingPartDelta(content_delta=' for current, real-time information'),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=' that changes daily, so I should use', provider_name='anthropic'
-                ),
+                delta=ThinkingPartDelta(content_delta=' that changes daily, so I should use'),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=' web search to get up-to-date weather', provider_name='anthropic'
-                ),
+                delta=ThinkingPartDelta(content_delta=' web search to get up-to-date weather'),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=' information. According to the guidelines, today', provider_name='anthropic'
-                ),
+                delta=ThinkingPartDelta(content_delta=' information. According to the guidelines, today'),
             ),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta="'s date is September 16, ", provider_name='anthropic')
-            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta="'s date is September 16, ")),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
@@ -3587,28 +3579,22 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
 2025.
 
 I should search for current\
-""",
-                    provider_name='anthropic',
+"""
                 ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=' weather in San Francisco. I\'ll include "', provider_name='anthropic'
-                ),
+                delta=ThinkingPartDelta(content_delta=' weather in San Francisco. I\'ll include "'),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(
-                    content_delta='today" in the search query to get the most current', provider_name='anthropic'
-                ),
+                delta=ThinkingPartDelta(content_delta='today" in the search query to get the most current'),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' information.', provider_name='anthropic')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' information.')),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    signature_delta='Er8ECkYIBxgCKkDp29haxwUos3j9hg3HNQI8e4jcFtinIsLxpzaQR/MhPnIpHkUpSNPatD/C2EVyiEGg2LIO1lhkU/P8XLgiyejFEgzinYyrRtGe03DeFEIaDL63CVUOAo1v/57lpSIw+msm1NHv1h+xLzkbu2YqlXPwjza0tVjwAj7RLUFwB1HpPbdv6hlityaMFb/SwKZZKqYDwbYu36cdPpUcpirpZaKZ/DITzfWJkX93BXmRl5au50mxAiFe9B8XxreADaofra5cmevEaaLH0b5Ze/IC0ja/cJdo9NoVlyHlqdXmex22CAkg0Y/HnsZr8MbnE6GyG9bOqAEhwb6YgKHMaMLDVmElbNSsD7luWtsbw5BDvRaqSSROzTxH4s0dqjUqJsoOBeUXuUqWHSl2KwQi8akELKUnvlDz15ZwFI1yVTHA5nSMFIhjB0jECs1g8PjFkAYTHkHddYR5/SLruy1ENpKU0xjc/hd/O41xnI3PxHBGDKv/hdeSVBKjJ0SDYIwXW96QS5vzlKxYGCqtibj2VxPzUlDITvhn1oO+cjCXClo1lE+ul//+nk7jk7fRkvl1/+pscYCpBoGKprA7CU1kpiggO9pAVUrpZM9vC2jF5/VVVYEoY3CyC+hrNpDWXTUdGdCTofhp2wdWVZzCmO7/+L8SUnlu64YYe9PWsRDuHRe8Lvl0M9EyBrhWnGWQkkk9b+O5uNU5xgE0sjbuGzgYswhwSd7Powb8XbtbW6h7lTbo1M2IQ3Ok0kdt0RAYAQ==',
-                    provider_name='anthropic',
+                    signature_delta='Er8ECkYIBxgCKkDp29haxwUos3j9hg3HNQI8e4jcFtinIsLxpzaQR/MhPnIpHkUpSNPatD/C2EVyiEGg2LIO1lhkU/P8XLgiyejFEgzinYyrRtGe03DeFEIaDL63CVUOAo1v/57lpSIw+msm1NHv1h+xLzkbu2YqlXPwjza0tVjwAj7RLUFwB1HpPbdv6hlityaMFb/SwKZZKqYDwbYu36cdPpUcpirpZaKZ/DITzfWJkX93BXmRl5au50mxAiFe9B8XxreADaofra5cmevEaaLH0b5Ze/IC0ja/cJdo9NoVlyHlqdXmex22CAkg0Y/HnsZr8MbnE6GyG9bOqAEhwb6YgKHMaMLDVmElbNSsD7luWtsbw5BDvRaqSSROzTxH4s0dqjUqJsoOBeUXuUqWHSl2KwQi8akELKUnvlDz15ZwFI1yVTHA5nSMFIhjB0jECs1g8PjFkAYTHkHddYR5/SLruy1ENpKU0xjc/hd/O41xnI3PxHBGDKv/hdeSVBKjJ0SDYIwXW96QS5vzlKxYGCqtibj2VxPzUlDITvhn1oO+cjCXClo1lE+ul//+nk7jk7fRkvl1/+pscYCpBoGKprA7CU1kpiggO9pAVUrpZM9vC2jF5/VVVYEoY3CyC+hrNpDWXTUdGdCTofhp2wdWVZzCmO7/+L8SUnlu64YYe9PWsRDuHRe8Lvl0M9EyBrhWnGWQkkk9b+O5uNU5xgE0sjbuGzgYswhwSd7Powb8XbtbW6h7lTbo1M2IQ3Ok0kdt0RAYAQ=='
                 ),
             ),
             PartEndEvent(
@@ -4644,35 +4630,26 @@ async def test_anthropic_web_fetch_tool_stream(
     )
     assert event_parts == snapshot(
         [
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='The user wants', provider_name='anthropic')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' me to fetch', provider_name='anthropic')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the content', provider_name='anthropic')),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta=' from the URL https', provider_name='anthropic')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta='://ai.pydantic.dev', provider_name='anthropic')
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and provide', provider_name='anthropic')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' only', provider_name='anthropic')),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta=' the first sentence from', provider_name='anthropic')
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' that page.', provider_name='anthropic')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='The user wants')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' me to fetch')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the content')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' from the URL https')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='://ai.pydantic.dev')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and provide')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' only')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the first sentence from')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' that page.')),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' I need to use the web_fetch', provider_name='anthropic'),
+                delta=ThinkingPartDelta(content_delta=' I need to use the web_fetch'),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' tool to', provider_name='anthropic')),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta=' get the content from', provider_name='anthropic')
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' this URL.', provider_name='anthropic')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' tool to')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' get the content from')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' this URL.')),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    signature_delta='EusCCkYICRgCKkAG/7zhRcmUoiMtml5iZUXVv3nqupp8kgk0nrq9zOoklaXzVCnrb9kwLNWGETIcCaAnLd0cd0ESwjslkVKdV9n8EgxKKdu8LlEvh9VGIWIaDAJ2Ja2NEacp1Am6jSIwyNO36tV+Sj+q6dWf79U+3KOIa1khXbIYarpkIViCuYQaZwpJ4Vtedrd7dLWTY2d5KtIB9Pug5UPuvepSOjyhxLaohtGxmdvZN8crGwBdTJYF9GHSli/rzvkR6CpH+ixd8iSopwFcsJgQ3j68fr/yD7cHmZ06jU3LaESVEBwTHnlK0ABiYnGvD3SvX6PgImMSQxQ1ThARFTA7DePoWw+z5DI0L2vgSun2qTYHkmGxzaEskhNIBlK9r7wS3tVcO0Di4lD/rhYV61tklL2NBWJqvm7ZCtJTN09CzPFJy7HDkg7bSINVL4kuu9gTWEtb/o40tw1b+sO62UcfxQTVFQ4Cj8D8XFZbGAE=',
-                    provider_name='anthropic',
+                    signature_delta='EusCCkYICRgCKkAG/7zhRcmUoiMtml5iZUXVv3nqupp8kgk0nrq9zOoklaXzVCnrb9kwLNWGETIcCaAnLd0cd0ESwjslkVKdV9n8EgxKKdu8LlEvh9VGIWIaDAJ2Ja2NEacp1Am6jSIwyNO36tV+Sj+q6dWf79U+3KOIa1khXbIYarpkIViCuYQaZwpJ4Vtedrd7dLWTY2d5KtIB9Pug5UPuvepSOjyhxLaohtGxmdvZN8crGwBdTJYF9GHSli/rzvkR6CpH+ixd8iSopwFcsJgQ3j68fr/yD7cHmZ06jU3LaESVEBwTHnlK0ABiYnGvD3SvX6PgImMSQxQ1ThARFTA7DePoWw+z5DI0L2vgSun2qTYHkmGxzaEskhNIBlK9r7wS3tVcO0Di4lD/rhYV61tklL2NBWJqvm7ZCtJTN09CzPFJy7HDkg7bSINVL4kuu9gTWEtb/o40tw1b+sO62UcfxQTVFQ4Cj8D8XFZbGAE='
                 ),
             ),
             PartStartEvent(
@@ -5959,13 +5936,11 @@ Here's how it breaks down following the order of operations:
             PartStartEvent(index=0, part=ThinkingPart(content='', signature='', provider_name='anthropic')),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta='The user is asking me to calculate', provider_name='anthropic'),
+                delta=ThinkingPartDelta(content_delta='The user is asking me to calculate'),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=' a mathematical expression: 65465-6544 *', provider_name='anthropic'
-                ),
+                delta=ThinkingPartDelta(content_delta=' a mathematical expression: 65465-6544 *'),
             ),
             PartDeltaEvent(
                 index=0,
@@ -5974,20 +5949,18 @@ Here's how it breaks down following the order of operations:
  65464-6+1.02255
 
 This\
-""",
-                    provider_name='anthropic',
+"""
                 ),
             ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    content_delta=' involves multiplication and subtraction operations, and I need to be careful about the order of',
-                    provider_name='anthropic',
+                    content_delta=' involves multiplication and subtraction operations, and I need to be careful about the order of'
                 ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' operations (PEMDAS/BODMAS).', provider_name='anthropic'),
+                delta=ThinkingPartDelta(content_delta=' operations (PEMDAS/BODMAS).'),
             ),
             PartDeltaEvent(
                 index=0,
@@ -5996,13 +5969,10 @@ This\
  Let me break this down:
 
 65\
-""",
-                    provider_name='anthropic',
+"""
                 ),
             ),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta='465-6544 * 65464-6+1.02255', provider_name='anthropic')
-            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='465-6544 * 65464-6+1.02255')),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
@@ -6011,28 +5981,24 @@ This\
 
 Following order of operations:
 1. First, multiplication:\
-""",
-                    provider_name='anthropic',
+"""
                 ),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' 6544 * 65464', provider_name='anthropic')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' 6544 * 65464')),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
                     content_delta="""\
 
 2. Then left to right for\
-""",
-                    provider_name='anthropic',
+"""
                 ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' addition and subtraction: 65465', provider_name='anthropic'),
+                delta=ThinkingPartDelta(content_delta=' addition and subtraction: 65465'),
             ),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta=' - (result from step 1)', provider_name='anthropic')
-            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' - (result from step 1)')),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
@@ -6040,31 +6006,25 @@ Following order of operations:
  - 6 + 1.02255
 
 This\
-""",
-                    provider_name='anthropic',
+"""
                 ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=' is a computational task that requires precise', provider_name='anthropic'
-                ),
+                delta=ThinkingPartDelta(content_delta=' is a computational task that requires precise'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta=' calculations, so I should use the code_execution'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta=' tool to get an accurate result.'),
             ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    content_delta=' calculations, so I should use the code_execution', provider_name='anthropic'
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' tool to get an accurate result.', provider_name='anthropic'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    signature_delta='EucFCkYIBxgCKkCfcR3zTiKFcMLhP1aMZu4l0cfgiw3ukkSHOSX2qV1DEKtpe3pu1HpRvDz1mEw32e/wvHoS/AfpVYk3AFb8oAscEgxips//IwdGKRINkQoaDDc122APa5lQXEtsuiIw7RQW/ow7z+MOXL6D8pAl4Iz5V6VSbn2A37DxwRbzOYHSicZuvVrhZHLmn2WWwTZjKs4EYn4HNPF6+Y+9dITwGBWUz6WXsOnv/S1sp+WJLYD8vGMDG9DzTIdjQ9pMN/Bg6VB3hPTveXqxopBk+V7u1WaQC0NmkEmREv6Pdq9iHHEnuIhN0t7UrrNDxPwt/cmbilfa7QL8ofeeSorIRwvibXtG0aqNDu42r6JkatwttDSRIBSqIgKLkel8yPP9ksmOf4SRbNAbgijmq63s+EIkNHt2yjuTHV48pR1j1czHWcsoqJOHj6faeXge0OyGKuPqbBCzoqAjecNq0dRfHQUgXMWmeaJp1R6iWhKxyJV5Y2EwhA5WGH9xzc9h0TobIgGFGAk2OvzDPBO5qr+O85LbjNeHF3WfZciaj2lMIVsveklN9S8598m+R+D4/O8Sscebc2xoVf8qBDazJP5gVtuMoAKBcJuNVWeTR5snv2vs5BEejv6Q2gcb6rPa4ZxEmilhK1NTy9+dwoYvgLUm5o11PBXbI7uRv18tLwwer55Ult5Aq3JgG8Uj8FgBA4exLCw9LKUhzd+1lN0i19f2mDDuBORw5dPUBj2unzIb6sro/2SYm3MF2nmKhh5mm1F/v37ksOzJlTUPhbcs6aYrUJo5cM1H9AB8vpcNln38uWb4tuFgD5Wqy/0WFu60nsRsnInI5SPMN39wA4cx2eyrCfne32iw0Ov+VAdn0+D8FFzyVEEh7lrCQlJFoqoznxvpKh6NRhUzLmLpfEPOhFN/bZBHsj+3YJLT4JgRaYGTf6fMkZGCyIk60hIbqofwcuMFNqFYOK0nffOV8dz9ElisN/6cSJsYAQ==',
-                    provider_name='anthropic',
+                    signature_delta='EucFCkYIBxgCKkCfcR3zTiKFcMLhP1aMZu4l0cfgiw3ukkSHOSX2qV1DEKtpe3pu1HpRvDz1mEw32e/wvHoS/AfpVYk3AFb8oAscEgxips//IwdGKRINkQoaDDc122APa5lQXEtsuiIw7RQW/ow7z+MOXL6D8pAl4Iz5V6VSbn2A37DxwRbzOYHSicZuvVrhZHLmn2WWwTZjKs4EYn4HNPF6+Y+9dITwGBWUz6WXsOnv/S1sp+WJLYD8vGMDG9DzTIdjQ9pMN/Bg6VB3hPTveXqxopBk+V7u1WaQC0NmkEmREv6Pdq9iHHEnuIhN0t7UrrNDxPwt/cmbilfa7QL8ofeeSorIRwvibXtG0aqNDu42r6JkatwttDSRIBSqIgKLkel8yPP9ksmOf4SRbNAbgijmq63s+EIkNHt2yjuTHV48pR1j1czHWcsoqJOHj6faeXge0OyGKuPqbBCzoqAjecNq0dRfHQUgXMWmeaJp1R6iWhKxyJV5Y2EwhA5WGH9xzc9h0TobIgGFGAk2OvzDPBO5qr+O85LbjNeHF3WfZciaj2lMIVsveklN9S8598m+R+D4/O8Sscebc2xoVf8qBDazJP5gVtuMoAKBcJuNVWeTR5snv2vs5BEejv6Q2gcb6rPa4ZxEmilhK1NTy9+dwoYvgLUm5o11PBXbI7uRv18tLwwer55Ult5Aq3JgG8Uj8FgBA4exLCw9LKUhzd+1lN0i19f2mDDuBORw5dPUBj2unzIb6sro/2SYm3MF2nmKhh5mm1F/v37ksOzJlTUPhbcs6aYrUJo5cM1H9AB8vpcNln38uWb4tuFgD5Wqy/0WFu60nsRsnInI5SPMN39wA4cx2eyrCfne32iw0Ov+VAdn0+D8FFzyVEEh7lrCQlJFoqoznxvpKh6NRhUzLmLpfEPOhFN/bZBHsj+3YJLT4JgRaYGTf6fMkZGCyIk60hIbqofwcuMFNqFYOK0nffOV8dz9ElisN/6cSJsYAQ=='
                 ),
             ),
             PartEndEvent(
@@ -6461,6 +6421,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
                     TextPart(
                         content='Tomorrow is November 20, 2025.',
                         id='msg_0dcd74f01910b54500691e5596124081a087e8fa7b2ca19d5a',
+                        provider_name='openai',
                     )
                 ],
                 usage=RequestUsage(input_tokens=329, output_tokens=12, details={'reasoning_tokens': 0}),
