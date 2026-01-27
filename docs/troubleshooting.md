@@ -8,11 +8,11 @@ Below are suggestions on how to fix some common errors you might encounter while
 
 **Modern Jupyter/IPython (7.0+)**: This environment supports top-level `await` natively. You can use [`Agent.run()`][pydantic_ai.Agent.run] directly in notebook cells without additional setup:
 
-```python {test="skip"}
+```python {test="skip" lint="skip"}
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o')
-result = await agent.run('Who let the dogs out?') # noqa: F704
+result = await agent.run('Who let the dogs out?')
 ```
 
 **Legacy environments or specific integrations**: If you encounter event loop conflicts, use [`nest-asyncio`](https://pypi.org/project/nest-asyncio/):
