@@ -208,7 +208,7 @@ support_agent = Agent(
     'openai:gpt-5',
     deps_type=SupportDependencies,
     output_type=SupportOutput,
-    system_prompt=(
+    instructions=(
         'You are a support agent in our bank, give the '
         'customer support and judge the risk level of their query.'
     ),

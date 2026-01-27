@@ -863,9 +863,11 @@ class OpenAIChatModel(Model):
 
         _model: OpenAIChatModel
 
-        texts: list[str] = field(default_factory=list)
-        thinkings: list[str] = field(default_factory=list)
-        tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = field(default_factory=list)
+        texts: list[str] = field(default_factory=list[str])
+        thinkings: list[str] = field(default_factory=list[str])
+        tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = field(
+            default_factory=list[ChatCompletionMessageFunctionToolCallParam]
+        )
 
         def map_assistant_message(self, message: ModelResponse) -> chat.ChatCompletionAssistantMessageParam:
             for item in message.parts:
