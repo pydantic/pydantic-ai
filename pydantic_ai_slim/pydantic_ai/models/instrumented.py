@@ -11,10 +11,10 @@ from urllib.parse import urlparse
 
 from genai_prices.types import PriceCalculation
 from opentelemetry._logs import (
-    Logger,  # pyright: ignore [reportPrivateImportUsage]
-    LoggerProvider,  # pyright: ignore [reportPrivateImportUsage]
-    LogRecord,  # pyright: ignore [reportPrivateImportUsage]
-    get_logger_provider,  # pyright: ignore [reportPrivateImportUsage]
+    Logger,
+    LoggerProvider,
+    LogRecord,
+    get_logger_provider,
 )
 from opentelemetry.metrics import MeterProvider, get_meter_provider
 from opentelemetry.trace import Span, SpanKind, Tracer, TracerProvider, get_tracer_provider
