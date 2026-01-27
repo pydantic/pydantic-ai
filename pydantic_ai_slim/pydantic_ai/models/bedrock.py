@@ -624,23 +624,28 @@ class BedrockConverseModel(Model):
                         )
                     elif isinstance(part, ToolReturnPart):
                         assert part.tool_call_id is not None
+                        tool_result_content = await self._map_tool_return_content(
+                            part,
+                            document_count,
+                            profile.bedrock_tool_result_format,
+                            profile.bedrock_supports_multimodal_tool_returns,
+                        )
                         bedrock_messages.append(
-                            {
-                                'role': 'user',
-                                'content': [
-                                    {
-                                        'toolResult': {
-                                            'toolUseId': part.tool_call_id,
-                                            'content': [
-                                                {'text': part.model_response_str()}
-                                                if profile.bedrock_tool_result_format == 'text'
-                                                else {'json': part.model_response_object()}
-                                            ],
-                                            'status': 'success',
+                            cast(
+                                'MessageUnionTypeDef',
+                                {
+                                    'role': 'user',
+                                    'content': [
+                                        {
+                                            'toolResult': {
+                                                'toolUseId': part.tool_call_id,
+                                                'content': tool_result_content,
+                                                'status': 'success',
+                                            }
                                         }
-                                    }
-                                ],
-                            }
+                                    ],
+                                },
+                            )
                         )
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
@@ -869,6 +874,84 @@ class BedrockConverseModel(Model):
                 else:
                     assert_never(item)
         return [{'role': 'user', 'content': content}]
+
+    async def _map_tool_return_content(  # noqa: C901
+        self,
+        part: ToolReturnPart,
+        document_count: Iterator[int],
+        tool_result_format: Literal['text', 'json'],
+        supports_multimodal: bool,
+    ) -> list[ContentBlockUnionTypeDef]:
+        """Map tool return content including multimodal files to Bedrock format.
+
+        Claude on Bedrock supports image, document, and video natively in tool results.
+        Nova models do not support multimodal content in tool results.
+        Audio raises an error for all models.
+        """
+        result: list[ContentBlockUnionTypeDef] = []
+
+        text_content = part.model_response_str()
+        if text_content:
+            if tool_result_format == 'text':
+                result.append({'text': text_content})
+            else:
+                result.append(cast('ContentBlockUnionTypeDef', {'json': part.model_response_object()}))
+
+        for file in part.files:
+            if not supports_multimodal:
+                raise UserError(
+                    'This Bedrock model does not support multimodal content in tool returns. '
+                    'Only Claude models on Bedrock support image, document, and video files in tool results.'
+                )
+            if isinstance(file, BinaryContent):
+                format = file.format
+                if file.is_document:
+                    name = f'Document {next(document_count)}'
+                    assert format in ('pdf', 'txt', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'md')
+                    result.append({'document': {'name': name, 'format': format, 'source': {'bytes': file.data}}})
+                elif file.is_image:
+                    assert format in ('jpeg', 'png', 'gif', 'webp')
+                    result.append({'image': {'format': format, 'source': {'bytes': file.data}}})
+                elif file.is_video:
+                    assert format in ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
+                    result.append({'video': {'format': format, 'source': {'bytes': file.data}}})
+                else:
+                    raise UserError(
+                        'Bedrock does not support audio content in tool returns. '
+                        'Only image, document, and video files are supported.'
+                    )
+            elif isinstance(file, AudioUrl):
+                raise UserError(
+                    'Bedrock does not support audio content in tool returns. '
+                    'Only image, document, and video files are supported.'
+                )
+            elif isinstance(file, ImageUrl | DocumentUrl | VideoUrl):
+                source: DocumentSourceTypeDef
+                if file.url.startswith('s3://'):
+                    parsed = urlparse(file.url)
+                    s3_location: S3LocationTypeDef = {'uri': f'{parsed.scheme}://{parsed.netloc}{parsed.path}'}
+                    if bucket_owner := parse_qs(parsed.query).get('bucketOwner', [None])[0]:
+                        s3_location['bucketOwner'] = bucket_owner
+                    source = {'s3Location': s3_location}
+                else:
+                    downloaded = await download_item(file, data_format='bytes', type_format='extension')
+                    source = {'bytes': downloaded['data']}
+
+                if file.kind == 'image-url':
+                    format = file.media_type.split('/')[1]
+                    assert format in ('jpeg', 'png', 'gif', 'webp'), f'Unsupported image format: {format}'
+                    result.append({'image': {'format': format, 'source': source}})
+                elif file.kind == 'document-url':
+                    name = f'Document {next(document_count)}'
+                    result.append({'document': {'name': name, 'format': file.format, 'source': source}})
+                elif file.kind == 'video-url':
+                    format = file.media_type.split('/')[1]
+                    assert format in ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
+                    result.append({'video': {'format': format, 'source': source}})
+            else:
+                assert_never(file)
+
+        return result or [{'text': ''}]
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ContentBlockOutputTypeDef:

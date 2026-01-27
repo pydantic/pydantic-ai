@@ -669,11 +669,10 @@ UserContent: TypeAlias = str | MultiModalContent | CachePoint
 
 @dataclass(repr=False)
 class ToolReturn:
-    """A structured return value for tools that need to provide both a return value and custom content to the model.
+    """A structured return value for tools that need to provide metadata alongside the return value.
 
     This class allows tools to return complex responses that include:
-    - A return value for actual tool return
-    - Custom content (including multi-modal content) to be sent to the model as a UserPromptPart
+    - A return value for actual tool return (can include multimodal content directly)
     - Optional metadata for application use
     """
 
@@ -683,7 +682,7 @@ class ToolReturn:
     _: KW_ONLY
 
     content: str | Sequence[UserContent] | None = None
-    """The content to be sent to the model as a UserPromptPart."""
+    """Deprecated: This field is no longer used. Return multimodal content directly in `return_value` instead."""
 
     metadata: Any = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
@@ -691,6 +690,16 @@ class ToolReturn:
     kind: Literal['tool-return'] = 'tool-return'
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+    def __post_init__(self) -> None:
+        if self.content is not None:
+            import warnings
+
+            warnings.warn(
+                'ToolReturn.content is deprecated. Return multimodal content directly in `return_value` instead. '
+                'Each provider now handles multimodal content in tool returns natively or via automatic fallback.',
+                DeprecationWarning,
+            )
 
 
 _document_format_lookup: dict[str, DocumentFormat] = {
@@ -820,17 +829,63 @@ class BaseToolReturnPart:
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
 
+    def _split_content(self) -> tuple[list[MultiModalContent], list[Any]]:
+        """Split content into (files, other).
+
+        Returns:
+            A tuple of (multimodal files, other content items).
+        """
+        if self.content is None:
+            return [], []
+        content = self.content
+        contents: list[Any] = content if isinstance(content, list) else [content]  # pyright: ignore[reportUnknownVariableType]
+        files: list[MultiModalContent] = []
+        other: list[Any] = []
+        for item in contents:
+            if isinstance(item, MultiModalContent):
+                files.append(item)
+            else:
+                other.append(item)
+        return files, other
+
+    @property
+    def files(self) -> list[MultiModalContent]:
+        """Get multimodal files from the content."""
+        files, _ = self._split_content()
+        return files
+
+    @property
+    def content_excluding_files(self) -> list[Any]:
+        """Get content excluding multimodal files."""
+        _, other = self._split_content()
+        return other
+
     def model_response_str(self) -> str:
-        """Return a string representation of the content for the model."""
-        if isinstance(self.content, str):
-            return self.content
+        """Return a string representation of the content for the model, excluding multimodal files."""
+        other = self.content_excluding_files
+        if len(other) == 0:
+            return ''
+        elif len(other) == 1:
+            item = other[0]
+            if isinstance(item, str):
+                return item
+            else:
+                return tool_return_ta.dump_json(item).decode()
         else:
-            return tool_return_ta.dump_json(self.content).decode()
+            return tool_return_ta.dump_json(other).decode()
 
     def model_response_object(self) -> dict[str, Any]:
-        """Return a dictionary representation of the content, wrapping non-dict types appropriately."""
-        # gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict
-        json_content = tool_return_ta.dump_python(self.content, mode='json')
+        """Return a dictionary representation of the content, wrapping non-dict types appropriately.
+
+        Excludes multimodal files from the response.
+        """
+        other = self.content_excluding_files
+        if len(other) == 0:
+            return {}
+        elif len(other) == 1:
+            json_content = tool_return_ta.dump_python(other[0], mode='json')
+        else:
+            json_content = tool_return_ta.dump_python(other, mode='json')
         if isinstance(json_content, dict):
             return json_content  # type: ignore[reportUnknownReturn]
         else:

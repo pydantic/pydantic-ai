@@ -1,0 +1,67 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: You MUST use available tools to complete tasks. Never respond without
+            using a tool first.
+        role: ROLE_SYSTEM
+      - content:
+        - text: Call the get_file tool to retrieve a audio, then describe what you
+            received.
+        role: ROLE_USER
+      model: grok-4-fast-non-reasoning
+      tools:
+      - function:
+          name: get_file
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+    raw: !!binary |
+      Cl8KWwpZWW91IE1VU1QgdXNlIGF2YWlsYWJsZSB0b29scyB0byBjb21wbGV0ZSB0YXNrcy4gTmV2
+      ZXIgcmVzcG9uZCB3aXRob3V0IHVzaW5nIGEgdG9vbCBmaXJzdC4QAwpSCk4KTENhbGwgdGhlIGdl
+      dF9maWxlIHRvb2wgdG8gcmV0cmlldmUgYSBhdWRpbywgdGhlbiBkZXNjcmliZSB3aGF0IHlvdSBy
+      ZWNlaXZlZC4QARIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZ4oBUQpPCghnZXRfZmlsZSJDeyJh
+      ZGRpdGlvbmFsUHJvcGVydGllcyI6IGZhbHNlLCAicHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJv
+      YmplY3QifZIBAggB
+  response_sample:
+    json:
+      id: 1f2038ae-b5e1-5b3c-1094-ad8e597c49a0
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_48109593
+            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: get_file
+              arguments: '{}'
+      created: '2026-01-27T21:41:52.911300474Z'
+      model: grok-4-fast-non-reasoning
+      system_fingerprint: fp_4616e76413
+      usage:
+        completion_tokens: 15
+        prompt_tokens: 374
+        total_tokens: 389
+        prompt_text_tokens: 374
+        cached_prompt_text_tokens: 158
+      settings:
+        parallel_tool_calls: true
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - function:
+            name: get_file
+            parameters: '{"additionalProperties": false, "properties": {}, "type":
+              "object"}'
+        top_p: 0.95
+    raw: !!binary |
+      CiQxZjIwMzhhZS1iNWUxLTViM2MtMTA5NC1hZDhlNTk3YzQ5YTASKwgEGicQAhojCg1jYWxsXzQ4
+      MTA5NTkzEAEYAVIOCghnZXRfZmlsZRICe30qDAig4uTLBhD6rsWyAzIZZ3Jvay00LWZhc3Qtbm9u
+      LXJlYXNvbmluZzoNZnBfNDYxNmU3NjQxM0oSCA8Q9gIYhQMg9gI4ngFYkOIjWmMQAS0zMzM/OgII
+      AUJRCk8KCGdldF9maWxlIkN7ImFkZGl0aW9uYWxQcm9wZXJ0aWVzIjogZmFsc2UsICJwcm9wZXJ0
+      aWVzIjoge30sICJ0eXBlIjogIm9iamVjdCJ9TTMzcz8=

@@ -49,7 +49,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.output import NativeOutput, PromptedOutput
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsDatetime, IsInstance, IsStr, raise_if_exception, try_import
+from ..conftest import IsBytes, IsDatetime, IsInstance, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -678,11 +678,10 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 241a70',
+                        content=BinaryImage(data=IsBytes(), media_type='image/jpeg'),
                         tool_call_id='arq6emmq6',
                         timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(content=['This is file 241a70:', IsInstance(BinaryImage)], timestamp=IsDatetime()),
+                    )
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),

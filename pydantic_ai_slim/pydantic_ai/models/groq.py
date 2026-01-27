@@ -18,6 +18,7 @@ from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_ca
 from ..builtin_tools import AbstractBuiltinTool, WebSearchTool
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
+    AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
@@ -37,6 +38,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.groq import GroqModelProfile
@@ -468,17 +470,14 @@ class GroqModel(Model):
 
     @classmethod
     def _map_user_message(cls, message: ModelRequest) -> Iterable[chat.ChatCompletionMessageParam]:
+        tool_return_parts: list[ToolReturnPart] = []
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
                 yield cls._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                yield chat.ChatCompletionToolMessageParam(
-                    role='tool',
-                    tool_call_id=_guard_tool_call_id(t=part),
-                    content=part.model_response_str(),
-                )
+                tool_return_parts.append(part)
             elif isinstance(part, RetryPromptPart):  # pragma: no branch
                 if part.tool_name is None:
                     yield chat.ChatCompletionUserMessageParam(  # pragma: no cover
@@ -490,6 +489,83 @@ class GroqModel(Model):
                         tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
+
+        fallback_content: list[chat.ChatCompletionContentPartParam] = []
+        for part in tool_return_parts:
+            tool_msg, fallback = cls._map_tool_return(part)
+            yield tool_msg
+            fallback_content.extend(fallback)
+        if fallback_content:
+            yield chat.ChatCompletionUserMessageParam(role='user', content=fallback_content)
+
+    @staticmethod
+    def _map_tool_return(
+        part: ToolReturnPart,
+    ) -> tuple[chat.ChatCompletionToolMessageParam, list[chat.ChatCompletionContentPartParam]]:
+        """Map a ToolReturnPart to Groq format.
+
+        Groq uses fallback for images (tool result gets placeholder, images go in
+        separate user message). Documents, audio, and video are not supported.
+
+        Returns:
+            Tuple of (tool_message, fallback_content_parts)
+        """
+        if not part.files:
+            return (
+                chat.ChatCompletionToolMessageParam(
+                    role='tool',
+                    tool_call_id=_guard_tool_call_id(t=part),
+                    content=part.model_response_str(),
+                ),
+                [],
+            )
+
+        tool_text_parts: list[str] = []
+        text_content = part.model_response_str()
+        if text_content:
+            tool_text_parts.append(text_content)
+
+        fallback_content: list[chat.ChatCompletionContentPartParam] = []
+
+        for f in part.files:
+            if isinstance(f, VideoUrl):
+                raise UserError('Groq does not support video in tool returns.')
+            elif isinstance(f, BinaryContent) and f.is_video:
+                raise UserError('Groq does not support video in tool returns.')
+            elif isinstance(f, AudioUrl):
+                raise UserError('Groq does not support audio in tool returns.')
+            elif isinstance(f, BinaryContent) and f.is_audio:
+                raise UserError('Groq does not support audio in tool returns.')
+            elif isinstance(f, DocumentUrl):
+                raise UserError('Groq does not support documents in tool returns.')
+            elif isinstance(f, BinaryContent) and f.is_document:
+                raise UserError('Groq does not support documents in tool returns.')
+
+            identifier = f.identifier
+            tool_text_parts.append(f'See file {identifier}')
+            fallback_content.append(
+                chat.ChatCompletionContentPartTextParam(text=f'This is file {identifier}:', type='text')
+            )
+
+            if isinstance(f, ImageUrl):
+                fallback_content.append(
+                    chat.ChatCompletionContentPartImageParam(image_url=ImageURL(url=f.url), type='image_url')
+                )
+            elif isinstance(f, BinaryContent) and f.is_image:
+                fallback_content.append(
+                    chat.ChatCompletionContentPartImageParam(image_url=ImageURL(url=f.data_uri), type='image_url')
+                )
+            else:
+                raise UserError(f'Groq does not support {type(f).__name__} in tool returns.')
+
+        return (
+            chat.ChatCompletionToolMessageParam(
+                role='tool',
+                tool_call_id=_guard_tool_call_id(t=part),
+                content='\n'.join(tool_text_parts) if tool_text_parts else '',
+            ),
+            fallback_content,
+        )
 
     @staticmethod
     def _map_user_prompt(part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:

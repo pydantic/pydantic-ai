@@ -1056,7 +1056,7 @@ async def process_tool_calls(  # noqa: C901
         output_final_result.append(final_result)
 
 
-async def _call_tools(  # noqa: C901
+async def _call_tools(
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
     tool_call_results: dict[str, DeferredToolResult],
@@ -1069,7 +1069,6 @@ async def _call_tools(  # noqa: C901
     output_deferred_metadata: dict[str, dict[str, Any]],
 ) -> AsyncIterator[_messages.HandleResponseEvent]:
     tool_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
-    user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
     deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
     deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
 
@@ -1090,22 +1089,12 @@ async def _call_tools(  # noqa: C901
     ):
 
         async def handle_call_or_result(
-            coro_or_task: Awaitable[
-                tuple[
-                    _messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None
-                ]
-            ]
-            | Task[
-                tuple[
-                    _messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None
-                ]
-            ],
+            coro_or_task: Awaitable[_messages.ToolReturnPart | _messages.RetryPromptPart]
+            | Task[_messages.ToolReturnPart | _messages.RetryPromptPart],
             index: int,
         ) -> _messages.HandleResponseEvent | None:
             try:
-                tool_part, tool_user_content = (
-                    (await coro_or_task) if inspect.isawaitable(coro_or_task) else coro_or_task.result()
-                )
+                tool_part = (await coro_or_task) if inspect.isawaitable(coro_or_task) else coro_or_task.result()
             except exceptions.CallDeferred as e:
                 deferred_calls_by_index[index] = 'external'
                 deferred_metadata_by_index[index] = e.metadata
@@ -1114,10 +1103,7 @@ async def _call_tools(  # noqa: C901
                 deferred_metadata_by_index[index] = e.metadata
             else:
                 tool_parts_by_index[index] = tool_part
-                if tool_user_content:
-                    user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
-
-                return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
+                return _messages.FunctionToolResultEvent(tool_part)
 
         if tool_manager.should_call_sequentially(tool_calls):
             for index, call in enumerate(tool_calls):
@@ -1154,10 +1140,7 @@ async def _call_tools(  # noqa: C901
 
                 raise
 
-    # We append the results at the end, rather than as they are received, to retain a consistent ordering
-    # This is mostly just to simplify testing
     output_parts.extend([tool_parts_by_index[k] for k in sorted(tool_parts_by_index)])
-    output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
 
     _populate_deferred_calls(
         tool_calls, deferred_calls_by_index, deferred_metadata_by_index, output_deferred_calls, output_deferred_metadata
@@ -1185,14 +1168,13 @@ async def _call_tool(
     tool_call: _messages.ToolCallPart,
     tool_call_result: DeferredToolResult | None,
     tool_call_metadata: dict[str, dict[str, Any]] | None,
-) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]:
+) -> _messages.ToolReturnPart | _messages.RetryPromptPart:
     try:
         if tool_call_result is None:
             tool_result = await tool_manager.handle_call(tool_call)
         elif isinstance(tool_call_result, ToolApproved):
             if tool_call_result.override_args is not None:
                 tool_call = dataclasses.replace(tool_call, args=tool_call_result.override_args)
-            # Get metadata from the tool_call_metadata dict by tool_call_id
             metadata = tool_call_metadata.get(tool_call.tool_call_id) if tool_call_metadata else None
             tool_result = await tool_manager.handle_call(tool_call, approved=True, metadata=metadata)
         elif isinstance(tool_call_result, ToolDenied):
@@ -1200,7 +1182,7 @@ async def _call_tool(
                 tool_name=tool_call.tool_name,
                 content=tool_call_result.message,
                 tool_call_id=tool_call.tool_call_id,
-            ), None
+            )
         elif isinstance(tool_call_result, exceptions.ModelRetry):
             m = _messages.RetryPromptPart(
                 content=tool_call_result.message,
@@ -1215,7 +1197,7 @@ async def _call_tool(
         else:
             tool_result = tool_call_result
     except ToolRetryError as e:
-        return e.tool_retry, None
+        return e.tool_retry
 
     if isinstance(tool_result, _messages.ToolReturn):
         tool_return = tool_result
@@ -1223,48 +1205,22 @@ async def _call_tool(
         result_is_list = isinstance(tool_result, list)
         contents = cast(list[Any], tool_result) if result_is_list else [tool_result]
 
-        return_values: list[Any] = []
-        user_contents: list[str | _messages.UserContent] = []
         for content in contents:
             if isinstance(content, _messages.ToolReturn):
                 raise exceptions.UserError(
                     f'The return value of tool {tool_call.tool_name!r} contains invalid nested `ToolReturn` objects. '
                     f'`ToolReturn` should be used directly.'
                 )
-            elif isinstance(content, _messages.MultiModalContent):
-                identifier = content.identifier
 
-                return_values.append(f'See file {identifier}')
-                user_contents.extend([f'This is file {identifier}:', content])
-            else:
-                return_values.append(content)
+        return_value = contents[0] if len(contents) == 1 and not result_is_list else contents
+        tool_return = _messages.ToolReturn(return_value=return_value)
 
-        tool_return = _messages.ToolReturn(
-            return_value=return_values[0] if len(return_values) == 1 and not result_is_list else return_values,
-            content=user_contents,
-        )
-
-    if (
-        isinstance(tool_return.return_value, _messages.MultiModalContent)
-        or isinstance(tool_return.return_value, list)
-        and any(
-            isinstance(content, _messages.MultiModalContent)
-            for content in tool_return.return_value  # type: ignore
-        )
-    ):
-        raise exceptions.UserError(
-            f'The `return_value` of tool {tool_call.tool_name!r} contains invalid nested `MultiModalContent` objects. '
-            f'Please use `content` instead.'
-        )
-
-    return_part = _messages.ToolReturnPart(
+    return _messages.ToolReturnPart(
         tool_name=tool_call.tool_name,
         tool_call_id=tool_call.tool_call_id,
-        content=tool_return.return_value,  # type: ignore
+        content=tool_return.return_value,
         metadata=tool_return.metadata,
     )
-
-    return return_part, tool_return.content or None
 
 
 @dataclasses.dataclass

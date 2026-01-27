@@ -27,6 +27,7 @@ class _CollectVcrTests:
 
     def __init__(self) -> None:
         self.tests: dict[str, set[str]] = defaultdict(set)
+        self.all_test_names: set[str] = set()
 
     @staticmethod
     def _remove_yaml_ext(s: str) -> str:
@@ -41,6 +42,8 @@ class _CollectVcrTests:
         from pytest_recording.plugin import get_default_cassette_name
 
         for item in items:
+            self.all_test_names.add(item.name)
+
             if not any(item.iter_markers('vcr')):
                 continue
 
@@ -59,9 +62,10 @@ class _CollectVcrTests:
                     self.tests[test_file_stem].add(self._remove_yaml_ext(arg))
 
 
-def get_all_cassettes() -> dict[str, set[str]]:
-    """Return {test_file_stem: set of cassette names (without .yaml)}."""
+def get_all_cassettes() -> tuple[dict[str, set[str]], set[str]]:
+    """Return ({test_file_stem: set of cassette names}, set of xai cassette names)."""
     cassettes: dict[str, set[str]] = {}
+    xai_cassettes: set[str] = set()
 
     for cassette_dir in Path('tests').rglob('cassettes'):
         if not cassette_dir.is_dir():
@@ -69,32 +73,40 @@ def get_all_cassettes() -> dict[str, set[str]]:
         for subdir in cassette_dir.iterdir():
             if subdir.is_dir():
                 test_stem = subdir.name
-                # Handle double extensions like .xai.yaml (xAI uses gRPC/protobuf, not HTTP)
-                cassette_names = {f.stem[:-4] if f.stem.endswith('.xai') else f.stem for f in subdir.glob('*.yaml')}
-                cassettes.setdefault(test_stem, set()).update(cassette_names)
+                for f in subdir.glob('*.yaml'):
+                    if f.stem.endswith('.xai'):
+                        cassette_name = f.stem[:-4]
+                        xai_cassettes.add(cassette_name)
+                    else:
+                        cassette_name = f.stem
+                    cassettes.setdefault(test_stem, set()).add(cassette_name)
 
-    return cassettes
+    return cassettes, xai_cassettes
 
 
-def get_all_tests() -> dict[str, set[str]]:
-    """Use pytest collection to get all VCR-marked tests and their cassette names."""
+def get_all_tests() -> tuple[dict[str, set[str]], set[str]]:
+    """Use pytest collection to get all VCR-marked tests and their cassette names.
+
+    Returns:
+        A tuple of (tests by module, all test names).
+    """
     collector = _CollectVcrTests()
     rc = pytest.main(['--collect-only', '-q', 'tests/'], plugins=[collector])
     if rc not in (pytest.ExitCode.OK, pytest.ExitCode.NO_TESTS_COLLECTED):
         raise SystemExit(rc)
-    return dict(collector.tests)
+    return dict(collector.tests), collector.all_test_names
 
 
 def main() -> int:
     verbose = '--verbose' in sys.argv or '-v' in sys.argv
 
     print('Collecting cassettes...')
-    cassettes = get_all_cassettes()
+    cassettes, xai_cassettes = get_all_cassettes()
     total_cassettes = sum(len(c) for c in cassettes.values())
     print(f'Found {total_cassettes} cassettes in {len(cassettes)} test modules')
 
     print('Collecting VCR-marked tests (this may take a moment)...')
-    tests = get_all_tests()
+    tests, all_test_names = get_all_tests()
     total_tests = sum(len(t) for t in tests.values())
     print(f'Found {total_tests} tests in {len(tests)} test modules')
 
@@ -112,6 +124,10 @@ def main() -> int:
                 matched += 1
                 if verbose:
                     print(f'  OK: {test_file}/{cassette}.yaml')
+            elif cassette in xai_cassettes and cassette in all_test_names:
+                matched += 1
+                if verbose:
+                    print(f'  OK: {test_file}/{cassette}.yaml (xAI proto cassette)')
             else:
                 orphans.append(f'{test_file}/{cassette}.yaml')
 

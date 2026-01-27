@@ -267,9 +267,16 @@ class XaiModel(Model):
         if tool_results:
             order = {id: i for i, id in enumerate(pending_tool_call_ids)}
             tool_results.sort(key=lambda p: order.get(p.tool_call_id, float('inf')))
+            fallback_content: list[chat_types.Content] = []
             for part in tool_results:
-                text = part.model_response_str() if isinstance(part, ToolReturnPart) else part.model_response()
-                xai_messages.append(tool_result(text))
+                if isinstance(part, ToolReturnPart):
+                    text, content = await self._map_tool_return(part)
+                    xai_messages.append(tool_result(text))
+                    fallback_content.extend(content)
+                else:
+                    xai_messages.append(tool_result(part.model_response()))
+            if fallback_content:
+                xai_messages.append(user(*fallback_content))
 
         return xai_messages
 
@@ -480,6 +487,63 @@ class XaiModel(Model):
             return user(*content_items)
 
         return None
+
+    async def _map_tool_return(self, part: ToolReturnPart) -> tuple[str, list[chat_types.Content]]:  # noqa: C901
+        """Map a ToolReturnPart to xAI format.
+
+        xAI uses fallback for images and documents (tool result gets placeholder,
+        files go in separate user message). Audio and video are not supported.
+
+        Returns:
+            Tuple of (tool_result_text, fallback_content_items)
+        """
+        if not part.files:
+            return part.model_response_str(), []
+
+        tool_text_parts: list[str] = []
+        text_content = part.model_response_str()
+        if text_content:
+            tool_text_parts.append(text_content)
+
+        fallback_content: list[chat_types.Content] = []
+
+        for f in part.files:
+            if isinstance(f, VideoUrl):
+                raise UserError('xAI does not support video in tool returns.')
+            elif isinstance(f, BinaryContent) and f.is_video:
+                raise UserError('xAI does not support video in tool returns.')
+            elif isinstance(f, AudioUrl):
+                raise UserError('xAI does not support audio in tool returns.')
+            elif isinstance(f, DocumentUrl):
+                raise UserError('xAI does not support documents in tool returns.')
+            elif isinstance(f, BinaryContent) and f.is_audio:
+                raise UserError('xAI does not support audio in tool returns.')
+            elif isinstance(f, BinaryContent) and f.is_document:
+                raise UserError('xAI does not support documents in tool returns.')
+
+            identifier = f.identifier
+            tool_text_parts.append(f'See file {identifier}')
+            fallback_content.append(f'This is file {identifier}:')
+
+            if isinstance(f, ImageUrl):
+                detail: chat_types.ImageDetail = 'auto'
+                if f.vendor_metadata and 'detail' in f.vendor_metadata:
+                    detail = f.vendor_metadata['detail']
+                image_url = f.url
+                if f.force_download:
+                    downloaded = await download_item(f, data_format='base64_uri', type_format='extension')
+                    image_url = downloaded['data']
+                fallback_content.append(image(image_url, detail=detail))
+            elif isinstance(f, BinaryContent):
+                if f.is_image:
+                    img_detail: chat_types.ImageDetail = 'auto'
+                    if f.vendor_metadata and 'detail' in f.vendor_metadata:
+                        img_detail = f.vendor_metadata['detail']
+                    fallback_content.append(image(f.data_uri, detail=img_detail))
+                else:
+                    raise UserError(f'xAI does not support binary content type {f.media_type} in tool returns.')
+
+        return '\n'.join(tool_text_parts) if tool_text_parts else '', fallback_content
 
     async def _create_chat(
         self,

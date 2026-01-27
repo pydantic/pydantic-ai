@@ -23,6 +23,7 @@ from ..builtin_tools import (
 )
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
+    AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
@@ -43,6 +44,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
@@ -705,6 +707,7 @@ class AnthropicModel(Model):
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
+        fallback_user_content: list[BetaContentBlockParam] = []
         for m in messages:
             if isinstance(m, ModelRequest):
                 user_content_params: list[BetaContentBlockParam] = []
@@ -718,13 +721,10 @@ class AnthropicModel(Model):
                             else:
                                 user_content_params.append(content)
                     elif isinstance(request_part, ToolReturnPart):
-                        tool_result_block_param = BetaToolResultBlockParam(
-                            tool_use_id=_guard_tool_call_id(t=request_part),
-                            type='tool_result',
-                            content=request_part.model_response_str(),
-                            is_error=False,
-                        )
-                        user_content_params.append(tool_result_block_param)
+                        tool_result, fallback_parts = await self._map_tool_return(request_part)
+                        user_content_params.append(tool_result)
+                        if fallback_parts:
+                            fallback_user_content.extend(fallback_parts)
                     elif isinstance(request_part, RetryPromptPart):  # pragma: no branch
                         if request_part.tool_name is None:
                             text = request_part.model_response()  # pragma: no cover
@@ -895,6 +895,10 @@ class AnthropicModel(Model):
                     anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
             else:
                 assert_never(m)
+
+        if fallback_user_content:
+            anthropic_messages.append(BetaMessageParam(role='user', content=fallback_user_content))
+
         if instructions := self._get_instructions(messages, model_request_parameters):
             system_prompt_parts.append(instructions)
         system_prompt = '\n\n'.join(system_prompt_parts)
@@ -1070,6 +1074,76 @@ class AnthropicModel(Model):
             )
         else:
             raise RuntimeError(f'Unsupported binary content media type for Anthropic: {media_type}')
+
+    async def _map_tool_return(
+        self, part: ToolReturnPart
+    ) -> tuple[BetaToolResultBlockParam, list[BetaContentBlockParam]]:
+        """Map a tool return to Anthropic format.
+
+        Returns:
+            A tuple of (tool_result_block, fallback_content).
+            fallback_content contains audio/video files that need to go in a separate user message.
+        """
+        tool_result_content: list[BetaContentBlockParam] = []
+        fallback_content: list[BetaContentBlockParam] = []
+
+        text_content = part.model_response_str()
+        if text_content:
+            tool_result_content.append(BetaTextBlockParam(text=text_content, type='text'))
+
+        for file in part.files:
+            if isinstance(file, BinaryContent):
+                if file.is_image or file.media_type == 'application/pdf' or file.media_type == 'text/plain':
+                    tool_result_content.append(self._map_binary_data(file.data, file.media_type))
+                elif file.is_audio:
+                    raise UserError('Anthropic does not support audio content in tool returns')
+                elif file.is_video:
+                    raise UserError('Anthropic does not support video content in tool returns')
+                else:
+                    raise UserError(f'Unsupported binary content media type for Anthropic: {file.media_type}')
+            elif isinstance(file, ImageUrl):
+                if file.force_download:
+                    downloaded = await download_item(file, data_format='bytes')
+                    tool_result_content.append(self._map_binary_data(downloaded['data'], file.media_type))
+                else:
+                    tool_result_content.append(
+                        BetaImageBlockParam(source={'type': 'url', 'url': file.url}, type='image')
+                    )
+            elif isinstance(file, DocumentUrl):
+                if file.media_type == 'application/pdf':
+                    if file.force_download:
+                        downloaded = await download_item(file, data_format='bytes')
+                        tool_result_content.append(self._map_binary_data(downloaded['data'], file.media_type))
+                    else:
+                        tool_result_content.append(
+                            BetaRequestDocumentBlockParam(source={'url': file.url, 'type': 'url'}, type='document')
+                        )
+                elif file.media_type == 'text/plain':
+                    downloaded = await download_item(file, data_format='text')
+                    tool_result_content.append(
+                        BetaRequestDocumentBlockParam(
+                            source=BetaPlainTextSourceParam(
+                                data=downloaded['data'], media_type=file.media_type, type='text'
+                            ),
+                            type='document',
+                        )
+                    )
+                else:
+                    raise UserError(f'Unsupported document media type for Anthropic: {file.media_type}')
+            elif isinstance(file, AudioUrl):
+                raise UserError('Anthropic does not support audio content in tool returns')
+            elif isinstance(file, VideoUrl):
+                raise UserError('Anthropic does not support video content in tool returns')
+            else:
+                assert_never(file)
+
+        tool_result = BetaToolResultBlockParam(
+            tool_use_id=_guard_tool_call_id(t=part),
+            type='tool_result',
+            content=cast(Any, tool_result_content) if tool_result_content else '',
+            is_error=False,
+        )
+        return tool_result, fallback_content
 
     @staticmethod
     async def _map_user_prompt(

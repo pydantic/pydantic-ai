@@ -1,0 +1,89 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '487'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: You MUST use available tools to complete tasks. Never respond without using a tool first.
+        role: system
+      - content: Call the get_file tool to retrieve a video, then describe what you received.
+        role: user
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '685'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{}'
+              name: get_file
+            id: msrj8vsqy
+            type: function
+      created: 1769548264
+      id: chatcmpl-cdd1f9a4-cdfe-497b-bb23-f9e3722fcfd3
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_f08cd12a81
+      usage:
+        completion_time: 0.045434587
+        completion_tokens: 20
+        prompt_time: 0.022103713
+        prompt_tokens: 726
+        queue_time: 0.077157932
+        total_time: 0.0675383
+        total_tokens: 746
+      usage_breakdown: null
+      x_groq:
+        id: req_01kg0mqcxtea7rja9kz385ccq4
+        seed: 1978266727
+    status:
+      code: 200
+      message: OK
+version: 1

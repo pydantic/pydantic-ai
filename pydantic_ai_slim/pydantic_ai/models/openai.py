@@ -1064,11 +1064,8 @@ class OpenAIChatModel(Model):
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                yield chat.ChatCompletionToolMessageParam(
-                    role='tool',
-                    tool_call_id=_guard_tool_call_id(t=part),
-                    content=part.model_response_str(),
-                )
+                async for msg in self._map_tool_return(part):
+                    yield msg
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
                     yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
@@ -1183,6 +1180,104 @@ class OpenAIChatModel(Model):
                 else:
                     assert_never(item)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
+
+    async def _map_tool_return(self, part: ToolReturnPart) -> AsyncIterator[chat.ChatCompletionMessageParam]:  # noqa: C901
+        """Map a tool return to OpenAI Chat format.
+
+        OpenAI Chat API uses fallback for all multimodal files:
+        - Tool message gets `"See file {id}"` placeholder
+        - Separate user message gets `"This is file {id}:"` + file content
+        - Video raises an error as OpenAI Chat doesn't support video
+        """
+        tool_content_parts: list[str] = []
+        fallback_content: list[ChatCompletionContentPartParam] = []
+
+        text_content = part.model_response_str()
+        if text_content:
+            tool_content_parts.append(text_content)
+
+        for file in part.files:
+            if isinstance(file, VideoUrl):
+                raise UserError(
+                    'OpenAI Chat API does not support video in tool returns. '
+                    'See https://community.openai.com/t/gpt4-o-support-for-image-urls-as-tool-responses/907546'
+                )
+            elif isinstance(file, AudioUrl):
+                raise UserError(
+                    'OpenAI Chat API does not support audio in tool returns. '
+                    'See https://community.openai.com/t/gpt4-o-support-for-image-urls-as-tool-responses/907546'
+                )
+            elif isinstance(file, BinaryContent) and file.is_video:
+                raise UserError(
+                    'OpenAI Chat API does not support video in tool returns. '
+                    'See https://community.openai.com/t/gpt4-o-support-for-image-urls-as-tool-responses/907546'
+                )
+            elif isinstance(file, BinaryContent) and file.is_audio:
+                raise UserError(
+                    'OpenAI Chat API does not support audio in tool returns. '
+                    'See https://community.openai.com/t/gpt4-o-support-for-image-urls-as-tool-responses/907546'
+                )
+
+            identifier = file.identifier
+            tool_content_parts.append(f'See file {identifier}')
+            fallback_content.append(ChatCompletionContentPartTextParam(text=f'This is file {identifier}:', type='text'))
+
+            if isinstance(file, ImageUrl):
+                image_url: ImageURL = {'url': file.url}
+                if file.force_download:
+                    downloaded = await download_item(file, data_format='base64_uri', type_format='extension')
+                    image_url['url'] = downloaded['data']
+                fallback_content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
+            elif isinstance(file, BinaryContent):
+                if file.is_image:
+                    fallback_content.append(
+                        ChatCompletionContentPartImageParam(
+                            image_url={'url': f'data:{file.media_type};base64,{base64.b64encode(file.data).decode()}'},
+                            type='image_url',
+                        )
+                    )
+                elif self._is_text_like_media_type(file.media_type):
+                    text = file.data.decode('utf-8', errors='replace')
+                    fallback_content.append(
+                        self._inline_text_file_part(text, media_type=file.media_type, identifier=identifier)
+                    )
+                else:
+                    fallback_content.append(
+                        ChatCompletionContentPartTextParam(text=f'[Binary file: {identifier}]', type='text')
+                    )
+            elif isinstance(file, AudioUrl):
+                profile = OpenAIModelProfile.from_profile(self.profile)
+                encoding = profile.openai_chat_audio_input_encoding
+                downloaded = await download_item(file, data_format='base64', type_format='extension')
+                if encoding == 'uri':
+                    data = f'data:audio/{downloaded["data_type"]};base64,{downloaded["data"]}'
+                else:
+                    data = downloaded['data']
+                audio_format = downloaded['data_type'] if downloaded['data_type'] in ('wav', 'mp3') else 'wav'
+                audio = InputAudio(data=data, format=audio_format)
+                fallback_content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
+            elif isinstance(file, DocumentUrl):
+                downloaded = await download_item(file, data_format='bytes', type_format='mime')
+                if self._is_text_like_media_type(downloaded['data_type']):
+                    text = downloaded['data'].decode('utf-8', errors='replace')
+                    fallback_content.append(
+                        self._inline_text_file_part(text, media_type=downloaded['data_type'], identifier=identifier)
+                    )
+                else:
+                    fallback_content.append(
+                        ChatCompletionContentPartTextParam(text=f'[Document: {identifier}]', type='text')
+                    )
+            else:
+                assert_never(file)
+
+        yield chat.ChatCompletionToolMessageParam(
+            role='tool',
+            tool_call_id=_guard_tool_call_id(t=part),
+            content='\n'.join(tool_content_parts) if tool_content_parts else '',
+        )
+
+        if fallback_content:
+            yield chat.ChatCompletionUserMessageParam(role='user', content=fallback_content)
 
     @staticmethod
     def _is_text_like_media_type(media_type: str) -> bool:
@@ -1764,10 +1859,11 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(part, ToolReturnPart):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
+                        output = await self._map_tool_return_output(part)
                         item = FunctionCallOutput(
                             type='function_call_output',
                             call_id=call_id,
-                            output=part.model_response_str(),
+                            output=output,
                         )
                         openai_messages.append(item)
                     elif isinstance(part, RetryPromptPart):
@@ -2010,6 +2106,92 @@ class OpenAIResponsesModel(Model):
         if OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition:  # pragma: no branch
             response_format_param['strict'] = o.strict
         return response_format_param
+
+    @staticmethod
+    async def _map_tool_return_output(  # noqa: C901
+        part: ToolReturnPart,
+    ) -> (
+        str
+        | list[
+            responses.ResponseInputTextContentParam
+            | responses.ResponseInputImageContentParam
+            | responses.ResponseInputFileContentParam
+        ]
+    ):
+        if not part.files:
+            return part.model_response_str()
+
+        output: list[
+            responses.ResponseInputTextContentParam
+            | responses.ResponseInputImageContentParam
+            | responses.ResponseInputFileContentParam
+        ] = []
+        text_content = part.model_response_str()
+        if text_content:
+            output.append(responses.ResponseInputTextContentParam(type='input_text', text=text_content))
+
+        for file in part.files:
+            if isinstance(file, VideoUrl):
+                raise UserError(
+                    'OpenAI Responses API does not support video in tool returns. '
+                    'See https://platform.openai.com/docs/guides/audio'
+                )
+            elif isinstance(file, AudioUrl):
+                raise UserError(
+                    'OpenAI Responses API does not support audio in tool returns. '
+                    'See https://platform.openai.com/docs/guides/audio'
+                )
+            elif isinstance(file, BinaryContent) and file.is_video:
+                raise UserError(
+                    'OpenAI Responses API does not support video in tool returns. '
+                    'See https://platform.openai.com/docs/guides/audio'
+                )
+            elif isinstance(file, BinaryContent) and file.is_audio:
+                raise UserError(
+                    'OpenAI Responses API does not support audio in tool returns. '
+                    'See https://platform.openai.com/docs/guides/audio'
+                )
+            elif isinstance(file, ImageUrl):
+                image_url = file.url
+                if file.force_download:
+                    downloaded = await download_item(file, data_format='base64_uri', type_format='extension')
+                    image_url = downloaded['data']
+                detail: Literal['auto', 'low', 'high'] = 'auto'
+                if metadata := file.vendor_metadata:
+                    detail = cast(Literal['auto', 'low', 'high'], metadata.get('detail', 'auto'))
+                output.append(
+                    responses.ResponseInputImageContentParam(type='input_image', image_url=image_url, detail=detail)
+                )
+            elif isinstance(file, BinaryContent):
+                if file.is_image:
+                    detail = 'auto'
+                    if metadata := file.vendor_metadata:
+                        detail = cast(Literal['auto', 'low', 'high'], metadata.get('detail', 'auto'))
+                    output.append(
+                        responses.ResponseInputImageContentParam(
+                            type='input_image', image_url=file.data_uri, detail=detail
+                        )
+                    )
+                else:
+                    output.append(
+                        responses.ResponseInputFileContentParam(
+                            type='input_file', file_data=file.data_uri, filename=f'file.{file.format or "bin"}'
+                        )
+                    )
+            elif isinstance(file, AudioUrl | DocumentUrl):
+                if file.force_download:
+                    downloaded = await download_item(file, data_format='base64_uri', type_format='extension')
+                    output.append(
+                        responses.ResponseInputFileContentParam(
+                            type='input_file', file_data=downloaded['data'], filename=f'file.{downloaded["data_type"]}'
+                        )
+                    )
+                else:
+                    output.append(responses.ResponseInputFileContentParam(type='input_file', file_url=file.url))
+            else:
+                assert_never(file)
+
+        return output
 
     @staticmethod
     async def _map_user_prompt(part: UserPromptPart) -> responses.EasyInputMessageParam:  # noqa: C901
