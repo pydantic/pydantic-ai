@@ -134,7 +134,7 @@ embedder = Embedder(
 async def main():
     result = await embedder.embed_query('Hello world')
     print(len(result.embeddings[0]))
-    #> 1536
+    #> 256
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
@@ -184,6 +184,107 @@ embedder = Embedder('ollama:nomic-embed-text')
 ```
 
 See [OpenAI-compatible Models](models/openai.md#openai-compatible-models) for the full list of supported providers.
+
+### Google
+
+[`GoogleEmbeddingModel`][pydantic_ai.embeddings.google.GoogleEmbeddingModel] works with Google's embedding models via the Gemini API (Google AI Studio) or Vertex AI.
+
+#### Install
+
+To use Google embedding models, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `google` optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[google]"
+```
+
+#### Configuration
+
+To use `GoogleEmbeddingModel` with the Gemini API, go to [aistudio.google.com](https://aistudio.google.com/) and generate an API key. Once you have the API key, you can set it as an environment variable:
+
+```bash
+export GOOGLE_API_KEY='your-api-key'
+```
+
+You can then use the model:
+
+```python {title="google_embeddings.py"}
+from pydantic_ai import Embedder
+
+embedder = Embedder('google-gla:gemini-embedding-001')
+
+
+async def main():
+    result = await embedder.embed_query('Hello world')
+    print(len(result.embeddings[0]))
+    #> 3072
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/embeddings) for available models.
+
+##### Vertex AI
+
+To use Google's embedding models via Vertex AI instead of the Gemini API, use the `google-vertex` provider prefix:
+
+```python {title="google_vertex_embeddings.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.google import GoogleEmbeddingModel
+from pydantic_ai.providers.google import GoogleProvider
+
+# Using provider prefix
+embedder = Embedder('google-vertex:gemini-embedding-001')
+
+# Or with explicit provider configuration
+model = GoogleEmbeddingModel(
+    'gemini-embedding-001',
+    provider=GoogleProvider(vertexai=True, project='my-project', location='us-central1'),
+)
+embedder = Embedder(model)
+```
+
+See the [Google provider documentation](models/google.md#vertex-ai-enterprisecloud) for more details on Vertex AI authentication options, including application default credentials, service accounts, and API keys.
+
+#### Dimension Control
+
+Google's embedding models support dimension reduction via the `dimensions` setting:
+
+```python {title="google_dimensions.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings import EmbeddingSettings
+
+embedder = Embedder(
+    'google-gla:gemini-embedding-001',
+    settings=EmbeddingSettings(dimensions=768),
+)
+
+
+async def main():
+    result = await embedder.embed_query('Hello world')
+    print(len(result.embeddings[0]))
+    #> 768
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+#### Google-Specific Settings
+
+Google models support additional settings via [`GoogleEmbeddingSettings`][pydantic_ai.embeddings.google.GoogleEmbeddingSettings]:
+
+```python {title="google_settings.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.google import GoogleEmbeddingSettings
+
+embedder = Embedder(
+    'google-gla:gemini-embedding-001',
+    settings=GoogleEmbeddingSettings(
+        dimensions=768,
+        google_task_type='SEMANTIC_SIMILARITY',  # Optimize for similarity comparison
+    ),
+)
+```
+
+See [Google's task type documentation](https://ai.google.dev/gemini-api/docs/embeddings#task-types) for available task types. By default, `embed_query()` uses `RETRIEVAL_QUERY` and `embed_documents()` uses `RETRIEVAL_DOCUMENT`.
 
 ### Cohere
 
@@ -237,6 +338,61 @@ embedder = Embedder(
         dimensions=512,
         cohere_truncate='END',  # Truncate long inputs instead of erroring
         cohere_max_tokens=256,  # Limit tokens per input
+    ),
+)
+```
+
+### VoyageAI
+
+[`VoyageAIEmbeddingModel`][pydantic_ai.embeddings.voyageai.VoyageAIEmbeddingModel] provides access to VoyageAI's embedding models, which are optimized for retrieval with specialized models for code, finance, and legal domains.
+
+#### Install
+
+To use VoyageAI embedding models, you need to install `pydantic-ai-slim` with the `voyageai` optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[voyageai]"
+```
+
+#### Configuration
+
+To use `VoyageAIEmbeddingModel`, go to [dash.voyageai.com](https://dash.voyageai.com/) to generate an API key. Once you have the API key, you can set it as an environment variable:
+
+```bash
+export VOYAGE_API_KEY='your-api-key'
+```
+
+You can then use the model:
+
+```python {title="voyageai_embeddings.py"}
+from pydantic_ai import Embedder
+
+embedder = Embedder('voyageai:voyage-3.5')
+
+
+async def main():
+    result = await embedder.embed_query('Hello world')
+    print(len(result.embeddings[0]))
+    #> 1024
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+See the [VoyageAI Embeddings documentation](https://docs.voyageai.com/docs/embeddings) for available models.
+
+#### VoyageAI-Specific Settings
+
+VoyageAI models support additional settings via [`VoyageAIEmbeddingSettings`][pydantic_ai.embeddings.voyageai.VoyageAIEmbeddingSettings]:
+
+```python {title="voyageai_settings.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingSettings
+
+embedder = Embedder(
+    'voyageai:voyage-3.5',
+    settings=VoyageAIEmbeddingSettings(
+        dimensions=512,  # Reduce output dimensions
+        voyageai_input_type='document',  # Override input type for all requests
     ),
 )
 ```
@@ -317,7 +473,10 @@ embedder = Embedder(model)
 
 ## Settings
 
-[`EmbeddingSettings`][pydantic_ai.embeddings.EmbeddingSettings] provides common configuration options that work across providers.
+[`EmbeddingSettings`][pydantic_ai.embeddings.EmbeddingSettings] provides common configuration options that work across providers:
+
+- `dimensions`: Reduce the output embedding dimensions (supported by OpenAI, Google, Cohere, VoyageAI)
+- `truncate`: When `True`, truncate input text that exceeds the model's context length instead of raising an error (supported by Cohere, VoyageAI)
 
 Settings can be specified at the embedder level (applied to all calls) or per-call:
 
@@ -339,7 +498,7 @@ async def main():
         settings=EmbeddingSettings(dimensions=256),
     )
     print(len(result.embeddings[0]))
-    #> 1536
+    #> 256
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_

@@ -86,7 +86,7 @@ Can optionally accept a `RunContext` as a parameter.
 class GraphAgentState:
     """State kept across the execution of the agent graph."""
 
-    message_history: list[_messages.ModelMessage] = dataclasses.field(default_factory=list)
+    message_history: list[_messages.ModelMessage] = dataclasses.field(default_factory=list[_messages.ModelMessage])
     usage: _usage.RunUsage = dataclasses.field(default_factory=_usage.RunUsage)
     retries: int = 0
     run_step: int = 0
@@ -187,12 +187,16 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     deferred_tool_results: DeferredToolResults | None = None
 
     instructions: str | None = None
-    instructions_functions: list[_system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(default_factory=list)
+    instructions_functions: list[_system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(
+        default_factory=list[_system_prompt.SystemPromptRunner[DepsT]]
+    )
 
     system_prompts: tuple[str, ...] = dataclasses.field(default_factory=tuple)
-    system_prompt_functions: list[_system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(default_factory=list)
+    system_prompt_functions: list[_system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(
+        default_factory=list[_system_prompt.SystemPromptRunner[DepsT]]
+    )
     system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(
-        default_factory=dict
+        default_factory=dict[str, _system_prompt.SystemPromptRunner[DepsT]]
     )
 
     async def run(  # noqa: C901
@@ -334,7 +338,10 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         # Skip ModelRequestNode and go directly to CallToolsNode
         return CallToolsNode[DepsT, NodeRunEndT](
-            last_model_response, tool_call_results=tool_call_results, user_prompt=self.user_prompt
+            last_model_response,
+            tool_call_results=tool_call_results,
+            tool_call_metadata=deferred_tool_results.metadata or None,
+            user_prompt=self.user_prompt,
         )
 
     async def _reevaluate_dynamic_prompts(
@@ -565,6 +572,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
     model_response: _messages.ModelResponse
     tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None = None
+    tool_call_metadata: dict[str, dict[str, Any]] | None = None
+    """Metadata for deferred tool calls, keyed by `tool_call_id`."""
     user_prompt: str | Sequence[_messages.UserContent] | None = None
     """Optional user prompt to include alongside tool call results.
 
@@ -614,6 +623,17 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         max_tokens = model_settings.get('max_tokens') if model_settings else None
                         raise exceptions.UnexpectedModelBehavior(
                             f'Model token limit ({max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
+                        )
+
+                    # Check for content filter on empty response
+                    if self.model_response.finish_reason == 'content_filter':
+                        details = self.model_response.provider_details or {}
+                        reason = details.get('finish_reason', 'content_filter')
+
+                        body = _messages.ModelMessagesTypeAdapter.dump_json([self.model_response]).decode()
+
+                        raise exceptions.ContentFilterError(
+                            f"Content filter triggered. Finish reason: '{reason}'", body=body
                         )
 
                     # we got an empty response.
@@ -741,6 +761,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             tool_manager=ctx.deps.tool_manager,
             tool_calls=tool_calls,
             tool_call_results=self.tool_call_results,
+            tool_call_metadata=self.tool_call_metadata,
             final_result=None,
             ctx=ctx,
             output_parts=output_parts,
@@ -853,6 +874,7 @@ async def process_tool_calls(  # noqa: C901
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
     tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None,
+    tool_call_metadata: dict[str, dict[str, Any]] | None,
     final_result: result.FinalResult[NodeRunEndT] | None,
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     output_parts: list[_messages.ModelRequestPart],
@@ -985,6 +1007,7 @@ async def process_tool_calls(  # noqa: C901
             tool_manager=tool_manager,
             tool_calls=calls_to_run,
             tool_call_results=calls_to_run_results,
+            tool_call_metadata=tool_call_metadata,
             tracer=ctx.deps.tracer,
             usage=ctx.state.usage,
             usage_limits=ctx.deps.usage_limits,
@@ -1033,10 +1056,11 @@ async def process_tool_calls(  # noqa: C901
         output_final_result.append(final_result)
 
 
-async def _call_tools(
+async def _call_tools(  # noqa: C901
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
     tool_call_results: dict[str, DeferredToolResult],
+    tool_call_metadata: dict[str, dict[str, Any]] | None,
     tracer: Tracer,
     usage: _usage.RunUsage,
     usage_limits: _usage.UsageLimits,
@@ -1098,7 +1122,7 @@ async def _call_tools(
         if tool_manager.should_call_sequentially(tool_calls):
             for index, call in enumerate(tool_calls):
                 if event := await handle_call_or_result(
-                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id)),
+                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), tool_call_metadata),
                     index,
                 ):
                     yield event
@@ -1106,19 +1130,29 @@ async def _call_tools(
         else:
             tasks = [
                 asyncio.create_task(
-                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id)),
+                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), tool_call_metadata),
                     name=call.tool_name,
                 )
                 for call in tool_calls
             ]
+            try:
+                pending: set[
+                    asyncio.Task[
+                        tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]
+                    ]
+                ] = set(tasks)  # pyright: ignore[reportAssignmentType]
+                while pending:
+                    done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                    for task in done:
+                        index = tasks.index(task)  # pyright: ignore[reportArgumentType]
+                        if event := await handle_call_or_result(coro_or_task=task, index=index):  # pyright: ignore[reportArgumentType]
+                            yield event
 
-            pending = tasks
-            while pending:
-                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                for task in done:
-                    index = tasks.index(task)
-                    if event := await handle_call_or_result(coro_or_task=task, index=index):
-                        yield event
+            except asyncio.CancelledError as e:
+                for task in tasks:
+                    task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
+
+                raise
 
     # We append the results at the end, rather than as they are received, to retain a consistent ordering
     # This is mostly just to simplify testing
@@ -1150,6 +1184,7 @@ async def _call_tool(
     tool_manager: ToolManager[DepsT],
     tool_call: _messages.ToolCallPart,
     tool_call_result: DeferredToolResult | None,
+    tool_call_metadata: dict[str, dict[str, Any]] | None,
 ) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]:
     try:
         if tool_call_result is None:
@@ -1157,7 +1192,9 @@ async def _call_tool(
         elif isinstance(tool_call_result, ToolApproved):
             if tool_call_result.override_args is not None:
                 tool_call = dataclasses.replace(tool_call, args=tool_call_result.override_args)
-            tool_result = await tool_manager.handle_call(tool_call, approved=True)
+            # Get metadata from the tool_call_metadata dict by tool_call_id
+            metadata = tool_call_metadata.get(tool_call.tool_call_id) if tool_call_metadata else None
+            tool_result = await tool_manager.handle_call(tool_call, approved=True, metadata=metadata)
         elif isinstance(tool_call_result, ToolDenied):
             return _messages.ToolReturnPart(
                 tool_name=tool_call.tool_name,
@@ -1330,8 +1367,7 @@ async def _process_message_history(
             if takes_ctx:
                 messages = await processor(run_context, messages)
             else:
-                async_processor = cast(_HistoryProcessorAsync, processor)
-                messages = await async_processor(messages)
+                messages = await processor(messages)
         else:
             if takes_ctx:
                 sync_processor_with_ctx = cast(_HistoryProcessorSyncWithCtx[DepsT], processor)
