@@ -206,8 +206,12 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             delta=delta.args_delta if isinstance(delta.args_delta, str) else json.dumps(delta.args_delta),
         )
 
-    async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[BaseEvent]:
-        yield ToolCallEndEvent(tool_call_id=part.tool_call_id)
+    async def handle_tool_call_end(self, part: ToolCallPart | BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
+        tool_call_id = part.tool_call_id
+        # Use prefixed ID for builtin tools if available
+        if isinstance(part, BuiltinToolCallPart) and tool_call_id in self._builtin_tool_call_ids:
+            tool_call_id = self._builtin_tool_call_ids[tool_call_id]
+        yield ToolCallEndEvent(tool_call_id=tool_call_id)
 
     async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
         yield ToolCallEndEvent(tool_call_id=self._builtin_tool_call_ids[part.tool_call_id])

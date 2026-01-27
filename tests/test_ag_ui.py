@@ -1901,6 +1901,57 @@ async def test_builtin_tool_call() -> None:
     )
 
 
+async def test_handle_tool_call_end_with_builtin_tool_call_part():
+    """Test that handle_tool_call_end correctly handles BuiltinToolCallPart using prefixed ID.
+
+    This tests the fix for https://github.com/pydantic/pydantic-ai/issues/4098
+    where calling handle_tool_call_end with a BuiltinToolCallPart would use the
+    original ID instead of the prefixed ID.
+    """
+    run_input = RunAgentInput(
+        thread_id='test',
+        run_id='run-1',
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props={},
+        state={},
+    )
+    stream = AGUIEventStream(run_input, accept='text/event-stream')
+
+    # Initialize the stream
+    async for _ in stream.before_stream():
+        pass
+    async for _ in stream.before_response():
+        pass
+
+    part = BuiltinToolCallPart(
+        tool_name='web_search',
+        args='{"query": "test"}',
+        tool_call_id='ws_abc123',
+        provider_name='openai',
+    )
+
+    tool_call_ids: dict[str, str] = {}
+
+    # Call handle_builtin_tool_call_start to register the prefixed ID
+    async for event in stream.handle_builtin_tool_call_start(part):
+        if event.type == EventType.TOOL_CALL_START:
+            tool_call_ids['TOOL_CALL_START'] = event.tool_call_id
+
+    # Call handle_tool_call_end directly with BuiltinToolCallPart
+    # This tests the defensive fix that makes handle_tool_call_end
+    # use the prefixed ID for builtin tools
+    async for event in stream.handle_tool_call_end(part):
+        if event.type == EventType.TOOL_CALL_END:
+            tool_call_ids['TOOL_CALL_END'] = event.tool_call_id
+
+    # Verify both events use the same prefixed ID
+    assert tool_call_ids['TOOL_CALL_START'] == 'pyd_ai_builtin|openai|ws_abc123'
+    assert tool_call_ids['TOOL_CALL_END'] == 'pyd_ai_builtin|openai|ws_abc123'
+    assert tool_call_ids['TOOL_CALL_START'] == tool_call_ids['TOOL_CALL_END']
+
+
 async def test_event_stream_back_to_back_text():
     async def event_generator():
         yield PartStartEvent(index=0, part=TextPart(content='Hello'))
