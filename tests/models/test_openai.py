@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -2716,7 +2717,8 @@ Dagvoorspelling:
 async def test_reasoning_model_with_temperature(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m, model_settings=OpenAIChatModelSettings(temperature=0.5))
-    result = await agent.run('What is the capital of Mexico?')
+    with pytest.warns(UserWarning, match='Sampling parameters.*temperature.*not supported when reasoning is enabled'):
+        result = await agent.run('What is the capital of Mexico?')
     assert result.output == snapshot(
         'The capital of Mexico is Mexico City. It is not only the seat of the federal government but also a major cultural, political, and economic center in the country.'
     )
@@ -3569,8 +3571,45 @@ async def test_openai_model_settings_temperature_ignored_on_gpt_5(allow_model_re
     m = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
 
-    result = await agent.run('What is the capital of France?', model_settings=ModelSettings(temperature=0.0))
+    with pytest.warns(UserWarning, match='Sampling parameters.*temperature.*not supported when reasoning is enabled'):
+        result = await agent.run('What is the capital of France?', model_settings=ModelSettings(temperature=0.0))
     assert result.output == snapshot('Paris.')
+
+
+async def test_openai_gpt_5_2_temperature_allowed_by_default(allow_model_requests: None):
+    """GPT-5.2 allows temperature by default (reasoning_effort defaults to 'none')."""
+    c = completion_message(ChatCompletionMessage(content='Paris.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    # No warning should be raised when using temperature without reasoning enabled
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter('always')
+        await agent.run('What is the capital of France?', model_settings=ModelSettings(temperature=0.5))
+        # Check no UserWarning about sampling params was raised
+        sampling_warnings = [x for x in w if 'Sampling parameters' in str(x.message)]
+        assert len(sampling_warnings) == 0
+
+    # Verify temperature was passed to the API
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['temperature'] == 0.5
+
+
+async def test_openai_gpt_5_2_temperature_warns_when_reasoning_enabled(allow_model_requests: None):
+    """GPT-5.2 warns and filters temperature when reasoning_effort is set."""
+    c = completion_message(ChatCompletionMessage(content='Paris.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.warns(UserWarning, match='Sampling parameters.*temperature.*not supported when reasoning is enabled'):
+        await agent.run(
+            'What is the capital of France?',
+            model_settings=OpenAIChatModelSettings(temperature=0.5, openai_reasoning_effort='medium'),
+        )
+
+    # Verify temperature was NOT passed to the API (filtered out)
+    assert 'temperature' not in get_mock_chat_completion_kwargs(mock_client)[0]
 
 
 async def test_openai_model_cerebras_provider(allow_model_requests: None, cerebras_api_key: str):
