@@ -47,7 +47,7 @@ class UsageBase:
         dict[str, int],
         # `details` can not be `None` any longer, but we still want to support deserializing model responses stored in a DB before this was changed
         BeforeValidator(lambda d: d or {}),
-    ] = dataclasses.field(default_factory=dict)
+    ] = dataclasses.field(default_factory=dict[str, int])
     """Any extra details returned by the model."""
 
     @property
@@ -197,7 +197,7 @@ class RunUsage(UsageBase):
     output_tokens: int = 0
     """Total number of output/completion tokens."""
 
-    details: dict[str, int] = dataclasses.field(default_factory=dict)
+    details: dict[str, int] = dataclasses.field(default_factory=dict[str, int])
     """Any extra details returned by the model."""
 
     def incr(self, incr_usage: RunUsage | RequestUsage) -> None:
@@ -267,8 +267,18 @@ class UsageLimits:
     """The maximum number of tokens allowed in requests and responses combined."""
     count_tokens_before_request: bool = False
     """If True, perform a token counting pass before sending the request to the model,
-    to enforce `request_tokens_limit` ahead of time. This may incur additional overhead
-    (from calling the model's `count_tokens` API before making the actual request) and is disabled by default."""
+    to enforce `request_tokens_limit` ahead of time.
+
+    This may incur additional overhead (from calling the model's `count_tokens` API before making the actual request) and is disabled by default.
+
+    Supported by:
+
+    - Anthropic
+    - Google
+    - Bedrock Converse
+
+    Support for OpenAI is in development: https://github.com/pydantic/pydantic-ai/issues/3430
+    """
 
     @property
     @deprecated('`request_tokens_limit` is deprecated, use `input_tokens_limit` instead')
