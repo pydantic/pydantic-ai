@@ -49,6 +49,7 @@ from ..profiles import ModelProfileSpec
 from ..profiles.google import GoogleModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
+from ..thinking import resolve_thinking_config
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -90,6 +91,7 @@ try:
         PartDict,
         SafetySettingDict,
         ThinkingConfigDict,
+        ThinkingLevel,
         ToolCodeExecutionDict,
         ToolConfigDict,
         ToolDict,
@@ -254,6 +256,74 @@ class GoogleModel(Model):
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, WebFetchTool, ImageGenerationTool})
+
+    def _resolve_thinking_config(self, model_settings: GoogleModelSettings) -> ThinkingConfigDict | None:
+        """Resolve thinking configuration from unified or provider-specific settings.
+
+        Provider-specific `google_thinking_config` takes precedence over unified `thinking`.
+        For Gemini 3+, uses `thinking_level` instead of `thinking_budget`.
+        """
+        # Provider-specific setting takes precedence
+        if 'google_thinking_config' in model_settings:
+            return model_settings['google_thinking_config']
+
+        thinking = model_settings.get('thinking')
+        if thinking is None:
+            return None
+
+        resolved = resolve_thinking_config(thinking, self.profile, self.model_name)
+        if resolved is None:  # pragma: no cover
+            return None
+
+        uses_thinking_level = self.profile.supports_thinking_level
+
+        if not resolved.enabled:
+            if uses_thinking_level:
+                return {'thinking_level': ThinkingLevel.LOW, 'include_thoughts': False}
+            else:
+                return {'thinking_budget': 0}
+
+        result: ThinkingConfigDict = {}
+
+        if uses_thinking_level:
+            # Gemini 3+: Map effort to thinking_level
+            effort_to_level = {
+                'low': ThinkingLevel.LOW,
+                'medium': ThinkingLevel.MEDIUM,
+                'high': ThinkingLevel.HIGH,
+            }
+
+            if resolved.effort:
+                # Check for Pro model medium→high mapping
+                is_pro = 'pro' in self.model_name.lower()
+                if resolved.effort == 'medium' and is_pro:
+                    from ._warnings import warn_setting_mapped
+
+                    warn_setting_mapped(
+                        setting_name='effort',
+                        setting_value='medium',
+                        provider_name='Google',
+                        model_name=self.model_name,
+                        mapped_to='high',
+                        reason="Gemini 3 Pro only supports 'low' and 'high' effort levels. Thinking will use 'high' effort",
+                    )
+                    result['thinking_level'] = ThinkingLevel.HIGH
+                else:
+                    result['thinking_level'] = effort_to_level.get(resolved.effort, ThinkingLevel.HIGH)
+            else:
+                result['thinking_level'] = ThinkingLevel.HIGH
+        else:
+            # Gemini 2.5: Use thinking_budget
+            budget_tokens = resolved.budget_tokens
+            if budget_tokens is None and resolved.effort and self.profile.effort_to_budget_map:
+                budget_tokens = self.profile.effort_to_budget_map.get(resolved.effort)
+            if budget_tokens is not None:
+                result['thinking_budget'] = budget_tokens
+
+        # Handle include_in_response → include_thoughts
+        result['include_thoughts'] = resolved.include_in_response
+
+        return result if result else None
 
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -543,7 +613,7 @@ class GoogleModel(Model):
             frequency_penalty=model_settings.get('frequency_penalty'),
             seed=model_settings.get('seed'),
             safety_settings=model_settings.get('google_safety_settings'),
-            thinking_config=model_settings.get('google_thinking_config'),
+            thinking_config=self._resolve_thinking_config(model_settings),
             labels=model_settings.get('google_labels'),
             media_resolution=model_settings.get('google_video_resolution'),
             cached_content=model_settings.get('google_cached_content'),

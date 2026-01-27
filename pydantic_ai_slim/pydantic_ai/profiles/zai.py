@@ -6,6 +6,13 @@ from . import ModelProfile
 def zai_model_profile(model_name: str) -> ModelProfile | None:
     """The model profile for ZAI models.
 
-    Currently returns None as ZAI model-specific properties are handled at the provider level.
+    ZAI GLM models support reasoning capabilities.
     """
-    return None
+    model_lower = model_name.lower()
+
+    # ZAI GLM models support reasoning
+    is_reasoning = 'glm' in model_lower
+
+    return ModelProfile(
+        supports_thinking=is_reasoning,
+    )

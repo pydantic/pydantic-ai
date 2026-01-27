@@ -17,6 +17,7 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterProvider
 from ..settings import ModelSettings
+from ..thinking import resolve_thinking_config
 from . import ModelRequestParameters
 
 try:
@@ -544,8 +545,58 @@ class OpenRouterModel(OpenAIChatModel):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
-        new_settings = _openrouter_settings_to_openai_settings(cast(OpenRouterModelSettings, merged_settings or {}))
+        merged_settings = cast(OpenRouterModelSettings, merged_settings or {})
+
+        # Apply unified thinking config if no provider-specific setting
+        if 'openrouter_reasoning' not in merged_settings:
+            reasoning_config = self._resolve_reasoning_config(merged_settings)
+            if reasoning_config is not None:
+                merged_settings['openrouter_reasoning'] = reasoning_config  # pragma: no cover
+
+        new_settings = _openrouter_settings_to_openai_settings(merged_settings)
         return new_settings, customized_parameters
+
+    def _resolve_reasoning_config(self, model_settings: OpenRouterModelSettings) -> OpenRouterReasoning | None:
+        """Resolve unified thinking settings to OpenRouter reasoning config.
+
+        Args:
+            model_settings: The model settings to check.
+
+        Returns:
+            OpenRouter reasoning config dict, or None if not specified.
+
+        Raises:
+            UserError: If thinking is requested but the model doesn't support it.
+        """
+        thinking = model_settings.get('thinking')
+        if thinking is None:
+            return None
+
+        resolved = resolve_thinking_config(thinking, self.profile, self._model_name)
+        if resolved is None:  # pragma: no cover
+            return None
+        if not resolved.enabled:
+            return {'enabled': False}
+
+        result: OpenRouterReasoning = {}
+
+        # Map effort directly (OpenRouter uses same values)
+        if resolved.effort:
+            result['effort'] = resolved.effort
+
+        # Map budget_tokens to max_tokens
+        if resolved.budget_tokens:
+            result['max_tokens'] = resolved.budget_tokens
+
+        # Map include_in_response=False to exclude=True
+        if resolved.include_in_response is False:
+            result['exclude'] = True
+
+        # If no specific settings, just enable
+        if not result:
+            result['enabled'] = True
+
+        return result
 
     @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _OpenRouterChatCompletion:
