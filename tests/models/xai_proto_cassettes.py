@@ -153,7 +153,7 @@ class XaiProtoCassette:
     for `chat.sample()` calls and `StreamInteraction` for `chat.stream()` calls.
     """
 
-    interactions: list[Interaction] = field(default_factory=list)
+    interactions: list[Interaction] = field(default_factory=list[Interaction])
     version: int = 1
 
     @classmethod
