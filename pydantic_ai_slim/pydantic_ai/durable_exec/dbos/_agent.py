@@ -42,6 +42,8 @@ DBOSToolCallsMode = Literal['sequential', 'parallel_ordered_events']
 
 @DBOS.dbos_class()
 class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
+    _tool_calls_mode: ToolCallsMode
+
     def __init__(
         self,
         wrapped: AbstractAgent[AgentDepsT, OutputDataT],
@@ -70,7 +72,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
 
         self._name = name or wrapped.name
         self._event_stream_handler = event_stream_handler
-        self._tool_calls_mode: ToolCallsMode = cast(ToolCallsMode, tool_calls_mode)
+        self._tool_calls_mode = cast(ToolCallsMode, tool_calls_mode)
         if self._name is None:
             raise UserError(
                 "An agent needs to have a unique `name` in order to be used with DBOS. The name will be used to identify the agent's workflows and steps."
