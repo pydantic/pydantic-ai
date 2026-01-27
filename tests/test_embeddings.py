@@ -4,7 +4,7 @@ import os
 from collections.abc import Iterator
 from decimal import Decimal
 from typing import Any, get_args
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from inline_snapshot import snapshot
@@ -155,6 +155,33 @@ class TestOpenAI:
         embedder = Embedder(model)
         with pytest.raises(ModelHTTPError, match='model_not_found'):
             await embedder.embed_query('Hello, world!')
+
+    async def test_response_with_no_usage(self):
+        mock_client = AsyncMock()
+        mock_embedding_item = MagicMock()
+        mock_embedding_item.embedding = [0.1, 0.2, 0.3]
+
+        mock_response = MagicMock()
+        mock_response.data = [mock_embedding_item]
+        mock_response.usage = None
+        mock_response.model = 'test-model'
+
+        mock_client.embeddings.create.return_value = mock_response
+
+        provider = OpenAIProvider(openai_client=mock_client)
+        model = OpenAIEmbeddingModel('test-model', provider=provider)
+
+        result = await model.embed('test', input_type='query')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=[[0.1, 0.2, 0.3]],
+                inputs=['test'],
+                input_type='query',
+                model_name='test-model',
+                provider_name='openai',
+                timestamp=IsDatetime(),
+            )
+        )
 
     @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
     async def test_instrumentation(self, openai_api_key: str, capfire: CaptureLogfire):
