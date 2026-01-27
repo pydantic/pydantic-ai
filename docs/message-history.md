@@ -30,7 +30,7 @@ Example of accessing methods on a [`RunResult`][pydantic_ai.agent.AgentRunResult
 ```python {title="run_result_messages.py" hl_lines="10"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5', system_prompt='Be a helpful assistant.')
+agent = Agent('openai:gpt-5', instructions='Be a helpful assistant.')
 
 result = agent.run_sync('Tell me a joke.')
 print(result.output)
@@ -42,16 +42,13 @@ print(result.all_messages())
 [
     ModelRequest(
         parts=[
-            SystemPromptPart(
-                content='Be a helpful assistant.',
-                timestamp=datetime.datetime(...),
-            ),
             UserPromptPart(
                 content='Tell me a joke.',
                 timestamp=datetime.datetime(...),
-            ),
+            )
         ],
         timestamp=datetime.datetime(...),
+        instructions='Be a helpful assistant.',
         run_id='...',
     ),
     ModelResponse(
@@ -60,7 +57,7 @@ print(result.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=RequestUsage(input_tokens=60, output_tokens=12),
+        usage=RequestUsage(input_tokens=55, output_tokens=12),
         model_name='gpt-5',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -76,7 +73,7 @@ Example of accessing methods on a [`StreamedRunResult`][pydantic_ai.result.Strea
 ```python {title="streamed_run_result_messages.py" hl_lines="9 40"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5', system_prompt='Be a helpful assistant.')
+agent = Agent('openai:gpt-5', instructions='Be a helpful assistant.')
 
 
 async def main():
@@ -87,16 +84,13 @@ async def main():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='Be a helpful assistant.',
-                        timestamp=datetime.datetime(...),
-                    ),
                     UserPromptPart(
                         content='Tell me a joke.',
                         timestamp=datetime.datetime(...),
-                    ),
+                    )
                 ],
                 timestamp=datetime.datetime(...),
+                instructions='Be a helpful assistant.',
                 run_id='...',
             )
         ]
@@ -115,16 +109,13 @@ async def main():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='Be a helpful assistant.',
-                        timestamp=datetime.datetime(...),
-                    ),
                     UserPromptPart(
                         content='Tell me a joke.',
                         timestamp=datetime.datetime(...),
-                    ),
+                    )
                 ],
                 timestamp=datetime.datetime(...),
+                instructions='Be a helpful assistant.',
                 run_id='...',
             ),
             ModelResponse(
@@ -157,7 +148,7 @@ If `message_history` is set and not empty, a new system prompt is not generated 
 ```python {title="Reusing messages in a conversation" hl_lines="9 13"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5', system_prompt='Be a helpful assistant.')
+agent = Agent('openai:gpt-5', instructions='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
 print(result1.output)
@@ -172,16 +163,13 @@ print(result2.all_messages())
 [
     ModelRequest(
         parts=[
-            SystemPromptPart(
-                content='Be a helpful assistant.',
-                timestamp=datetime.datetime(...),
-            ),
             UserPromptPart(
                 content='Tell me a joke.',
                 timestamp=datetime.datetime(...),
-            ),
+            )
         ],
         timestamp=datetime.datetime(...),
+        instructions='Be a helpful assistant.',
         run_id='...',
     ),
     ModelResponse(
@@ -190,7 +178,7 @@ print(result2.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=RequestUsage(input_tokens=60, output_tokens=12),
+        usage=RequestUsage(input_tokens=55, output_tokens=12),
         model_name='gpt-5',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -203,6 +191,7 @@ print(result2.all_messages())
             )
         ],
         timestamp=datetime.datetime(...),
+        instructions='Be a helpful assistant.',
         run_id='...',
     ),
     ModelResponse(
@@ -211,7 +200,7 @@ print(result2.all_messages())
                 content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
-        usage=RequestUsage(input_tokens=61, output_tokens=26),
+        usage=RequestUsage(input_tokens=56, output_tokens=26),
         model_name='gpt-5',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -240,7 +229,7 @@ from pydantic_ai import (
     ModelMessagesTypeAdapter,  # (1)!
 )
 
-agent = Agent('openai:gpt-5', system_prompt='Be a helpful assistant.')
+agent = Agent('openai:gpt-5', instructions='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
 history_step_1 = result1.all_messages()
@@ -280,7 +269,7 @@ In the example below, we reuse the message from the first agent run, which uses 
 ```python {title="Reusing messages with a different model" hl_lines="17"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5', system_prompt='Be a helpful assistant.')
+agent = Agent('openai:gpt-5', instructions='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
 print(result1.output)
@@ -299,16 +288,13 @@ print(result2.all_messages())
 [
     ModelRequest(
         parts=[
-            SystemPromptPart(
-                content='Be a helpful assistant.',
-                timestamp=datetime.datetime(...),
-            ),
             UserPromptPart(
                 content='Tell me a joke.',
                 timestamp=datetime.datetime(...),
-            ),
+            )
         ],
         timestamp=datetime.datetime(...),
+        instructions='Be a helpful assistant.',
         run_id='...',
     ),
     ModelResponse(
@@ -317,7 +303,7 @@ print(result2.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=RequestUsage(input_tokens=60, output_tokens=12),
+        usage=RequestUsage(input_tokens=55, output_tokens=12),
         model_name='gpt-5',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -330,6 +316,7 @@ print(result2.all_messages())
             )
         ],
         timestamp=datetime.datetime(...),
+        instructions='Be a helpful assistant.',
         run_id='...',
     ),
     ModelResponse(
@@ -338,7 +325,7 @@ print(result2.all_messages())
                 content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
-        usage=RequestUsage(input_tokens=61, output_tokens=26),
+        usage=RequestUsage(input_tokens=56, output_tokens=26),
         model_name='gemini-2.5-pro',
         timestamp=datetime.datetime(...),
         run_id='...',
