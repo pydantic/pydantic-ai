@@ -324,3 +324,237 @@ def test_args_validator_tool_plain():
     agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
 
     assert validator_called
+
+
+# Test 13: Schema validation failure (no custom validator) results in args_valid=False
+@pytest.mark.anyio
+async def test_schema_validation_failure_args_valid_false():
+    """Test that args_valid=False when Pydantic schema validation fails (no custom validator)."""
+    from collections.abc import AsyncIterator
+
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+    from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+
+    def return_invalid_args(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        """Return a tool call with invalid arguments (wrong type)."""
+        return ModelResponse(parts=[ToolCallPart(tool_name='add_numbers', args={'x': 'not_an_int', 'y': 2})])
+
+    async def stream_invalid_args(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        """Stream a tool call with invalid arguments."""
+        yield {0: DeltaToolCall(name='add_numbers')}
+        yield {0: DeltaToolCall(json_args='{"x": "not_an_int", "y": 2}')}
+
+    agent = Agent(FunctionModel(return_invalid_args, stream_function=stream_invalid_args), deps_type=int)
+
+    @agent.tool
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    events: list[Any] = []
+    # The model always returns invalid args, so eventually max retries will be exceeded
+    # We collect events until that happens
+    try:
+        async for event in agent.run_stream_events('call add_numbers', deps=42):
+            events.append(event)
+    except UnexpectedModelBehavior:
+        pass  # Expected when max retries exceeded
+
+    # Find FunctionToolCallEvent
+    tool_call_events: list[FunctionToolCallEvent] = [e for e in events if isinstance(e, FunctionToolCallEvent)]
+    assert len(tool_call_events) >= 1
+
+    # The first event should have args_valid=False due to schema validation failure
+    first_event = tool_call_events[0]
+    assert first_event.part.tool_name == 'add_numbers'
+    assert first_event.args_valid is False
+
+
+# Test 14: Max retries exceeded - validator always fails
+def test_args_validator_max_retries_exceeded():
+    """Test that UnexpectedModelBehavior is raised when validator always fails and max retries is exceeded."""
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+    def always_fail_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        raise ModelRetry('Always fails')
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=always_fail_validator, retries=2)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries'):
+        agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+
+# Test 15: Tool.from_schema() with args_validator
+def test_args_validator_tool_from_schema():
+    """Test Tool.from_schema() with args_validator parameter."""
+    validator_called = False
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal validator_called
+        validator_called = True
+
+    def add_numbers(ctx: RunContext[int], **kwargs: Any) -> int:
+        """Add two numbers."""
+        return kwargs['x'] + kwargs['y']
+
+    json_schema = {
+        'type': 'object',
+        'properties': {
+            'x': {'type': 'integer'},
+            'y': {'type': 'integer'},
+        },
+        'required': ['x', 'y'],
+    }
+
+    tool = Tool.from_schema(
+        add_numbers,
+        name='add_numbers',
+        description='Add two numbers',
+        json_schema=json_schema,
+        takes_ctx=True,
+        args_validator=my_validator,
+    )
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+        tools=[tool],
+    )
+
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+    assert validator_called
+
+
+# Test 16: Validator with prepare function - both used together
+def test_args_validator_with_prepare():
+    """Test that args_validator works together with prepare function."""
+    from pydantic_ai.tools import ToolDefinition
+
+    validator_called = False
+    prepare_called = False
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal validator_called
+        validator_called = True
+
+    async def my_prepare(ctx: RunContext[int], tool_def: ToolDefinition) -> ToolDefinition:
+        nonlocal prepare_called
+        prepare_called = True
+        return tool_def
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=my_validator, prepare=my_prepare)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+    assert prepare_called
+    assert validator_called
+
+
+# Test 17: Multiple tools with different validators
+def test_args_validator_multiple_tools():
+    """Test that multiple tools can have different validators that work independently."""
+    add_validator_calls = 0
+    multiply_validator_calls = 0
+
+    def add_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal add_validator_calls
+        add_validator_calls += 1
+
+    def multiply_validator(ctx: RunContext[int], a: int, b: int) -> None:
+        nonlocal multiply_validator_calls
+        multiply_validator_calls += 1
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers', 'multiply_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=add_validator)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    @agent.tool(args_validator=multiply_validator)
+    def multiply_numbers(ctx: RunContext[int], a: int, b: int) -> int:
+        """Multiply two numbers."""
+        return a * b
+
+    agent.run_sync('call both tools', deps=42)
+
+    # Both validators should have been called at least once
+    # (TestModel may call tools multiple times depending on agent flow)
+    assert add_validator_calls >= 1
+    assert multiply_validator_calls >= 1
+    # Ensure correct validator was called for correct tool (no cross-calling)
+    # This is implicitly verified by no exceptions being raised
+
+
+# Test 18: Validator can access tool_name from context
+def test_args_validator_context_tool_name():
+    """Test that validator can access tool_name from RunContext."""
+    captured_tool_name = None
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal captured_tool_name
+        captured_tool_name = ctx.tool_name
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+    assert captured_tool_name == 'add_numbers'
+
+
+# Test 19: Validator receives retry count from context
+def test_args_validator_context_retry():
+    """Test that validator can access retry count from RunContext."""
+    retry_values: list[int] = []
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        retry_values.append(ctx.retry)
+        if len(retry_values) == 1:
+            raise ModelRetry('First attempt fails')
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=my_validator, retries=2)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+    # Validator is called multiple times; retry count reflects state at call time
+    # The exact values depend on when retries dict is updated
+    assert len(retry_values) >= 2
+    # First call should have retry=0
+    assert retry_values[0] == 0

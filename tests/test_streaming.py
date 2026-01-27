@@ -2650,6 +2650,14 @@ async def test_output_tool_validation_failure_events():
                     timestamp=IsNow(tz=timezone.utc),
                 )
             ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='final_result',
+                    args={'value': 'valid'},
+                    tool_call_id=IsStr(),
+                ),
+                args_valid=True,
+            ),
         ]
     )
 
