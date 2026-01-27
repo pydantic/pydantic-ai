@@ -18,6 +18,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import (
     Agent,
     BinaryContent,
+    BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FinalResultEvent,
@@ -461,7 +462,9 @@ async def test_stream_text(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
+            ['hello ', 'hello world', 'hello world']
+        )
         assert result.is_complete
 
 
@@ -474,7 +477,7 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
-            ['hello ', 'hello world', 'hello world.']
+            ['hello ', 'hello world', 'hello world.', 'hello world.']
         )
         assert result.is_complete
 
@@ -521,7 +524,13 @@ async def test_stream_structured(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [{}, {'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
+            [
+                {},
+                {'first': 'One'},
+                {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
+            ]
         )
         assert result.is_complete
 
@@ -580,7 +589,12 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
+            [
+                {'first': 'One'},
+                {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
+            ]
         )
         assert result.is_complete
 
@@ -593,7 +607,9 @@ async def test_no_delta(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
+            ['hello ', 'hello world', 'hello world']
+        )
         assert result.is_complete
 
 
@@ -622,7 +638,7 @@ async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
 async def test_image_as_binary_content_tool_response(
     allow_model_requests: None, groq_api_key: str, image_content: BinaryContent
 ):
-    m = GroqModel('meta-llama/llama-4-scout-17b-16e-instruct', provider=GroqProvider(api_key=groq_api_key))
+    m = GroqModel('meta-llama/llama-4-maverick-17b-128e-instruct', provider=GroqProvider(api_key=groq_api_key))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -647,17 +663,14 @@ async def test_image_as_binary_content_tool_response(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_wkpd')],
-                usage=RequestUsage(input_tokens=192, output_tokens=8),
-                model_name='meta-llama/llama-4-scout-17b-16e-instruct',
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='arq6emmq6')],
+                usage=RequestUsage(input_tokens=712, output_tokens=20),
+                model_name='meta-llama/llama-4-maverick-17b-128e-instruct',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
-                provider_details={
-                    'finish_reason': 'tool_calls',
-                    'timestamp': datetime(2025, 4, 29, 20, 21, 45, tzinfo=timezone.utc),
-                },
-                provider_response_id='chatcmpl-3c327c89-e9f5-4aac-a5d5-190e6f6f25c9',
+                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
+                provider_response_id='chatcmpl-31dace36-574a-42ee-a89f-154b2881e090',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -665,33 +678,24 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 1c8566',
-                        tool_call_id='call_wkpd',
+                        content='See file 241a70',
+                        tool_call_id='arq6emmq6',
                         timestamp=IsDatetime(),
                     ),
-                    UserPromptPart(
-                        content=[
-                            'This is file 1c8566:',
-                            image_content,
-                        ],
-                        timestamp=IsDatetime(),
-                    ),
+                    UserPromptPart(content=['This is file 241a70:', IsInstance(BinaryImage)], timestamp=IsDatetime()),
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The fruit in the image is a kiwi.')],
-                usage=RequestUsage(input_tokens=2552, output_tokens=11),
-                model_name='meta-llama/llama-4-scout-17b-16e-instruct',
+                usage=RequestUsage(input_tokens=1501, output_tokens=11),
+                model_name='meta-llama/llama-4-maverick-17b-128e-instruct',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
-                provider_details={
-                    'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 4, 29, 20, 21, 47, tzinfo=timezone.utc),
-                },
-                provider_response_id='chatcmpl-82dfad42-6a28-4089-82c3-c8633f626c0d',
+                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_response_id='chatcmpl-5644262c-ce2b-40af-9408-21690b4619a8',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),

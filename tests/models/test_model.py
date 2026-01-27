@@ -18,7 +18,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.groq import GroqModel
     from pydantic_ai.models.mistral import MistralModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
-
+    from pydantic_ai.models.openrouter import OpenRouterModel
 
 if not imports_successful():
     pytest.skip('model packages were not installed', allow_module_level=True)  # pragma: lax no cover
@@ -212,6 +212,14 @@ TEST_CASES = [
         'openai',
         'openai',
         OpenAIResponsesModel,
+    ),
+    pytest.param(
+        {'OPENROUTER_API_KEY': 'openrouter-api-key'},
+        'openrouter:anthropic/claude-3.5-sonnet',
+        'anthropic/claude-3.5-sonnet',
+        'openrouter',
+        'openrouter',
+        OpenRouterModel,
     ),
 ]
 

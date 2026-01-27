@@ -294,6 +294,13 @@ class MistralModel(Model):
                     'type': 'json_object'
                 },  # TODO: Should be able to use json_schema now: https://docs.mistral.ai/capabilities/structured-output/custom_structured_output/, https://github.com/mistralai/client-python/blob/bc4adf335968c8a272e1ab7da8461c9943d8e701/src/mistralai/extra/utils/response_format.py#L9
                 stream=True,
+                temperature=model_settings.get('temperature', UNSET),
+                top_p=model_settings.get('top_p', 1),
+                max_tokens=model_settings.get('max_tokens', UNSET),
+                timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
+                presence_penalty=model_settings.get('presence_penalty'),
+                frequency_penalty=model_settings.get('frequency_penalty'),
+                stop=model_settings.get('stop_sequences', None),
                 http_headers={'User-Agent': get_user_agent()},
             )
 
@@ -783,14 +790,16 @@ def _map_content(content: MistralOptionalNullable[MistralContent]) -> tuple[str 
     elif isinstance(content, list):
         for chunk in content:
             if isinstance(chunk, MistralTextChunk):
-                text = text or '' + chunk.text
+                text = (text or '') + chunk.text
             elif isinstance(chunk, MistralThinkChunk):
                 for thought in chunk.thinking:
                     if thought.type == 'text':  # pragma: no branch
                         thinking.append(thought.text)
+            elif isinstance(chunk, MistralReferenceChunk):
+                pass  # Reference chunks are not yet supported, skip silently
             else:
                 assert False, (  # pragma: no cover
-                    f'Other data types like (Image, Reference) are not yet supported,  got {type(chunk)}'
+                    f'Other data types like (Image) are not yet supported, got {type(chunk)}'
                 )
     elif isinstance(content, str):
         text = content

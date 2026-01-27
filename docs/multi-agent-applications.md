@@ -1,11 +1,12 @@
 # Multi-agent Applications
 
-There are roughly four levels of complexity when building applications with Pydantic AI:
+There are roughly five levels of complexity when building applications with Pydantic AI:
 
 1. Single agent workflows — what most of the `pydantic_ai` documentation covers
 2. [Agent delegation](#agent-delegation) — agents using another agent via tools
 3. [Programmatic agent hand-off](#programmatic-agent-hand-off) — one agent runs, then application code calls another agent
 4. [Graph based control flow](graph.md) — for the most complex cases, a graph-based state machine can be used to control the execution of multiple agents
+5. [Deep Agents](#deep-agents) — autonomous agents with planning, file operations, task delegation, and sandboxed code execution
 
 Of course, you can combine multiple strategies in a single application.
 
@@ -26,7 +27,7 @@ from pydantic_ai import Agent, RunContext, UsageLimits
 
 joke_selection_agent = Agent(  # (1)!
     'openai:gpt-5',
-    system_prompt=(
+    instructions=(
         'Use the `joke_factory` to generate some jokes, then choose the best. '
         'You must return just a single joke.'
     ),
@@ -52,7 +53,7 @@ result = joke_selection_agent.run_sync(
 print(result.output)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
 print(result.usage())
-#> RunUsage(input_tokens=204, output_tokens=24, requests=3, tool_calls=1)
+#> RunUsage(input_tokens=166, output_tokens=24, requests=3, tool_calls=1)
 ```
 
 1. The "parent" or controlling agent.
@@ -99,7 +100,7 @@ class ClientAndKey:  # (1)!
 joke_selection_agent = Agent(
     'openai:gpt-5',
     deps_type=ClientAndKey,  # (2)!
-    system_prompt=(
+    instructions=(
         'Use the `joke_factory` tool to generate some jokes on the given subject, '
         'then choose the best. You must return just a single joke.'
     ),
@@ -108,7 +109,7 @@ joke_generation_agent = Agent(
     'google-gla:gemini-2.5-flash',
     deps_type=ClientAndKey,  # (4)!
     output_type=list[str],
-    system_prompt=(
+    instructions=(
         'Use the "get_jokes" tool to get some jokes on the given subject, '
         'then extract each joke into a list.'
     ),
@@ -143,7 +144,7 @@ async def main():
         print(result.output)
         #> Did you hear about the toothpaste scandal? They called it Colgate.
         print(result.usage())  # (6)!
-        #> RunUsage(input_tokens=309, output_tokens=32, requests=4, tool_calls=2)
+        #> RunUsage(input_tokens=221, output_tokens=32, requests=4, tool_calls=2)
 ```
 
 1. Define a dataclass to hold the client and API key dependencies.
@@ -199,7 +200,7 @@ class Failed(BaseModel):
 flight_search_agent = Agent[None, FlightDetails | Failed](  # (1)!
     'openai:gpt-5',
     output_type=FlightDetails | Failed,  # type: ignore
-    system_prompt=(
+    instructions=(
         'Use the "flight_search" tool to find a flight '
         'from the given origin to the given destination.'
     ),
@@ -247,7 +248,7 @@ class SeatPreference(BaseModel):
 seat_preference_agent = Agent[None, SeatPreference | Failed](  # (5)!
     'openai:gpt-5',
     output_type=SeatPreference | Failed,  # type: ignore
-    system_prompt=(
+    instructions=(
         "Extract the user's seat preference. "
         'Seats A and F are window seats. '
         'Row 1 is the front row and has extra leg room. '
@@ -322,8 +323,58 @@ graph TB
 
 See the [graph](graph.md) documentation on when and how to use graphs.
 
+## Deep Agents
+
+Deep agents are autonomous agents that combine multiple architectural patterns and capabilities to handle complex, multi-step tasks reliably. These patterns can be implemented using Pydantic AI's built-in features and (third-party) toolsets:
+
+- **Planning and progress tracking** — agents break down complex tasks into steps and track their progress, giving users visibility into what the agent is working on. See [Task Management toolsets](toolsets.md#task-management).
+- **File system operations** — reading, writing, and editing files with proper abstraction layers that work across in-memory storage, real file systems, and sandboxed containers. See [File Operations toolsets](toolsets.md#file-operations).
+- **Task delegation** — spawning specialized sub-agents for specific tasks, with isolated context to prevent recursive delegation issues. See [Agent Delegation](#agent-delegation) above.
+- **Sandboxed code execution** — running AI-generated code in isolated environments (typically Docker containers) to prevent accidents. See [Code Execution toolsets](toolsets.md#code-execution).
+- **Context management** — automatic conversation summarization to handle long sessions that would otherwise exceed token limits. See [Processing Message History](message-history.md#processing-message-history).
+- **Human-in-the-loop** — approval workflows for dangerous operations like code execution or file deletion. See [Requiring Tool Approval](toolsets.md#requiring-tool-approval).
+- **Durable execution** — preserving agent state across transient API failures and application errors or restarts. See [Durable Execution](durable_execution/overview.md).
+
+In addition, the community maintains packages that bring these concepts together in a more opinionated way:
+
+- [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) by [Vstorm](https://vstorm.co/)
+
+## Observing Multi-Agent Systems
+
+Multi-agent systems can be challenging to debug due to their complexity; when multiple agents interact, understanding the flow of execution becomes essential.
+
+### Tracing Agent Delegation
+
+With [Logfire](logfire.md), you can trace the entire flow across multiple agents:
+
+```python
+import logfire
+
+logfire.configure()
+logfire.instrument_pydantic_ai()
+
+# Your multi-agent code here...
+```
+
+Logfire shows you:
+
+- **Which agent handled which part** of the request
+- **Delegation decisions**—when and why one agent called another
+- **End-to-end latency** broken down by agent
+- **Token usage and costs** per agent
+- **What triggered the agent run**—the HTTP request, scheduled job, or user action that started it all
+- **What happened inside tool calls**—database queries, HTTP requests, file operations, and any other instrumented code that tools execute
+
+This is essential for understanding and optimizing complex agent workflows. When something goes wrong in a multi-agent system, you'll see exactly which agent failed and what it was trying to do, and whether the problem was in the agent's reasoning or in the backend systems it called.
+
+### Full-Stack Visibility
+
+If your PydanticAI application includes a TypeScript frontend, API gateway, or services in other languages, Logfire can trace them too—Logfire provides SDKs for Python, JavaScript/TypeScript, and Rust, plus compatibility with any OpenTelemetry-instrumented application. See traces from your entire stack in a unified view. For details on sending data from other languages using standard OpenTelemetry, see the [alternative clients guide](https://logfire.pydantic.dev/docs/how-to-guides/alternative-clients/).
+
+PydanticAI's instrumentation is built on [OpenTelemetry](https://opentelemetry.io/), so you can also use any OTel-compatible backend. See the [Logfire integration guide](logfire.md) for details.
+
 ## Examples
 
-The following examples demonstrate how to use dependencies in Pydantic AI:
+The following examples demonstrate how to use multi-agent patterns in Pydantic AI:
 
 - [Flight booking](examples/flight-booking.md)

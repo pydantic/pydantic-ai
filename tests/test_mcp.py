@@ -14,6 +14,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import (
     BinaryContent,
+    BinaryImage,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -43,7 +44,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from .conftest import IsDatetime, IsNow, IsStr, try_import
+from .conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
     from mcp import ErrorData, McpError, SamplingMessage
@@ -56,6 +57,7 @@ with try_import() as imports_successful:
         ImageContent,
         Implementation,
         TextContent,
+        ToolUseContent,
     )
 
     from pydantic_ai._mcp import map_from_mcp_params, map_from_model_response, map_from_pai_messages
@@ -353,7 +355,7 @@ async def test_stdio_server_list_resources(run_context: RunContext[int]):
         resources = await server.list_resources()
         assert resources == snapshot(
             [
-                Resource(name='kiwi_resource', description='', mime_type='image/png', uri='resource://kiwi.png'),
+                Resource(name='kiwi_resource', description='', mime_type='image/jpeg', uri='resource://kiwi.jpg'),
                 Resource(name='marcelo_resource', description='', mime_type='audio/mpeg', uri='resource://marcelo.mp3'),
                 Resource(
                     name='product_name_resource',
@@ -706,11 +708,11 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     parts=[
                         ToolReturnPart(
                             tool_name='get_image_resource',
-                            content='See file 1c8566',
+                            content='See file 241a70',
                             tool_call_id='call_nFsDHYDZigO0rOHqmChZ3pmt',
                             timestamp=IsDatetime(),
                         ),
-                        UserPromptPart(content=['This is file 1c8566:', image_content], timestamp=IsDatetime()),
+                        UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -801,11 +803,11 @@ async def test_tool_returning_image_resource_link(
                     parts=[
                         ToolReturnPart(
                             tool_name='get_image_resource_link',
-                            content='See file 1c8566',
+                            content='See file 241a70',
                             tool_call_id='call_eVFgn54V9Nuh8Y4zvuzkYjUp',
                             timestamp=IsDatetime(),
                         ),
-                        UserPromptPart(content=['This is file 1c8566:', image_content], timestamp=IsDatetime()),
+                        UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -929,6 +931,7 @@ async def test_tool_returning_audio_resource_link(
                             tool_name='get_audio_resource_link',
                             args={},
                             tool_call_id=IsStr(),
+                            provider_name='google-gla',
                             provider_details={'thought_signature': IsStr()},
                         )
                     ],
@@ -987,7 +990,9 @@ async def test_tool_returning_audio_resource_link(
 async def test_tool_returning_image(allow_model_requests: None, agent: Agent, image_content: BinaryContent):
     async with agent:
         result = await agent.run('Get me an image')
-        assert result.output == snapshot('Here is an image of a sliced kiwi on a white background.')
+        assert result.output == snapshot(
+            "Here's an image of a kiwi fruit cut in half. The vibrant green flesh contrasts with the tiny black seeds, making it visually appealing. If you need more images or a different kind, just let me know!"
+        )
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
@@ -1003,13 +1008,13 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='get_image',
+                            tool_name='get_image_resource',
                             args='{}',
-                            tool_call_id='call_Q7xG8CCG0dyevVfUS0ubsDdN',
+                            tool_call_id='call_KL2BXptkWmKifse91X727M7y',
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=190,
+                        input_tokens=393,
                         output_tokens=11,
                         details={
                             'accepted_prediction_tokens': 0,
@@ -1026,23 +1031,20 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                         'finish_reason': 'tool_calls',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BRloGQJWIX0Qk7gtNzF4s2Fez0O29',
+                    provider_response_id='chatcmpl-CpxEaVAApbQvDQSTnqrFd0mxu7Cs3',
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
-                            tool_name='get_image',
-                            content='See file 1c8566',
-                            tool_call_id='call_Q7xG8CCG0dyevVfUS0ubsDdN',
+                            tool_name='get_image_resource',
+                            content='See file 241a70',
+                            tool_call_id='call_KL2BXptkWmKifse91X727M7y',
                             timestamp=IsDatetime(),
                         ),
                         UserPromptPart(
-                            content=[
-                                'This is file 1c8566:',
-                                image_content,
-                            ],
+                            content=['This is file 241a70:', IsInstance(BinaryImage)],
                             timestamp=IsDatetime(),
                         ),
                     ],
@@ -1050,10 +1052,14 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     run_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[TextPart(content='Here is an image of a sliced kiwi on a white background.')],
+                    parts=[
+                        TextPart(
+                            content="Here's an image of a kiwi fruit cut in half. The vibrant green flesh contrasts with the tiny black seeds, making it visually appealing. If you need more images or a different kind, just let me know!"
+                        )
+                    ],
                     usage=RequestUsage(
-                        input_tokens=1329,
-                        output_tokens=15,
+                        input_tokens=1196,
+                        output_tokens=43,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -1069,7 +1075,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                         'finish_reason': 'stop',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BRloJHR654fSD0fcvLWZxtKtn0pag',
+                    provider_response_id='chatcmpl-CpxEdNdePHwVHTJLjmaHWzNUfpoNo',
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -1459,7 +1465,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
     async with agent:
         result = await agent.run('Get me multiple items and summarize in one sentence')
         assert result.output == snapshot(
-            'The data includes two strings, a dictionary with a key-value pair, and an image of a sliced kiwi.'
+            'The content includes two strings, a dictionary with keys "foo" and "baz," and an image of a kiwi fruit.'
         )
         assert result.all_messages() == snapshot(
             [
@@ -1478,12 +1484,12 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                         ToolCallPart(
                             tool_name='get_multiple_items',
                             args='{}',
-                            tool_call_id='call_kL0TvjEVQBDGZrn1Zv7iNYOW',
+                            tool_call_id='call_pyHWn85cReaMKhKpY5J4cGev',
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=195,
-                        output_tokens=12,
+                        input_tokens=398,
+                        output_tokens=11,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -1499,7 +1505,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                         'finish_reason': 'tool_calls',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BRlobKLgm6vf79c9O8sloZaYx3coC',
+                    provider_response_id='chatcmpl-CpzU5Mhbq7bf8kaSOksp2KUTqG4u0',
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -1511,17 +1517,13 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                                 'This is a string',
                                 'Another string',
                                 {'foo': 'bar', 'baz': 123},
-                                'See file 1c8566',
+                                'See file 241a70',
                             ],
-                            tool_call_id='call_kL0TvjEVQBDGZrn1Zv7iNYOW',
+                            tool_call_id='call_pyHWn85cReaMKhKpY5J4cGev',
                             timestamp=IsDatetime(),
                         ),
                         UserPromptPart(
-                            content=[
-                                'This is file 1c8566:',
-                                image_content,
-                            ],
-                            timestamp=IsDatetime(),
+                            content=['This is file 241a70:', IsInstance(BinaryImage)], timestamp=IsDatetime()
                         ),
                     ],
                     timestamp=IsDatetime(),
@@ -1530,12 +1532,12 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                 ModelResponse(
                     parts=[
                         TextPart(
-                            content='The data includes two strings, a dictionary with a key-value pair, and an image of a sliced kiwi.'
+                            content='The content includes two strings, a dictionary with keys "foo" and "baz," and an image of a kiwi fruit.'
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=1355,
-                        output_tokens=24,
+                        input_tokens=1220,
+                        output_tokens=26,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -1551,7 +1553,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                         'finish_reason': 'stop',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BRloepWR5NJpTgSqFBGTSPeM1SWm8',
+                    provider_response_id='chatcmpl-CpzU6VAYJTRYnthvYDAolptinBLkS',
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -1659,6 +1661,20 @@ def test_map_from_mcp_params_model_response():
     )
 
 
+def test_map_from_mcp_params_unsupported_user_content():
+    params = CreateMessageRequestParams(
+        messages=[
+            SamplingMessage(
+                role='user',
+                content=ToolUseContent(type='tool_use', id='123', name='tool', input={}),
+            ),
+        ],
+        maxTokens=8,
+    )
+    with pytest.raises(NotImplementedError, match='ToolUseContent cannot be used as user content'):
+        map_from_mcp_params(params)
+
+
 def test_map_from_pai_messages_with_binary_content():
     """Test that map_from_pai_messages correctly converts image and audio content to MCP format.
 
@@ -1678,7 +1694,11 @@ def test_map_from_pai_messages_with_binary_content():
     assert system_prompt == ''
     assert [m.model_dump(by_alias=True) for m in sampling_msgs] == snapshot(
         [
-            {'role': 'user', 'content': {'type': 'text', 'text': 'text message', 'annotations': None, '_meta': None}},
+            {
+                'role': 'user',
+                'content': {'type': 'text', 'text': 'text message', 'annotations': None, '_meta': None},
+                '_meta': None,
+            },
             {
                 'role': 'user',
                 'content': {
@@ -1688,6 +1708,7 @@ def test_map_from_pai_messages_with_binary_content():
                     'annotations': None,
                     '_meta': None,
                 },
+                '_meta': None,
             },
         ]
     )
@@ -1702,9 +1723,25 @@ def test_map_from_pai_messages_with_binary_content():
         map_from_pai_messages([message_with_video])
 
 
-def test_map_from_model_response():
-    with pytest.raises(UnexpectedModelBehavior, match='Unexpected part type: ThinkingPart, expected TextPart'):
-        map_from_model_response(ModelResponse(parts=[ThinkingPart(content='Thinking...')]))
+def test_map_from_model_response_unexpected_part_raises_error():
+    with pytest.raises(UnexpectedModelBehavior, match='Unexpected part type: ToolCallPart, expected TextPart'):
+        map_from_model_response(ModelResponse(parts=[ToolCallPart(tool_name='test-tool')]))
+
+
+def test_map_from_model_response_mixed_parts():
+    result = map_from_model_response(
+        ModelResponse(
+            parts=[
+                TextPart(content='Hello '),
+                ThinkingPart(content='Should I say world?'),
+                TextPart(content='world!'),
+                ThinkingPart(content='That sounded good.'),
+            ]
+        )
+    )
+    assert result.model_dump(by_alias=True) == snapshot(
+        {'type': 'text', 'text': 'Hello world!', 'annotations': None, '_meta': None}
+    )
 
 
 async def test_elicitation_callback_functionality(run_context: RunContext[int]):
@@ -1764,11 +1801,11 @@ async def test_read_blob_resource(run_context: RunContext[int]):
     """Test reading a binary resource (converted to BinaryContent)."""
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
-        content = await server.read_resource('resource://kiwi.png')
+        content = await server.read_resource('resource://kiwi.jpg')
         assert isinstance(content, BinaryContent)
-        assert content.media_type == snapshot('image/png')
-        # Verify it's PNG data (starts with PNG magic bytes)
-        assert content.data[:8] == b'\x89PNG\r\n\x1a\n'  # PNG magic bytes
+        assert content.media_type == snapshot('image/jpeg')
+        # Verify it's JPEG data (starts with JPEG magic bytes)
+        assert content.data.startswith(bytes.fromhex('ffd8ffe0'))  # JPEG magic bytes
 
 
 async def test_read_resource_template(run_context: RunContext[int]):
@@ -2216,6 +2253,17 @@ async def test_custom_http_client_not_closed():
     assert len(tools) > 0
 
     assert not custom_http_client.is_closed
+
+
+async def test_http_client_mutually_exclusive_with_headers():
+    server = MCPServerStreamableHTTP(
+        url='https://example.com/mcp',
+        http_client=cached_async_http_client(),
+        headers={'Authorization': 'Bearer token'},
+    )
+    with pytest.raises(ValueError, match='`http_client` is mutually exclusive with `headers`'):
+        async with server:
+            pass
 
 
 # ============================================================================

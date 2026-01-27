@@ -187,11 +187,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         if isinstance(task, Sequence) and len(task) == 1:
             first_task = task[0]
             if isinstance(first_task.inputs, BaseNode):  # pragma: no branch
-                base_node: BaseNode[
+                base_node: BaseNode[  # pyright: ignore[reportUnknownVariableType]
                     _agent_graph.GraphAgentState,
                     _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT],
                     FinalResult[OutputDataT],
-                ] = first_task.inputs  # type: ignore[reportUnknownMemberType]
+                ] = first_task.inputs  # pyright: ignore[reportUnknownMemberType]
                 if _agent_graph.is_agent_node(node=base_node):  # pragma: no branch
                     return base_node
         if isinstance(task, EndMarker):
@@ -284,6 +284,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def usage(self) -> _usage.RunUsage:
         """Get usage statistics for the run so far, including token usage, model requests, and so on."""
         return self._graph_run.state.usage
+
+    @property
+    def metadata(self) -> dict[str, Any] | None:
+        """Metadata associated with this agent run, if configured."""
+        return self._graph_run.state.metadata
 
     @property
     def run_id(self) -> str:
@@ -423,6 +428,11 @@ class AgentRunResult(Generic[OutputDataT]):
     def timestamp(self) -> datetime:
         """Return the timestamp of last response."""
         return self.response.timestamp
+
+    @property
+    def metadata(self) -> dict[str, Any] | None:
+        """Metadata associated with this agent run, if configured."""
+        return self._state.metadata
 
     @property
     def run_id(self) -> str:

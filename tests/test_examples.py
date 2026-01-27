@@ -38,6 +38,8 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import group_by_temporal
+from pydantic_ai.embeddings import EmbeddingModel, infer_embedding_model
+from pydantic_ai.embeddings.test import TestEmbeddingModel
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.models.fallback import FallbackModel
@@ -61,8 +63,8 @@ code_examples: dict[str, CodeExample] = {}
 
 @dataclass
 class ExamplesConfig(BaseExamplesConfig):
-    known_first_party: list[str] = field(default_factory=list)
-    known_local_folder: list[str] = field(default_factory=list)
+    known_first_party: list[str] = field(default_factory=list[str])
+    known_local_folder: list[str] = field(default_factory=list[str])
 
     def ruff_config(self) -> tuple[str, ...]:
         config = super().ruff_config()
@@ -126,6 +128,7 @@ def test_docs_examples(
     vertex_provider_auth: None,
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
+    mocker.patch('pydantic_ai.embeddings.infer_embedding_model', side_effect=mock_infer_embedding_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
     mocker.patch('pydantic_evals.reporting.render_numbers._render_duration', side_effect=mock_render_duration)
 
@@ -181,11 +184,14 @@ def test_docs_examples(
     env.set('DEEPSEEK_API_KEY', 'testing')
     env.set('OVHCLOUD_API_KEY', 'testing')
     env.set('ALIBABA_API_KEY', 'testing')
+    env.set('SAMBANOVA_API_KEY', 'testing')
     env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'testing')
     env.set('S3_ENDPOINT', 'https://test-bucket.s3.amazonaws.com')
     env.set('S3_ACCESS_KEY_ID', 'testing')
     env.set('S3_SECRET_ACCESS_KEY', 'testing')
     env.set('S3_REGION', 'us-east-1')
+    env.set('VOYAGE_API_KEY', 'testing')
+    env.set('XAI_API_KEY', 'testing')
 
     prefix_settings = example.prefix_settings()
     opt_test = prefix_settings.get('test', '')
@@ -551,6 +557,11 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'What do I have on my calendar today?': "You're going to spend all day playing with Pydantic AI.",
     'Write a long story about a cat': 'Once upon a time, there was a curious cat named Whiskers who loved to explore the world around him...',
     'What is the first sentence on https://ai.pydantic.dev?': 'Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.',
+    'Create a record with name "test" and value 42': ToolCallPart(
+        tool_name='final_result',
+        args={'name': 'test', 'value': 42},
+        tool_call_id='pyd_ai_tool_call_id',
+    ),
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -995,6 +1006,29 @@ async def stream_model_logic(  # noqa: C901
 
     sys.stdout.write(str(debug.format(messages, info)))
     raise RuntimeError(f'Unexpected message: {last_part}')
+
+
+def mock_infer_embedding_model(model: EmbeddingModel | str) -> EmbeddingModel:
+    """Mock embedding model inference to return a TestEmbeddingModel with appropriate dimensions."""
+    if isinstance(model, EmbeddingModel):
+        return model
+
+    # Use the non-mocked model inference to get the actual model name and provider
+    actual_model = infer_embedding_model(model)
+    model_name = actual_model.model_name
+    provider_name = actual_model.system
+
+    # Map model names to their known dimensions (only models used in examples)
+    dimensions_map: dict[str, int] = {
+        'text-embedding-3-small': 1536,
+        'text-embedding-3-large': 3072,
+        'embed-v4.0': 1024,
+        'voyage-3.5': 1024,
+        'all-MiniLM-L6-v2': 384,
+        'gemini-embedding-001': 3072,
+    }
+    dimensions = dimensions_map.get(model_name, 8)
+    return TestEmbeddingModel(model_name, provider_name=provider_name, dimensions=dimensions)
 
 
 def mock_infer_model(model: Model | KnownModelName) -> Model:
