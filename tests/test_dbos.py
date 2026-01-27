@@ -216,7 +216,7 @@ complex_agent = Agent(
     name='complex_agent',
 )
 complex_dbos_agent = DBOSAgent(complex_agent)
-seq_complex_dbos_agent = DBOSAgent(complex_agent, sequential_tool_calls=True, name='seq_complex_agent')
+seq_complex_dbos_agent = DBOSAgent(complex_agent, tool_calls_mode='sequential', name='seq_complex_agent')
 
 
 async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire) -> None:

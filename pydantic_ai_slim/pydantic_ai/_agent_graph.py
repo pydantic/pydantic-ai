@@ -1133,7 +1133,7 @@ async def _call_tools(  # noqa: C901
             ]
 
             try:
-                if tool_manager.should_wait_all():
+                if tool_manager.should_order_events():
                     # Wait for all tasks to complete before yielding any events
                     await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
                     for index, task in enumerate(tasks):

@@ -10,13 +10,14 @@ from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
 import anyio
 from pydantic import TypeAdapter
-from typing_extensions import Self, TypeIs, TypeVar
+from typing_extensions import Self, TypeIs, TypeVar, deprecated
 
 from pydantic_graph import End
 
 from .. import (
     _agent_graph,
     _system_prompt,
+    _tool_manager,
     _utils,
     exceptions,
     messages as _messages,
@@ -1172,16 +1173,24 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     @staticmethod
     @contextmanager
-    def sequential_tool_calls() -> Iterator[None]:
-        """Run tool calls sequentially during the context."""
-        with ToolManager.sequential_tool_calls():
+    def tool_calls_mode(mode: _tool_manager.ToolCallsMode = 'parallel') -> Iterator[None]:
+        """Set the tool calls execution mode during the context.
+
+        Args:
+            mode: The execution mode for tool calls:
+                - 'parallel': Run tool calls in parallel, yielding events as they complete (default).
+                - 'sequential': Run tool calls one at a time in order.
+                - 'parallel_ordered_events': Run tool calls in parallel, but events are emitted in order, after all calls complete.
+        """
+        with ToolManager.tool_calls_mode(mode):
             yield
 
     @staticmethod
     @contextmanager
-    def parallel_wait_all_tool_calls() -> Iterator[None]:
-        """Run tool calls in parallel but wait for all to complete before yielding events."""
-        with ToolManager.parallel_wait_all_tool_calls():
+    @deprecated('Use `tool_calls_mode("sequential")` instead.')
+    def sequential_tool_calls() -> Iterator[None]:
+        """Run tool calls sequentially during the context."""
+        with ToolManager.tool_calls_mode('sequential'):
             yield
 
     @staticmethod
