@@ -109,8 +109,7 @@ class OutlinesModel(Model):
     def from_transformers(
         cls,
         hf_model: transformers.modeling_utils.PreTrainedModel,
-        hf_tokenizer_or_processor: transformers.tokenization_utils.PreTrainedTokenizer
-        | transformers.processing_utils.ProcessorMixin,
+        hf_tokenizer_or_processor: transformers.PreTrainedTokenizer | transformers.processing_utils.ProcessorMixin,
         *,
         provider: Literal['outlines'] | Provider[OutlinesBaseModel] = 'outlines',
         profile: ModelProfileSpec | None = None,
@@ -158,7 +157,7 @@ class OutlinesModel(Model):
     def from_mlxlm(  # pragma: no cover
         cls,
         mlx_model: nn.Module,  # pyright: ignore[reportUnknownParameterType, reportUnknownMemberType]
-        mlx_tokenizer: transformers.tokenization_utils.PreTrainedTokenizer,
+        mlx_tokenizer: transformers.PreTrainedTokenizer,
         *,
         provider: Literal['outlines'] | Provider[OutlinesBaseModel] = 'outlines',
         profile: ModelProfileSpec | None = None,

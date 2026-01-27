@@ -170,6 +170,7 @@ async def test_simple_completion(allow_model_requests: None, huggingface_api_key
             model_name='Qwen/Qwen2.5-72B-Instruct-fast',
             timestamp=IsNow(tz=timezone.utc),
             provider_name='huggingface',
+            provider_url='https://router.huggingface.co/nebius/v1',
             provider_details={
                 'finish_reason': 'stop',
                 'timestamp': datetime(2025, 7, 8, 13, 42, 33, tzinfo=timezone.utc),
@@ -463,19 +464,19 @@ def chunk(
         {
             'id': 'x',
             'choices': [
-                ChatCompletionStreamOutputChoice(index=index, delta=delta, finish_reason=finish_reason)  # type: ignore
+                ChatCompletionStreamOutputChoice(index=index, delta=delta, finish_reason=finish_reason)
                 for index, delta in enumerate(delta)
             ],
             'created': 1704067200,  # 2024-01-01
             'model': 'hf-model',
             'object': 'chat.completion.chunk',
-            'usage': ChatCompletionStreamOutputUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),  # type: ignore
+            'usage': ChatCompletionStreamOutputUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),
         }
     )
 
 
 def text_chunk(text: str, finish_reason: FinishReason | None = None) -> ChatCompletionStreamOutput:
-    return chunk([ChatCompletionStreamOutputDelta(content=text, role='assistant')], finish_reason=finish_reason)  # type: ignore
+    return chunk([ChatCompletionStreamOutputDelta(content=text, role='assistant')], finish_reason=finish_reason)
 
 
 async def test_stream_text(allow_model_requests: None):
@@ -544,13 +545,13 @@ class MyTypedDict(TypedDict, total=False):
 
 async def test_stream_structured(allow_model_requests: None):
     stream = [
-        chunk([ChatCompletionStreamOutputDelta(role='assistant')]),  # type: ignore
-        chunk([ChatCompletionStreamOutputDelta(role='assistant', tool_calls=[])]),  # type: ignore
+        chunk([ChatCompletionStreamOutputDelta(role='assistant')]),
+        chunk([ChatCompletionStreamOutputDelta(role='assistant', tool_calls=[])]),
         chunk(
             [
                 ChatCompletionStreamOutputDelta(
-                    role='assistant',  # type: ignore
-                    tool_calls=[  # type: ignore
+                    role='assistant',
+                    tool_calls=[
                         ChatCompletionStreamOutputDeltaToolCall(id='0', type='function', index=0, function=None)  # type: ignore
                     ],
                 )
@@ -559,8 +560,8 @@ async def test_stream_structured(allow_model_requests: None):
         chunk(
             [
                 ChatCompletionStreamOutputDelta(
-                    role='assistant',  # type: ignore
-                    tool_calls=[  # type: ignore
+                    role='assistant',
+                    tool_calls=[
                         ChatCompletionStreamOutputDeltaToolCall(id='0', type='function', index=0, function=None)  # type: ignore
                     ],
                 )
@@ -570,8 +571,8 @@ async def test_stream_structured(allow_model_requests: None):
         chunk(
             [
                 ChatCompletionStreamOutputDelta(
-                    role='assistant',  # type: ignore
-                    tool_calls=[  # type: ignore
+                    role='assistant',
+                    tool_calls=[
                         ChatCompletionStreamOutputDeltaToolCall(id='0', type='function', index=0, function=None)  # type: ignore
                     ],
                 )
@@ -683,6 +684,7 @@ async def test_image_url_input(allow_model_requests: None, huggingface_api_key: 
                 model_name='Qwen/Qwen2.5-VL-72B-Instruct',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='huggingface',
+                provider_url='https://router.huggingface.co/nebius/v1',
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 7, 8, 14, 4, 39, tzinfo=timezone.utc),
@@ -757,6 +759,7 @@ async def test_hf_model_instructions(allow_model_requests: None, huggingface_api
                 model_name='Qwen/Qwen2.5-72B-Instruct-fast',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
+                provider_url='https://router.huggingface.co/nebius/v1',
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 7, 2, 15, 39, 17, tzinfo=timezone.utc),
@@ -905,7 +908,7 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
 
 
 async def test_thinking_part_in_history(allow_model_requests: None):
-    c = completion_message(ChatCompletionOutputMessage(content='response', role='assistant'))  # type: ignore
+    c = completion_message(ChatCompletionOutputMessage(content='response', role='assistant'))
     mock_client = MockHuggingFace.create_mock(c)
     model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
     agent = Agent(model)
@@ -989,6 +992,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                 model_name='Qwen/Qwen3-235B-A22B',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
+                provider_url='https://router.huggingface.co/nebius/v1',
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 7, 9, 13, 17, 45, tzinfo=timezone.utc),
@@ -1027,6 +1031,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                 model_name='Qwen/Qwen3-235B-A22B',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
+                provider_url='https://router.huggingface.co/nebius/v1',
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 7, 9, 13, 18, 14, tzinfo=timezone.utc),
@@ -1071,6 +1076,7 @@ async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingfa
                 model_name='Qwen/Qwen3-235B-A22B',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
+                provider_url='https://router.huggingface.co/nebius/v1',
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 7, 23, 19, 58, 41, tzinfo=timezone.utc),
