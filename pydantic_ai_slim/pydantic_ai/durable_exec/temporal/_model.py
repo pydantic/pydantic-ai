@@ -16,34 +16,15 @@ from pydantic_ai import ModelMessage, ModelResponse, ModelResponseStreamEvent, m
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, parse_model_string
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile
-from pydantic_ai.providers import Provider
+from pydantic_ai.providers import Provider, infer_provider_class
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RequestUsage
 
 from ._run_context import TemporalRunContext
-
-# Legacy model name prefixes (no provider: prefix)
-_LEGACY_PREFIXES = {'gpt': 'openai', 'o1': 'openai', 'o3': 'openai', 'claude': 'anthropic', 'gemini': 'google-gla'}
-
-
-def _parse_model_string(model_string: str) -> tuple[str | None, str]:
-    """Parse a model string into (provider, model_name).
-
-    Returns (None, model_string) if the provider cannot be determined.
-    """
-    if ':' in model_string:
-        provider, model_name = model_string.split(':', maxsplit=1)
-        return provider, model_name
-
-    # Legacy model names without provider prefix
-    for prefix, provider in _LEGACY_PREFIXES.items():
-        if model_string.startswith(prefix):
-            return provider, model_string
-    return None, model_string
 
 
 def _infer_profile(model_string: str) -> ModelProfile:
@@ -52,17 +33,16 @@ def _infer_profile(model_string: str) -> ModelProfile:
     This is safe to call inside Temporal workflows because it only does pure
     computation (string parsing and profile function calls). No I/O occurs.
     """
-    from pydantic_ai.providers import infer_profile_func
-
-    provider, model_name = _parse_model_string(model_string)
+    provider, model_name = parse_model_string(model_string)
     if provider is None:
         return DEFAULT_PROFILE
 
-    profile_func = infer_profile_func(provider)
-    if profile_func is None:
+    try:
+        provider_class = infer_provider_class(provider)
+    except ValueError:
         return DEFAULT_PROFILE
 
-    return profile_func(model_name) or DEFAULT_PROFILE
+    return provider_class.model_profile(model_name) or DEFAULT_PROFILE
 
 
 @dataclass
@@ -338,21 +318,6 @@ class TemporalModel(WrapperModel):
     def _current_model_id(self) -> str | None:
         return self._model_id_var.get()
 
-    def _current_model_for_context(self) -> Model:
-        """Get the model for settings/base_url properties.
-
-        Only used for `settings` and `base_url`. For unregistered strings,
-        falls back to the default model since these require provider construction.
-        """
-        model_id = self._current_model_id()
-        if model_id is None:
-            return self.wrapped
-        if model_id in self._models_by_id:
-            return self._models_by_id[model_id]
-        if workflow.in_workflow():
-            return self.wrapped
-        return models.infer_model(model_id)
-
     @property
     def model_name(self) -> str:
         """Get the model name, inferring from raw strings without provider construction."""
@@ -362,7 +327,7 @@ class TemporalModel(WrapperModel):
         if model_id in self._models_by_id:
             return self._models_by_id[model_id].model_name
         # Parse from string - no provider construction needed
-        _, model_name = _parse_model_string(model_id)
+        _, model_name = parse_model_string(model_id)
         return model_name
 
     @property
@@ -374,12 +339,16 @@ class TemporalModel(WrapperModel):
         if model_id in self._models_by_id:
             return self._models_by_id[model_id].system
         # Parse from string - no provider construction needed
-        provider, _ = _parse_model_string(model_id)
+        provider, _ = parse_model_string(model_id)
         return provider or self.wrapped.system
 
     @property
-    def profile(self) -> ModelProfile:  # type: ignore[reportIncompatibleMethodOverride]
-        """Get the model profile, inferring from raw strings without provider construction."""
+    def profile(self) -> ModelProfile:  # type: ignore[override]
+        """Get the model profile, inferring from raw strings without provider construction.
+
+        Note: This overrides a cached_property with a regular property because the profile
+        depends on _current_model_id() which can change dynamically via using_model().
+        """
         model_id = self._current_model_id()
         if model_id is None:
             return self.wrapped.profile
@@ -387,13 +356,31 @@ class TemporalModel(WrapperModel):
             return self._models_by_id[model_id].profile
         return _infer_profile(model_id)
 
-    @property
-    def settings(self) -> ModelSettings | None:
-        return self._current_model_for_context().settings
+    def prepare_request(
+        self,
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        """Prepare request using the currently active model's profile.
 
-    @property
-    def base_url(self) -> str | None:
-        return self._current_model_for_context().base_url
+        This override ensures that when a different model is specified at runtime
+        via `using_model()`, we use that model's profile for validation and
+        parameter preparation, not the default wrapped model's profile.
+        """
+        model_id = self._current_model_id()
+
+        # If using a registered model, delegate to its prepare_request directly
+        if model_id is not None and model_id in self._models_by_id:
+            return self._models_by_id[model_id].prepare_request(model_settings, model_request_parameters)
+
+        # If using default model (model_id is None), delegate to wrapped model
+        if model_id is None:
+            return self.wrapped.prepare_request(model_settings, model_request_parameters)
+
+        # For unregistered model strings, use Model.prepare_request (grandparent's method)
+        # with our overridden profile property. This allows validation to use the correct
+        # profile inferred from the model string, without constructing a full model instance.
+        return Model.prepare_request(self, model_settings, model_request_parameters)
 
     def _resolve_model_id(self, model_id: str | None, run_context: RunContext[Any] | None = None) -> Model:
         """Resolve a model ID to a Model instance.

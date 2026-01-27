@@ -91,7 +91,8 @@ class BedrockProvider(Provider[BaseClient]):
     def client(self) -> BaseClient:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
             'anthropic': lambda model_name: BedrockModelProfile(
                 bedrock_supports_tool_choice=True,

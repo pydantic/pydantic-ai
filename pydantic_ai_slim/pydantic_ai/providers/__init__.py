@@ -6,15 +6,11 @@ The providers are in charge of providing an authenticated client to the API.
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
 from typing import Any, Generic, TypeVar
 
 from ..profiles import ModelProfile
 
 InterfaceClient = TypeVar('InterfaceClient')
-
-ProfileFunc = Callable[[str], ModelProfile | None]
-"""Type alias for a function that takes a model name and returns a profile."""
 
 
 class Provider(ABC, Generic[InterfaceClient]):
@@ -47,7 +43,8 @@ class Provider(ABC, Generic[InterfaceClient]):
         """The client for the provider."""
         raise NotImplementedError()
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         """The model profile for the named model, if available."""
         return None  # pragma: no cover
 
@@ -191,52 +188,3 @@ def infer_provider(provider: str) -> Provider[Any]:
     else:
         provider_class = infer_provider_class(provider)
         return provider_class()
-
-
-def infer_profile_func(provider: str) -> ProfileFunc | None:
-    """Infer the profile function for a provider name.
-
-    This returns the pure profile function without constructing a provider.
-    Safe to call in contexts where I/O is not allowed (e.g., Temporal workflows).
-
-    Returns None if the provider is unknown or has no profile function.
-    """
-    # Profile functions are pure - they only do string matching and return profiles.
-    # No SDK imports, no I/O, no side effects.
-    from ..profiles.amazon import amazon_model_profile
-    from ..profiles.anthropic import anthropic_model_profile
-    from ..profiles.cohere import cohere_model_profile
-    from ..profiles.deepseek import deepseek_model_profile
-    from ..profiles.google import google_model_profile
-    from ..profiles.grok import grok_model_profile
-    from ..profiles.groq import groq_model_profile
-    from ..profiles.mistral import mistral_model_profile
-    from ..profiles.moonshotai import moonshotai_model_profile
-    from ..profiles.openai import openai_model_profile
-    from ..profiles.qwen import qwen_model_profile
-
-    # Map provider names to their profile functions
-    # Note: Some providers (like ollama, huggingface) use composite profiles
-    # based on the model name - those are handled specially or return None.
-    profile_funcs: dict[str, ProfileFunc] = {
-        'openai': openai_model_profile,
-        'openai-chat': openai_model_profile,
-        'openai-responses': openai_model_profile,
-        'anthropic': anthropic_model_profile,
-        'google': google_model_profile,
-        'google-gla': google_model_profile,
-        'google-vertex': google_model_profile,
-        'vertexai': google_model_profile,
-        'groq': groq_model_profile,
-        'mistral': mistral_model_profile,
-        'cohere': cohere_model_profile,
-        'xai': grok_model_profile,
-        'grok': grok_model_profile,
-        'deepseek': deepseek_model_profile,
-        'moonshotai': moonshotai_model_profile,
-        'alibaba': qwen_model_profile,
-        # Bedrock uses amazon profile as base
-        'bedrock': amazon_model_profile,
-    }
-
-    return profile_funcs.get(provider)
