@@ -56,6 +56,7 @@ with try_import() as bedrock_imports_successful:
     from pydantic_ai.embeddings.bedrock import (
         BedrockEmbeddingModel,
         BedrockEmbeddingSettings,
+        LatestBedrockEmbeddingModelNames,
     )
     from pydantic_ai.providers.bedrock import BedrockProvider
 
@@ -1361,7 +1362,8 @@ class TestSentenceTransformers:
     not openai_imports_successful()
     or not cohere_imports_successful()
     or not google_imports_successful()
-    or not voyageai_imports_successful(),
+    or not voyageai_imports_successful()
+    or not bedrock_imports_successful(),
     reason='some embedding package was not installed',
 )
 def test_known_embedding_model_names():  # pragma: lax no cover
@@ -1378,8 +1380,11 @@ def test_known_embedding_model_names():  # pragma: lax no cover
     google_gla_names = [f'google-gla:{n}' for n in get_model_names(LatestGoogleGLAEmbeddingModelNames)]
     google_vertex_names = [f'google-vertex:{n}' for n in get_model_names(LatestGoogleVertexEmbeddingModelNames)]
     voyageai_names = [f'voyageai:{n}' for n in get_model_names(LatestVoyageAIEmbeddingModelNames)]
+    bedrock_names = [f'bedrock:{n}' for n in get_model_names(LatestBedrockEmbeddingModelNames)]
 
-    generated_names = sorted(openai_names + cohere_names + google_gla_names + google_vertex_names + voyageai_names)
+    generated_names = sorted(
+        openai_names + cohere_names + google_gla_names + google_vertex_names + voyageai_names + bedrock_names
+    )
 
     known_model_names = sorted(get_args(KnownEmbeddingModelName.__value__))
     if generated_names != known_model_names:
