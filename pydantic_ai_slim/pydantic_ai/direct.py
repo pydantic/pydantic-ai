@@ -288,7 +288,7 @@ class StreamedResponseSync:
 
     _async_stream_cm: AbstractAsyncContextManager[StreamedResponse]
     _queue: queue.Queue[messages.ModelResponseStreamEvent | Exception | None] = field(
-        default_factory=queue.Queue, init=False
+        default_factory=queue.Queue[messages.ModelResponseStreamEvent | Exception | None], init=False
     )
     _thread: threading.Thread | None = field(default=None, init=False)
     _stream_response: StreamedResponse | None = field(default=None, init=False)

@@ -72,7 +72,7 @@ class Box(BaseModel):
 agent = Agent(
     'openai:gpt-5-mini',
     output_type=[Box, str], # (1)!
-    system_prompt=(
+    instructions=(
         "Extract me the dimensions of a box, "
         "if you can't extract all data, ask the user to try again."
     ),
@@ -99,7 +99,7 @@ from pydantic_ai import Agent
 agent = Agent[None, list[str] | list[int]](
     'openai:gpt-5-mini',
     output_type=list[str] | list[int],  # type: ignore # (1)!
-    system_prompt='Extract either colors or sizes from the shapes provided.',
+    instructions='Extract either colors or sizes from the shapes provided.',
 )
 
 result = agent.run_sync('red square, blue circle, green triangle')
@@ -565,7 +565,7 @@ agent = Agent[DatabaseConn, Output](
     'google-gla:gemini-2.5-flash',
     output_type=Output,  # type: ignore
     deps_type=DatabaseConn,
-    system_prompt='Generate PostgreSQL flavored SQL queries based on user input.',
+    instructions='Generate PostgreSQL flavored SQL queries based on user input.',
 )
 
 
@@ -759,7 +759,7 @@ class UserProfile(TypedDict):
 agent = Agent(
     'openai:gpt-5',
     output_type=UserProfile,
-    system_prompt='Extract a user profile from the input',
+    instructions='Extract a user profile from the input',
 )
 
 
