@@ -38,7 +38,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """LLM usage associated with the run."""
     prompt: str | Sequence[_messages.UserContent] | None = None
     """The original user prompt passed to the run."""
-    messages: list[_messages.ModelMessage] = field(default_factory=list)
+    messages: list[_messages.ModelMessage] = field(default_factory=list[_messages.ModelMessage])
     """Messages exchanged in the conversation so far."""
     validation_context: Any = None
     """Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) for tool args and run outputs."""
@@ -48,7 +48,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """Whether to include the content of the messages in the trace."""
     instrumentation_version: int = DEFAULT_INSTRUMENTATION_VERSION
     """Instrumentation settings version, if instrumentation is enabled."""
-    retries: dict[str, int] = field(default_factory=dict)
+    retries: dict[str, int] = field(default_factory=dict[str, int])
     """Number of retries for each tool so far."""
     tool_call_id: str | None = None
     """The ID of the tool call."""
