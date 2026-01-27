@@ -1,0 +1,191 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: Return just the day of week for the date of Jan 1 in 2026?
+        role: ROLE_USER
+      model: grok-4-fast-reasoning
+      tools:
+      - web_search:
+          enable_image_understanding: false
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+      use_encrypted_content: true
+      include:
+      - INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT
+    raw: !!binary |
+      CkAKPAo6UmV0dXJuIGp1c3QgdGhlIGRheSBvZiB3ZWVrIGZvciB0aGUgZGF0ZSBvZiBKYW4gMSBp
+      biAyMDI2PxABEhVncm9rLTQtZmFzdC1yZWFzb25pbmeKAQQaAhgAkgECCAHAAQHSAQEB
+  response_sample:
+    json:
+      id: 3c94c5df-5a60-3ecd-4045-16df3b0bfbfe
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_85779342
+            type: TOOL_CALL_TYPE_WEB_SEARCH_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: web_search
+              arguments: '{"query":"what day of the week is January 1, 2026"}'
+          encrypted_content: oE8AJJC4dZHtb/DTUrac2F7k06DvXxnteWcYZYWcJC1LwlkVw1kyVLgniE/kFPglmDSEp5NIA0GsY5026qrBaIMW+EHfsktriO607+R9FCTh9Ex9sgYCXwfWqhI8n98+Jnrhh4dNuV3+X0CXSlSht/PXFWongMHkF3oS15dyl3aIRSv6xjUMoTeKqL+FzS3n2UtiaA1sISaayg2WX939p6KupVW4n+4YgUsZJVEFB+3Zv5fYx6SYYZPgrWql/ooZWoT3bOTYgPvlGR0F6TdNhXjDdRCrCDvEEwC2zdIm4MXEbiNBQCwiMJmQ9AwXDF9iP6m3lyMQxg3hFQwscVhxF9hOC5eYYZjh3mYjNKyXX5t6uvXCAsCqPDba5xU/FIyzKrVcJDdA9P+6AMr6mR4oK5eLT7VFwu8U1R1NkamMikNI4QByPZRRgatTgJK41ozxZFY7U+54Fvj+jZGb+STHqSi4C40FQYRW5iia2BKlT5SquvBDBwBYiSdv4jla0/zEuMQ/SWM0L7uuWjp4fXgX+uNWdYsyRonPWmDTmx6NsLm8UmG0cZrSGXyBfqkz5HYPlOB6YMkLuIDxslrYyIM4j5PGdjSLcfpE7cbd+QJqQ8Uz8IFKhOIwj2hzOIPmdH2fWBW+am5HxsUB+QAqjRsJZZocrLlGO9qTplq7yQx8O48
+      - index: 1
+        message:
+          role: ROLE_TOOL
+          tool_calls:
+          - id: call_85779342
+            type: TOOL_CALL_TYPE_WEB_SEARCH_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: web_search
+              arguments: '{"query":"what day of the week is January 1, 2026"}'
+          encrypted_content: 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
+      - finish_reason: REASON_STOP
+        index: 2
+        message:
+          content: Thursday
+          role: ROLE_ASSISTANT
+          encrypted_content: duXrMIRSPhUyxJyl0hWccyN5rIEcauGKqYik78ahPeooPRXy2Aw/A7wQPc2SnEApKQZwPx4q+xf//o/8MgusqcrVNEfPs3h6/BSrrJRSNvxJfJGyCRJ1p0jTYfhrn0V6ycEBdJAxHTkDo6C4R8BKYoUG7j09+5AGnoWqtdx5YJ+FZoEZ3kPx7LsUkUYIfRycY94Ki6HGCRzrQDUYfGkQCH5LrcAFZCXFNNK0yptqYBTJEXVIlHrI5AVR0crwXBXgCM4CL+PJ86hEPhgHc4x7p+YyIPHDvMjZ/Dta4bzRj1Zo7cgyklYJIM32cihsNTnx+6WUmPrZzXa66oYJnn4C2tKg6LCljy3aWdtIYI/fCxvRCR0HknEbWE6rqGMgNyqvIYMO37Oxs1UQCrIw5oZTJlTj+OcfhNLmCvwwZ1SHORBtL4SiVy/sHO92i6SgYNVKNuuaiaUSfwvxKLpbHY//V7VM39hYNzyaruX/R79BVIxuSlMwxZx8fyOdwXpuUPzXvJuHkK/z7Vs7LVnBDTYDa1HukqYchh4PKYfNuC1FtaEhLGVXs7+OxvPHZnU9UObQuqcsK5UPfpbRPqMnN/jsSVD3h+fXcwbucWrxwRctAymlD4HzxONrf78Jtkd5QrelpaSMOg0RTaMFBQTC9WZqRpRnsqEnGMugrqni1ohfoDm+YlQzi/TH1rwyV6Wle2JJk45MPMbluA1/fJCowR4xqspvCSFyB8rDIlqIl2KpC92vBqQXb/qdi+qz6RtsWm8YxPTCDpRPfG2RhIUuWg
+      created: '2026-01-19T17:38:45.839154411Z'
+      model: grok-4-fast-reasoning
+      system_fingerprint: fp_cfcc85ff86
+      usage:
+        completion_tokens: 38
+        prompt_tokens: 2332
+        total_tokens: 2680
+        prompt_text_tokens: 2332
+        reasoning_tokens: 310
+        cached_prompt_text_tokens: 1540
+        server_side_tools_used:
+        - SERVER_SIDE_TOOL_WEB_SEARCH
+      citations:
+      - https://www.almanac.com/calendar/date/2026-01-01
+      - https://time.is/calendar
+      - https://calendar.online/calendar-weeks/2026/1
+      - https://grabcalendar.com/printable-january-calendar.html
+      - https://www.wiki-calendar.com/january-calendars.html
+      - https://www.timeanddate.com/calendar/monthly.html?country=1&month=1&year=2026
+      - https://weeknumber.com/2026/new-year%E2%80%99s-day
+      - http://www.whatweekisit.org/
+      - https://www.epochconverter.com/weeks/2026
+      - https://www.calendar-365.com/calendar/2026/January.html
+      settings:
+        parallel_tool_calls: true
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - web_search:
+            enable_image_understanding: false
+        use_encrypted_content: true
+        include:
+        - INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT
+    raw: !!binary |
+      CiQzYzk0YzVkZi01YTYwLTNlY2QtNDA0NS0xNmRmM2IwYmZiZmUSjQYIBBqIBhACGlYKDWNhbGxf
+      ODU3NzkzNDIQAhgBUkEKCndlYl9zZWFyY2gSM3sicXVlcnkiOiJ3aGF0IGRheSBvZiB0aGUgd2Vl
+      ayBpcyBKYW51YXJ5IDEsIDIwMjYifSqrBW9FOEFKSkM0ZFpIdGIvRFRVcmFjMkY3azA2RHZYeG50
+      ZVdjWVpZV2NKQzFMd2xrVncxa3lWTGduaUUva0ZQZ2xtRFNFcDVOSUEwR3NZNTAyNnFyQmFJTVcr
+      RUhmc2t0cmlPNjA3K1I5RkNUaDlFeDlzZ1lDWHdmV3FoSThuOTgrSm5yaGg0ZE51VjMrWDBDWFNs
+      U2h0L1BYRldvbmdNSGtGM29TMTVkeWwzYUlSU3Y2eGpVTW9UZUtxTCtGelMzbjJVdGlhQTFzSVNh
+      YXlnMldYOTM5cDZLdXBWVzRuKzRZZ1VzWkpWRUZCKzNadjVmWXg2U1lZWlBncldxbC9vb1pXb1Qz
+      Yk9UWWdQdmxHUjBGNlRkTmhYakRkUkNyQ0R2RUV3QzJ6ZEltNE1YRWJpTkJRQ3dpTUptUTlBd1hE
+      RjlpUDZtM2x5TVF4ZzNoRlF3c2NWaHhGOWhPQzVlWVlaamgzbVlqTkt5WFg1dDZ1dlhDQXNDcVBE
+      YmE1eFUvRkl5ektyVmNKRGRBOVArNkFNcjZtUjRvSzVlTFQ3VkZ3dThVMVIxTmthbU1pa05JNFFC
+      eVBaUlJnYXRUZ0pLNDFvenhaRlk3VSs1NEZ2aitqWkdiK1NUSHFTaTRDNDBGUVlSVzVpaWEyQkts
+      VDVTcXV2QkRCd0JZaVNkdjRqbGEwL3pFdU1RL1NXTTBMN3V1V2pwNGZYZ1grdU5XZFlzeVJvblBX
+      bURUbXg2TnNMbThVbUcwY1pyU0dYeUJmcWt6NUhZUGxPQjZZTWtMdUlEeHNscll5SU00ajVQR2Rq
+      U0xjZnBFN2NiZCtRSnFROFV6OElGS2hPSXdqMmh6T0lQbWRIMmZXQlcrYW01SHhzVUIrUUFxalJz
+      Slpab2NyTGxHTzlxVHBscTd5UXg4TzQ4EqIdEAEanR0QBRpWCg1jYWxsXzg1Nzc5MzQyEAIYAVJB
+      Cgp3ZWJfc2VhcmNoEjN7InF1ZXJ5Ijoid2hhdCBkYXkgb2YgdGhlIHdlZWsgaXMgSmFudWFyeSAx
+      LCAyMDI2In0qwBwza1djbmsxdkJENktsODZWT3lpUEx5ekpyQkFnc2k3RUoycXZSZ0M2NS9ZTFFK
+      bi9VSmhVcFE1TUI0ZUt2dkwyeUJ6YTVPMFJQMTh2NXJsSncxcnlzc0JrTVVpeDEwYTdkd00rVVA5
+      QnJSR0JlZ2NGSEU2TXE0QktBV0ZMRGl6Ynp0Vkt1aHJlUG9xYUlNY29mWjRYUzk0MzdIbWppdEow
+      R2QwcUhteGk3MWJaNHd4L0JXdnlINjhTOWZyMThtNXVjTUNUcTM2UHVKcTVEbXM3T1NCYTVTOFhO
+      RXpBYUI5Q0prMytTcm5rVVdxQ2xicFBWbHRoUi90dExTSnV2cGg2RVU2U2lzL2RpUFh6c1RmeW9L
+      am1GREZwSWdTb01Fc00vc2JuditDZUs4VkNHRTBrc29KTXEvY1ZNRDRna09ONllMZjY4TDZpWHhP
+      czhWLy9nM0NsYk5Cb3dMZmZOZjRnOHFKdGRYamNwMnZSMEF1WGJtazJqamVEMnRRRlVSdENaT1dZ
+      UVJXcGRkU0MyYXNsNTVGcjBDeEJlSkJzb0Q1aFliYUZnSzBHVjhqOW44ZCt1Q1dvZjBEZmt4cW5N
+      WXg0aEhUUXdMd092RXQxL2c3VnpjVWhYaHVQaFV4cUx4ZjNFeGhZcVk5NkY0VTdxa1MxWXdjMGpN
+      Y09KeUpYc0JaUmV6ZzNlMFJ2Rkh6NmlyeldURFptSHc3aDcvdHE5c3Z5Z2NEUEEwWmVzcW02Qmlu
+      Z3VwOXlSVHVIcWQ4MWhrZnErRFNJR001Z1Q4Yi85TDFnVnJrSFB3a0lFVGhuY3hnSU0yYkc3L09D
+      L3pDOVE2TVp5amZhZVVobE1MSGM4Rmx1RjV3SEJBa0VuUlM2UytrcjVTWWx4cEVyOGRRdlF1Um0x
+      TjJxUldibkdncG5OV1FNeFA3RVE3ellGNERRL0xXd3JOY3FYMnJUak0zZGJVT0laTFZianZGUVRF
+      aXBSY1ZLckcwYUM3TmhDOGFKNyttM25vK3A5dDRjMzV2bVg4dk51VUlhQkQ1bko1M1VqWW5lL3lt
+      SU4vUzl5R2M1SDNaRzZJc0V6UmFQNmJGQThESnBaVGI3RnpwZnVaN3lUdC8xRGpCWWl6ZUppRE82
+      UEJmZElaMTVRbElHZTQrVjF0TWxPVzBaQVlkTU9zN2NsTmd1VG44NEVUL21lNmxJSE4rZkxQcUYw
+      Zm8zcXlwTjN2UkRGdk1hUGh5RWt6V3c1OUs0aWtXOGFvV3FmZVVUZlZjam9iSjNDVFRBRHo1dnRJ
+      QkFmdE1LTU0yeWtsZDlTRFNHVGl2Ull3bFlrQ2drL1FuaDBVRDErdXF3ZjVuOHFqRkxMWGtHZEdM
+      WXk2RWVQMGZCY1djZFEwV2dUQ1JmME9iV0Q3MWd1UDNLT0dGMU80MngrcXpQa3ZpSVpCMzRGV2xM
+      N3Z3cUcwNkZxT1p5NzBzWHkra1pFWnBKWWwzNEJIV0JMZUZLTkxZZGtnYnRrNFFnT2ZZQWw3a3RR
+      Qy94ZEh1MFVKcVUvZG9KZG53OFl2RDN3K3BNSmJMejloc09YQXlHMXVyYU8yazE3Yk9vYzh5bXlM
+      ZzdxTHgyUUZhLzQwVEJOa1JRY0trM3VSK0x0SGlsVXpYOGNqRlhLR0FXZjB6OW5Wc01pZ3VoNklq
+      L0J6dzFoY0pYVHJ2WG5ZQjlYdTcvbVFGV2RYVC9Ea2pERGh2QzQreG1SNU52ZGFxT004MlJraFlp
+      QU1nK2RhNFA5RmRNYjhwemgzZVJwQTB2VlpoL3pEaG1qQ3NSaTRJRUVOM0tVN3RpRFFqNkQwM3Ir
+      N0hPNThzQzVoQjZxMFoyMFhLaFhPQktneitmblF6bk5wY2VVWWs2eDcyUHpjbGhRek1YVlYvN1k5
+      STNESDcrQnkvNHZQbnQvQnFDRjZ4UVZ4UUtGd2NGUHE4R3hxUHBjQWk2Vllsa0dyUzlCazVJY3Q2
+      cTJyb004SnNyOVExcWR6QUQrT0IvWE45RTRXazdnT0g5RmRaOEhDYlVYaUE4S3VGdWcrTTR6aVBr
+      MVAyb1AxdVFkclBLRWtaVHdMcks2bkZvTTdvVTJxYmhLSkJ0VkloMmh4bm51eG5EKzBmbkM1MzdJ
+      YThsVHdXeHNOY055ZGtjRmZFMEx5Zms1RDRRVE16MmdSL2l6ZSsxVU84ZXQ2ZU85VDMvQ0JJOHU2
+      N3hrQ0pZWkgyWlk1R05rbWI0REhJdXNMc2hMaEUwNGpXR0FQazZhdVp6WWVXT0FFMTJyTk94K0p3
+      SVBtSjV3MU8zMFR0dmYvdzhQVTlDZHVPallpSmNOZGpVTWNkQXdIQkJlaGlmdjh1Rk9NOFJ4bi9E
+      VVordlRxYjRKL0ZxNDFZNG5GRGYydDZqSDNWMXpORUFueFo2VlpDZlh5aUJROEtsZWU5NUc1SDVx
+      QUN3ZFJZQVZ1RTZ6Yit3K0FRTUQ3dzhOanNVbkdPeDY5WlFZQml6UGhQa2l2MnRyZ3o5clBicUJx
+      cmQ4ZmgrUnA5amErWTZraU9QNGl3YkJzODdOL0Y0d3piOEw1M3lGRTdLRGFZVUNlKzQ3Sk9CZEpr
+      ZGMxb2IwVERnL1l6ZjFNRmpuN2xJc290VXJKallSY0xoVGtsMmVzeFJxQzAxa1RiV3pTK2ttdGor
+      YXJmeGxSc0h2SkdPNWNiVXBmbHgzaXhpdjkzSzBJY2NCMHlra2hkYW9KdjlsR1VBcEdaUHJ1T1Ns
+      K05OYnRSQm13cS85alhaL0JlZ3dQa1hhdWJTYnhMQzN3eStJYldHR0lZQUYxNC9BWUxXWFVvNVFs
+      SGlHNmErNVZ5RTBVTlFNUEtCNDFzV2QwQ1F5QXdYRG9yNG42MzQzS0F5Y01HMmo0Z0tNK0NObWMr
+      TTd3RUkwbFM0eXRGdzVpWlphRXFoZEY2K3JvbllJdVFYQll6OHQvS2dka2JWL0VQdXdGMkI3QUlP
+      blpZQzRDb1Z0M21MOUVuOEdwcnhHeUsxZzNPdDRlVnhUd3FoWVU0SVdCb0k5d3NKWm1nK0Iwdmhh
+      M3k1Y0RNbUNnbHQzV2JEMVpRV3FIaWthUzFMSkQrOTU1WWdQVldscmwyaUpURWVnVjJTOS9uRkRS
+      bWllaWVLcEtmT1YzN3p2aThUVmEzc0hsYmlaMGNyeGtqT2NFekJZanNlMldGZjZDL05OQ3dvWWhp
+      RlBzbEo1QzFlWXhTYk8vMmV6ZkRUK0JuRDlZOVk3YVQ3aDh3UnpLNkdkQmc1KzdiUWFpTE5nVnBO
+      QkdPbkRqSWRyS2tBbnJYZUJXU3FncDZ1WE1NN3R3RDI2dlEyemExT2RxVnBqZWtKc2RUYmI1enla
+      dy81ZTJuOEZLTU1QOXlIVlluZGhPRm9rT1NVMFNrTFN1UHFxWSs4dEQyM3Z3YjlZM1Z3M20zODZG
+      bExKbVlhVlV3NjlrdThBNVJXSk93SnhsM2I5YjNsLzlXSE91SHBjWmtJVmpzL0dDemhMbXRvSDM4
+      cVFrTXo1YStIcjN0a0NQV3d1Q1FreXdnS0tGeDBXY3JTN2txS0NudldvZkV4NFJIM3hHMWdnbVI2
+      SmZVN2hPcytRU2ZLbHBEQktZaHBUaUhiU05mYnVxY2xNaXdkdGp1YXFGUm93TFB5aHNONE5oMU9H
+      Mkh1dGpxb2orY2JuRjBFTUdyREdPMXRkeDc1UFFST0ZPWjg1aVBBeGJJc203MTAvVW9DOGRNN1FX
+      VHlhWVlieEtQK0lpSGwrZkErSlg5M1J2NzJjbDB1SFdRUHllczNVZW0rVG9ZeUg5Zkg0U0JYRzEy
+      azBHUlpxb0FjSUVoU1prZ2dxSUovSm5rdngwZ3p5QVNGeEIxOW9hTlpvbFJwdGhoZ1JzMHovbWpD
+      bS9pOTV0K1JzRGFVai84cHcyNzdCYUVFSmFYNnpnam1JekxkSlJyRlFCaDFkR3pSM0ZwREJ0RHlO
+      VDVuQlJVSHpFcVpoZWJZNVFURUluQjJhb1VhSEpKUmlCQ1N5SCtOWTlUejNjcWNucDgyd2V0Wkpa
+      cTZleTBONlYrWEhIWEpnd09sbEQ2V3UreWNaOC94NDNGbTVnRm5kMGJZdkVXVVBqQ3BPNkgxYkpj
+      S01kQnZtVVVhREJFaGJUSlpQYnVmQzlXcUFsYXphMFBtVDh2ZTJBMWxXYUlkcHJnRmE4VUN4eTk2
+      ei9LZ1pqUTFKRk1XNko2OU9kZkZXQzlqZW8xZ0kzcWdQaXBLbzV5ZS9ndW5WQ1cvMUJuVDBxdXlX
+      anRLcmJDeHJkK3dSYnIvQWFuRlRZV1BxUWpDbFcrVGl1R1dobnd6UTVaQTVVZVcveGYvQXJ6a3A5
+      eXliZFJobWg2eWZNQzNsWUFlckwyRjlPTCtxYWhZYTJPRFprNXd0UHY3dVd1dGNRTzl4ZThqTzNi
+      U2pCcFdlZjVxVzNwaWpxRkNNMFIrdHFtM2x4QXRrOU00Vy9FdUZWYkV1aENZREhqc1JJM3k1blhY
+      aEpldW5HK3hDUjlmUTk3a0dEaHpoOG1KWnBMYkNpWHZ3MEV3K3RlcGxHUEpJZEdjdm5hRkdLZzJV
+      THZ4WHplZzZ1ZzNFUU43eUw5cGNsZHF6WUlzNlVXMEJsMXB5UXIwY2trb2pnVTl5WHcrQ1p5d2lm
+      ZUZnMXAwWkk3SDRZQ2loN2tqMWQ4RS9YNE5sNmhXS0dmY2VuYXNVTjhCNHVkU1g0YlphWEN0UGIw
+      RFEvYjdPQ25vaHlubDFRbHdUV0FkeW5BQ1EzL2xqckFCalk2cEdaZDZzcERMNytJK3Y5KzEyMWdI
+      SC8wT09aL0pDQWZyem5IMHF3UmJuRUFVVlNmeWp6QTNPNWdEZ2xBMlVEekpxOWlRc3RMaTJzRWdD
+      bjI4TG9lMWRkaWMSqAYIAxACGqEGCghUaHVyc2RheRACKpIGZHVYck1JUlNQaFV5eEp5bDBoV2Nj
+      eU41cklFY2F1R0txWWlrNzhhaFBlb29QUlh5MkF3L0E3d1FQYzJTbkVBcEtRWndQeDRxK3hmLy9v
+      LzhNZ3VzcWNyVk5FZlBzM2g2L0JTcnJKUlNOdnhKZkpHeUNSSjFwMGpUWWZocm4wVjZ5Y0VCZEpB
+      eEhUa0RvNkM0UjhCS1lvVUc3ajA5KzVBR25vV3F0ZHg1WUorRlpvRVoza1B4N0xzVWtVWUlmUnlj
+      WTk0S2k2SEdDUnpyUURVWWZHa1FDSDVMcmNBRlpDWEZOTksweXB0cVlCVEpFWFZJbEhySTVBVlIw
+      Y3J3WEJYZ0NNNENMK1BKODZoRVBoZ0hjNHg3cCtZeUlQSER2TWpaL0R0YTRielJqMVpvN2NneWts
+      WUpJTTMyY2loc05UbngrNldVbVByWnpYYTY2b1lKbm40QzJ0S2c2TENsankzYVdkdElZSS9mQ3h2
+      UkNSMEhrbkViV0U2cnFHTWdOeXF2SVlNTzM3T3hzMVVRQ3JJdzVvWlRKbFRqK09jZmhOTG1Ddnd3
+      WjFTSE9SQnRMNFNpVnkvc0hPOTJpNlNnWU5WS051dWFpYVVTZnd2eEtMcGJIWS8vVjdWTTM5aFlO
+      enlhcnVYL1I3OUJWSXh1U2xNd3haeDhmeU9kd1hwdVVQelh2SnVIa0svejdWczdMVm5CRFRZRGEx
+      SHVrcVljaGg0UEtZZk51QzFGdGFFaExHVlhzNytPeHZQSFpuVTlVT2JRdXFjc0s1VVBmcGJSUHFN
+      bk4vanNTVkQzaCtmWGN3YnVjV3J4d1JjdEF5bWxENEh6eE9OcmY3OEp0a2Q1UXJlbHBhU01PZzBS
+      VGFNRkJRVEM5V1pxUnBSbnNxRW5HTXVncnFuaTFvaGZvRG0rWWxRemkvVEgxcnd5VjZXbGUySkpr
+      NDVNUE1ibHVBMS9mSkNvd1I0eHFzcHZDU0Z5QjhyRElscUlsMktwQzkydkJxUVhiL3FkaStxejZS
+      dHNXbThZeFBUQ0RwUlBmRzJSaElVdVdnKgwIpdi5ywYQ6/WRkAMyFWdyb2stNC1mYXN0LXJlYXNv
+      bmluZzoNZnBfY2ZjYzg1ZmY4NkoZCCYQnBIY+BQgnBIwtgI4hAxKAQFYsNHlGVIwaHR0cHM6Ly93
+      d3cuYWxtYW5hYy5jb20vY2FsZW5kYXIvZGF0ZS8yMDI2LTAxLTAxUhhodHRwczovL3RpbWUuaXMv
+      Y2FsZW5kYXJSLWh0dHBzOi8vY2FsZW5kYXIub25saW5lL2NhbGVuZGFyLXdlZWtzLzIwMjYvMVI4
+      aHR0cHM6Ly9ncmFiY2FsZW5kYXIuY29tL3ByaW50YWJsZS1qYW51YXJ5LWNhbGVuZGFyLmh0bWxS
+      NGh0dHBzOi8vd3d3Lndpa2ktY2FsZW5kYXIuY29tL2phbnVhcnktY2FsZW5kYXJzLmh0bWxSTWh0
+      dHBzOi8vd3d3LnRpbWVhbmRkYXRlLmNvbS9jYWxlbmRhci9tb250aGx5Lmh0bWw/Y291bnRyeT0x
+      Jm1vbnRoPTEmeWVhcj0yMDI2UjJodHRwczovL3dlZWtudW1iZXIuY29tLzIwMjYvbmV3LXllYXIl
+      RTIlODAlOTlzLWRheVIcaHR0cDovL3d3dy53aGF0d2Vla2lzaXQub3JnL1IpaHR0cHM6Ly93d3cu
+      ZXBvY2hjb252ZXJ0ZXIuY29tL3dlZWtzLzIwMjZSN2h0dHBzOi8vd3d3LmNhbGVuZGFyLTM2NS5j
+      b20vY2FsZW5kYXIvMjAyNi9KYW51YXJ5Lmh0bWxaERABOgIIAUIEGgIYAGgBcgEB
