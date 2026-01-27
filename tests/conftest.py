@@ -648,8 +648,8 @@ def model(
 
             return OutlinesModel(
                 from_transformers(
-                    AutoModelForCausalLM.from_pretrained('erwanf/gpt2-mini'),
-                    AutoTokenizer.from_pretrained('erwanf/gpt2-mini'),
+                    AutoModelForCausalLM.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
+                    AutoTokenizer.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
                 )
             )
         else:

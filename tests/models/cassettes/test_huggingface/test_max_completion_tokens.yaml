@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '252'
+      - '138'
       content-type:
       - application/json
       host:
@@ -16,11 +16,7 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: You are a helpful assistant.
-        name: null
-        role: system
-        tool_calls: null
-      - content: What is the capital of France?
+      - content: hello
         name: null
         role: user
         tool_calls: null
@@ -41,11 +37,11 @@ interactions:
       cross-origin-opener-policy:
       - same-origin
       etag:
-      - W/"5db-UY0oV4/lBWbyWNjwPWmfk1IQDeE"
+      - W/"659-lxG/VJZlTgu7SSQY43D1wzNMgZg"
       referrer-policy:
       - strict-origin-when-cross-origin
       retry-after:
-      - '13'
+      - '9'
       strict-transport-security:
       - max-age=15552000; includeSubDomains
       transfer-encoding:
@@ -58,28 +54,29 @@ interactions:
         index: 0
         logprobs: null
         message:
-          content: "<think>\nOkay, the user is asking about the capital of France. That's a straightforward geography question.
-            \n\nHmm, I recall that Paris is the capital--it's one of those basic facts everyone learns in school. The user
-            might be a student doing homework, a traveler planning a trip, or just someone confirming a trivia detail. Since
-            the question is simple, they probably want a quick, clear answer without extra fluff. \n\nBut wait--should I add
-            more context? Like how Paris is also France's cultural and economic hub? Nah, the query doesn't hint at needing
-            depth. Over-explaining might annoy them. Keep it concise: \"Paris\" plus a tiny assurance (\"That's correct!\")
-            to sound friendly. \n\n...Though if they follow up, I could mention the Seine River or the Eiffel Tower. For now,
-            brevity wins.\n</think>\nThe capital of France is **Paris**.  \n\nThat's correct! Paris is not only the political
-            center but also the cultural, economic, and historical heart of France. \U0001F1EB\U0001F1F7"
+          content: "<think>\nHmm, the user just said \"hello\". That's a simple greeting, but I need to figure out how to
+            respond appropriately. \n\nFirst, I should acknowledge their greeting warmly since starting with a friendly tone
+            sets a positive interaction. The user might be testing if I'm responsive, or they could be preparing to ask something
+            more complex. \n\nI notice they didn't provide any context - no name, no question, just a bare greeting. That
+            makes me think either: \n- They're new to chatting with AIs and testing the waters \n- They're distracted or typing
+            slowly \n- Or they expect me to take initiative in the conversation \n\nGiven that, my response should be open-ended
+            to encourage them to share their needs. Adding a smiley face \U0001F60A makes it feel more human and approachable.
+            \n\nI'll keep it simple but inviting - \"Hello! How can I help you today?\" covers all bases: acknowledges them,
+            shows readiness, and leaves the door open for anything from casual chat to serious requests. \n\nNo need to overthink
+            this one - short and warm is perfect here.\n</think>\nHello! \U0001F60A How can I help you today?"
           role: assistant
           tool_calls: []
-        seed: 5844196810245229000
-      created: 1769546597
-      id: oV1mrRW-28Eivz-9c4b14db295620a5
+        seed: 2051143124256602600
+      created: 1769546608
+      id: oV1mujC-zqrih-9c4b15208b343f0b
       model: deepseek-ai/DeepSeek-R1
       object: chat.completion
       prompt: []
       usage:
         cached_tokens: 0
-        completion_tokens: 216
-        prompt_tokens: 16
-        total_tokens: 232
+        completion_tokens: 238
+        prompt_tokens: 4
+        total_tokens: 242
     status:
       code: 200
       message: OK

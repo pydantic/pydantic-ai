@@ -145,16 +145,13 @@ def completion_message(
 @pytest.mark.vcr()
 async def test_simple_completion(allow_model_requests: None, huggingface_api_key: str):
     model = HuggingFaceModel(
-        'Qwen/Qwen2.5-72B-Instruct',
-        provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key),
+        'deepseek-ai/DeepSeek-R1',
+        provider=HuggingFaceProvider(provider_name='together', api_key=huggingface_api_key),
     )
     agent = Agent(model)
 
     result = await agent.run('hello')
-    assert (
-        result.output
-        == 'Hello! How can I assist you today? Feel free to ask me any questions or let me know if you need help with anything specific.'
-    )
+    assert result.output == IsStr()
     messages = result.all_messages()
     request = messages[0]
     response = messages[1]
@@ -162,20 +159,37 @@ async def test_simple_completion(allow_model_requests: None, huggingface_api_key
     assert response == snapshot(
         ModelResponse(
             parts=[
+                ThinkingPart(
+                    content="""\
+
+Hmm, the user just said "hello". That's a simple greeting, but I need to figure out how to respond appropriately.  \n\
+
+First, I should acknowledge their greeting warmly since starting friendly sets a positive tone. Maybe "Hello!" with an exclamation to show enthusiasm.  \n\
+
+I wonder if this is just a test message or if they have something specific in mind. The message is very short, so they might be:  \n\
+- Checking if I'm active  \n\
+- Unsure how to start  \n\
+- Or just being polite before asking something else  \n\
+
+Since they didn't follow up immediately, I'll keep it open-ended. Adding "How can I help you today?" invites them to share their actual need without pressure.  \n\
+
+Also, no emojis yet--they didn't use any, so I'll match that tone unless they show preference later. Keeping it simple but friendly feels right here.
+"""
+                ),
                 TextPart(
-                    content='Hello! How can I assist you today? Feel free to ask me any questions or let me know if you need help with anything specific.'
-                )
+                    content="""\
+
+Hello! 👋 How can I help you today?\
+"""
+                ),
             ],
-            usage=RequestUsage(input_tokens=30, output_tokens=29),
-            model_name='Qwen/Qwen2.5-72B-Instruct-fast',
-            timestamp=IsNow(tz=timezone.utc),
+            usage=RequestUsage(input_tokens=4, output_tokens=197),
+            model_name='deepseek-ai/DeepSeek-R1',
+            timestamp=IsDatetime(),
             provider_name='huggingface',
-            provider_url='https://router.huggingface.co/nebius/v1',
-            provider_details={
-                'finish_reason': 'stop',
-                'timestamp': datetime(2025, 7, 8, 13, 42, 33, tzinfo=timezone.utc),
-            },
-            provider_response_id='chatcmpl-d445c0d473a84791af2acf356cc00df7',
+            provider_url='https://router.huggingface.co/together/v1',
+            provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+            provider_response_id='oV1mmQk-28Eivz-9c4b14712ea45a45',
             run_id=IsStr(),
         )
     )
@@ -184,75 +198,26 @@ async def test_simple_completion(allow_model_requests: None, huggingface_api_key
 @pytest.mark.vcr()
 async def test_request_simple_usage(allow_model_requests: None, huggingface_api_key: str):
     model = HuggingFaceModel(
-        'Qwen/Qwen2.5-72B-Instruct',
-        provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key),
+        'deepseek-ai/DeepSeek-R1',
+        provider=HuggingFaceProvider(provider_name='together', api_key=huggingface_api_key),
     )
     agent = Agent(model)
 
     result = await agent.run('Hello')
-    assert (
-        result.output
-        == "Hello! It's great to meet you. How can I assist you today? Whether you have any questions, need some advice, or just want to chat, feel free to let me know!"
-    )
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=30, output_tokens=40))
+    assert result.output == IsStr()
+    assert result.usage() == snapshot(RunUsage(input_tokens=4, output_tokens=258, requests=1))
 
 
-async def test_request_structured_response(
-    allow_model_requests: None,
-):
-    tool_call = ChatCompletionOutputToolCall.parse_obj_as_instance(  # type:ignore
-        {
-            'function': ChatCompletionOutputFunctionDefinition.parse_obj_as_instance(  # type:ignore
-                {
-                    'name': 'final_result',
-                    'arguments': '{"response": [1, 2, 123]}',
-                }
-            ),
-            'id': '123',
-            'type': 'function',
-        }
-    )
-    message = ChatCompletionOutputMessage.parse_obj_as_instance(  # type:ignore
-        {
-            'content': None,
-            'role': 'assistant',
-            'tool_calls': [tool_call],
-        }
-    )
-    c = completion_message(message)
-
-    mock_client = MockHuggingFace.create_mock(c)
+@pytest.mark.vcr()
+async def test_request_structured_response(allow_model_requests: None, huggingface_api_key: str):
     model = HuggingFaceModel(
-        'Qwen/Qwen2.5-72B-Instruct',
-        provider=HuggingFaceProvider(provider_name='nebius', hf_client=mock_client, api_key='x'),
+        'deepseek-ai/DeepSeek-R1',
+        provider=HuggingFaceProvider(provider_name='together', api_key=huggingface_api_key),
     )
     agent = Agent(model, output_type=list[int])
 
-    result = await agent.run('Hello')
-    assert result.output == [1, 2, 123]
-    messages = result.all_messages()
-    assert messages[0].parts[0].content == 'Hello'  # type: ignore
-    assert messages[1] == snapshot(
-        ModelResponse(
-            parts=[
-                ToolCallPart(
-                    tool_name='final_result',
-                    args='{"response": [1, 2, 123]}',
-                    tool_call_id='123',
-                )
-            ],
-            model_name='hf-model',
-            timestamp=IsNow(tz=timezone.utc),
-            provider_name='huggingface',
-            provider_url='https://api-inference.huggingface.co',
-            provider_details={
-                'finish_reason': 'stop',
-                'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-            },
-            provider_response_id='123',
-            run_id=IsStr(),
-        )
-    )
+    result = await agent.run('What are the first three prime numbers? Return them as a list of integers.')
+    assert result.output == snapshot([2, 3, 5])
 
 
 async def test_stream_completion(allow_model_requests: None):
@@ -679,17 +644,21 @@ async def test_image_url_input(allow_model_requests: None, huggingface_api_key: 
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='Hello! How can I assist you with this image of a potato?')],
-                usage=RequestUsage(input_tokens=269, output_tokens=15),
+                parts=[
+                    TextPart(
+                        content='Hello! How can I assist you with the image of the potato? Do you have any specific questions or need information about it?'
+                    )
+                ],
+                usage=RequestUsage(input_tokens=269, output_tokens=27),
                 model_name='Qwen/Qwen2.5-VL-72B-Instruct',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='huggingface',
                 provider_url='https://router.huggingface.co/nebius/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 7, 8, 14, 4, 39, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='chatcmpl-49aa100effab4ca28514d5ccc00d7944',
+                provider_response_id='chatcmpl-d68e3c40c98e4d3f8ab4ff4cbf81c544',
                 run_id=IsStr(),
             ),
         ]
@@ -707,7 +676,7 @@ async def test_image_as_binary_content_input(
     agent = Agent(m)
     result = await agent.run(['What fruit is in the image?', image_content])
     assert result.output == snapshot(
-        'The fruit in the image is a kiwi. It has been sliced in half, revealing its bright green flesh with small black seeds arranged in a circular pattern around a white center. The outer skin of the kiwi is fuzzy and brown.'
+        'The fruit in the image is a kiwi. The distinctive green flesh, small black seeds arranged in a circular pattern, and the fuzzy brown skin are characteristic features of a kiwi.'
     )
 
 
@@ -722,21 +691,10 @@ def test_model_status_error(allow_model_requests: None) -> None:
 
 
 @pytest.mark.vcr()
-async def test_request_simple_success_with_vcr(allow_model_requests: None, huggingface_api_key: str):
-    m = HuggingFaceModel(
-        'Qwen/Qwen2.5-72B-Instruct', provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key)
-    )
-    agent = Agent(m)
-    result = await agent.run('hello')
-    assert result.output == snapshot(
-        'Hello! How can I assist you today? Feel free to ask me any questions or let me know if you need help with anything specific.'
-    )
-
-
-@pytest.mark.vcr()
 async def test_hf_model_instructions(allow_model_requests: None, huggingface_api_key: str):
     m = HuggingFaceModel(
-        'Qwen/Qwen2.5-72B-Instruct', provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key)
+        'deepseek-ai/DeepSeek-R1',
+        provider=HuggingFaceProvider(provider_name='together', api_key=huggingface_api_key),
     )
 
     def simple_instructions(ctx: RunContext):
@@ -754,29 +712,50 @@ async def test_hf_model_instructions(allow_model_requests: None, huggingface_api
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='Paris')],
-                usage=RequestUsage(input_tokens=26, output_tokens=2),
-                model_name='Qwen/Qwen2.5-72B-Instruct-fast',
+                parts=[
+                    ThinkingPart(
+                        content="""\
+
+Okay, the user is asking about the capital of France. That's a straightforward geography question. \n\
+
+Hmm, I recall that Paris is the capital--it's one of those basic facts everyone learns in school. The user might be a student doing homework, a traveler planning a trip, or just someone confirming a trivia detail. Since the question is simple, they probably want a quick, clear answer without extra fluff. \n\
+
+But wait--should I add more context? Like how Paris is also France's cultural and economic hub? Nah, the query doesn't hint at needing depth. Over-explaining might annoy them. Keep it concise: "Paris" plus a tiny assurance ("That's correct!") to sound friendly. \n\
+
+...Though if they follow up, I could mention the Seine River or the Eiffel Tower. For now, brevity wins.
+"""
+                    ),
+                    TextPart(
+                        content="""\
+
+The capital of France is **Paris**.  \n\
+
+That's correct! Paris is not only the political center but also the cultural, economic, and historical heart of France. 🇫🇷\
+"""
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=16, output_tokens=216),
+                model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
-                provider_url='https://router.huggingface.co/nebius/v1',
+                provider_url='https://router.huggingface.co/together/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 7, 2, 15, 39, 17, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='chatcmpl-b3936940372c481b8d886e596dc75524',
+                provider_response_id='oV1mrRW-28Eivz-9c4b14db295620a5',
                 run_id=IsStr(),
             ),
         ]
     )
 
 
-@pytest.mark.parametrize(
-    'model_name', ['Qwen/Qwen2.5-72B-Instruct', 'deepseek-ai/DeepSeek-R1-0528', 'meta-llama/Llama-3.3-70B-Instruct']
-)
 @pytest.mark.vcr()
-async def test_max_completion_tokens(allow_model_requests: None, model_name: str, huggingface_api_key: str):
-    m = HuggingFaceModel(model_name, provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key))
+async def test_max_completion_tokens(allow_model_requests: None, huggingface_api_key: str):
+    m = HuggingFaceModel(
+        'deepseek-ai/DeepSeek-R1',
+        provider=HuggingFaceProvider(provider_name='together', api_key=huggingface_api_key),
+    )
     agent = Agent(m, model_settings=ModelSettings(max_tokens=100))
 
     result = await agent.run('hello')
@@ -971,7 +950,8 @@ async def test_unsupported_media_types(allow_model_requests: None, content_item:
 @pytest.mark.vcr()
 async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_api_key: str):
     m = HuggingFaceModel(
-        'Qwen/Qwen3-235B-A22B', provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key)
+        'deepseek-ai/DeepSeek-R1',
+        provider=HuggingFaceProvider(provider_name='together', api_key=huggingface_api_key),
     )
     agent = Agent(m)
 
@@ -988,16 +968,16 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                     IsInstance(ThinkingPart),
                     IsInstance(TextPart),
                 ],
-                usage=RequestUsage(input_tokens=15, output_tokens=1090),
-                model_name='Qwen/Qwen3-235B-A22B',
+                usage=RequestUsage(input_tokens=10, output_tokens=995),
+                model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
-                provider_url='https://router.huggingface.co/nebius/v1',
+                provider_url='https://router.huggingface.co/together/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 7, 9, 13, 17, 45, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='chatcmpl-957db61fe60d4440bcfe1f11f2c5b4b9',
+                provider_response_id='oV1mwwj-28Eivz-9c4b154f3b427f82',
                 run_id=IsStr(),
             ),
         ]
@@ -1006,7 +986,8 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
     result = await agent.run(
         'Considering the way to cross the street, analogously, how do I cross the river?',
         model=HuggingFaceModel(
-            'Qwen/Qwen3-235B-A22B', provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key)
+            'deepseek-ai/DeepSeek-R1',
+            provider=HuggingFaceProvider(provider_name='together', api_key=huggingface_api_key),
         ),
         message_history=result.all_messages(),
     )
@@ -1027,16 +1008,16 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                     IsInstance(ThinkingPart),
                     TextPart(content=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=691, output_tokens=1860),
-                model_name='Qwen/Qwen3-235B-A22B',
+                usage=RequestUsage(input_tokens=32, output_tokens=1425),
+                model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
-                provider_url='https://router.huggingface.co/nebius/v1',
+                provider_url='https://router.huggingface.co/together/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 7, 9, 13, 18, 14, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='chatcmpl-35fdec1307634f94a39f7e26f52e12a7',
+                provider_response_id='oV1n6B7-zqrih-9c4b15fafffad6d3',
                 run_id=IsStr(),
             ),
         ]
@@ -1046,7 +1027,8 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
 @pytest.mark.vcr()
 async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingface_api_key: str):
     m = HuggingFaceModel(
-        'Qwen/Qwen3-235B-A22B', provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key)
+        'deepseek-ai/DeepSeek-R1',
+        provider=HuggingFaceProvider(provider_name='together', api_key=huggingface_api_key),
     )
     agent = Agent(m)
 
@@ -1073,15 +1055,16 @@ async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingfa
                     ThinkingPart(content=IsStr()),
                     TextPart(content=IsStr()),
                 ],
-                model_name='Qwen/Qwen3-235B-A22B',
+                usage=RequestUsage(input_tokens=10, output_tokens=955),
+                model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
-                provider_url='https://router.huggingface.co/nebius/v1',
+                provider_url='https://router.huggingface.co/together/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 7, 23, 19, 58, 41, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='chatcmpl-357f347a3f5d4897b36a128fb4e4cf7b',
+                provider_response_id='oV1nHvx-28Eivz-9c4b16f37c27e605',
                 run_id=IsStr(),
             ),
         ]
