@@ -1,18 +1,19 @@
 interactions:
 - request:
     body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France?"}]}], "system": [{"text": "You
-      are a helpful chatbot."}], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_capital", "description":
-      "Get the capital of a country.", "inputSchema": {"json": {"properties": {"country": {"description": "The country name.",
-      "title": "Country", "type": "string"}}, "required": ["country"], "type": "object", "additionalProperties": false}}}}]}}'
+      are a helpful chatbot."}], "inferenceConfig": {"temperature": 0.0}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_capital",
+      "inputSchema": {"json": {"additionalProperties": false, "properties": {"country": {"description": "The country name.",
+      "type": "string"}}, "required": ["country"], "type": "object"}}, "description": "Get the capital of a country."}}],
+      "toolChoice": {"auto": {}}}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        NjgwMDdkOTEtN2U2Mi00OTg5LTk1OWEtZWJkZjFmYzg5Yzdi
+        YWJlY2VmODAtNDc2My00Y2M5LTliMDgtZTBmMDlmMWFjNTI3
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '482'
+      - '508'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -23,50 +24,52 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '450'
+      - '553'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 387
+        latencyMs: 581
       output:
         message:
           content:
           - text: |
-              <thinking> To find the capital of France, I will use the available tool "get_capital". I will input the country name "France" into the tool. </thinking>
+              <thinking> To determine the capital of France, I can use the provided tool that returns the capital of a given country. Since the country in question is France, I will use the tool with the country parameter set to "France". </thinking>
           - toolUse:
               input:
                 country: France
               name: get_capital
-              toolUseId: tooluse_F8LnaCMtQ0-chKTnPhNH2g
+              toolUseId: tooluse_Ze_bgl9CSqu8aJv7XD-_Dw
           role: assistant
       stopReason: tool_use
       usage:
-        inputTokens: 417
-        outputTokens: 69
-        totalTokens: 486
+        inputTokens: 426
+        outputTokens: 66
+        serverToolUsage: {}
+        totalTokens: 492
     status:
       code: 200
       message: OK
 - request:
     body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France?"}]}, {"role": "assistant",
-      "content": [{"text": "<thinking> To find the capital of France, I will use the available tool \"get_capital\". I will
-      input the country name \"France\" into the tool. </thinking>\n"}, {"toolUse": {"toolUseId": "tooluse_F8LnaCMtQ0-chKTnPhNH2g",
-      "name": "get_capital", "input": {"country": "France"}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId":
-      "tooluse_F8LnaCMtQ0-chKTnPhNH2g", "content": [{"text": "The country is not supported.\n\nFix the errors and try again."}],
-      "status": "error"}}]}], "system": [{"text": "You are a helpful chatbot."}], "inferenceConfig": {}, "toolConfig": {"tools":
-      [{"toolSpec": {"name": "get_capital", "description": "Get the capital of a country.", "inputSchema": {"json": {"properties":
-      {"country": {"description": "The country name.", "title": "Country", "type": "string"}}, "required": ["country"], "type":
-      "object", "additionalProperties": false}}}}]}}'
+      "content": [{"text": "<thinking> To determine the capital of France, I can use the provided tool that returns the capital
+      of a given country. Since the country in question is France, I will use the tool with the country parameter set to \"France\".
+      </thinking>\n"}, {"toolUse": {"toolUseId": "tooluse_Ze_bgl9CSqu8aJv7XD-_Dw", "name": "get_capital", "input": {"country":
+      "France"}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_Ze_bgl9CSqu8aJv7XD-_Dw", "content":
+      [{"text": "The country is not supported.\n\nFix the errors and try again."}], "status": "error"}}]}], "system": [{"text":
+      "You are a helpful chatbot."}], "inferenceConfig": {"temperature": 0.0}, "toolConfig": {"tools": [{"toolSpec": {"name":
+      "get_capital", "inputSchema": {"json": {"additionalProperties": false, "properties": {"country": {"description": "The
+      country name.", "type": "string"}}, "required": ["country"], "type": "object"}}, "description": "Get the capital of
+      a country."}}], "toolChoice": {"auto": {}}}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        M2NkZjc3YjgtYzAyYi00NTI0LWI3Y2UtMjc3YzQyYjg2ZGE2
+        MjhkOTkwZDctMzczZC00ZDczLTg4ZDEtN2E0MTFmNDBkMzY5
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '1011'
+      - '1119'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -77,25 +80,26 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '719'
+      - '576'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 663
+        latencyMs: 567
       output:
         message:
           content:
-          - text: |-
-              <thinking> It seems there was an error in retrieving the capital of France. The tool returned a message saying "The country is not supported." This indicates that the tool does not support the country France. I will inform the user about this limitation and suggest alternative ways to find the information. </thinking>
-
-              I'm sorry, but the tool I have does not support retrieving the capital of France. However, I can tell you that the capital of France is Paris. If you need information on a different country, please let me know!
+          - text: "<thinking> It appears that there was an error in retrieving the capital of France as the tool indicated
+              that the country is not supported. Since the tool is not able to provide the requested information, I will respond
+              to the User with the information I have access to. </thinking> \n\nThe capital of France is Paris. If you need
+              any further information, feel free to ask!"
           role: assistant
       stopReason: end_turn
       usage:
-        inputTokens: 509
-        outputTokens: 108
-        totalTokens: 617
+        inputTokens: 531
+        outputTokens: 76
+        serverToolUsage: {}
+        totalTokens: 607
     status:
       code: 200
       message: OK

@@ -92,7 +92,7 @@ class FullStatePersistence(BaseStatePersistence[StateT, RunEndT]):
     Defaults to `True` so even if nodes or state are modified after the snapshot is taken,
     the persistence history will record the value at the time of the snapshot.
     """
-    history: list[Snapshot[StateT, RunEndT]] = field(default_factory=list)
+    history: list[Snapshot[StateT, RunEndT]] = field(default_factory=list[Snapshot[StateT, RunEndT]])
     """List of snapshots taken during the graph run."""
     _snapshots_type_adapter: pydantic.TypeAdapter[list[Snapshot[StateT, RunEndT]]] | None = field(
         default=None, init=False, repr=False

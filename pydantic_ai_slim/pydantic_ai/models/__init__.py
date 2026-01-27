@@ -595,12 +595,12 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
 class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
-    function_tools: list[ToolDefinition] = field(default_factory=list)
-    builtin_tools: list[AbstractBuiltinTool] = field(default_factory=list)
+    function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
+    builtin_tools: list[AbstractBuiltinTool] = field(default_factory=list[AbstractBuiltinTool])
 
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
-    output_tools: list[ToolDefinition] = field(default_factory=list)
+    output_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
     prompted_output_template: str | None = None
     allow_text_output: bool = True
     allow_image_output: bool = False
