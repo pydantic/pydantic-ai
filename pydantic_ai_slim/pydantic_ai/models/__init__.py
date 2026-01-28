@@ -1091,6 +1091,38 @@ def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
         ALLOW_MODEL_REQUESTS = old_value  # pyright: ignore[reportConstantRedefinition]
 
 
+LEGACY_MODEL_PREFIXES: dict[str, str] = {
+    'gpt': 'openai',
+    'o1': 'openai',
+    'o3': 'openai',
+    'claude': 'anthropic',
+    'gemini': 'google-gla',
+}
+"""Mapping of legacy model name prefixes to provider names.
+
+These prefixes allow using model names without the `provider:` prefix for backwards compatibility.
+For example, `gpt-4` is equivalent to `openai:gpt-4`.
+"""
+
+
+def parse_model_string(model: str) -> tuple[str | None, str]:
+    """Parse a model string into (provider_name, model_name).
+
+    Handles both the modern `provider:model` format and legacy model names
+    that start with known prefixes (e.g., `gpt-4`, `claude-3`).
+    """
+    if ':' in model:
+        provider_name, model_name = model.split(':', maxsplit=1)
+        return provider_name, model_name
+
+    # Legacy model names without provider prefix
+    for prefix, provider_name in LEGACY_MODEL_PREFIXES.items():
+        if model.startswith(prefix):
+            return provider_name, model
+
+    return None, model
+
+
 def infer_model(  # noqa: C901
     model: Model | KnownModelName | str, provider_factory: Callable[[str], Provider[Any]] = infer_provider
 ) -> Model:
@@ -1109,25 +1141,17 @@ def infer_model(  # noqa: C901
 
         return TestModel()
 
-    try:
-        provider_name, model_name = model.split(':', maxsplit=1)
-    except ValueError:
-        provider_name = None
-        model_name = model
-        if model_name.startswith(('gpt', 'o1', 'o3')):
-            provider_name = 'openai'
-        elif model_name.startswith('claude'):
-            provider_name = 'anthropic'
-        elif model_name.startswith('gemini'):
-            provider_name = 'google-gla'
+    provider_name, model_name = parse_model_string(model)
+    if provider_name is None:
+        raise UserError(f'Unknown model: {model}')
 
-        if provider_name is not None:
-            warnings.warn(
-                f"Specifying a model name without a provider prefix is deprecated. Instead of {model_name!r}, use '{provider_name}:{model_name}'.",
-                DeprecationWarning,
-            )
-        else:
-            raise UserError(f'Unknown model: {model}')
+    # Warn if using legacy model name without provider prefix
+    if ':' not in model:
+        warnings.warn(
+            f'Specifying a model name without a provider prefix is deprecated. '
+            f"Instead of {model!r}, use '{provider_name}:{model}'.",
+            DeprecationWarning,
+        )
 
     if provider_name == 'vertexai':  # pragma: no cover
         warnings.warn(
