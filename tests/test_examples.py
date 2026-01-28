@@ -584,11 +584,10 @@ async def model_logic(  # noqa: C901
 ) -> ModelResponse:  # pragma: lax no cover
     m = messages[-1].parts[-1]
     # Handle multimodal tool returns (content directly in ToolReturnPart)
-    if isinstance(m, ToolReturnPart):
-        if m.tool_name == 'get_company_logo' and _has_multimodal_content(m, ImageUrl):
-            return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
-        elif m.tool_name == 'get_document' and _has_multimodal_content(m, DocumentUrl):
-            return ModelResponse(parts=[TextPart('The document contains just the text "Dummy PDF file."')])
+    if isinstance(m, ToolReturnPart) and m.tool_name == 'get_company_logo' and _has_multimodal_content(m, ImageUrl):
+        return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_document' and _has_multimodal_content(m, DocumentUrl):
+        return ModelResponse(parts=[TextPart('The document contains just the text "Dummy PDF file."')])
     elif isinstance(m, UserPromptPart):
         assert isinstance(m.content, str)
         if m.content == 'Tell me a joke.' and any(t.name == 'joke_factory' for t in info.function_tools):
@@ -938,7 +937,12 @@ async def model_logic(  # noqa: C901
                 )
             ],
         )
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'update_file' and isinstance(m.content, str) and 'README.md.bak' in m.content:
+    elif (
+        isinstance(m, ToolReturnPart)
+        and m.tool_name == 'update_file'
+        and isinstance(m.content, str)
+        and 'README.md.bak' in m.content
+    ):
         return ModelResponse(
             parts=[
                 TextPart(

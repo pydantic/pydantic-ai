@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
-from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
+from pydantic_ai._function_schema import _takes_ctx  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, now_utc, run_in_executor
@@ -1340,7 +1340,7 @@ async def _process_message_history(
 ) -> list[_messages.ModelMessage]:
     """Process message history through a sequence of processors."""
     for processor in processors:
-        takes_ctx = is_takes_ctx(processor)
+        takes_ctx = _takes_ctx(processor)
 
         if is_async_callable(processor):
             if takes_ctx:

@@ -26,7 +26,7 @@ from .exceptions import UnexpectedModelBehavior
 from .usage import RequestUsage
 
 if TYPE_CHECKING:
-    from .models.instrumented import InstrumentationSettings
+    from .models.instrumented import InstrumentationSettings, InstrumentedModel
 
 _mime_types = MimeTypes()
 # Replicate what is being done in `mimetypes.init()`
@@ -823,7 +823,7 @@ class BaseToolReturnPart:
     def _split_content(self) -> tuple[list[Any], list[MultiModalContent]]:
         """Split content into non-file and file parts.
 
-        Returns a tuple of (non_files, files) to ensure both `files` and
+        Returns a tuple of (`non_files`, `files`) to ensure both `files` and
         `content_excluding_files` stay in sync when content structure changes.
         """
         multimodal_types = get_args(MultiModalContent)
@@ -865,7 +865,7 @@ class BaseToolReturnPart:
     def model_response_str(self) -> str:
         """Return a string representation of the data content for the model.
 
-        This excludes multimodal files - use `files` to get those separately.
+        This excludes multimodal files - use `.files` to get those separately.
         """
         data = self.content_excluding_files
         if not data:
@@ -904,8 +904,6 @@ class BaseToolReturnPart:
         )
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
-        from .models.instrumented import InstrumentedModel
-
         part = _otel_messages.ToolCallResponsePart(
             type='tool_call_response',
             id=self.tool_call_id,
@@ -1537,8 +1535,6 @@ class ModelResponse:
                 if isinstance(part, BuiltinToolCallPart):
                     call_part['builtin'] = True
                 if settings.include_content and part.args is not None:
-                    from .models.instrumented import InstrumentedModel
-
                     if isinstance(part.args, str):
                         call_part['arguments'] = part.args
                     else:
@@ -1553,8 +1549,6 @@ class ModelResponse:
                     builtin=True,
                 )
                 if settings.include_content and part.content is not None:  # pragma: no branch
-                    from .models.instrumented import InstrumentedModel
-
                     return_part['result'] = InstrumentedModel.serialize_any(part.content)
 
                 parts.append(return_part)
