@@ -1,4 +1,4 @@
-# Cohere
+# Databricks
 
 ## Install
 
