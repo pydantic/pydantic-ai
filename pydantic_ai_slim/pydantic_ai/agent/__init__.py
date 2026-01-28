@@ -1649,7 +1649,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             ui_source: Source for the chat UI HTML. Can be:
                 - None (default): Fetches from CDN and caches locally
                 - A Path instance: Reads from the local file
-                - A string starting with '<': Treated as raw HTML content
                 - A URL string (http:// or https://): Fetches from the URL
                 - A file path string: Reads from the local file
 
