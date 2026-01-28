@@ -351,7 +351,9 @@ async def run_chat(
                 return exit_value
         else:
             try:
-                messages = await ask_agent(agent, text, stream, console, code_theme, deps, messages, model_settings, usage_limits)
+                messages = await ask_agent(
+                    agent, text, stream, console, code_theme, deps, messages, model_settings, usage_limits
+                )
             except CancelledError:  # pragma: no cover
                 console.print('[dim]Interrupted[/dim]')
             except Exception as e:  # pragma: no cover
@@ -382,7 +384,9 @@ async def ask_agent(
         return result.all_messages()
 
     with status, ExitStack() as stack:
-        async with agent.iter(prompt, message_history=messages, deps=deps, model_settings=model_settings, usage_limits=usage_limits) as agent_run:
+        async with agent.iter(
+            prompt, message_history=messages, deps=deps, model_settings=model_settings, usage_limits=usage_limits
+        ) as agent_run:
             live = Live('', refresh_per_second=15, console=console, vertical_overflow='ellipsis')
             async for node in agent_run:
                 if Agent.is_model_request_node(node):

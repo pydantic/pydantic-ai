@@ -1476,5 +1476,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```
         """
         return _utils.get_event_loop().run_until_complete(
-            self.to_cli(deps=deps, prog_name=prog_name, message_history=message_history, model_settings=model_settings, usage_limits=usage_limits)
+            self.to_cli(
+                deps=deps,
+                prog_name=prog_name,
+                message_history=message_history,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+            )
         )

@@ -741,4 +741,3 @@ async def test_agent_to_cli_async_with_args(mocker: MockerFixture, env: TestEnv)
         model_settings=model_settings,
         usage_limits=usage_limits,
     )
-
