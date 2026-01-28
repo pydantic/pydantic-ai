@@ -1,0 +1,88 @@
+interactions:
+  - request:
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate, br
+        connection:
+          - keep-alive
+        content-length:
+          - "535"
+        content-type:
+          - application/json
+        host:
+          - mock.databricks.com
+      method: POST
+      parsed_body:
+        messages:
+          - content: What is the weather in London?
+            role: user
+        model: databricks-qwen3-next-80b-a3b-instruct
+        stream: false
+        tool_choice: auto
+        tools:
+          - function:
+              description: Get the current weather.
+              name: get_weather
+              parameters:
+                description: Get the current weather.
+                properties:
+                  location:
+                    title: Location
+                    type: string
+                  unit:
+                    default: celsius
+                    enum:
+                      - celsius
+                      - fahrenheit
+                    title: Unit
+                    type: string
+                required:
+                  - location
+                title: GetWeather
+                type: object
+            type: function
+      uri: https://mock.databricks.com/serving-endpoints/chat/completions
+    response:
+      headers:
+        alt-svc:
+          - h3=":443"; ma=86400, h3-29=":443"; ma=86400
+        content-length:
+          - "485"
+        content-type:
+          - application/json; charset=utf-8
+        server-timing:
+          - request_id;dur=0;desc="49d72629-e29e-41c9-9f3a-b5b3d791a53c", client_protocol;dur=0;desc="HTTP/1.1"
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        transfer-encoding:
+          - chunked
+        vary:
+          - Accept-Encoding
+      parsed_body:
+        choices:
+          - finish_reason: tool_calls
+            index: 0
+            logprobs: null
+            message:
+              content: null
+              role: assistant
+              tool_calls:
+                - function:
+                    arguments: '{"location": "London"}'
+                    name: get_weather
+                  id: call_5ed908f0-14d9-4c43-aa2a-ea2609018e80
+                  type: function
+        created: 1768819951
+        id: chatcmpl_fed4cc07-581f-45c7-a915-a2010ad566b7
+        model: qwen3-next-instruct-091725
+        object: chat.completion
+        usage:
+          completion_tokens: 20
+          prompt_tokens: 212
+          total_tokens: 232
+      status:
+        code: 200
+        message: OK
+version: 1
