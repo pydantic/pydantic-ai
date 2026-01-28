@@ -101,3 +101,27 @@ The web UI app uses the following routes which should not be overwritten:
 - `/api/health` - Health check (GET)
 
 The app cannot currently be mounted at a subpath (e.g., `/chat`) because the UI expects these routes at the root. You can add additional routes to the app, but avoid conflicts with these reserved paths.
+
+## Custom UI Source
+
+By default, the web UI is fetched from a CDN and cached locally. You can provide a `ui_source` to override this for offline usage or enterprise environments.
+
+For offline usage, download the UI HTML file once while you have internet access:
+
+```bash
+curl -o ~/pydantic-ai-ui.html https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@1.0.0/dist/index.html
+```
+
+Then use `ui_source` to point to your local file or custom URL:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5')
+
+# Use a local file (e.g., for offline usage)
+app = agent.to_web(ui_source='~/pydantic-ai-ui.html')
+
+# Or use a custom URL (e.g., for enterprise environments)
+app = agent.to_web(ui_source='https://cdn.example.com/ui/index.html')
+```
