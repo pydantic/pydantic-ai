@@ -1,0 +1,51 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Call the get_file tool to retrieve a image, then describe
+      what you received."}]}], "system": [{"text": "You MUST use available tools to complete tasks. Never respond without
+      using a tool first."}], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_file", "inputSchema":
+      {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}}}], "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        NGE1ODkzM2UtYzI2NS00YjkwLWE4M2MtOWVlZDBjMmU4MDI0
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '458'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-lite-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '556'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 886
+      output:
+        message:
+          content:
+          - text: |
+              <thinking>I need to call the get_file tool to retrieve an image. Once I have the image, I will describe it. However, I can't actually view or describe images as I don't have the capability to process image data. I'll let the User know this limitation.</thinking>
+          - toolUse:
+              input: {}
+              name: get_file
+              toolUseId: tooluse_lEHvRpeTSXqgKbCdE-r-4w
+          role: assistant
+      stopReason: tool_use
+      usage:
+        inputTokens: 411
+        outputTokens: 78
+        serverToolUsage: {}
+        totalTokens: 489
+    status:
+      code: 200
+      message: OK
+version: 1

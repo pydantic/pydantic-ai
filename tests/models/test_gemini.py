@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import (
     Agent,
     BinaryContent,
+    BinaryImage,
     DocumentUrl,
     ImageUrl,
     ModelRequest,
@@ -62,7 +63,7 @@ from pydantic_ai.result import RunUsage
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import ClientWithHandler, IsDatetime, IsNow, IsStr, TestEnv
+from ..conftest import ClientWithHandler, IsBytes, IsDatetime, IsNow, IsStr, TestEnv
 
 pytestmark = [
     pytest.mark.anyio,
@@ -1280,17 +1281,10 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 241a70',
-                        tool_call_id=IsStr(),
+                        content=BinaryImage(data=IsBytes(), media_type='image/jpeg'),
+                        tool_call_id='pyd_ai_4926bdb7eef441b2a4431380461e6725',
                         timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content=[
-                            'This is file 241a70:',
-                            image_content,
-                        ],
-                        timestamp=IsDatetime(),
-                    ),
+                    )
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),

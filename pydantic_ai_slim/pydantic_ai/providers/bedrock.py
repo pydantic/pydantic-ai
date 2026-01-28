@@ -43,6 +43,7 @@ class BedrockModelProfile(ModelProfile):
     bedrock_send_back_thinking_parts: bool = False
     bedrock_supports_prompt_caching: bool = False
     bedrock_supports_tool_caching: bool = False
+    bedrock_supports_multimodal_tool_returns: bool = True
 
 
 def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
@@ -52,6 +53,7 @@ def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
         profile = BedrockModelProfile(
             bedrock_supports_tool_choice=True,
             bedrock_supports_prompt_caching=True,
+            bedrock_supports_multimodal_tool_returns=False,
         ).update(profile)
 
     if 'nova-2' in model_name:

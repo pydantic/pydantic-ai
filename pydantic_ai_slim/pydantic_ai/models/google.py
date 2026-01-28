@@ -640,6 +640,7 @@ class GoogleModel(Model):
                                 }
                             }
                         )
+                        message_parts.extend(await self._map_tool_return_files(part))
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
                             message_parts.append({'text': part.model_response()})
@@ -755,6 +756,48 @@ class GoogleModel(Model):
                 else:
                     assert_never(item)
         return content
+
+    async def _map_tool_return_files(self, part: ToolReturnPart) -> list[PartDict]:
+        """Map multimodal files from a tool return to Google API format.
+
+        Google supports all file types natively in tool returns.
+        """
+        result: list[PartDict] = []
+        for file in part.files:
+            if isinstance(file, BinaryContent):
+                inline_data_dict: BlobDict = {'data': file.data, 'mime_type': file.media_type}
+                part_dict: PartDict = {'inline_data': inline_data_dict}
+                if file.vendor_metadata:
+                    part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
+                result.append(part_dict)
+            elif isinstance(file, VideoUrl) and (
+                file.is_youtube or (file.url.startswith('gs://') and self.system == 'google-vertex')
+            ):
+                file_data_dict: FileDataDict = {'file_uri': file.url, 'mime_type': file.media_type}
+                part_dict: PartDict = {'file_data': file_data_dict}
+                if file.vendor_metadata:
+                    part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
+                result.append(part_dict)
+            elif isinstance(file, FileUrl):
+                if file.force_download or (
+                    self.system == 'google-gla'
+                    and not file.url.startswith(r'https://generativelanguage.googleapis.com/v1beta/files')
+                ):
+                    downloaded = await download_item(file, data_format='bytes')
+                    inline_data: BlobDict = {'data': downloaded['data'], 'mime_type': downloaded['data_type']}
+                    part_dict: PartDict = {'inline_data': inline_data}
+                    if isinstance(file, VideoUrl) and file.vendor_metadata:
+                        part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
+                    result.append(part_dict)
+                else:
+                    file_data_dict: FileDataDict = {'file_uri': file.url, 'mime_type': file.media_type}
+                    part_dict: PartDict = {'file_data': file_data_dict}
+                    if isinstance(file, VideoUrl) and file.vendor_metadata:
+                        part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
+                    result.append(part_dict)
+            else:
+                assert_never(file)
+        return result
 
     def _map_response_schema(self, o: OutputObjectDefinition) -> dict[str, Any]:
         response_schema = o.json_schema.copy()

@@ -20,6 +20,7 @@ from pydantic_ai import (
     Agent,
     AudioUrl,
     BinaryContent,
+    BinaryImage,
     CachePoint,
     DocumentUrl,
     ImageUrl,
@@ -50,7 +51,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, try_import
+from ..conftest import IsBytes, IsDatetime, IsNow, IsStr, TestEnv, try_import
 from .mock_openai import (
     MockOpenAI,
     MockOpenAIResponses,
@@ -1246,20 +1247,12 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file bd38f5',
+                        content=ImageUrl(
+                            url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
+                        ),
                         tool_call_id='call_4hrT4QP9jfojtK69vGiFCFjG',
                         timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content=[
-                            'This is file bd38f5:',
-                            ImageUrl(
-                                url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
-                                identifier='bd38f5',
-                            ),
-                        ],
-                        timestamp=IsDatetime(),
-                    ),
+                    )
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -1340,11 +1333,10 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 241a70',
+                        content=BinaryImage(data=IsBytes(), media_type='image/jpeg'),
                         tool_call_id='call_1FnV4RIOyM7T9BxPHbSuUexJ',
                         timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
+                    )
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
