@@ -692,14 +692,26 @@ async def test_tool_manager_sequential_tool_call():
 
     prepared_tool_manager = await tool_manager.for_run_step(build_run_context(None))
 
-    assert prepared_tool_manager.should_call_sequentially([ToolCallPart(tool_name='tool_a', args={'x': 1})])
-    assert not prepared_tool_manager.should_call_sequentially([ToolCallPart(tool_name='tool_b', args={'x': 1})])
-
-    assert prepared_tool_manager.should_call_sequentially(
-        [ToolCallPart(tool_name='tool_a', args={'x': 1}), ToolCallPart(tool_name='tool_b', args={'x': 1})]
+    assert (
+        prepared_tool_manager.get_parallel_execution_mode([ToolCallPart(tool_name='tool_a', args={'x': 1})])
+        == 'sequential'
     )
-    assert prepared_tool_manager.should_call_sequentially(
-        [ToolCallPart(tool_name='tool_b', args={'x': 1}), ToolCallPart(tool_name='tool_a', args={'x': 1})]
+    assert (
+        not prepared_tool_manager.get_parallel_execution_mode([ToolCallPart(tool_name='tool_b', args={'x': 1})])
+        == 'sequential'
+    )
+
+    assert (
+        prepared_tool_manager.get_parallel_execution_mode(
+            [ToolCallPart(tool_name='tool_a', args={'x': 1}), ToolCallPart(tool_name='tool_b', args={'x': 1})]
+        )
+        == 'sequential'
+    )
+    assert (
+        prepared_tool_manager.get_parallel_execution_mode(
+            [ToolCallPart(tool_name='tool_b', args={'x': 1}), ToolCallPart(tool_name='tool_a', args={'x': 1})]
+        )
+        == 'sequential'
     )
 
 
