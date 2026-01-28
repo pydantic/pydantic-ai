@@ -50,6 +50,7 @@ nav:
           - input.md
           - thinking.md
           - retries.md
+          - guardrails.md
       - MCP:
           - Overview: mcp/overview.md
           - mcp/client.md
@@ -141,6 +142,7 @@ nav:
           - api/exceptions.md
           - api/ext.md
           - api/format_prompt.md
+          - api/guardrails.md
           - api/mcp.md
           - api/messages.md
           - api/models/anthropic.md
@@ -369,6 +371,7 @@ plugins:
           - common-tools.md
           - output.md
           - retries.md
+          - guardrails.md
           - message-history.md
           - multi-agent-applications.md
           - thinking.md
