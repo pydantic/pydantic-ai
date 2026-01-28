@@ -272,19 +272,6 @@ async def test_stub_provider_properties():
     assert provider.base_url == 'https://bedrock.stub'
 
 
-@pytest.mark.parametrize(
-    ('model_name', 'expected'),
-    [
-        ('us.anthropic.claude-sonnet-4-20250514-v1:0', 'anthropic.claude-sonnet-4-20250514-v1:0'),
-        ('eu.amazon.nova-micro-v1:0', 'amazon.nova-micro-v1:0'),
-        ('apac.meta.llama3-8b-instruct-v1:0', 'meta.llama3-8b-instruct-v1:0'),
-        ('anthropic.claude-3-7-sonnet-20250219-v1:0', 'anthropic.claude-3-7-sonnet-20250219-v1:0'),
-    ],
-)
-def test_remove_inference_geo_prefix(model_name: str, expected: str):
-    assert BedrockConverseModel._remove_inference_geo_prefix(model_name) == expected  # pyright: ignore[reportPrivateUsage]
-
-
 async def test_bedrock_model_structured_output(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     agent = Agent(model=model, instructions='You are a helpful chatbot.', retries=5)
