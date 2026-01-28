@@ -1967,7 +1967,6 @@ async def test_bedrock_cache_messages_with_document_as_last_content(
     usage = result.usage()
     assert usage.input_tokens > 0
     assert usage.output_tokens > 0
-    # Should have cache write tokens on first run
     assert usage.cache_write_tokens == 0 and usage.cache_read_tokens == 0
 
 
@@ -2153,7 +2152,7 @@ async def test_bedrock_cache_messages(allow_model_requests: None, bedrock_provid
 async def test_bedrock_cache_messages_with_binary_content(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """Test that bedrock_cache_messages does not add cache point for document content."""
+    """Test that bedrock_cache_messages does add cache point for document content with newline workaround."""
     model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -2181,6 +2180,43 @@ async def test_bedrock_cache_messages_with_binary_content(
                     'source': {'bytes': b'Test document content'},
                 }
             },
+            {'text': '\n'},
+            {'cachePoint': {'type': 'default'}},
+        ]
+    )
+
+
+async def test_bedrock_cache_messages_with_tool_result(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that bedrock_cache_messages does add cache point for tool call content."""
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='final_result',
+                    content='Final result processed.',
+                    tool_call_id='tooluse_DaRsVjwcShCI_3pOsIsWqg',
+                    timestamp=IsDatetime(),
+                )
+            ],
+        )
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_messages=True),
+    )
+    # Should add cache point for tool call content
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {
+                'toolResult': {
+                    'toolUseId': 'tooluse_DaRsVjwcShCI_3pOsIsWqg',
+                    'content': [{'text': 'Final result processed.'}],
+                    'status': 'success',
+                }
+            },
+            {'cachePoint': {'type': 'default'}},
         ]
     )
 

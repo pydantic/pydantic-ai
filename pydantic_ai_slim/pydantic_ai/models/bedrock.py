@@ -746,10 +746,14 @@ class BedrockConverseModel(Model):
         if processed_messages and settings.get('bedrock_cache_messages') and profile.bedrock_supports_prompt_caching:
             last_user_content = self._get_last_user_message_content(processed_messages)
             if last_user_content is not None:
-                # AWS currently rejects cache points that directly follow document content.
-                # only add cache point if last block is not a document
-                if 'document' not in last_user_content[-1]:
-                    last_user_content.append({'cachePoint': {'type': 'default'}})
+                # AWS currently rejects cache points that directly follow binary content (document, image, video).
+                # Insert a newline text block as a workaround only for these specific content types.
+                # We avoid adding this workaround for other non-text content like toolResult, as the
+                # non-persisted newline causes cache misses on subsequent calls (see #4121).
+                last_block = last_user_content[-1]
+                if any(key in last_block for key in ('document', 'image', 'video')):
+                    last_user_content.append({'text': '\n'})
+                last_user_content.append({'cachePoint': {'type': 'default'}})
 
         return system_prompt, processed_messages
 
@@ -859,10 +863,13 @@ class BedrockConverseModel(Model):
                             'CachePoint cannot be the first content in a user message - there must be previous content to cache when using Bedrock. '
                             'To cache system instructions or tool definitions, use the `bedrock_cache_instructions` or `bedrock_cache_tool_definitions` settings instead.'
                         )
-                    if 'text' not in content[-1]:
-                        # AWS currently rejects cache points that directly follow non-text content.
-                        # Insert an empty text block as a workaround (see https://github.com/pydantic/pydantic-ai/issues/3418
-                        # and https://github.com/pydantic/pydantic-ai/pull/2560#discussion_r2349209916).
+                    # AWS currently rejects cache points that directly follow binary content (document, image, video).
+                    # Insert a newline text block as a workaround only for these specific content types.
+                    # We avoid adding this workaround for other non-text content like toolResult, as the
+                    # non-persisted newline causes cache misses on subsequent calls (see #4121).
+                    # See also https://github.com/pydantic/pydantic-ai/issues/3418 and
+                    # https://github.com/pydantic/pydantic-ai/pull/2560#discussion_r2349209916.
+                    if any(key in content[-1] for key in ('document', 'image', 'video')):
                         content.append({'text': '\n'})
                     content.append({'cachePoint': {'type': 'default'}})
                 else:
