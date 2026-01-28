@@ -1,7 +1,3 @@
----
-title: "Pydantic AI: Concurrency, Performance & Rate Limiting"
-description: "Maximize evaluation throughput. Learn how to use concurrency and manage rate limits to run large-scale AI evaluations efficiently with Pydantic AI."
----
 # Concurrency & Performance
 
 Control how evaluation cases are executed in parallel.

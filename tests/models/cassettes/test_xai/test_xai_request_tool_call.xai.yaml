@@ -1,0 +1,162 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: What is the location of Lodon and London?
+        role: ROLE_USER
+      model: grok-4-fast-reasoning
+      tools:
+      - function:
+          name: get_location
+          parameters: '{"additionalProperties": false, "properties": {"loc_name":
+            {"type": "string"}}, "required": ["loc_name"], "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+    raw: !!binary |
+      Ci8KKwopV2hhdCBpcyB0aGUgbG9jYXRpb24gb2YgTG9kb24gYW5kIExvbmRvbj8QARIVZ3Jvay00
+      LWZhc3QtcmVhc29uaW5nigGOAQqLAQoMZ2V0X2xvY2F0aW9uInt7ImFkZGl0aW9uYWxQcm9wZXJ0
+      aWVzIjogZmFsc2UsICJwcm9wZXJ0aWVzIjogeyJsb2NfbmFtZSI6IHsidHlwZSI6ICJzdHJpbmci
+      fX0sICJyZXF1aXJlZCI6IFsibG9jX25hbWUiXSwgInR5cGUiOiAib2JqZWN0In2SAQIIAQ==
+  response_sample:
+    json:
+      id: 16f11376-601d-63ed-6f26-17423d20a7b9
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_56494531
+            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: get_location
+              arguments: '{"loc_name":"Lodon"}'
+          - id: call_28585237
+            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: get_location
+              arguments: '{"loc_name":"London"}'
+      created: '2026-01-16T17:04:35.144916809Z'
+      model: grok-4-fast-reasoning
+      system_fingerprint: fp_cfcc85ff86
+      usage:
+        completion_tokens: 53
+        prompt_tokens: 351
+        total_tokens: 627
+        prompt_text_tokens: 351
+        reasoning_tokens: 223
+        cached_prompt_text_tokens: 148
+      settings:
+        parallel_tool_calls: true
+        reasoning_effort: EFFORT_MEDIUM
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - function:
+            name: get_location
+            parameters: '{"additionalProperties": false, "properties": {"loc_name":
+              {"type": "string"}}, "required": ["loc_name"], "type": "object"}'
+    raw: !!binary |
+      CiQxNmYxMTM3Ni02MDFkLTYzZWQtNmYyNi0xNzQyM2QyMGE3YjkSfQgEGnkQAho5Cg1jYWxsXzU2
+      NDk0NTMxEAEYAVIkCgxnZXRfbG9jYXRpb24SFHsibG9jX25hbWUiOiJMb2RvbiJ9GjoKDWNhbGxf
+      Mjg1ODUyMzcQARgBUiUKDGdldF9sb2NhdGlvbhIVeyJsb2NfbmFtZSI6IkxvbmRvbiJ9KgsIo9+p
+      ywYQyYKNRTIVZ3Jvay00LWZhc3QtcmVhc29uaW5nOg1mcF9jZmNjODVmZjg2ShUINRDfAhjzBCDf
+      AjDfATiUAVigw3FamQEQASACOgIIAUKOAQqLAQoMZ2V0X2xvY2F0aW9uInt7ImFkZGl0aW9uYWxQ
+      cm9wZXJ0aWVzIjogZmFsc2UsICJwcm9wZXJ0aWVzIjogeyJsb2NfbmFtZSI6IHsidHlwZSI6ICJz
+      dHJpbmcifX0sICJyZXF1aXJlZCI6IFsibG9jX25hbWUiXSwgInR5cGUiOiAib2JqZWN0In0=
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: What is the location of Lodon and London?
+        role: ROLE_USER
+      - content:
+        - text: ''
+        role: ROLE_ASSISTANT
+        tool_calls:
+        - id: call_56494531
+          type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+          status: TOOL_CALL_STATUS_COMPLETED
+          function:
+            name: get_location
+            arguments: '{"loc_name":"Lodon"}'
+        - id: call_28585237
+          type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+          status: TOOL_CALL_STATUS_COMPLETED
+          function:
+            name: get_location
+            arguments: '{"loc_name":"London"}'
+      - content:
+        - text: 'Wrong location, I only know about "London".
+
+
+            Fix the errors and try again.'
+        role: ROLE_TOOL
+      - content:
+        - text: '{"lat": 51, "lng": 0}'
+        role: ROLE_TOOL
+      model: grok-4-fast-reasoning
+      tools:
+      - function:
+          name: get_location
+          parameters: '{"additionalProperties": false, "properties": {"loc_name":
+            {"type": "string"}}, "required": ["loc_name"], "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+    raw: !!binary |
+      Ci8KKwopV2hhdCBpcyB0aGUgbG9jYXRpb24gb2YgTG9kb24gYW5kIExvbmRvbj8QAQp9CgIKABAC
+      IjkKDWNhbGxfNTY0OTQ1MzEQARgBUiQKDGdldF9sb2NhdGlvbhIUeyJsb2NfbmFtZSI6IkxvZG9u
+      In0iOgoNY2FsbF8yODU4NTIzNxABGAFSJQoMZ2V0X2xvY2F0aW9uEhV7ImxvY19uYW1lIjoiTG9u
+      ZG9uIn0KUApMCkpXcm9uZyBsb2NhdGlvbiwgSSBvbmx5IGtub3cgYWJvdXQgIkxvbmRvbiIuCgpG
+      aXggdGhlIGVycm9ycyBhbmQgdHJ5IGFnYWluLhAFChsKFwoVeyJsYXQiOiA1MSwgImxuZyI6IDB9
+      EAUSFWdyb2stNC1mYXN0LXJlYXNvbmluZ4oBjgEKiwEKDGdldF9sb2NhdGlvbiJ7eyJhZGRpdGlv
+      bmFsUHJvcGVydGllcyI6IGZhbHNlLCAicHJvcGVydGllcyI6IHsibG9jX25hbWUiOiB7InR5cGUi
+      OiAic3RyaW5nIn19LCAicmVxdWlyZWQiOiBbImxvY19uYW1lIl0sICJ0eXBlIjogIm9iamVjdCJ9
+      kgECCAE=
+  response_sample:
+    json:
+      id: 0e863c3f-49a0-0854-d018-29733632f240
+      outputs:
+      - finish_reason: REASON_STOP
+        message:
+          content: Lodon appears to be a misspelling or non-standard variant of "London,"
+            which doesn't correspond to a known location based on available data.
+            London (the capital of England and the United Kingdom) is located at approximately
+            51° N latitude and 0° W longitude, in southeastern England along the River
+            Thames.
+          role: ROLE_ASSISTANT
+      created: '2026-01-16T17:04:38.487615037Z'
+      model: grok-4-fast-reasoning
+      system_fingerprint: fp_cfcc85ff86
+      usage:
+        completion_tokens: 63
+        prompt_tokens: 670
+        total_tokens: 816
+        prompt_text_tokens: 670
+        reasoning_tokens: 83
+        cached_prompt_text_tokens: 601
+      settings:
+        parallel_tool_calls: true
+        reasoning_effort: EFFORT_MEDIUM
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - function:
+            name: get_location
+            parameters: '{"additionalProperties": false, "properties": {"loc_name":
+              {"type": "string"}}, "required": ["loc_name"], "type": "object"}'
+    raw: !!binary |
+      CiQwZTg2M2MzZi00OWEwLTA4NTQtZDAxOC0yOTczMzYzMmYyNDASvgIIAxq5Agq0AkxvZG9uIGFw
+      cGVhcnMgdG8gYmUgYSBtaXNzcGVsbGluZyBvciBub24tc3RhbmRhcmQgdmFyaWFudCBvZiAiTG9u
+      ZG9uLCIgd2hpY2ggZG9lc24ndCBjb3JyZXNwb25kIHRvIGEga25vd24gbG9jYXRpb24gYmFzZWQg
+      b24gYXZhaWxhYmxlIGRhdGEuIExvbmRvbiAodGhlIGNhcGl0YWwgb2YgRW5nbGFuZCBhbmQgdGhl
+      IFVuaXRlZCBLaW5nZG9tKSBpcyBsb2NhdGVkIGF0IGFwcHJveGltYXRlbHkgNTHCsCBOIGxhdGl0
+      dWRlIGFuZCAwwrAgVyBsb25naXR1ZGUsIGluIHNvdXRoZWFzdGVybiBFbmdsYW5kIGFsb25nIHRo
+      ZSBSaXZlciBUaGFtZXMuEAIqDAim36nLBhC91MHoATIVZ3Jvay00LWZhc3QtcmVhc29uaW5nOg1m
+      cF9jZmNjODVmZjg2ShQIPxCeBRiwBiCeBTBTONkEWPSoR1qZARABIAI6AggBQo4BCosBCgxnZXRf
+      bG9jYXRpb24ie3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3BlcnRpZXMiOiB7
+      ImxvY19uYW1lIjogeyJ0eXBlIjogInN0cmluZyJ9fSwgInJlcXVpcmVkIjogWyJsb2NfbmFtZSJd
+      LCAidHlwZSI6ICJvYmplY3QifQ==

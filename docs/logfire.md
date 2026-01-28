@@ -1,7 +1,3 @@
----
-title: "Pydantic Logfire Documentation: Debugging & Monitoring"
-description: "Monitor and debug your Pydantic AI agents with Pydantic Logfire. Get full visibility into LLM calls, tool execution & performance."
----
 # Pydantic Logfire Debugging and Monitoring
 
 Applications that use LLMs have some challenges that are well known and understood: LLMs are **slow**, **unreliable** and **expensive**.

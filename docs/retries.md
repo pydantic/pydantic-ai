@@ -1,7 +1,3 @@
----
-title: "Pydantic AI HTTP Request Retries & Rate Limits"
-description: Manage network reliability and rate limits. Configure HTTP retry logic and exponential backoff for robust communication with LLM provider APIs.
----
 # HTTP Request Retries
 
 Pydantic AI provides retry functionality for HTTP requests made by model providers through custom HTTP transports.
@@ -318,6 +314,16 @@ agent = Agent(model)
 5. **Log Retry Attempts**: Add logging to monitor retry behavior in production. (This will be picked up by Logfire automatically if you instrument httpx.)
 
 6. **Consider Circuit Breakers**: For high-traffic applications, consider implementing circuit breaker patterns.
+
+!!! tip "Monitoring Retries in Production"
+    Excessive retries can indicate underlying issues and increase costs. [Logfire](logfire.md) helps you track retry patterns:
+
+    - See which requests triggered retries
+    - Understand retry causes (rate limits, server errors, timeouts)
+    - Monitor retry frequency over time
+    - Identify opportunities to reduce retries
+
+    With [HTTPX instrumentation](logfire.md#monitoring-http-requests) enabled, retry attempts are automatically captured in your traces.
 
 ## Error Handling
 

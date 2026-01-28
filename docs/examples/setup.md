@@ -1,7 +1,3 @@
----
-title: "Pydantic AI Examples: Setup, Install & Run Guide"
-description: "Learn how to clone a repository, install dependencies, and execute sample agent scripts."
----
 # Examples
 
 Here we include some examples of how to use Pydantic AI and what it can do.
@@ -48,7 +44,7 @@ To run the examples (this will work whether you installed `pydantic_ai`, or clon
 python/uv-run -m pydantic_ai_examples.<example_module_name>
 ```
 
-For examples, to run the very simple [`pydantic_model`](./pydantic-model.md) example:
+For example, to run the very simple [`pydantic_model`](./pydantic-model.md) example:
 
 ```bash
 python/uv-run -m pydantic_ai_examples.pydantic_model

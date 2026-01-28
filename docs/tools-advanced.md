@@ -1,7 +1,3 @@
----
-title: Pydantic AI Advanced Tool Features
-description: "Master advanced tool patterns in Pydantic AI. Learn about tool dependency injection, dynamic tool selection, and advanced result handling."
----
 # Advanced Tool Features
 
 This page covers advanced features for function tools in Pydantic AI. For basic tool usage, see the [Function Tools](tools.md) documentation.
@@ -101,7 +97,7 @@ def click_and_capture(x: int, y: int) -> ToolReturn:
     return ToolReturn(
         return_value=f'Successfully clicked at ({x}, {y})',
         content=[
-            f'Clicked at coordinates ({x}, {y}). Here's the comparison:',
+            f'Clicked at coordinates ({x}, {y}). Here\'s the comparison:',
             'Before:',
             BinaryContent(data=before_screenshot, media_type='image/png'),
             'After:',

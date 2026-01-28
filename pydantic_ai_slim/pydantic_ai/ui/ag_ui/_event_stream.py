@@ -73,7 +73,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     """UI event stream transformer for the Agent-User Interaction (AG-UI) protocol."""
 
     _thinking_text: bool = False
-    _builtin_tool_call_ids: dict[str, str] = field(default_factory=dict)
+    _builtin_tool_call_ids: dict[str, str] = field(default_factory=dict[str, str])
     _error: bool = False
 
     @property
