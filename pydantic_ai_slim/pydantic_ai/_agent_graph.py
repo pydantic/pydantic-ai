@@ -138,7 +138,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     usage_limits: _usage.UsageLimits
     max_result_retries: int
     end_strategy: EndStrategy
-    get_instructions: Callable[[RunContext[DepsT]], Awaitable[str | None]]
+    instructions: Callable[[RunContext[DepsT]], Awaitable[str | None]]
 
     output_schema: _output.OutputSchema[OutputDataT]
     output_validators: list[_output.OutputValidator[DepsT, OutputDataT]]
@@ -249,7 +249,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             elif isinstance(last_message, _messages.ModelResponse):
                 if self.user_prompt is None:
                     run_context = build_run_context(ctx)
-                    instructions = await ctx.deps.get_instructions(run_context)
+                    instructions = await ctx.deps.instructions(run_context)
                     if not instructions:
                         # If there's no new prompt or instructions, skip ModelRequestNode and go directly to CallToolsNode
                         return CallToolsNode[DepsT, NodeRunEndT](last_message)
@@ -260,7 +260,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         if not run_context:
             run_context = build_run_context(ctx)
-            instructions = await ctx.deps.get_instructions(run_context)
+            instructions = await ctx.deps.instructions(run_context)
 
         if messages:
             await self._reevaluate_dynamic_prompts(messages, run_context)
@@ -666,7 +666,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # in the hope the model will return a non-empty response this time.
                     ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.deps.model_settings)
                     run_context = build_run_context(ctx)
-                    instructions = await ctx.deps.get_instructions(run_context)
+                    instructions = await ctx.deps.instructions(run_context)
                     self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
                         _messages.ModelRequest(parts=[], instructions=instructions)
                     )
@@ -734,7 +734,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
                     )
                     run_context = build_run_context(ctx)
-                    instructions = await ctx.deps.get_instructions(run_context)
+                    instructions = await ctx.deps.instructions(run_context)
                     self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
                         _messages.ModelRequest(parts=[e.tool_retry], instructions=instructions)
                     )
@@ -777,7 +777,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             if self.user_prompt is not None:
                 output_parts.append(_messages.UserPromptPart(self.user_prompt))
 
-            instructions = await ctx.deps.get_instructions(run_context)
+            instructions = await ctx.deps.instructions(run_context)
             self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
                 _messages.ModelRequest(parts=output_parts, instructions=instructions)
             )
