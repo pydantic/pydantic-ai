@@ -2,23 +2,23 @@
 
 ## Summary
 
-Provider-agnostic `SearchableToolset` for all models. Anthropic uses native BM25 (default) or regex; others use custom `pai_tool_search_tool` with regex. Beta feature, CodeModeToolset-aware.
+Provider-agnostic `SearchableToolset` for all models. Anthropic uses native BM25 (default) or regex; others use custom `pai_tool_search_tool` with regex. CodeModeToolset-aware.
 
 ## Key Design Decisions
 
 | Decision | Rationale |
 |----------|-----------|
 | Single `SearchableToolset`, auto-injected by Agent | Only one search tool allowed; avoids user confusion |
+| Wrapper order: `CodeModeToolset(SearchableToolset(UserToolsets))` | CodeMode sees discovered tools from SearchableToolset |
 | `tool_search_options: ToolSearchOptions` on Agent | Centralized config; dataclass is expandable |
 | No nesting | Simplicity; algorithm applies to all deferred tools |
 | `defer_loading` param on MCPServer | Consistency; avoid multiple ways to do same thing |
 | Tool name: `pai_tool_search_tool` | Namespaced to avoid collisions; error if user defines same |
 | No matches returns empty list | `{message: "No tools found for '{term}'", tools: []}` |
-| Beta: `pydantic_ai.beta._tool_search` | Requires `beta=True` on Agent |
 | BM25 fallback -> regex + warning | TODO: native BM25 via sqlite + optional dep |
-| Track discovered tools via `discovered_tools: list[str]` on `ModelRequest` | Enables message history portability, CodeModeToolset integration |
+| Parse discovered tools from `ToolReturnPart.content` | Stateless; no extra fields on `ModelRequest` |
 | Follow builtin fallback pattern (#3212) | Anthropic native when supported, custom search tool otherwise |
-| `tool_renderer` callable allowed | Warning if non-serializable in durable execution contexts |
+| `tool_renderer` callable allowed | For durable exec contexts too, if they support it |
 
 ## `ToolSearchOptions` Dataclass
 
@@ -41,6 +41,16 @@ class DiscoveredToolInfo(TypedDict, total=False):
 
 Return format: `{message: str, tools: list[DiscoveredToolInfo]}`
 
+## Discovery Logic (Stateless)
+
+In `SearchableToolset.get_tools(ctx)`:
+1. Get all tool defs from wrapped toolset
+2. Scan `ctx.messages` for `ToolReturnPart` where `tool_name == 'pai_tool_search_tool'`
+3. Parse `content['tools']` -> set of discovered tool names
+4. Return `[search_tool] + [tool_def for tool_def in all_tools if tool_def.name in discovered]`
+
+No per-`run_id` state tracking needed. Just parse message history on each `get_tools` call.
+
 ## API Examples
 
 ### Basic Usage - Decorator
@@ -48,21 +58,21 @@ Return format: `{message: str, tools: list[DiscoveredToolInfo]}`
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-4o', beta=True)
+agent = Agent('openai:gpt-4o')
 
 @agent.tool(defer_loading=True)
 def get_weather(city: str) -> str:
-    """Get weather for a city."""
+    '''Get weather for a city.'''
     return f'Weather in {city}: sunny'
 
 @agent.tool(defer_loading=True)
 def get_stock_price(symbol: str) -> float:
-    """Get current stock price."""
+    '''Get current stock price.'''
     return 123.45
 
 @agent.tool  # not deferred - always available
 def get_time() -> str:
-    """Get current time."""
+    '''Get current time.'''
     return '12:00 PM'
 
 result = agent.run_sync('What is the weather in Paris?')
@@ -72,11 +82,10 @@ result = agent.run_sync('What is the weather in Paris?')
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.beta import ToolSearchOptions
+from pydantic_ai.toolsets import ToolSearchOptions
 
 agent = Agent(
     'anthropic:claude-sonnet-4-20250514',
-    beta=True,
     tool_search_options=ToolSearchOptions(
         algorithm='bm25',  # or 'regex', or None for provider default
         max_results=10,
@@ -85,7 +94,7 @@ agent = Agent(
 
 @agent.tool(defer_loading=True)
 def fetch_user_data(user_id: int) -> dict:
-    """Fetch user data from database."""
+    '''Fetch user data from database.'''
     return {'id': user_id, 'name': 'John'}
 ```
 
@@ -93,7 +102,7 @@ def fetch_user_data(user_id: int) -> dict:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.beta import ToolSearchOptions, DiscoveredToolInfo
+from pydantic_ai.toolsets import ToolSearchOptions, DiscoveredToolInfo
 from pydantic_ai.tools import ToolDefinition
 
 def custom_renderer(tool: ToolDefinition) -> DiscoveredToolInfo:
@@ -104,7 +113,6 @@ def custom_renderer(tool: ToolDefinition) -> DiscoveredToolInfo:
 
 agent = Agent(
     'openai:gpt-4o',
-    beta=True,
     tool_search_options=ToolSearchOptions(tool_renderer=custom_renderer),
 )
 ```
@@ -116,11 +124,11 @@ from pydantic_ai import Agent
 from pydantic_ai.toolsets import FunctionToolset
 
 def db_query(query: str) -> list[dict]:
-    """Execute a database query."""
+    '''Execute a database query.'''
     return [{'result': 'data'}]
 
 def db_insert(table: str, data: dict) -> bool:
-    """Insert data into a table."""
+    '''Insert data into a table.'''
     return True
 
 toolset = FunctionToolset(
@@ -128,7 +136,7 @@ toolset = FunctionToolset(
     defer_loading=True,  # applies to all tools in this toolset
 )
 
-agent = Agent('openai:gpt-4o', toolsets=[toolset], beta=True)
+agent = Agent('openai:gpt-4o', toolsets=[toolset])
 ```
 
 ### With MCP Server
@@ -150,29 +158,28 @@ mcp_partial = MCPServer(
     defer_loading=['read_file', 'write_file'],  # only these are deferred
 )
 
-agent = Agent('openai:gpt-4o', toolsets=[mcp], beta=True)
+agent = Agent('openai:gpt-4o', toolsets=[mcp])
 ```
 
 ### With CodeModeToolset (Future)
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.beta import ToolSearchOptions
+from pydantic_ai.toolsets import ToolSearchOptions
 
 agent = Agent(
     'anthropic:claude-sonnet-4-20250514',
-    beta=True,
     tool_search_options=ToolSearchOptions(algorithm='bm25'),
 )
 
 @agent.tool(defer_loading=True, allowed_callers='code')
 def complex_calculation(x: float, y: float, z: float) -> float:
-    """Perform complex calculation. Best called from code."""
+    '''Perform complex calculation. Best called from code.'''
     return x * y + z
 
 @agent.tool(defer_loading=True, allowed_callers='code')
 def data_transform(data: list[dict]) -> list[dict]:
-    """Transform data structure. Best called from code."""
+    '''Transform data structure. Best called from code.'''
     return [{'transformed': d} for d in data]
 
 # Tools are:
@@ -186,7 +193,7 @@ def data_transform(data: list[dict]) -> list[dict]:
 ```python
 from pydantic_ai import Agent
 
-agent1 = Agent('openai:gpt-4o', beta=True)
+agent1 = Agent('openai:gpt-4o')
 
 @agent1.tool(defer_loading=True)
 def tool_a() -> str:
@@ -201,7 +208,7 @@ result1 = agent1.run_sync('Find and use tool_a')
 history = result1.all_messages()
 
 # Create agent2 with same tools
-agent2 = Agent('anthropic:claude-sonnet-4-20250514', beta=True)
+agent2 = Agent('anthropic:claude-sonnet-4-20250514')
 
 @agent2.tool(defer_loading=True)
 def tool_a() -> str:
@@ -211,53 +218,51 @@ def tool_a() -> str:
 def tool_b() -> str:
     return 'b'
 
-# agent2 automatically knows tool_a was discovered from history
+# agent2 parses history, sees tool_a was discovered via search tool return
 # tool_b is still deferred
 result2 = agent2.run_sync('Use tool_a again', message_history=history)
 ```
 
 ## Files to Create/Modify
 
-1. **`pydantic_ai/beta/_tool_search.py`** (new)
-   - `ToolSearchOptions`, `DiscoveredToolInfo`, `ToolSearchTool` builtin
+1. **`pydantic_ai/toolsets/_searchable.py`** (new, private)
+   - `SearchableToolset(WrapperToolset)` - stateless, parses history for discovered tools
+   - `ToolSearchOptions` dataclass
+   - `DiscoveredToolInfo` TypedDict
 
-2. **`pydantic_ai/toolsets/_searchable.py`** (new, private)
-   - `SearchableToolset(WrapperToolset)` - per-`run_id` state, history hydration
+2. **`pydantic_ai/toolsets/__init__.py`**
+   - Export `ToolSearchOptions`, `DiscoveredToolInfo`
 
 3. **`pydantic_ai/tools.py`** - add `defer_loading: bool = False` to `ToolDefinition`
 
-4. **`pydantic_ai/messages.py`** - add `discovered_tools: list[str] | None` to `ModelRequest`
-
-5. **`pydantic_ai/agent/__init__.py`**
-   - Add `tool_search_options: ToolSearchOptions | None`, `beta: bool = False`
+4. **`pydantic_ai/agent/__init__.py`**
+   - Add `tool_search_options: ToolSearchOptions | None`
    - Auto-inject `SearchableToolset` for `defer_loading=True` tools
 
-6. **`pydantic_ai/toolsets/function.py`** - `defer_loading` on decorator + toolset
+5. **`pydantic_ai/toolsets/function.py`** - `defer_loading` on decorator + toolset
 
-7. **`pydantic_ai/_mcp.py`** - `defer_loading: bool | list[str] = False` on MCPServer
+6. **`pydantic_ai/_mcp.py`** - `defer_loading: bool | list[str] = False` on MCPServer
 
-8. **`pydantic_ai/models/__init__.py`** - `prepare_request` filters native vs custom search
+7. **`pydantic_ai/models/__init__.py`** - `prepare_request` filters native vs custom search
 
-9. **`pydantic_ai/models/anthropic.py`** - handle native responses, pass `defer_loading` tools + beta header
+8. **`pydantic_ai/models/anthropic.py`** - handle native responses, pass `defer_loading` tools + beta header
 
-10. **`pydantic_ai/profiles/anthropic.py`** - add `supports_bm25_search: bool` (model-specific)
-
-11. **`pydantic_ai/beta/_utils.py`** (new) - `require_beta(agent, feature_name)` helper
+9. **`pydantic_ai/profiles/anthropic.py`** - add `supports_bm25_search: bool` (model-specific)
 
 ## Key Behaviors
 
 - Tool name: `pai_tool_search_tool` (error on collision)
 - No matches: `{message: "No tools found for '{term}'", tools: []}`
 - Anthropic default: BM25 (better than regex), fallback to regex + warning if BM25 unsupported
-- `discovered_tools` on `ModelRequest` enables history portability + CodeModeToolset integration
-- `tool_renderer` callable allowed (warning in durable exec if non-serializable)
+- Discovered tools parsed from `ToolReturnPart.content` in message history
+- `tool_renderer` callable allowed
 
 ## CodeModeToolset Integration (Future)
 
-- CodeModeToolset reads `discovered_tools` from message history
+- Wrapper order: `CodeModeToolset(SearchableToolset(UserToolsets))`
+- CodeModeToolset sees tools discovered by SearchableToolset
 - Tools with `defer_loading=True, allowed_callers='code'` hidden until discovered
 - Once discovered: tool added to CodeModeToolset registry, signature exposed in sandbox
-- Search result includes full `ToolDefinition` serialization for reconstruction
 
 ## Open TODOs (Future PRs)
 
@@ -269,7 +274,7 @@ result2 = agent2.run_sync('Use tool_a again', message_history=history)
 
 - VCR: Anthropic native (BM25 + regex)
 - VCR: OpenAI custom search tool
-- Unit: `@agent.tool(defer_loading=True)`, state isolation, history hydration, beta gate, name collision
+- Unit: `@agent.tool(defer_loading=True)`, history parsing, name collision
 
 ## Research Sources
 
