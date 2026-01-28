@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from inline_snapshot import snapshot
+from logfire.testing import CaptureLogfire
 from pydantic import BaseModel
 from pydantic_core import ErrorDetails
 
@@ -56,7 +57,10 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApp
 from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
 
-from .conftest import IsDatetime, IsInt, IsNow, IsStr
+from .conftest import IsDatetime, IsInt, IsNow, IsStr, try_import
+
+with try_import() as logfire_imports_successful:
+    from logfire.testing import CaptureLogfire
 
 pytestmark = pytest.mark.anyio
 
@@ -207,7 +211,7 @@ def test_streamed_text_sync_response():
         RunUsage(
             requests=2,
             input_tokens=103,
-            output_tokens=5,
+            output_tokens=11,
             tool_calls=1,
         )
     )
@@ -2635,12 +2639,12 @@ async def test_output_tool_validation_failure_events():
             FunctionToolResultEvent(
                 result=RetryPromptPart(
                     content=[
-                        ErrorDetails(
-                            type='missing',
-                            loc=('value',),
-                            msg='Field required',
-                            input={'bad_value': 'invalid'},
-                        ),
+                        {
+                            'type': 'missing',
+                            'loc': ('value',),
+                            'msg': 'Field required',
+                            'input': {'bad_value': 'invalid'},
+                        },
                     ],
                     tool_name='final_result',
                     tool_call_id=IsStr(),
@@ -2783,7 +2787,7 @@ async def test_tool_raises_call_deferred():
         assert await result.validate_response_output(responses[0]) == snapshot(
             DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
         )
-        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=0))
+        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=51))
         assert result.timestamp() == IsNow(tz=timezone.utc)
         assert result.is_complete
 
@@ -3170,8 +3174,7 @@ async def test_stream_tool_returning_user_content():
                 content=[
                     'This is file bd38f5:',
                     ImageUrl(
-                        url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
-                        identifier='bd38f5',
+                        url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
                     ),
                 ],
             ),
@@ -3300,5 +3303,181 @@ async def test_get_output_after_stream_output():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
+        ]
+    )
+
+
+async def test_streamed_run_result_sync():
+    m = TestModel(custom_output_text='The cat sat on the mat.')
+
+    agent = Agent(m)
+
+    async with agent.run_stream('Hello') as result:
+        output = await result.get_output()
+        assert output == snapshot('The cat sat on the mat.')
+        result_sync = StreamedRunResultSync(result)
+        assert result_sync.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Hello',
+                            timestamp=IsNow(tz=timezone.utc),
+                        )
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='The cat sat on the mat.')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=7),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+
+def test_stream_output_after_get_output_sync():
+    m = TestModel()
+
+    agent = Agent(m, output_type=bool)
+
+    result = agent.run_stream_sync('Hello')
+
+    assert result.get_output() == snapshot(False)
+    assert [c for c in result.stream_output()] == snapshot([False])
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'response': False},
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=51),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+def test_run_stream_sync_instrumentation(capfire: CaptureLogfire):
+    m = TestModel()
+
+    agent = Agent(m, instrument=True)
+
+    result = agent.run_stream_sync('Hello')
+    output = [c for c in result.stream_output()]
+    assert output == snapshot(['success (no tool calls)'])
+
+    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
+        [
+            {
+                'name': 'chat test',
+                'context': {'trace_id': 1, 'span_id': 3, 'is_remote': False},
+                'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'start_time': 2000000000,
+                'end_time': 3000000000,
+                'attributes': {
+                    'gen_ai.operation.name': 'chat',
+                    'gen_ai.system': 'test',
+                    'gen_ai.request.model': 'test',
+                    'model_request_parameters': {
+                        'function_tools': [],
+                        'builtin_tools': [],
+                        'output_mode': 'text',
+                        'output_object': None,
+                        'output_tools': [],
+                        'prompted_output_template': None,
+                        'allow_text_output': True,
+                        'allow_image_output': False,
+                    },
+                    'logfire.span_type': 'span',
+                    'logfire.msg': 'chat test',
+                    'gen_ai.input.messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]}],
+                    'gen_ai.output.messages': [
+                        {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'success (no tool calls)'}]}
+                    ],
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'gen_ai.input.messages': {'type': 'array'},
+                            'gen_ai.output.messages': {'type': 'array'},
+                            'model_request_parameters': {'type': 'object'},
+                        },
+                    },
+                    'gen_ai.usage.input_tokens': 51,
+                    'gen_ai.usage.output_tokens': 4,
+                    'gen_ai.response.model': 'test',
+                },
+            },
+            {
+                'name': 'agent run',
+                'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'parent': None,
+                'start_time': 1000000000,
+                'end_time': 5000000000,
+                'attributes': {
+                    'model_name': 'test',
+                    'agent_name': 'agent',
+                    'gen_ai.agent.name': 'agent',
+                    'logfire.msg': 'agent run',
+                    'logfire.span_type': 'span',
+                    'logfire.exception.fingerprint': '0000000000000000000000000000000000000000000000000000000000000000',
+                    'pydantic_ai.all_messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]}],
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'pydantic_ai.all_messages': {'type': 'array'},
+                            'final_result': {'type': 'object'},
+                        },
+                    },
+                    'logfire.level_num': 17,
+                },
+                'events': [
+                    {
+                        'name': 'exception',
+                        'timestamp': 4000000000,
+                        'attributes': {
+                            'exception.type': 'RuntimeError',
+                            'exception.message': 'Attempted to exit cancel scope in a different task than it was entered in',
+                            'exception.stacktrace': 'RuntimeError: Attempted to exit cancel scope in a different task than it was entered in',
+                            'exception.escaped': 'False',
+                        },
+                    }
+                ],
+            },
         ]
     )
