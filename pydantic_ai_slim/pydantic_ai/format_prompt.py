@@ -77,12 +77,12 @@ def format_as_xml(
         price: Decimal
 
     product = Product(name='Widget', price=Decimal('19.99'))
-    print(format_as_xml(product, mode='json'))
+    print(format_as_xml(product, root_tag='product', mode='json'))
     '''
-    <Product>
+    <product>
       <name>Widget</name>
       <price>19.99</price>
-    </Product>
+    </product>
     '''
     ```
     """
