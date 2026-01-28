@@ -18,7 +18,12 @@ with try_import() as imports_successful:
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
 
     from pydantic_ai.models.bedrock import LatestBedrockModelNames
-    from pydantic_ai.providers.bedrock import BEDROCK_GEO_PREFIXES, BedrockModelProfile, BedrockProvider
+    from pydantic_ai.providers.bedrock import (
+        BEDROCK_GEO_PREFIXES,
+        BedrockModelProfile,
+        BedrockProvider,
+        remove_bedrock_geo_prefix,
+    )
 
 if not imports_successful():
     BEDROCK_GEO_PREFIXES: tuple[str, ...] = ()  # type: ignore[no-redef]
@@ -139,6 +144,19 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
 
     unknown_model = provider.model_profile('unknown.unknown-model')
     assert unknown_model is None
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected'),
+    [
+        ('us.anthropic.claude-sonnet-4-20250514-v1:0', 'anthropic.claude-sonnet-4-20250514-v1:0'),
+        ('eu.amazon.nova-micro-v1:0', 'amazon.nova-micro-v1:0'),
+        ('apac.meta.llama3-8b-instruct-v1:0', 'meta.llama3-8b-instruct-v1:0'),
+        ('anthropic.claude-3-7-sonnet-20250219-v1:0', 'anthropic.claude-3-7-sonnet-20250219-v1:0'),
+    ],
+)
+def test_remove_inference_geo_prefix(model_name: str, expected: str):
+    assert remove_bedrock_geo_prefix(model_name) == expected
 
 
 @pytest.mark.parametrize('prefix', BEDROCK_GEO_PREFIXES)
