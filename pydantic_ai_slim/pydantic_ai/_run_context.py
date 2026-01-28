@@ -50,6 +50,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """Instrumentation settings version, if instrumentation is enabled."""
     retries: dict[str, int] = field(default_factory=dict[str, int])
     """Number of retries for each tool so far."""
+    tools_use_counts: dict[str, int] = field(default_factory=dict)
+    """Successful use counts per tool. Only tools that have been used appear here."""
+    # TODO: Consider having an aggregate of total counts as well here?
+    # How does usage limit track this? -> RunUsage is incremented in place where it tracks total tool_calls
+    # I am tracking it here, is that really fine? Is RunUsage a better place to put it?
     tool_call_id: str | None = None
     """The ID of the tool call."""
     tool_name: str | None = None
@@ -75,6 +80,18 @@ class RunContext(Generic[RunContextAgentDepsT]):
     def last_attempt(self) -> bool:
         """Whether this is the last attempt at running this tool before an error is raised."""
         return self.retry == self.max_retries
+
+    @property
+    def tool_use(self) -> int | None:
+        """Successful use count for the current tool.
+
+        Returns:
+            The number of times the current tool has been successfully called,
+            or `None` if not currently in a tool context (i.e., `tool_name` is not set).
+        """
+        if self.tool_name:
+            return self.tools_use_counts.get(self.tool_name, 0)
+        return None
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

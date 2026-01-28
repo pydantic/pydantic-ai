@@ -15,6 +15,7 @@ from pydantic_ai import (
     models,
     usage as _usage,
 )
+from pydantic_ai._tool_usage_policy import ToolPolicy
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
 from pydantic_ai.agent.abstract import AgentMetadata, Instructions, RunOutputDataT
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
@@ -136,6 +137,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             deps: AgentDepsT,
             model_settings: ModelSettings | None = None,
             usage_limits: _usage.UsageLimits | None = None,
+            tool_use_policy: ToolPolicy | None = None,
             usage: _usage.RunUsage | None = None,
             metadata: AgentMetadata[AgentDepsT] | None = None,
             infer_name: bool = True,
@@ -155,6 +157,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     deps=deps,
                     model_settings=model_settings,
                     usage_limits=usage_limits,
+                    tool_use_policy=tool_use_policy,
                     usage=usage,
                     metadata=metadata,
                     infer_name=infer_name,
@@ -179,6 +182,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             model_settings: ModelSettings | None = None,
             instructions: Instructions[AgentDepsT] = None,
             usage_limits: _usage.UsageLimits | None = None,
+            tool_use_policy: ToolPolicy | None = None,
             usage: _usage.RunUsage | None = None,
             metadata: AgentMetadata[AgentDepsT] | None = None,
             infer_name: bool = True,
@@ -198,6 +202,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     deps=deps,
                     model_settings=model_settings,
                     usage_limits=usage_limits,
+                    tool_use_policy=tool_use_policy,
                     usage=usage,
                     metadata=metadata,
                     infer_name=infer_name,
@@ -273,6 +278,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -294,6 +300,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -314,6 +321,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -350,6 +358,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            tool_use_policy: Optional tool use policy for all tools in this run (max calls, per-step limits, etc.).
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -375,6 +384,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             deps=deps,
             model_settings=model_settings,
             usage_limits=usage_limits,
+            tool_use_policy=tool_use_policy,
             usage=usage,
             metadata=metadata,
             infer_name=infer_name,
@@ -397,6 +407,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -418,6 +429,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -438,6 +450,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -473,6 +486,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            tool_use_policy: Optional tool use policy for all tools in this run (max calls, per-step limits, etc.).
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -498,6 +512,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             deps=deps,
             model_settings=model_settings,
             usage_limits=usage_limits,
+            tool_use_policy=tool_use_policy,
             usage=usage,
             metadata=metadata,
             infer_name=infer_name,
@@ -520,6 +535,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -541,6 +557,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         instructions: Instructions[AgentDepsT] = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -562,6 +579,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -595,6 +613,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            tool_use_policy: Optional tool use policy for all tools in this run (max calls, per-step limits, etc.).
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -622,6 +641,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             deps=deps,
             model_settings=model_settings,
             usage_limits=usage_limits,
+            tool_use_policy=tool_use_policy,
             usage=usage,
             metadata=metadata,
             infer_name=infer_name,
@@ -645,6 +665,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -665,6 +686,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -684,6 +706,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -735,6 +758,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            tool_use_policy: Optional tool use policy for all tools in this run (max calls, per-step limits, etc.).
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -764,6 +788,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -785,6 +810,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -806,6 +832,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        tool_use_policy: ToolPolicy | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -885,6 +912,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            tool_use_policy: Optional tool use policy for all tools in this run (max calls, per-step limits, etc.).
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -911,6 +939,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 deps=deps,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
+                tool_use_policy=tool_use_policy,
                 usage=usage,
                 metadata=metadata,
                 infer_name=infer_name,

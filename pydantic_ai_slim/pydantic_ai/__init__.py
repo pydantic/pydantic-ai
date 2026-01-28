@@ -1,5 +1,6 @@
 from importlib.metadata import version as _metadata_version
 
+from ._tool_usage_policy import ToolPolicy
 from .agent import (
     Agent,
     CallToolsNode,
@@ -254,5 +255,7 @@ __all__ = (
     'AgentRun',
     'AgentRunResult',
     'AgentRunResultEvent',
+    # tool usage policy
+    'ToolPolicy',
 )
 __version__ = _metadata_version('pydantic_ai_slim')

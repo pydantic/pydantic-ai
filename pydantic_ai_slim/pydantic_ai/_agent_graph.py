@@ -5,7 +5,7 @@ import dataclasses
 import inspect
 import uuid
 from asyncio import Task
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
@@ -1056,6 +1056,60 @@ async def process_tool_calls(  # noqa: C901
         output_final_result.append(final_result)
 
 
+def _handle_tool_calls_parts(
+    tool_calls: list[_messages.ToolCallPart],
+    *,
+    output_parts: list[_messages.ModelRequestPart],
+    tool_manager: ToolManager[DepsT],
+    output_calls_to_run: list[_messages.ToolCallPart],
+    projected_tools_uses: Counter[str],
+    current_total_tool_uses: int,
+) -> Iterator[_messages.HandleResponseEvent]:
+    # Agent-level batch pre-check: reject all calls upfront if agent policy has
+    # partial_execution=False and batch exceeds limits
+    batch_rejection = tool_manager.get_batch_rejection_reason(
+        tool_calls_in_batch=len(tool_calls),
+        current_total_tool_uses=current_total_tool_uses,
+    )
+    if batch_rejection is not None:
+        for call in tool_calls:
+            return_part = _messages.ToolReturnPart(
+                tool_name=call.tool_name,
+                content=batch_rejection,
+                tool_call_id=call.tool_call_id,
+            )
+            output_parts.append(return_part)
+            yield _messages.FunctionToolResultEvent(return_part)
+        return
+
+    # Per-call checks for per-tool limits and incremental agent-level limits
+    accepted_per_tool: Counter[str] = Counter()
+    total_accepted = 0
+
+    for call in tool_calls:
+        rejection_reason = tool_manager.get_tool_call_rejection_reason(
+            call.tool_name,
+            tool_accepted_in_step=accepted_per_tool[call.tool_name],
+            projected_tool_uses=projected_tools_uses[call.tool_name],
+            current_total_tool_uses=current_total_tool_uses,
+            tool_calls_executed_in_step=total_accepted,
+        )
+        if rejection_reason is not None:
+            return_part = _messages.ToolReturnPart(
+                tool_name=call.tool_name,
+                content=rejection_reason,
+                tool_call_id=call.tool_call_id,
+                # TODO: Add return kind and prompt_config here once supported by #3656
+            )
+            output_parts.append(return_part)
+            yield _messages.FunctionToolResultEvent(return_part)
+        else:
+            accepted_per_tool[call.tool_name] += 1
+            total_accepted += 1
+            yield _messages.FunctionToolCallEvent(call)
+            output_calls_to_run.append(call)
+
+
 async def _call_tools(  # noqa: C901
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
@@ -1073,19 +1127,32 @@ async def _call_tools(  # noqa: C901
     deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
     deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
 
+    projected_usage = deepcopy(usage)
+    projected_usage.tool_calls += len(tool_calls)
+
     if usage_limits.tool_calls_limit is not None:
-        projected_usage = deepcopy(usage)
-        projected_usage.tool_calls += len(tool_calls)
         usage_limits.check_before_tool_call(projected_usage)
 
-    for call in tool_calls:
-        yield _messages.FunctionToolCallEvent(call)
+    projected_tools_uses = Counter[str](call.tool_name for call in tool_calls)
+
+    calls_to_run: list[_messages.ToolCallPart] = []
+
+    # Process tool calls, keeping the logic entailed within the tool manager as much as possible
+    for event in _handle_tool_calls_parts(
+        tool_calls,
+        output_parts=output_parts,
+        tool_manager=tool_manager,
+        output_calls_to_run=calls_to_run,
+        projected_tools_uses=projected_tools_uses,
+        current_total_tool_uses=usage.tool_calls,
+    ):
+        yield event
 
     with tracer.start_as_current_span(
         'running tools',
         attributes={
-            'tools': [call.tool_name for call in tool_calls],
-            'logfire.msg': f'running {len(tool_calls)} tool{"" if len(tool_calls) == 1 else "s"}',
+            'tools': [call.tool_name for call in calls_to_run],
+            'logfire.msg': f'running {len(calls_to_run)} tool{"" if len(calls_to_run) == 1 else "s"}',
         },
     ):
 
@@ -1119,8 +1186,8 @@ async def _call_tools(  # noqa: C901
 
                 return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
 
-        if tool_manager.should_call_sequentially(tool_calls):
-            for index, call in enumerate(tool_calls):
+        if tool_manager.should_call_sequentially(calls_to_run):
+            for index, call in enumerate(calls_to_run):
                 if event := await handle_call_or_result(
                     _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), tool_call_metadata),
                     index,
@@ -1133,7 +1200,7 @@ async def _call_tools(  # noqa: C901
                     _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), tool_call_metadata),
                     name=call.tool_name,
                 )
-                for call in tool_calls
+                for call in calls_to_run
             ]
             try:
                 pending: set[
@@ -1160,7 +1227,11 @@ async def _call_tools(  # noqa: C901
     output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
 
     _populate_deferred_calls(
-        tool_calls, deferred_calls_by_index, deferred_metadata_by_index, output_deferred_calls, output_deferred_metadata
+        calls_to_run,
+        deferred_calls_by_index,
+        deferred_metadata_by_index,
+        output_deferred_calls,
+        output_deferred_metadata,
     )
 
 
