@@ -96,6 +96,7 @@ CRITICAL Syntax restrictions (the runtime uses a restricted Python subset):
 - No imports - use only the provided functions and builtins (len, sum, str, etc.) or write your own functions.
 
 How to write effective code:
+- ALWAYS use `await` when calling external functions (e.g., `items = await get_items()`)
 - ALWAYS use keyword arguments when calling functions (e.g., `get_user(id=123)` not `get_user(123)`)
 - Use for loops to handle multiple items
 - NEVER return raw tool results - always extract/filter to only what you need
@@ -110,13 +111,13 @@ Available functions:
 Example - fetching, filtering, and summarizing in one execution:
 ```python
 # Fetch data
-items = get_items(category="electronics")
+items = await get_items(category="electronics")
 
 # Process immediately - extract only needed fields
 results = []
 total = 0
 for item in items:
-    details = get_item_details(id=item["id"])
+    details = await get_item_details(id=item["id"])
     if details["status"] == "active":
         total = total + details["price"]
         results.append({{"name": item["name"], "price": details["price"]}})
@@ -126,14 +127,6 @@ for item in items:
 ```"""
 
 
-# TODO remove when monty supports async (which we agreed we want to do)
-def _find_await_expressions(code: str) -> list[tuple[int, int]]:
-    """Return list of (line, col) for any await expressions in code."""
-    try:
-        tree = ast.parse(code)
-        return [(node.lineno, node.col_offset) for node in ast.walk(tree) if isinstance(node, ast.Await)]
-    except SyntaxError:
-        return []
 
 
 @dataclass(kw_only=True)

@@ -307,7 +307,7 @@ def signature_from_schema(
 
     typeddict_defs = context.get_typeddict_definitions()
 
-    signature_line = f'def {name}({", ".join(params)}) -> {resolved_return_type}'
+    signature_line = f'async def {name}({", ".join(params)}) -> {resolved_return_type}'
 
     if description:
         docstring = _format_docstring(description)
