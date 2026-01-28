@@ -21,7 +21,7 @@ from pydantic_ai.runtime.abstract import (
 )
 
 try:
-    import monty
+    import pydantic_monty as monty
 except ImportError:
     raise ImportError("MontyRuntime requires 'monty'. Install with: pip install 'pydantic-ai-slim[monty]'")
 
