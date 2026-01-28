@@ -105,7 +105,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def handle_run_result(self, event: AgentRunResultEvent) -> AsyncIterator[BaseChunk]:
         pydantic_reason = event.result.response.finish_reason
         if pydantic_reason:
-            self._finish_reason = _FINISH_REASON_MAP.get(pydantic_reason)
+            self._finish_reason = _FINISH_REASON_MAP.get(pydantic_reason, 'other')
         return
         yield
 
@@ -193,6 +193,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             tool_call_id=tool_call_id,
             tool_name=part.tool_name,
             provider_executed=provider_executed,
+            provider_metadata=dump_provider_metadata(
+                id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+            ),
         )
         if part.args:
             yield ToolInputDeltaChunk(tool_call_id=tool_call_id, input_text_delta=part.args_as_json_str())
