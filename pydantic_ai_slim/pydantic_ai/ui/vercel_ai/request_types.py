@@ -1,7 +1,7 @@
 """Vercel AI request types (UI messages).
 
 Converted to Python from:
-https://github.com/vercel/ai/blob/ai%406.0.0-beta.159/packages/ai/src/ui/ui-messages.ts
+https://github.com/vercel/ai/blob/ai%406.0.57/packages/ai/src/ui/ui-messages.ts
 
 Tool approval types (`ToolApprovalRequested`, `ToolApprovalResponded`) require AI SDK v6 or later.
 """

@@ -4,7 +4,7 @@ This module provides classes for integrating Pydantic AI agents with the Vercel 
 enabling streaming event-based communication for interactive AI applications.
 
 Converted to Python from:
-https://github.com/vercel/ai/blob/ai%405.0.34/packages/ai/src/ui/ui-messages.ts
+https://github.com/vercel/ai/blob/ai%406.0.57/packages/ai/src/ui/ui-messages.ts
 """
 
 from ._adapter import VercelAIAdapter
