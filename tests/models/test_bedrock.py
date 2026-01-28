@@ -1942,6 +1942,35 @@ async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_
     assert second_usage == snapshot(RunUsage(input_tokens=1324, output_tokens=5, cache_read_tokens=1322, requests=1))
 
 
+@pytest.mark.vcr()
+async def test_bedrock_cache_messages_with_document_as_last_content(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test that bedrock_cache_messages works correctly when the last user message content is a document."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(
+        model,
+        system_prompt='You are a helpful assistant that analyzes documents.',
+        model_settings=BedrockModelSettings(
+            bedrock_cache_messages=True,  # This should add a cache point to the last user message
+        ),
+    )
+
+    # Create a document as the last piece of content in the user message
+    document = BinaryContent(data=b'This is a test document with important analysis data.', media_type='text/plain')
+    run_args = ['Please analyze this document:', document]
+
+    result = await agent.run(run_args)
+    assert 'document' in result.output.lower() or 'analysis' in result.output.lower()
+
+    # Verify cache tokens are being used
+    usage = result.usage()
+    assert usage.input_tokens > 0
+    assert usage.output_tokens > 0
+    # Should have cache write tokens on first run
+    assert usage.cache_write_tokens > 0 or usage.cache_read_tokens > 0
+
+
 async def test_bedrock_cache_point_as_first_content_raises_error(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):

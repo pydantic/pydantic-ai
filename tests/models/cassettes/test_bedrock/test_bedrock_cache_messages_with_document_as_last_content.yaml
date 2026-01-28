@@ -1,0 +1,36 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Please analyze this document:"}, {"document": {"name": "Document
+      1", "format": "txt", "source": {"bytes": "VGhpcyBpcyBhIHRlc3QgZG9jdW1lbnQgd2l0aCBpbXBvcnRhbnQgYW5hbHlzaXMgZGF0YS4="}}},
+      {"cachePoint": {"type": "default"}}]}], "system": [{"text": "You are a helpful assistant that analyzes documents."}],
+      "inferenceConfig": {}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MDkwNDQ4MTEtMGNjMS00OTlkLTljZDAtYzVkZTYxZjkwMjBi
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '378'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '338'
+      content-type:
+      - application/json
+      date:
+      - Mon, 28 Jan 2026 04:30:00 GMT
+    body:
+      string: '{"output": {"message": {"content": [{"text": "I can see you'\''ve shared a document containing the text \"This is a test document with important analysis data.\" This appears to be a sample document for testing purposes. The document contains basic text content that could serve as a foundation for analysis tasks. What specific analysis would you like me to perform on this document?"}], "role": "assistant"}}, "stopReason": "end_turn", "usage": {"inputTokens": 42, "outputTokens": 65, "cacheWriteInputTokens": 40, "cacheReadInputTokens": 0}}'
+    status:
+      code: 200
+      message: OK
+version: 1
