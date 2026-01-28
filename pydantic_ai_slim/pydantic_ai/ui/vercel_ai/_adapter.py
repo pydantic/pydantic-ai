@@ -101,12 +101,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             agent: The Pydantic AI agent to run.
             enable_tool_approval: Whether to enable tool approval streaming for human-in-the-loop workflows.
         """
-        return cls(
-            agent=agent,
-            run_input=cls.build_run_input(await request.body()),
-            accept=request.headers.get('accept'),
-            enable_tool_approval=enable_tool_approval,
-        )
+        adapter = cast(VercelAIAdapter[AgentDepsT, OutputDataT], await super().from_request(request, agent=agent))
+        adapter.enable_tool_approval = enable_tool_approval
+        return adapter
 
     def build_event_stream(self) -> UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
         """Build a Vercel AI event stream transformer."""
