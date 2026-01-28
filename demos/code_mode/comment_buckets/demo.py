@@ -10,7 +10,8 @@ import os
 
 from pydantic_ai import Agent, ModelSettings
 from pydantic_ai.mcp import MCPServerStreamableHTTP
-from pydantic_ai.models import ModelSettings
+from pydantic_ai.runtime import CodeRuntime
+from pydantic_ai.runtime.monty import MontyRuntime
 from pydantic_ai.toolsets.code_mode import CodeModeToolset
 
 # Demo intent: nested PR -> files/reviews/comments fan-out; code mode does it in one run.
@@ -79,9 +80,15 @@ def create_traditional_agent(github: MCPServerStreamableHTTP, model: str = DEFAU
     return agent
 
 
-def create_code_mode_agent(github: MCPServerStreamableHTTP, model: str = DEFAULT_MODEL) -> Agent[None, str]:
+def create_code_mode_agent(
+    github: MCPServerStreamableHTTP,
+    model: str = DEFAULT_MODEL,
+    runtime: CodeRuntime | None = None,
+) -> Agent[None, str]:
     """Create agent with code mode (tools as Python functions)."""
-    code_toolset: CodeModeToolset[None] = CodeModeToolset(wrapped=github, max_retries=MAX_RETRIES)
+    if runtime is None:
+        runtime = MontyRuntime()
+    code_toolset: CodeModeToolset[None] = CodeModeToolset(wrapped=github, max_retries=MAX_RETRIES, runtime=runtime)
     agent: Agent[None, str] = Agent(
         model,
         toolsets=[code_toolset],

@@ -13,6 +13,8 @@ import logfire
 
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 from pydantic_ai.messages import ModelResponse, RetryPromptPart
+from pydantic_ai.runtime import CodeRuntime
+from pydantic_ai.runtime.monty import MontyRuntime
 
 from .demo import MODELS, PROMPT, create_code_mode_agent, create_github_mcp, create_traditional_agent
 
@@ -28,10 +30,12 @@ class RunResult:
     output: str | None
 
 
-async def run_mode(mode: str, github: MCPServerStreamableHTTP, model: str) -> RunResult:
+async def run_mode(
+    mode: str, github: MCPServerStreamableHTTP, model: str, runtime: CodeRuntime | None = None
+) -> RunResult:
     with logfire.span('demo_run.{mode}', mode=mode, model=model):
         if mode == 'code_mode':
-            agent = create_code_mode_agent(github, model=model)
+            agent = create_code_mode_agent(github, model=model, runtime=runtime)
             code_toolset = agent.toolsets[0]
             async with code_toolset:
                 result = await agent.run(PROMPT)
@@ -66,12 +70,13 @@ async def run_mode(mode: str, github: MCPServerStreamableHTTP, model: str) -> Ru
 
 async def main() -> None:
     github: MCPServerStreamableHTTP = create_github_mcp()
+    runtime = MontyRuntime()
 
     async with github:
         for model in MODELS:
             with logfire.span('model_run {model}', model=model):
                 tool_calling_result = await run_mode('tool_calling', github, model)
-                code_mode_result = await run_mode('code_mode', github, model)
+                code_mode_result = await run_mode('code_mode', github, model, runtime=runtime)
 
             logfire.info(
                 'tool_calling_result: {request_count=} {token_count=} {retry_count=}',
