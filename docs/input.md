@@ -144,12 +144,12 @@ Use [`UploadedFile`][pydantic_ai.messages.UploadedFile] to reference files that 
 
 | Model | Support |
 |-------|---------|
-| [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | ✅ `UploadedFile` via [Anthropic Files API](https://docs.anthropic.com/en/docs/build-with-claude/files) |
-| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | ✅ `UploadedFile` via [OpenAI Files API](https://platform.openai.com/docs/api-reference/files) |
-| [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | ✅ `UploadedFile` via [OpenAI Files API](https://platform.openai.com/docs/api-reference/files) |
-| [`GoogleModel`][pydantic_ai.models.google.GoogleModel] | ✅ `UploadedFile` via [Google Files API](https://ai.google.dev/gemini-api/docs/files) |
-| [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | ✅ `UploadedFile` via S3 URLs (`s3://bucket/key`) |
-| [`XaiModel`][pydantic_ai.models.xai.XaiModel] | ✅ `UploadedFile` via [xAI Files API](https://docs.x.ai/docs/guides/files) |
+| [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | ✅ via [Anthropic Files API](https://docs.anthropic.com/en/docs/build-with-claude/files) |
+| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | ✅ via [OpenAI Files API](https://platform.openai.com/docs/api-reference/files) |
+| [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | ✅ via [OpenAI Files API](https://platform.openai.com/docs/api-reference/files) |
+| [`GoogleModel`][pydantic_ai.models.google.GoogleModel] | ✅ via [Google Files API](https://ai.google.dev/gemini-api/docs/files) |
+| [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | ✅ via S3 URLs (`s3://bucket/key`) |
+| [`XaiModel`][pydantic_ai.models.xai.XaiModel] | ✅ via [xAI Files API](https://docs.x.ai/docs/guides/files) |
 | Other models | ❌ Not supported |
 
 ### Provider Name Requirement
@@ -157,13 +157,13 @@ Use [`UploadedFile`][pydantic_ai.messages.UploadedFile] to reference files that 
 When using [`UploadedFile`][pydantic_ai.messages.UploadedFile] you must set the `provider_name`. Uploaded files are specific to the system they are uploaded to and are not transferable across providers. Trying to use a message that contains an `UploadedFile` with a different provider will result in an error.
 
 !!! tip "Getting the provider name"
-    Use `model.system` to get the correct provider name dynamically. This ensures your code works correctly even if the provider name changes. All examples below demonstrate this pattern.
+    Use [`model.system`][pydantic_ai.models.Model.system] to get the correct provider name dynamically. This ensures your code works correctly even if the provider name changes. All examples below demonstrate this pattern.
 
 If you want to introduce portability into your agent logic to allow the same prompt history to work with different provider backends, you can use a [history processor][pydantic_ai.agent.Agent.history_processors] to remove or rewrite `UploadedFile` parts from messages before sending them to a provider that does not support them. Be aware that stripping out `UploadedFile` instances might confuse the model, especially if references to those files remain in the text.
 
 ### Anthropic
 
-Upload files using `provider.client` (the underlying [Anthropic client](https://docs.anthropic.com/en/docs/build-with-claude/files)).
+Follow the [Anthropic Files API docs](https://docs.anthropic.com/en/docs/build-with-claude/files) to upload files. You can access the underlying Anthropic client via `provider.client`.
 
 !!! note "Beta Feature"
     The Anthropic Files API is currently in beta. You need to include the beta header `anthropic-beta: files-api-2025-04-14` when making requests.
@@ -202,7 +202,7 @@ asyncio.run(main())
 
 ### OpenAI
 
-Upload files using `provider.client` (the underlying [OpenAI client](https://platform.openai.com/docs/api-reference/files/create)).
+Follow the [OpenAI Files API docs](https://platform.openai.com/docs/api-reference/files/create) to upload files. You can access the underlying OpenAI client via `provider.client`.
 
 ```py {title="uploaded_file_openai.py" test="skip"}
 import asyncio
@@ -237,7 +237,7 @@ asyncio.run(main())
 
 ### Google
 
-Upload files using `provider.client` (the underlying [Google GenAI client](https://ai.google.dev/gemini-api/docs/files)).
+Follow the [Google Files API docs](https://ai.google.dev/gemini-api/docs/files) to upload files. You can access the underlying Google GenAI client via `provider.client`.
 
 ```py {title="uploaded_file_google.py" test="skip"}
 import asyncio
@@ -309,7 +309,7 @@ asyncio.run(main())
 
 ### xAI
 
-Upload files using `provider.client` (the underlying [xAI client](https://docs.x.ai/docs/guides/files)).
+Follow the [xAI Files API docs](https://docs.x.ai/docs/guides/files) to upload files. You can access the underlying xAI client via `provider.client`.
 
 ```py {title="uploaded_file_xai.py" test="skip"}
 import asyncio

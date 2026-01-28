@@ -34,14 +34,13 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UnexpectedModelBehavior,
-    UploadedFile,
     UserError,
     UserPromptPart,
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.exceptions import ContentFilterError
-from pydantic_ai.messages import SystemPromptPart
+from pydantic_ai.messages import SystemPromptPart, UploadedFile
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile

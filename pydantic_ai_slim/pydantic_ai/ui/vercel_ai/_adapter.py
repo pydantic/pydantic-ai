@@ -117,7 +117,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             # Check provider_metadata for UploadedFile data
                             provider_meta = load_provider_metadata(part.provider_metadata)
                             uploaded_file_id = provider_meta.get('uploaded_file_id')
-                            uploaded_file_provider = provider_meta.get('uploaded_file_provider')
+                            uploaded_file_provider = provider_meta.get('provider_name')
                             if uploaded_file_id and uploaded_file_provider:
                                 file = UploadedFile(
                                     file_id=uploaded_file_id,
@@ -554,7 +554,7 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
                 media_type = item.media_type or 'application/octet-stream'
                 # Store uploaded file info in provider_metadata for round-trip support
                 provider_metadata = dump_provider_metadata(
-                    uploaded_file_id=item.file_id, uploaded_file_provider=item.provider_name
+                    uploaded_file_id=item.file_id, provider_name=item.provider_name
                 )
                 ui_parts.append(
                     FileUIPart(url=item.file_id, media_type=media_type, provider_metadata=provider_metadata)
