@@ -245,9 +245,10 @@ async def test_args_validator_event_args_valid_field():
     assert len(tool_call_events) >= 1
 
     # Check args_valid is True for the tool with validator
-    for event in tool_call_events:
-        if event.part.tool_name == 'add_numbers':
-            assert event.args_valid is True
+    add_number_events = [e for e in tool_call_events if e.part.tool_name == 'add_numbers']
+    assert add_number_events, 'Should have events for add_numbers'
+    for event in add_number_events:
+        assert event.args_valid is True
 
 
 # Test 10: args_valid=False when validator fails
@@ -308,9 +309,10 @@ async def test_args_validator_event_args_valid_no_custom_validator():
     assert len(tool_call_events) >= 1
 
     # args_valid should be True when schema validation passes (no custom validator)
-    for event in tool_call_events:
-        if event.part.tool_name == 'add_numbers':
-            assert event.args_valid is True
+    add_number_events = [e for e in tool_call_events if e.part.tool_name == 'add_numbers']
+    assert add_number_events, 'Should have events for add_numbers'
+    for event in add_number_events:
+        assert event.args_valid is True
 
 
 # Test 12: tool_plain with args_validator
@@ -367,7 +369,7 @@ async def test_schema_validation_failure_args_valid_false():
     # The model always returns invalid args, so eventually max retries will be exceeded
     # We collect events until that happens
     try:
-        async for event in agent.run_stream_events('call add_numbers', deps=42):
+        async for event in agent.run_stream_events('call add_numbers', deps=42):  # pragma: no branch
             events.append(event)
     except UnexpectedModelBehavior:
         pass  # Expected when max retries exceeded
@@ -759,7 +761,7 @@ async def test_external_tool_validation_failure():
     events: list[Any] = []
     # The model returns invalid args, which should trigger validation failure
     try:
-        async for event in agent.run_stream_events('test external tool validation'):
+        async for event in agent.run_stream_events('test external tool validation'):  # pragma: no branch
             events.append(event)
     except Exception:
         pass  # May fail due to validation errors
