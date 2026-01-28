@@ -250,35 +250,26 @@ The following providers have dedicated documentation on Pydantic AI:
 ## Advanced usage
 ### Agent run token usage
 
-Model/request spans report authoritative per-call token usage using the GenAI
-attributes:
+Model/request spans emit per-call token usage using the standard GenAI attributes:
 
 - `gen_ai.usage.input_tokens`
 - `gen_ai.usage.output_tokens`
 
-These attributes represent the actual token usage for individual model or
-chat requests and should be treated as the source of truth for per-call
-metrics such as billing and latency analysis.
+These attributes represent the actual token usage for individual model or chat
+requests and should be treated as the source of truth for per-call metrics such
+as billing and latency analysis.
 
-Agent run spans may also report token usage, but this represents an aggregation
-over all child model/request spans within a single agent run. To avoid ambiguity
-and accidental double-counting in observability backends that aggregate span
-attributes across parent and child spans, aggregated usage on agent run spans
-is emitted using agent-scoped attribute names:
+Agent run spans may also report token usage aggregated across all child
+model/request spans in a single agent run. Since some observability backends
+aggregate span attributes across parent and child spans incorrectly, aggregated
+usage on agent run spans is emitted using agent-scoped attribute names:
 
 - `gen_ai.usage.aggregated_input_tokens`
 - `gen_ai.usage.aggregated_output_tokens`
 
-This distinction makes the semantics explicit:
-
-- Model/request spans report per-call token usage.
-- Agent run spans report aggregated token usage across the full agent run.
-
-When using observability backends that aggregate span attributes, consumers
-should prefer model/request span usage for billing and fine-grained metrics,
-and treat agent run usage as a high-level summary representing the total
-resource consumption of the agent execution.
-
+When using such backends, consumers should prefer model/request span usage for
+billing and fine-grained metrics, and treat agent run usage as a high-level
+summary.
 
 ### Configuring data format
 
