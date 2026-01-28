@@ -209,7 +209,7 @@ async def test_server_instructions_not_initialized():
     
     with pytest.raises(
         AttributeError, 
-        match='The `MCPServerStdio` instructions are only available after initialization.'
+        match='The `MCPServerStdio.instructions` is only instantiated after initialization.'
     ):
         await server.instructions(ctx)
 
