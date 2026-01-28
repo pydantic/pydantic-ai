@@ -3158,9 +3158,4 @@ async def test_binary_content_serialization_in_workflow(client: Client):
             for part in msg.parts
             if isinstance(part, ToolReturnPart)
         )
-        assert tool_return_part.content == snapshot(
-            {
-                'image': BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'),
-                'label': 'test',
-            }
-        )
+        assert tool_return_part.content == get_binary_in_dict(None)  # pyright: ignore[reportArgumentType]
