@@ -2,7 +2,7 @@ from __future__ import annotations
 from abc import ABC
 from dataclasses import dataclass, field
 from typing import Any
-from typing_extensions import Awaitable, Callable
+from typing_extensions import Awaitable, Callable, TypeAlias
 
 
 @dataclass(frozen=True)
@@ -39,6 +39,10 @@ class CodeRuntimeError(CodeExecutionError):
     """Code raised an exception at runtime."""
     pass
 
+NextFn: TypeAlias = Callable[[], Awaitable[FunctionCall | ExecutionResult]]
+ProvideResultFn: TypeAlias = Callable[[Any], Awaitable[None]]
+DumpFn: TypeAlias = Callable[[], bytes | None]
+
 class CodeExecution:
     """Handle for one running code execution. Created by CodeRuntime.execute() or .restore().
 
@@ -48,9 +52,15 @@ class CodeExecution:
 
     # Injected by the runtime at construction time — these are the actual behavior.
     # Public methods below delegate to these callables.
-    _next: Callable[[], Awaitable[FunctionCall | ExecutionResult]]
-    _provide_result: Callable[[Any], Awaitable[ExecutionResult]]
-    _dump: Callable[[], bytes | None] = lambda: None
+    _next: NextFn
+    _provide_result: ProvideResultFn
+    _dump: DumpFn = lambda: None
+
+
+    def __init__(self, next: NextFn, provide_result: ProvideResultFn, dump: DumpFn) -> None:
+        self._next = next
+        self._provide_result = provide_result
+        self._dump = dump
 
     async def next(self) -> FunctionCall | ExecutionResult:
         """Pull the next event: either a FunctionCall (code wants a tool) or ExecutionResult (code finished).
@@ -101,10 +111,14 @@ class CodeRuntime(ABC):
         """
         ...
 
-    async def type_check(self, code: str) -> None:
+    async def type_check(self, code: str, signatures: list[str]) -> None:
         """Optional pre-execution type checking.
 
         Default is a no-op. Runtimes with a built-in type checker can override this.
+
+        Args:
+            code: The LLM-generated Python code to type check.
+            signatures: List of Python function signature strings for available tools.
 
         Raises:
             CodeTypeError: If type checking finds errors.

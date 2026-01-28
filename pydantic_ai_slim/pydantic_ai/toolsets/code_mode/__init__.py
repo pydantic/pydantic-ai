@@ -7,9 +7,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
-import monty
 from pydantic import TypeAdapter
 from typing_extensions import TypedDict
+
+from pydantic_ai.runtime.abstract import CodeExecution, CodeRuntime, CodeRuntimeError, CodeSyntaxError, CodeTypeError, ExecutionResult, FunctionCall
+from pydantic_ai.runtime.monty import MontyRuntime
 
 from ..._run_context import AgentDepsT, RunContext
 from ...exceptions import ApprovalRequired, ModelRetry
@@ -221,6 +223,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 callback after deserialization.
     """
 
+    runtime: CodeRuntime = field(default_factory=MontyRuntime)
+    # The user needs to provide a runtime to be used with the toolset. If not provided we will use Monty by default.
     prompt_builder: Callable[..., str] = build_code_mode_prompt
     max_retries: int = 3
     tool_name_prefix: str | None = None
@@ -230,6 +234,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     description_handler: DescriptionHandler | None = None
     _cached_signatures: list[str] = field(default_factory=list, init=False, repr=False)
     _name_mapping: ToolNameMapping = field(default_factory=ToolNameMapping, init=False, repr=False)
+
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         wrapped_tools = await super().get_tools(ctx)
@@ -303,45 +308,40 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             )
 
         try:
-            m = monty.Monty(code, external_functions=list(tool.original_tools.keys()))
+            functions = list(tool.original_tools.keys())
 
-            result: monty.MontySnapshot | monty.MontyComplete | None = None
+            state: CodeExecution | None = None
             if checkpoint:
-                result = monty.MontySnapshot.load(checkpoint['checkpoint_dump'])
+                state = await self.runtime.restore(checkpoint['checkpoint_dump'])
 
-            if result is None:
-                prefix = _build_type_check_prefix(self._cached_signatures)
-                m.type_check(prefix_code=prefix)
-                # result = m.start(limits=monty_limits)
-                result = m.start()
-        except monty.MontyTypingError as e:
-            error_msg = e.display('concise')
-            raise ModelRetry(f'Type error in generated code:\n{error_msg}')
-        except monty.MontySyntaxError as e:
-            error_msg = e.display()
-            raise ModelRetry(f'Syntax error in generated code:\n{error_msg}')
-        except monty.MontyRuntimeError as e:
-            # Timeouts are also caught here
-            error_msg = e.display('traceback')
-            raise ModelRetry(f'Runtime error in generated code:\n{error_msg}')
+            if state is None:
+                await self.runtime.type_check(code, self._cached_signatures)
+                state = await self.runtime.execute(code, functions)
+        except CodeTypeError as e:
+            raise ModelRetry(f'Type error in generated code:\n{e.message}')
+        except CodeSyntaxError as e:
+            raise ModelRetry(f'Syntax error in generated code:\n{e.message}')
+        except CodeRuntimeError as e:
+            raise ModelRetry(f'Runtime error in generated code:\n{e.message}')
 
         # Only the first inner tool call after approval is marked approved. This keeps
         # approval scoped to a single tool call, not the entire code execution.
         next_call_approved = checkpoint is not None
 
-        while isinstance(result, monty.MontySnapshot):
-            sanitized_name = result.function_name
+        event = await state.next()
+        while isinstance(event, FunctionCall):
+            sanitized_name = event.function_name
             original_tool = tool.original_tools[sanitized_name]
             # Map sanitized name back to original for calling the underlying toolset
             original_name = self._name_mapping.get_original(sanitized_name) or sanitized_name
 
-            tool_kwargs = dict(result.kwargs)
-            if result.args:
+            tool_kwargs = dict(event.kwargs)
+            if event.args:
                 # Positional args are mapped using JSON schema property order, which may not match
                 # the tool's actual parameter order. The prompt instructs models to use keyword
                 # arguments only, but we handle positional args as a fallback for non-compliant models.
                 param_names = list(original_tool.tool_def.parameters_json_schema.get('properties', {}).keys())
-                for i, arg in enumerate(result.args):
+                for i, arg in enumerate(event.args):
                     if i < len(param_names):
                         tool_kwargs[param_names[i]] = arg
 
@@ -383,7 +383,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 raise ApprovalRequired(
                     metadata={
                         'code_mode': {
-                            'checkpoint_dump': result.dump(),
+                            'checkpoint_dump': state.dump(),
                             'tool_name': original_name,
                             'sanitized_name': sanitized_name,
                             'tool_args': tool_kwargs,
@@ -396,9 +396,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     }
                 )
             try:
-                result = result.resume(return_value=tool_return_value)
-            except monty.MontyRuntimeError as e:
-                error_msg = e.display('traceback')
-                raise ModelRetry(f'Runtime error in generated code:\n{error_msg}')
+                await state.provide_result(tool_return_value)
+                event = await state.next()
+            except CodeRuntimeError as e:
+                raise ModelRetry(f'Runtime error in generated code:\n{e.message}')
 
-        return result.output
+        assert isinstance(event, ExecutionResult)
+        return event.output
