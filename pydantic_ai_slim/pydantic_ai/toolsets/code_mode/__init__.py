@@ -11,13 +11,12 @@ from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_ai.runtime.abstract import (
-    CodeExecution,
     CodeRuntime,
     CodeRuntimeError,
     CodeSyntaxError,
     CodeTypeError,
-    ExecutionResult,
     FunctionCall,
+    ToolCallback,
 )
 from pydantic_ai.runtime.monty import MontyRuntime
 
@@ -120,12 +119,6 @@ for item in items:
 # Return processed summary, NOT raw data
 {{"total": total, "count": len(results), "items": results}}
 ```"""
-
-
-def _build_type_check_prefix(signatures: list[str]) -> str:
-    """Build prefix code with imports and tool signatures for Monty type checking."""
-    imports = 'from typing import Any, TypedDict, NotRequired, Literal\n\n'
-    return imports + '\n\n'.join(signatures)
 
 
 # TODO remove when monty supports async (which we agreed we want to do)
@@ -288,7 +281,77 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             )
         }
 
-    async def call_tool(  # noqa: C901
+    def _make_tool_callback(
+        self,
+        tool: _CodeModeTool[AgentDepsT],
+        ctx: RunContext[AgentDepsT],
+        checkpoint: dict[str, Any] | None,
+    ) -> ToolCallback:
+        next_call_approved = checkpoint is not None
+        override_args: dict[str, Any] | None = (
+            ctx.tool_call_metadata.get('_override_args') if checkpoint and ctx.tool_call_metadata else None
+        )
+
+        async def callback(call: FunctionCall) -> Any:
+            nonlocal next_call_approved, override_args
+            sanitized_name = call.function_name
+            original_tool = tool.original_tools[sanitized_name]
+            original_name = self._name_mapping.get_original(sanitized_name) or sanitized_name
+
+            # Build kwargs (positional arg fallback)
+            tool_kwargs = dict(call.kwargs)
+            if call.args:
+                # Positional args are mapped using JSON schema property order, which may not match
+                # the tool's actual parameter order. The prompt instructs models to use keyword
+                # arguments only, but we handle positional args as a fallback for non-compliant models.
+                param_names = list(original_tool.tool_def.parameters_json_schema.get('properties', {}).keys())
+                for i, arg in enumerate(call.args):
+                    if i < len(param_names):
+                        tool_kwargs[param_names[i]] = arg
+
+            # One-shot override from approval
+            if override_args:
+                tool_kwargs = override_args
+                override_args = None
+
+            # When resuming from checkpoint, pass only the inner tool's original metadata
+            # to avoid leaking code_mode's checkpoint data into the inner tool's context.
+            inner_metadata = ctx.tool_call_metadata.get('original_metadata') if checkpoint else None
+            inner_ctx = replace(
+                ctx, tool_name=original_name, tool_call_approved=next_call_approved, tool_call_metadata=inner_metadata
+            )
+            # Only the first inner tool call after approval is marked approved.
+            next_call_approved = False
+
+            span_attributes = {
+                'gen_ai.tool.name': original_name,
+                'code_mode.inner_tool': True,
+                'code_mode.sanitized_name': sanitized_name,
+                'logfire.msg': f'code mode calling: {original_name}',
+            }
+
+            try:
+                # TODO: Consider letting tool manager handle the span(Discussion with Douwe)?
+                span_name = f'code_mode_tool:{original_name}'
+                with ctx.tracer.start_as_current_span(span_name, attributes=span_attributes):
+                    return await super(CodeModeToolset, self).call_tool(
+                        original_name, tool_kwargs, inner_ctx, original_tool
+                    )
+            except ApprovalRequired as e:
+                # Attach tool info so the consumer can build _approval_call wrapping
+                raise ApprovalRequired(
+                    metadata={
+                        **(e.metadata or {}),
+                        'tool_name': original_name,
+                        'sanitized_name': sanitized_name,
+                        'tool_args': tool_kwargs,
+                        'original_metadata': e.metadata,
+                    }
+                )
+
+        return callback
+
+    async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         code = tool_args['code']
@@ -296,117 +359,41 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         assert isinstance(tool, _CodeModeTool)
         assert isinstance(code, str)
 
-        # Do we have a previous checkpoint we can resume from?
-        checkpoint: dict[str, Any] | None = None
-
-        if ctx.tool_call_approved and ctx.tool_call_metadata:
-            checkpoint = ctx.tool_call_metadata.get('code_mode')
-
-        # Adding this to mitigate potential infinite loops or resource exhaustion
-        # Or maybe just something dubious by the model which could hang this
-        #
-        # monty_limits = monty.ResourceLimits(
-        #     max_duration_secs=120  # Allow for this to be configurable?
-        # )
-
         if _find_await_expressions(code):
             raise ModelRetry(
                 'await expressions are not supported. All functions are synchronous - call them directly without await.'
             )
 
+        # Do we have a previous checkpoint we can resume from?
+        checkpoint: dict[str, Any] | None = None
+        if ctx.tool_call_approved and ctx.tool_call_metadata:
+            checkpoint = ctx.tool_call_metadata.get('code_mode')
+
+        callback = self._make_tool_callback(tool, ctx, checkpoint)
+
         try:
             functions = list(tool.original_tools.keys())
-
-            state: CodeExecution | None = None
-            if checkpoint:
-                state = await self.runtime.restore(checkpoint['checkpoint_dump'])
-
-            if state is None:
-                await self.runtime.type_check(code, self._cached_signatures)
-                state = await self.runtime.execute(code, functions)
+            if checkpoint and checkpoint.get('runtime_checkpoint'):
+                return await self.runtime.resume_with_tools(checkpoint['runtime_checkpoint'], callback)
+            await self.runtime.type_check(code, self._cached_signatures)
+            return await self.runtime.run_with_tools(code, functions, callback)
         except CodeTypeError as e:
             raise ModelRetry(f'Type error in generated code:\n{e.message}')
         except CodeSyntaxError as e:
             raise ModelRetry(f'Syntax error in generated code:\n{e.message}')
         except CodeRuntimeError as e:
             raise ModelRetry(f'Runtime error in generated code:\n{e.message}')
-
-        # Only the first inner tool call after approval is marked approved. This keeps
-        # approval scoped to a single tool call, not the entire code execution.
-        next_call_approved = checkpoint is not None
-
-        event = await state.next()
-        while isinstance(event, FunctionCall):
-            sanitized_name = event.function_name
-            original_tool = tool.original_tools[sanitized_name]
-            # Map sanitized name back to original for calling the underlying toolset
-            original_name = self._name_mapping.get_original(sanitized_name) or sanitized_name
-
-            tool_kwargs = dict(event.kwargs)
-            if event.args:
-                # Positional args are mapped using JSON schema property order, which may not match
-                # the tool's actual parameter order. The prompt instructs models to use keyword
-                # arguments only, but we handle positional args as a fallback for non-compliant models.
-                param_names = list(original_tool.tool_def.parameters_json_schema.get('properties', {}).keys())
-                for i, arg in enumerate(event.args):
-                    if i < len(param_names):
-                        tool_kwargs[param_names[i]] = arg
-
-            # Apply override_args if provided by user during approval.
-            # When _approval_call is present, the agent graph stores override_args in metadata
-            # as '_override_args' rather than replacing the outer tool's args directly.
-            if checkpoint and ctx.tool_call_metadata:
-                override_args = ctx.tool_call_metadata.get('_override_args')
-                if override_args:
-                    tool_kwargs = override_args
-
-            # NOTE: we intentionally do not propagate outer approval beyond a single call, approval was for one call
-            # When resuming from checkpoint, pass only the inner tool's original metadata
-            # to avoid leaking code_mode's checkpoint data into the inner tool's context for no reason.
-            inner_metadata = ctx.tool_call_metadata.get('original_metadata') if checkpoint else None
-            inner_ctx = replace(
-                ctx, tool_name=original_name, tool_call_approved=next_call_approved, tool_call_metadata=inner_metadata
-            )
-            next_call_approved = False
-
-            try:
-                span_attributes = {
-                    'gen_ai.tool.name': original_name,
-                    'code_mode.inner_tool': True,
-                    'code_mode.sanitized_name': sanitized_name,
-                    'logfire.msg': f'code mode calling: {original_name}',
+        except ApprovalRequired as e:
+            # The runtime wraps runtime_checkpoint into metadata. We wrap that
+            # further as code_mode metadata and surface _approval_call for the agent graph.
+            metadata = e.metadata or {}
+            raise ApprovalRequired(
+                metadata={
+                    'code_mode': metadata,
+                    'original_metadata': metadata.get('original_metadata'),
+                    '_approval_call': {
+                        'tool_name': metadata.get('tool_name'),
+                        'args': metadata.get('tool_args'),
+                    },
                 }
-
-                # TODO: Consider letting tool manager handle the span(Discussion with Douwe)?
-                span_name = f'code_mode_tool:{original_name}'
-                with ctx.tracer.start_as_current_span(span_name, attributes=span_attributes):
-                    tool_return_value = await super().call_tool(original_name, tool_kwargs, inner_ctx, original_tool)
-            except ApprovalRequired as e:
-                # The inner tool needs approval - dump Monty state into the metadata and re-raise.
-                # We keep 'original_metadata' separate to avoid key collisions when passing
-                # metadata back to the inner tool on resume.
-                # '_approval_call' tells the agent graph to surface the inner tool name/args
-                # in DeferredToolRequests.approvals instead of the outer 'run_code' call.
-                raise ApprovalRequired(
-                    metadata={
-                        'code_mode': {
-                            'checkpoint_dump': state.dump(),
-                            'tool_name': original_name,
-                            'sanitized_name': sanitized_name,
-                            'tool_args': tool_kwargs,
-                        },
-                        'original_metadata': e.metadata,
-                        '_approval_call': {
-                            'tool_name': original_name,
-                            'args': tool_kwargs,
-                        },
-                    }
-                )
-            try:
-                await state.provide_result(tool_return_value)
-                event = await state.next()
-            except CodeRuntimeError as e:
-                raise ModelRetry(f'Runtime error in generated code:\n{e.message}')
-
-        assert isinstance(event, ExecutionResult)
-        return event.output
+            )

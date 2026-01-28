@@ -1,23 +1,23 @@
 """CodeRuntime implementation backed by the Monty sandboxed Python interpreter.
 
 Monty executes LLM-generated code in a restricted environment and pauses
-whenever the code calls an external function (tool). This pause-and-resume
-model maps directly onto the CodeExecution protocol: each pause yields a
-FunctionCall, and the caller feeds back a result to continue execution.
+whenever the code calls an external function (tool). This module implements
+the callback-based CodeRuntime protocol: the runtime drives a loop over
+Monty's pause points, invoking the caller's callback for each tool call.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.runtime.abstract import (
-    CodeExecution,
     CodeRuntime,
     CodeRuntimeError,
     CodeSyntaxError,
     CodeTypeError,
-    ExecutionResult,
     FunctionCall,
+    ToolCallback,
 )
 
 try:
@@ -35,21 +35,20 @@ class MontyRuntime(CodeRuntime):
     resumed once the host has computed the function's return value.
     """
 
-    async def execute(self, code: str, functions: list[str]) -> CodeExecution:
+    async def run_with_tools(self, code: str, functions: list[str], call_tool: ToolCallback) -> Any:
         """Start executing code in the Monty sandbox.
 
         Args:
             code: LLM-generated Python source code.
             functions: Names of external functions the code is allowed to call.
-                Monty will pause execution whenever one of these is invoked.
+            call_tool: Callback invoked for each external function call.
 
         Returns:
-            A CodeExecution handle for iterating through function calls and
-            the final result.
+            The final output of the code execution.
 
         Raises:
             CodeSyntaxError: If Monty cannot parse the code.
-            CodeRuntimeError: If execution fails immediately (e.g. top-level error).
+            CodeRuntimeError: If execution fails.
         """
         m = monty.Monty(code, external_functions=functions)
         try:
@@ -59,7 +58,20 @@ class MontyRuntime(CodeRuntime):
         except monty.MontyRuntimeError as e:
             raise CodeRuntimeError(e.display())
 
-        return _build_execution(state)
+        return await self._execution_loop(state, call_tool)
+
+    async def resume_with_tools(self, checkpoint: bytes, call_tool: ToolCallback) -> Any:
+        """Resume a paused execution from a serialized checkpoint.
+
+        Args:
+            checkpoint: Bytes previously obtained from a MontySnapshot dump.
+            call_tool: Callback invoked for each remaining external function call.
+
+        Returns:
+            The final output of the code execution.
+        """
+        state = monty.MontySnapshot.load(checkpoint)
+        return await self._execution_loop(state, call_tool)
 
     async def type_check(self, code: str, signatures: list[str]) -> None:
         """Type check code using Monty's built-in type checker.
@@ -77,8 +89,6 @@ class MontyRuntime(CodeRuntime):
             CodeTypeError: If Monty's type checker finds type errors.
             CodeSyntaxError: If the code cannot be parsed.
         """
-        # Build a preamble containing typing imports and tool signatures so
-        # Monty can resolve types for external function calls.
         imports = 'from typing import Any, TypedDict, NotRequired, Literal\n\n'
         prefix_code = imports + '\n\n'.join(signatures)
         m = monty.Monty(code, external_functions=[])
@@ -89,74 +99,72 @@ class MontyRuntime(CodeRuntime):
         except monty.MontySyntaxError as e:
             raise CodeSyntaxError(e.display())
 
-    async def restore(self, checkpoint: bytes) -> CodeExecution:
-        """Restore a paused execution from a serialized checkpoint.
+    async def _execution_loop(
+        self,
+        state: monty.MontySnapshot | monty.MontyComplete,
+        call_tool: ToolCallback,
+    ) -> Any:
+        """Drive Monty's pause/resume loop, invoking call_tool at each pause point.
+
+        The runtime owns this loop — not the consumer. Each iteration:
+        1. Monty is paused at a tool call (MontySnapshot) — package it as a FunctionCall.
+        2. Invoke the consumer's callback, which handles name mapping, tracing,
+           approval context, and the actual inner tool call.
+        3. Feed the callback's return value back to Monty to resume execution.
+
+        If the callback raises ApprovalRequired (because the inner tool needs
+        human approval), the runtime is the right place to handle it: we have
+        direct access to `state.dump()` here, so we serialize the Monty VM
+        state and attach it as `runtime_checkpoint` in the exception metadata.
+        The consumer (CodeModeToolset.call_tool) will wrap this further with
+        its own `code_mode` metadata before re-raising to the agent graph.
+
+        On resume (via resume_with_tools), the same loop runs again from the
+        restored snapshot. The consumer builds the callback with
+        next_call_approved=True for the first call, so the previously-blocked
+        tool call succeeds this time, and execution continues normally.
 
         Args:
-            checkpoint: Bytes previously returned by ``CodeExecution.dump()``,
-                containing a serialized MontySnapshot.
+            state: The current Monty state (snapshot or complete).
+            call_tool: Callback provided by CodeModeToolset._make_tool_callback().
 
         Returns:
-            A CodeExecution positioned at the point where the snapshot was
-            taken, ready to receive a result and continue.
+            The final output once Monty completes.
         """
-        result = monty.MontySnapshot.load(checkpoint)
-        return _build_execution(result)
-
-
-def _build_execution(initial_state: monty.MontySnapshot | monty.MontyComplete) -> CodeExecution:
-    """Wrap a Monty state object in the CodeExecution protocol.
-
-    Uses closure-based state to track the current Monty snapshot and any
-    pending tool result. This avoids subclassing CodeExecution while still
-    providing the three callbacks it requires (next, provide_result, dump).
-
-    Args:
-        initial_state: Either a MontySnapshot (execution paused at a function
-            call) or MontyComplete (execution already finished).
-
-    Returns:
-        A fully wired CodeExecution instance.
-    """
-    # Mutable containers used as closure state — lists allow mutation from
-    # inner functions without `nonlocal`.
-    state = [initial_state]
-    pending_result: list[Any] = []
-
-    async def _next() -> FunctionCall | ExecutionResult:
-        # If a result was provided since the last call, resume execution
-        # with that value before inspecting the new state.
-        if pending_result:
-            if not isinstance(state[0], monty.MontySnapshot):
-                raise CodeRuntimeError('Cannot resume a completed execution')
+        while isinstance(state, monty.MontySnapshot):
+            # Package Monty's pause point into a vendor-agnostic FunctionCall.
+            call = FunctionCall(
+                function_name=state.function_name,
+                args=tuple(state.args) if state.args else (),
+                kwargs=dict(state.kwargs) if state.kwargs else {},
+            )
             try:
-                state[0] = state[0].resume(return_value=pending_result.pop())
+                # Invoke the consumer's callback. Inside, this maps the sanitized
+                # function name back to the original tool name, builds kwargs,
+                # applies approval context, opens a tracing span, and calls the
+                # real tool via WrapperToolset.call_tool().
+                result = await call_tool(call)
+            except ApprovalRequired as e:
+                # The inner tool needs human approval. Since we own the Monty
+                # state, we can serialize it here — the consumer callback can't
+                # do this because it doesn't have access to the Monty snapshot.
+                # We merge our checkpoint into the exception's existing metadata
+                # (which contains tool_name, tool_args, etc. from the callback).
+                checkpoint_bytes = state.dump()
+                raise ApprovalRequired(
+                    metadata={
+                        **(e.metadata or {}),
+                        'runtime_checkpoint': checkpoint_bytes,
+                    }
+                )
+            try:
+                # Feed the tool result back to Monty. This resumes the sandboxed
+                # code from where it paused, with `result` as the return value
+                # of the function call. The new state is either another
+                # MontySnapshot (next tool call) or MontyComplete (code finished).
+                state = state.resume(return_value=result)
             except monty.MontyRuntimeError as e:
                 raise CodeRuntimeError(e.display())
 
-        s = state[0]
-        if isinstance(s, monty.MontySnapshot):
-            # Execution is paused at an external function call — surface it
-            # so the host can run the real tool and feed back a result.
-            return FunctionCall(
-                function_name=s.function_name,
-                args=tuple(s.args) if s.args else (),
-                kwargs=dict(s.kwargs) if s.kwargs else {},
-            )
-
-        # MontyComplete — execution finished, return the final output.
-        return ExecutionResult(output=s.output)
-
-    async def _provide_result(value: Any) -> None:
-        # Buffer the tool return value; it will be consumed on the next
-        # call to _next() which resumes the snapshot.
-        pending_result.append(value)
-
-    def _dump() -> bytes | None:
-        # Only snapshots (paused executions) can be serialized. Completed
-        # executions have no state to checkpoint.
-        if isinstance(state[0], monty.MontySnapshot):
-            return state[0].dump()
-        return None
-
-    return CodeExecution(_next, _provide_result, _dump)
+        assert isinstance(state, monty.MontyComplete)
+        return state.output
