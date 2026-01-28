@@ -2766,3 +2766,47 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
             ),
         ]
     )
+
+
+async def test_bedrock_prompt_cache_ttl_system_and_messages(bedrock_provider: BedrockProvider):
+    """Test that TTL is applied to system instructions and automatic message caching."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    settings = BedrockModelSettings(
+        bedrock_cache_instructions=True,
+        bedrock_cache_messages=True,
+        bedrock_prompt_cache_ttl='1h',
+    )
+
+    req = [
+        ModelRequest(parts=[SystemPromptPart(content='System')], timestamp=datetime.now()),
+        ModelRequest(parts=[UserPromptPart(content='Hello')], timestamp=datetime.now()),
+    ]
+    system_prompt, messages = await model._map_messages(req, ModelRequestParameters(), settings)  # type: ignore[reportPrivateUsage]
+
+    assert system_prompt[-1] == {'cachePoint': {'type': 'default', 'ttl': '1h'}}
+    assert messages[-1]['content'][-1] == {'cachePoint': {'type': 'default', 'ttl': '1h'}}
+
+
+async def test_bedrock_prompt_cache_ttl_tools(bedrock_provider: BedrockProvider):
+    """Test that TTL is applied to tool definition caching."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    settings = BedrockModelSettings(bedrock_cache_tool_definitions=True, bedrock_prompt_cache_ttl='1h')
+
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='my_tool', parameters_json_schema={})])
+    tool_config = model._map_tool_config(params, settings)  # type: ignore[reportPrivateUsage]
+
+    assert tool_config is not None
+    assert tool_config['tools'][-1] == {'cachePoint': {'type': 'default', 'ttl': '1h'}}
+
+
+async def test_bedrock_prompt_cache_ttl_manual(bedrock_provider: BedrockProvider):
+    """Test that TTL is applied to manual CachePoint markers."""
+    from itertools import count
+
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    settings = BedrockModelSettings(bedrock_prompt_cache_ttl='1h')
+
+    user_part = UserPromptPart(content=['Context', CachePoint(), 'Question'])
+    mapped = await model._map_user_prompt(user_part, count(), True, settings)  # type: ignore[reportPrivateUsage]
+
+    assert mapped[0]['content'][1] == {'cachePoint': {'type': 'default', 'ttl': '1h'}}

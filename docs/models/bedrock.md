@@ -83,8 +83,18 @@ Bedrock supports [prompt caching](https://docs.aws.amazon.com/bedrock/latest/use
 3. **Cache Tool Definitions**: Enable [`BedrockModelSettings.bedrock_cache_tool_definitions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_tool_definitions] to cache your tool schemas.
 4. **Cache All Messages**: Set [`BedrockModelSettings.bedrock_cache_messages`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_messages] to `True` to automatically cache the last user message.
 
-!!! note "No TTL Support"
-    Unlike the direct Anthropic API, Bedrock manages cache TTL automatically. All cache settings are boolean only — no `'5m'` or `'1h'` options.
+### Prompt Cache TTL
+
+By default, Bedrock prompt cache entries have a TTL of 5 minutes. Some models (like Claude 3.5/3.7 and Claude 4/4.5) support an extended 1-hour TTL. You can configure this via `bedrock_prompt_cache_ttl`:
+
+```python
+from pydantic_ai.models.bedrock import BedrockModelSettings
+
+bedrock_model_settings = BedrockModelSettings(
+    bedrock_cache_messages=True,
+    bedrock_prompt_cache_ttl='1h',  # '5m' or '1h'
+)
+```
 
 !!! note "Minimum Token Threshold"
     AWS only serves cached content once a segment crosses the provider-specific minimum token thresholds (see the [Bedrock prompt caching docs](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html)). Short prompts or tool definitions below those limits will bypass the cache, so don't expect savings for tiny payloads.
