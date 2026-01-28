@@ -51,6 +51,24 @@ _CODE_ADAPTER = TypeAdapter(_CodeToolArguments)
 _CODE_MODE_TOOL_NAME = 'run_code'
 
 
+# CRITICAL Syntax restrictions (the runtime uses a restricted Python subset):
+# - No imports - use only the provided functions and builtins (len, sum, str, etc.)
+# - No while loops - use for loops instead
+# - No comprehensions (list/dict/set) or generator expressions - use explicit for loops
+# - No lambdas - define logic inline
+# - No tuple unpacking (e.g., `a, b = 1, 2`) - assign variables separately
+# - No list indexing or slicing (e.g., `lst[0]`, `lst[:10]`) - use for loops to iterate
+# - No break or continue statements - use conditional logic instead
+# - No string methods (.join, .split, .upper, etc.) - return data structures, not formatted strings
+
+# What DOES work:
+# - Dict assignment: `d["key"] = value`
+# - Dict methods: `.get()`, `.keys()`, `.values()`, `.items()`
+# - List methods: `.append()`
+# - F-strings: `f"value is {{x}}"`
+# - Builtins: `len()`, `sum()`, `str()`, `list()`, `range()`
+
+
 def build_code_mode_prompt(*, signatures: list[str]) -> str:
     """Build the default code mode prompt with the given tool signatures.
 
@@ -73,28 +91,15 @@ CRITICAL execution model:
 - Each run_code call is ISOLATED - variables do NOT persist between calls
 - Plan your entire solution before writing code, then implement it all at once
 
+
+CRITICAL Syntax restrictions (the runtime uses a restricted Python subset):
+- No imports - use only the provided functions and builtins (len, sum, str, etc.) or write your own functions.
+
 How to write effective code:
 - ALWAYS use keyword arguments when calling functions (e.g., `get_user(id=123)` not `get_user(123)`)
 - Use for loops to handle multiple items
 - NEVER return raw tool results - always extract/filter to only what you need
 - The last expression evaluated becomes the return value - make it a processed summary, not raw data
-
-CRITICAL Syntax restrictions (the runtime uses a restricted Python subset):
-- No imports - use only the provided functions and builtins (len, sum, str, etc.)
-- No while loops - use for loops instead
-- No comprehensions (list/dict/set) or generator expressions - use explicit for loops
-- No lambdas - define logic inline
-- No tuple unpacking (e.g., `a, b = 1, 2`) - assign variables separately
-- No list indexing or slicing (e.g., `lst[0]`, `lst[:10]`) - use for loops to iterate
-- No break or continue statements - use conditional logic instead
-- No string methods (.join, .split, .upper, etc.) - return data structures, not formatted strings
-
-What DOES work:
-- Dict assignment: `d["key"] = value`
-- Dict methods: `.get()`, `.keys()`, `.values()`, `.items()`
-- List methods: `.append()`
-- F-strings: `f"value is {{x}}"`
-- Builtins: `len()`, `sum()`, `str()`, `list()`, `range()`
 
 Available functions:
 
@@ -367,10 +372,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         assert isinstance(tool, _CodeModeTool)
         assert isinstance(code, str)
 
-        if _find_await_expressions(code):
-            raise ModelRetry(
-                'await expressions are not supported. All functions are synchronous - call them directly without await.'
-            )
+        # if _find_await_expressions(code):
+        #     raise ModelRetry(
+        #         'await expressions are not supported. All functions are synchronous - call them directly without await.'
+        #     )
 
         # Do we have a previous checkpoint we can resume from?
         checkpoint: dict[str, Any] | None = None

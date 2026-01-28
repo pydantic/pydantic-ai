@@ -22,9 +22,7 @@ Rules:
 - Use list PRs with state=closed, sort=updated, direction=desc
 - Use per_page=5 and page=1..1 (no slicing, no cursor/after)
 - Do not use datetime, slicing, break, or continue
-- Do not use list comprehensions, map, or parallel tool calls
 - Only use GitHub MCP tools
-- All tool calls must be sequential
 
 For each PR:
 - Fetch PR files (per_page=100, page=1..1)
@@ -74,7 +72,6 @@ def create_traditional_agent(github: MCPServerStreamableHTTP, model: str = DEFAU
     agent: Agent[None, str] = Agent(
         model,
         toolsets=[github],
-        model_settings=ModelSettings(parallel_tool_calls=False),
         system_prompt=('You are a GitHub PR analyst. Use the available tools to analyze PRs.'),
     )
     return agent
@@ -92,7 +89,6 @@ def create_code_mode_agent(
     agent: Agent[None, str] = Agent(
         model,
         toolsets=[code_toolset],
-        model_settings=ModelSettings(parallel_tool_calls=False),
         system_prompt=('You are a GitHub PR analyst. Use the available tools to analyze PRs.'),
     )
     return agent

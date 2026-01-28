@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import inspect
 import json
 from typing import Any
 
@@ -111,13 +112,15 @@ class MontyRuntime(CodeRuntime):
         """
         imports = 'from typing import Any, TypedDict, NotRequired, Literal\n\n'
         prefix_code = imports + '\n\n'.join(signatures)
-        m = monty.Monty(code, external_functions=[])
         try:
+            m = monty.Monty(code, external_functions=[])
             m.type_check(prefix_code=prefix_code)
         except monty.MontyTypingError as e:
             raise CodeTypeError(e.display())
         except monty.MontySyntaxError as e:
             raise CodeSyntaxError(e.display())
+        except monty.MontyRuntimeError as e:
+            raise CodeRuntimeError(e.display())
 
     async def _execution_loop(
         self,
@@ -162,7 +165,10 @@ class MontyRuntime(CodeRuntime):
         # Wrap the callback so we always get a proper coroutine for create_task.
         # ToolCallback returns Awaitable[Any], but create_task needs a Coroutine.
         async def _run_callback(fn_call: FunctionCall) -> Any:
-            return await call_tool(fn_call)
+            result = await call_tool(fn_call)
+            if inspect.isawaitable(result):
+                return await result
+            return result
 
         # On resume with pending calls: re-launch tasks for deferred calls.
         if pending_calls:
