@@ -651,7 +651,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                 return self.validator.validate_json(
                     json_str, allow_partial=pyd_allow_partial, context=validation_context
                 )
-            except ValidationError:
+            except ValidationError as original_error:
                 # Only attempt JSON repair on final (non-partial) calls,
                 # as repairing partial JSON can interfere with streaming behavior
                 if allow_partial:
@@ -660,9 +660,13 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                 if repaired == json_str:
                     # Repair didn't change anything, re-raise original error
                     raise
-                return self.validator.validate_json(
-                    repaired, allow_partial=pyd_allow_partial, context=validation_context
-                )
+                try:
+                    return self.validator.validate_json(
+                        repaired, allow_partial=pyd_allow_partial, context=validation_context
+                    )
+                except ValidationError:
+                    # Repair didn't help, re-raise the original error for consistent behavior
+                    raise original_error from None
         else:
             return self.validator.validate_python(
                 data or {}, allow_partial=pyd_allow_partial, context=validation_context
