@@ -55,7 +55,6 @@ from .request_types import (
     SourceUrlUIPart,
     StepStartUIPart,
     TextUIPart,
-    ToolApprovalResponded,
     ToolInputAvailablePart,
     ToolInputStreamingPart,
     ToolOutputAvailablePart,
@@ -63,6 +62,7 @@ from .request_types import (
     ToolUIPart,
     UIMessage,
     UIMessagePart,
+    iter_tool_approvals,
 )
 from .response_types import BaseChunk
 
@@ -117,14 +117,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         """Extract deferred tool results from Vercel AI messages with approval responses."""
         if not self.enable_tool_approval:
             return None
-        approvals: dict[str, bool | DeferredToolApprovalResult] = {}
-        for msg in self.run_input.messages:
-            if msg.role == 'assistant':
-                for part in msg.parts:
-                    if isinstance(part, ToolUIPart | DynamicToolUIPart) and isinstance(
-                        part.approval, ToolApprovalResponded
-                    ):
-                        approvals[part.tool_call_id] = part.approval.approved
+        approvals: dict[str, bool | DeferredToolApprovalResult] = {
+            tool_call_id: approval.approved
+            for tool_call_id, approval in iter_tool_approvals(self.run_input.messages)
+        }
         return DeferredToolResults(approvals=approvals) if approvals else None
 
     @cached_property

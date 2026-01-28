@@ -7,6 +7,7 @@ Tool approval types (`ToolApprovalRequested`, `ToolApprovalResponded`) require A
 """
 
 from abc import ABC
+from collections.abc import Iterator
 from typing import Annotated, Any, Literal
 
 from pydantic import Discriminator, Field
@@ -307,3 +308,14 @@ class RegenerateMessage(CamelBaseModel, extra='allow'):
 
 RequestData = Annotated[SubmitMessage | RegenerateMessage, Discriminator('trigger')]
 """Union of all request data types."""
+
+
+def iter_tool_approvals(messages: list[UIMessage]) -> Iterator[tuple[str, ToolApprovalResponded]]:
+    """Yield ``(tool_call_id, approval)`` for every responded tool-approval in *messages*."""
+    for msg in messages:
+        if msg.role == 'assistant':
+            for part in msg.parts:
+                if isinstance(part, ToolUIPart | DynamicToolUIPart) and isinstance(
+                    part.approval, ToolApprovalResponded
+                ):
+                    yield part.tool_call_id, part.approval
