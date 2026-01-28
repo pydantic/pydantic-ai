@@ -447,6 +447,9 @@ def databricks_api_key() -> str:
 @pytest.fixture(scope='session')
 def databricks_base_url():
     return os.getenv('DATABRICKS_BASE_URL', 'https://mock.databricks.com')
+
+
+@pytest.fixture(scope='session')
 def voyage_api_key() -> str:
     return os.getenv('VOYAGE_API_KEY', 'mock-api-key')
 
