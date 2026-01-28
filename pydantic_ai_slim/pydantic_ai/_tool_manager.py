@@ -14,6 +14,7 @@ from typing_extensions import assert_never, deprecated
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
 from ._run_context import AgentDepsT, RunContext
+from ._utils import maybe_repair_json
 from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from .messages import ToolCallPart
 from .tools import ToolDefinition
@@ -25,6 +26,45 @@ ParallelExecutionMode = Literal['parallel', 'sequential', 'parallel_ordered_even
 _parallel_execution_mode_ctx_var: ContextVar[ParallelExecutionMode] = ContextVar(
     'parallel_execution_mode', default='parallel'
 )
+
+
+def _validate_json_with_repair(
+    validator: Any,
+    json_str: str,
+    allow_partial: bool,
+    validation_context: Any,
+) -> dict[str, Any]:
+    """Validate JSON string, attempting repair if validation fails.
+
+    Args:
+        validator: Pydantic schema validator
+        json_str: JSON string to validate
+        allow_partial: Whether to allow partial JSON (for streaming)
+        validation_context: Pydantic validation context
+
+    Returns:
+        Validated arguments dict
+
+    Raises:
+        ValidationError: If validation fails (even after repair attempt)
+    """
+    pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
+    try:
+        return validator.validate_json(json_str, allow_partial=pyd_allow_partial, context=validation_context)
+    except ValidationError as original_error:
+        # Only attempt JSON repair on final (non-partial) calls,
+        # as repairing partial JSON can interfere with streaming behavior
+        if allow_partial:
+            raise
+        repaired = maybe_repair_json(json_str)
+        if repaired == json_str:
+            # Repair didn't change anything, re-raise original error
+            raise
+        try:
+            return validator.validate_json(repaired, allow_partial=pyd_allow_partial, context=validation_context)
+        except ValidationError:
+            # Repair didn't help, re-raise the original error for consistent behavior
+            raise original_error from None
 
 
 @dataclass
@@ -198,13 +238,13 @@ class ToolManager(Generic[AgentDepsT]):
                 partial_output=allow_partial,
             )
 
-            pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
             validator = tool.args_validator
             if isinstance(call.args, str):
-                args_dict = validator.validate_json(
-                    call.args or '{}', allow_partial=pyd_allow_partial, context=ctx.validation_context
+                args_dict = _validate_json_with_repair(
+                    validator, call.args or '{}', allow_partial, ctx.validation_context
                 )
             else:
+                pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
                 args_dict = validator.validate_python(
                     call.args or {}, allow_partial=pyd_allow_partial, context=ctx.validation_context
                 )
