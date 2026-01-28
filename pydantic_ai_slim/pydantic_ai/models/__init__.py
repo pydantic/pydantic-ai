@@ -7,6 +7,7 @@ specific LLM being used.
 from __future__ import annotations as _annotations
 
 import base64
+import copy
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
@@ -991,7 +992,11 @@ class StreamedResponse(ABC):
                 if end_event:
                     yield end_event
 
-            self._event_iterator = iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
+            self._event_iterator = iterator_with_part_end(
+                iterator_with_final_event(
+                    chain_async_and_sync_iters(self._get_event_iterator(), self._parts_manager.final_flush())
+                )
+            )
         return self._event_iterator
 
     @abstractmethod
@@ -1009,8 +1014,14 @@ class StreamedResponse(ABC):
 
     def get(self) -> ModelResponse:
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
+        # Flush any buffered content before building response
+        # clone parts manager to avoid modifying the ongoing stream state
+        cloned_manager = copy.deepcopy(self._parts_manager)
+        for _ in cloned_manager.final_flush():
+            pass
+
         return ModelResponse(
-            parts=self._parts_manager.get_parts(),
+            parts=cloned_manager.get_parts(),
             model_name=self.model_name,
             timestamp=self.timestamp,
             usage=self.usage(),
@@ -1049,6 +1060,16 @@ class StreamedResponse(ABC):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         raise NotImplementedError()
+
+
+async def chain_async_and_sync_iters(
+    iter1: AsyncIterator[ModelResponseStreamEvent], iter2: Iterator[ModelResponseStreamEvent]
+) -> AsyncIterator[ModelResponseStreamEvent]:
+    """Chain an async iterator with a sync iterator."""
+    async for event in iter1:
+        yield event
+    for event in iter2:
+        yield event
 
 
 ALLOW_MODEL_REQUESTS = True

@@ -492,6 +492,11 @@ def test_file_part_has_content():
     assert filepart.has_content()
 
 
+def test_thinking_part_has_content():
+    assert not ThinkingPart(content='').has_content()
+    assert ThinkingPart(content='thinking').has_content()
+
+
 def test_file_part_serialization_roundtrip():
     # Verify that a serialized BinaryImage doesn't come back as a BinaryContent.
     messages: list[ModelMessage] = [

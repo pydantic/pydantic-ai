@@ -764,7 +764,6 @@ async def test_stream_text_empty_think_tag_and_text_before_tool_call(allow_model
         assert not result.is_complete
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
             [
-                {},
                 {'first': 'One'},
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
@@ -772,6 +771,32 @@ async def test_stream_text_empty_think_tag_and_text_before_tool_call(allow_model
             ]
         )
     assert await result.get_output() == snapshot({'first': 'One', 'second': 'Two'})
+
+
+async def test_stream_with_embedded_thinking_sets_metadata(allow_model_requests: None):
+    """Test that embedded thinking creates ThinkingPart with id='content' and provider_name='openai'."""
+    stream = [
+        text_chunk('<think>'),
+        text_chunk('reasoning'),
+        text_chunk('</think>'),
+        text_chunk('response'),
+        chunk([]),
+    ]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['response'])
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.parts == snapshot(
+        [
+            ThinkingPart(content='reasoning', id='content', provider_name='openai'),
+            TextPart(content='response'),
+        ]
+    )
 
 
 async def test_no_delta(allow_model_requests: None):
@@ -3654,28 +3679,27 @@ async def test_cache_point_filtering(allow_model_requests: None):
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
 
-    # Test the instance method directly to trigger line 864
     msg = await m._map_user_prompt(UserPromptPart(content=['text before', CachePoint(), 'text after']))  # pyright: ignore[reportPrivateUsage]
 
     # CachePoint should be filtered out, only text content should remain
-    assert msg['role'] == 'user'
-    assert len(msg['content']) == 2  # type: ignore[reportUnknownArgumentType]
-    assert msg['content'][0]['text'] == 'text before'  # type: ignore[reportUnknownArgumentType]
-    assert msg['content'][1]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]
+    assert msg == snapshot(
+        {'role': 'user', 'content': [{'type': 'text', 'text': 'text before'}, {'type': 'text', 'text': 'text after'}]}
+    )
 
 
 async def test_cache_point_filtering_responses_model():
     """Test that CachePoint is filtered out in OpenAI Responses API requests."""
-    # Test the static method directly to trigger line 1680
     msg = await OpenAIResponsesModel._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
         UserPromptPart(content=['text before', CachePoint(), 'text after'])
     )
 
     # CachePoint should be filtered out, only text content should remain
-    assert msg['role'] == 'user'
-    assert len(msg['content']) == 2
-    assert msg['content'][0]['text'] == 'text before'  # type: ignore[reportUnknownArgumentType]
-    assert msg['content'][1]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]
+    assert msg == snapshot(
+        {
+            'role': 'user',
+            'content': [{'type': 'input_text', 'text': 'text before'}, {'type': 'input_text', 'text': 'text after'}],
+        }
+    )
 
 
 async def test_openai_custom_reasoning_field_sending_back_in_thinking_tags(allow_model_requests: None):
