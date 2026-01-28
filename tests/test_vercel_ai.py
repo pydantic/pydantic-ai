@@ -2189,7 +2189,7 @@ async def test_tool_output_denied_chunk_emission():
                     ),
                     ToolReturnPart(
                         tool_name='delete_file',
-                        content='The tool call was denied.',
+                        content='User cancelled the deletion',
                         tool_call_id='delete_1',
                         timestamp=IsDatetime(),
                     ),

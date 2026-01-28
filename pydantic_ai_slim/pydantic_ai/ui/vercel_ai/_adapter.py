@@ -36,7 +36,7 @@ from ...messages import (
     VideoUrl,
 )
 from ...output import OutputDataT
-from ...tools import AgentDepsT, DeferredToolApprovalResult, DeferredToolResults
+from ...tools import AgentDepsT, DeferredToolApprovalResult, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter, UIEventStream
 from ._event_stream import VercelAIEventStream
 from ._utils import dump_provider_metadata, load_provider_metadata
@@ -118,7 +118,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         if not self.enable_tool_approval:
             return None
         approvals: dict[str, bool | DeferredToolApprovalResult] = {
-            tool_call_id: approval.approved
+            tool_call_id: ToolDenied(message=approval.reason)
+            if not approval.approved and approval.reason
+            else approval.approved
             for tool_call_id, approval in iter_tool_approvals(self.run_input.messages)
         }
         return DeferredToolResults(approvals=approvals) if approvals else None
