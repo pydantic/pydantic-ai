@@ -45,7 +45,7 @@ from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.providers import Provider, infer_provider
-from pydantic_ai.providers.bedrock import BEDROCK_GEO_PREFIXES, BedrockModelProfile
+from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
@@ -342,7 +342,7 @@ class BedrockConverseModel(Model):
         settings = cast(BedrockModelSettings, model_settings or {})
         system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters, settings)
         params: CountTokensRequestTypeDef = {
-            'modelId': self._remove_inference_geo_prefix(self.model_name),
+            'modelId': remove_bedrock_geo_prefix(self.model_name),
             'input': {
                 'converse': {
                     'messages': bedrock_messages,
@@ -941,14 +941,6 @@ class BedrockConverseModel(Model):
                 else:
                     new_content.append(block)
             message['content'] = list(reversed(new_content))  # Restore original order
-
-    @staticmethod
-    def _remove_inference_geo_prefix(model_name: BedrockModelName) -> BedrockModelName:
-        """Remove inference geographic prefix from model ID if present."""
-        for prefix in BEDROCK_GEO_PREFIXES:
-            if model_name.startswith(f'{prefix}.'):
-                return model_name.removeprefix(f'{prefix}.')
-        return model_name
 
 
 @dataclass
