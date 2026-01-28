@@ -243,6 +243,14 @@ class BedrockModelSettings(ModelSettings, total=False):
     See more about it on <https://docs.aws.amazon.com/bedrock/latest/userguide/service-tiers-inference.html>.
     """
 
+    bedrock_prompt_cache_ttl: Literal['5m', '1h']
+    """Time-to-live for prompt caching.
+    '5m' (5 minutes) - supported by all models (default)
+    '1h' (1 hour) - supported by Claude Opus 4.5, Haiku 4.5, Sonnet 4.5
+
+    See more about it on <https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html>.
+    """
+
 
 @dataclass(init=False)
 class BedrockConverseModel(Model):
@@ -583,7 +591,7 @@ class BedrockConverseModel(Model):
             and model_settings.get('bedrock_cache_tool_definitions')
             and profile.bedrock_supports_tool_caching
         ):
-            tools.append({'cachePoint': {'type': 'default'}})
+            tools.append(self._get_cache_point(model_settings))
 
         tool_choice: ToolChoiceTypeDef
         if not model_request_parameters.allow_text_output:
@@ -620,7 +628,9 @@ class BedrockConverseModel(Model):
                             system_prompt.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
                         bedrock_messages.extend(
-                            await self._map_user_prompt(part, document_count, profile.bedrock_supports_prompt_caching)
+                            await self._map_user_prompt(
+                                part, document_count, profile.bedrock_supports_prompt_caching, settings
+                            )
                         )
                     elif isinstance(part, ToolReturnPart):
                         assert part.tool_call_id is not None
@@ -741,7 +751,7 @@ class BedrockConverseModel(Model):
             system_prompt.append({'text': instructions})
 
         if system_prompt and settings.get('bedrock_cache_instructions') and profile.bedrock_supports_prompt_caching:
-            system_prompt.append({'cachePoint': {'type': 'default'}})
+            system_prompt.append(self._get_cache_point(settings))
 
         if processed_messages and settings.get('bedrock_cache_messages') and profile.bedrock_supports_prompt_caching:
             last_user_content = self._get_last_user_message_content(processed_messages)
@@ -750,7 +760,7 @@ class BedrockConverseModel(Model):
                 # Insert a newline text block as a workaround.
                 if 'text' not in last_user_content[-1]:
                     last_user_content.append({'text': '\n'})
-                last_user_content.append({'cachePoint': {'type': 'default'}})
+                last_user_content.append(self._get_cache_point(settings))
 
         return system_prompt, processed_messages
 
@@ -785,6 +795,7 @@ class BedrockConverseModel(Model):
         part: UserPromptPart,
         document_count: Iterator[int],
         supports_prompt_caching: bool,
+        settings: BedrockModelSettings | None,
     ) -> list[MessageUnionTypeDef]:
         content: list[ContentBlockUnionTypeDef] = []
         if isinstance(part.content, str):
@@ -865,7 +876,7 @@ class BedrockConverseModel(Model):
                         # Insert an empty text block as a workaround (see https://github.com/pydantic/pydantic-ai/issues/3418
                         # and https://github.com/pydantic/pydantic-ai/pull/2560#discussion_r2349209916).
                         content.append({'text': '\n'})
-                    content.append({'cachePoint': {'type': 'default'}})
+                    content.append(BedrockConverseModel._get_cache_point(settings))
                 else:
                     assert_never(item)
         return [{'role': 'user', 'content': content}]
@@ -875,6 +886,13 @@ class BedrockConverseModel(Model):
         return {
             'toolUse': {'toolUseId': _utils.guard_tool_call_id(t=t), 'name': t.tool_name, 'input': t.args_as_dict()}
         }
+
+    @staticmethod
+    def _get_cache_point(settings: BedrockModelSettings | None) -> Any:
+        cache_point: dict[str, Any] = {'type': 'default'}
+        if settings and (ttl := settings.get('bedrock_prompt_cache_ttl')):
+            cache_point['ttl'] = ttl
+        return {'cachePoint': cache_point}
 
     @staticmethod
     def _limit_cache_points(
