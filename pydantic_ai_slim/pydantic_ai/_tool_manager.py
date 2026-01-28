@@ -5,11 +5,11 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from typing import Any, Generic
+from typing import Any, Generic, Literal
 
 from opentelemetry.trace import Tracer
 from pydantic import ValidationError
-from typing_extensions import assert_never
+from typing_extensions import assert_never, deprecated
 
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
@@ -20,7 +20,11 @@ from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 from .usage import RunUsage
 
-_sequential_tool_calls_ctx_var: ContextVar[bool] = ContextVar('sequential_tool_calls', default=False)
+ParallelExecutionMode = Literal['parallel', 'sequential', 'parallel_ordered_events']
+
+_parallel_execution_mode_ctx_var: ContextVar[ParallelExecutionMode] = ContextVar(
+    'parallel_execution_mode', default='parallel'
+)
 
 
 @dataclass
@@ -40,13 +44,28 @@ class ToolManager(Generic[AgentDepsT]):
 
     @classmethod
     @contextmanager
-    def sequential_tool_calls(cls) -> Iterator[None]:
-        """Run tool calls sequentially during the context."""
-        token = _sequential_tool_calls_ctx_var.set(True)
+    def parallel_execution_mode(cls, mode: ParallelExecutionMode = 'parallel') -> Iterator[None]:
+        """Set the parallel execution mode during the context.
+
+        Args:
+            mode: The execution mode for tool calls:
+                - 'parallel': Run tool calls in parallel, yielding events as they complete (default).
+                - 'sequential': Run tool calls one at a time in order.
+                - 'parallel_ordered_events': Run tool calls in parallel, but events are emitted in order, after all calls complete.
+        """
+        token = _parallel_execution_mode_ctx_var.set(mode)
         try:
             yield
         finally:
-            _sequential_tool_calls_ctx_var.reset(token)
+            _parallel_execution_mode_ctx_var.reset(token)
+
+    @classmethod
+    @contextmanager
+    @deprecated('Use `parallel_execution_mode("sequential")` instead.')
+    def sequential_tool_calls(cls) -> Iterator[None]:
+        """Run tool calls sequentially during the context."""
+        with cls.parallel_execution_mode('sequential'):
+            yield
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> ToolManager[AgentDepsT]:
         """Build a new tool manager for the next run step, carrying over the retries from the current run step."""
@@ -75,11 +94,20 @@ class ToolManager(Generic[AgentDepsT]):
 
         return [tool.tool_def for tool in self.tools.values()]
 
-    def should_call_sequentially(self, calls: list[ToolCallPart]) -> bool:
-        """Whether to require sequential tool calls for a list of tool calls."""
-        return _sequential_tool_calls_ctx_var.get() or any(
-            tool_def.sequential for call in calls if (tool_def := self.get_tool_def(call.tool_name))
-        )
+    def get_parallel_execution_mode(self, calls: list[ToolCallPart]) -> ParallelExecutionMode:
+        """Get the effective parallel execution mode for a list of tool calls.
+
+        This takes into account both the context variable and whether any tool
+        has `sequential=True` set. If any tool requires sequential execution,
+        returns `'sequential'` regardless of the context variable.
+        """
+        # Check if any tool requires sequential execution
+        if any(tool_def.sequential for call in calls if (tool_def := self.get_tool_def(call.tool_name))):
+            return 'sequential'
+
+        mode = _parallel_execution_mode_ctx_var.get()
+
+        return mode
 
     def get_tool_def(self, name: str) -> ToolDefinition | None:
         """Get the tool definition for a given tool name, or `None` if the tool is unknown."""

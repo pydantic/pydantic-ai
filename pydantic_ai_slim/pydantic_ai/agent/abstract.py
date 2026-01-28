@@ -10,13 +10,14 @@ from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
 import anyio
 from pydantic import TypeAdapter
-from typing_extensions import Self, TypeIs, TypeVar
+from typing_extensions import Self, TypeIs, TypeVar, deprecated
 
 from pydantic_graph import End
 
 from .. import (
     _agent_graph,
     _system_prompt,
+    _tool_manager,
     _utils,
     exceptions,
     messages as _messages,
@@ -1172,9 +1173,24 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     @staticmethod
     @contextmanager
+    def parallel_tool_call_execution_mode(mode: _tool_manager.ParallelExecutionMode = 'parallel') -> Iterator[None]:
+        """Set the parallel execution mode during the context.
+
+        Args:
+            mode: The execution mode for tool calls:
+                - 'parallel': Run tool calls in parallel, yielding events as they complete (default).
+                - 'sequential': Run tool calls one at a time in order.
+                - 'parallel_ordered_events': Run tool calls in parallel, but events are emitted in order, after all calls complete.
+        """
+        with ToolManager.parallel_execution_mode(mode):
+            yield
+
+    @staticmethod
+    @contextmanager
+    @deprecated('Use `parallel_execution_mode("sequential")` instead.')
     def sequential_tool_calls() -> Iterator[None]:
         """Run tool calls sequentially during the context."""
-        with ToolManager.sequential_tool_calls():
+        with ToolManager.parallel_execution_mode('sequential'):
             yield
 
     @staticmethod

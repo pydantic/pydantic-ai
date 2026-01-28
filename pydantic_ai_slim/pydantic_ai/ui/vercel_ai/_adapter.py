@@ -42,7 +42,6 @@ from ._utils import dump_provider_metadata, load_provider_metadata
 from .request_types import (
     DataUIPart,
     DynamicToolInputAvailablePart,
-    DynamicToolInputStreamingPart,
     DynamicToolOutputAvailablePart,
     DynamicToolOutputErrorPart,
     DynamicToolUIPart,
@@ -55,7 +54,6 @@ from .request_types import (
     StepStartUIPart,
     TextUIPart,
     ToolInputAvailablePart,
-    ToolInputStreamingPart,
     ToolOutputAvailablePart,
     ToolOutputErrorPart,
     ToolUIPart,
@@ -195,13 +193,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         else:
                             assert_never(args)
 
-                        provider_meta = {}
-                        part_id = provider_name = provider_details = None
-                        if not isinstance(part, (DynamicToolInputStreamingPart, ToolInputStreamingPart)):
-                            provider_meta = load_provider_metadata(part.call_provider_metadata)
-                            part_id = provider_meta.get('id')
-                            provider_name = provider_meta.get('provider_name')
-                            provider_details = provider_meta.get('provider_details')
+                        provider_meta = load_provider_metadata(part.call_provider_metadata)
+                        part_id = provider_meta.get('id')
+                        provider_name = provider_meta.get('provider_name')
+                        provider_details = provider_meta.get('provider_details')
 
                         if builtin_tool:
                             # For builtin tools, we need to create 2 parts (BuiltinToolCall & BuiltinToolReturn) for a single Vercel ToolOutput

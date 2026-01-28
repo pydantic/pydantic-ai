@@ -308,7 +308,13 @@ I'd be happy to help you use a tool! However, I need more information about what
                     }
                 },
             },
-            {'type': 'tool-input-start', 'toolCallId': IsStr(), 'toolName': 'web_search', 'providerExecuted': True},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
@@ -353,7 +359,13 @@ I'd be happy to help you use a tool! However, I need more information about what
                     }
                 },
             },
-            {'type': 'tool-input-start', 'toolCallId': IsStr(), 'toolName': 'web_search', 'providerExecuted': True},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
@@ -395,7 +407,13 @@ I'd be happy to help you use a tool! However, I need more information about what
                     }
                 },
             },
-            {'type': 'tool-input-start', 'toolCallId': IsStr(), 'toolName': 'web_search', 'providerExecuted': True},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
@@ -437,7 +455,13 @@ I'd be happy to help you use a tool! However, I need more information about what
                     }
                 },
             },
-            {'type': 'tool-input-start', 'toolCallId': IsStr(), 'toolName': 'web_search', 'providerExecuted': True},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
@@ -482,7 +506,13 @@ I'd be happy to help you use a tool! However, I need more information about what
                     }
                 },
             },
-            {'type': 'tool-input-start', 'toolCallId': IsStr(), 'toolName': 'web_search', 'providerExecuted': True},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
@@ -524,7 +554,13 @@ I'd be happy to help you use a tool! However, I need more information about what
                     }
                 },
             },
-            {'type': 'tool-input-start', 'toolCallId': IsStr(), 'toolName': 'web_search', 'providerExecuted': True},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
@@ -566,7 +602,13 @@ I'd be happy to help you use a tool! However, I need more information about what
                     }
                 },
             },
-            {'type': 'tool-input-start', 'toolCallId': IsStr(), 'toolName': 'web_search', 'providerExecuted': True},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
@@ -1473,7 +1515,13 @@ async def test_run_stream_builtin_tool_call():
         [
             {'type': 'start'},
             {'type': 'start-step'},
-            {'type': 'tool-input-start', 'toolCallId': 'search_1', 'toolName': 'web_search', 'providerExecuted': True},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': 'search_1',
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'function'}},
+            },
             {'type': 'tool-input-delta', 'toolCallId': 'search_1', 'inputTextDelta': '{"query":'},
             {'type': 'tool-input-delta', 'toolCallId': 'search_1', 'inputTextDelta': '"Hello world"}'},
             {
@@ -4039,7 +4087,18 @@ async def test_event_stream_tool_call_end_with_provider_metadata():
         [
             {'type': 'start'},
             {'type': 'start-step'},
-            {'type': 'tool-input-start', 'toolCallId': 'tc_meta', 'toolName': 'my_tool'},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': 'tc_meta',
+                'toolName': 'my_tool',
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'tool_call_id_123',
+                        'provider_name': 'anthropic',
+                        'provider_details': {'tool_index': 0},
+                    }
+                },
+            },
             {'type': 'tool-input-delta', 'toolCallId': 'tc_meta', 'inputTextDelta': '{"key":"value"}'},
             {
                 'type': 'tool-input-available',
@@ -4096,7 +4155,19 @@ async def test_event_stream_builtin_tool_call_end_with_provider_metadata():
         [
             {'type': 'start'},
             {'type': 'start-step'},
-            {'type': 'tool-input-start', 'toolCallId': 'btc_meta', 'toolName': 'web_search', 'providerExecuted': True},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': 'btc_meta',
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'builtin_call_id_456',
+                        'provider_name': 'openai',
+                        'provider_details': {'tool_type': 'web_search_preview'},
+                    }
+                },
+            },
             {'type': 'tool-input-delta', 'toolCallId': 'btc_meta', 'inputTextDelta': '{"query":"test"}'},
             {
                 'type': 'tool-input-available',

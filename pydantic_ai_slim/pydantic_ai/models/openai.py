@@ -57,7 +57,7 @@ from ..messages import (
     VideoUrl,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
-from ..profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole
+from ..profiles.openai import SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -263,6 +263,41 @@ def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str)
     return None
 
 
+def _drop_sampling_params_for_reasoning(profile: OpenAIModelProfile, model_settings: OpenAIChatModelSettings) -> None:
+    """Drop sampling params when reasoning is enabled on models that support it.
+
+    Reasoning models (o-series, GPT-5, GPT-5.1+) don't support sampling parameters when
+    reasoning is active. For models that support reasoning_effort='none' (GPT-5.1+),
+    sampling params are allowed when reasoning is off.
+    """
+    if not profile.openai_supports_reasoning:
+        return
+
+    reasoning_effort = model_settings.get('openai_reasoning_effort')
+    # On GPT-5.1+ models, 'none' is the default
+    if profile.openai_supports_reasoning_effort_none and reasoning_effort in (None, 'none'):
+        return
+
+    if dropped := [k for k in SAMPLING_PARAMS if k in model_settings]:
+        warnings.warn(
+            f'Sampling parameters {dropped} are not supported when reasoning is enabled. '
+            'These settings will be ignored.',
+            UserWarning,
+        )
+
+    for k in SAMPLING_PARAMS:
+        model_settings.pop(k, None)
+
+
+def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAIChatModelSettings) -> None:
+    """Drop unsupported parameters based on model profile.
+
+    Used currently only by Cerebras
+    """
+    for setting in profile.openai_unsupported_model_settings:
+        model_settings.pop(setting, None)
+
+
 class OpenAIChatModelSettings(ModelSettings, total=False):
     """Settings used for an OpenAI model request."""
 
@@ -314,6 +349,16 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     """The retention policy for the prompt cache. Set to 24h to enable extended prompt caching, which keeps cached prefixes active for longer, up to a maximum of 24 hours.
 
     See the [OpenAI Prompt Caching documentation](https://platform.openai.com/docs/guides/prompt-caching#how-it-works) for more information.
+    """
+
+    openai_continuous_usage_stats: bool
+    """When True, enables continuous usage statistics in streaming responses.
+
+    When enabled, the API returns cumulative usage data with each chunk rather than only at the end.
+    This setting correctly handles the cumulative nature of these stats by using only the final
+    usage values rather than summing all intermediate values.
+
+    See [OpenAI's streaming documentation](https://platform.openai.com/docs/api-reference/chat/create#stream_options) for more information.
     """
 
 
@@ -580,11 +625,10 @@ class OpenAIChatModel(Model):
             model_settings,
             model_request_parameters,
         )
-        response = await self._completions_create(
-            messages, True, cast(OpenAIChatModelSettings, model_settings or {}), model_request_parameters
-        )
+        model_settings_cast = cast(OpenAIChatModelSettings, model_settings or {})
+        response = await self._completions_create(messages, True, model_settings_cast, model_request_parameters)
         async with response:
-            yield await self._process_streamed_response(response, model_request_parameters)
+            yield await self._process_streamed_response(response, model_request_parameters, model_settings_cast)
 
     @overload
     async def _completions_create(
@@ -614,12 +658,10 @@ class OpenAIChatModel(Model):
         tools = self._get_tools(model_request_parameters)
         web_search_options = self._get_web_search_options(model_request_parameters)
 
+        profile = OpenAIModelProfile.from_profile(self.profile)
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif (
-            not model_request_parameters.allow_text_output
-            and OpenAIModelProfile.from_profile(self.profile).openai_supports_tool_choice_required
-        ):
+        elif not model_request_parameters.allow_text_output and profile.openai_supports_tool_choice_required:
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
@@ -636,9 +678,9 @@ class OpenAIChatModel(Model):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
-        unsupported_model_settings = OpenAIModelProfile.from_profile(self.profile).openai_unsupported_model_settings
-        for setting in unsupported_model_settings:
-            model_settings.pop(setting, None)
+        _drop_sampling_params_for_reasoning(profile, model_settings)
+
+        _drop_unsupported_params(profile, model_settings)
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
@@ -650,7 +692,7 @@ class OpenAIChatModel(Model):
                 tools=tools or OMIT,
                 tool_choice=tool_choice or OMIT,
                 stream=stream,
-                stream_options={'include_usage': True} if stream else OMIT,
+                stream_options=self._get_stream_options(model_settings) if stream else OMIT,
                 stop=model_settings.get('stop_sequences', OMIT),
                 max_completion_tokens=model_settings.get('max_tokens', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
@@ -792,7 +834,10 @@ class OpenAIChatModel(Model):
         return items or None
 
     async def _process_streamed_response(
-        self, response: AsyncStream[ChatCompletionChunk], model_request_parameters: ModelRequestParameters
+        self,
+        response: AsyncStream[ChatCompletionChunk],
+        model_request_parameters: ModelRequestParameters,
+        model_settings: OpenAIChatModelSettings | None = None,
     ) -> OpenAIStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
@@ -814,6 +859,7 @@ class OpenAIChatModel(Model):
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
             _provider_timestamp=number_to_datetime(first_chunk.created) if first_chunk.created else None,
+            _model_settings=model_settings,
         )
 
     @property
@@ -826,6 +872,16 @@ class OpenAIChatModel(Model):
 
     def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
         return _map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
+
+    def _get_stream_options(self, model_settings: OpenAIChatModelSettings) -> chat.ChatCompletionStreamOptionsParam:
+        """Build stream_options for the API request.
+
+        Returns a dict with include_usage=True and optionally continuous_usage_stats if configured.
+        """
+        options: dict[str, bool] = {'include_usage': True}
+        if model_settings.get('openai_continuous_usage_stats'):
+            options['continuous_usage_stats'] = True
+        return cast(chat.ChatCompletionStreamOptionsParam, options)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
@@ -1502,9 +1558,9 @@ class OpenAIResponsesModel(Model):
             text = text or {}
             text['verbosity'] = verbosity
 
-        unsupported_model_settings = profile.openai_unsupported_model_settings
-        for setting in unsupported_model_settings:
-            model_settings.pop(setting, None)
+        _drop_sampling_params_for_reasoning(profile, model_settings)
+
+        _drop_unsupported_params(profile, model_settings)
 
         include: list[responses.ResponseIncludable] = []
         if profile.openai_supports_encrypted_reasoning_content:
@@ -1604,6 +1660,10 @@ class OpenAIResponsesModel(Model):
                 if tool.user_location:
                     web_search_tool['user_location'] = responses.web_search_tool_param.UserLocation(
                         type='approximate', **tool.user_location
+                    )
+                if tool.allowed_domains:
+                    web_search_tool['filters'] = responses.web_search_tool_param.Filters(
+                        allowed_domains=tool.allowed_domains
                     )
                 tools.append(web_search_tool)
             elif isinstance(tool, FileSearchTool):
@@ -2072,12 +2132,19 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
+    _model_settings: OpenAIChatModelSettings | None = None
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         if self._provider_timestamp is not None:  # pragma: no branch
             self.provider_details = {'timestamp': self._provider_timestamp}
         async for chunk in self._validate_response():
-            self._usage += self._map_usage(chunk)
+            chunk_usage = self._map_usage(chunk)
+            if self._model_settings and self._model_settings.get('openai_continuous_usage_stats'):
+                # When continuous_usage_stats is enabled, each chunk contains cumulative usage,
+                # so we replace rather than increment to avoid double-counting.
+                self._usage = chunk_usage
+            else:
+                self._usage += chunk_usage
 
             if chunk.id:  # pragma: no branch
                 self.provider_response_id = chunk.id

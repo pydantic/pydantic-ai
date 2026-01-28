@@ -48,6 +48,7 @@ from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, U
 from pydantic_ai.models import Model, ModelRequestParameters, cached_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -2786,6 +2787,40 @@ class BuiltinToolWorkflow:
         return result.output
 
 
+# Model that does NOT support any builtin tools (used as default)
+no_builtin_support_model = _BuiltinToolModel(response_text='no builtin support', model_name='no-builtin-test')
+
+# Model that DOES support WebSearchTool (registered as alternate model)
+web_search_builtin_override_model = _WebSearchOnlyModel(
+    response_text='web search response',
+    model_name='web-search-override',
+)
+
+# Agent initialized with model that doesn't support builtins, but has builtin tools configured
+builtins_in_workflow_agent = Agent(
+    no_builtin_support_model,
+    builtin_tools=[WebSearchTool()],
+    instrument=True,
+    name='builtins_in_workflow',
+)
+
+# TemporalAgent registers an alternate model that DOES support builtins
+builtins_in_workflow_temporal_agent = TemporalAgent(
+    builtins_in_workflow_agent,
+    name='builtins_in_workflow',
+    models={'web_search': web_search_builtin_override_model},
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class BuiltinsInWorkflow(PydanticAIWorkflow):
+    @workflow.run
+    async def run(self, prompt: str, model_id: str | None = None) -> str:
+        result = await builtins_in_workflow_temporal_agent.run(prompt, model=model_id)
+        return result.output
+
+
 @workflow.defn
 class MultiModelWorkflowUnregistered:
     @workflow.run
@@ -2876,6 +2911,33 @@ async def test_temporal_dynamic_builtin_tools_select_by_model(allow_model_reques
             code_execution_builtin_model.last_model_request_parameters.builtin_tools[0],
             CodeExecutionTool,
         )
+
+
+async def test_builtins_in_workflow_with_runtime_model_override(allow_model_requests: None, client: Client):
+    """Test that builtin tools work when agent is initialized with a non-supporting model
+    but run with a model that does support builtins."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[BuiltinsInWorkflow],
+        plugins=[AgentPlugin(builtins_in_workflow_temporal_agent)],
+    ):
+        # Run with the model that supports WebSearchTool
+        result = await client.execute_workflow(
+            BuiltinsInWorkflow.run,
+            args=['search for something', 'web_search'],
+            id='BuiltinsInWorkflow',
+            task_queue=TASK_QUEUE,
+        )
+        assert result == 'web search response'
+
+    # Verify the web search model received the WebSearchTool in its request parameters
+    assert isinstance(web_search_builtin_override_model.last_model_request_parameters, ModelRequestParameters)
+    assert web_search_builtin_override_model.last_model_request_parameters.builtin_tools
+    assert isinstance(
+        web_search_builtin_override_model.last_model_request_parameters.builtin_tools[0],
+        WebSearchTool,
+    )
 
 
 async def test_temporal_agent_multi_model_unregistered_error(allow_model_requests: None, client: Client):
@@ -3032,7 +3094,6 @@ async def test_temporal_agent_model_selection_by_instance(
 
 def test_temporal_model_profile_for_raw_strings():
     """Test TemporalModel infers model_name, system, and profile from raw strings without constructing providers."""
-    from pydantic_ai.profiles.openai import openai_model_profile
 
     default_model = TestModel(custom_output_text='default')
     temporal_model = TemporalModel(

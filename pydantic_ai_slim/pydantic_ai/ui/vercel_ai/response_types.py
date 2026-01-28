@@ -1,7 +1,7 @@
 """Vercel AI response types (SSE chunks).
 
 Converted to Python from:
-https://github.com/vercel/ai/blob/ai%405.0.59/packages/ai/src/ui-message-stream/ui-message-chunks.ts
+https://github.com/vercel/ai/blob/ai%406.0.57/packages/ai/src/ui-message-stream/ui-message-chunks.ts
 """
 
 from abc import ABC
@@ -16,7 +16,7 @@ JSONValue = Any
 ProviderMetadata = dict[str, dict[str, JSONValue]]
 """Provider metadata."""
 
-FinishReason = Literal['stop', 'length', 'content-filter', 'tool-calls', 'error', 'other', 'unknown'] | None
+FinishReason = Literal['stop', 'length', 'content-filter', 'tool-calls', 'error', 'other'] | None
 """Reason why the model finished generating."""
 
 
@@ -91,6 +91,7 @@ class ToolInputStartChunk(BaseChunk):
     tool_call_id: str
     tool_name: str
     provider_executed: bool | None = None
+    provider_metadata: ProviderMetadata | None = None
     dynamic: bool | None = None
 
 
@@ -233,6 +234,7 @@ class AbortChunk(BaseChunk):
     """Abort chunk."""
 
     type: Literal['abort'] = 'abort'
+    reason: str | None = None
 
 
 class MessageMetadataChunk(BaseChunk):

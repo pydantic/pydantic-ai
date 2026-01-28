@@ -1008,6 +1008,149 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
     assert result.output == snapshot(IsStr())
 
 
+async def test_openai_responses_model_web_search_tool_with_allowed_domains(
+    allow_model_requests: None, openai_api_key: str
+):
+    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        m,
+        instructions='You are a helpful assistant.',
+        builtin_tools=[WebSearchTool(allowed_domains=['wikipedia.org'])],
+    )
+
+    result = await agent.run('Search Google for the current population of Tokyo prefecture. Give me just the number.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Search Google for the current population of Tokyo prefecture. Give me just the number.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='You are a helpful assistant.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id=IsStr(),
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={
+                            'query': 'Tokyo population prefecture current site:wikipedia.org',
+                            'type': 'search',
+                            'queries': [
+                                'Tokyo population prefecture current site:wikipedia.org',
+                                'Tokyo Metropolis population site:wikipedia.org',
+                                'Demographics of Tokyo population site:wikipedia.org',
+                            ],
+                        },
+                        tool_call_id=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content={'status': 'completed'},
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id=IsStr(),
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={
+                            'query': 'Tokyo Metropolis population 2025 site:wikipedia.org',
+                            'type': 'search',
+                            'queries': [
+                                'Tokyo Metropolis population 2025 site:wikipedia.org',
+                                'Tokyo Prefecture population site:wikipedia.org',
+                            ],
+                        },
+                        tool_call_id=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content={'status': 'completed'},
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id=IsStr(),
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={
+                            'type': 'open_page',
+                            'url': 'https://en.wikipedia.org/wiki/List_of_Japanese_prefectures_by_population',
+                        },
+                        tool_call_id=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content={'status': 'completed'},
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id=IsStr(),
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'type': 'open_page', 'url': 'https://en.wikipedia.org/wiki/Demographics_of_Tokyo'},
+                        tool_call_id=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content={'status': 'completed'},
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id=IsStr(),
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    TextPart(content='14195730', id=IsStr(), provider_name='openai'),
+                ],
+                usage=RequestUsage(input_tokens=22013, output_tokens=1737, details={'reasoning_tokens': 1728}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+    assert result.output == snapshot('14195730')
+
+
 async def test_openai_responses_model_web_search_tool_with_invalid_region(
     allow_model_requests: None, openai_api_key: str
 ):
@@ -1576,7 +1719,8 @@ def test_model_profile_strict_not_supported():
 async def test_reasoning_model_with_temperature(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m, model_settings=OpenAIResponsesModelSettings(temperature=0.5))
-    result = await agent.run('What is the capital of Mexico?')
+    with pytest.warns(UserWarning, match='Sampling parameters.*temperature.*not supported when reasoning is enabled'):
+        result = await agent.run('What is the capital of Mexico?')
     assert result.output == snapshot(
         'The capital of Mexico is Mexico City. It serves as the political, cultural, and economic heart of the country and is one of the largest metropolitan areas in the world.'
     )

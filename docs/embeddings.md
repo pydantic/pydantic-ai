@@ -397,6 +397,181 @@ embedder = Embedder(
 )
 ```
 
+### Bedrock
+
+[`BedrockEmbeddingModel`][pydantic_ai.embeddings.bedrock.BedrockEmbeddingModel] provides access to embedding models through AWS Bedrock, including Amazon Titan, Cohere, and Amazon Nova models.
+
+#### Install
+
+To use Bedrock embedding models, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `bedrock` optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[bedrock]"
+```
+
+#### Configuration
+
+Authentication with AWS Bedrock uses standard AWS credentials. See the [Bedrock provider documentation](models/bedrock.md#environment-variables) for details on configuring credentials via environment variables, AWS credentials file, or IAM roles.
+
+Ensure your AWS account has access to the Bedrock embedding models you want to use. See [AWS Bedrock model access](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html) for details.
+
+#### Basic Usage
+
+```python {title="bedrock_embeddings.py" test="skip"}
+from pydantic_ai import Embedder
+
+# Using Amazon Titan
+embedder = Embedder('bedrock:amazon.titan-embed-text-v2:0')
+
+
+async def main():
+    result = await embedder.embed_query('Hello world')
+    print(len(result.embeddings[0]))
+    #> 1024
+```
+
+_(This example requires AWS credentials configured)_
+
+#### Supported Models
+
+Bedrock supports three families of embedding models. See the [AWS Bedrock documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for the full list of available models.
+
+**Amazon Titan:**
+
+- `amazon.titan-embed-text-v1` — 1536 dimensions (fixed), 8K tokens
+- `amazon.titan-embed-text-v2:0` — 256/384/1024 dimensions (configurable, default: 1024), 8K tokens
+
+**Cohere Embed:**
+
+- `cohere.embed-english-v3` — English-only, 1024 dimensions (fixed), 512 tokens
+- `cohere.embed-multilingual-v3` — Multilingual, 1024 dimensions (fixed), 512 tokens
+- `cohere.embed-v4:0` — 256/512/1024/1536 dimensions (configurable, default: 1536), 128K tokens
+
+**Amazon Nova:**
+
+- `amazon.nova-2-multimodal-embeddings-v1:0` — 256/384/1024/3072 dimensions (configurable, default: 3072), 8K tokens
+
+#### Titan-Specific Settings
+
+Titan v2 supports vector normalization for direct similarity calculations via `bedrock_titan_normalize` (default: `True`). Titan v1 does not support this setting.
+
+```python {title="bedrock_titan.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
+
+embedder = Embedder(
+    'bedrock:amazon.titan-embed-text-v2:0',
+    settings=BedrockEmbeddingSettings(
+        dimensions=512,
+        bedrock_titan_normalize=True,
+    ),
+)
+```
+
+!!! note
+    Titan models do not support the `truncate` setting. The `dimensions` setting is only supported by Titan v2.
+
+#### Cohere-Specific Settings
+
+Cohere models on Bedrock support additional settings via [`BedrockEmbeddingSettings`][pydantic_ai.embeddings.bedrock.BedrockEmbeddingSettings]:
+
+- `bedrock_cohere_input_type` — By default, `embed_query()` uses `'search_query'` and `embed_documents()` uses `'search_document'`. Also accepts `'classification'` or `'clustering'`.
+- `bedrock_cohere_truncate` — Fine-grained truncation control: `'NONE'` (default, error on overflow), `'START'`, or `'END'`. Overrides the base `truncate` setting.
+- `bedrock_cohere_max_tokens` — Limits tokens per input (default: 128000). Only supported by Cohere v4.
+
+```python {title="bedrock_cohere.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
+
+embedder = Embedder(
+    'bedrock:cohere.embed-v4:0',
+    settings=BedrockEmbeddingSettings(
+        dimensions=512,
+        bedrock_cohere_max_tokens=1000,
+        bedrock_cohere_truncate='END',
+    ),
+)
+```
+
+!!! note
+    The `dimensions` and `bedrock_cohere_max_tokens` settings are only supported by Cohere v4. Cohere v3 models have fixed 1024 dimensions.
+
+#### Nova-Specific Settings
+
+Nova models on Bedrock support additional settings via [`BedrockEmbeddingSettings`][pydantic_ai.embeddings.bedrock.BedrockEmbeddingSettings]:
+
+- `bedrock_nova_truncate` — Fine-grained truncation control: `'NONE'` (default, error on overflow), `'START'`, or `'END'`. Overrides the base `truncate` setting.
+- `bedrock_nova_embedding_purpose` — By default, `embed_query()` uses `'GENERIC_RETRIEVAL'` and `embed_documents()` uses `'GENERIC_INDEX'`. Also accepts `'TEXT_RETRIEVAL'`, `'CLASSIFICATION'`, or `'CLUSTERING'`.
+
+```python {title="bedrock_nova.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
+
+embedder = Embedder(
+    'bedrock:amazon.nova-2-multimodal-embeddings-v1:0',
+    settings=BedrockEmbeddingSettings(
+        dimensions=1024,
+        bedrock_nova_embedding_purpose='TEXT_RETRIEVAL',
+        truncate=True,
+    ),
+)
+```
+
+#### Concurrency Settings
+
+Models that don't support batch embedding (Titan and Nova) make individual API requests for each input text. By default, these requests run concurrently with a maximum of 5 parallel requests.
+
+You can adjust this with the `bedrock_max_concurrency` setting:
+
+```python {title="bedrock_concurrency.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
+
+# Increase concurrency for faster throughput
+embedder = Embedder(
+    'bedrock:amazon.titan-embed-text-v2:0',
+    settings=BedrockEmbeddingSettings(bedrock_max_concurrency=10),
+)
+
+# Or reduce concurrency to avoid rate limits
+embedder = Embedder(
+    'bedrock:amazon.nova-2-multimodal-embeddings-v1:0',
+    settings=BedrockEmbeddingSettings(bedrock_max_concurrency=2),
+)
+```
+
+#### Regional Prefixes (Cross-Region Inference)
+
+Bedrock supports cross-region inference using geographic prefixes like `us.`, `eu.`, or `apac.`:
+
+```python {title="bedrock_regional.py"}
+from pydantic_ai import Embedder
+
+embedder = Embedder('bedrock:us.amazon.titan-embed-text-v2:0')
+```
+
+#### Using a Custom Provider
+
+For advanced configuration like explicit credentials or a custom boto3 client, you can create a [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider] directly. See the [Bedrock provider documentation](models/bedrock.md#provider-argument) for more details.
+
+```python {title="bedrock_provider.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.bedrock import BedrockEmbeddingModel
+from pydantic_ai.providers.bedrock import BedrockProvider
+
+provider = BedrockProvider(
+    region_name='us-west-2',
+    aws_access_key_id='your-access-key',
+    aws_secret_access_key='your-secret-key',
+)
+
+model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=provider)
+embedder = Embedder(model)
+```
+
+!!! note "Token Counting"
+    Bedrock embedding models do not support the `count_tokens()` method because AWS Bedrock's token counting API only works with text generation models (Claude, Llama, etc.), not embedding models. Calling `count_tokens()` will raise `NotImplementedError`.
+
 ### Sentence Transformers (Local)
 
 [`SentenceTransformerEmbeddingModel`][pydantic_ai.embeddings.sentence_transformers.SentenceTransformerEmbeddingModel] runs embeddings locally using the [sentence-transformers](https://www.sbert.net/) library. This is ideal for:
@@ -475,8 +650,8 @@ embedder = Embedder(model)
 
 [`EmbeddingSettings`][pydantic_ai.embeddings.EmbeddingSettings] provides common configuration options that work across providers:
 
-- `dimensions`: Reduce the output embedding dimensions (supported by OpenAI, Google, Cohere, VoyageAI)
-- `truncate`: When `True`, truncate input text that exceeds the model's context length instead of raising an error (supported by Cohere, VoyageAI)
+- `dimensions`: Reduce the output embedding dimensions (supported by OpenAI, Google, Cohere, Bedrock, VoyageAI)
+- `truncate`: When `True`, truncate input text that exceeds the model's context length instead of raising an error (supported by Cohere, Bedrock, VoyageAI)
 
 Settings can be specified at the embedder level (applied to all calls) or per-call:
 

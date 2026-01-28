@@ -169,11 +169,15 @@ class OpenAIEmbeddingModel(EmbeddingModel):
 
 
 def _map_usage(
-    usage: Usage,
+    usage: Usage | None,
     provider: str,
     provider_url: str,
     model: str,
 ) -> RequestUsage:
+    # OpenAI SDK types say CreateEmbeddingResponse.usage will always be set, in reality some OpenAI-compatible APIs omit it.
+    if usage is None:
+        return RequestUsage()
+
     usage_data = usage.model_dump(exclude_none=True)
     details = {k: v for k, v in usage_data.items() if k not in {'prompt_tokens', 'total_tokens'} if isinstance(v, int)}
     response_data = dict(model=model, usage=usage_data)

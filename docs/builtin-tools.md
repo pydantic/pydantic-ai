@@ -150,7 +150,7 @@ _(This example is complete, it can be run "as is")_
 | `search_context_size` | ✅ | ❌ | ❌ | ❌ |
 | `user_location` | ✅ | ✅ | ❌ | ❌ |
 | `blocked_domains` | ❌ | ✅ | ✅ | ✅ |
-| `allowed_domains` | ❌ | ✅ | ✅ | ✅ |
+| `allowed_domains` | ✅ | ✅ | ✅ | ✅ |
 | `max_uses` | ❌ | ✅ | ❌ | ❌ |
 
 !!! note "Anthropic Domain Filtering"

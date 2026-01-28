@@ -18,21 +18,14 @@ from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
-    FinalResultEvent,
-    FunctionToolCallEvent,
-    FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelSettings,
-    PartDeltaEvent,
-    PartEndEvent,
-    PartStartEvent,
     RetryPromptPart,
     RunContext,
     TextPart,
     ToolCallPart,
-    ToolCallPartDelta,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -47,14 +40,10 @@ from pydantic_ai.usage import RequestUsage
 from .conftest import IsDatetime, IsNow, IsStr
 
 try:
-    import importlib.metadata
-
     from dbos import DBOS, DBOSConfig, SetWorkflowID
-    from packaging.version import Version
 
     from pydantic_ai.durable_exec.dbos import DBOSAgent, DBOSMCPServer, DBOSModel
 
-    dbos_version = Version(importlib.metadata.version('dbos'))
 except ImportError:  # pragma: lax no cover
     pytest.skip('DBOS is not installed', allow_module_level=True)
 
@@ -120,36 +109,21 @@ def workflow_raises(exc_type: type[Exception], exc_message: str) -> Iterator[Non
     assert str(exc_info.value) == exc_message
 
 
-DBOS_SQLITE_FILE = 'dbostest.sqlite'
-DBOS_CONFIG: DBOSConfig = {
-    'name': 'pydantic_dbos_tests',
-    'system_database_url': f'sqlite:///{DBOS_SQLITE_FILE}',
-    'run_admin_server': False,
-    # enable_otlp requires dbos>1.14
-    'enable_otlp': True,
-}
-
-
 @pytest.fixture(scope='module')
-def dbos() -> Generator[DBOS, Any, None]:
-    dbos = DBOS(config=DBOS_CONFIG)
+def dbos(tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOS, Any, None]:
+    dbos_sqlite_file = tmp_path_factory.mktemp('dbos') / 'dbostest.sqlite'
+    dbos_config: DBOSConfig = {
+        'name': 'pydantic_dbos_tests',
+        'system_database_url': f'sqlite:///{dbos_sqlite_file}',
+        'run_admin_server': False,
+        'enable_otlp': True,
+    }
+    dbos = DBOS(config=dbos_config)
     DBOS.launch()
     try:
         yield dbos
     finally:
         DBOS.destroy()
-
-
-# Automatically clean up old DBOS sqlite files
-@pytest.fixture(autouse=True, scope='module')
-def cleanup_test_sqlite_file() -> Iterator[None]:
-    if os.path.exists(DBOS_SQLITE_FILE):
-        os.remove(DBOS_SQLITE_FILE)  # pragma: lax no cover
-    try:
-        yield
-    finally:
-        if os.path.exists(DBOS_SQLITE_FILE):
-            os.remove(DBOS_SQLITE_FILE)  # pragma: lax no cover
 
 
 model = OpenAIChatModel(
@@ -242,6 +216,7 @@ complex_agent = Agent(
     name='complex_agent',
 )
 complex_dbos_agent = DBOSAgent(complex_agent)
+seq_complex_dbos_agent = DBOSAgent(complex_agent, parallel_execution_mode='sequential', name='seq_complex_agent')
 
 
 async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire) -> None:
@@ -270,8 +245,8 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
             'complex_agent__model.request_stream',
             'event_stream_handler',
             'event_stream_handler',
-            'event_stream_handler',
             'complex_agent__mcp_server__mcp.call_tool',
+            'event_stream_handler',
             'event_stream_handler',
             'complex_agent__mcp_server__mcp.get_tools',
             'complex_agent__model.request_stream',
@@ -366,6 +341,10 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='running tool: get_country'),
                                 BasicSpan(
+                                    content='running tool: get_product_name',
+                                    children=[BasicSpan(content='complex_agent__mcp_server__mcp.call_tool')],
+                                ),
+                                BasicSpan(
                                     content='event_stream_handler',
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
@@ -375,10 +354,6 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                             )
                                         ),
                                     ],
-                                ),
-                                BasicSpan(
-                                    content='running tool: get_product_name',
-                                    children=[BasicSpan(content='complex_agent__mcp_server__mcp.call_tool')],
                                 ),
                                 BasicSpan(
                                     content='event_stream_handler',
@@ -605,296 +580,43 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
     )
 
 
-# Note: since we wrap the agent run in a DBOS workflow, we cannot just use a DBOS agent without DBOS. This test shows we can use a complex agent with DBOS decorated tools. Without DBOS workflows, those steps are just normal functions.
-async def test_complex_agent_run(allow_model_requests: None) -> None:
-    events: list[AgentStreamEvent] = []
-
-    async def event_stream_handler(
-        ctx: RunContext[Deps],
-        stream: AsyncIterable[AgentStreamEvent],
-    ):
-        async for event in stream:
-            events.append(event)
-
-    with complex_agent.override(deps=Deps(country='Mexico')):
-        result = await complex_agent.run(
-            'Tell me: the capital of the country; the weather there; the product name',
-            deps=Deps(country='The Netherlands'),
-            event_stream_handler=event_stream_handler,
+# Test sequential tool call works
+async def test_complex_agent_run_sequential_tool(allow_model_requests: None, dbos: DBOS) -> None:
+    # Set a workflow ID for testing list steps
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        # DBOSAgent already wraps the `run` function as a DBOS workflow, so we can just call it directly.
+        result = await seq_complex_dbos_agent.run(
+            'Tell me: the capital of the country; the weather there; the product name', deps=Deps(country='Mexico')
         )
     assert result.output == snapshot(
         Response(
             answers=[
-                Answer(label='Capital', answer='The capital of Mexico is Mexico City.'),
-                Answer(label='Weather', answer='The weather in Mexico City is currently sunny.'),
-                Answer(label='Product Name', answer='The product name is Pydantic AI.'),
+                Answer(label='Capital of the country', answer='Mexico City'),
+                Answer(label='Weather in the capital', answer='Sunny'),
+                Answer(label='Product Name', answer='Pydantic AI'),
             ]
         )
     )
 
-    assert events == snapshot(
+    # Make sure the steps are persisted correctly in the DBOS database.
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert [step['function_name'] for step in steps] == snapshot(
         [
-            PartStartEvent(
-                index=0,
-                part=ToolCallPart(tool_name='get_country', args='', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z'),
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z')
-            ),
-            PartEndEvent(
-                index=0,
-                part=ToolCallPart(tool_name='get_country', args='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z'),
-                next_part_kind='tool-call',
-            ),
-            PartStartEvent(
-                index=1,
-                part=ToolCallPart(tool_name='get_product_name', args='', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5'),
-                previous_part_kind='tool-call',
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='{}', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5')
-            ),
-            PartEndEvent(
-                index=1,
-                part=ToolCallPart(
-                    tool_name='get_product_name', args='{}', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5'
-                ),
-            ),
-            FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='get_country', args='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z')
-            ),
-            FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='get_product_name', args='{}', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5')
-            ),
-            FunctionToolResultEvent(
-                result=ToolReturnPart(
-                    tool_name='get_country',
-                    content='Mexico',
-                    tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z',
-                    timestamp=IsDatetime(),
-                )
-            ),
-            FunctionToolResultEvent(
-                result=ToolReturnPart(
-                    tool_name='get_product_name',
-                    content='Pydantic AI',
-                    tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5',
-                    timestamp=IsDatetime(),
-                )
-            ),
-            PartStartEvent(
-                index=0,
-                part=ToolCallPart(tool_name='get_weather', args='', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv'),
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='{"', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='city', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='Mexico', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' City', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
-            ),
-            PartEndEvent(
-                index=0,
-                part=ToolCallPart(
-                    tool_name='get_weather', args='{"city":"Mexico City"}', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv'
-                ),
-            ),
-            FunctionToolCallEvent(
-                part=ToolCallPart(
-                    tool_name='get_weather', args='{"city":"Mexico City"}', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv'
-                )
-            ),
-            FunctionToolResultEvent(
-                result=ToolReturnPart(
-                    tool_name='get_weather',
-                    content='sunny',
-                    tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv',
-                    timestamp=IsDatetime(),
-                )
-            ),
-            PartStartEvent(
-                index=0,
-                part=ToolCallPart(tool_name='final_result', args='', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn'),
-            ),
-            FinalResultEvent(tool_name='final_result', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn'),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='{"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='answers', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='":[', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='{"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='label', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='Capital', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='","', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='answer', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='The', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' capital', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' of', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' Mexico', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' is', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' Mexico', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' City', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='."', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='},{"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='label', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='Weather', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='","', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='answer', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='The', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' weather', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' in', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' Mexico', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' City', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' is', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' currently', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' sunny', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='."', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='},{"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='label', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='Product', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' Name', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='","', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='answer', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='The', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' product', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' name', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' is', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' P', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='yd', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='antic', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' AI', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='."', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='}', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=']}', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartEndEvent(
-                index=0,
-                part=ToolCallPart(
-                    tool_name='final_result',
-                    args='{"answers":[{"label":"Capital","answer":"The capital of Mexico is Mexico City."},{"label":"Weather","answer":"The weather in Mexico City is currently sunny."},{"label":"Product Name","answer":"The product name is Pydantic AI."}]}',
-                    tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn',
-                ),
-            ),
+            'seq_complex_agent__mcp_server__mcp.get_tools',
+            'seq_complex_agent__model.request_stream',
+            'event_stream_handler',
+            'event_stream_handler',
+            'event_stream_handler',
+            'seq_complex_agent__mcp_server__mcp.call_tool',
+            'event_stream_handler',
+            'seq_complex_agent__mcp_server__mcp.get_tools',
+            'seq_complex_agent__model.request_stream',
+            'event_stream_handler',
+            'get_weather',
+            'event_stream_handler',
+            'seq_complex_agent__mcp_server__mcp.get_tools',
+            'seq_complex_agent__model.request_stream',
         ]
     )
 
@@ -1122,15 +844,10 @@ async def test_dbos_agent_run_in_workflow_with_event_stream_handler(allow_model_
     with pytest.raises(Exception) as exc_info:
         await simple_dbos_agent.run('What is the capital of Mexico?', event_stream_handler=simple_event_stream_handler)
 
-    if dbos_version <= Version('1.14'):  # pragma: lax no cover
-        # Older DBOS versions used jsonpickle
-        assert str(exc_info.value) == snapshot('Serialized function should be defined at the top level of a module')
-    else:
-        # Newer DBOS versions use pickle
-        assert (
-            "local object 'test_dbos_agent_run_in_workflow_with_event_stream_handler.<locals>.simple_event_stream_handler'"
-            in str(exc_info.value)
-        )
+    assert (
+        "local object 'test_dbos_agent_run_in_workflow_with_event_stream_handler.<locals>.simple_event_stream_handler'"
+        in str(exc_info.value)
+    )
 
 
 async def test_dbos_agent_run_in_workflow_with_model(allow_model_requests: None, dbos: DBOS):
@@ -1235,12 +952,7 @@ async def test_dbos_agent_with_unserializable_deps_type(allow_model_requests: No
             logfire.instrument_httpx(client, capture_all=True)
             await unserializable_deps_dbos_agent.run('What is the model name?', deps=UnserializableDeps(client=client))
 
-    if dbos_version <= Version('1.14'):  # pragma: lax no cover
-        # Older DBOS versions used jsonpickle
-        assert str(exc_info.value) == snapshot('object proxy must define __reduce_ex__()')
-    else:
-        # Newer DBOS versions use pickle
-        assert str(exc_info.value) == snapshot("cannot pickle '_thread.RLock' object")
+    assert str(exc_info.value) == snapshot("cannot pickle '_thread.RLock' object")
 
 
 # Test dynamic toolsets in an agent with DBOS
