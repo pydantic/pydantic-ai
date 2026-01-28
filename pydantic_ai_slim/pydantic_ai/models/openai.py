@@ -351,6 +351,16 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     See the [OpenAI Prompt Caching documentation](https://platform.openai.com/docs/guides/prompt-caching#how-it-works) for more information.
     """
 
+    openai_continuous_usage_stats: bool
+    """When True, enables continuous usage statistics in streaming responses.
+
+    When enabled, the API returns cumulative usage data with each chunk rather than only at the end.
+    This setting correctly handles the cumulative nature of these stats by using only the final
+    usage values rather than summing all intermediate values.
+
+    See [OpenAI's streaming documentation](https://platform.openai.com/docs/api-reference/chat/create#stream_options) for more information.
+    """
+
 
 @deprecated('Use `OpenAIChatModelSettings` instead.')
 class OpenAIModelSettings(OpenAIChatModelSettings, total=False):
@@ -615,11 +625,10 @@ class OpenAIChatModel(Model):
             model_settings,
             model_request_parameters,
         )
-        response = await self._completions_create(
-            messages, True, cast(OpenAIChatModelSettings, model_settings or {}), model_request_parameters
-        )
+        model_settings_cast = cast(OpenAIChatModelSettings, model_settings or {})
+        response = await self._completions_create(messages, True, model_settings_cast, model_request_parameters)
         async with response:
-            yield await self._process_streamed_response(response, model_request_parameters)
+            yield await self._process_streamed_response(response, model_request_parameters, model_settings_cast)
 
     @overload
     async def _completions_create(
@@ -683,7 +692,7 @@ class OpenAIChatModel(Model):
                 tools=tools or OMIT,
                 tool_choice=tool_choice or OMIT,
                 stream=stream,
-                stream_options={'include_usage': True} if stream else OMIT,
+                stream_options=self._get_stream_options(model_settings) if stream else OMIT,
                 stop=model_settings.get('stop_sequences', OMIT),
                 max_completion_tokens=model_settings.get('max_tokens', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
@@ -825,7 +834,10 @@ class OpenAIChatModel(Model):
         return items or None
 
     async def _process_streamed_response(
-        self, response: AsyncStream[ChatCompletionChunk], model_request_parameters: ModelRequestParameters
+        self,
+        response: AsyncStream[ChatCompletionChunk],
+        model_request_parameters: ModelRequestParameters,
+        model_settings: OpenAIChatModelSettings | None = None,
     ) -> OpenAIStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
@@ -847,6 +859,7 @@ class OpenAIChatModel(Model):
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
             _provider_timestamp=number_to_datetime(first_chunk.created) if first_chunk.created else None,
+            _model_settings=model_settings,
         )
 
     @property
@@ -859,6 +872,16 @@ class OpenAIChatModel(Model):
 
     def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
         return _map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
+
+    def _get_stream_options(self, model_settings: OpenAIChatModelSettings) -> chat.ChatCompletionStreamOptionsParam:
+        """Build stream_options for the API request.
+
+        Returns a dict with include_usage=True and optionally continuous_usage_stats if configured.
+        """
+        options: dict[str, bool] = {'include_usage': True}
+        if model_settings.get('openai_continuous_usage_stats'):
+            options['continuous_usage_stats'] = True
+        return cast(chat.ChatCompletionStreamOptionsParam, options)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
@@ -1733,6 +1756,10 @@ class OpenAIResponsesModel(Model):
                     web_search_tool['user_location'] = responses.web_search_tool_param.UserLocation(
                         type='approximate', **tool.user_location
                     )
+                if tool.allowed_domains:
+                    web_search_tool['filters'] = responses.web_search_tool_param.Filters(
+                        allowed_domains=tool.allowed_domains
+                    )
                 tools.append(web_search_tool)
             elif isinstance(tool, FileSearchTool):
                 file_search_tool = cast(
@@ -2287,12 +2314,19 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
+    _model_settings: OpenAIChatModelSettings | None = None
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         if self._provider_timestamp is not None:  # pragma: no branch
             self.provider_details = {'timestamp': self._provider_timestamp}
         async for chunk in self._validate_response():
-            self._usage += self._map_usage(chunk)
+            chunk_usage = self._map_usage(chunk)
+            if self._model_settings and self._model_settings.get('openai_continuous_usage_stats'):
+                # When continuous_usage_stats is enabled, each chunk contains cumulative usage,
+                # so we replace rather than increment to avoid double-counting.
+                self._usage = chunk_usage
+            else:
+                self._usage += chunk_usage
 
             if chunk.id:  # pragma: no branch
                 self.provider_response_id = chunk.id
