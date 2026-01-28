@@ -1,47 +1,61 @@
 from __future__ import annotations
+
 from abc import ABC
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
-from typing_extensions import Awaitable, Callable, TypeAlias
+from typing import Any, TypeAlias
 
 
 @dataclass(frozen=True)
 class FunctionCall:
     """Emitted by CodeExecution.next() when running code calls a tool."""
+
     function_name: str
-    args: tuple[Any, ...] = () # Positional args
-    kwargs: dict[str, Any] = field(default_factory = dict) # keyword args
+    args: tuple[Any, ...] = ()  # Positional args
+    kwargs: dict[str, Any] = field(default_factory=dict)  # keyword args
 
 
 @dataclass(frozen=True)
 class ExecutionResult:
     """Emitted by CodeExecution.next() when running code finishes."""
+
     output: Any
+
 
 # Exception Hierarchy
 #
 
+
 class CodeExecutionError(Exception):
     """Base for all code execution errors."""
+
     def __init__(self, message: str):
         self.message = message
         super().__init__(message)
 
+
 class CodeSyntaxError(CodeExecutionError):
     """Code has a syntax error."""
+
     pass
+
 
 class CodeTypeError(CodeExecutionError):
     """Code has a type error."""
+
     pass
+
 
 class CodeRuntimeError(CodeExecutionError):
     """Code raised an exception at runtime."""
+
     pass
+
 
 NextFn: TypeAlias = Callable[[], Awaitable[FunctionCall | ExecutionResult]]
 ProvideResultFn: TypeAlias = Callable[[Any], Awaitable[None]]
 DumpFn: TypeAlias = Callable[[], bytes | None]
+
 
 class CodeExecution:
     """Handle for one running code execution. Created by CodeRuntime.execute() or .restore().
@@ -55,7 +69,6 @@ class CodeExecution:
     _next: NextFn
     _provide_result: ProvideResultFn
     _dump: DumpFn = lambda: None
-
 
     def __init__(self, next: NextFn, provide_result: ProvideResultFn, dump: DumpFn) -> None:
         self._next = next
@@ -88,7 +101,6 @@ class CodeExecution:
         Returns bytes if checkpointing is supported, None otherwise.
         """
         return self._dump()
-
 
 
 class CodeRuntime(ABC):

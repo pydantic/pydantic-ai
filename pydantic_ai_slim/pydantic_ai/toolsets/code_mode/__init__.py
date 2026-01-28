@@ -10,7 +10,15 @@ from typing import Any, cast
 from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
-from pydantic_ai.runtime.abstract import CodeExecution, CodeRuntime, CodeRuntimeError, CodeSyntaxError, CodeTypeError, ExecutionResult, FunctionCall
+from pydantic_ai.runtime.abstract import (
+    CodeExecution,
+    CodeRuntime,
+    CodeRuntimeError,
+    CodeSyntaxError,
+    CodeTypeError,
+    ExecutionResult,
+    FunctionCall,
+)
 from pydantic_ai.runtime.monty import MontyRuntime
 
 from ..._run_context import AgentDepsT, RunContext
@@ -234,7 +242,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     description_handler: DescriptionHandler | None = None
     _cached_signatures: list[str] = field(default_factory=list, init=False, repr=False)
     _name_mapping: ToolNameMapping = field(default_factory=ToolNameMapping, init=False, repr=False)
-
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         wrapped_tools = await super().get_tools(ctx)
