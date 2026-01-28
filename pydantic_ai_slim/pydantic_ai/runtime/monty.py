@@ -80,9 +80,8 @@ class MontyRuntime(CodeRuntime):
     async def resume_with_tools(self, checkpoint: bytes, call_tool: ToolCallback) -> Any:
         """Resume a paused execution from a serialized checkpoint.
 
-        Supports both plain MontySnapshot checkpoints (legacy/simple) and
-        enriched checkpoints that include MontyFutureSnapshot state plus
-        pending call info for concurrent execution.
+        The checkpoint is a JSON envelope containing the Monty VM state
+        plus pending call info for concurrent execution.
 
         Args:
             checkpoint: Bytes previously obtained from ``_build_checkpoint``.
@@ -160,10 +159,15 @@ class MontyRuntime(CodeRuntime):
         tasks: dict[int, asyncio.Task[Any]] = {}
         call_info: dict[int, FunctionCall] = {}
 
+        # Wrap the callback so we always get a proper coroutine for create_task.
+        # ToolCallback returns Awaitable[Any], but create_task needs a Coroutine.
+        async def _run_callback(fn_call: FunctionCall) -> Any:
+            return await call_tool(fn_call)
+
         # On resume with pending calls: re-launch tasks for deferred calls.
         if pending_calls:
             for cid, call in pending_calls.items():
-                task = asyncio.create_task(call_tool(call))
+                task = asyncio.create_task(_run_callback(call))
                 tasks[cid] = task
                 call_info[cid] = call
 
@@ -179,7 +183,7 @@ class MontyRuntime(CodeRuntime):
                             args=tuple(state.args) if state.args else (),
                             kwargs=dict(state.kwargs) if state.kwargs else {},
                         )
-                        task = asyncio.create_task(call_tool(call))
+                        task = asyncio.create_task(_run_callback(call))
                         tasks[state.call_id] = task
                         call_info[state.call_id] = call
                         try:
@@ -225,7 +229,7 @@ class MontyRuntime(CodeRuntime):
         pending_tasks = {cid: tasks[cid] for cid in pending_ids if cid in tasks}
         task_to_cid: dict[asyncio.Task[Any], int] = {task: cid for cid, task in pending_tasks.items()}
 
-        completed: dict[int, monty.ExternalReturnValue] = {}
+        completed: dict[int, monty.ExternalResult] = {}
         approval_needed: dict[int, ApprovalRequired] = {}
 
         remaining = set(pending_tasks.values())
@@ -246,7 +250,7 @@ class MontyRuntime(CodeRuntime):
             # Provide partial results for completed calls before checkpointing.
             if completed:
                 try:
-                    future_state = future_state.resume(results=completed)  # type: ignore[assignment]
+                    future_state = future_state.resume(results=completed)
                 except monty.MontyRuntimeError as e:
                     raise CodeRuntimeError(e.display())
 
@@ -300,82 +304,65 @@ class MontyRuntime(CodeRuntime):
     @staticmethod
     def _build_checkpoint(
         state: monty.MontySnapshot | monty.MontyFutureSnapshot,
-        pending_calls: dict[int, FunctionCall] | None = None,
+        pending_calls: dict[int, FunctionCall],
     ) -> bytes:
-        """Serialize Monty state to a checkpoint.
+        """Serialize Monty state and pending call info to a checkpoint.
 
-        For a ``MontyFutureSnapshot`` with pending calls, the checkpoint is a
-        JSON envelope containing the Monty dump (base64-encoded) plus the
-        ``FunctionCall`` info for each pending call_id. This is necessary
-        because ``MontyFutureSnapshot.pending_call_ids`` only gives IDs, not
-        the function name/args/kwargs needed to re-launch callbacks on resume.
-
-        For a plain ``MontySnapshot`` (no pending calls), the checkpoint is
-        just the raw Monty dump bytes.
+        The checkpoint is a JSON envelope containing the Monty dump
+        (base64-encoded) plus the ``FunctionCall`` info for each pending
+        call_id. This is necessary because ``MontyFutureSnapshot.pending_call_ids``
+        only gives IDs, not the function name/args/kwargs needed to re-launch
+        callbacks on resume.
 
         Args:
             state: The Monty snapshot to serialize.
-            pending_calls: Optional mapping of call_id -> FunctionCall for
-                concurrent calls that still need to be resolved.
+            pending_calls: Mapping of call_id -> FunctionCall for concurrent
+                calls that still need to be resolved.
 
         Returns:
             Opaque bytes suitable for ``_load_checkpoint``.
         """
-        if pending_calls:
-            data = {
-                'monty': base64.b64encode(state.dump()).decode(),
-                'pending_calls': {
-                    str(cid): {
-                        'function_name': call.function_name,
-                        'args': list(call.args),
-                        'kwargs': call.kwargs,
-                    }
-                    for cid, call in pending_calls.items()
-                },
-            }
-            return json.dumps(data).encode()
-        else:
-            return state.dump()
+        data = {
+            'monty': base64.b64encode(state.dump()).decode(),
+            'pending_calls': {
+                str(cid): {
+                    'function_name': call.function_name,
+                    'args': list(call.args),
+                    'kwargs': call.kwargs,
+                }
+                for cid, call in pending_calls.items()
+            },
+        }
+        return json.dumps(data).encode()
 
     @staticmethod
     def _load_checkpoint(
         checkpoint: bytes,
-    ) -> tuple[monty.MontySnapshot | monty.MontyFutureSnapshot, dict[int, FunctionCall] | None]:
+    ) -> tuple[monty.MontySnapshot | monty.MontyFutureSnapshot, dict[int, FunctionCall]]:
         """Deserialize a checkpoint produced by ``_build_checkpoint``.
-
-        Handles both enriched (JSON envelope) and plain (raw bytes)
-        checkpoint formats.
 
         Args:
             checkpoint: Bytes from ``_build_checkpoint``.
 
         Returns:
-            A tuple of (Monty state, optional pending calls dict).
+            A tuple of (Monty state, pending calls dict).
         """
+        data = json.loads(checkpoint.decode())
+        monty_bytes = base64.b64decode(data['monty'])
+        # Try MontyFutureSnapshot first, fall back to MontySnapshot.
         try:
-            data = json.loads(checkpoint.decode())
-            if isinstance(data, dict) and 'monty' in data and 'pending_calls' in data:
-                monty_bytes = base64.b64decode(data['monty'])
-                # Try MontyFutureSnapshot first, fall back to MontySnapshot.
-                try:
-                    state: monty.MontySnapshot | monty.MontyFutureSnapshot = monty.MontyFutureSnapshot.load(
-                        monty_bytes
-                    )
-                except Exception:
-                    state = monty.MontySnapshot.load(monty_bytes)
-                pending_calls = {
-                    int(cid): FunctionCall(
-                        function_name=info['function_name'],
-                        args=tuple(info['args']),
-                        kwargs=info['kwargs'],
-                    )
-                    for cid, info in data['pending_calls'].items()
-                }
-                return state, pending_calls
-        except (json.JSONDecodeError, UnicodeDecodeError, KeyError):
-            pass
-        # Legacy/simple: plain MontySnapshot bytes.
-        return monty.MontySnapshot.load(checkpoint), None
+            state: monty.MontySnapshot | monty.MontyFutureSnapshot = monty.MontyFutureSnapshot.load(monty_bytes)
+        except Exception:
+            state = monty.MontySnapshot.load(monty_bytes)
+        pending_calls = {
+            int(cid): FunctionCall(
+                function_name=info['function_name'],
+                args=tuple(info['args']),
+                kwargs=info['kwargs'],
+            )
+            for cid, info in data['pending_calls'].items()
+        }
+        return state, pending_calls
 
     # ------------------------------------------------------------------
     # Task helpers
