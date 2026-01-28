@@ -287,13 +287,17 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         checkpoint: dict[str, Any] | None,
     ) -> ToolCallback:
-        next_call_approved = checkpoint is not None
+        # Match approval by tool name rather than a boolean flag. With concurrent
+        # execution, multiple callbacks fire simultaneously — a boolean consumed by
+        # whichever task runs first would approve the wrong call. String matching
+        # ensures only the callback whose original_name matches gets approved.
+        approved_tool_name: str | None = checkpoint.get('tool_name') if checkpoint else None
         override_args: dict[str, Any] | None = (
             ctx.tool_call_metadata.get('_override_args') if checkpoint and ctx.tool_call_metadata else None
         )
 
         async def callback(call: FunctionCall) -> Any:
-            nonlocal next_call_approved, override_args
+            nonlocal approved_tool_name, override_args
             sanitized_name = call.function_name
             original_tool = tool.original_tools[sanitized_name]
             original_name = self._name_mapping.get_original(sanitized_name) or sanitized_name
@@ -309,8 +313,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     if i < len(param_names):
                         tool_kwargs[param_names[i]] = arg
 
-            # One-shot override from approval
-            if override_args:
+            # Approval matches by tool name (one-shot): only the callback whose
+            # original_name matches the approved tool gets marked approved.
+            this_call_approved = approved_tool_name is not None and original_name == approved_tool_name
+            if this_call_approved:
+                approved_tool_name = None  # consumed
+
+            # One-shot override from approval, gated on this_call_approved
+            if this_call_approved and override_args:
                 tool_kwargs = override_args
                 override_args = None
 
@@ -318,10 +328,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # to avoid leaking code_mode's checkpoint data into the inner tool's context.
             inner_metadata = ctx.tool_call_metadata.get('original_metadata') if checkpoint else None
             inner_ctx = replace(
-                ctx, tool_name=original_name, tool_call_approved=next_call_approved, tool_call_metadata=inner_metadata
+                ctx, tool_name=original_name, tool_call_approved=this_call_approved, tool_call_metadata=inner_metadata
             )
-            # Only the first inner tool call after approval is marked approved.
-            next_call_approved = False
 
             span_attributes = {
                 'gen_ai.tool.name': original_name,
