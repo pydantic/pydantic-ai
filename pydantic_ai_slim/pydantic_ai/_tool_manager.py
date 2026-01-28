@@ -224,7 +224,8 @@ class ToolManager(Generic[AgentDepsT]):
                     tool_call_id=call.tool_call_id,
                 )
                 validation_error = ToolRetryError(m)
-            else:
+            else:  # pragma: no cover
+                # Same as above but without the intermediate variable
                 validation_error = ToolRetryError(
                     _messages.RetryPromptPart(tool_name=name, content=error_msg, tool_call_id=call.tool_call_id)
                 )

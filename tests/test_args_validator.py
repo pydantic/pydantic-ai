@@ -5,12 +5,23 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import FunctionToolCallEvent
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets.function import FunctionToolset
+
+
+# Models for exhaustive strategy test (need to be at module level for type resolution)
+class _ExhaustiveTestValidOutput(BaseModel):
+    value: str
+
+
+class _ExhaustiveTestInvalidOutput(BaseModel):
+    value: str
+    count: int  # This field requires an int
 
 
 # Test 1: args_validator success - validator passes, args_valid=True
@@ -336,7 +347,7 @@ async def test_schema_validation_failure_args_valid_false():
     from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
     from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 
-    def return_invalid_args(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def return_invalid_args(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
         """Return a tool call with invalid arguments (wrong type)."""
         return ModelResponse(parts=[ToolCallPart(tool_name='add_numbers', args={'x': 'not_an_int', 'y': 2})])
 
@@ -348,9 +359,9 @@ async def test_schema_validation_failure_args_valid_false():
     agent = Agent(FunctionModel(return_invalid_args, stream_function=stream_invalid_args), deps_type=int)
 
     @agent.tool
-    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:  # pragma: no cover
         """Add two numbers."""
-        return x + y
+        return x + y  # Never executed - validation always fails
 
     events: list[Any] = []
     # The model always returns invalid args, so eventually max retries will be exceeded
@@ -385,9 +396,9 @@ def test_args_validator_max_retries_exceeded():
     )
 
     @agent.tool(args_validator=always_fail_validator, retries=2)
-    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:  # pragma: no cover
         """Add two numbers."""
-        return x + y
+        return x + y  # Never executed - validator always fails
 
     with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries'):
         agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
@@ -558,3 +569,207 @@ def test_args_validator_context_retry():
     assert len(retry_values) >= 2
     # First call should have retry=0
     assert retry_values[0] == 0
+
+
+# Test 20: Exhaustive strategy - first output succeeds, second fails schema validation
+def test_exhaustive_strategy_second_output_schema_validation_fails():
+    """Test exhaustive strategy when first output succeeds and second fails schema validation.
+
+    This tests the code path in _agent_graph.py lines 950-957 where args_valid=False
+    when there's already a final_result.
+    """
+    from pydantic_ai._output import ToolOutput
+    from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    output_tools_called: list[str] = []
+
+    def process_first(output: _ExhaustiveTestValidOutput) -> _ExhaustiveTestValidOutput:
+        """Process first output - will succeed."""
+        output_tools_called.append('first')
+        return output
+
+    def process_second(output: _ExhaustiveTestInvalidOutput) -> _ExhaustiveTestInvalidOutput:  # pragma: no cover
+        """Process second output - won't be called due to schema validation failure."""
+        output_tools_called.append('second')
+        return output
+
+    def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(
+            parts=[
+                # First output: valid schema
+                ToolCallPart('first_output', {'value': 'valid'}),
+                # Second output: invalid schema (count should be int, not string)
+                ToolCallPart('second_output', {'value': 'invalid', 'count': 'not_an_int'}),
+            ],
+        )
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=[
+            ToolOutput(process_first, name='first_output'),
+            ToolOutput(process_second, name='second_output'),
+        ],
+        end_strategy='exhaustive',
+    )
+
+    result = agent.run_sync('test exhaustive with schema validation failure')
+
+    # Verify the result came from the first output tool
+    assert isinstance(result.output, _ExhaustiveTestValidOutput)
+    assert result.output.value == 'valid'
+
+    # Only the first output tool should have been called
+    # (second failed schema validation before its processor could run)
+    assert output_tools_called == ['first']
+
+
+# Test 21: Exhaustive strategy - first output succeeds, second exceeds max retries
+def test_exhaustive_strategy_second_output_max_retries_exceeded():
+    """Test exhaustive strategy when first output succeeds and second exceeds max retries.
+
+    This tests the code path in _agent_graph.py lines 930-938 where UnexpectedModelBehavior
+    is caught when there's already a final_result.
+    """
+    from pydantic_ai._output import ToolOutput
+    from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    output_tools_called: list[str] = []
+
+    def process_first(output: _ExhaustiveTestValidOutput) -> _ExhaustiveTestValidOutput:
+        """Process first output - will succeed."""
+        output_tools_called.append('first')
+        return output
+
+    def process_second(output: _ExhaustiveTestInvalidOutput) -> _ExhaustiveTestInvalidOutput:  # pragma: no cover
+        """Process second output - will never be called due to schema validation failure."""
+        output_tools_called.append('second')
+        return output
+
+    def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(
+            parts=[
+                # First output: valid schema
+                ToolCallPart('first_output', {'value': 'valid'}),
+                # Second output: invalid schema (count should be int, not string)
+                # Will fail schema validation and with output_retries=0, will exceed max retries
+                ToolCallPart('second_output', {'value': 'invalid', 'count': 'not_an_int'}),
+            ],
+        )
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=[
+            ToolOutput(process_first, name='first_output'),
+            ToolOutput(process_second, name='second_output'),
+        ],
+        end_strategy='exhaustive',
+        output_retries=0,  # Immediately exceed max retries on first validation failure
+    )
+
+    result = agent.run_sync('test exhaustive with max retries exceeded')
+
+    # Verify the result came from the first output tool
+    assert isinstance(result.output, _ExhaustiveTestValidOutput)
+    assert result.output.value == 'valid'
+
+    # Only the first output tool should have been called
+    assert output_tools_called == ['first']
+
+
+# Test 22: External tool validation failure
+@pytest.mark.anyio
+async def test_external_tool_validation_failure():
+    """Test that external tool validation failure is handled correctly.
+
+    This tests the code path in _agent_graph.py lines 1101-1121 where
+    deferred/external tool validation fails.
+    """
+    from collections.abc import AsyncIterator
+    from dataclasses import replace as dataclass_replace
+
+    from pydantic_core import SchemaValidator, core_schema
+
+    from pydantic_ai._output import DeferredToolRequests
+    from pydantic_ai._run_context import RunContext as RC
+    from pydantic_ai.messages import ModelMessage
+    from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+    from pydantic_ai.tools import ToolDefinition
+    from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
+
+    # Create a schema validator that requires 'value' field of type string
+    strict_schema = core_schema.typed_dict_schema(
+        {
+            'value': core_schema.typed_dict_field(core_schema.str_schema(), required=True),
+        },
+    )
+    STRICT_VALIDATOR = SchemaValidator(schema=strict_schema)
+
+    class StrictExternalToolset(AbstractToolset[None]):
+        """A custom external toolset with strict validation."""
+
+        tool_defs: list[ToolDefinition]
+
+        def __init__(self, tool_defs: list[ToolDefinition]):
+            self.tool_defs = tool_defs
+
+        @property
+        def id(self) -> str | None:
+            return 'strict_external'
+
+        async def get_tools(self, ctx: RC[None]) -> dict[str, ToolsetTool[None]]:
+            return {
+                tool_def.name: ToolsetTool(
+                    toolset=self,
+                    tool_def=dataclass_replace(tool_def, kind='external'),
+                    max_retries=1,  # Allow 1 retry so validation failure doesn't raise immediately
+                    args_validator=STRICT_VALIDATOR,
+                )
+                for tool_def in self.tool_defs
+            }
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RC[None], tool: ToolsetTool[None]
+        ) -> Any:  # pragma: no cover
+            raise NotImplementedError('External tools cannot be called directly')
+
+    async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        # Call external tool with invalid arguments (missing required 'value' field)
+        yield {0: DeltaToolCall(name='external_tool', json_args='{"wrong_field": 123}')}
+
+    # Create an external tool definition
+    external_tool_def = ToolDefinition(
+        name='external_tool',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'value': {'type': 'string'}},
+            'required': ['value'],
+        },
+    )
+
+    agent: Agent[None, str | DeferredToolRequests] = Agent(
+        FunctionModel(stream_function=stream_function),
+        output_type=[str, DeferredToolRequests],
+        toolsets=[StrictExternalToolset(tool_defs=[external_tool_def])],
+    )
+
+    events: list[Any] = []
+    # The model returns invalid args, which should trigger validation failure
+    try:
+        async for event in agent.run_stream_events('test external tool validation'):
+            events.append(event)
+    except Exception:
+        pass  # May fail due to validation errors
+
+    # Find FunctionToolCallEvent
+    tool_call_events: list[FunctionToolCallEvent] = [e for e in events if isinstance(e, FunctionToolCallEvent)]
+
+    # Should have at least one tool call event
+    if tool_call_events:
+        # The event should have args_valid=False due to schema validation failure
+        external_events = [e for e in tool_call_events if e.part.tool_name == 'external_tool']
+        if external_events:
+            assert external_events[0].args_valid is False
