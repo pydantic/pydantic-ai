@@ -496,6 +496,7 @@ class BinaryContent:
     - `XaiModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     """
 
+    # Required for inline-snapshot which expects all `__init__` methods to take all field names as kwargs.
     _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
         compare=False, default=None
     )
@@ -503,6 +504,8 @@ class BinaryContent:
     kind: Literal['binary'] = 'binary'
     """Type identifier, this is available on all parts as a discriminator."""
 
+    # pydantic_dataclass replaces __init__ at class creation, so this body never executes.
+    # The signature is kept for pyright/IDE type hints and to accept _identifier from inline-snapshot repr.
     def __init__(
         self,
         data: bytes,
@@ -634,7 +637,8 @@ class BinaryImage(BinaryContent):
         kind: Literal['binary'] = 'binary',
         _identifier: str | None = None,
     ):
-        # Directly set attributes to avoid Pydantic validation (allows inline-snapshot matchers)
+        # We set the attributes directly to avoid Pydantic validation (which rejects inline-snapshot matchers).
+        # This differs from BinaryContent, which is a pydantic_dataclass (pydantic replaces its __init__ at class creation).
         self.data = data
         self.media_type = media_type
         self._identifier = identifier or _identifier

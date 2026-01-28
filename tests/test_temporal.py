@@ -3114,9 +3114,9 @@ binary_tool_agent = Agent(TestModel(), name='binary_tool_agent')
 
 
 @binary_tool_agent.tool
-def get_binary_in_dict(ctx: RunContext[None]) -> dict[str, Any]:
-    """Return BinaryContent nested in a dict."""
-    return {'image': BinaryContent(data=b'\x89PNG', media_type='image/png'), 'label': 'test'}
+def get_binary_data(ctx: RunContext[None]) -> list[str | BinaryContent]:
+    """Return a list with text and BinaryContent."""
+    return ['test', BinaryContent(data=b'\x89PNG', media_type='image/png')]
 
 
 binary_tool_temporal_agent = TemporalAgent(binary_tool_agent, activity_config=BASE_ACTIVITY_CONFIG)
@@ -3151,11 +3151,49 @@ async def test_binary_content_serialization_in_workflow(client: Client):
             id='test_binary_content_serialization',
             task_queue=TASK_QUEUE,
         )
-        tool_return_part = next(
-            part
-            for msg in messages
-            if isinstance(msg, ModelRequest)
-            for part in msg.parts
-            if isinstance(part, ToolReturnPart)
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='Call the tool', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_binary_data', args={}, tool_call_id='pyd_ai_tool_call_id__get_binary_data'
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=53, output_tokens=2),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='get_binary_data',
+                            content=['test', 'See file 4effda'],
+                            tool_call_id='pyd_ai_tool_call_id__get_binary_data',
+                            timestamp=IsDatetime(),
+                        ),
+                        UserPromptPart(
+                            content=[
+                                'This is file 4effda:',
+                                BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'),
+                            ],
+                            timestamp=IsDatetime(),
+                        ),
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"get_binary_data":["test","See file 4effda"]}')],
+                    usage=RequestUsage(input_tokens=68, output_tokens=10),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
         )
-        assert tool_return_part.content == get_binary_in_dict(None)  # pyright: ignore[reportArgumentType]
