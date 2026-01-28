@@ -13,13 +13,6 @@ def qwen_model_profile(model_name: str) -> ModelProfile | None:
             openai_supports_strict_tool_definition=False,
             ignore_streamed_leading_whitespace=True,
         )
-    if 'thinking' in model_name.lower():
-        return OpenAIModelProfile(
-            json_schema_transformer=InlineDefsJsonSchemaTransformer,
-            ignore_streamed_leading_whitespace=True,
-            openai_chat_thinking_field='reasoning_content',
-            openai_chat_send_back_thinking_parts='field',
-        )
     return ModelProfile(
         json_schema_transformer=InlineDefsJsonSchemaTransformer,
         ignore_streamed_leading_whitespace=True,

@@ -44,8 +44,11 @@ class AlibabaProvider(Provider[AsyncOpenAI]):
     def model_profile(self, model_name: str) -> ModelProfile | None:
         base_profile = qwen_model_profile(model_name)
 
-        # Wrap/merge into OpenAIModelProfile
-        openai_profile = OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(base_profile)
+        openai_profile = OpenAIModelProfile(
+            json_schema_transformer=OpenAIJsonSchemaTransformer,
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts='field',
+        ).update(base_profile)
 
         # For Qwen Omni models, force URI audio input encoding
         if 'omni' in model_name.lower():
