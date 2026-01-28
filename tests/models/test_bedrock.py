@@ -1929,6 +1929,34 @@ async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_
     assert second_usage == snapshot(RunUsage(input_tokens=1324, output_tokens=5, cache_read_tokens=1322, requests=1))
 
 
+@pytest.mark.vcr()
+async def test_bedrock_cache_messages_with_document_as_last_content(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test that bedrock_cache_messages does not add a cache point when the last user message content is a document."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(
+        model,
+        system_prompt='You are a helpful assistant that analyzes documents.',
+        model_settings=BedrockModelSettings(
+            bedrock_cache_messages=True,  # This should add a cache point to the last user message
+        ),
+    )
+
+    # Create a document as the last piece of content in the user message
+    document = BinaryContent(data=b'This is a test document with important analysis data.', media_type='text/plain')
+    run_args = ['Please analyze this document:', document]
+
+    result = await agent.run(run_args)
+    assert 'document' in result.output.lower() or 'analysis' in result.output.lower()
+
+    # Verify cache tokens are not being used
+    usage = result.usage()
+    assert usage.input_tokens > 0
+    assert usage.output_tokens > 0
+    assert usage.cache_write_tokens == 0 and usage.cache_read_tokens == 0
+
+
 async def test_bedrock_cache_point_as_first_content_raises_error(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
@@ -2111,7 +2139,7 @@ async def test_bedrock_cache_messages(allow_model_requests: None, bedrock_provid
 async def test_bedrock_cache_messages_with_binary_content(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """Test that bedrock_cache_messages adds newline workaround for non-text content."""
+    """Test that bedrock_cache_messages does add cache point for document content with newline workaround."""
     model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -2129,7 +2157,7 @@ async def test_bedrock_cache_messages_with_binary_content(
         ModelRequestParameters(),
         BedrockModelSettings(bedrock_cache_messages=True),
     )
-    # Should add newline text block before cache point when last content is not text
+    # Should not add cache point for document content
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {
@@ -2140,6 +2168,41 @@ async def test_bedrock_cache_messages_with_binary_content(
                 }
             },
             {'text': '\n'},
+            {'cachePoint': {'type': 'default'}},
+        ]
+    )
+
+
+async def test_bedrock_cache_messages_with_tool_result(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that bedrock_cache_messages does add cache point for tool call content."""
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='final_result',
+                    content='Final result processed.',
+                    tool_call_id='tooluse_DaRsVjwcShCI_3pOsIsWqg',
+                    timestamp=IsDatetime(),
+                )
+            ],
+        )
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_messages=True),
+    )
+    # Should add cache point for tool call content
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {
+                'toolResult': {
+                    'toolUseId': 'tooluse_DaRsVjwcShCI_3pOsIsWqg',
+                    'content': [{'text': 'Final result processed.'}],
+                    'status': 'success',
+                }
+            },
             {'cachePoint': {'type': 'default'}},
         ]
     )
