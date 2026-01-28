@@ -358,7 +358,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     """Whether to include the server's instructions in the agent's system prompt.
 
     When enabled, the instructions sent by the MCP server during initialization
-    will be automatically injected into the agent's system prompt via `get_instructions()`.
+    will be automatically injected into the agent's system prompt via `instructions()`.
 
     Defaults to `False` for backward compatibility.
     """
@@ -476,7 +476,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             )
         return self._server_capabilities
 
-    async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
+    async def instructions(self, ctx: RunContext[Any]) -> str | None:
         """Return instructions to inject into the agent's system prompt.
 
         If ``use_server_instructions`` is ``True``, returns the instructions
