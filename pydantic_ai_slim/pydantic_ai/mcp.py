@@ -497,7 +497,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             # Access internal attribute directly to avoid triggering deprecation warning
             if not hasattr(self, '_instructions'):
                 raise AttributeError(
-                    f'The `{self.__class__.__name__}` instructions are only available after initialization.'
+                    f'The `{self.__class__.__name__}.instructions` is only instantiated after initialization.'
                 )
             return self._instructions
         return None
