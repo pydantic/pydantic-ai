@@ -69,7 +69,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `prefect` - installs [Prefect Durable Execution](durable_execution/prefect.md) dependency `prefect` [PyPI ↗](https://pypi.org/project/prefect){:target="_blank"}
 * `retries` - installs HTTP retry utilities dependency `tenacity` [PyPI ↗](https://pypi.org/project/tenacity){:target="_blank"}
 * `temporal` - installs [Temporal Durable Execution](durable_execution/temporal.md) dependency `temporalio` [PyPI ↗](https://pypi.org/project/temporalio){:target="_blank"}
-* `json-repair` - installs automatic JSON repair for malformed tool arguments dependency `fast-json-repair` [PyPI ↗](https://pypi.org/project/fast-json-repair){:target="_blank"} (Python 3.11+ only)
+* `json-repair` - installs [Automatic JSON Repair](tools-advanced.md#automatic-json-repair) dependency `fast-json-repair` [PyPI ↗](https://pypi.org/project/fast-json-repair){:target="_blank"} (Python 3.11+ only)
 
 You can also install dependencies for multiple models and use cases, for example:
 
