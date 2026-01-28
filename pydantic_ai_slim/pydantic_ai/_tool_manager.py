@@ -14,7 +14,7 @@ from typing_extensions import assert_never, deprecated
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
 from ._run_context import AgentDepsT, RunContext
-from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
+from .exceptions import ModelRetry, ToolFailed, ToolRetryError, UnexpectedModelBehavior
 from .messages import ToolCallPart
 from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
@@ -210,6 +210,19 @@ class ToolManager(Generic[AgentDepsT]):
                 )
 
             return await self.toolset.call_tool(name, args_dict, ctx, tool)
+        except ToolFailed as e:
+            # ToolFailed is traced as an error but allows agent to continue
+            if e.disable:
+                # Disable tool for remainder of run
+                self.failed_tools.add(name)
+            if wrap_validation_errors:
+                m = _messages.RetryPromptPart(
+                    tool_name=name,
+                    content=e.message,
+                    tool_call_id=call.tool_call_id,
+                )
+                raise ToolRetryError(m) from e
+            raise
         except (ValidationError, ModelRetry) as e:
             max_retries = tool.max_retries if tool is not None else self.default_max_retries
             current_retry = self.ctx.retries.get(name, 0)
