@@ -1,10 +1,13 @@
 """Vercel AI request types (UI messages).
 
 Converted to Python from:
-https://github.com/vercel/ai/blob/ai%405.0.59/packages/ai/src/ui/ui-messages.ts
+https://github.com/vercel/ai/blob/ai%406.0.57/packages/ai/src/ui/ui-messages.ts
+
+Tool approval types (`ToolApprovalRequested`, `ToolApprovalResponded`) require AI SDK v6 or later.
 """
 
 from abc import ABC
+from collections.abc import Iterator
 from typing import Annotated, Any, Literal
 
 from pydantic import Discriminator, Field
@@ -110,6 +113,30 @@ class DataUIPart(BaseUIPart):
     data: Any
 
 
+class ToolApprovalRequested(CamelBaseModel):
+    """Tool approval in requested state (awaiting user response)."""
+
+    id: str
+    """The approval request ID."""
+
+
+class ToolApprovalResponded(CamelBaseModel):
+    """Tool approval in responded state (user has approved or denied)."""
+
+    id: str
+    """The approval request ID."""
+
+    approved: bool
+    """Whether the user approved the tool call."""
+
+    reason: str | None = None
+    """Optional reason for the approval or denial."""
+
+
+ToolApproval = ToolApprovalRequested | ToolApprovalResponded
+"""Union of tool approval states."""
+
+
 # Tool part states as separate models
 class ToolInputStreamingPart(BaseUIPart):
     """Tool part in input-streaming state."""
@@ -119,6 +146,7 @@ class ToolInputStreamingPart(BaseUIPart):
     state: Literal['input-streaming'] = 'input-streaming'
     input: Any | None = None
     provider_executed: bool | None = None
+    approval: ToolApproval | None = None
 
 
 class ToolInputAvailablePart(BaseUIPart):
@@ -130,6 +158,7 @@ class ToolInputAvailablePart(BaseUIPart):
     input: Any | None = None
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    approval: ToolApproval | None = None
 
 
 class ToolOutputAvailablePart(BaseUIPart):
@@ -143,6 +172,7 @@ class ToolOutputAvailablePart(BaseUIPart):
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     preliminary: bool | None = None
+    approval: ToolApproval | None = None
 
 
 class ToolOutputErrorPart(BaseUIPart):
@@ -156,6 +186,7 @@ class ToolOutputErrorPart(BaseUIPart):
     error_text: str
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    approval: ToolApproval | None = None
 
 
 ToolUIPart = ToolInputStreamingPart | ToolInputAvailablePart | ToolOutputAvailablePart | ToolOutputErrorPart
@@ -171,6 +202,7 @@ class DynamicToolInputStreamingPart(BaseUIPart):
     tool_call_id: str
     state: Literal['input-streaming'] = 'input-streaming'
     input: Any | None = None
+    approval: ToolApproval | None = None
 
 
 class DynamicToolInputAvailablePart(BaseUIPart):
@@ -182,6 +214,7 @@ class DynamicToolInputAvailablePart(BaseUIPart):
     state: Literal['input-available'] = 'input-available'
     input: Any
     call_provider_metadata: ProviderMetadata | None = None
+    approval: ToolApproval | None = None
 
 
 class DynamicToolOutputAvailablePart(BaseUIPart):
@@ -195,6 +228,7 @@ class DynamicToolOutputAvailablePart(BaseUIPart):
     output: Any
     call_provider_metadata: ProviderMetadata | None = None
     preliminary: bool | None = None
+    approval: ToolApproval | None = None
 
 
 class DynamicToolOutputErrorPart(BaseUIPart):
@@ -207,6 +241,7 @@ class DynamicToolOutputErrorPart(BaseUIPart):
     input: Any
     error_text: str
     call_provider_metadata: ProviderMetadata | None = None
+    approval: ToolApproval | None = None
 
 
 DynamicToolUIPart = (
@@ -273,3 +308,14 @@ class RegenerateMessage(CamelBaseModel, extra='allow'):
 
 RequestData = Annotated[SubmitMessage | RegenerateMessage, Discriminator('trigger')]
 """Union of all request data types."""
+
+
+def iter_tool_approvals(messages: list[UIMessage]) -> Iterator[tuple[str, ToolApprovalResponded]]:
+    """Yield ``(tool_call_id, approval)`` for every responded tool-approval in *messages*."""
+    for msg in messages:
+        if msg.role == 'assistant':
+            for part in msg.parts:
+                if isinstance(part, ToolUIPart | DynamicToolUIPart) and isinstance(
+                    part.approval, ToolApprovalResponded
+                ):
+                    yield part.tool_call_id, part.approval
