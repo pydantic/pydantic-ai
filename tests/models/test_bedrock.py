@@ -1946,7 +1946,7 @@ async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_
 async def test_bedrock_cache_messages_with_document_as_last_content(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """Test that bedrock_cache_messages works correctly when the last user message content is a document."""
+    """Test that bedrock_cache_messages does not add a cache point when the last user message content is a document."""
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
     agent = Agent(
         model,
@@ -1963,12 +1963,12 @@ async def test_bedrock_cache_messages_with_document_as_last_content(
     result = await agent.run(run_args)
     assert 'document' in result.output.lower() or 'analysis' in result.output.lower()
 
-    # Verify cache tokens are being used
+    # Verify cache tokens are not being used
     usage = result.usage()
     assert usage.input_tokens > 0
     assert usage.output_tokens > 0
     # Should have cache write tokens on first run
-    assert usage.cache_write_tokens > 0 or usage.cache_read_tokens > 0
+    assert usage.cache_write_tokens == 0 and usage.cache_read_tokens == 0
 
 
 async def test_bedrock_cache_point_as_first_content_raises_error(
@@ -2148,6 +2148,40 @@ async def test_bedrock_cache_messages(allow_model_requests: None, bedrock_provid
             }
         ]
     )
+
+
+async def test_bedrock_cache_messages_with_binary_content(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test that bedrock_cache_messages does not add cache point for document content."""
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        BinaryContent(data=b'Test document content', media_type='text/plain'),
+                    ]
+                )
+            ]
+        )
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_messages=True),
+    )
+    # Should not add cache point for document content
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {
+                'document': {
+                    'name': 'Document 1',
+                    'format': 'txt',
+                    'source': {'bytes': b'Test document content'},
+                }
+            },
+        ]
 
 
 async def test_bedrock_cache_messages_does_not_duplicate(allow_model_requests: None, bedrock_provider: BedrockProvider):

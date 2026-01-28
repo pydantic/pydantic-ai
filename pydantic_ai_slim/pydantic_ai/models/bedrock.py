@@ -746,7 +746,10 @@ class BedrockConverseModel(Model):
         if processed_messages and settings.get('bedrock_cache_messages') and profile.bedrock_supports_prompt_caching:
             last_user_content = self._get_last_user_message_content(processed_messages)
             if last_user_content is not None:
-                last_user_content.append({'cachePoint': {'type': 'default'}})
+                # AWS currently rejects cache points that directly follow document content.
+                # only add cache point if last block is not a document
+                if 'document' not in last_user_content[-1]:
+                    last_user_content.append({'cachePoint': {'type': 'default'}})
 
         return system_prompt, processed_messages
 

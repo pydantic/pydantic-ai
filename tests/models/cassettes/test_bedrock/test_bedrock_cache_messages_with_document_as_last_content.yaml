@@ -1,35 +1,74 @@
 interactions:
 - request:
     body: '{"messages": [{"role": "user", "content": [{"text": "Please analyze this document:"}, {"document": {"name": "Document
-      1", "format": "txt", "source": {"bytes": "VGhpcyBpcyBhIHRlc3QgZG9jdW1lbnQgd2l0aCBpbXBvcnRhbnQgYW5hbHlzaXMgZGF0YS4="}}},
-      {"cachePoint": {"type": "default"}}]}], "system": [{"text": "You are a helpful assistant that analyzes documents."}],
-      "inferenceConfig": {}}'
+      1", "format": "txt", "source": {"bytes": "VGhpcyBpcyBhIHRlc3QgZG9jdW1lbnQgd2l0aCBpbXBvcnRhbnQgYW5hbHlzaXMgZGF0YS4="}}}]}],
+      "system": [{"text": "You are a helpful assistant that analyzes documents."}], "inferenceConfig": {}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        MDkwNDQ4MTEtMGNjMS00OTlkLTljZDAtYzVkZTYxZjkwMjBi
+        ODlhYzQ4MmMtYTU1Mi00ODQ1LTljZjctZmY1OGEwODgyOGZj
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '378'
+      - '341'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+    uri: https://bedrock-runtime.us-west-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '338'
+      - '1343'
       content-type:
       - application/json
-      date:
-      - Mon, 28 Jan 2026 04:30:00 GMT
-    body:
-      string: '{"output": {"message": {"content": [{"text": "I can see you'\''ve shared a document containing the text \"This is a test document with important analysis data.\" This appears to be a sample document for testing purposes. The document contains basic text content that could serve as a foundation for analysis tasks. What specific analysis would you like me to perform on this document?"}], "role": "assistant"}}, "stopReason": "end_turn", "usage": {"inputTokens": 42, "outputTokens": 65, "cacheWriteInputTokens": 40, "cacheReadInputTokens": 0}}'
+    parsed_body:
+      metrics:
+        latencyMs: 4173
+      output:
+        message:
+          content:
+          - text: |-
+              I'll analyze the document for you.
+
+              **Document Analysis:**
+
+              The document (Document 1.txt) is a brief text file containing a single sentence. Here's my analysis:
+
+              **Content Summary:**
+              - The document identifies itself as a test document
+              - It claims to contain "important analysis data"
+
+              **Characteristics:**
+              - **Length:** Very short (9 words)
+              - **Type:** Appears to be a placeholder or sample document
+              - **Purpose:** Likely used for testing or demonstration purposes
+
+              **Observations:**
+              - Despite claiming to contain "important analysis data," the document doesn't actually present any specific data, metrics, or detailed information
+              - This is a self-referential statement rather than substantive content
+              - The document would need additional content to fulfill its stated purpose of containing analysis data
+
+              **Potential Use Cases:**
+              - System testing
+              - Format verification
+              - Placeholder content during development
+
+              Is there any specific aspect of this document you'd like me to focus on or expand upon?
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 77
+        outputTokens: 216
+        serverToolUsage: {}
+        totalTokens: 293
     status:
       code: 200
       message: OK
