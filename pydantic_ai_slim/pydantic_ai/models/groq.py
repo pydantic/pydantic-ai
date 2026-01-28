@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Literal, cast, overload
 
@@ -176,6 +176,20 @@ class GroqModel(Model):
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool})
+
+    def prepare_request(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        # Groq doesn't support native structured output with function tools
+        # Fall back to tool-based output when function tools are present
+        # This must happen BEFORE super().prepare_request() because the base class
+        # clears output_tools when output_mode != 'tool'
+        if model_request_parameters.function_tools and model_request_parameters.output_mode in ('native', 'auto'):
+            profile_default = self.profile.default_structured_output_mode
+            if model_request_parameters.output_mode == 'native' or profile_default == 'native':
+                model_request_parameters = replace(model_request_parameters, output_mode='tool')
+
+        return super().prepare_request(model_settings, model_request_parameters)
 
     async def request(
         self,
@@ -479,17 +493,17 @@ class GroqModel(Model):
                     tool_call_id=_guard_tool_call_id(t=part),
                     content=part.model_response_str(),
                 )
-            elif isinstance(part, RetryPromptPart):  # pragma: no branch
+            elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
-                    yield chat.ChatCompletionUserMessageParam(  # pragma: no cover
-                        role='user', content=part.model_response()
-                    )
+                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
                 else:
                     yield chat.ChatCompletionToolMessageParam(
                         role='tool',
                         tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
+            else:
+                assert_never(part)
 
     @staticmethod
     def _map_user_prompt(part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:
