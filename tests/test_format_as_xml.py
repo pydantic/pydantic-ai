@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
+from decimal import Decimal
 from enum import Enum
 from typing import Any
 
@@ -23,6 +24,11 @@ class ExampleDataclass:
 class ExamplePydanticModel(BaseModel):
     name: str
     age: int
+
+
+class ExamplePydanticModelWithDecimal(BaseModel):
+    name: str
+    age: Decimal
 
 
 class ExampleEnum(Enum):
@@ -621,3 +627,16 @@ def test_set():
 
 def test_custom_null():
     assert format_as_xml(None, none_str='nil') == snapshot('<item>nil</item>')
+
+
+def test_non_primitive_types():
+    assert format_as_xml(ExamplePydanticModelWithDecimal(name='John', age=Decimal('123.45')), mode='json') == snapshot("""\
+<name>John</name>
+<age>123.45</age>\
+""")
+
+    with pytest.raises(TypeError, match='Unsupported type for XML formatting'):
+        format_as_xml(ExamplePydanticModelWithDecimal(name='John', age=Decimal('123.45')), mode='python')
+
+    with pytest.raises(TypeError, match='Unsupported type for XML formatting'):
+        format_as_xml(ExamplePydanticModelWithDecimal(name='John', age=Decimal('123.45')))

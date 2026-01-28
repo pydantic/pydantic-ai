@@ -21,6 +21,7 @@ def format_as_xml(
     none_str: str = 'null',
     indent: str | None = '  ',
     include_field_info: Literal['once'] | bool = False,
+    mode: Literal['json', 'python'] = 'python',
 ) -> str:
     """Format a Python object as XML.
 
@@ -28,7 +29,8 @@ def format_as_xml(
     rather than JSON etc.
 
     Supports: `str`, `bytes`, `bytearray`, `bool`, `int`, `float`, `date`, `datetime`, `time`, `timedelta`, `Enum`,
-    `Mapping`, `Iterable`, `dataclass`, and `BaseModel`.
+    `Mapping`, `Iterable`, `dataclass`, and `BaseModel`. When using `mode='json'` with Pydantic models,
+    non-primitive types like `Decimal`, `UUID`, etc. are also supported via Pydantic's JSON serialization.
 
     Args:
         obj: Python Object to serialize to XML.
@@ -41,6 +43,11 @@ def format_as_xml(
             `metadata` as XML attributes. In both cases the allowed `Field` attributes and `field()` metadata keys are
             `title` and `description`. If a field is repeated in the data (e.g. in a list) by setting `once`
             the attributes are included only in the first occurrence of an XML element relative to the same field.
+        mode: The mode to use for dumping the data when the object is a Pydantic BaseModel. If `json`, the data will
+            be dumped as JSON using Pydantic's `model_dump(mode='json')`, which enables serialization of non-primitive
+            types like `Decimal`, `UUID`, etc. that are not directly supported in `mode='python'`. If `python` (default),
+            the data will be dumped as Python objects, but this mode only supports primitive types and will raise
+            `TypeError` for non-primitive types.
 
     Returns:
         XML representation of the object.
@@ -58,12 +65,33 @@ def format_as_xml(
     </user>
     '''
     ```
+
+    Example with non-primitive types:
+    ```python {title="format_as_xml_decimal_example.py" lint="skip"}
+    from decimal import Decimal
+    from pydantic import BaseModel
+    from pydantic_ai import format_as_xml
+
+    class Product(BaseModel):
+        name: str
+        price: Decimal
+
+    product = Product(name='Widget', price=Decimal('19.99'))
+    print(format_as_xml(product, mode='json'))
+    '''
+    <Product>
+      <name>Widget</name>
+      <price>19.99</price>
+    </Product>
+    '''
+    ```
     """
     el = _ToXml(
         data=obj,
         item_tag=item_tag,
         none_str=none_str,
         include_field_info=include_field_info,
+        mode=mode,
     ).to_xml(root_tag)
     if root_tag is None and el.text is None:
         join = '' if indent is None else '\n'
@@ -80,6 +108,7 @@ class _ToXml:
     item_tag: str
     none_str: str
     include_field_info: Literal['once'] | bool
+    mode: Literal['json', 'python']
     # a map of Pydantic and dataclasses Field paths to their metadata:
     # a field unique string representation and its class
     _fields_info: dict[str, tuple[str, FieldInfo | ComputedFieldInfo]] = field(
@@ -125,7 +154,7 @@ class _ToXml:
                 element.tag = value.__class__.__name__
             # by dumping the model we loose all metadata in nested data structures,
             # but we have collected it when called _init_structure_info
-            self._mapping_to_xml(element, value.model_dump(), path)
+            self._mapping_to_xml(element, value.model_dump(mode=self.mode), path)
         elif isinstance(value, Iterable):
             for n, item in enumerate(value):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
                 element.append(self._to_xml(value=item, path=f'{path}.[{n}]' if path else f'[{n}]'))
