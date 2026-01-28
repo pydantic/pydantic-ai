@@ -1,0 +1,50 @@
+interactions:
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      host:
+      - accountid.r2.cloudflarestorage.com
+    method: HEAD
+    uri: https://accountid.r2.cloudflarestorage.com/pydantic-ai-tests
+  response:
+    body:
+      string: ''
+    headers:
+      connection:
+      - keep-alive
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      host:
+      - accountid.r2.cloudflarestorage.com
+    method: HEAD
+    uri: https://accountid.r2.cloudflarestorage.com/pydantic-ai-tests
+  response:
+    body:
+      string: ''
+    headers:
+      connection:
+      - keep-alive
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+version: 1
