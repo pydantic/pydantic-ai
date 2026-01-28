@@ -150,9 +150,9 @@ async def test_repair_doesnt_help_when_json_unchanged():
     toolset = FunctionToolset[None]()
 
     @toolset.tool
-    def typed_func(count: int) -> int:
+    def typed_func(count: int) -> int:  # pragma: no cover
         """A function that expects an int."""
-        return count * 2
+        return count * 2  # Never called - we're testing validation failure
 
     context = build_run_context()
     tool_manager = await ToolManager[None](toolset).for_run_step(context)
@@ -179,9 +179,9 @@ async def test_repair_changes_json_but_still_fails_validation():
     toolset = FunctionToolset[None]()
 
     @toolset.tool
-    def typed_func(count: int) -> int:
+    def typed_func(count: int) -> int:  # pragma: no cover
         """A function that expects an int."""
-        return count * 2
+        return count * 2  # Never called - we're testing validation failure
 
     context = build_run_context()
     tool_manager = await ToolManager[None](toolset).for_run_step(context)
