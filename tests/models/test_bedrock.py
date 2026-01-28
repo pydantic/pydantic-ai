@@ -2184,6 +2184,7 @@ async def test_bedrock_cache_messages_with_binary_content(
         ]
     )
 
+
 async def test_bedrock_cache_messages_does_not_duplicate(allow_model_requests: None, bedrock_provider: BedrockProvider):
     """Test that bedrock_cache_messages does not add duplicate cache point if already present."""
     model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
