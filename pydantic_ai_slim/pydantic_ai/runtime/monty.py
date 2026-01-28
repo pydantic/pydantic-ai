@@ -248,11 +248,16 @@ class MontyRuntime(CodeRuntime):
 
         if approval_needed:
             # Provide partial results for completed calls before checkpointing.
+            checkpoint_state: monty.MontySnapshot | monty.MontyFutureSnapshot = future_state
             if completed:
                 try:
-                    future_state = future_state.resume(results=completed)
+                    resumed = future_state.resume(results=completed)
                 except monty.MontyRuntimeError as e:
                     raise CodeRuntimeError(e.display())
+                # If partial results completed execution, approvals are moot.
+                if isinstance(resumed, monty.MontyComplete):
+                    return resumed
+                checkpoint_state = resumed
 
             # TODO: Currently we surface one approval at a time (sequential rounds).
             # Each round is efficient -- completed results are already provided to Monty
@@ -277,7 +282,7 @@ class MontyRuntime(CodeRuntime):
 
             # Build enriched checkpoint: Monty state + pending call info.
             remaining_calls = {cid: call_info[cid] for cid in approval_needed}
-            checkpoint = self._build_checkpoint(future_state, remaining_calls)
+            checkpoint = self._build_checkpoint(checkpoint_state, remaining_calls)
 
             raise ApprovalRequired(
                 metadata={
