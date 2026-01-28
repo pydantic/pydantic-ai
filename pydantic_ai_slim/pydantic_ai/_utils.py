@@ -236,29 +236,6 @@ async def group_by_temporal(  # noqa: C901
                             yield buffer
                         task = None
                         break
-                else:
-                    # wait for the time remaining in the group
-                    wait_time = soft_max_interval - (time.monotonic() - group_start_time)
-
-                # if there's no current task, we get the next one
-                if task is None:
-                    # anext(aiter) returns an Awaitable[T], not a Coroutine which asyncio.create_task expects
-                    # so far, this doesn't seem to be a problem
-                    task = asyncio.create_task(anext(aiterator))  # pyright: ignore[reportArgumentType]
-
-                # we use asyncio.wait to avoid cancelling the coroutine if it's not done
-                done, _ = await asyncio.wait((task,), timeout=wait_time)
-
-                if done:
-                    # the one task we waited for completed
-                    try:
-                        item = done.pop().result()
-                    except StopAsyncIteration:
-                        # if the task raised StopAsyncIteration, we're done iterating
-                        if buffer:
-                            yield buffer
-                        task = None
-                        break
                     else:
                         # we got an item, add it to the buffer and set task to None to get the next item
                         buffer.append(item)
