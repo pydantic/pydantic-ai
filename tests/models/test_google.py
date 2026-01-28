@@ -4367,6 +4367,15 @@ def test_google_process_response_filters_empty_text_parts(google_provider: Googl
     assert result.parts == snapshot([TextPart(content='first'), TextPart(content='second')])
 
 
+def test_google_process_response_empty_candidates(google_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.5-pro', provider=google_provider)
+    response = _generate_response_with_texts(response_id='resp-456', texts=['', '', ''])
+    response.candidates = []
+    result = model._process_response(response)  # pyright: ignore[reportPrivateUsage]
+
+    assert result.parts == snapshot([])
+
+
 async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
     chunk = _generate_response_with_texts('stream-1', ['', 'streamed text'])
 
