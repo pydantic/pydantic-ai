@@ -38,5 +38,4 @@ class PydanticTypeAdapter(Serde[T]):
         """
         if obj is None:
             return b''
-        tpe = TypeAdapter(type(obj))
-        return tpe.dump_json(obj)
+        return self._model_type.dump_json(obj)

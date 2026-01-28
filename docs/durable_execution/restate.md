@@ -60,6 +60,12 @@ async def handler(ctx: restate.Context, name: str) -> str:
 
 `RestateAgent` is designed to run inside Restate handlers, where streaming response APIs aren't supported. Use an `event_stream_handler` and call [`RestateAgent.run()`][pydantic_ai.durable_exec.restate.RestateAgent.run] instead of `run_stream()` or `run_stream_events()`.
 
+## Serialization requirements
+
+Restate persists step inputs and outputs. This means anything returned from model calls and tools (and any `deps` you pass to the agent run) must be serializable by Restate.
+
+In practice, keep tool outputs to JSON-serializable values and/or Pydantic models.
+
 ## Disabling automatic tool wrapping
 
 By default, function tools are executed inside `ctx.run_typed(...)`. If you want to use the Restate context directly in your tool code (e.g. to call `ctx.run(...)` yourself), initialize the agent with `disable_auto_wrapping_tools=True`.

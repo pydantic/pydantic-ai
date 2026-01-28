@@ -53,7 +53,7 @@ class RestateFastMCPToolset(WrapperToolset[AgentDepsT]):
     def visit_and_replace(
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
     ) -> AbstractToolset[AgentDepsT]:
-        return visitor(self)
+        return self
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         async def get_tools_in_context() -> RestateFastMCPGetToolsContextRunResult:

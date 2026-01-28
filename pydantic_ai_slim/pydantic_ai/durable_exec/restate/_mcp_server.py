@@ -2,20 +2,42 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic.errors import PydanticUserError
 from typing_extensions import Self
 
 from pydantic_ai import ToolDefinition
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
-from pydantic_ai.mcp import MCPServer, ToolResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
 from ._restate_types import Context, RunOptions, TerminalError
 from ._serde import PydanticTypeAdapter
+
+if TYPE_CHECKING:
+    from typing import Protocol
+
+    try:
+        from pydantic_ai.mcp import MCPServer as MCPServer, ToolResult as ToolResult
+    except ImportError:  # pragma: no cover
+        ToolResult = Any
+
+        class MCPServer(Protocol):
+            id: str | None
+
+            async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]: ...
+
+            async def call_tool(
+                self,
+                name: str,
+                tool_args: dict[str, Any],
+                ctx: RunContext[Any],
+                tool: ToolsetTool[Any],
+            ) -> Any: ...
+
+            def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[Any]: ...
 
 
 @dataclass
@@ -46,7 +68,7 @@ class RestateMCPServer(WrapperToolset[AgentDepsT]):
 
     def __init__(self, wrapped: MCPServer, context: Context):
         super().__init__(wrapped)
-        self._wrapped = wrapped
+        self._wrapped: MCPServer = wrapped
         self._context = context
 
     @property
@@ -64,7 +86,7 @@ class RestateMCPServer(WrapperToolset[AgentDepsT]):
     def visit_and_replace(
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
     ) -> AbstractToolset[AgentDepsT]:
-        return visitor(self)
+        return self
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         async def get_tools_in_context() -> RestateMCPGetToolsContextRunResult:
@@ -80,8 +102,7 @@ class RestateMCPServer(WrapperToolset[AgentDepsT]):
         return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.output.items()}
 
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
-        assert isinstance(self.wrapped, MCPServer)
-        return self.wrapped.tool_for_tool_def(tool_def)
+        return cast(ToolsetTool[AgentDepsT], self._wrapped.tool_for_tool_def(tool_def))
 
     async def call_tool(
         self,
