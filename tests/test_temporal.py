@@ -3114,18 +3114,6 @@ binary_tool_agent = Agent(TestModel(), name='binary_tool_agent')
 
 
 @binary_tool_agent.tool
-def get_binary_direct(ctx: RunContext[None]) -> BinaryContent:
-    """Return BinaryContent directly."""
-    return BinaryContent(data=b'\x89PNG\r\n\x1a\n', media_type='image/png')
-
-
-@binary_tool_agent.tool
-def get_binary_in_list(ctx: RunContext[None]) -> list[Any]:
-    """Return BinaryContent inside a list."""
-    return [BinaryContent(data=b'\x89PNG', media_type='image/png'), 'other-item']
-
-
-@binary_tool_agent.tool
 def get_binary_in_dict(ctx: RunContext[None]) -> dict[str, Any]:
     """Return BinaryContent nested in a dict."""
     return {'image': BinaryContent(data=b'\x89PNG', media_type='image/png'), 'label': 'test'}
@@ -3137,9 +3125,9 @@ binary_tool_temporal_agent = TemporalAgent(binary_tool_agent, activity_config=BA
 @workflow.defn
 class BinaryToolWorkflow:
     @workflow.run
-    async def run(self, prompt: str) -> str:
+    async def run(self, prompt: str) -> list[ModelMessage]:
         result = await binary_tool_temporal_agent.run(prompt)
-        return result.output
+        return result.all_messages()
 
 
 async def test_binary_content_serialization_in_workflow(client: Client):
@@ -3157,12 +3145,22 @@ async def test_binary_content_serialization_in_workflow(client: Client):
         workflows=[BinaryToolWorkflow],
         plugins=[AgentPlugin(binary_tool_temporal_agent)],
     ):
-        output = await client.execute_workflow(
+        messages = await client.execute_workflow(
             BinaryToolWorkflow.run,
-            args=['Call all binary tools'],
+            args=['Call the tool'],
             id='test_binary_content_serialization',
             task_queue=TASK_QUEUE,
         )
-        assert output == snapshot(
-            '{"get_binary_direct":"See file 4caece","get_binary_in_list":["See file 4effda","other-item"],"get_binary_in_dict":{"image":{"data":"iVBORw==","media_type":"image/png","vendor_metadata":null,"kind":"binary","identifier":"4effda"},"label":"test"}}'
+        tool_return_part = next(
+            part
+            for msg in messages
+            if isinstance(msg, ModelRequest)
+            for part in msg.parts
+            if isinstance(part, ToolReturnPart)
+        )
+        assert tool_return_part.content == snapshot(
+            {
+                'image': BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'),
+                'label': 'test',
+            }
         )

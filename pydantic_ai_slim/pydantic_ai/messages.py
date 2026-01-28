@@ -512,14 +512,7 @@ class BinaryContent:
         vendor_metadata: dict[str, Any] | None = None,
         kind: Literal['binary'] = 'binary',
         _identifier: str | None = None,
-    ) -> None:  # pragma: no cover
-        # Pydantic dataclasses replace __init__ with a generated validator-wrapped version.
-        # This custom __init__ provides type hints for IDEs and accepts _identifier for inline-snapshot.
-        self.data = data
-        self.media_type = media_type
-        self._identifier = identifier or _identifier
-        self.vendor_metadata = vendor_metadata
-        self.kind = kind
+    ) -> None: ...
 
     @staticmethod
     def narrow_type(bc: BinaryContent) -> BinaryContent | BinaryImage:
