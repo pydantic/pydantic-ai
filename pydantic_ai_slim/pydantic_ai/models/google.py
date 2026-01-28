@@ -559,7 +559,7 @@ class GoogleModel(Model):
 
     def _process_response(self, response: GenerateContentResponse) -> ModelResponse:
         if not response.candidates:
-            raise UnexpectedModelBehavior('Expected at least one candidate in Gemini response')  # pragma: no cover
+            return ModelResponse(parts=[])
 
         candidate = response.candidates[0]
 
