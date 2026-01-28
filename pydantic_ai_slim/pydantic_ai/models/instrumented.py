@@ -264,6 +264,7 @@ class InstrumentationSettings:
                     GEN_AI_SYSTEM_ATTRIBUTE: system,
                     **(event.attributes or {}),
                 }
+            
             self._emit_events(span, events)
         else:
             output_messages = self.messages_to_otel_messages([response])
@@ -293,7 +294,10 @@ class InstrumentationSettings:
                     }
                 ),
             }
+
             span.set_attributes(attributes)
+
+            
 
     def system_instructions_attributes(self, instructions: str | None) -> dict[str, str]:
         if instructions and self.include_content:

@@ -220,6 +220,9 @@ class RunUsage(UsageBase):
         new_usage.incr(other)
         return new_usage
 
+    def opentelemetry_attributes(self) -> dict[str, int]:
+        return super().opentelemetry_attributes()
+
 
 def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | RequestUsage) -> None:
     """Increment the usage in place.
