@@ -136,9 +136,9 @@ The event stream handler function will receive the agent [run context][pydantic_
 ### Parallel Tool Execution
 
 When using `DBOSAgent`, tools are executed in parallel by default to minimize latency. To guarantee deterministic replay and reliable recovery, DBOS waits for all parallel tool calls to complete before emitting events **in order**.
-It's equivalent to the behavior of [`with agent.tool_calls_mode('parallel_ordered_events')`][pydantic_ai.agent.AbstractAgent.tool_calls_mode].
+It's equivalent to the behavior of [`with agent.parallel_tool_call_execution_mode('parallel_ordered_events')`][pydantic_ai.agent.AbstractAgent.parallel_tool_call_execution_mode].
 
-If you prefer strict ordering, you can configure the agent to run tools sequentially by setting [`tool_calls_mode='sequential'`][pydantic_ai.durable_exec.dbos.DBOSAgent] when initializing the `DBOSAgent`.
+If you prefer strict ordering, you can configure the agent to run tools sequentially by setting [`parallel_execution_mode='sequential'`][pydantic_ai.durable_exec.dbos.DBOSAgent] when initializing the `DBOSAgent`.
 
 
 ## Step Configuration

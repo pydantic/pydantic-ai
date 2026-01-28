@@ -1173,8 +1173,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     @staticmethod
     @contextmanager
-    def tool_calls_mode(mode: _tool_manager.ToolCallsMode = 'parallel') -> Iterator[None]:
-        """Set the tool calls execution mode during the context.
+    def parallel_tool_call_execution_mode(mode: _tool_manager.ParallelExecutionMode = 'parallel') -> Iterator[None]:
+        """Set the parallel execution mode during the context.
 
         Args:
             mode: The execution mode for tool calls:
@@ -1182,15 +1182,15 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 - 'sequential': Run tool calls one at a time in order.
                 - 'parallel_ordered_events': Run tool calls in parallel, but events are emitted in order, after all calls complete.
         """
-        with ToolManager.tool_calls_mode(mode):
+        with ToolManager.parallel_execution_mode(mode):
             yield
 
     @staticmethod
     @contextmanager
-    @deprecated('Use `tool_calls_mode("sequential")` instead.')
+    @deprecated('Use `parallel_execution_mode("sequential")` instead.')
     def sequential_tool_calls() -> Iterator[None]:
         """Run tool calls sequentially during the context."""
-        with ToolManager.tool_calls_mode('sequential'):
+        with ToolManager.parallel_execution_mode('sequential'):
             yield
 
     @staticmethod

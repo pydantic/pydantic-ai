@@ -36,7 +36,7 @@ from .._agent_graph import (
     capture_run_messages,
 )
 from .._output import OutputToolset
-from .._tool_manager import ToolCallsMode, ToolManager
+from .._tool_manager import ParallelExecutionMode, ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec
@@ -87,7 +87,7 @@ __all__ = (
     'ModelRequestNode',
     'UserPromptNode',
     'InstrumentationSettings',
-    'ToolCallsMode',
+    'ParallelExecutionMode',
     'WrapperAgent',
     'AbstractAgent',
     'EventStreamHandler',
