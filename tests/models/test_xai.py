@@ -54,7 +54,6 @@ from pydantic_ai import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
-    UploadedFile,
     UserError,
     UserPromptPart,
     VideoUrl,
@@ -65,6 +64,7 @@ from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     CachePoint,
+    UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.output import NativeOutput, PromptedOutput, ToolOutput

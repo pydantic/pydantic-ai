@@ -3117,9 +3117,7 @@ async def test_convert_user_prompt_part_uploaded_file():
             FileUIPart(
                 media_type='application/pdf',
                 url='file-abc123',
-                provider_metadata={
-                    'pydantic_ai': {'uploaded_file_id': 'file-abc123', 'uploaded_file_provider': 'openai'}
-                },
+                provider_metadata={'pydantic_ai': {'uploaded_file_id': 'file-abc123', 'provider_name': 'openai'}},
             ),
         ]
     )
@@ -3135,9 +3133,7 @@ async def test_adapter_load_messages_uploaded_file():
                 FileUIPart(
                     media_type='application/pdf',
                     url='file-abc123',
-                    provider_metadata={
-                        'pydantic_ai': {'uploaded_file_id': 'file-abc123', 'uploaded_file_provider': 'openai'}
-                    },
+                    provider_metadata={'pydantic_ai': {'uploaded_file_id': 'file-abc123', 'provider_name': 'openai'}},
                 )
             ],
         )

@@ -46,7 +46,6 @@ from pydantic_ai import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
-    UploadedFile,
     UsageLimitExceeded,
     UserPromptPart,
     VideoUrl,
@@ -70,6 +69,7 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+    UploadedFile,
 )
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -4784,7 +4784,7 @@ async def test_uploaded_file_mapping():
 
     assert len(content) == 2
     assert content[0] == {'text': 'Analyze this file'}
-    assert content[1] == {'file_data': {'file_uri': file_uri}}
+    assert content[1] == {'file_data': {'file_uri': file_uri, 'mime_type': 'application/octet-stream'}}
 
 
 async def test_uploaded_file_mapping_with_media_type():

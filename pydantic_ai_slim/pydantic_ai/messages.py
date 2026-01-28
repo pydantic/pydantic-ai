@@ -152,8 +152,35 @@ def _multi_modal_content_identifier(identifier: str | bytes) -> str:
     return hashlib.sha1(identifier).hexdigest()[:6]
 
 
+def _get_media_type_category(media_type: str) -> str:
+    """Return the category part of the media type (e.g., 'image' from 'image/png')."""
+    return media_type.split('/')[0]
+
+
+def _get_media_type_subtype(media_type: str) -> str:
+    """Return the subtype part of the media type (e.g., 'png' from 'image/png')."""
+    return media_type.split('/', 1)[1]
+
+
+class _MediaTypeMixin:
+    """Mixin providing media_type_category and media_type_subtype properties.
+
+    Classes using this mixin must have a `media_type: str` property or attribute.
+    """
+
+    @property
+    def media_type_category(self) -> str:
+        """Return the category part of the media type (e.g., 'image' from 'image/png')."""
+        return _get_media_type_category(self.media_type)  # type: ignore[attr-defined]
+
+    @property
+    def media_type_subtype(self) -> str:
+        """Return the subtype part of the media type (e.g., 'png' from 'image/png')."""
+        return _get_media_type_subtype(self.media_type)  # type: ignore[attr-defined]
+
+
 @dataclass(init=False, repr=False)
-class FileUrl(ABC):
+class FileUrl(_MediaTypeMixin, ABC):
     """Abstract base class for any URL-based file."""
 
     url: str
@@ -233,16 +260,6 @@ class FileUrl(ABC):
     def format(self) -> str:
         """The file format."""
         raise NotImplementedError
-
-    @property
-    def media_type_category(self) -> str:
-        """Return the category part of the media type (e.g., 'image' from 'image/png')."""
-        return self.media_type.split('/')[0]
-
-    @property
-    def media_type_subtype(self) -> str:
-        """Return the subtype part of the media type (e.g., 'png' from 'image/png')."""
-        return self.media_type.split('/', 1)[1]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -474,7 +491,7 @@ class DocumentUrl(FileUrl):
 
 
 @dataclass(init=False, repr=False)
-class BinaryContent:
+class BinaryContent(_MediaTypeMixin):
     """Binary content, e.g. an audio or image file."""
 
     data: bytes
@@ -624,16 +641,6 @@ class BinaryContent:
         except KeyError as e:
             raise ValueError(f'Unknown media type: {self.media_type}') from e
 
-    @property
-    def media_type_category(self) -> str:
-        """Return the category part of the media type (e.g., 'image' from 'image/png')."""
-        return self.media_type.split('/')[0]
-
-    @property
-    def media_type_subtype(self) -> str:
-        """Return the subtype part of the media type (e.g., 'png' from 'image/png')."""
-        return self.media_type.split('/', 1)[1]
-
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
@@ -688,7 +695,7 @@ UploadedFileProviderName: TypeAlias = Literal['anthropic', 'openai', 'google-gla
 
 
 @dataclass(init=False, repr=False)
-class UploadedFile:
+class UploadedFile(_MediaTypeMixin):
     """A reference to a file uploaded to a provider's file storage by ID.
 
     This allows referencing files that have been uploaded via provider-specific file APIs
@@ -759,11 +766,11 @@ class UploadedFile:
 
     @pydantic.computed_field
     @property
-    def media_type(self) -> str | None:
+    def media_type(self) -> str:
         """Return the media type of the file, inferred from `file_id` if not explicitly provided.
 
         Note: Automatic inference only works if `file_id` is a URL or path with a recognizable file extension.
-        For opaque file IDs (e.g., `'file-abc123'`), you must provide the `media_type` explicitly.
+        For opaque file IDs (e.g., `'file-abc123'`), the media type will default to `'application/octet-stream'`.
 
         Required by some providers (e.g., Bedrock) for certain file types.
         """
@@ -771,7 +778,7 @@ class UploadedFile:
             return self._media_type
         parsed = urlparse(self.file_id)
         mime_type, _ = mimetypes.guess_type(parsed.path)
-        return mime_type
+        return mime_type or 'application/octet-stream'
 
     @pydantic.computed_field
     @property
@@ -788,35 +795,13 @@ class UploadedFile:
         return self._identifier or _multi_modal_content_identifier(self.file_id)
 
     @property
-    def media_type_category(self) -> str | None:
-        """Return the category part of the media type (e.g., 'image' from 'image/png').
-
-        Returns None if media_type is not set.
-        """
-        if self.media_type is None:
-            return None
-        return self.media_type.split('/')[0]
-
-    @property
-    def media_type_subtype(self) -> str | None:
-        """Return the subtype part of the media type (e.g., 'png' from 'image/png').
-
-        Returns None if media_type is not set.
-        """
-        if self.media_type is None:
-            return None
-        return self.media_type.split('/', 1)[1]
-
-    @property
     def format(self) -> str | None:
         """The file format based on media type.
 
-        Returns None if media_type is not set or not recognized.
+        Returns None if the media type is not recognized.
 
         The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
         """
-        if self.media_type is None:
-            return None
         if self.media_type_category == 'image':
             return _image_format_lookup.get(self.media_type)
         elif self.media_type_category == 'video':

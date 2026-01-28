@@ -35,7 +35,6 @@ from pydantic_ai import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
-    UploadedFile,
     UserPromptPart,
     VideoUrl,
     _utils,
@@ -44,6 +43,7 @@ from pydantic_ai import (
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.messages import UploadedFile
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BEDROCK_GEO_PREFIXES, BedrockModelProfile
@@ -871,6 +871,8 @@ class BedrockConverseModel(Model):
                         content.append(_make_image_block(format, source))
                     elif item.media_type_category == 'video':
                         content.append(_make_video_block(format, source))
+                    elif item.media_type_category == 'audio':
+                        raise UserError('Audio files are not supported for Bedrock UploadedFile')
                     else:
                         content.append(_make_document_block(item.identifier, format, source))
                 elif isinstance(item, CachePoint):

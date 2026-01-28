@@ -42,7 +42,6 @@ from pydantic_ai import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
-    UploadedFile,
     UsageLimitExceeded,
     UserPromptPart,
 )
@@ -51,6 +50,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+    UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput

@@ -33,7 +33,6 @@ from pydantic_ai import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
-    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -44,6 +43,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+    UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.profiles import DEFAULT_PROFILE
@@ -2401,16 +2401,20 @@ async def test_uploaded_file_non_s3_url(allow_model_requests: None, bedrock_prov
         )
 
 
-async def test_uploaded_file_ambiguous_extension(allow_model_requests: None, bedrock_provider: BedrockProvider):
-    """Test that UploadedFile without media_type and ambiguous extension raises an error."""
+async def test_uploaded_file_no_extension_defaults_to_octet_stream(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test that UploadedFile without extension defaults to application/octet-stream which is unsupported."""
     model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
     agent = Agent(model)
 
-    with pytest.raises(UserError, match='Unsupported media type for Bedrock UploadedFile: None'):
+    with pytest.raises(UserError, match='Unsupported media type for Bedrock UploadedFile: application/octet-stream'):
         await agent.run(
             [
                 'Analyze this file',
-                UploadedFile(file_id='s3://bucket/file', provider_name='bedrock'),  # No extension, no media_type
+                UploadedFile(
+                    file_id='s3://bucket/file', provider_name='bedrock'
+                ),  # No extension, defaults to octet-stream
             ]
         )
 
@@ -3021,5 +3025,19 @@ async def test_uploaded_file_unsupported_video_media_type(
             [
                 'Describe this video',
                 UploadedFile(file_id='s3://bucket/video.avi', provider_name='bedrock', media_type='video/avi'),
+            ]
+        )
+
+
+async def test_uploaded_file_audio_not_supported(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that UploadedFile with audio media type raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='Audio files are not supported for Bedrock UploadedFile'):
+        await agent.run(
+            [
+                'Transcribe this audio',
+                UploadedFile(file_id='s3://bucket/audio.wav', provider_name='bedrock', media_type='audio/wav'),
             ]
         )

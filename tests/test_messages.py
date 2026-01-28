@@ -25,10 +25,10 @@ from pydantic_ai import (
     ThinkingPart,
     ThinkingPartDelta,
     ToolCallPart,
-    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.messages import UploadedFile
 
 from .conftest import IsDatetime, IsNow, IsStr
 
@@ -813,10 +813,11 @@ def test_uploaded_file_media_type_helpers():
     assert uploaded_file.media_type_category == 'video'
     assert uploaded_file.media_type_subtype == 'mp4'
 
-    # Test without media_type - should return None
+    # Test without media_type - defaults to 'application/octet-stream'
     uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic')
-    assert uploaded_file.media_type_category is None
-    assert uploaded_file.media_type_subtype is None
+    assert uploaded_file.media_type == 'application/octet-stream'
+    assert uploaded_file.media_type_category == 'application'
+    assert uploaded_file.media_type_subtype == 'octet-stream'
 
     # Test with S3 URL that has extension (media_type can be inferred)
     uploaded_file = UploadedFile(file_id='s3://bucket/image.png', provider_name='bedrock')
@@ -827,8 +828,9 @@ def test_uploaded_file_media_type_helpers():
 
 def test_uploaded_file_format():
     """Test UploadedFile.format property for different media types."""
-    # Test with no media_type - should return None
+    # Test with no media_type - defaults to 'application/octet-stream' which has no format
     uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic')
+    assert uploaded_file.media_type == 'application/octet-stream'
     assert uploaded_file.format is None
 
     # Test with image media_type
@@ -858,7 +860,7 @@ def test_uploaded_file_in_otel_message_parts():
     Per OTel GenAI spec, UploadedFile maps to FilePart with type='file', modality, and file_id.
     See: https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-input-messages.json
     """
-    # Test with file ID (OTel FilePart format) - no media_type means unknown modality
+    # Test with file ID (OTel FilePart format) - no media_type defaults to 'application/octet-stream'
     part = UserPromptPart(
         content=['text before', UploadedFile(file_id='file-abc123', provider_name='anthropic'), 'text after']
     )
@@ -867,12 +869,12 @@ def test_uploaded_file_in_otel_message_parts():
     assert otel_parts == snapshot(
         [
             {'type': 'text', 'content': 'text before'},
-            {'type': 'file', 'modality': 'document', 'file_id': 'file-abc123'},
+            {'type': 'file', 'modality': 'document', 'file_id': 'file-abc123', 'mime_type': 'application/octet-stream'},
             {'type': 'text', 'content': 'text after'},
         ]
     )
 
-    # Test with URL file_id (still uses file_id field per spec)
+    # Test with URL file_id (still uses file_id field per spec) - no extension defaults to 'application/octet-stream'
     part_url = UserPromptPart(
         content=[
             'analyze this',
@@ -890,6 +892,7 @@ def test_uploaded_file_in_otel_message_parts():
                 'type': 'file',
                 'modality': 'document',
                 'file_id': 'https://generativelanguage.googleapis.com/v1beta/files/abc123',
+                'mime_type': 'application/octet-stream',
             },
         ]
     )
