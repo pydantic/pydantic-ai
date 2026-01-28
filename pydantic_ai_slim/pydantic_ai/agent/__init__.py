@@ -1147,6 +1147,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
+        examples: list[dict[str, Any]] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
@@ -1166,6 +1167,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
+        examples: list[dict[str, Any]] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> Any:
@@ -1216,6 +1218,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
+            examples: Example inputs demonstrating correct tool usage. Defaults to None.
+                See [`ToolDefinition.examples`][pydantic_ai.tools.ToolDefinition.examples] for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
@@ -1238,6 +1242,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 strict=strict,
                 sequential=sequential,
                 requires_approval=requires_approval,
+                examples=examples,
                 metadata=metadata,
                 timeout=timeout,
             )
@@ -1263,6 +1268,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
+        examples: list[dict[str, Any]] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
@@ -1282,6 +1288,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
+        examples: list[dict[str, Any]] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> Any:
@@ -1332,6 +1339,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
+            examples: Example inputs demonstrating correct tool usage. Defaults to None.
+                See [`ToolDefinition.examples`][pydantic_ai.tools.ToolDefinition.examples] for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
@@ -1352,6 +1361,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 strict=strict,
                 sequential=sequential,
                 requires_approval=requires_approval,
+                examples=examples,
                 metadata=metadata,
                 timeout=timeout,
             )
