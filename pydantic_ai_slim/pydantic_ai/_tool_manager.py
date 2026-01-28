@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -25,6 +26,30 @@ ParallelExecutionMode = Literal['parallel', 'sequential', 'parallel_ordered_even
 _parallel_execution_mode_ctx_var: ContextVar[ParallelExecutionMode] = ContextVar(
     'parallel_execution_mode', default='parallel'
 )
+
+
+@dataclass
+class ValidatedToolCall(Generic[AgentDepsT]):
+    """Result of validating tool arguments, ready for execution.
+
+    This separates validation from execution, allowing callers to:
+    1. Know if validation passed before executing
+    2. Emit accurate `args_valid` status in events
+    3. Handle validation failures differently from execution failures
+    """
+
+    call: ToolCallPart
+    """The original tool call part."""
+    tool: ToolsetTool[AgentDepsT] | None
+    """The tool definition, or None if the tool is unknown."""
+    ctx: RunContext[AgentDepsT]
+    """The run context for this tool call."""
+    args_valid: bool
+    """Whether argument validation (schema + custom validator) passed."""
+    validated_args: dict[str, Any] | None = None
+    """The validated arguments if validation passed, None otherwise."""
+    validation_error: ToolRetryError | None = None
+    """The validation error if validation failed, None otherwise."""
 
 
 @dataclass
@@ -119,151 +144,334 @@ class ToolManager(Generic[AgentDepsT]):
         except KeyError:
             return None
 
-    async def handle_call(
+    def _build_tool_context(
         self,
         call: ToolCallPart,
-        allow_partial: bool = False,
-        wrap_validation_errors: bool = True,
-        *,
-        approved: bool = False,
-        metadata: Any = None,
-    ) -> Any:
-        """Handle a tool call by validating the arguments, calling the tool, and handling retries.
-
-        Args:
-            call: The tool call part to handle.
-            allow_partial: Whether to allow partial validation of the tool arguments.
-            wrap_validation_errors: Whether to wrap validation errors in a retry prompt part.
-            approved: Whether the tool call has been approved.
-            metadata: Additional metadata from DeferredToolResults.metadata.
-        """
-        if self.tools is None or self.ctx is None:
-            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
-
-        if (tool := self.tools.get(call.tool_name)) and tool.tool_def.kind == 'output':
-            # Output tool calls are not traced and not counted
-            return await self._call_tool(
-                call,
-                allow_partial=allow_partial,
-                wrap_validation_errors=wrap_validation_errors,
-                approved=approved,
-                metadata=metadata,
-            )
-        else:
-            return await self._call_function_tool(
-                call,
-                allow_partial=allow_partial,
-                wrap_validation_errors=wrap_validation_errors,
-                approved=approved,
-                metadata=metadata,
-                tracer=self.ctx.tracer,
-                include_content=self.ctx.trace_include_content,
-                instrumentation_version=self.ctx.instrumentation_version,
-                usage=self.ctx.usage,
-            )
-
-    async def _call_tool(
-        self,
-        call: ToolCallPart,
+        tool: ToolsetTool[AgentDepsT],
         *,
         allow_partial: bool,
-        wrap_validation_errors: bool,
-        approved: bool,
+        approved: bool = False,
         metadata: Any = None,
-    ) -> Any:
+    ) -> RunContext[AgentDepsT]:
+        """Build the execution context for a tool call.
+
+        Caller must ensure self.ctx is not None before calling this method.
+        """
+        assert self.ctx is not None  # for type checker; caller ensures this
+        return replace(
+            self.ctx,
+            tool_name=call.tool_name,
+            tool_call_id=call.tool_call_id,
+            retry=self.ctx.retries.get(call.tool_name, 0),
+            max_retries=tool.max_retries,
+            tool_call_approved=approved,
+            tool_call_metadata=metadata,
+            partial_output=allow_partial,
+        )
+
+    async def _validate_tool_args(
+        self,
+        call: ToolCallPart,
+        tool: ToolsetTool[AgentDepsT],
+        ctx: RunContext[AgentDepsT],
+        *,
+        allow_partial: bool,
+    ) -> dict[str, Any]:
+        """Validate tool arguments using Pydantic schema and custom args_validator_func.
+
+        Returns:
+            The validated arguments as a dictionary.
+
+        Raises:
+            ValidationError: If Pydantic schema validation fails.
+            ModelRetry: If custom args_validator_func validation fails.
+        """
+        pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
+        validator = tool.args_validator
+        if isinstance(call.args, str):
+            args_dict = validator.validate_json(
+                call.args or '{}', allow_partial=pyd_allow_partial, context=ctx.validation_context
+            )
+        else:
+            args_dict = validator.validate_python(
+                call.args or {}, allow_partial=pyd_allow_partial, context=ctx.validation_context
+            )
+
+        # Custom args_validator_func validation (if configured)
+        if tool.args_validator_func is not None:
+            result = tool.args_validator_func(ctx, **args_dict)
+            if inspect.isawaitable(result):
+                await result
+
+        return args_dict
+
+    async def validate_tool_call(
+        self,
+        call: ToolCallPart,
+        *,
+        allow_partial: bool = False,
+        wrap_validation_errors: bool = True,
+        approved: bool = False,
+        metadata: Any = None,
+    ) -> ValidatedToolCall[AgentDepsT]:
+        """Validate tool arguments without executing the tool.
+
+        This method validates arguments BEFORE the tool is executed, allowing the caller to:
+        1. Emit FunctionToolCallEvent with accurate `args_valid` status
+        2. Handle validation failures differently from execution failures
+        3. Decide whether to execute or defer based on validation result
+
+        Args:
+            call: The tool call part to validate.
+            allow_partial: Whether to allow partial validation of the tool arguments.
+            wrap_validation_errors: Whether to wrap validation errors in ToolRetryError.
+            approved: Whether the tool call has been approved.
+            metadata: Additional metadata from DeferredToolResults.metadata.
+
+        Returns:
+            ValidatedToolCall with validation results, ready for execution via execute_tool_call().
+        """
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
         name = call.tool_name
         tool = self.tools.get(name)
-        try:
-            if tool is None:
-                if self.tools:
-                    msg = f'Available tools: {", ".join(f"{name!r}" for name in self.tools.keys())}'
-                else:
-                    msg = 'No tools available.'
-                raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
 
-            if tool.tool_def.kind == 'external':
-                raise RuntimeError('External tools cannot be called')
+        # Handle unknown tool
+        if tool is None:
+            if self.tools:
+                msg = f'Available tools: {", ".join(f"{name!r}" for name in self.tools.keys())}'
+            else:
+                msg = 'No tools available.'
+            error_msg = f'Unknown tool name: {name!r}. {msg}'
 
-            ctx = replace(
-                self.ctx,
-                tool_name=name,
-                tool_call_id=call.tool_call_id,
-                retry=self.ctx.retries.get(name, 0),
-                max_retries=tool.max_retries,
-                tool_call_approved=approved,
-                tool_call_metadata=metadata,
-                partial_output=allow_partial,
+            if wrap_validation_errors:
+                m = _messages.RetryPromptPart(
+                    tool_name=name,
+                    content=error_msg,
+                    tool_call_id=call.tool_call_id,
+                )
+                validation_error = ToolRetryError(m)
+            else:  # pragma: no cover
+                # Same as above but without the intermediate variable
+                validation_error = ToolRetryError(
+                    _messages.RetryPromptPart(tool_name=name, content=error_msg, tool_call_id=call.tool_call_id)
+                )
+
+            if not allow_partial:  # pragma: no branch
+                self.failed_tools.add(name)
+
+            return ValidatedToolCall(
+                call=call,
+                tool=None,
+                ctx=self.ctx,
+                args_valid=False,
+                validated_args=None,
+                validation_error=validation_error,
             )
 
-            pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
-            validator = tool.args_validator
-            if isinstance(call.args, str):
-                args_dict = validator.validate_json(
-                    call.args or '{}', allow_partial=pyd_allow_partial, context=ctx.validation_context
-                )
-            else:
-                args_dict = validator.validate_python(
-                    call.args or {}, allow_partial=pyd_allow_partial, context=ctx.validation_context
-                )
+        ctx = self._build_tool_context(call, tool, allow_partial=allow_partial, approved=approved, metadata=metadata)
 
-            return await self.toolset.call_tool(name, args_dict, ctx, tool)
+        try:
+            validated_args = await self._validate_tool_args(call, tool, ctx, allow_partial=allow_partial)
+            return ValidatedToolCall(
+                call=call,
+                tool=tool,
+                ctx=ctx,
+                args_valid=True,
+                validated_args=validated_args,
+                validation_error=None,
+            )
         except (ValidationError, ModelRetry) as e:
-            max_retries = tool.max_retries if tool is not None else self.default_max_retries
+            max_retries = tool.max_retries
             current_retry = self.ctx.retries.get(name, 0)
 
             if current_retry == max_retries:
                 raise UnexpectedModelBehavior(f'Tool {name!r} exceeded max retries count of {max_retries}') from e
+
+            if wrap_validation_errors:
+                if isinstance(e, ValidationError):
+                    m = _messages.RetryPromptPart(
+                        tool_name=name,
+                        content=e.errors(include_url=False, include_context=False),
+                        tool_call_id=call.tool_call_id,
+                    )
+                    validation_error = ToolRetryError(m)
+                elif isinstance(e, ModelRetry):
+                    m = _messages.RetryPromptPart(
+                        tool_name=name,
+                        content=e.message,
+                        tool_call_id=call.tool_call_id,
+                    )
+                    validation_error = ToolRetryError(m)
+                else:
+                    assert_never(e)
             else:
-                if wrap_validation_errors:
-                    if isinstance(e, ValidationError):
-                        m = _messages.RetryPromptPart(
-                            tool_name=name,
-                            content=e.errors(include_url=False, include_context=False),
-                            tool_call_id=call.tool_call_id,
-                        )
-                        e = ToolRetryError(m)
-                    elif isinstance(e, ModelRetry):
-                        m = _messages.RetryPromptPart(
-                            tool_name=name,
-                            content=e.message,
-                            tool_call_id=call.tool_call_id,
-                        )
-                        e = ToolRetryError(m)
-                    else:
-                        assert_never(e)
+                # Re-raise original error if not wrapping
+                raise
 
-                if not allow_partial:
-                    # If we're validating partial arguments, we don't want to count this as a failed tool as it may still succeed once the full arguments are received.
-                    self.failed_tools.add(name)
+            if not allow_partial:  # pragma: no branch
+                self.failed_tools.add(name)
 
-                raise e
+            return ValidatedToolCall(
+                call=call,
+                tool=tool,
+                ctx=ctx,
+                args_valid=False,
+                validated_args=None,
+                validation_error=validation_error,
+            )
 
-    async def _call_function_tool(
+    async def validate_tool_args(
         self,
         call: ToolCallPart,
         *,
-        allow_partial: bool,
-        wrap_validation_errors: bool,
-        approved: bool,
-        metadata: Any = None,
+        allow_partial: bool = False,
+    ) -> bool:
+        """Validate tool arguments and return whether validation passed.
+
+        This is a convenience method that wraps validate_tool_call() for simple boolean checks.
+
+        Args:
+            call: The tool call part to validate.
+            allow_partial: Whether to allow partial validation of the tool arguments.
+
+        Returns:
+            True if validation passed, False otherwise.
+        """
+        try:
+            result = await self.validate_tool_call(call, allow_partial=allow_partial, wrap_validation_errors=True)
+            return result.args_valid
+        except UnexpectedModelBehavior:
+            return False
+
+    async def execute_tool_call(
+        self,
+        validated: ValidatedToolCall[AgentDepsT],
+        *,
+        tracer: Tracer | None = None,
+        include_content: bool = True,
+        instrumentation_version: int | None = None,
+        usage: RunUsage | None = None,
+    ) -> Any:
+        """Execute a validated tool call, optionally within a trace span.
+
+        This method handles both successful validation (executes the tool) and failed validation
+        (creates a span to record the error and raises ToolRetryError).
+
+        For output tools, no tracing is performed.
+        For function tools, a trace span is created if tracer is provided.
+
+        Args:
+            validated: The validated tool call from validate_tool_call().
+            tracer: Optional tracer for creating spans. If None, no tracing is performed.
+            include_content: Whether to include tool arguments and results in the span.
+            instrumentation_version: The instrumentation version for span attribute names.
+            usage: Usage tracking object to increment tool_calls count.
+
+        Returns:
+            The tool result if validation passed and execution succeeded.
+
+        Raises:
+            ToolRetryError: If validation failed (contains the retry prompt).
+            RuntimeError: If trying to execute an external tool.
+        """
+        if self.ctx is None:
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+
+        # Determine if this is an output tool (no tracing)
+        is_output_tool = validated.tool is not None and validated.tool.tool_def.kind == 'output'
+
+        if is_output_tool or tracer is None:
+            # Output tools and calls without tracer: no tracing
+            return await self._execute_tool_call_impl(validated, usage=usage)
+        else:
+            # Function tools: trace the execution
+            return await self._execute_function_tool_call(
+                validated,
+                tracer=tracer,
+                include_content=include_content,
+                instrumentation_version=instrumentation_version or self.ctx.instrumentation_version,
+                usage=usage,
+            )
+
+    async def _execute_tool_call_impl(
+        self,
+        validated: ValidatedToolCall[AgentDepsT],
+        *,
+        usage: RunUsage | None = None,
+    ) -> Any:
+        """Execute a validated tool call without tracing.
+
+        Raises ToolRetryError if validation failed or if the tool raises ModelRetry.
+        Raises UnexpectedModelBehavior if max retries exceeded.
+        """
+        if self.ctx is None:
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+
+        # If validation failed, raise the error
+        if not validated.args_valid:
+            assert validated.validation_error is not None
+            raise validated.validation_error
+
+        # Validation passed - execute the tool
+        assert validated.tool is not None
+        assert validated.validated_args is not None
+
+        if validated.tool.tool_def.kind == 'external':
+            raise RuntimeError('External tools cannot be called')
+
+        name = validated.call.tool_name
+        try:
+            result = await self.toolset.call_tool(
+                name,
+                validated.validated_args,
+                validated.ctx,
+                validated.tool,
+            )
+        except ModelRetry as e:
+            # Tool raised ModelRetry during execution - check max retries
+            max_retries = validated.tool.max_retries
+            current_retry = self.ctx.retries.get(name, 0)
+
+            if current_retry == max_retries:
+                raise UnexpectedModelBehavior(f'Tool {name!r} exceeded max retries count of {max_retries}') from e
+
+            # Wrap in ToolRetryError for retry
+            m = _messages.RetryPromptPart(
+                tool_name=name,
+                content=e.message,
+                tool_call_id=validated.call.tool_call_id,
+            )
+            self.failed_tools.add(name)
+            raise ToolRetryError(m) from e
+
+        if usage is not None:
+            usage.tool_calls += 1
+
+        return result
+
+    async def _execute_function_tool_call(
+        self,
+        validated: ValidatedToolCall[AgentDepsT],
+        *,
         tracer: Tracer,
         include_content: bool,
         instrumentation_version: int,
-        usage: RunUsage,
+        usage: RunUsage | None = None,
     ) -> Any:
-        """See <https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/#execute-tool-span>."""
+        """Execute a validated function tool call within a trace span.
+
+        See <https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/#execute-tool-span>.
+        """
         instrumentation_names = InstrumentationNames.for_version(instrumentation_version)
+        call = validated.call
 
         span_attributes = {
             'gen_ai.tool.name': call.tool_name,
-            # NOTE: this means `gen_ai.tool.call.id` will be included even if it was generated by pydantic-ai
             'gen_ai.tool.call.id': call.tool_call_id,
             **({instrumentation_names.tool_arguments_attr: call.args_as_json_str()} if include_content else {}),
             'logfire.msg': f'running tool: {call.tool_name}',
-            # add the JSON schema so these attributes are formatted nicely in Logfire
             'logfire.json_schema': json.dumps(
                 {
                     'type': 'object',
@@ -282,25 +490,18 @@ class ToolManager(Generic[AgentDepsT]):
                 }
             ),
         }
+
         with tracer.start_as_current_span(
             instrumentation_names.get_tool_span_name(call.tool_name),
             attributes=span_attributes,
         ) as span:
             try:
-                tool_result = await self._call_tool(
-                    call,
-                    allow_partial=allow_partial,
-                    wrap_validation_errors=wrap_validation_errors,
-                    approved=approved,
-                    metadata=metadata,
-                )
-                usage.tool_calls += 1
-
+                tool_result = await self._execute_tool_call_impl(validated, usage=usage)
             except ToolRetryError as e:
                 part = e.tool_retry
                 if include_content and span.is_recording():
                     span.set_attribute(instrumentation_names.tool_result_attr, part.model_response())
-                raise e
+                raise
 
             if include_content and span.is_recording():
                 span.set_attribute(
@@ -311,3 +512,44 @@ class ToolManager(Generic[AgentDepsT]):
                 )
 
         return tool_result
+
+    async def handle_call(
+        self,
+        call: ToolCallPart,
+        allow_partial: bool = False,
+        wrap_validation_errors: bool = True,
+        *,
+        approved: bool = False,
+        metadata: Any = None,
+    ) -> Any:
+        """Handle a tool call by validating the arguments, calling the tool, and handling retries.
+
+        This is a convenience method that combines validate_tool_call() and execute_tool_call().
+
+        Args:
+            call: The tool call part to handle.
+            allow_partial: Whether to allow partial validation of the tool arguments.
+            wrap_validation_errors: Whether to wrap validation errors in a retry prompt part.
+            approved: Whether the tool call has been approved.
+            metadata: Additional metadata from DeferredToolResults.metadata.
+        """
+        if self.ctx is None:
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+
+        # Validate the tool call
+        validated = await self.validate_tool_call(
+            call,
+            allow_partial=allow_partial,
+            wrap_validation_errors=wrap_validation_errors,
+            approved=approved,
+            metadata=metadata,
+        )
+
+        # Execute the validated call (with tracing for function tools)
+        return await self.execute_tool_call(
+            validated,
+            tracer=self.ctx.tracer,
+            include_content=self.ctx.trace_include_content,
+            instrumentation_version=self.ctx.instrumentation_version,
+            usage=self.ctx.usage,
+        )
