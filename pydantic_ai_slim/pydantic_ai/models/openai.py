@@ -345,7 +345,7 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     See the [OpenAI Prompt Caching documentation](https://platform.openai.com/docs/guides/prompt-caching#how-it-works) for more information.
     """
 
-    openai_prompt_cache_retention: Literal['in-memory', '24h']
+    openai_prompt_cache_retention: Literal['in_memory', '24h']
     """The retention policy for the prompt cache. Set to 24h to enable extended prompt caching, which keeps cached prefixes active for longer, up to a maximum of 24 hours.
 
     See the [OpenAI Prompt Caching documentation](https://platform.openai.com/docs/guides/prompt-caching#how-it-works) for more information.
@@ -685,7 +685,8 @@ class OpenAIChatModel(Model):
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
-            return await self.client.chat.completions.create(
+            # OpenAI SDK has incorrect type for prompt_cache_retention ('in-memory' vs 'in_memory')
+            return await self.client.chat.completions.create(  # pyright: ignore[reportCallIssue,reportUnknownVariableType]
                 model=self.model_name,
                 messages=openai_messages,
                 parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
@@ -711,7 +712,8 @@ class OpenAIChatModel(Model):
                 logprobs=model_settings.get('openai_logprobs', OMIT),
                 top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
                 prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
-                prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
+                # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory'
+                prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),  # pyright: ignore[reportArgumentType]
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -1589,7 +1591,8 @@ class OpenAIResponsesModel(Model):
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
-            return await self.client.responses.create(
+            # OpenAI SDK has incorrect type for prompt_cache_retention ('in-memory' vs 'in_memory')
+            return await self.client.responses.create(  # pyright: ignore[reportCallIssue,reportUnknownVariableType]
                 input=openai_messages,
                 model=self.model_name,
                 instructions=instructions,
@@ -1610,7 +1613,8 @@ class OpenAIResponsesModel(Model):
                 text=text or OMIT,
                 include=include or OMIT,
                 prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
-                prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
+                # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory'
+                prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),  # pyright: ignore[reportArgumentType]
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
