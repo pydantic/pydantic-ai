@@ -545,3 +545,30 @@ def get_event_loop():
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
     return event_loop
+
+
+# Optional JSON repair functionality
+try:
+    from fast_json_repair import repair_json  # pyright: ignore[reportUnknownVariableType]
+
+    def maybe_repair_json(json_string: str) -> str:
+        """Attempt to repair malformed JSON using fast_json_repair.
+
+        This is useful when LLMs produce broken JSON (missing braces, trailing
+        commas, single quotes, etc.). Install with: pip install 'pydantic-ai-slim[json-repair]'
+
+        Args:
+            json_string: The potentially malformed JSON string.
+
+        Returns:
+            The repaired JSON string if repairs were made, otherwise the original string.
+        """
+        result = repair_json(json_string, return_objects=False)
+        # repair_json returns str when return_objects=False
+        return str(result)
+
+except ImportError as _import_error:
+
+    def maybe_repair_json(json_string: str) -> str:
+        """Fallback when fast_json_repair is not available - returns input unchanged."""
+        return json_string

@@ -16,8 +16,8 @@ from typing_extensions import Self, TypedDict, TypeVar
 from pydantic_ai._instrumentation import InstrumentationNames
 
 from . import _function_schema, _utils, messages as _messages
-from ._json_repair import maybe_repair_json
 from ._run_context import AgentDepsT, RunContext
+from ._utils import maybe_repair_json
 from .exceptions import ModelRetry, ToolRetryError, UserError
 from .output import (
     DeferredToolRequests,

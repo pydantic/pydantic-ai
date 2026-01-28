@@ -13,8 +13,8 @@ from typing_extensions import assert_never
 
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
-from ._json_repair import maybe_repair_json
 from ._run_context import AgentDepsT, RunContext
+from ._utils import maybe_repair_json
 from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from .messages import ToolCallPart
 from .tools import ToolDefinition
