@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import monty
+from pydantic_monty import Monty
 import pytest
 from inline_snapshot import snapshot
 
@@ -131,7 +131,7 @@ def add(x: int, y: int) -> int:
 ''')
     # Verify Monty can parse and type check code using this prefix
     # If our signature generation is broken, this will raise MontySyntaxError
-    m = monty.Monty('add(1, 2)', external_functions=['add'])
+    m = Monty('add(1, 2)', external_functions=['add'])
     m.type_check(prefix_code=prefix)  # Should not raise
 
 

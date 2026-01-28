@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Any, cast
@@ -126,6 +125,11 @@ for item in items:
 {{"total": total, "count": len(results), "items": results}}
 ```"""
 
+
+def _build_type_check_prefix(signatures: list[str]) -> str:
+    """Build the prefix code for type checking (imports + signatures)."""
+    imports = 'from typing import Any, TypedDict, NotRequired, Literal\n\n'
+    return imports + '\n\n'.join(signatures)
 
 
 
