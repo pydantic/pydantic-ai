@@ -651,8 +651,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 if instruction:
                     toolset_instructions.append(instruction)
 
-            # Use apply() to visit all leaf toolsets and collect their instructions
-            # We need to run this asynchronously for each toolset
             toolsets_to_visit: list[AbstractToolset[AgentDepsT]] = []
             toolset.apply(toolsets_to_visit.append)
             for ts in toolsets_to_visit:
@@ -1483,6 +1481,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         additional_instructions: Instructions[AgentDepsT] = None,
     ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
+        """Prepare instructions from agent configuration.
+
+        This method extracts and organizes instructions from the agent's configuration.
+        Note that this only handles agent-level instructions; toolset instructions are
+        collected separately during run execution and combined with these instructions.
+
+        See the `get_instructions` function in `Agent.iter()` for how toolset instructions
+        are collected from all leaf toolsets and combined into the final system prompt.
+
+        Args:
+            additional_instructions: Additional instructions to include for this run.
+
+        Returns:
+            A tuple of (literal_instructions, instruction_functions) where:
+            - literal_instructions: Combined literal string instructions or None
+            - instruction_functions: List of instruction functions that need to be evaluated at runtime
+        """
         override_instructions = self._override_instructions.get()
         if override_instructions:
             instructions = override_instructions.value
