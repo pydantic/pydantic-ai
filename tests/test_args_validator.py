@@ -717,7 +717,7 @@ async def test_external_tool_validation_failure():
             self.tool_defs = tool_defs
 
         @property
-        def id(self) -> str | None:
+        def id(self) -> str | None:  # pragma: no cover
             return 'strict_external'
 
         async def get_tools(self, ctx: RC[None]) -> dict[str, ToolsetTool[None]]:
@@ -768,8 +768,8 @@ async def test_external_tool_validation_failure():
     tool_call_events: list[FunctionToolCallEvent] = [e for e in events if isinstance(e, FunctionToolCallEvent)]
 
     # Should have at least one tool call event
-    if tool_call_events:
-        # The event should have args_valid=False due to schema validation failure
-        external_events = [e for e in tool_call_events if e.part.tool_name == 'external_tool']
-        if external_events:
-            assert external_events[0].args_valid is False
+    assert tool_call_events, 'Should have at least one tool call event'
+    # The event should have args_valid=False due to schema validation failure
+    external_events = [e for e in tool_call_events if e.part.tool_name == 'external_tool']
+    assert external_events, 'Should have external tool events'
+    assert external_events[0].args_valid is False

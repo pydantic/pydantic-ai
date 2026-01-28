@@ -258,7 +258,7 @@ class ToolManager(Generic[AgentDepsT]):
                     _messages.RetryPromptPart(tool_name=name, content=error_msg, tool_call_id=call.tool_call_id)
                 )
 
-            if not allow_partial:
+            if not allow_partial:  # pragma: no branch
                 self.failed_tools.add(name)
 
             return ValidatedToolCall(
@@ -310,7 +310,7 @@ class ToolManager(Generic[AgentDepsT]):
                 # Re-raise original error if not wrapping
                 raise
 
-            if not allow_partial:
+            if not allow_partial:  # pragma: no branch
                 self.failed_tools.add(name)
 
             return ValidatedToolCall(
