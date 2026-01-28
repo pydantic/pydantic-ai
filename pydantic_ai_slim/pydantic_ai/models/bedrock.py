@@ -704,7 +704,7 @@ class BedrockConverseModel(Model):
                             if item.tool_name == CodeExecutionTool.kind:
                                 tool_result: ToolResultBlockOutputTypeDef = {
                                     'toolUseId': _utils.guard_tool_call_id(t=item),
-                                    'content': [{'json': item.content}] if item.content else [],
+                                    'content': [{'json': cast(Any, item.content)}] if item.content else [],
                                     'type': 'nova_code_interpreter_result',
                                 }
                                 if item.provider_details and 'status' in item.provider_details:
