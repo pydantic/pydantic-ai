@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Any, Literal, TypeAlias, cast
 
 from pydantic.errors import PydanticUserError
-from typing_extensions import Protocol, Self, TypeAlias
+from typing_extensions import Protocol, Self
 
 from pydantic_ai import ToolDefinition
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
