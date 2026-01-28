@@ -779,7 +779,7 @@ class Model(ABC):
 
     @property
     def model_id(self) -> str:
-        """Return the fully qualified model name in format 'provider:model_name'. """
+        """Return the fully qualified model name in format 'provider:model_name'."""
         return f'{self.system}:{self.model_name}'
 
     @property
