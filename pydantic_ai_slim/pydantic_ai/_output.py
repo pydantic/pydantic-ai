@@ -16,6 +16,7 @@ from typing_extensions import Self, TypedDict, TypeVar
 from pydantic_ai._instrumentation import InstrumentationNames
 
 from . import _function_schema, _utils, messages as _messages
+from ._json_repair import maybe_repair_json
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, ToolRetryError, UserError
 from .output import (
@@ -645,9 +646,23 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     ) -> dict[str, Any]:
         pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
         if isinstance(data, str):
-            return self.validator.validate_json(
-                data or '{}', allow_partial=pyd_allow_partial, context=validation_context
-            )
+            json_str = data or '{}'
+            try:
+                return self.validator.validate_json(
+                    json_str, allow_partial=pyd_allow_partial, context=validation_context
+                )
+            except ValidationError:
+                # Only attempt JSON repair on final (non-partial) calls,
+                # as repairing partial JSON can interfere with streaming behavior
+                if allow_partial:
+                    raise
+                repaired = maybe_repair_json(json_str)
+                if repaired == json_str:
+                    # Repair didn't change anything, re-raise original error
+                    raise
+                return self.validator.validate_json(
+                    repaired, allow_partial=pyd_allow_partial, context=validation_context
+                )
         else:
             return self.validator.validate_python(
                 data or {}, allow_partial=pyd_allow_partial, context=validation_context

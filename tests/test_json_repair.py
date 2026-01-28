@@ -164,3 +164,49 @@ async def test_repair_doesnt_help_validation_error():
         await tool_manager.handle_call(
             ToolCallPart(tool_name='typed_func', args=invalid_type_json),
         )
+
+
+def test_object_output_processor_repair():
+    """Test that ObjectOutputProcessor.validate also repairs JSON."""
+    pytest.importorskip('fast_json_repair')
+
+    from pydantic import BaseModel
+
+    from pydantic_ai._output import ObjectOutputProcessor
+
+    class MyOutput(BaseModel):
+        name: str
+        age: int
+
+    processor = ObjectOutputProcessor(MyOutput)
+
+    # Broken JSON: missing closing brace
+    broken_json = '{"name": "Alice", "age": 30'
+
+    result = processor.validate(broken_json)
+    # validate returns a model instance when passed a BaseModel
+    assert isinstance(result, MyOutput)
+    assert result.name == 'Alice'
+    assert result.age == 30
+
+
+def test_object_output_processor_repair_trailing_comma():
+    """Test that ObjectOutputProcessor.validate repairs trailing commas."""
+    pytest.importorskip('fast_json_repair')
+
+    from pydantic import BaseModel
+
+    from pydantic_ai._output import ObjectOutputProcessor
+
+    class MyOutput(BaseModel):
+        value: str
+
+    processor = ObjectOutputProcessor(MyOutput)
+
+    # Broken JSON: trailing comma
+    broken_json = '{"value": "test",}'
+
+    result = processor.validate(broken_json)
+    # validate returns a model instance when passed a BaseModel
+    assert isinstance(result, MyOutput)
+    assert result.value == 'test'

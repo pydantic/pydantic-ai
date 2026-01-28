@@ -13,28 +13,13 @@ from typing_extensions import assert_never
 
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
+from ._json_repair import maybe_repair_json
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from .messages import ToolCallPart
 from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 from .usage import RunUsage
-
-try:
-    from fast_json_repair import repair_json  # pyright: ignore[reportUnknownVariableType]
-
-    def _maybe_repair_json(json_string: str) -> str:
-        """Attempt to repair malformed JSON using fast_json_repair."""
-        result = repair_json(json_string, return_objects=False)
-        # repair_json returns str when return_objects=False
-        return str(result)
-
-except ImportError as _import_error:
-
-    def _maybe_repair_json(json_string: str) -> str:
-        """Fallback when fast_json_repair is not available - returns input unchanged."""
-        return json_string
-
 
 _sequential_tool_calls_ctx_var: ContextVar[bool] = ContextVar('sequential_tool_calls', default=False)
 
@@ -199,7 +184,7 @@ class ToolManager(Generic[AgentDepsT]):
                     # as repairing partial JSON can interfere with streaming behavior
                     if allow_partial:
                         raise
-                    repaired = _maybe_repair_json(args_str)
+                    repaired = maybe_repair_json(args_str)
                     if repaired == args_str:
                         # Repair didn't change anything, re-raise original error
                         raise
