@@ -512,7 +512,7 @@ class BinaryContent:
         vendor_metadata: dict[str, Any] | None = None,
         kind: Literal['binary'] = 'binary',
         _identifier: str | None = None,
-    ) -> None: ...
+    ) -> None: ...  # pragma: no cover
 
     @staticmethod
     def narrow_type(bc: BinaryContent) -> BinaryContent | BinaryImage:
