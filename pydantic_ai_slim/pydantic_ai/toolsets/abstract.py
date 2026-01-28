@@ -109,7 +109,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> str | None:
+    async def instructions(self, ctx: RunContext[AgentDepsT]) -> str | None:
         """Return instructions to inject into the agent's system prompt when this toolset is used.
 
         Override this method to provide custom instructions that help the agent understand
