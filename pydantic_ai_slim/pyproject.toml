@@ -126,7 +126,7 @@ json-repair = ["fast-json-repair>=0.2.0; python_version >= '3.11'"]
 # Temporal
 temporal = ["temporalio==1.20.0"]
 # DBOS
-dbos = ["dbos>=1.14.0"]
+dbos = ["dbos>=2.10.0"]
 # Prefect
 prefect = ["prefect>=3.4.21"]
 
