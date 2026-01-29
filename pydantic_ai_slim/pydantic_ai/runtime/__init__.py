@@ -3,7 +3,7 @@ from .abstract import (
     CodeRuntime,
     CodeRuntimeError,
     CodeSyntaxError,
-    CodeTypeError,
+    CodeTypingError,
     FunctionCall,
     ToolCallback,
 )
@@ -13,7 +13,7 @@ __all__ = (
     'CodeRuntime',
     'CodeRuntimeError',
     'CodeSyntaxError',
-    'CodeTypeError',
+    'CodeTypingError',
     'FunctionCall',
     'ToolCallback',
 )

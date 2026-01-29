@@ -20,7 +20,9 @@ from pydantic_ai.runtime.abstract import (
 from pydantic_ai.runtime.monty import MontyRuntime
 
 from ..._run_context import AgentDepsT, RunContext
+from ..._tool_manager import ToolManager
 from ...exceptions import ModelRetry
+from ...messages import ToolCallPart
 from ...tools import ToolDefinition
 from ..abstract import SchemaValidatorProt, ToolsetTool
 from ..function import FunctionToolset, FunctionToolsetTool
@@ -284,46 +286,40 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         self,
         tool: _CodeModeTool[AgentDepsT],
         ctx: RunContext[AgentDepsT],
-        # checkpoint: dict[str, Any] | None,
+        code_mode_tool_manager: ToolManager[AgentDepsT],
+        sanitized_to_original: dict[str, str],
     ) -> ToolCallback:
-        # Match approval by tool name rather than a boolean flag. With concurrent
-        # execution, multiple callbacks fire simultaneously — a boolean consumed by
-        # whichever task runs first would approve the wrong call. String matching
-        # ensures only the callback whose original_name matches gets approved.
-        # approved_tool_name: str | None = checkpoint.get('tool_name') if checkpoint else None
-        # override_args: dict[str, Any] | None = (
-        #     ctx.tool_call_metadata.get('_override_args') if checkpoint and ctx.tool_call_metadata else None
-        # )
-
         async def callback(call: FunctionCall) -> Any:
             sanitized_name = call.function_name
-            original_tool = tool.original_tools[sanitized_name]
-            original_name = self._name_mapping.get_original(sanitized_name) or sanitized_name
+            original_name = sanitized_to_original.get(sanitized_name, sanitized_name)
 
             # Build kwargs (positional arg fallback)
-            tool_kwargs = dict(call.kwargs)
+            tool_kwargs: dict[str, Any] = dict(call.kwargs)
             if call.args:
                 # Positional args are mapped using JSON schema property order, which may not match
                 # the tool's actual parameter order. The prompt instructs models to use keyword
                 # arguments only, but we handle positional args as a fallback for non-compliant models.
+                original_tool = tool.original_tools[sanitized_name]
                 param_names = list(original_tool.tool_def.parameters_json_schema.get('properties', {}).keys())
                 for i, arg in enumerate(call.args):
                     if i < len(param_names):
                         tool_kwargs[param_names[i]] = arg
 
-            span_attributes = {
-                'gen_ai.tool.name': original_name,
-                'code_mode.inner_tool': True,
-                'code_mode.sanitized_name': sanitized_name,
-                'logfire.msg': f'code mode calling: {original_name}',
-            }
+            # Construct ToolCallPart for handle_call (tool_call_id auto-generated)
+            tool_call_part = ToolCallPart(
+                tool_name=original_name,
+                args=tool_kwargs,
+            )
 
-            # TODO: Consider letting tool manager handle the span(Discussion with Douwe)?
-            span_name = f'code_mode_tool:{original_name}'
-            # with ctx.tracer.start_as_current_span(span_name, attributes=span_attributes):
-
-            # I am calling the tool myself, tool manager does not handle it for me here, can I sort of let this bubble up to tool manager and come back down here?
-            return await super(CodeModeToolset, self).call_tool(original_name, tool_kwargs, ctx, original_tool)
+            # Route through full ToolManager flow:
+            # handle_call → _call_function_tool (tracing + usage) → _call_tool (validate + enrich + call)
+            # wrap_validation_errors=False: let raw errors propagate to the runtime.
+            # If UnexpectedModelBehavior is raised (e.g. max_retries=0 tool), it propagates
+            # naturally through the Monty runtime as CodeRuntimeError → outer ModelRetry.
+            return await code_mode_tool_manager.handle_call(
+                tool_call_part,
+                wrap_validation_errors=False,
+            )
 
         return callback
 
@@ -335,15 +331,27 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         assert isinstance(tool, _CodeModeTool)
         assert isinstance(code, str)
 
-        callback = self._make_tool_callback(tool, ctx)
+        # Re-key tools by original name for the wrapped toolset
+        original_name_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
+        sanitized_to_original: dict[str, str] = {}
+        for sanitized, t in tool.original_tools.items():
+            orig = self._name_mapping.get_original(sanitized) or sanitized
+            original_name_tools[orig] = t
+            sanitized_to_original[sanitized] = orig
+
+        # ToolManager scoped to inner tools — uses full handle_call flow
+        # (validation, context enrichment, OTel tracing, usage counting)
+        code_mode_tool_manager = ToolManager(
+            toolset=self.wrapped,
+            ctx=ctx,
+            tools=original_name_tools,
+        )
+
+        callback = self._make_tool_callback(tool, ctx, code_mode_tool_manager, sanitized_to_original)
 
         try:
             functions = list(tool.original_tools.keys())
-
-            return await self.runtime.run(
-                code, functions, callback, self._cached_signatures
-            )  # I don't know if it is wise to send a shared mutable state like this through?
-
+            return await self.runtime.run(code, functions, callback, self._cached_signatures)
         except CodeTypingError as e:
             raise ModelRetry(f'Type error in generated code:\n{e.message}')
         except CodeSyntaxError as e:
