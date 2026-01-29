@@ -3,6 +3,7 @@ changelog:
     labels:
       - docs
       - chore
+      - dev-dependency
   categories:
     - title: 🚀 Features
       labels:
@@ -10,3 +11,6 @@ changelog:
     - title: 🐛 Bug Fixes
       labels:
         - bug
+    - title: 📦 Dependencies
+      labels:
+        - dependency

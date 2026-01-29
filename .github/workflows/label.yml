@@ -1,34 +1,135 @@
-name: PR
+name: PR Labels
 
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
+  issue_comment:
+    types: [created]
 
 permissions:
-  pull-requests: read
+  pull-requests: write
+  issues: write
 
 jobs:
   check-pr-labels:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Check PR has required label
-        run: |
-          LABELS=$(gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --json labels --jq '.labels[].name')
-          REQUIRED_LABELS=("bug" "feature" "docs" "chore")
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const requiredLabels = ['bug', 'feature', 'docs', 'chore', 'dependency', 'dev-dependency'];
+            const prNumber = context.payload.pull_request.number;
 
-          HAS_LABEL=false
-          for label in "${REQUIRED_LABELS[@]}"; do
-            if echo "$LABELS" | grep -q "^${label}$"; then
-              HAS_LABEL=true
-              echo "✅ PR has required label: $label"
-              break
-            fi
-          done
+            const { data: labels } = await github.rest.issues.listLabelsOnIssue({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber
+            });
 
-          if [ "$HAS_LABEL" = false ]; then
-            echo "❌ PR must have one of the following labels: ${REQUIRED_LABELS[*]}"
-            echo "A maintainer will assign it"
-            exit 1
-          fi
-        env:
-          GH_TOKEN: ${{ github.token }}
+            const labelNames = labels.map(l => l.name);
+            const hasRequiredLabel = requiredLabels.some(l => labelNames.includes(l));
+
+            if (hasRequiredLabel) {
+              console.log(`✅ PR has a required label`);
+              return;
+            }
+
+            // Check if we already posted a comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber
+            });
+
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' &&
+              c.body.includes('<!-- label-reminder -->')
+            );
+
+            const message = [
+              '<!-- label-reminder -->',
+              '',
+              'This PR requires a label before it can be merged. Please add one of the following labels:',
+              '',
+              '- `bug` - Bug fix',
+              '- `feature` - New feature',
+              '- `docs` - Documentation changes',
+              '- `chore` - Maintenance tasks',
+              '- `dependency` - Dependency updates',
+              '- `dev-dependency` - Development dependency updates',
+              '',
+              '**To add a label**, comment on this PR with:',
+              '```',
+              '/label <name>',
+              '```',
+              '',
+              'For example: `/label bug`'
+            ].join('\n');
+
+            if (!botComment) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: message
+              });
+            }
+
+            core.setFailed(`❌ PR must have one of the following labels: ${requiredLabels.join(', ')}`);
+
+  add-label-from-comment:
+    if: github.event_name == 'issue_comment' && github.event.issue.pull_request && startsWith(github.event.comment.body, '/label ')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add label from comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const allowedLabels = ['bug', 'feature', 'docs', 'chore', 'dependency', 'dev-dependency'];
+            const comment = context.payload.comment.body.trim();
+            const match = comment.match(/^\/label\s+(\S+)/);
+
+            if (!match) {
+              console.log('No label found in comment');
+              return;
+            }
+
+            const requestedLabel = match[1].toLowerCase();
+
+            if (!allowedLabels.includes(requestedLabel)) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                body: `❌ \`${requestedLabel}\` is not a valid label. Allowed labels are: ${allowedLabels.map(l => '\`' + l + '\`').join(', ')}`
+              });
+              return;
+            }
+
+            try {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                labels: [requestedLabel]
+              });
+
+              // Add a reaction to the comment to indicate success
+              await github.rest.reactions.createForIssueComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: context.payload.comment.id,
+                content: '+1'
+              });
+
+              console.log(`✅ Added label: ${requestedLabel}`);
+            } catch (error) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                body: `❌ Failed to add label \`${requestedLabel}\`: ${error.message}`
+              });
+            }
