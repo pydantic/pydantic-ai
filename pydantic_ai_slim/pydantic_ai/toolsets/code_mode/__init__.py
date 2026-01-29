@@ -50,6 +50,7 @@ _CODE_ADAPTER = TypeAdapter(_CodeToolArguments)
 _CODE_MODE_TOOL_NAME = 'run_code'
 
 
+# We will attempt to remove all restrictions
 # CRITICAL Syntax restrictions (the runtime uses a restricted Python subset):
 # - No imports - use only the provided functions and builtins (len, sum, str, etc.)
 # - No while loops - use for loops instead
@@ -81,7 +82,7 @@ def build_code_mode_prompt(*, signatures: list[str]) -> str:
         The complete prompt describing code mode capabilities and available functions.
     """
     functions_block = '\n\n'.join(signatures)
-    # TODO: The first line of the prompt should be customizable by the user using Prompt Templates
+    # TODO: The first line of the prompt should be customizable by the user using Prompt Templates #3656
     return f"""\
 ALWAYS use run_code to solve the ENTIRE task in a single code block. Do not call tools individually - write one comprehensive Python script that fetches all data, processes it, and returns the complete answer.
 
@@ -124,12 +125,6 @@ for item in items:
 # Return processed summary, NOT raw data
 {{"total": total, "count": len(results), "items": results}}
 ```"""
-
-
-# def _build_type_check_prefix(signatures: list[str]) -> str:
-#     """Build the prefix code for type checking (imports + signatures)."""
-#     imports = 'from typing import Any, TypedDict, NotRequired, Literal\n\n'
-#     return imports + '\n\n'.join(signatures)
 
 
 @dataclass(kw_only=True)
@@ -227,14 +222,17 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     runtime: CodeRuntime = field(default_factory=MontyRuntime)
     # The user needs to provide a runtime to be used with the toolset. If not provided we will use Monty by default.
+    # At the moment we only support Monty as well, need to check if Modal or some other Sandbox can also be used with this.
     prompt_builder: Callable[..., str] = build_code_mode_prompt
     max_retries: int = 3
     tool_name_prefix: str | None = None
     # TODO: description_handler is not serializable. For distributed execution scenarios,
     # we may need an alternative approach (e.g., named handlers registered in a registry,
     # or description processing at tool registration time rather than at signature generation).
+    # Claude added the above comment, yet to validate
+
     description_handler: DescriptionHandler | None = None
-    _cached_signatures: list[str] = field(default_factory=list, init=False, repr=False)
+    _cached_signatures: list[str] = field(default_factory=lambda: [], init=False, repr=False)
     _name_mapping: ToolNameMapping = field(default_factory=ToolNameMapping, init=False, repr=False)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
@@ -385,7 +383,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             if checkpoint and checkpoint.get('runtime_checkpoint'):
                 return await self.runtime.resume_with_tools(checkpoint['runtime_checkpoint'], callback)
             await self.runtime.type_check(code, self._cached_signatures)
-            return await self.runtime.run_with_tools(code, functions, callback)
+            return await self.runtime.run(code, functions, callback)
         except CodeTypeError as e:
             raise ModelRetry(f'Type error in generated code:\n{e.message}')
         except CodeSyntaxError as e:

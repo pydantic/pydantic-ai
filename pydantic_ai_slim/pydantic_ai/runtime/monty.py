@@ -53,12 +53,12 @@ class MontyRuntime(CodeRuntime):
     at which point the runtime awaits completed tasks and provides results.
     """
 
-    async def run_with_tools(self, code: str, functions: list[str], call_tool: ToolCallback) -> Any:
+    async def run(self, code: str, functions: list[str], call_tool: ToolCallback) -> Any:
         """Start executing code in the Monty sandbox.
 
         Args:
             code: LLM-generated Python source code.
-            functions: Names of external functions the code is allowed to call.
+            functions: Names of external functions(tools) the code uses.
             call_tool: Callback invoked for each external function call.
 
         Returns:

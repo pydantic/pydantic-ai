@@ -59,7 +59,7 @@ class CodeRuntime(ABC):
     """Abstract base for code execution runtimes. Subclass per runtime provider."""
 
     @abstractmethod
-    async def run_with_tools(
+    async def run(
         self,
         code: str,
         functions: list[str],
