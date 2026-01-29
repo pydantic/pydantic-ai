@@ -1,0 +1,187 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '359'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Call the get_file tool to get a image and describe what you see.
+        role: user
+      model: meta-llama/llama-4-maverick-17b-128e-instruct
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '691'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{}'
+              name: get_file
+            id: qhsrxt7hy
+            type: function
+      created: 1769705209
+      id: chatcmpl-29f66a58-597b-4e4f-bd8b-bcb1c97f0e36
+      model: meta-llama/llama-4-maverick-17b-128e-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_d2c1f7e199
+      usage:
+        completion_time: 0.028977933
+        completion_tokens: 20
+        prompt_time: 0.580160903
+        prompt_tokens: 708
+        queue_time: 0.968356986
+        total_time: 0.609138836
+        total_tokens: 728
+      usage_breakdown: null
+      x_groq:
+        id: req_01kg5acyfdej492j7kgwfz2qb2
+        seed: 2097052121
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '713'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=HWSOFbPJPNNP8lwVdFaN3jOSxXQneyDeg4kgHQy7E6k-1769705209-1.0.1.1-5en7kXRsthMc76.fgB1BX2anitPGVzSfEjh5RP3lAKLcexh22UWN_MFPY.OFzYLZpIdL0mNsyX1OZsrChgH42mUWD6NWzFFb7NXruhxekSY
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Call the get_file tool to get a image and describe what you see.
+        role: user
+      - role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: get_file
+          id: qhsrxt7hy
+          type: function
+      - content: See file 6a18c6.
+        role: tool
+        tool_call_id: qhsrxt7hy
+      - content:
+        - text: 'This is file 6a18c6:'
+          type: text
+        - image_url:
+            url: https://www.gstatic.com/webp/gallery3/1.png
+          type: image_url
+        role: user
+      model: meta-llama/llama-4-maverick-17b-128e-instruct
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '746'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: The image shows a wilting orange rose with a pink rose petal resting on top, attached to a stem with green
+            leaves, set against a white background.
+          role: assistant
+      created: 1769705211
+      id: chatcmpl-35b19082-971e-48da-8318-cb5e88884b68
+      model: meta-llama/llama-4-maverick-17b-128e-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_992318f10a
+      usage:
+        completion_time: 0.093493256
+        completion_tokens: 33
+        prompt_time: 0.066408993
+        prompt_tokens: 1211
+        queue_time: 0.634809702
+        total_time: 0.159902249
+        total_tokens: 1244
+      usage_breakdown: null
+      x_groq:
+        id: req_01kg5ad09ff7ra6ywp20e71w0z
+        seed: 1705132654
+    status:
+      code: 200
+      message: OK
+version: 1

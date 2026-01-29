@@ -1,0 +1,150 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '359'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Call the get_file tool to get a audio and describe what you see.
+        role: user
+      model: meta-llama/llama-4-maverick-17b-128e-instruct
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '409'
+      content-type:
+      - application/json
+      retry-after:
+      - '7'
+      strict-transport-security:
+      - max-age=15552000
+      vary:
+      - Origin
+    parsed_body:
+      error:
+        code: rate_limit_exceeded
+        message: 'Rate limit reached for model `meta-llama/llama-4-maverick-17b-128e-instruct` in organization `org_01k0cr3hcdehfb2mcy22cp8p3y`
+          service tier `on_demand` on tokens per minute (TPM): Limit 6000, Used 5915, Requested 709. Please try again in 6.239999999s.
+          Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing'
+        type: tokens
+    status:
+      code: 429
+      message: Too Many Requests
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '359'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=gSM.yaK9oX.7.wHcBudSCDPq5kD9Y6vNZU0KkI9TvGg-1769704562-1.0.1.1-GedurcdtW444RZxVkKyChnceGS.zM3Qk514MY5f0CrXO7YI1ZbDbc6WQ.H4dR3yW1BCWQLgW4jk_RwRdVOpUJz7Ha1MCcuR80oQs9ci8asA
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Call the get_file tool to get a audio and describe what you see.
+        role: user
+      model: meta-llama/llama-4-maverick-17b-128e-instruct
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '690'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{}'
+              name: get_file
+            id: w1mfd2nxe
+            type: function
+      created: 1769704569
+      id: chatcmpl-26182c14-994b-4096-9282-a74466a29465
+      model: meta-llama/llama-4-maverick-17b-128e-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_992318f10a
+      usage:
+        completion_time: 0.024614413
+        completion_tokens: 20
+        prompt_time: 0.175814349
+        prompt_tokens: 708
+        queue_time: 0.114603134
+        total_time: 0.200428762
+        total_tokens: 728
+      usage_breakdown: null
+      x_groq:
+        id: req_01kg59seq7f4bvsyhd1endh9pa
+        seed: 347936023
+    status:
+      code: 200
+      message: OK
+version: 1
