@@ -45,6 +45,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
+    tool_return_ta,
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
@@ -723,40 +724,88 @@ class AnthropicModel(Model):
                         tool_result_content: list[beta_tool_result_block_param.Content] = []
                         unsupported_files: list[BetaContentBlockParam] = []
 
-                        # Add data content (text/JSON) to tool result
-                        if data_str := request_part.model_response_str():
-                            tool_result_content.append(BetaTextBlockParam(text=data_str, type='text'))
-
-                        # Handle multimodal files - images go in tool_result, others go to separate user message
-                        for file in request_part.files:
-                            if isinstance(file, BinaryContent):
-                                if file.media_type.startswith('image/'):
-                                    tool_result_content.append(self._map_binary_data(file.data, file.media_type))
+                        # Iterate content directly to preserve order of mixed file/data content
+                        content = request_part.content
+                        items: list[Any] = content if isinstance(content, list) else [content]
+                        for item in items:
+                            if isinstance(item, BinaryContent):
+                                if item.is_image or item.is_document:
+                                    # Images and documents (PDF, text) go native in tool_result
+                                    tool_result_content.append(self._map_binary_data(item.data, item.media_type))
                                 else:
-                                    unsupported_files.append(self._map_binary_data(file.data, file.media_type))
-                            elif isinstance(file, ImageUrl):
-                                if file.force_download:
-                                    downloaded = await download_item(file, data_format='bytes')
+                                    # Audio/video binary not supported - add identifier pattern
                                     tool_result_content.append(
-                                        self._map_binary_data(downloaded['data'], file.media_type)
+                                        BetaTextBlockParam(text=f'See file {item.identifier}.', type='text')
+                                    )
+                                    unsupported_files.append(
+                                        BetaTextBlockParam(
+                                            text=f'This is file {item.identifier}: [{item.media_type} not supported by Anthropic]',
+                                            type='text',
+                                        )
+                                    )
+                            elif isinstance(item, ImageUrl):
+                                # Images go native in tool_result
+                                if item.force_download:
+                                    downloaded = await download_item(item, data_format='bytes')
+                                    tool_result_content.append(
+                                        self._map_binary_data(downloaded['data'], item.media_type)
                                     )
                                 else:
                                     tool_result_content.append(
-                                        BetaImageBlockParam(source={'type': 'url', 'url': file.url}, type='image')
+                                        BetaImageBlockParam(source={'type': 'url', 'url': item.url}, type='image')
                                     )
-                            elif isinstance(file, DocumentUrl | AudioUrl | VideoUrl):
-                                # Documents/audio/video not supported in tool_result, add to separate user message
-                                user_prompt = UserPromptPart(content=[file])
-                                async for block in self._map_user_prompt(user_prompt):
-                                    if not isinstance(block, CachePoint):  # pragma: no branch
-                                        unsupported_files.append(block)
+                            elif isinstance(item, DocumentUrl):
+                                # PDFs and text documents go native in tool_result
+                                if item.media_type == 'application/pdf':
+                                    if item.force_download:
+                                        downloaded = await download_item(item, data_format='bytes')
+                                        tool_result_content.append(
+                                            self._map_binary_data(downloaded['data'], item.media_type)
+                                        )
+                                    else:
+                                        tool_result_content.append(
+                                            BetaRequestDocumentBlockParam(
+                                                source={'url': item.url, 'type': 'url'}, type='document'
+                                            )
+                                        )
+                                elif item.media_type == 'text/plain':
+                                    downloaded_item = await download_item(item, data_format='text')
+                                    tool_result_content.append(
+                                        BetaRequestDocumentBlockParam(
+                                            source=BetaPlainTextSourceParam(
+                                                data=downloaded_item['data'], media_type=item.media_type, type='text'
+                                            ),
+                                            type='document',
+                                        )
+                                    )
+                                else:  # pragma: no cover
+                                    raise RuntimeError(f'Unsupported document media type: {item.media_type}')
+                            elif isinstance(item, (AudioUrl, VideoUrl)):
+                                # Audio/video not supported in tool_result - add identifier pattern
+                                tool_result_content.append(
+                                    BetaTextBlockParam(text=f'See file {item.identifier}.', type='text')
+                                )
+                                file_type = 'audio' if isinstance(item, AudioUrl) else 'video'
+                                unsupported_files.append(
+                                    BetaTextBlockParam(
+                                        text=f'This is file {item.identifier}: [{file_type} URL not supported by Anthropic]',
+                                        type='text',
+                                    )
+                                )
                             else:
-                                assert_never(file)
+                                # Data content (str, dict, etc.) - serialize to text
+                                if isinstance(item, str):
+                                    if item:  # Skip empty strings
+                                        tool_result_content.append(BetaTextBlockParam(text=item, type='text'))
+                                else:
+                                    tool_result_content.append(
+                                        BetaTextBlockParam(text=tool_return_ta.dump_json(item).decode(), type='text')
+                                    )
 
                         tool_result_block_param = beta_tool_result_block_param.BetaToolResultBlockParam(
                             tool_use_id=_guard_tool_call_id(t=request_part),
                             type='tool_result',
-                            content=tool_result_content or request_part.model_response_str(),
+                            content=tool_result_content or '',
                             is_error=False,
                         )
                         user_content_params.append(tool_result_block_param)
@@ -1124,7 +1173,11 @@ class AnthropicModel(Model):
                 elif isinstance(item, CachePoint):
                     yield item
                 elif isinstance(item, BinaryContent):
-                    yield AnthropicModel._map_binary_data(item.data, item.media_type)
+                    if item.is_image or item.is_document:
+                        yield AnthropicModel._map_binary_data(item.data, item.media_type)
+                    else:
+                        # Audio/video binary not supported - add placeholder
+                        yield BetaTextBlockParam(text=f'[{item.media_type} not supported by Anthropic]', type='text')
                 elif isinstance(item, ImageUrl):
                     if item.force_download:
                         downloaded = await download_item(item, data_format='bytes')
@@ -1150,6 +1203,12 @@ class AnthropicModel(Model):
                         )
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported media type: {item.media_type}')
+                elif isinstance(item, AudioUrl):
+                    # Audio URLs not supported - add placeholder
+                    yield BetaTextBlockParam(text=f'[Audio URL not supported by Anthropic: {item.url}]', type='text')
+                elif isinstance(item, VideoUrl):
+                    # Video URLs not supported - add placeholder
+                    yield BetaTextBlockParam(text=f'[Video URL not supported by Anthropic: {item.url}]', type='text')
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 

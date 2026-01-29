@@ -688,7 +688,11 @@ class GoogleModel(Model):
         return system_instruction, contents
 
     async def _map_tool_return(self, part: ToolReturnPart) -> list[PartDict]:
-        """Map a ToolReturnPart to Google API format, handling multimodal content."""
+        """Map a `ToolReturnPart` to Google API format, handling multimodal content.
+
+        Iterates content directly to preserve order of mixed file/data content.
+        Data goes in `function_response`, files become separate parts that follow.
+        """
         # TODO: Gemini 3+ supports multimodal parts inside FunctionResponseDict.parts field
         # which could be more efficient than sending files as separate content parts.
         # See: https://ai.google.dev/gemini-api/docs/function-calling#multimodal-function-responses
@@ -702,10 +706,13 @@ class GoogleModel(Model):
             }
         ]
 
-        # Add multimodal files as separate parts
-        for file in part.files:
-            file_part = await self._map_file_to_part(file)
-            result.append(file_part)
+        # Add multimodal files - iterate content directly to preserve relative file order
+        part_content = part.content
+        items: list[Any] = part_content if isinstance(part_content, list) else [part_content]
+        for item in items:
+            if isinstance(item, (BinaryContent, FileUrl)):
+                file_part = await self._map_file_to_part(item)
+                result.append(file_part)
 
         return result
 

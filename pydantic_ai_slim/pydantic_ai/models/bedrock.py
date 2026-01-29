@@ -43,6 +43,7 @@ from pydantic_ai import (
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.messages import tool_return_ta
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
@@ -646,31 +647,58 @@ class BedrockConverseModel(Model):
                     elif isinstance(part, ToolReturnPart):
                         assert part.tool_call_id is not None
                         tool_result_content: list[Any] = []
-
-                        # Add data content (text or JSON based on profile)
-                        if part.content_excluding_files:
-                            if profile.bedrock_tool_result_format == 'text':
-                                tool_result_content.append({'text': part.model_response_str()})
-                            else:
-                                tool_result_content.append({'json': part.model_response_object()})
-
-                        # Add multimodal files - only images are native in toolResult
-                        # Documents/videos must be siblings in the outer content array
                         sibling_content: list[ContentBlockUnionTypeDef] = []
-                        for file in part.files:
-                            file_block = await self._map_file_to_content_block(file, document_count)
-                            if file_block is not None:  # pragma: no branch
-                                if 'image' in file_block:
-                                    tool_result_content.append(file_block)
-                                elif 'document' in file_block:
-                                    sibling_content.append({'document': file_block['document']})
-                                elif 'video' in file_block:
-                                    sibling_content.append({'video': file_block['video']})
+
+                        # Iterate content directly to preserve order of mixed file/data content
+                        part_content = part.content
+                        items: list[Any] = part_content if isinstance(part_content, list) else [part_content]
+                        for item in items:
+                            if isinstance(item, BinaryContent):
+                                file_block = await self._map_file_to_content_block(item, document_count)
+                                if file_block is not None:
+                                    if 'image' in file_block:
+                                        tool_result_content.append(file_block)
+                                    elif 'document' in file_block:
+                                        sibling_content.append({'document': file_block['document']})
+                                    elif 'video' in file_block:
+                                        sibling_content.append({'video': file_block['video']})
+                                    else:
+                                        assert_never(file_block)
                                 else:
-                                    assert_never(file_block)
+                                    # Audio binary - Bedrock doesn't support audio, use identifier pattern
+                                    tool_result_content.append({'text': f'See file {item.identifier}.'})
+                                    sibling_content.append(
+                                        {'text': f'This is file {item.identifier}: [Audio not supported by Bedrock]'}
+                                    )
+                            elif isinstance(item, (ImageUrl, DocumentUrl, VideoUrl)):
+                                file_block = await self._map_file_to_content_block(item, document_count)
+                                if file_block is not None:  # pragma: no branch
+                                    if 'image' in file_block:
+                                        tool_result_content.append(file_block)
+                                    elif 'document' in file_block:
+                                        sibling_content.append({'document': file_block['document']})
+                                    elif 'video' in file_block:
+                                        sibling_content.append({'video': file_block['video']})
+                                    else:
+                                        assert_never(file_block)
+                            elif isinstance(item, AudioUrl):
+                                # Audio URLs - Bedrock doesn't support audio, use identifier pattern
+                                tool_result_content.append({'text': f'See file {item.identifier}.'})
+                                sibling_content.append(
+                                    {'text': f'This is file {item.identifier}: [Audio not supported by Bedrock]'}
+                                )
+                            else:
+                                # Data content (str, dict, etc.) - serialize based on profile
+                                if isinstance(item, str):
+                                    if item:  # Skip empty strings
+                                        tool_result_content.append({'text': item})
+                                elif profile.bedrock_tool_result_format == 'text':
+                                    tool_result_content.append({'text': tool_return_ta.dump_json(item).decode()})
+                                else:
+                                    tool_result_content.append({'json': item})
 
                         # Ensure we have at least some content
-                        if not tool_result_content:  # pragma: no branch
+                        if not tool_result_content:
                             if profile.bedrock_tool_result_format == 'text':
                                 tool_result_content.append({'text': ''})
                             else:

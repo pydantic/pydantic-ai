@@ -18,6 +18,7 @@ from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_ca
 from ..builtin_tools import AbstractBuiltinTool, WebSearchTool
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
+    AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
@@ -36,7 +37,10 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
+    VideoUrl,
+    tool_return_ta,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.groq import GroqModelProfile
@@ -474,11 +478,33 @@ class GroqModel(Model):
             elif isinstance(part, UserPromptPart):
                 yield cls._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
+                tool_content_parts: list[str] = []
+                file_content: list[UserContent] = []
+
+                part_content = part.content
+                items: list[Any] = part_content if isinstance(part_content, list) else [part_content]
+                for item in items:
+                    if isinstance(item, (BinaryContent, ImageUrl)):
+                        if isinstance(item, BinaryContent) and not item.is_image:
+                            raise RuntimeError('Only images are supported for binary content in Groq.')
+                        tool_content_parts.append(f'See file {item.identifier}.')
+                        file_content.append(f'This is file {item.identifier}:')
+                        file_content.append(item)
+                    elif isinstance(item, (AudioUrl, VideoUrl, DocumentUrl)):
+                        raise RuntimeError('Only images are supported for multimodal content in Groq tool returns.')
+                    elif isinstance(item, str):
+                        if item:
+                            tool_content_parts.append(item)
+                    else:
+                        tool_content_parts.append(tool_return_ta.dump_json(item).decode())
+
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
                     tool_call_id=_guard_tool_call_id(t=part),
-                    content=part.model_response_str(),
+                    content='\n'.join(tool_content_parts) if tool_content_parts else '',
                 )
+                if file_content:
+                    yield cls._map_user_prompt(UserPromptPart(content=file_content))
             elif isinstance(part, RetryPromptPart):  # pragma: no branch
                 if part.tool_name is None:
                     yield chat.ChatCompletionUserMessageParam(  # pragma: no cover
@@ -510,10 +536,14 @@ class GroqModel(Model):
                         content.append(chat.ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                     else:
                         raise RuntimeError('Only images are supported for binary content in Groq.')
-                elif isinstance(item, DocumentUrl):  # pragma: no cover
+                elif isinstance(item, DocumentUrl):
                     raise RuntimeError('DocumentUrl is not supported in Groq.')
-                else:  # pragma: no cover
-                    raise RuntimeError(f'Unsupported content type: {type(item)}')
+                elif isinstance(item, AudioUrl):
+                    raise RuntimeError('AudioUrl is not supported in Groq.')
+                elif isinstance(item, VideoUrl):
+                    raise RuntimeError('VideoUrl is not supported in Groq.')
+                else:
+                    assert_never(item)
 
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
 

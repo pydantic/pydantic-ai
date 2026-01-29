@@ -53,8 +53,10 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
     VideoUrl,
+    tool_return_ta,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
@@ -1091,14 +1093,31 @@ class OpenAIChatModel(Model):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
                 # OpenAI Chat API only supports string content in tool messages
+                # Iterate content directly to preserve order and add file identifiers
+                tool_content_parts: list[str] = []
+                file_content: list[UserContent] = []
+
+                part_content = part.content
+                items: list[Any] = part_content if isinstance(part_content, list) else [part_content]
+                for item in items:
+                    if isinstance(item, (BinaryContent, ImageUrl, AudioUrl, DocumentUrl, VideoUrl)):
+                        tool_content_parts.append(f'See file {item.identifier}.')
+                        file_content.append(f'This is file {item.identifier}:')
+                        file_content.append(item)
+                    elif isinstance(item, str):
+                        if item:  # Skip empty strings
+                            tool_content_parts.append(item)
+                    else:
+                        tool_content_parts.append(tool_return_ta.dump_json(item).decode())
+
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
                     tool_call_id=_guard_tool_call_id(t=part),
-                    content=part.model_response_str(),
+                    content='\n'.join(tool_content_parts) if tool_content_parts else '',
                 )
-                # Send multimodal files as separate user message (API limitation)
-                if files := part.files:
-                    user_prompt = UserPromptPart(content=files)
+                # Send files as separate user message with identifiers
+                if file_content:
+                    user_prompt = UserPromptPart(content=file_content)
                     yield await self._map_user_prompt(user_prompt)
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
@@ -1162,6 +1181,8 @@ class OpenAIChatModel(Model):
                                 type='file',
                             )
                         )
+                    elif item.is_video:
+                        raise NotImplementedError('VideoUrl is not supported for OpenAI')
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, AudioUrl):
@@ -2085,6 +2106,8 @@ class OpenAIResponsesModel(Model):
                         )
                     elif item.is_audio:
                         raise NotImplementedError('Audio as binary content is not supported for OpenAI Responses API.')
+                    elif item.is_video:
+                        raise NotImplementedError('VideoUrl is not supported for OpenAI.')
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, ImageUrl):
@@ -2133,7 +2156,10 @@ class OpenAIResponsesModel(Model):
     async def _map_tool_return_output(
         part: ToolReturnPart,
     ) -> str | list[ResponseInputTextContentParam | ResponseInputImageContentParam | ResponseInputFileContentParam]:
-        """Map a ToolReturnPart to OpenAI Responses API output format, supporting multimodal content."""
+        """Map a `ToolReturnPart` to OpenAI Responses API output format, supporting multimodal content.
+
+        Iterates content directly to preserve order of mixed file/data content.
+        """
         if not part.files:
             return part.model_response_str()
 
@@ -2141,43 +2167,42 @@ class OpenAIResponsesModel(Model):
             ResponseInputTextContentParam | ResponseInputImageContentParam | ResponseInputFileContentParam
         ] = []
 
-        # Add data content as text
-        data_str = part.model_response_str()
-        if data_str:
-            output.append(ResponseInputTextContentParam(type='input_text', text=data_str))
-
-        # Add multimodal files
-        for file in part.files:
-            if isinstance(file, BinaryContent):
-                if file.is_image:
+        # Iterate content directly to preserve order of mixed file/data content
+        part_content = part.content
+        items: list[Any] = part_content if isinstance(part_content, list) else [part_content]
+        for item in items:
+            if isinstance(item, BinaryContent):
+                if item.is_image:
                     detail: Literal['auto', 'low', 'high'] = 'auto'
-                    if metadata := file.vendor_metadata:
+                    if metadata := item.vendor_metadata:
                         detail = cast(Literal['auto', 'low', 'high'], metadata.get('detail', 'auto'))
                     output.append(
-                        ResponseInputImageContentParam(type='input_image', image_url=file.data_uri, detail=detail)
+                        ResponseInputImageContentParam(type='input_image', image_url=item.data_uri, detail=detail)
                     )
-                elif file.is_document:
+                elif item.is_document:
                     output.append(
                         ResponseInputFileContentParam(
                             type='input_file',
-                            file_data=file.data_uri,
-                            filename=f'filename.{file.format}',
+                            file_data=item.data_uri,
+                            filename=f'filename.{item.format}',
                         )
                     )
+                elif item.is_video:
+                    raise NotImplementedError('VideoUrl is not supported for OpenAI.')
                 else:
-                    raise RuntimeError(f'Unsupported binary content type: {file.media_type}')
-            elif isinstance(file, ImageUrl):
+                    raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
+            elif isinstance(item, ImageUrl):
                 detail: Literal['auto', 'low', 'high'] = 'auto'
-                image_url = file.url
-                if metadata := file.vendor_metadata:
+                image_url = item.url
+                if metadata := item.vendor_metadata:
                     detail = cast(Literal['auto', 'low', 'high'], metadata.get('detail', 'auto'))
-                if file.force_download:
-                    downloaded = await download_item(file, data_format='base64_uri', type_format='extension')
+                if item.force_download:
+                    downloaded = await download_item(item, data_format='base64_uri', type_format='extension')
                     image_url = downloaded['data']
                 output.append(ResponseInputImageContentParam(type='input_image', image_url=image_url, detail=detail))
-            elif isinstance(file, (AudioUrl, DocumentUrl)):
-                if file.force_download:
-                    downloaded = await download_item(file, data_format='base64_uri', type_format='extension')
+            elif isinstance(item, (AudioUrl, DocumentUrl)):
+                if item.force_download:
+                    downloaded = await download_item(item, data_format='base64_uri', type_format='extension')
                     output.append(
                         ResponseInputFileContentParam(
                             type='input_file',
@@ -2186,9 +2211,18 @@ class OpenAIResponsesModel(Model):
                         )
                     )
                 else:
-                    output.append(ResponseInputFileContentParam(type='input_file', file_url=file.url))
-            elif isinstance(file, VideoUrl):
+                    output.append(ResponseInputFileContentParam(type='input_file', file_url=item.url))
+            elif isinstance(item, VideoUrl):
                 raise NotImplementedError('VideoUrl is not supported for OpenAI.')
+            else:
+                # Data content (str, dict, etc.) - serialize to text
+                if isinstance(item, str):
+                    if item:  # Skip empty strings
+                        output.append(ResponseInputTextContentParam(type='input_text', text=item))
+                else:
+                    output.append(
+                        ResponseInputTextContentParam(type='input_text', text=tool_return_ta.dump_json(item).decode())
+                    )
 
         return output
 
