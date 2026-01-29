@@ -2732,29 +2732,20 @@ def _make_raw_content_updater(delta: str, index: int) -> Callable[[dict[str, Any
 
 # Convert logprobs to a serializable format
 def _map_logprobs(
-    logprobs: Sequence[chat_completion_token_logprob.ChatCompletionTokenLogprob]
-    | Sequence[responses.response_output_text.Logprob]
-    | Sequence[responses.response_text_done_event.Logprob],
+    logprobs: list[chat_completion_token_logprob.ChatCompletionTokenLogprob]
+    | list[responses.response_output_text.Logprob],
 ) -> list[dict[str, Any]]:
-    mapped: list[dict[str, Any]] = []
-    for lp in logprobs:
-        top_logprobs = lp.top_logprobs or []
-        mapped.append(
-            {
-                'token': lp.token,
-                'bytes': getattr(lp, 'bytes', None),
-                'logprob': lp.logprob,
-                'top_logprobs': [
-                    {
-                        'token': tlp.token,
-                        'bytes': getattr(tlp, 'bytes', None),
-                        'logprob': tlp.logprob,
-                    }
-                    for tlp in top_logprobs
-                ],
-            }
-        )
-    return mapped
+    return [
+        {
+            'token': lp.token,
+            'bytes': lp.bytes,
+            'logprob': lp.logprob,
+            'top_logprobs': [
+                {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
+            ],
+        }
+        for lp in logprobs
+    ]
 
 
 def _map_usage(
