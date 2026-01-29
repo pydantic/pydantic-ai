@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from pydantic_monty import Monty
 import pytest
 from inline_snapshot import snapshot
+from pydantic_monty import Monty
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelRetry

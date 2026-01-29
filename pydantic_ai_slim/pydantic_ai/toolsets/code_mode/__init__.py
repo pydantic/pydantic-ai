@@ -126,11 +126,10 @@ for item in items:
 ```"""
 
 
-def _build_type_check_prefix(signatures: list[str]) -> str:
-    """Build the prefix code for type checking (imports + signatures)."""
-    imports = 'from typing import Any, TypedDict, NotRequired, Literal\n\n'
-    return imports + '\n\n'.join(signatures)
-
+# def _build_type_check_prefix(signatures: list[str]) -> str:
+#     """Build the prefix code for type checking (imports + signatures)."""
+#     imports = 'from typing import Any, TypedDict, NotRequired, Literal\n\n'
+#     return imports + '\n\n'.join(signatures)
 
 
 @dataclass(kw_only=True)

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 
-from pydantic_ai import Agent, ModelSettings
+from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 from pydantic_ai.runtime import CodeRuntime
 from pydantic_ai.runtime.monty import MontyRuntime
