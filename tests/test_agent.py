@@ -6323,7 +6323,7 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
     user_prompt = 'call a lot of tools'
 
     if mode == 'contextmanager':
-        with agent.sequential_tool_calls():
+        with agent.parallel_tool_call_execution_mode('sequential'):
             result = agent.run_sync(user_prompt)
     else:
         result = agent.run_sync(user_prompt)
