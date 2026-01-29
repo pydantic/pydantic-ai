@@ -52,6 +52,7 @@ class ModelSettings(TypedDict, total=False):
     * Bedrock
     * MCP Sampling
     * Outlines (all providers)
+    * xAI
     """
 
     temperature: float
@@ -72,6 +73,7 @@ class ModelSettings(TypedDict, total=False):
     * Mistral
     * Bedrock
     * Outlines (Transformers, LlamaCpp, SgLang, VLLMOffline)
+    * xAI
     """
 
     top_p: float
@@ -91,6 +93,7 @@ class ModelSettings(TypedDict, total=False):
     * Mistral
     * Bedrock
     * Outlines (Transformers, LlamaCpp, SgLang, VLLMOffline)
+    * xAI
     """
 
     timeout: float | Timeout
@@ -103,6 +106,7 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI
     * Groq
     * Mistral
+    * xAI
     """
 
     parallel_tool_calls: bool
@@ -113,6 +117,7 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI (some models, not o1)
     * Groq
     * Anthropic
+    * xAI
     """
 
     tool_choice: ToolChoice
@@ -170,6 +175,7 @@ class ModelSettings(TypedDict, total=False):
     * Gemini
     * Mistral
     * Outlines (LlamaCpp, SgLang, VLLMOffline)
+    * xAI
     """
 
     frequency_penalty: float
@@ -183,6 +189,7 @@ class ModelSettings(TypedDict, total=False):
     * Gemini
     * Mistral
     * Outlines (LlamaCpp, SgLang, VLLMOffline)
+    * xAI
     """
 
     logit_bias: dict[str, int]
@@ -207,6 +214,7 @@ class ModelSettings(TypedDict, total=False):
     * Groq
     * Cohere
     * Google
+    * xAI
     """
 
     extra_headers: dict[str, str]
@@ -217,6 +225,7 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI
     * Anthropic
     * Groq
+    * xAI
     """
 
     extra_body: object

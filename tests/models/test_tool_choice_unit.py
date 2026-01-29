@@ -68,7 +68,7 @@ class Case:
     tool_choice: ToolChoice
     expected: ResolvedToolChoice | ExpectError
     function_tools: list[str] = field(default_factory=lambda: ['tool_a'])
-    output_tools: list[str] = field(default_factory=list)
+    output_tools: list[str] = field(default_factory=list[str])
     allow_text_output: bool = False
     allow_image_output: bool = False
     none_settings: bool = False
