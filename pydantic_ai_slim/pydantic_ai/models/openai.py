@@ -685,8 +685,10 @@ class OpenAIChatModel(Model):
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
-            # OpenAI SDK has incorrect type for prompt_cache_retention ('in-memory' vs 'in_memory')
-            return await self.client.chat.completions.create(  # pyright: ignore[reportCallIssue,reportUnknownVariableType]
+
+            # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
+            prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
+            return await self.client.chat.completions.create(
                 model=self.model_name,
                 messages=openai_messages,
                 parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
@@ -712,8 +714,7 @@ class OpenAIChatModel(Model):
                 logprobs=model_settings.get('openai_logprobs', OMIT),
                 top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
                 prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
-                # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory'
-                prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),  # pyright: ignore[reportArgumentType]
+                prompt_cache_retention=prompt_cache_retention,
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -1591,8 +1592,9 @@ class OpenAIResponsesModel(Model):
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
-            # OpenAI SDK has incorrect type for prompt_cache_retention ('in-memory' vs 'in_memory')
-            return await self.client.responses.create(  # pyright: ignore[reportCallIssue,reportUnknownVariableType]
+            # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
+            prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
+            return await self.client.responses.create(
                 input=openai_messages,
                 model=self.model_name,
                 instructions=instructions,
@@ -1613,8 +1615,7 @@ class OpenAIResponsesModel(Model):
                 text=text or OMIT,
                 include=include or OMIT,
                 prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
-                # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory'
-                prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),  # pyright: ignore[reportArgumentType]
+                prompt_cache_retention=prompt_cache_retention,
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
