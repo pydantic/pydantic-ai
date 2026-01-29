@@ -179,7 +179,7 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
         'and will be passed as extra instructions to each run.',
     )
     parser.add_argument(
-        '--ui-source',
+        '--html-path',
         help='URL or file path for the chat UI HTML. If not specified, the UI is downloaded from a CDN.',
     )
     parser.add_argument('--host', default='127.0.0.1', help='Host to bind server (default: 127.0.0.1)')
@@ -197,7 +197,7 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
         tools=args.tools or [],
         instructions=args.instructions,
         default_model=default_model,
-        ui_source=args.ui_source,
+        html_path=args.html_path,
     )
 
 

@@ -1619,7 +1619,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         instructions: str | None = None,
-        ui_source: str | Path | None = None,
+        html_path: str | Path | None = None,
     ) -> Starlette:
         """Create a Starlette app that serves a web chat UI for this agent.
 
@@ -1646,7 +1646,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps: Optional dependencies to use for all requests.
             model_settings: Optional settings to use for all model requests.
             instructions: Optional extra instructions to pass to each agent run.
-            ui_source: Source for the chat UI HTML. Can be:
+            html_path: Path or URL for the chat UI HTML. Can be:
                 - None (default): Fetches from CDN and caches locally
                 - A Path instance: Reads from the local file
                 - A URL string (http:// or https://): Fetches from the URL
@@ -1680,7 +1680,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps=deps,
             model_settings=model_settings,
             instructions=instructions,
-            ui_source=ui_source,
+            html_path=html_path,
         )
 
     @asynccontextmanager

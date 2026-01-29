@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from collections.abc import Sequence
 from pathlib import Path
@@ -24,8 +25,8 @@ except ImportError as _import_error:  # pragma: no cover
         'you can use the `web` optional group — `pip install "pydantic-ai-slim[web]"`'
     ) from _import_error
 
-DEFAULT_UI_VERSION = '1.0.0'
-CDN_URL_TEMPLATE = 'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@{version}/dist/index.html'
+CHAT_UI_VERSION = '1.0.0'
+CHAT_UI_URL_TEMPLATE = 'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@{version}/dist/index.html'
 
 AgentDepsT = TypeVar('AgentDepsT')
 OutputDataT = TypeVar('OutputDataT')
@@ -46,28 +47,28 @@ def _get_cache_dir() -> Path:
     return cache_dir
 
 
-async def _get_ui_html(ui_source: str | Path | None = None) -> bytes:
+async def _get_ui_html(html_path: str | Path | None = None) -> bytes:
     """Get UI HTML content from the specified source or default CDN.
 
-    When ui_source is provided, it is used directly.
-    When ui_source is None, fetches from the default CDN.
+    When html_path is provided, it is used directly.
+    When html_path is None, fetches from the default CDN.
 
     Args:
-        ui_source: Source for the chat UI HTML. Can be:
+        html_path: Path or URL for the chat UI HTML. Can be:
             - None: Uses the default CDN (cached locally)
             - A Path instance: Reads from the local file
             - A URL (http:// or https://): Fetches from the URL
             - A file path string: Reads from the local file
     """
     # Use default CDN with caching
-    if ui_source is None:
+    if html_path is None:
         cache_dir = _get_cache_dir()
-        cache_file = cache_dir / f'{DEFAULT_UI_VERSION}.html'
+        cache_file = cache_dir / f'{CHAT_UI_VERSION}.html'
 
         if cache_file.exists():
             return cache_file.read_bytes()
 
-        cdn_url = CDN_URL_TEMPLATE.format(version=DEFAULT_UI_VERSION)
+        cdn_url = CHAT_UI_URL_TEMPLATE.format(version=CHAT_UI_VERSION)
         async with httpx.AsyncClient() as client:
             response = await client.get(cdn_url)
             response.raise_for_status()
@@ -77,23 +78,33 @@ async def _get_ui_html(ui_source: str | Path | None = None) -> bytes:
         return content
 
     # Handle Path instances
-    if isinstance(ui_source, Path):
-        if ui_source.is_file():
-            return ui_source.read_bytes()
-        raise FileNotFoundError(f'Local UI file not found: {ui_source}')
+    if isinstance(html_path, Path):
+        if html_path.is_file():
+            return html_path.read_bytes()
+        raise FileNotFoundError(f'Local UI file not found: {html_path}')
 
-    # Handle URLs
-    if ui_source.startswith(('http://', 'https://')):
+    # Handle URLs with filesystem caching
+    if html_path.startswith(('http://', 'https://')):
+        cache_dir = _get_cache_dir()
+        url_hash = hashlib.sha256(html_path.encode()).hexdigest()[:16]
+        cache_file = cache_dir / f'url_{url_hash}.html'
+
+        if cache_file.exists():
+            return cache_file.read_bytes()
+
         async with httpx.AsyncClient() as client:
-            response = await client.get(ui_source)
+            response = await client.get(html_path)
             response.raise_for_status()
-            return response.content
+            content = response.content
+
+        cache_file.write_bytes(content)
+        return content
 
     # Handle local file paths (strings)
-    local_path = Path(ui_source).expanduser()
+    local_path = Path(html_path).expanduser()
     if local_path.is_file():
         return local_path.read_bytes()
-    raise FileNotFoundError(f'Local UI file not found: {ui_source}')
+    raise FileNotFoundError(f'Local UI file not found: {html_path}')
 
 
 def create_web_app(
@@ -103,11 +114,11 @@ def create_web_app(
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,
-    ui_source: str | Path | None = None,
+    html_path: str | Path | None = None,
 ) -> Starlette:
     """Create a Starlette app that serves a web chat UI for the given agent.
 
-    By default, the UI is fetched from a CDN and cached locally. The ui_source
+    By default, the UI is fetched from a CDN and cached locally. The html_path
     parameter allows overriding this for enterprise environments, offline usage,
     or custom UI builds.
 
@@ -123,7 +134,7 @@ def create_web_app(
         deps: Optional dependencies to use for all requests.
         model_settings: Optional settings to use for all model requests.
         instructions: Optional extra instructions to pass to each agent run.
-        ui_source: Source for the chat UI HTML. Can be:
+        html_path: Path or URL for the chat UI HTML. Can be:
             - None (default): Fetches from CDN and caches locally
             - A Path instance: Reads from the local file
             - A URL string (http:// or https://): Fetches from the URL
@@ -146,18 +157,7 @@ def create_web_app(
 
     async def index(request: Request) -> Response:
         """Serve the chat UI from filesystem cache or CDN."""
-        try:
-            content = await _get_ui_html(ui_source)
-        except httpx.HTTPStatusError as e:
-            return HTMLResponse(
-                content=f'Failed to fetch UI: {e.response.status_code}',
-                status_code=502,
-            )
-        except FileNotFoundError as e:
-            return HTMLResponse(
-                content=str(e),
-                status_code=404,
-            )
+        content = await _get_ui_html(html_path)
 
         return HTMLResponse(
             content=content,

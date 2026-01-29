@@ -400,7 +400,7 @@ def test_clai_web_generic_agent(mocker: MockerFixture, env: TestEnv):
         tools=['web_search'],
         instructions=None,
         default_model='openai:gpt-5',
-        ui_source=None,
+        html_path=None,
     )
 
 
@@ -422,7 +422,7 @@ def test_clai_web_success(mocker: MockerFixture, create_test_module: Callable[..
         tools=[],
         instructions=None,
         default_model='openai:gpt-5',
-        ui_source=None,
+        html_path=None,
     )
 
 
@@ -459,7 +459,7 @@ def test_clai_web_with_models(mocker: MockerFixture, create_test_module: Callabl
         tools=[],
         instructions=None,
         default_model='openai:gpt-5',
-        ui_source=None,
+        html_path=None,
     )
 
 
@@ -487,7 +487,7 @@ def test_clai_web_with_tools(mocker: MockerFixture, create_test_module: Callable
         tools=['web_search', 'code_execution'],
         instructions=None,
         default_model='openai:gpt-5',
-        ui_source=None,
+        html_path=None,
     )
 
 
@@ -507,7 +507,7 @@ def test_clai_web_generic_with_instructions(mocker: MockerFixture, env: TestEnv)
         tools=[],
         instructions='You are a helpful coding assistant',
         default_model='openai:gpt-5',
-        ui_source=None,
+        html_path=None,
     )
 
 
@@ -533,7 +533,7 @@ def test_clai_web_with_custom_port(mocker: MockerFixture, create_test_module: Ca
         tools=[],
         instructions=None,
         default_model='openai:gpt-5',
-        ui_source=None,
+        html_path=None,
     )
 
 
@@ -694,13 +694,13 @@ def test_run_web_command_cli_models_passed_to_create_web_app(
     assert call_kwargs.get('models') == ['openai:gpt-5', 'anthropic:claude-sonnet-4-5']
 
 
-def test_clai_web_with_ui_source(mocker: MockerFixture, env: TestEnv):
-    """Test web command with --ui-source flag."""
+def test_clai_web_with_html_path(mocker: MockerFixture, env: TestEnv):
+    """Test web command with --html-path flag."""
     env.set('OPENAI_API_KEY', 'test')
     mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
 
     custom_url = 'https://internal.company.com/pydantic-ai-ui/index.html'
-    assert cli(['web', '-m', 'openai:gpt-5', '--ui-source', custom_url], prog_name='clai') == 0
+    assert cli(['web', '-m', 'openai:gpt-5', '--html-path', custom_url], prog_name='clai') == 0
 
     mock_run_web.assert_called_once_with(
         agent_path=None,
@@ -710,5 +710,5 @@ def test_clai_web_with_ui_source(mocker: MockerFixture, env: TestEnv):
         tools=[],
         instructions=None,
         default_model='openai:gpt-5',
-        ui_source=custom_url,
+        html_path=custom_url,
     )

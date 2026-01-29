@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ with try_import() as starlette_import_successful:
     import pydantic_ai.ui._web.app as app_module
     from pydantic_ai.builtin_tools import WebSearchTool
     from pydantic_ai.ui._web import create_web_app
+    from pydantic_ai.ui._web.app import _get_ui_html  # pyright: ignore[reportPrivateUsage]
     from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 with try_import() as openai_import_successful:
@@ -227,12 +229,10 @@ async def test_get_ui_html_cdn_fetch(monkeypatch: pytest.MonkeyPatch, tmp_path: 
 
     monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
 
-    from pydantic_ai.ui._web.app import _get_ui_html  # pyright: ignore[reportPrivateUsage]
-
     result = await _get_ui_html()
 
     assert result == test_content
-    cache_file: Path = tmp_path / f'{app_module.DEFAULT_UI_VERSION}.html'
+    cache_file: Path = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
     assert cache_file.exists()
     assert cache_file.read_bytes() == test_content
 
@@ -243,10 +243,8 @@ async def test_get_ui_html_filesystem_cache_hit(monkeypatch: pytest.MonkeyPatch,
     monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
 
     test_content = b'<html>Cached UI</html>'
-    cache_file = tmp_path / f'{app_module.DEFAULT_UI_VERSION}.html'
+    cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
     cache_file.write_bytes(test_content)
-
-    from pydantic_ai.ui._web.app import _get_ui_html  # pyright: ignore[reportPrivateUsage]
 
     result = await _get_ui_html()
 
@@ -464,21 +462,66 @@ async def test_get_ui_html_custom_url(monkeypatch: pytest.MonkeyPatch, tmp_path:
 
     monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
 
-    from pydantic_ai.ui._web.app import _get_ui_html  # pyright: ignore[reportPrivateUsage]
-
     # URL is used directly, no version templating
     custom_url = 'https://my-internal-cdn.example.com/ui/index.html'
-    result = await _get_ui_html(ui_source=custom_url)
+    result = await _get_ui_html(html_path=custom_url)
 
     assert result == test_content
     assert len(captured_url) == 1
     assert captured_url[0] == custom_url
 
 
-def test_agent_to_web_with_ui_source():
-    """Test that Agent.to_web() accepts ui_source parameter."""
+@pytest.mark.anyio
+async def test_get_ui_html_custom_url_caching(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Test that custom URLs are cached to filesystem and not re-fetched."""
+    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+
+    test_content = b'<html>Cached Custom UI</html>'
+    fetch_count = 0
+
+    class MockResponse:
+        content = test_content
+
+        def raise_for_status(self) -> None:
+            pass
+
+    class MockAsyncClient:
+        async def __aenter__(self) -> MockAsyncClient:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        async def get(self, url: str) -> MockResponse:
+            nonlocal fetch_count
+            fetch_count += 1
+            return MockResponse()
+
+    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
+
+    custom_url = 'https://my-internal-cdn.example.com/ui/cached.html'
+
+    # First call should fetch from URL
+    result1 = await _get_ui_html(html_path=custom_url)
+    assert result1 == test_content
+    assert fetch_count == 1
+
+    # Verify cache file was created
+    url_hash = hashlib.sha256(custom_url.encode()).hexdigest()[:16]
+    cache_file = tmp_path / f'url_{url_hash}.html'
+    assert cache_file.exists()
+    assert cache_file.read_bytes() == test_content
+
+    # Second call should use cache, not fetch again
+    result2 = await _get_ui_html(html_path=custom_url)
+    assert result2 == test_content
+    assert fetch_count == 1  # Still 1, not 2
+
+
+def test_agent_to_web_with_html_path():
+    """Test that Agent.to_web() accepts html_path parameter."""
     agent = Agent('test')
-    app = agent.to_web(ui_source='https://custom-cdn.example.com/ui/index.html')
+    app = agent.to_web(html_path='https://custom-cdn.example.com/ui/index.html')
 
     assert isinstance(app, Starlette)
 
@@ -491,7 +534,7 @@ async def test_get_ui_html_local_file_path_string(monkeypatch: pytest.MonkeyPatc
     local_file = tmp_path / 'custom-ui.html'
     local_file.write_bytes(test_html)
 
-    result = await app_module._get_ui_html(ui_source=str(local_file))  # pyright: ignore[reportPrivateUsage]
+    result = await app_module._get_ui_html(html_path=str(local_file))  # pyright: ignore[reportPrivateUsage]
 
     assert result == test_html
 
@@ -504,7 +547,7 @@ async def test_get_ui_html_local_file_path_instance(monkeypatch: pytest.MonkeyPa
     local_file = tmp_path / 'path-ui.html'
     local_file.write_bytes(test_html)
 
-    result = await app_module._get_ui_html(ui_source=local_file)  # pyright: ignore[reportPrivateUsage]
+    result = await app_module._get_ui_html(html_path=local_file)  # pyright: ignore[reportPrivateUsage]
 
     assert result == test_html
 
@@ -516,7 +559,7 @@ async def test_get_ui_html_local_file_not_found(monkeypatch: pytest.MonkeyPatch,
     nonexistent_path = str(tmp_path / 'nonexistent-ui.html')
 
     with pytest.raises(FileNotFoundError, match='Local UI file not found'):
-        await app_module._get_ui_html(ui_source=nonexistent_path)  # pyright: ignore[reportPrivateUsage]
+        await app_module._get_ui_html(html_path=nonexistent_path)  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.anyio
@@ -526,23 +569,22 @@ async def test_get_ui_html_path_instance_not_found(monkeypatch: pytest.MonkeyPat
     nonexistent_path = tmp_path / 'nonexistent-ui.html'
 
     with pytest.raises(FileNotFoundError, match='Local UI file not found'):
-        await app_module._get_ui_html(ui_source=nonexistent_path)  # pyright: ignore[reportPrivateUsage]
+        await app_module._get_ui_html(html_path=nonexistent_path)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_chat_app_index_file_not_found(tmp_path: Path):
-    """Test that index endpoint returns 404 for non-existent ui_source file."""
+    """Test that index endpoint raises FileNotFoundError for non-existent html_path file."""
     agent = Agent('test')
     nonexistent_file = tmp_path / 'nonexistent-ui.html'
-    app = create_web_app(agent, ui_source=str(nonexistent_file))
+    app = create_web_app(agent, html_path=str(nonexistent_file))
 
-    with TestClient(app) as client:
-        response = client.get('/')
-        assert response.status_code == 404
-        assert 'Local UI file not found' in response.text
+    with TestClient(app, raise_server_exceptions=True) as client:
+        with pytest.raises(FileNotFoundError, match='Local UI file not found'):
+            client.get('/')
 
 
 def test_chat_app_index_http_error(monkeypatch: pytest.MonkeyPatch):
-    """Test that index endpoint returns 502 when CDN fetch fails with HTTPStatusError."""
+    """Test that index endpoint raises HTTPStatusError when CDN fetch fails."""
 
     class MockResponse:
         status_code = 500
@@ -565,7 +607,6 @@ def test_chat_app_index_http_error(monkeypatch: pytest.MonkeyPatch):
     agent = Agent('test')
     app = create_web_app(agent)
 
-    with TestClient(app) as client:
-        response = client.get('/')
-        assert response.status_code == 502
-        assert 'Failed to fetch UI: 500' in response.text
+    with TestClient(app, raise_server_exceptions=True) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            client.get('/')

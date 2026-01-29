@@ -36,7 +36,6 @@ Run the app with any ASGI server:
 uvicorn my_module:app --host 127.0.0.1 --port 7932
 ```
 
-
 ## Configuring Models
 
 You can specify additional models to make available in the UI. Models can be provided as a list of model names/instances or a dictionary mapping display labels to model names/instances.
@@ -102,17 +101,27 @@ The web UI app uses the following routes which should not be overwritten:
 
 The app cannot currently be mounted at a subpath (e.g., `/chat`) because the UI expects these routes at the root. You can add additional routes to the app, but avoid conflicts with these reserved paths.
 
-## Custom UI Source
+## Custom HTML Path
 
-By default, the web UI is fetched from a CDN and cached locally. You can provide a `ui_source` to override this for offline usage or enterprise environments.
+By default, the web UI is fetched from a CDN and cached locally. You can provide `html_path` to override this for offline usage or enterprise environments.
 
-For offline usage, download the UI HTML file once while you have internet access:
+For offline usage, download the CHAT UI HTML file once while you have internet access:
 
-```bash
-curl -o ~/pydantic-ai-ui.html https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@1.0.0/dist/index.html
+```python
+from pydantic_ai.ui import CHAT_UI_URL_TEMPLATE, CHAT_UI_VERSION
+
+chat_ui_url = CHAT_UI_URL_TEMPLATE.format(version=CHAT_UI_VERSION)
+
+print(chat_ui_url)  # Use this URL to download the UI HTML file
+#> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@1.0.0/dist/index.html
+
 ```
 
-Then use `ui_source` to point to your local file or custom URL:
+```bash
+curl -o ~/pydantic-ai-ui.html <chat_ui_url>
+```
+
+Then use `html_path` to point to your local file or custom URL:
 
 ```python
 from pydantic_ai import Agent
@@ -120,8 +129,8 @@ from pydantic_ai import Agent
 agent = Agent('openai:gpt-5')
 
 # Use a local file (e.g., for offline usage)
-app = agent.to_web(ui_source='~/pydantic-ai-ui.html')
+app = agent.to_web(html_path='~/pydantic-ai-ui.html')
 
 # Or use a custom URL (e.g., for enterprise environments)
-app = agent.to_web(ui_source='https://cdn.example.com/ui/index.html')
+app = agent.to_web(html_path='https://cdn.example.com/ui/index.html')
 ```
