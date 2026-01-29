@@ -4369,11 +4369,24 @@ def test_google_process_response_filters_empty_text_parts(google_provider: Googl
 
 def test_google_process_response_empty_candidates(google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-pro', provider=google_provider)
-    response = _generate_response_with_texts(response_id='resp-456', texts=['', '', ''])
-    response.candidates = []
+    response = GenerateContentResponse.model_validate(
+        {
+            'response_id': 'resp-456',
+            'candidates': [],
+        }
+    )
     result = model._process_response(response)  # pyright: ignore[reportPrivateUsage]
 
-    assert result.parts == snapshot([])
+    assert result == snapshot(
+        ModelResponse(
+            parts=[],
+            model_name='gemini-2.5-pro',
+            timestamp=IsDatetime(),
+            provider_name='google-gla',
+            provider_url='https://generativelanguage.googleapis.com/',
+            provider_response_id='resp-456',
+        )
+    )
 
 
 async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
