@@ -26,7 +26,7 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 CHAT_UI_VERSION = '1.0.0'
-CHAT_UI_URL_TEMPLATE = 'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@{version}/dist/index.html'
+DEFAULT_HTML_URL = f'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@{CHAT_UI_VERSION}/dist/index.html'
 
 AgentDepsT = TypeVar('AgentDepsT')
 OutputDataT = TypeVar('OutputDataT')
@@ -68,9 +68,8 @@ async def _get_ui_html(html_path: str | Path | None = None) -> bytes:
         if cache_file.exists():
             return cache_file.read_bytes()
 
-        cdn_url = CHAT_UI_URL_TEMPLATE.format(version=CHAT_UI_VERSION)
         async with httpx.AsyncClient() as client:
-            response = await client.get(cdn_url)
+            response = await client.get(DEFAULT_HTML_URL)
             response.raise_for_status()
             content = response.content
 

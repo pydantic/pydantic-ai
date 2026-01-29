@@ -108,11 +108,9 @@ By default, the web UI is fetched from a CDN and cached locally. You can provide
 For offline usage, download the html file once while you have internet access:
 
 ```python
-from pydantic_ai.ui import CHAT_UI_URL_TEMPLATE, CHAT_UI_VERSION
+from pydantic_ai.ui import DEFAULT_HTML_URL
 
-chat_ui_url = CHAT_UI_URL_TEMPLATE.format(version=CHAT_UI_VERSION)
-
-print(chat_ui_url)  # Use this URL to download the UI HTML file
+print(DEFAULT_HTML_URL)  # Use this URL to download the UI HTML file
 #> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@1.0.0/dist/index.html
 ```
 
