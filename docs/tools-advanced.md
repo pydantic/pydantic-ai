@@ -377,9 +377,8 @@ While [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] is intended for expected
 
 This is particularly useful in parallel tool execution where some tools may fail but you want the agent to proceed with the successful results.
 
-```python
+```python {lint="skip"}
 from pydantic_ai import Agent, RunContext, ToolFailed
-
 
 agent = Agent('test')
 
@@ -392,10 +391,10 @@ async def query_database(ctx: RunContext[None], query: str) -> str:
         return result
     except AuthenticationError:
         # Permanent failure - disable this tool for the rest of the run
-        raise ToolFailed("Database credentials invalid", disable=True)
+        raise ToolFailed('Database credentials invalid', disable=True)
     except TemporaryConnectionError:
         # Transient failure - keep tool available for retry
-        raise ToolFailed("Database temporarily unavailable", disable=False)
+        raise ToolFailed('Database temporarily unavailable', disable=False)
 ```
 
 Key differences between `ModelRetry` and `ToolFailed`:
