@@ -1,0 +1,206 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '320'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Call the get_file tool to get a image and describe what you see.
+        role: user
+      model: gpt-4.1-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1064'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '456'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{}'
+              name: get_file
+            id: call_qBcdwWufbKrSKubRDyDWlJ9T
+            type: function
+      created: 1769565061
+      id: chatcmpl-D2ozthGfO7Bz4nlpFns0ZEJAogO1n
+      model: gpt-4.1-mini-2025-04-14
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_376a7ccef1
+      usage:
+        completion_tokens: 10
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 46
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 56
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '768'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=4FkNoLPnImxxuY6agbWPExTPIINcUx7Sox6jd4pSlOM-1769565061-1.0.1.1-Wnay7jlKgpzuCK.8E3bqM5l.1pQYnOcx89_3bY2tgQIJUGsgtAa1aI5k.yYLQqbFrdhQttspC5N3REAxu6H1_2Ix0kD56xMITgmaT1p_zhw;
+        _cfuvid=9AleC2nmaT7JIDSQDR9T_MABtmAtXfnoz4GMYXA2TLU-1769565061825-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Call the get_file tool to get a image and describe what you see.
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: get_file
+          id: call_qBcdwWufbKrSKubRDyDWlJ9T
+          type: function
+      - content: See file daf116.
+        role: tool
+        tool_call_id: call_qBcdwWufbKrSKubRDyDWlJ9T
+      - content:
+        - text: 'This is file daf116:'
+          type: text
+        - image_url:
+            url: https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png
+          type: image_url
+        role: user
+      model: gpt-4.1-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1218'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '1643'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: 'The image shows the Google logo. It consists of the word "Google" written in a clean, sans-serif font
+            with each letter in a distinct color: blue for the first "G," red for the first "o," yellow for the second "o,"
+            blue for the "g," green for the "l," and red for the "e." The design is simple and colorful, representing the
+            well-known brand of the Google search engine and its related services.'
+          refusal: null
+          role: assistant
+      created: 1769565063
+      id: chatcmpl-D2ozvzVkNfsjDjYEoaa2VUKJxytov
+      model: gpt-4.1-mini-2025-04-14
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_376a7ccef1
+      usage:
+        completion_tokens: 94
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 246
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 340
+    status:
+      code: 200
+      message: OK
+version: 1

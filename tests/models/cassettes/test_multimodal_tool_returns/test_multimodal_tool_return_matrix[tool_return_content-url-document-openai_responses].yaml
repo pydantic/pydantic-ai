@@ -1,0 +1,265 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '324'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: Call the get_file tool to get a document and describe what you see.
+        role: user
+      model: gpt-4.1-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_file
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1688'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '570'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1769565206
+      created_at: 1769565206
+      error: null
+      frequency_penalty: 0.0
+      id: resp_01bc5e9f7030bb1b0069796c16190c8196bcc03334b58eab38
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4.1-mini-2025-04-14
+      object: response
+      output:
+      - arguments: '{}'
+        call_id: call_DHPartE0x8gwtnzPAleOJAK7
+        id: fc_01bc5e9f7030bb1b0069796c167edc8196bdd2f84b59a06c06
+        name: get_file
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_file
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 40
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 11
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 51
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '625'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=HPfx0GH2_xHR6qt5_LWBeNvTtgg76YAvG_0FT2LOdfA-1769565206-1.0.1.1-t1O7fKD7xiH7cPi6y6Ov0qrkiHWW1Z.99pmYiPGXGvNUyQao47F6DrC7j3jjaYS65H6rCQEf8c9_0uKIo7nuzuEspbuWQUikH_QTq2dVKHM;
+        _cfuvid=CRRjI2ccqXw3AG1zoTuo4pFX9lHDLaav6k5cF7NOq14-1769565206711-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: Call the get_file tool to get a document and describe what you see.
+        role: user
+      - arguments: '{}'
+        call_id: call_DHPartE0x8gwtnzPAleOJAK7
+        name: get_file
+        type: function_call
+      - call_id: call_DHPartE0x8gwtnzPAleOJAK7
+        output: File attached
+        type: function_call_output
+      - content:
+        - file_url: https://pdfobject.com/pdf/sample.pdf
+          type: input_file
+        role: user
+      model: gpt-4.1-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_file
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2391'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '2918'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1769565209
+      created_at: 1769565207
+      error: null
+      frequency_penalty: 0.0
+      id: resp_09b64baa239167c00069796c17081081a396b02bda4b8ee7ff
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4.1-mini-2025-04-14
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: |-
+            The document is a simple PDF file that contains mostly placeholder text. It starts with a short introduction:
+
+            "Sample PDF
+            This is a simple PDF file. Fun fun fun."
+
+            The rest of the text is a passage filled with classic "Lorem ipsum" dummy text, which is commonly used as a placeholder in typesetting and design. The Lorem ipsum text includes multiple paragraphs with sentences in Latin-like structure, used to fill space and demonstrate the visual form of a document without meaningful content.
+
+            Overall, the PDF appears to serve as an example or test document rather than containing actual substantive content.
+          type: output_text
+        id: msg_09b64baa239167c00069796c182ab881a3b51ec04f5f64c7f3
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_file
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 799
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 118
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 917
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

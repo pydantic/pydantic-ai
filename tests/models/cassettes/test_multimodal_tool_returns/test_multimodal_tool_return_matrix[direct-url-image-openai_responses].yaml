@@ -1,0 +1,259 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '321'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: Call the get_file tool to get a image and describe what you see.
+        role: user
+      model: gpt-4.1-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_file
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1688'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '793'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1769565066
+      created_at: 1769565065
+      error: null
+      frequency_penalty: 0.0
+      id: resp_03f9c410afe36afd0069796b8985a48190916596756c01caac
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4.1-mini-2025-04-14
+      object: response
+      output:
+      - arguments: '{}'
+        call_id: call_gLwfMobAccJqhCKCpH23Jnxt
+        id: fc_03f9c410afe36afd0069796b8a20808190bf82bc05c8d01046
+        name: get_file
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_file
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 40
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 11
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 51
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '644'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=h72H3JHq4N7SB0byb5VDJWFY3DimeXuCZA9rPK9bCy8-1769565066-1.0.1.1-btSPpmpPa0u.HhkgNKXMuq4nBpDifTLz9YHwEw5P7pu9iSjpRkg.C95sHvhaXigd_HF2ngvB3KaPm8dnZKxTQ471h76_ykqUQHb23y0sZ.w;
+        _cfuvid=BxQroziwcuPpXWRN2jJXO.OCsS0QMTlG3qp1.n_2w7Q-1769565066361-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: Call the get_file tool to get a image and describe what you see.
+        role: user
+      - arguments: '{}'
+        call_id: call_gLwfMobAccJqhCKCpH23Jnxt
+        name: get_file
+        type: function_call
+      - call_id: call_gLwfMobAccJqhCKCpH23Jnxt
+        output:
+        - detail: auto
+          image_url: https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png
+          type: input_image
+        type: function_call_output
+      model: gpt-4.1-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_file
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2123'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '2560'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1769565069
+      created_at: 1769565066
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0d2ac8edc12611c90069796b8aaaec8196bade65325ee9cced
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4.1-mini-2025-04-14
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: 'The image is the Google logo. It features the word "Google" written in a clean, sans-serif font with each
+            letter in a different color: the first "G" is blue, the first "o" is red, the second "o" is yellow, the "g" is
+            blue, the "l" is green, and the "e" is red. The style of the logo is simple and colorful, consistent with Google''s
+            branding.'
+          type: output_text
+        id: msg_0d2ac8edc12611c90069796b8b3aec8196800a8d29ee514ab4
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_file
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 224
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 93
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 317
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1
