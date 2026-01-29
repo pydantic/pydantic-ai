@@ -1051,6 +1051,67 @@ Fix the errors and try again.\
     )
 
 
+class ModelWithMissingUsage(Model):
+    """Model that returns responses with zero/missing usage attributes."""
+
+    @property
+    def system(self) -> str:
+        return 'openai'
+
+    @property
+    def model_name(self) -> str:
+        return 'gpt-4o'
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        # Return a response with no token usage (all zeros)
+        return ModelResponse(
+            parts=[TextPart('response')],
+            usage=RequestUsage(),  # All token counts default to 0
+            model_name='gpt-4o-2024-11-20',
+        )
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        return RequestUsage(input_tokens=0)  # pragma: no cover
+
+
+async def test_missing_token_usage_not_recorded(capfire: CaptureLogfire):
+    """Test that when token usage is 0/missing, no metrics are recorded to histograms."""
+    model = InstrumentedModel(ModelWithMissingUsage(), InstrumentationSettings())
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('system_prompt'), UserPromptPart('user_prompt')], timestamp=IsDatetime())
+    ]
+
+    await model.request(
+        messages,
+        model_settings=ModelSettings(),
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[],
+            allow_text_output=True,
+            output_tools=[],
+            output_mode='text',
+            output_object=None,
+        ),
+    )
+
+    try:
+        # metrics_reader.get_metrics_data() will return None
+        metrics = capfire.get_collected_metrics()
+        assert metrics == []
+    except AttributeError:
+        pass
+
+
 def test_messages_to_otel_events_serialization_errors():
     class Foo:
         def __repr__(self):
