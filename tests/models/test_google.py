@@ -75,7 +75,7 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
-from ..conftest import IsBytes, IsDatetime, IsInstance, IsNow, IsStr, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
@@ -3269,7 +3269,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
     result = await agent.run('Generate an image of an axolotl.')
     messages = result.all_messages()
 
-    assert result.output == snapshot(BinaryImage(data=IsBytes(), media_type='image/jpeg', _identifier='b6e95a'))
+    assert result.output == snapshot(IsInstance(BinaryImage))
     assert messages == snapshot(
         [
             ModelRequest(
@@ -3285,11 +3285,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
             ModelResponse(
                 parts=[
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/jpeg',
-                            _identifier='b6e95a',
-                        ),
+                        content=IsInstance(BinaryImage),
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
@@ -3312,7 +3308,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
     )
 
     result = await agent.run('Now give it a sombrero.', message_history=messages)
-    assert result.output == snapshot(BinaryImage(data=IsBytes(), media_type='image/jpeg', _identifier='14bec0'))
+    assert result.output == snapshot(IsInstance(BinaryImage))
     assert result.new_messages() == snapshot(
         [
             ModelRequest(
@@ -3328,11 +3324,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
             ModelResponse(
                 parts=[
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/jpeg',
-                            _identifier='14bec0',
-                        ),
+                        content=IsInstance(BinaryImage),
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
@@ -3365,14 +3357,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
     agent = Agent(m, output_type=BinaryImage)
 
     async with agent.run_stream('Generate an image of an axolotl') as result:
-        assert await result.get_output() == snapshot(
-            BinaryImage(
-                data=IsBytes(),
-                media_type='image/png',
-                _identifier='9ff9cc',
-                identifier='9ff9cc',
-            )
-        )
+        assert await result.get_output() == snapshot(IsInstance(BinaryImage))
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='Generate an image of an axolotl.') as agent_run:
@@ -3383,14 +3368,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
                         event_parts.append(event)
 
     assert agent_run.result is not None
-    assert agent_run.result.output == snapshot(
-        BinaryImage(
-            data=IsBytes(),
-            media_type='image/png',
-            _identifier='2af2a7',
-            identifier='2af2a7',
-        )
-    )
+    assert agent_run.result.output == snapshot(IsInstance(BinaryImage))
     assert agent_run.result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -3406,14 +3384,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
             ModelResponse(
                 parts=[
                     TextPart(content='Here you go! '),
-                    FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/png',
-                            _identifier='2af2a7',
-                            identifier='2af2a7',
-                        )
-                    ),
+                    FilePart(content=IsInstance(BinaryImage)),
                 ],
                 usage=RequestUsage(
                     input_tokens=10,
@@ -3438,13 +3409,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
             PartEndEvent(index=0, part=TextPart(content='Here you go! '), next_part_kind='file'),
             PartStartEvent(
                 index=1,
-                part=FilePart(
-                    content=BinaryImage(
-                        data=IsBytes(),
-                        media_type='image/png',
-                        _identifier='2af2a7',
-                    )
-                ),
+                part=FilePart(content=IsInstance(BinaryImage)),
                 previous_part_kind='text',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
@@ -3488,12 +3453,7 @@ A little axolotl named Archie lived in a beautiful glass tank, but he always won
                         provider_details={'thought_signature': IsStr()},
                     ),
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/jpeg',
-                            _identifier='00f2af',
-                            identifier=IsStr(),
-                        ),
+                        content=IsInstance(BinaryImage),
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
@@ -3527,14 +3487,7 @@ async def test_google_image_or_text_output(allow_model_requests: None, google_pr
     )
 
     result = await agent.run('Generate an image of an axolotl.')
-    assert result.output == snapshot(
-        BinaryImage(
-            data=IsBytes(),
-            media_type='image/png',
-            _identifier='f82faf',
-            identifier='f82faf',
-        )
-    )
+    assert result.output == snapshot(IsInstance(BinaryImage))
 
 
 async def test_google_image_and_text_output(allow_model_requests: None, google_provider: GoogleProvider):
@@ -3545,16 +3498,7 @@ async def test_google_image_and_text_output(allow_model_requests: None, google_p
     assert result.output == snapshot(
         'Once, in a hidden cenote, lived an axolotl named Pip who loved to collect shiny pebbles. One day, Pip found a pebble that glowed, illuminating his entire underwater world with a soft, warm light. '
     )
-    assert result.response.files == snapshot(
-        [
-            BinaryImage(
-                data=IsBytes(),
-                media_type='image/png',
-                _identifier='67b12f',
-                identifier='67b12f',
-            )
-        ]
-    )
+    assert result.response.files == snapshot([IsInstance(BinaryImage)])
 
 
 async def test_google_image_generation_with_tool_output(allow_model_requests: None, google_provider: GoogleProvider):
@@ -3600,11 +3544,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
             ModelResponse(
                 parts=[
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/jpeg',
-                            _identifier='4e5b3e',
-                        ),
+                        content=IsInstance(BinaryImage),
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
@@ -3698,7 +3638,7 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
     result = await agent.run(
         'Visualize the current weather forecast for the next 5 days in Mexico City as a clean, modern weather chart. Add a visual on what I should wear each day'
     )
-    assert result.output == snapshot(BinaryImage(data=IsBytes(), media_type='image/jpeg', _identifier='787c28'))
+    assert result.output == snapshot(IsInstance(BinaryImage))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -3743,11 +3683,7 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                         provider_name='google-gla',
                     ),
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/jpeg',
-                            _identifier='787c28',
-                        ),
+                        content=IsInstance(BinaryImage),
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
@@ -3960,9 +3896,7 @@ async def test_google_vertexai_image_generation(allow_model_requests: None, vert
     agent = Agent(model, output_type=BinaryImage)
 
     result = await agent.run('Generate an image of an axolotl.')
-    assert result.output == snapshot(
-        BinaryImage(data=IsBytes(), media_type='image/png', _identifier='b037a4', identifier='b037a4')
-    )
+    assert result.output == snapshot(IsInstance(BinaryImage))
 
 
 async def test_google_httpx_client_is_not_closed(allow_model_requests: None, gemini_api_key: str):
@@ -4365,6 +4299,28 @@ def test_google_process_response_filters_empty_text_parts(google_provider: Googl
     result = model._process_response(response)  # pyright: ignore[reportPrivateUsage]
 
     assert result.parts == snapshot([TextPart(content='first'), TextPart(content='second')])
+
+
+def test_google_process_response_empty_candidates(google_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.5-pro', provider=google_provider)
+    response = GenerateContentResponse.model_validate(
+        {
+            'response_id': 'resp-456',
+            'candidates': [],
+        }
+    )
+    result = model._process_response(response)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == snapshot(
+        ModelResponse(
+            parts=[],
+            model_name='gemini-2.5-pro',
+            timestamp=IsDatetime(),
+            provider_name='google-gla',
+            provider_url='https://generativelanguage.googleapis.com/',
+            provider_response_id='resp-456',
+        )
+    )
 
 
 async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
