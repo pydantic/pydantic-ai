@@ -946,8 +946,7 @@ class UserPromptPart:
                 file_part = _otel_messages.FilePart(type='file', modality=modality)
                 if settings.include_content:
                     file_part['file_id'] = part.file_id
-                    if part.media_type:
-                        file_part['mime_type'] = part.media_type
+                    file_part['mime_type'] = part.media_type
                 parts.append(file_part)
             else:
                 parts.append({'type': part.kind})  # pragma: no cover

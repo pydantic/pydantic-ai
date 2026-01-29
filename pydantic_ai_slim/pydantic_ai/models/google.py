@@ -757,9 +757,7 @@ class GoogleModel(Model):
                         )
                     # UploadedFile.file_id should be a file URI from the Google Files API
                     # e.g., 'https://generativelanguage.googleapis.com/v1beta/files/abc123'
-                    file_data_dict: FileDataDict = {'file_uri': item.file_id}
-                    if item.media_type:
-                        file_data_dict['mime_type'] = item.media_type
+                    file_data_dict: FileDataDict = {'file_uri': item.file_id, 'mime_type': item.media_type}
                     part_dict: PartDict = {'file_data': file_data_dict}
                     # Include video_metadata if present in vendor_metadata
                     if item.vendor_metadata:
