@@ -1119,7 +1119,8 @@ async def _call_tools(  # noqa: C901
 
                 return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
 
-        if tool_manager.should_call_sequentially(tool_calls):
+        parallel_execution_mode = tool_manager.get_parallel_execution_mode(tool_calls)
+        if parallel_execution_mode == 'sequential':
             for index, call in enumerate(tool_calls):
                 if event := await handle_call_or_result(
                     _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), tool_call_metadata),
@@ -1136,17 +1137,24 @@ async def _call_tools(  # noqa: C901
                 for call in tool_calls
             ]
             try:
-                pending: set[
-                    asyncio.Task[
-                        tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]
-                    ]
-                ] = set(tasks)  # pyright: ignore[reportAssignmentType]
-                while pending:
-                    done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                    for task in done:
-                        index = tasks.index(task)  # pyright: ignore[reportArgumentType]
-                        if event := await handle_call_or_result(coro_or_task=task, index=index):  # pyright: ignore[reportArgumentType]
+                if parallel_execution_mode == 'parallel_ordered_events':
+                    # Wait for all tasks to complete before yielding any events
+                    await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
+                    for index, task in enumerate(tasks):
+                        if event := await handle_call_or_result(coro_or_task=task, index=index):
                             yield event
+                else:
+                    pending: set[
+                        asyncio.Task[
+                            tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]
+                        ]
+                    ] = set(tasks)  # pyright: ignore[reportAssignmentType]
+                    while pending:
+                        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                        for task in done:
+                            index = tasks.index(task)  # pyright: ignore[reportArgumentType]
+                            if event := await handle_call_or_result(coro_or_task=task, index=index):  # pyright: ignore[reportArgumentType]
+                                yield event
 
             except asyncio.CancelledError as e:
                 for task in tasks:
