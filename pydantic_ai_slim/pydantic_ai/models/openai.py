@@ -454,7 +454,8 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
 
     When enabled, any annotations (e.g., citations from web search) will be available
     in the `provider_details['annotations']` field of text parts.
-    This is opt-in to avoid duplicate data once native annotation support is added.
+    This is opt-in since there may be overlap with native annotation support once
+    added via https://github.com/pydantic/pydantic-ai/issues/3126.
     """
 
 
