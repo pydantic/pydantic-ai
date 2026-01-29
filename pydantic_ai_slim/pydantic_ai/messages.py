@@ -514,7 +514,7 @@ class BinaryContent:
         identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
         kind: Literal['binary'] = 'binary',
-        # _identifier needed because dataclasses_no_defaults_repr outputs _identifier=... and inline-snapshot needs the __init__ to accept it
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _identifier: str | None = None,
     ) -> None: ...  # pragma: no cover
 
