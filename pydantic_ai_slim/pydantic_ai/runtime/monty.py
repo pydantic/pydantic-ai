@@ -61,8 +61,8 @@ class MontyRuntime(CodeRuntime):
             # Well first of all let us type check because Monty allows that
             await self._type_check(code, signatures)
 
+        # Consider adding raise from None to keep these errors short and helpful for the LLMs to fix the code?
         except MontyTypingError as e:
-            # Consider adding raise from None to keep these errors short and helpful for the LLMs to fix the code?
             raise CodeTypingError(e.display())
         except MontyRuntimeError as e:
             raise CodeRuntimeError(e.display())
