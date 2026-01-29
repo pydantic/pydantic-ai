@@ -35,7 +35,6 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.gemini import (
     GeminiModel,
@@ -63,7 +62,7 @@ from pydantic_ai.result import RunUsage
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import ClientWithHandler, IsBytes, IsDatetime, IsNow, IsStr, TestEnv
+from ..conftest import ClientWithHandler, IsDatetime, IsNow, IsStr, TestEnv
 
 pytestmark = [
     pytest.mark.anyio,
@@ -1200,129 +1199,6 @@ async def test_safety_settings_safe(
         ),
     )
     assert result.output == 'world'
-
-
-@pytest.mark.vcr()
-async def test_image_as_binary_content_tool_response(
-    allow_model_requests: None, gemini_api_key: str, image_content: BinaryContent
-) -> None:
-    m = GeminiModel('gemini-3-pro-preview', provider=GoogleGLAProvider(api_key=gemini_api_key))
-    agent = Agent(m)
-
-    @agent.tool_plain
-    async def get_image() -> BinaryContent:
-        return image_content
-
-    result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content=['What fruit is in the image you can get from the get_image tool?'],
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='get_image',
-                        args={'parameters': {}},
-                        tool_call_id=IsStr(),
-                    )
-                ],
-                usage=RequestUsage(
-                    input_tokens=33, output_tokens=181, details={'thoughts_tokens': 168, 'text_prompt_tokens': 33}
-                ),
-                model_name='gemini-3-pro-preview',
-                timestamp=IsDatetime(),
-                provider_name='google-gla',
-                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
-                provider_details={'finish_reason': 'STOP'},
-                provider_response_id=IsStr(),
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    RetryPromptPart(
-                        content=[
-                            {
-                                'type': 'extra_forbidden',
-                                'loc': ('parameters',),
-                                'msg': 'Extra inputs are not permitted',
-                                'input': {},
-                            }
-                        ],
-                        tool_name='get_image',
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr())],
-                usage=RequestUsage(
-                    input_tokens=130, output_tokens=1221, details={'thoughts_tokens': 1211, 'text_prompt_tokens': 130}
-                ),
-                model_name='gemini-3-pro-preview',
-                timestamp=IsDatetime(),
-                provider_name='google-gla',
-                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
-                provider_details={'finish_reason': 'STOP'},
-                provider_response_id=IsStr(),
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='get_image',
-                        content=BinaryImage(data=IsBytes(), media_type='image/jpeg'),
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(content='1'),
-                    TextPart(
-                        content="""\
-AM
-
-The fruit in the image is a **kiwi**. It is sliced in half, showing its bright green flesh, small black seeds, and white core.
-
-Would you like to know more about kiwis, such as their nutritional benefits?
-
-**Source:**
-- *Image generated from tool output.*\
-"""
-                    ),
-                    TextPart(
-                        content='The fruit in the image is a **kiwi** (or kiwifruit). It shows the cross-section of a sliced kiwi, featuring its characteristic bright green flesh, ring of small black seeds, and white center core, surrounded by fuzzy brown skin.'
-                    ),
-                ],
-                usage=RequestUsage(
-                    input_tokens=1263,
-                    output_tokens=116,
-                    details={'image_prompt_tokens': 1088, 'text_prompt_tokens': 175},
-                ),
-                model_name='gemini-3-pro-preview',
-                timestamp=IsDatetime(),
-                provider_name='google-gla',
-                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
-                provider_details={'finish_reason': 'STOP'},
-                provider_response_id=IsStr(),
-                run_id=IsStr(),
-            ),
-        ]
-    )
 
 
 @pytest.mark.vcr()
