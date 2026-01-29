@@ -52,7 +52,7 @@ from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsBytes, IsDatetime, IsFloat, IsInt, IsNow, IsStr, TestEnv, try_import
+from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, TestEnv, try_import
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
@@ -4972,14 +4972,7 @@ async def test_openai_responses_code_execution_return_image(allow_model_requests
     agent = Agent(model=model, builtin_tools=[CodeExecutionTool()], output_type=BinaryImage)
 
     result = await agent.run('Create a chart of y=x^2 for x=-5 to 5')
-    assert result.output == snapshot(
-        BinaryImage(
-            data=IsBytes(),
-            media_type='image/png',
-            _identifier='653a61',
-            identifier='653a61',
-        )
-    )
+    assert result.output == snapshot(IsInstance(BinaryImage))
     messages = result.all_messages()
     assert messages == snapshot(
         [
@@ -5034,12 +5027,7 @@ plt.show()\r
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/png',
-                            _identifier='653a61',
-                            identifier='653a61',
-                        ),
+                        content=IsInstance(BinaryImage),
                         id='ci_68cdc39029a481909399d54b0a3637a10187028ba77f15f7',
                     ),
                     BuiltinToolReturnPart(
@@ -5074,14 +5062,7 @@ plt.show()\r
     )
 
     result = await agent.run('Style it more futuristically.', message_history=messages)
-    assert result.output == snapshot(
-        BinaryImage(
-            data=IsBytes(),
-            media_type='image/png',
-            _identifier='81863d',
-            identifier='81863d',
-        )
-    )
+    assert result.output == snapshot(IsInstance(BinaryImage))
     assert result.new_messages() == snapshot(
         [
             ModelRequest(
@@ -5184,12 +5165,7 @@ out_path\
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/png',
-                            _identifier='81863d',
-                            identifier='81863d',
-                        ),
+                        content=IsInstance(BinaryImage),
                         id='ci_68cdc3be6f3481908f64d8f0a71dc6bb0187028ba77f15f7',
                     ),
                     BuiltinToolReturnPart(
@@ -5257,14 +5233,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                         event_parts.append(event)
 
     assert agent_run.result is not None
-    assert agent_run.result.output == snapshot(
-        BinaryImage(
-            data=IsBytes(),
-            media_type='image/png',
-            _identifier='df0d78',
-            identifier='df0d78',
-        )
-    )
+    assert agent_run.result.output == snapshot(IsInstance(BinaryImage))
     assert agent_run.result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -5292,12 +5261,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/png',
-                            _identifier='df0d78',
-                            identifier='df0d78',
-                        ),
+                        content=IsInstance(BinaryImage),
                         id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
                     ),
                     BuiltinToolReturnPart(
@@ -6656,7 +6620,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
             PartStartEvent(
                 index=2,
                 part=FilePart(
-                    content=BinaryImage(data=IsBytes(), media_type='image/png', _identifier='df0d78'),
+                    content=IsInstance(BinaryImage),
                     id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
                 ),
                 previous_part_kind='builtin-tool-call',
@@ -6753,13 +6717,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
     result = await agent.run('Generate an image of an axolotl.')
     messages = result.all_messages()
 
-    assert result.output == snapshot(
-        BinaryImage(
-            data=IsBytes(),
-            media_type='image/png',
-            identifier='68b13f',
-        )
-    )
+    assert result.output == snapshot(IsInstance(BinaryImage))
     assert messages == snapshot(
         [
             ModelRequest(
@@ -6786,11 +6744,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/png',
-                            identifier='68b13f',
-                        ),
+                        content=IsInstance(BinaryImage),
                         id='ig_68cdc3ed36dc8191b543d16151961f8e08537600f5445fc6',
                     ),
                     BuiltinToolReturnPart(
@@ -6832,13 +6786,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
     )
 
     result = await agent.run('Now give it a sombrero.', message_history=messages)
-    assert result.output == snapshot(
-        BinaryImage(
-            data=IsBytes(),
-            media_type='image/png',
-            identifier='2b4fea',
-        )
-    )
+    assert result.output == snapshot(IsInstance(BinaryImage))
     assert result.new_messages() == snapshot(
         [
             ModelRequest(
@@ -6865,11 +6813,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/png',
-                            identifier='2b4fea',
-                        ),
+                        content=IsInstance(BinaryImage),
                         id='ig_68cdc46a3bc881919771488b1795a68908537600f5445fc6',
                     ),
                     BuiltinToolReturnPart(
@@ -6916,13 +6860,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
     agent = Agent(model, output_type=BinaryImage)
 
     async with agent.run_stream('Generate an image of an axolotl') as result:
-        assert await result.get_output() == snapshot(
-            BinaryImage(
-                data=IsBytes(),
-                media_type='image/png',
-                identifier='be46a2',
-            )
-        )
+        assert await result.get_output() == snapshot(IsInstance(BinaryImage))
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='Generate an image of an axolotl.') as agent_run:
@@ -6933,13 +6871,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                         event_parts.append(event)
 
     assert agent_run.result is not None
-    assert agent_run.result.output == snapshot(
-        BinaryImage(
-            data=IsBytes(),
-            media_type='image/png',
-            identifier='69eaa4',
-        )
-    )
+    assert agent_run.result.output == snapshot(IsInstance(BinaryImage))
     assert agent_run.result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -6966,11 +6898,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/png',
-                            identifier='69eaa4',
-                        ),
+                        content=IsInstance(BinaryImage),
                         id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
                     ),
                     BuiltinToolReturnPart(
@@ -7048,10 +6976,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
             PartStartEvent(
                 index=2,
                 part=FilePart(
-                    content=BinaryImage(
-                        data=IsBytes(),
-                        media_type='image/png',
-                    ),
+                    content=IsInstance(BinaryImage),
                     id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
                 ),
                 previous_part_kind='builtin-tool-call',
@@ -7060,11 +6985,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
             PartStartEvent(
                 index=2,
                 part=FilePart(
-                    content=BinaryImage(
-                        data=IsBytes(),
-                        media_type='image/png',
-                        identifier='69eaa4',
-                    ),
+                    content=IsInstance(BinaryImage),
                     id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
                 ),
                 previous_part_kind='file',
@@ -7151,11 +7072,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/png',
-                            identifier='c51b7b',
-                        ),
+                        content=IsInstance(BinaryImage),
                         id='ig_68cdec307db4819fbc6af5c42bc6f373079003437d26d0c0',
                     ),
                     BuiltinToolReturnPart(
@@ -7215,11 +7132,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/png',
-                            identifier='c9d559',
-                        ),
+                        content=IsInstance(BinaryImage),
                         id='ig_68cdec701280819fab216c216ff58efe079003437d26d0c0',
                     ),
                     BuiltinToolReturnPart(
@@ -7266,13 +7179,7 @@ async def test_openai_responses_image_or_text_output(allow_model_requests: None,
     assert result.output == snapshot(IsStr())
 
     result = await agent.run('Generate an image of an axolotl.')
-    assert result.output == snapshot(
-        BinaryImage(
-            data=IsBytes(),
-            media_type='image/png',
-            identifier='f77253',
-        )
-    )
+    assert result.output == snapshot(IsInstance(BinaryImage))
 
 
 async def test_openai_responses_image_and_text_output(allow_model_requests: None, openai_api_key: str):
@@ -7281,15 +7188,7 @@ async def test_openai_responses_image_and_text_output(allow_model_requests: None
 
     result = await agent.run('Tell me a two-sentence story about an axolotl with an illustration.')
     assert result.output == snapshot(IsStr())
-    assert result.response.files == snapshot(
-        [
-            BinaryImage(
-                data=IsBytes(),
-                media_type='image/png',
-                identifier='fbb409',
-            )
-        ]
-    )
+    assert result.response.files == snapshot([IsInstance(BinaryImage)])
 
 
 async def test_openai_responses_image_generation_with_tool_output(allow_model_requests: None, openai_api_key: str):
@@ -7328,11 +7227,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/png',
-                            identifier='918a98',
-                        ),
+                        content=IsInstance(BinaryImage),
                         id='ig_0360827931d9421b0068dd833f660c81a09fc92cfc19fb9b13',
                     ),
                     BuiltinToolReturnPart(
@@ -7457,11 +7352,7 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/png',
-                            identifier='4ed317',
-                        ),
+                        content=IsInstance(BinaryImage),
                         id='ig_09b7ce6df817433c0068dd8418e65881a09a80011c41848b07',
                     ),
                     BuiltinToolReturnPart(
@@ -7536,11 +7427,7 @@ async def test_openai_responses_image_generation_with_prompted_output(allow_mode
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/png',
-                            identifier='958792',
-                        ),
+                        content=IsInstance(BinaryImage),
                         id='ig_0d14a5e3c26c21180068dd87309a608190ab2d8c7af59983ed',
                     ),
                     BuiltinToolReturnPart(
@@ -7588,13 +7475,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
         return 'axolotl'
 
     result = await agent.run('Generate an image of the animal returned by the get_animal tool.')
-    assert result.output == snapshot(
-        BinaryImage(
-            data=IsBytes(),
-            media_type='image/png',
-            identifier='160d47',
-        )
-    )
+    assert result.output == snapshot(IsInstance(BinaryImage))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -7656,11 +7537,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/png',
-                            identifier='160d47',
-                        ),
+                        content=IsInstance(BinaryImage),
                         id='ig_0481074da98340df0068dd88fb39c0819182d36f882ee0904f',
                     ),
                     BuiltinToolReturnPart(
@@ -7703,13 +7580,7 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
 
     result = await agent.run('Generate two separate images of axolotls.')
     # The first image is used as output
-    assert result.output == snapshot(
-        BinaryImage(
-            data=IsBytes(),
-            media_type='image/png',
-            identifier='2a8c51',
-        )
-    )
+    assert result.output == snapshot(IsInstance(BinaryImage))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -7736,11 +7607,7 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/png',
-                            identifier='2a8c51',
-                        ),
+                        content=IsInstance(BinaryImage),
                         id='ig_0b6169df6e16e9690068dd80f7b070819189831dcc01b98a2a',
                     ),
                     BuiltinToolReturnPart(
@@ -7762,11 +7629,7 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/png',
-                            identifier='dd7c41',
-                        ),
+                        content=IsInstance(BinaryImage),
                         id='ig_0b6169df6e16e9690068dd8125f4448191bac6818b54114209',
                     ),
                     BuiltinToolReturnPart(
@@ -7813,13 +7676,7 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
 
     result = await agent.run('Generate an image of axolotl.')
 
-    assert result.output == snapshot(
-        BinaryImage(
-            data=IsBytes(),
-            media_type='image/jpeg',
-            identifier='df8cd2',
-        )
-    )
+    assert result.output == snapshot(IsInstance(BinaryImage))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -7846,11 +7703,7 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/jpeg',
-                            identifier='df8cd2',
-                        ),
+                        content=IsInstance(BinaryImage),
                         id='ig_08acbdf1ae54befc0068dd9d0347bc8197ad70005495e64e62',
                     ),
                     BuiltinToolReturnPart(

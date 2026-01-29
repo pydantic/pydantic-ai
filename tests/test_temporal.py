@@ -10,12 +10,14 @@ from datetime import timedelta
 from typing import Any, Literal
 
 import pytest
+from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
     AgentRunResultEvent,
     AgentStreamEvent,
+    BinaryContent,
     BinaryImage,
     ExternalToolset,
     FinalResultEvent,
@@ -3103,3 +3105,95 @@ def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> Non
         result = plugin.configure_client(config)  # type: ignore[arg-type]
     assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
     assert result['data_converter'].payload_codec is codec
+
+
+# Tests for BinaryContent serialization in Temporal (#3702)
+
+
+binary_tool_agent = Agent(TestModel(), name='binary_tool_agent')
+
+
+@binary_tool_agent.tool
+def get_binary_data(ctx: RunContext[None]) -> list[str | BinaryContent]:
+    """Return a list with text and BinaryContent."""
+    return ['test', BinaryImage(data=b'\x89PNG', media_type='image/png')]
+
+
+binary_tool_temporal_agent = TemporalAgent(binary_tool_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class BinaryToolWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[ModelMessage]:
+        result = await binary_tool_temporal_agent.run(prompt)
+        return result.all_messages()
+
+
+async def test_binary_content_serialization_in_workflow(client: Client):
+    """Test that BinaryContent survives Temporal activity→workflow serialization.
+
+    This is a regression test for #3702: MCP tools returning binary data failed
+    Temporal serialization with `PydanticSerializationError: invalid utf-8 sequence`.
+
+    To fix, BinaryContent is serialized with base64 encoding and
+    properly reconstructed after deserialization.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[BinaryToolWorkflow],
+        plugins=[AgentPlugin(binary_tool_temporal_agent)],
+    ):
+        messages = await client.execute_workflow(
+            BinaryToolWorkflow.run,
+            args=['Call the tool'],
+            id='test_binary_content_serialization',
+            task_queue=TASK_QUEUE,
+        )
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='Call the tool', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_binary_data', args={}, tool_call_id='pyd_ai_tool_call_id__get_binary_data'
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=53, output_tokens=2),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='get_binary_data',
+                            content=['test', 'See file 4effda'],
+                            tool_call_id='pyd_ai_tool_call_id__get_binary_data',
+                            timestamp=IsDatetime(),
+                        ),
+                        UserPromptPart(
+                            content=[
+                                'This is file 4effda:',
+                                BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'),
+                            ],
+                            timestamp=IsDatetime(),
+                        ),
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"get_binary_data":["test","See file 4effda"]}')],
+                    usage=RequestUsage(input_tokens=68, output_tokens=10),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
