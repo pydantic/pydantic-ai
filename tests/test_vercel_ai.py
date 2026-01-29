@@ -46,6 +46,7 @@ from pydantic_ai.models.function import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
+from pydantic_ai.ui.vercel_ai._utils import dump_provider_metadata, load_provider_metadata
 from pydantic_ai.ui.vercel_ai.request_types import (
     DynamicToolOutputAvailablePart,
     FileUIPart,
@@ -285,9 +286,35 @@ I'd be happy to help you use a tool! However, I need more information about what
         [
             {'type': 'start'},
             {'type': 'start-step'},
-            {'type': 'reasoning-start', 'id': IsStr()},
-            {'type': 'reasoning-end', 'id': IsStr()},
-            {'type': 'tool-input-start', 'toolCallId': IsStr(), 'toolName': 'web_search', 'providerExecuted': True},
+            {
+                'type': 'reasoning-start',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': IsStr(),
+                        'provider_name': 'openai',
+                        'id': 'rs_00e767404995b9950068e647f10d8c819187515d1b2517b059',
+                    }
+                },
+            },
+            {
+                'type': 'reasoning-end',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': IsStr(),
+                        'provider_name': 'openai',
+                        'id': 'rs_00e767404995b9950068e647f10d8c819187515d1b2517b059',
+                    }
+                },
+            },
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
@@ -310,9 +337,35 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'output': {'status': 'completed'},
                 'providerExecuted': True,
             },
-            {'type': 'reasoning-start', 'id': IsStr()},
-            {'type': 'reasoning-end', 'id': IsStr()},
-            {'type': 'tool-input-start', 'toolCallId': IsStr(), 'toolName': 'web_search', 'providerExecuted': True},
+            {
+                'type': 'reasoning-start',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': IsStr(),
+                        'provider_name': 'openai',
+                        'id': 'rs_00e767404995b9950068e647fa69e48191b6f5385a856b2948',
+                    }
+                },
+            },
+            {
+                'type': 'reasoning-end',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': IsStr(),
+                        'provider_name': 'openai',
+                        'id': 'rs_00e767404995b9950068e647fa69e48191b6f5385a856b2948',
+                    }
+                },
+            },
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
@@ -332,9 +385,35 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'output': {'status': 'completed'},
                 'providerExecuted': True,
             },
-            {'type': 'reasoning-start', 'id': IsStr()},
-            {'type': 'reasoning-end', 'id': IsStr()},
-            {'type': 'tool-input-start', 'toolCallId': IsStr(), 'toolName': 'web_search', 'providerExecuted': True},
+            {
+                'type': 'reasoning-start',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': IsStr(),
+                        'provider_name': 'openai',
+                        'id': 'rs_00e767404995b9950068e647fd656081919385a27bd1162fcd',
+                    }
+                },
+            },
+            {
+                'type': 'reasoning-end',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': IsStr(),
+                        'provider_name': 'openai',
+                        'id': 'rs_00e767404995b9950068e647fd656081919385a27bd1162fcd',
+                    }
+                },
+            },
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
@@ -354,9 +433,35 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'output': {'status': 'completed'},
                 'providerExecuted': True,
             },
-            {'type': 'reasoning-start', 'id': IsStr()},
-            {'type': 'reasoning-end', 'id': IsStr()},
-            {'type': 'tool-input-start', 'toolCallId': IsStr(), 'toolName': 'web_search', 'providerExecuted': True},
+            {
+                'type': 'reasoning-start',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': IsStr(),
+                        'provider_name': 'openai',
+                        'id': 'rs_00e767404995b9950068e648022d288191a6acb6cff99dafba',
+                    }
+                },
+            },
+            {
+                'type': 'reasoning-end',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': IsStr(),
+                        'provider_name': 'openai',
+                        'id': 'rs_00e767404995b9950068e648022d288191a6acb6cff99dafba',
+                    }
+                },
+            },
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
@@ -379,9 +484,35 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'output': {'status': 'completed'},
                 'providerExecuted': True,
             },
-            {'type': 'reasoning-start', 'id': IsStr()},
-            {'type': 'reasoning-end', 'id': IsStr()},
-            {'type': 'tool-input-start', 'toolCallId': IsStr(), 'toolName': 'web_search', 'providerExecuted': True},
+            {
+                'type': 'reasoning-start',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': IsStr(),
+                        'provider_name': 'openai',
+                        'id': 'rs_00e767404995b9950068e648060b088191974c790f06b8ea8e',
+                    }
+                },
+            },
+            {
+                'type': 'reasoning-end',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': IsStr(),
+                        'provider_name': 'openai',
+                        'id': 'rs_00e767404995b9950068e648060b088191974c790f06b8ea8e',
+                    }
+                },
+            },
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
@@ -401,9 +532,35 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'output': {'status': 'completed'},
                 'providerExecuted': True,
             },
-            {'type': 'reasoning-start', 'id': IsStr()},
-            {'type': 'reasoning-end', 'id': IsStr()},
-            {'type': 'tool-input-start', 'toolCallId': IsStr(), 'toolName': 'web_search', 'providerExecuted': True},
+            {
+                'type': 'reasoning-start',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': IsStr(),
+                        'provider_name': 'openai',
+                        'id': 'rs_00e767404995b9950068e6480bbd348191b11aa4762de66297',
+                    }
+                },
+            },
+            {
+                'type': 'reasoning-end',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': IsStr(),
+                        'provider_name': 'openai',
+                        'id': 'rs_00e767404995b9950068e6480bbd348191b11aa4762de66297',
+                    }
+                },
+            },
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
@@ -423,9 +580,35 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'output': {'status': 'completed'},
                 'providerExecuted': True,
             },
-            {'type': 'reasoning-start', 'id': IsStr()},
-            {'type': 'reasoning-end', 'id': IsStr()},
-            {'type': 'tool-input-start', 'toolCallId': IsStr(), 'toolName': 'web_search', 'providerExecuted': True},
+            {
+                'type': 'reasoning-start',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': IsStr(),
+                        'provider_name': 'openai',
+                        'id': 'rs_00e767404995b9950068e6480f16f08191beaad2936e3d3195',
+                    }
+                },
+            },
+            {
+                'type': 'reasoning-end',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': IsStr(),
+                        'provider_name': 'openai',
+                        'id': 'rs_00e767404995b9950068e6480f16f08191beaad2936e3d3195',
+                    }
+                },
+            },
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
@@ -445,9 +628,38 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'output': {'status': 'completed'},
                 'providerExecuted': True,
             },
-            {'type': 'reasoning-start', 'id': IsStr()},
-            {'type': 'reasoning-end', 'id': IsStr()},
-            {'type': 'text-start', 'id': IsStr()},
+            {
+                'type': 'reasoning-start',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': IsStr(),
+                        'provider_name': 'openai',
+                        'id': 'rs_00e767404995b9950068e648130f0481918dc71103fbd6a486',
+                    }
+                },
+            },
+            {
+                'type': 'reasoning-end',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': IsStr(),
+                        'provider_name': 'openai',
+                        'id': 'rs_00e767404995b9950068e648130f0481918dc71103fbd6a486',
+                    }
+                },
+            },
+            {
+                'type': 'text-start',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'msg_00e767404995b9950068e6482f25e0819181582a15cdd9207f',
+                        'provider_name': 'openai',
+                    }
+                },
+            },
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -455,13 +667,15 @@ Short answer:
 - Default\
 """,
                 'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'msg_00e767404995b9950068e6482f25e0819181582a15cdd9207f',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {'type': 'text-delta', 'delta': ' FastAPI/OpenTelemetry', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': ' instrumentation already records method',
-                'id': IsStr(),
-            },
+            {'type': 'text-delta', 'delta': ' instrumentation already records method', 'id': IsStr()},
             {'type': 'text-delta', 'delta': '/route/status', 'id': IsStr()},
             {
                 'type': 'text-delta',
@@ -526,11 +740,7 @@ How\
             },
             {'type': 'text-delta', 'delta': ' just the', 'id': IsStr()},
             {'type': 'text-delta', 'delta': ' headers you need; avoid', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': ' sensitive ones or sanitize',
-                'id': IsStr(),
-            },
+            {'type': 'text-delta', 'delta': ' sensitive ones or sanitize', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -540,34 +750,14 @@ export OTEL\
 """,
                 'id': IsStr(),
             },
-            {
-                'type': 'text-delta',
-                'delta': '_INSTRUMENTATION_HTTP_CAPTURE',
-                'id': IsStr(),
-            },
-            {
-                'type': 'text-delta',
-                'delta': '_HEADERS_SERVER_REQUEST="content',
-                'id': IsStr(),
-            },
+            {'type': 'text-delta', 'delta': '_INSTRUMENTATION_HTTP_CAPTURE', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '_HEADERS_SERVER_REQUEST="content', 'id': IsStr()},
             {'type': 'text-delta', 'delta': '-type,user', 'id': IsStr()},
             {'type': 'text-delta', 'delta': '-agent"\n', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': 'export OTEL_INSTRUMENTATION',
-                'id': IsStr(),
-            },
+            {'type': 'text-delta', 'delta': 'export OTEL_INSTRUMENTATION', 'id': IsStr()},
             {'type': 'text-delta', 'delta': '_HTTP_CAPTURE_HEADERS', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': '_SERVER_RESPONSE="content-type"\n',
-                'id': IsStr(),
-            },
-            {
-                'type': 'text-delta',
-                'delta': 'export OTEL_INSTRUMENTATION_HTTP',
-                'id': IsStr(),
-            },
+            {'type': 'text-delta', 'delta': '_SERVER_RESPONSE="content-type"\n', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'export OTEL_INSTRUMENTATION_HTTP', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -579,11 +769,7 @@ This makes headers appear on spans as http.request.header.* and http.response.he
 """,
                 'id': IsStr(),
             },
-            {
-                'type': 'text-delta',
-                'delta': ' Add hooks to capture request',
-                'id': IsStr(),
-            },
+            {'type': 'text-delta', 'delta': ' Add hooks to capture request', 'id': IsStr()},
             {'type': 'text-delta', 'delta': '/response bodies', 'id': IsStr()},
             {
                 'type': 'text-delta',
@@ -990,11 +1176,7 @@ from opente\
                 'id': IsStr(),
             },
             {'type': 'text-delta', 'delta': 'lemetry.instrumentation', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': '.logging import LoggingInstrument',
-                'id': IsStr(),
-            },
+            {'type': 'text-delta', 'delta': '.logging import LoggingInstrument', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
@@ -1037,7 +1219,11 @@ Want me to tailor\
             {'type': 'text-delta', 'delta': ' skip binary content,', 'id': IsStr()},
             {'type': 'text-delta', 'delta': ' or accumulate chunked', 'id': IsStr()},
             {'type': 'text-delta', 'delta': ' bodies safely?', 'id': IsStr()},
-            {'type': 'text-end', 'id': IsStr()},
+            {
+                'type': 'text-end',
+                'id': IsStr(),
+                'providerMetadata': {'pydantic_ai': {'id': IsStr(), 'provider_name': 'openai'}},
+            },
             {'type': 'finish-step'},
             {'type': 'finish', 'finishReason': 'stop'},
             '[DONE]',
@@ -1097,6 +1283,134 @@ async def test_run_stream_text_and_thinking():
             {'type': 'reasoning-start', 'id': IsStr()},
             {'type': 'reasoning-delta', 'id': IsStr(), 'delta': 'More thinking'},
             {'type': 'reasoning-end', 'id': IsStr()},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_thinking_with_signature():
+    """Test that thinking parts with signatures include providerMetadata in reasoning-end events."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaThinkingCalls | str]:
+        yield {0: DeltaThinkingPart(content='Let me think...')}
+        yield {0: DeltaThinkingPart(signature='sig_abc123')}
+        yield 'Here is my answer.'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Think about something')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'reasoning-start', 'id': IsStr()},
+            {'type': 'reasoning-delta', 'id': IsStr(), 'delta': 'Let me think...'},
+            {
+                'type': 'reasoning-end',
+                'id': IsStr(),
+                'providerMetadata': {'pydantic_ai': {'signature': 'sig_abc123', 'provider_name': 'function'}},
+            },
+            {'type': 'text-start', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'Here is my answer.', 'id': IsStr()},
+            {'type': 'text-end', 'id': IsStr()},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_event_stream_thinking_end_with_full_metadata():
+    """Test handle_thinking_end with all metadata fields (signature, provider_name, provider_details, id)."""
+
+    async def event_generator():
+        part = ThinkingPart(
+            content='Deep thought...',
+            id='thinking_456',
+            signature='sig_xyz789',
+            provider_name='anthropic',
+            provider_details={'model': 'claude-3', 'tokens': 100},
+        )
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Think deeply')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {
+                'type': 'reasoning-start',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': 'sig_xyz789',
+                        'provider_name': 'anthropic',
+                        'id': 'thinking_456',
+                        'provider_details': {'model': 'claude-3', 'tokens': 100},
+                    }
+                },
+            },
+            {
+                'type': 'reasoning-delta',
+                'id': IsStr(),
+                'delta': 'Deep thought...',
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': 'sig_xyz789',
+                        'provider_name': 'anthropic',
+                        'id': 'thinking_456',
+                        'provider_details': {'model': 'claude-3', 'tokens': 100},
+                    }
+                },
+            },
+            {
+                'type': 'reasoning-end',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': 'sig_xyz789',
+                        'provider_name': 'anthropic',
+                        'provider_details': {'model': 'claude-3', 'tokens': 100},
+                        'id': 'thinking_456',
+                    }
+                },
+            },
             {'type': 'finish-step'},
             {'type': 'finish'},
             '[DONE]',
@@ -1201,7 +1515,13 @@ async def test_run_stream_builtin_tool_call():
         [
             {'type': 'start'},
             {'type': 'start-step'},
-            {'type': 'tool-input-start', 'toolCallId': 'search_1', 'toolName': 'web_search', 'providerExecuted': True},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': 'search_1',
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'function'}},
+            },
             {'type': 'tool-input-delta', 'toolCallId': 'search_1', 'inputTextDelta': '{"query":'},
             {'type': 'tool-input-delta', 'toolCallId': 'search_1', 'inputTextDelta': '"Hello world"}'},
             {
@@ -1810,7 +2130,12 @@ async def test_adapter_load_messages():
                         input={'query': 'What is Logfire?'},
                         output="[Scrubbed due to 'Auth']",
                         provider_executed=True,
-                        call_provider_metadata={'pydantic_ai': {'provider_name': 'openai'}},
+                        call_provider_metadata={
+                            'pydantic_ai': {
+                                'call_meta': {'provider_name': 'openai'},
+                                'return_meta': {'provider_name': 'openai_return'},
+                            }
+                        },
                     ),
                     ToolOutputErrorPart(
                         type='tool-web_search',
@@ -1956,7 +2281,7 @@ async def test_adapter_load_messages():
                         content="[Scrubbed due to 'Auth']",
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4s',
                         timestamp=IsDatetime(),
-                        provider_name='openai',
+                        provider_name='openai_return',
                     ),
                     BuiltinToolCallPart(
                         tool_name='web_search',
@@ -2115,12 +2440,14 @@ async def test_adapter_dump_messages_with_builtin_tools():
                     args={'query': 'test'},
                     tool_call_id='tool_456',
                     provider_name='openai',
+                    provider_details={'tool_type': 'web_search_preview'},
                 ),
                 BuiltinToolReturnPart(
                     tool_name='web_search',
                     content={'status': 'completed'},
                     tool_call_id='tool_456',
                     provider_name='openai',
+                    provider_details={'execution_time_ms': 150},
                 ),
             ]
         ),
@@ -2149,7 +2476,18 @@ async def test_adapter_dump_messages_with_builtin_tools():
                         'input': '{"query":"test"}',
                         'output': '{"status":"completed"}',
                         'provider_executed': True,
-                        'call_provider_metadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                        'call_provider_metadata': {
+                            'pydantic_ai': {
+                                'call_meta': {
+                                    'provider_name': 'openai',
+                                    'provider_details': {'tool_type': 'web_search_preview'},
+                                },
+                                'return_meta': {
+                                    'provider_name': 'openai',
+                                    'provider_details': {'execution_time_ms': 150},
+                                },
+                            }
+                        },
                         'preliminary': None,
                     }
                 ],
@@ -2196,7 +2534,9 @@ async def test_adapter_dump_messages_with_builtin_tool_without_return():
                         'state': 'input-available',
                         'input': '{"query":"orphan query"}',
                         'provider_executed': True,
-                        'call_provider_metadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                        'call_provider_metadata': {
+                            'pydantic_ai': {'provider_name': 'openai'}
+                        },  # No return part, so defaults to normal call provider name
                     }
                 ],
             },
@@ -2369,6 +2709,24 @@ Fix the errors and try again.\
         ]
     )
 
+    # Verify roundtrip
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+    # Content will have changed for retry prompt part, so we check it's value
+    # And then set it back to the original value
+    retry_prompt_part = reloaded_messages[2].parts[0]
+    assert isinstance(retry_prompt_part, RetryPromptPart)
+    assert retry_prompt_part == snapshot(
+        RetryPromptPart(
+            content='Tool failed with error\n\nFix the errors and try again.',
+            tool_name='my_tool',
+            tool_call_id='tool_789',
+            timestamp=IsDatetime(),
+        )
+    )
+    retry_prompt_part.content = 'Tool failed with error'
+    _sync_timestamps(messages, reloaded_messages)
+    assert reloaded_messages == messages
+
 
 async def test_adapter_dump_messages_with_retry_no_tool_name():
     """Test dumping messages with retry prompts without tool_name (e.g., output validation errors)."""
@@ -2423,6 +2781,39 @@ Fix the errors and try again.\
             },
         ]
     )
+
+    # Verify roundtrip
+    # Note: This is a lossy conversion - RetryPromptPart without tool_call_id becomes a user text message.
+    # When loaded back, it creates a UserPromptPart instead of RetryPromptPart.
+    # So we check it's value and then replace it with the original RetryPromptPart to assert equality
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+    assert reloaded_messages[2] == snapshot(
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content="""\
+Validation feedback:
+Output validation failed: expected integer
+
+Fix the errors and try again.\
+""",
+                    timestamp=IsDatetime(),
+                )
+            ]
+        )
+    )
+    # Get original tool_call_id and replace with original RetryPromptPart
+    original_retry = messages[2].parts[0]
+    assert isinstance(original_retry, RetryPromptPart)
+    reloaded_messages[2] = ModelRequest(
+        parts=[
+            RetryPromptPart(
+                content='Output validation failed: expected integer', tool_call_id=original_retry.tool_call_id
+            )
+        ]
+    )
+    _sync_timestamps(messages, reloaded_messages)
+    assert reloaded_messages == messages
 
 
 async def test_adapter_dump_messages_consecutive_text():
@@ -2492,7 +2883,12 @@ async def test_adapter_dump_messages_text_with_interruption():
                         'input': '{}',
                         'output': 'result',
                         'provider_executed': True,
-                        'call_provider_metadata': {'pydantic_ai': {'provider_name': 'test'}},
+                        'call_provider_metadata': {
+                            'pydantic_ai': {
+                                'call_meta': {'provider_name': 'test'},
+                                'return_meta': {'provider_name': 'test'},
+                            }
+                        },
                         'preliminary': None,
                     },
                     {
@@ -2532,17 +2928,9 @@ async def test_adapter_dump_load_roundtrip():
 
     ui_messages = VercelAIAdapter.dump_messages(original_messages)
 
-    def sync_timestamps(original: list[ModelRequest | ModelResponse], new: list[ModelRequest | ModelResponse]) -> None:
-        for orig_msg, new_msg in zip(original, new):
-            for orig_part, new_part in zip(orig_msg.parts, new_msg.parts):
-                if hasattr(orig_part, 'timestamp') and hasattr(new_part, 'timestamp'):
-                    new_part.timestamp = orig_part.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-            if hasattr(orig_msg, 'timestamp') and hasattr(new_msg, 'timestamp'):  # pragma: no branch
-                new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue]
-
     # Load back to Pydantic AI format
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
-    sync_timestamps(original_messages, reloaded_messages)
+    _sync_timestamps(original_messages, reloaded_messages)
 
     assert reloaded_messages == original_messages
 
@@ -2884,3 +3272,1082 @@ async def test_adapter_dump_messages_with_cache_point():
             }
         ]
     )
+
+
+async def test_adapter_text_part_with_provider_metadata():
+    """Test TextPart with provider_name and provider_details preserves metadata and roundtrips."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                TextPart(
+                    content='Hello with metadata',
+                    id='text_123',
+                    provider_name='openai',
+                    provider_details={'model': 'gpt-4', 'finish_reason': 'stop'},
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {
+                        'type': 'text',
+                        'text': 'Hello with metadata',
+                        'state': 'done',
+                        'provider_metadata': {
+                            'pydantic_ai': {
+                                'id': 'text_123',
+                                'provider_name': 'openai',
+                                'provider_details': {'model': 'gpt-4', 'finish_reason': 'stop'},
+                            }
+                        },
+                    }
+                ],
+            }
+        ]
+    )
+
+    # Verify roundtrip
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+    _sync_timestamps(messages, reloaded_messages)
+    assert reloaded_messages == messages
+
+
+async def test_adapter_load_messages_text_with_provider_metadata():
+    """Test loading TextUIPart with provider_metadata preserves metadata on TextPart."""
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                TextUIPart(
+                    text='Hello with metadata',
+                    state='done',
+                    provider_metadata={
+                        'pydantic_ai': {
+                            'id': 'text_123',
+                            'provider_name': 'anthropic',
+                            'provider_details': {'model': 'gpt-4', 'tokens': 50},
+                        }
+                    },
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='Hello with metadata',
+                        id='text_123',
+                        provider_name='anthropic',
+                        provider_details={'model': 'gpt-4', 'tokens': 50},
+                    )
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+async def test_adapter_tool_call_part_with_provider_metadata():
+    """Test ToolCallPart with provider_name and provider_details preserves metadata and roundtrips."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Do something')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='my_tool',
+                    args={'arg': 'value'},
+                    tool_call_id='tool_abc',
+                    id='call_123',
+                    provider_name='openai',
+                    provider_details={'index': 0, 'type': 'function'},
+                ),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='my_tool',
+                    content='result',
+                    tool_call_id='tool_abc',
+                )
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'user',
+                'metadata': None,
+                'parts': [{'type': 'text', 'text': 'Do something', 'state': 'done', 'provider_metadata': None}],
+            },
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {
+                        'type': 'dynamic-tool',
+                        'tool_name': 'my_tool',
+                        'tool_call_id': 'tool_abc',
+                        'state': 'output-available',
+                        'input': '{"arg":"value"}',
+                        'output': 'result',
+                        'call_provider_metadata': {
+                            'pydantic_ai': {
+                                'id': 'call_123',
+                                'provider_name': 'openai',
+                                'provider_details': {'index': 0, 'type': 'function'},
+                            }
+                        },
+                        'preliminary': None,
+                    }
+                ],
+            },
+        ]
+    )
+
+    # Verify roundtrip
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+    _sync_timestamps(messages, reloaded_messages)
+    assert reloaded_messages == messages
+
+
+async def test_adapter_load_messages_tool_call_with_provider_metadata():
+    """Test loading dynamic tool part with provider_metadata preserves metadata on ToolCallPart."""
+    from pydantic_ai.ui.vercel_ai.request_types import DynamicToolInputAvailablePart
+
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                DynamicToolInputAvailablePart(
+                    tool_name='my_tool',
+                    tool_call_id='tc_123',
+                    input='{"key": "value"}',
+                    state='input-available',
+                    call_provider_metadata={
+                        'pydantic_ai': {
+                            'provider_name': 'anthropic',
+                            'provider_details': {'index': 0},
+                        }
+                    },
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='my_tool',
+                        args={'key': 'value'},
+                        tool_call_id='tc_123',
+                        provider_name='anthropic',
+                        provider_details={'index': 0},
+                    ),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+async def test_adapter_file_part_with_provider_metadata():
+    """Test FilePart with provider metadata preserves id, provider_name, provider_details and roundtrips."""
+    # Use BinaryImage (not BinaryContent) since that's what load_messages produces for images
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                FilePart(
+                    content=BinaryImage(data=b'file_data', media_type='image/png'),
+                    id='file_123',
+                    provider_name='openai',
+                    provider_details={'generation_id': 'gen_abc'},
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {
+                        'type': 'file',
+                        'media_type': 'image/png',
+                        'filename': None,
+                        'url': 'data:image/png;base64,ZmlsZV9kYXRh',
+                        'provider_metadata': {
+                            'pydantic_ai': {
+                                'id': 'file_123',
+                                'provider_name': 'openai',
+                                'provider_details': {'generation_id': 'gen_abc'},
+                            }
+                        },
+                    }
+                ],
+            }
+        ]
+    )
+
+    # Verify roundtrip
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+    _sync_timestamps(messages, reloaded_messages)
+    assert reloaded_messages == messages
+
+
+async def test_adapter_load_messages_file_with_provider_metadata():
+    """Test loading FileUIPart with provider_metadata preserves id, provider_name, and provider_details."""
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                FileUIPart(
+                    url='data:image/png;base64,ZmlsZV9kYXRh',
+                    media_type='image/png',
+                    provider_metadata={
+                        'pydantic_ai': {
+                            'id': 'file_456',
+                            'provider_name': 'anthropic',
+                            'provider_details': {'source': 'generated'},
+                        }
+                    },
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    FilePart(
+                        content=BinaryImage(data=b'file_data', media_type='image/png', _identifier='cdd967'),
+                        id='file_456',
+                        provider_name='anthropic',
+                        provider_details={'source': 'generated'},
+                    )
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+async def test_adapter_builtin_tool_part_with_provider_metadata():
+    """Test BuiltinToolCallPart with id, provider_name, provider_details and roundtrips."""
+    # Use JSON string for content since that's what load_messages produces
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Search')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'test'},
+                    tool_call_id='bt_123',
+                    id='call_456',
+                    provider_name='openai',
+                    provider_details={'tool_type': 'web_search_preview'},
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content='{"results":[]}',  # JSON string for roundtrip compatibility
+                    tool_call_id='bt_123',
+                    provider_name='openai',
+                    provider_details={'execution_time_ms': 150},
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'user',
+                'metadata': None,
+                'parts': [{'type': 'text', 'text': 'Search', 'state': 'done', 'provider_metadata': None}],
+            },
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {
+                        'type': 'tool-web_search',
+                        'tool_call_id': 'bt_123',
+                        'state': 'output-available',
+                        'input': '{"query":"test"}',
+                        'output': '{"results":[]}',
+                        'provider_executed': True,
+                        'call_provider_metadata': {
+                            'pydantic_ai': {
+                                'call_meta': {
+                                    'id': 'call_456',
+                                    'provider_name': 'openai',
+                                    'provider_details': {'tool_type': 'web_search_preview'},
+                                },
+                                'return_meta': {
+                                    'provider_name': 'openai',
+                                    'provider_details': {'execution_time_ms': 150},
+                                },
+                            }
+                        },
+                        'preliminary': None,
+                    }
+                ],
+            },
+        ]
+    )
+
+    # Verify roundtrip
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+    _sync_timestamps(messages, reloaded_messages)
+    assert reloaded_messages == messages
+
+
+async def test_adapter_builtin_tool_error_part_with_provider_metadata():
+    """Test BuiltinToolReturnPart with error content creates ToolOutputErrorPart and roundtrips."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Search')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'test'},
+                    tool_call_id='bt_err_123',
+                    id='call_err_456',
+                    provider_name='openai',
+                    provider_details={'tool_type': 'web_search_preview'},
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content={'error_text': 'Search failed: rate limit exceeded', 'is_error': True},
+                    tool_call_id='bt_err_123',
+                    provider_name='openai',
+                    provider_details={'error_code': 'RATE_LIMIT'},
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'user',
+                'metadata': None,
+                'parts': [{'type': 'text', 'text': 'Search', 'state': 'done', 'provider_metadata': None}],
+            },
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {
+                        'type': 'tool-web_search',
+                        'tool_call_id': 'bt_err_123',
+                        'state': 'output-error',
+                        'input': '{"query":"test"}',
+                        'raw_input': None,
+                        'error_text': 'Search failed: rate limit exceeded',
+                        'provider_executed': True,
+                        'call_provider_metadata': {
+                            'pydantic_ai': {
+                                'call_meta': {
+                                    'id': 'call_err_456',
+                                    'provider_name': 'openai',
+                                    'provider_details': {'tool_type': 'web_search_preview'},
+                                },
+                                'return_meta': {
+                                    'provider_name': 'openai',
+                                    'provider_details': {'error_code': 'RATE_LIMIT'},
+                                },
+                            }
+                        },
+                    }
+                ],
+            },
+        ]
+    )
+
+    # Verify roundtrip
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+    _sync_timestamps(messages, reloaded_messages)
+    assert reloaded_messages == messages
+
+
+async def test_adapter_load_messages_builtin_tool_with_provider_details():
+    """Test loading builtin tool with provider_details on return part."""
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                ToolOutputAvailablePart(
+                    type='tool-web_search',
+                    tool_call_id='bt_load',
+                    input='{"query": "test"}',
+                    output='{"results": []}',
+                    state='output-available',
+                    provider_executed=True,
+                    call_provider_metadata={
+                        'pydantic_ai': {
+                            'call_meta': {
+                                'id': 'call_456',
+                                'provider_name': 'openai',
+                                'provider_details': {'tool_type': 'web_search_preview'},
+                            },
+                            'return_meta': {
+                                'id': 'call_456',
+                                'provider_name': 'openai',
+                                'provider_details': {'execution_time_ms': 150},
+                            },
+                        }
+                    },
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'test'},
+                        tool_call_id='bt_load',
+                        id='call_456',
+                        provider_details={'tool_type': 'web_search_preview'},
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content='{"results": []}',
+                        tool_call_id='bt_load',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                        provider_details={'execution_time_ms': 150},
+                    ),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+async def test_adapter_load_messages_builtin_tool_error_with_provider_details():
+    """Test loading builtin tool error with provider_details - ensures ToolOutputErrorPart metadata is extracted."""
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                ToolOutputErrorPart(
+                    type='tool-web_search',
+                    tool_call_id='bt_error',
+                    input='{"query": "test"}',
+                    error_text='Search failed: rate limit exceeded',
+                    state='output-error',
+                    provider_executed=True,
+                    call_provider_metadata={
+                        'pydantic_ai': {
+                            'call_meta': {
+                                'id': 'call_789',
+                                'provider_name': 'openai',
+                                'provider_details': {'tool_type': 'web_search_preview'},
+                            },
+                            'return_meta': {
+                                'provider_name': 'openai',
+                                'provider_details': {'error_code': 'RATE_LIMIT'},
+                            },
+                        }
+                    },
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'test'},
+                        tool_call_id='bt_error',
+                        id='call_789',
+                        provider_name='openai',
+                        provider_details={'tool_type': 'web_search_preview'},
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content={'error_text': 'Search failed: rate limit exceeded', 'is_error': True},
+                        tool_call_id='bt_error',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                        provider_details={'error_code': 'RATE_LIMIT'},
+                    ),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+async def test_adapter_load_messages_tool_input_streaming_part():
+    """Test loading ToolInputStreamingPart which doesn't have call_provider_metadata yet."""
+    from pydantic_ai.ui.vercel_ai.request_types import ToolInputStreamingPart
+
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                ToolInputStreamingPart(
+                    type='tool-my_tool',
+                    tool_call_id='tc_streaming',
+                    input='{"query": "test"}',
+                    state='input-streaming',
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='my_tool', args={'query': 'test'}, tool_call_id='tc_streaming'),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+async def test_adapter_load_messages_dynamic_tool_input_streaming_part():
+    """Test loading DynamicToolInputStreamingPart which doesn't have call_provider_metadata yet."""
+    from pydantic_ai.ui.vercel_ai.request_types import DynamicToolInputStreamingPart
+
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                DynamicToolInputStreamingPart(
+                    tool_name='dynamic_tool',
+                    tool_call_id='tc_dyn_streaming',
+                    input='{"arg": 123}',
+                    state='input-streaming',
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='dynamic_tool', args={'arg': 123}, tool_call_id='tc_dyn_streaming'),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+async def test_adapter_dump_messages_tool_error_with_provider_metadata():
+    """Test dumping ToolCallPart with RetryPromptPart includes provider metadata with provider_name."""
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Do task')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='failing_tool',
+                    args={'x': 1},
+                    tool_call_id='tc_fail',
+                    id='call_fail_id',
+                    provider_name='google',
+                    provider_details={'attempt': 1},
+                ),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    content='Tool execution failed',
+                    tool_name='failing_tool',
+                    tool_call_id='tc_fail',
+                )
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'user',
+                'metadata': None,
+                'parts': [{'type': 'text', 'text': 'Do task', 'state': 'done', 'provider_metadata': None}],
+            },
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {
+                        'type': 'dynamic-tool',
+                        'tool_name': 'failing_tool',
+                        'tool_call_id': 'tc_fail',
+                        'state': 'output-error',
+                        'input': '{"x":1}',
+                        'error_text': """\
+Tool execution failed
+
+Fix the errors and try again.\
+""",
+                        'call_provider_metadata': {
+                            'pydantic_ai': {
+                                'id': 'call_fail_id',
+                                'provider_name': 'google',
+                                'provider_details': {'attempt': 1},
+                            }
+                        },
+                    }
+                ],
+            },
+        ]
+    )
+
+    # Verify roundtrip
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+    # Content will have changed for retry prompt part, so we set it back to the original value
+    retry_prompt_part = reloaded_messages[2].parts[0]
+    assert isinstance(retry_prompt_part, RetryPromptPart)
+    assert retry_prompt_part.content == 'Tool execution failed\n\nFix the errors and try again.'
+    retry_prompt_part.content = 'Tool execution failed'
+    _sync_timestamps(messages, reloaded_messages)
+    assert reloaded_messages == messages
+
+
+async def test_event_stream_text_with_provider_metadata():
+    """Test that text events include provider_metadata when TextPart has provider_name and provider_details."""
+
+    async def event_generator():
+        part = TextPart(
+            content='Hello with details',
+            id='text_event_id',
+            provider_name='openai',
+            provider_details={'model': 'gpt-4', 'tokens': 10},
+        )
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Test')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {
+                'type': 'text-start',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'text_event_id',
+                        'provider_name': 'openai',
+                        'provider_details': {'model': 'gpt-4', 'tokens': 10},
+                    }
+                },
+            },
+            {
+                'type': 'text-delta',
+                'id': IsStr(),
+                'delta': 'Hello with details',
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'text_event_id',
+                        'provider_name': 'openai',
+                        'provider_details': {'model': 'gpt-4', 'tokens': 10},
+                    }
+                },
+            },
+            {
+                'type': 'text-end',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'text_event_id',
+                        'provider_name': 'openai',
+                        'provider_details': {'model': 'gpt-4', 'tokens': 10},
+                    }
+                },
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_event_stream_tool_call_end_with_provider_metadata():
+    """Test that tool-input-available events include provider_metadata with provider_name."""
+
+    async def event_generator():
+        part = ToolCallPart(
+            tool_name='my_tool',
+            tool_call_id='tc_meta',
+            args={'key': 'value'},
+            id='tool_call_id_123',
+            provider_name='anthropic',
+            provider_details={'tool_index': 0},
+        )
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Test')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': 'tc_meta',
+                'toolName': 'my_tool',
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'tool_call_id_123',
+                        'provider_name': 'anthropic',
+                        'provider_details': {'tool_index': 0},
+                    }
+                },
+            },
+            {'type': 'tool-input-delta', 'toolCallId': 'tc_meta', 'inputTextDelta': '{"key":"value"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'tc_meta',
+                'toolName': 'my_tool',
+                'input': {'key': 'value'},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'tool_call_id_123',
+                        'provider_name': 'anthropic',
+                        'provider_details': {'tool_index': 0},
+                    }
+                },
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_event_stream_builtin_tool_call_end_with_provider_metadata():
+    """Test that builtin tool-input-available events include provider_name in provider_metadata."""
+
+    async def event_generator():
+        part = BuiltinToolCallPart(
+            tool_name='web_search',
+            tool_call_id='btc_meta',
+            args={'query': 'test'},
+            id='builtin_call_id_456',
+            provider_name='openai',
+            provider_details={'tool_type': 'web_search_preview'},
+        )
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Search')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': 'btc_meta',
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'builtin_call_id_456',
+                        'provider_name': 'openai',
+                        'provider_details': {'tool_type': 'web_search_preview'},
+                    }
+                },
+            },
+            {'type': 'tool-input-delta', 'toolCallId': 'btc_meta', 'inputTextDelta': '{"query":"test"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'btc_meta',
+                'toolName': 'web_search',
+                'input': {'query': 'test'},
+                'providerExecuted': True,
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'provider_details': {'tool_type': 'web_search_preview'},
+                        'provider_name': 'openai',
+                        'id': 'builtin_call_id_456',
+                    }
+                },
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_event_stream_thinking_delta_with_provider_metadata():
+    """Test that thinking delta events include provider_metadata."""
+    from pydantic_ai.messages import ThinkingPartDelta
+
+    async def event_generator():
+        part = ThinkingPart(
+            content='',
+            id='think_delta',
+            signature='initial_sig',
+            provider_name='anthropic',
+            provider_details={'model': 'claude'},
+        )
+        yield PartStartEvent(index=0, part=part)
+        yield PartDeltaEvent(
+            index=0,
+            delta=ThinkingPartDelta(
+                content_delta='thinking...',
+                signature_delta='updated_sig',
+                provider_name='anthropic',
+                provider_details={'chunk': 1},
+            ),
+        )
+        yield PartEndEvent(
+            index=0,
+            part=ThinkingPart(
+                content='thinking...',
+                id='think_delta',
+                signature='updated_sig',
+                provider_name='anthropic',
+            ),
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Think')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {
+                'type': 'reasoning-start',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'think_delta',
+                        'signature': 'initial_sig',
+                        'provider_name': 'anthropic',
+                        'provider_details': {'model': 'claude'},
+                    }
+                },
+            },
+            {
+                'type': 'reasoning-delta',
+                'id': IsStr(),
+                'delta': 'thinking...',
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'provider_name': 'anthropic',
+                        'signature': 'updated_sig',
+                        'provider_details': {'chunk': 1},
+                    }
+                },
+            },
+            {
+                'type': 'reasoning-end',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {'id': 'think_delta', 'signature': 'updated_sig', 'provider_name': 'anthropic'}
+                },
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+def _sync_timestamps(original: list[ModelMessage], new: list[ModelMessage]) -> None:
+    """Utility function to sync timestamps between original and new messages."""
+    for orig_msg, new_msg in zip(original, new):
+        for orig_part, new_part in zip(orig_msg.parts, new_msg.parts):
+            if hasattr(orig_part, 'timestamp') and hasattr(new_part, 'timestamp'):
+                new_part.timestamp = orig_part.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        if hasattr(orig_msg, 'timestamp') and hasattr(new_msg, 'timestamp'):  # pragma: no branch
+            new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue]
+
+
+class TestDumpProviderMetadata:
+    async def test_dump_provider_metadata_filters_none_values(self):
+        """Test that dump_provider_metadata only includes non-None values."""
+
+        # All None - should return None
+        result = dump_provider_metadata(id=None, provider_name=None, provider_details=None)
+        assert result is None
+
+        # Some values
+        result = dump_provider_metadata(id='test_id', provider_name=None, provider_details={'key': 'val'})
+        assert result == {'pydantic_ai': {'id': 'test_id', 'provider_details': {'key': 'val'}}}
+
+        # All values
+        result = dump_provider_metadata(
+            id='full_id',
+            signature='sig',
+            provider_name='provider',
+            provider_details={'detail': 1},
+        )
+        assert result == {
+            'pydantic_ai': {
+                'id': 'full_id',
+                'signature': 'sig',
+                'provider_name': 'provider',
+                'provider_details': {'detail': 1},
+            }
+        }
+
+    async def test_dump_provider_metadata_wrapper_key(self):
+        """Test that dump_provider_metadata includes the wrapper key."""
+
+        result = dump_provider_metadata(
+            wrapper_key='test', id='test_id', provider_name='test_provider', provider_details={'test_detail': 1}
+        )
+        assert result == {
+            'test': {'id': 'test_id', 'provider_name': 'test_provider', 'provider_details': {'test_detail': 1}}
+        }
+
+        # Test with None wrapper key
+        result = dump_provider_metadata(
+            None, id='test_id', provider_name='test_provider', provider_details={'test_detail': 1}
+        )
+        assert result == {'id': 'test_id', 'provider_name': 'test_provider', 'provider_details': {'test_detail': 1}}
+
+
+class TestLoadProviderMetadata:
+    async def test_load_provider_metadata_loads_provider_metadata(self):
+        """Test that load_provider_metadata loads provider metadata."""
+
+        provider_metadata = {
+            'pydantic_ai': {'id': 'test_id', 'provider_name': 'test_provider', 'provider_details': {'test_detail': 1}}
+        }
+        result = load_provider_metadata(provider_metadata)
+        assert result == {'id': 'test_id', 'provider_name': 'test_provider', 'provider_details': {'test_detail': 1}}
+
+    async def test_load_provider_metadata_loads_provider_metadata_incorrect_key(self):
+        """Test that load_provider_metadata fails to load provider metadata if the wrapper key is not present."""
+
+        provider_metadata = {'test': {'id': 'test_id'}}
+        result = load_provider_metadata(provider_metadata)
+        assert result == {}

@@ -168,6 +168,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                         'allow_image_output': False,
                     },
                     'logfire.span_type': 'span',
+                    'gen_ai.provider.name': 'function',
                     'logfire.msg': 'chat fallback:function:failure_response:,function:success_response:',
                     'gen_ai.system': 'function',
                     'gen_ai.request.model': 'function:success_response:',
@@ -277,6 +278,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                         'allow_image_output': False,
                     },
                     'logfire.span_type': 'span',
+                    'gen_ai.provider.name': 'function',
                     'logfire.msg': 'chat fallback:function::failure_response_stream,function::success_response_stream',
                     'gen_ai.system': 'function',
                     'gen_ai.request.model': 'function::success_response_stream',
@@ -374,6 +376,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                 'end_time': 4000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
+                    'gen_ai.provider.name': 'fallback:function,function',
                     'gen_ai.system': 'fallback:function,function',
                     'gen_ai.request.model': 'fallback:function:failure_response:,function:failure_response:',
                     'model_request_parameters': {
@@ -843,6 +846,19 @@ Don't include any text or Markdown fencing before or after.
                 'end_time': 3000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
+                    'gen_ai.tool.definitions': [
+                        {
+                            'type': 'function',
+                            'name': 'final_result',
+                            'description': 'The final response which ends this conversation',
+                            'parameters': {
+                                'properties': {'bar': {'type': 'string'}},
+                                'required': ['bar'],
+                                'title': 'Foo',
+                                'type': 'object',
+                            },
+                        }
+                    ],
                     'model_request_parameters': {
                         'function_tools': [],
                         'builtin_tools': [],
@@ -871,6 +887,7 @@ Don't include any text or Markdown fencing before or after.
                         'allow_image_output': False,
                     },
                     'logfire.span_type': 'span',
+                    'gen_ai.provider.name': 'function',
                     'logfire.msg': 'chat fallback:function:tool_output_func:,function:prompted_output_func:',
                     'gen_ai.system': 'function',
                     'gen_ai.request.model': 'function:prompted_output_func:',
