@@ -76,8 +76,8 @@ app = agent.to_web(
 )
 ```
 
-!!! note "Memory Tool"
-    The `memory` builtin tool is not supported via `to_web()` or `clai web`. If your agent needs memory, configure the [`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool] directly on the agent at construction time.
+!!! note "Memory and Text Editor Tools"
+    The `memory` and `text_editor` builtin tools are not supported via `to_web()` or `clai web`. If your agent needs memory or text editing, configure the [`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool] or [`TextEditorTool`][pydantic_ai.builtin_tools.TextEditorTool] directly on the agent at construction time.
 
 ## Extra Instructions
 

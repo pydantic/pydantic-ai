@@ -17,6 +17,7 @@ __all__ = (
     'WebFetchTool',
     'UrlContextTool',
     'ImageGenerationTool',
+    'TextEditorTool',
     'MemoryTool',
     'MCPServerTool',
     'FileSearchTool',
@@ -358,6 +359,27 @@ class ImageGenerationTool(AbstractBuiltinTool):
 
 
 @dataclass(kw_only=True)
+class TextEditorTool(AbstractBuiltinTool):
+    """A builtin tool that allows your agent to view, create, modify, and delete text files.
+
+    Supported by:
+
+    * Anthropic
+    """
+
+    max_characters: int | None = None
+    """The maximum number of characters to return from `view` commands.
+
+    Supported by:
+
+    * Anthropic (Claude 4 text editor tool, `text_editor_20250728`)
+    """
+
+    kind: str = 'text_editor'
+    """The kind of tool."""
+
+
+@dataclass(kw_only=True)
 class MemoryTool(AbstractBuiltinTool):
     """A builtin tool that allows your agent to use memory.
 
@@ -478,4 +500,6 @@ DEPRECATED_BUILTIN_TOOLS: frozenset[type[AbstractBuiltinTool]] = frozenset({UrlC
 SUPPORTED_BUILTIN_TOOLS = frozenset(cls for cls in BUILTIN_TOOL_TYPES.values() if cls not in DEPRECATED_BUILTIN_TOOLS)
 """Get the set of all builtin tool types (excluding deprecated tools)."""
 
-BUILTIN_TOOLS_REQUIRING_CONFIG: frozenset[type[AbstractBuiltinTool]] = frozenset({MCPServerTool, MemoryTool})
+BUILTIN_TOOLS_REQUIRING_CONFIG: frozenset[type[AbstractBuiltinTool]] = frozenset(
+    {MCPServerTool, MemoryTool, TextEditorTool}
+)
