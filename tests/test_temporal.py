@@ -76,9 +76,6 @@ try:
         TemporalAgent,
         pydantic_ai_data_converter,
     )
-    from pydantic_ai.durable_exec.temporal._converter import (
-        _prepare_for_serialization,  # pyright: ignore[reportPrivateUsage]
-    )
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
@@ -3166,68 +3163,161 @@ def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> Non
     assert result['data_converter'].payload_codec is codec
 
 
-def test_prepare_for_serialization_handles_nested_file_urls() -> None:
-    """Test that _prepare_for_serialization handles FileUrl instances nested in containers."""
-    doc = DocumentUrl(url='https://example.com/doc/12345', media_type='application/pdf')
+# Tests for DocumentUrl serialization in Temporal
+# The key point is that media_type cannot be inferred from the URL and must be specified explicitly
 
-    # Top-level FileUrl
-    result = _prepare_for_serialization(doc)
-    assert result == snapshot(
-        {
-            'url': 'https://example.com/doc/12345',
-            'force_download': False,
-            'vendor_metadata': None,
-            'kind': 'document-url',
-            'media_type': 'application/pdf',
-            'identifier': 'eb8998',
-        }
-    )
 
-    # FileUrl in list
-    result = _prepare_for_serialization([doc])
-    assert result == snapshot(
-        [
-            {
-                'url': 'https://example.com/doc/12345',
-                'force_download': False,
-                'vendor_metadata': None,
-                'kind': 'document-url',
-                'media_type': 'application/pdf',
-                'identifier': 'eb8998',
-            }
-        ]
-    )
+document_tool_agent = Agent(TestModel(), name='document_tool_agent')
 
-    # FileUrl in dict
-    result = _prepare_for_serialization({'doc': doc})
-    assert result == snapshot(
-        {
-            'doc': {
-                'url': 'https://example.com/doc/12345',
-                'force_download': False,
-                'vendor_metadata': None,
-                'kind': 'document-url',
-                'media_type': 'application/pdf',
-                'identifier': 'eb8998',
-            }
-        }
-    )
 
-    # FileUrl in nested structure
-    result = _prepare_for_serialization({'items': [{'doc': doc}]})
-    assert result == snapshot(
-        {
-            'items': [
-                {
-                    'doc': {
-                        'url': 'https://example.com/doc/12345',
-                        'force_download': False,
-                        'vendor_metadata': None,
-                        'kind': 'document-url',
-                        'media_type': 'application/pdf',
-                        'identifier': 'eb8998',
-                    }
-                }
+@document_tool_agent.tool
+def get_document(ctx: RunContext[None]) -> list[str | DocumentUrl]:
+    """Return a list with text and DocumentUrl."""
+    # URL doesn't hint at media type, so media_type must be specified explicitly
+    return ['test', DocumentUrl(url='https://example.com/doc/12345', media_type='application/pdf')]
+
+
+document_tool_temporal_agent = TemporalAgent(document_tool_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class DocumentToolWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[ModelMessage]:
+        result = await document_tool_temporal_agent.run(prompt)
+        return result.all_messages()
+
+
+async def test_document_url_tool_return_serialization_in_workflow(client: Client):
+    """Test that DocumentUrl returned from a tool survives Temporal activity→workflow serialization.
+
+    This tests that FileUrl instances (like DocumentUrl) are properly serialized
+    and reconstructed after deserialization. The key point is that the media_type
+    cannot be inferred from the URL and must be specified explicitly.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DocumentToolWorkflow],
+        plugins=[AgentPlugin(document_tool_temporal_agent)],
+    ):
+        messages = await client.execute_workflow(
+            DocumentToolWorkflow.run,
+            args=['Call the tool'],
+            id='test_document_url_tool_return_serialization',
+            task_queue=TASK_QUEUE,
+        )
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='Call the tool', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_document', args={}, tool_call_id='pyd_ai_tool_call_id__get_document'
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=53, output_tokens=2),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='get_document',
+                            content=['test', 'See file eb8998'],
+                            tool_call_id='pyd_ai_tool_call_id__get_document',
+                            timestamp=IsDatetime(),
+                        ),
+                        UserPromptPart(
+                            content=[
+                                'This is file eb8998:',
+                                DocumentUrl(
+                                    url='https://example.com/doc/12345',
+                                    media_type='application/pdf',
+                                    _identifier='eb8998',
+                                ),
+                            ],
+                            timestamp=IsDatetime(),
+                        ),
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"get_document":["test","See file eb8998"]}')],
+                    usage=RequestUsage(input_tokens=68, output_tokens=10),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
             ]
-        }
-    )
+        )
+
+
+document_input_agent = Agent(TestModel(), name='document_input_agent')
+
+document_input_temporal_agent = TemporalAgent(document_input_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class DocumentInputWorkflow:
+    @workflow.run
+    async def run(self, prompt: list[str | DocumentUrl]) -> list[ModelMessage]:
+        result = await document_input_temporal_agent.run(prompt)
+        return result.all_messages()
+
+
+async def test_document_url_input_serialization_in_workflow(client: Client):
+    """Test that DocumentUrl passed to agent.run survives Temporal workflow→activity serialization.
+
+    This tests that FileUrl instances (like DocumentUrl) are properly serialized when passed
+    as input to a workflow and reconstructed for the activity. The key point is that the
+    media_type cannot be inferred from the URL and must be specified explicitly.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DocumentInputWorkflow],
+        plugins=[AgentPlugin(document_input_temporal_agent)],
+    ):
+        # URL doesn't hint at media type, so media_type must be specified explicitly
+        doc = DocumentUrl(url='https://example.com/doc/12345', media_type='application/pdf')
+        messages = await client.execute_workflow(
+            DocumentInputWorkflow.run,
+            args=[['Describe this document', doc]],
+            id='test_document_url_input_serialization',
+            task_queue=TASK_QUEUE,
+        )
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content=[
+                                'Describe this document',
+                                DocumentUrl(
+                                    url='https://example.com/doc/12345',
+                                    media_type='application/pdf',
+                                    _identifier='eb8998',
+                                ),
+                            ],
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='success (no tool calls)')],
+                    usage=RequestUsage(input_tokens=54, output_tokens=4),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
