@@ -1,0 +1,155 @@
+interactions:
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+    method: GET
+    uri: https://huggingface.co/api/models/meta-llama/Llama-4-Scout-17B-16E-Instruct?expand=inferenceProviderMapping
+  response:
+    headers:
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      connection:
+      - keep-alive
+      content-length:
+      - '805'
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"2f4-2Jth5KZLXOacamWJfUkoFIKU18w"
+      ratelimit:
+      - '"api";r=999;t=217'
+      ratelimit-policy:
+      - '"fixed window";"api";q=1000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin
+    parsed_body:
+      _id: 67ed3cd9290a7f9d3301f9c1
+      id: meta-llama/Llama-4-Scout-17B-16E-Instruct
+      inferenceProviderMapping:
+        groq:
+          isModelAuthor: false
+          providerId: meta-llama/llama-4-scout-17b-16e-instruct
+          status: live
+          task: conversational
+        novita:
+          isModelAuthor: false
+          providerId: meta-llama/llama-4-scout-17b-16e-instruct
+          status: live
+          task: conversational
+        nscale:
+          isModelAuthor: false
+          providerId: meta-llama/Llama-4-Scout-17B-16E-Instruct
+          status: error
+          task: conversational
+        sambanova:
+          isModelAuthor: false
+          providerId: Llama-4-Scout-17B-16E-Instruct
+          status: error
+          task: conversational
+        together:
+          isModelAuthor: false
+          providerId: meta-llama/Llama-4-Scout-17B-16E-Instruct
+          status: live
+          task: conversational
+    status:
+      code: 200
+      message: OK
+- request:
+    body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      model: meta-llama/Llama-4-Scout-17B-16E-Instruct
+      stream: false
+      tool_choice: none
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+    headers:
+      content-type:
+      - application/json
+    method: POST
+    uri: https://router.huggingface.co/together/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"651-XxMTPC3E07beMSTXZe+d03XoU2w"
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      retry-after:
+      - '2'
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: |-
+            I'm not able to provide real-time information such as current weather conditions. However, I can suggest some ways for you to find out the current weather in Paris:
+
+            1. Check a weather website or app: You can check websites like AccuWeather, Weather.com, or Météo-France (the French national meteorological service) for up-to-date weather forecasts and current conditions in Paris.
+            2. Use a search engine: Simply type "Paris weather" or "weather Paris" in a search engine like Google, and you'll get the current weather conditions and forecast.
+            3. Check a travel website: If you're planning a trip to Paris, you can check travel websites like TripAdvisor or Lonely Planet for weather information and tips on what to pack.
+
+            Keep in mind that Paris has a temperate climate with mild winters and warm summers. The best time to visit Paris is during the spring (April-May) and autumn (September-October), when the weather is pleasant and mild.
+
+            If you need more specific information or have a specific question, feel free to ask!
+          reasoning: null
+          role: assistant
+          tool_calls: []
+        seed: null
+      created: 1769718261
+      id: oVGwf7N-z1gNr-9c5b73c8d8f737a2
+      metadata:
+        weight_version: default
+      model: meta-llama/Llama-4-Scout-17B-16E-Instruct
+      object: chat.completion
+      prompt: []
+      usage:
+        completion_tokens: 210
+        prompt_tokens: 17
+        total_tokens: 227
+    status:
+      code: 200
+      message: OK
+version: 1

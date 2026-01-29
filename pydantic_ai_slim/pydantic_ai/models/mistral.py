@@ -344,8 +344,10 @@ class MistralModel(Model):
         tool_defs = model_request_parameters.tool_defs
 
         tool_choice: MistralToolChoiceEnum
-        if resolved_tool_choice in ('auto', 'required'):
-            tool_choice = resolved_tool_choice
+        if resolved_tool_choice == 'auto':
+            tool_choice = 'auto'
+        elif resolved_tool_choice == 'required':
+            tool_choice = 'any'
         elif resolved_tool_choice == 'none':
             # Mistral returns garbled responses when tool_choice='none' with tools present.
             # Don't send tools at all.
@@ -354,7 +356,7 @@ class MistralModel(Model):
             tool_choice_mode, tool_names = resolved_tool_choice
             # Breaks caching, but Mistral doesn't support limiting tools via API arg
             tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-            tool_choice = 'auto' if tool_choice_mode == 'auto' else 'required'
+            tool_choice = 'auto' if tool_choice_mode == 'auto' else 'any'
         else:
             assert_never(resolved_tool_choice)
 

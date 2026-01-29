@@ -86,8 +86,6 @@ try:
         chat_completion_chunk,
         chat_completion_token_logprob,
     )
-    from openai.types.chat.chat_completion_allowed_tool_choice_param import ChatCompletionAllowedToolChoiceParam
-    from openai.types.chat.chat_completion_allowed_tools_param import ChatCompletionAllowedToolsParam
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
     from openai.types.chat.chat_completion_content_part_param import File, FileFile
@@ -112,6 +110,7 @@ try:
     )
     from openai.types.responses.response_status import ResponseStatus
     from openai.types.responses.tool_choice_allowed_param import ToolChoiceAllowedParam
+    from openai.types.responses.tool_choice_function_param import ToolChoiceFunctionParam
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
 
@@ -661,19 +660,11 @@ class OpenAIChatModel(Model):
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk] | ModelResponse:
-        
         tool_choice: ChatCompletionToolChoiceOptionParam | None
 
         tools, tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
         web_search_options = self._get_web_search_options(model_request_parameters)
-
         profile = OpenAIModelProfile.from_profile(self.profile)
-        if not tools:
-            tool_choice = None
-        elif not model_request_parameters.allow_text_output and profile.openai_supports_tool_choice_required:
-            tool_choice = 'required'
-        else:
-            tool_choice = 'auto'
 
         openai_messages = await self._map_messages(messages, model_request_parameters)
 
@@ -904,13 +895,10 @@ class OpenAIChatModel(Model):
             tool_choice = 'required' if supports else 'auto'
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            tool_choice = ChatCompletionAllowedToolChoiceParam(
-                type='allowed_tools',
-                allowed_tools=ChatCompletionAllowedToolsParam(
-                    mode=tool_choice_mode,
-                    tools=[{'type': 'function', 'function': {'name': n}} for n in tool_names],
-                ),
-            )
+            if len(tool_names) == 1:
+                tool_choice = {'type': 'function', 'function': {'name': tool_names[0]}}
+            else:
+                tool_choice = tool_choice_mode
         else:
             assert_never(resolved_tool_choice)
 
@@ -1710,11 +1698,14 @@ class OpenAIResponsesModel(Model):
             tool_choice = 'required' if supports else 'auto'
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            tool_choice = ToolChoiceAllowedParam(
-                type='allowed_tools',
-                mode=tool_choice_mode,
-                tools=[{'type': 'function', 'name': n} for n in tool_names],
-            )
+            if len(tool_names) == 1:
+                tool_choice = ToolChoiceFunctionParam(type='function', name=tool_names[0])
+            else:
+                tool_choice = ToolChoiceAllowedParam(
+                    type='allowed_tools',
+                    mode=tool_choice_mode,
+                    tools=[{'type': 'function', 'name': n} for n in tool_names],
+                )
         else:
             assert_never(resolved_tool_choice)
 

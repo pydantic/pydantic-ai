@@ -1,0 +1,95 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '432'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      n: 1
+      stream: false
+      tool_choice: none
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '1773'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: |-
+            I'm not able to provide real-time information about the weather in Paris or any other location. However, I can suggest some ways for you to find out the current weather conditions in Paris:
+
+            1. Check a weather website or app: You can visit websites like AccuWeather, Weather.com, or Météo-France (the official French weather service) to get the current weather conditions in Paris. You can also download mobile apps like Dark Sky or Weather Underground to get real-time weather updates.
+            2. Look up a weather forecast: You can search for "Paris weather forecast" on a search engine like Google to find a list of websites that provide weather forecasts for Paris.
+            3. Check social media: Many weather services and news outlets have social media accounts where they post updates about the weather.
+
+            Keep in mind that Paris is in the Northern Hemisphere and has a temperate climate with four distinct seasons. The weather can be quite unpredictable, so it's always a good idea to check the forecast before planning your activities.
+
+            If you have any specific questions about Paris or its climate, I'll do my best to help!
+          role: assistant
+      created: 1769718253
+      id: chatcmpl-d0ac359b-5e60-417f-9f95-f90dd331e314
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_f08cd12a81
+      usage:
+        completion_time: 0.530954608
+        completion_tokens: 218
+        prompt_time: 0.000419446
+        prompt_tokens: 16
+        queue_time: 0.124494042
+        total_time: 0.531374054
+        total_tokens: 234
+      usage_breakdown: null
+      x_groq:
+        id: req_01kg5pv15je17bt63efwz2qrnb
+        seed: 1685877399
+    status:
+      code: 200
+      message: OK
+version: 1

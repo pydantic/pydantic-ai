@@ -1,0 +1,137 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: What's the weather in Paris?
+        role: ROLE_USER
+      model: grok-3-fast
+      tools:
+      - function:
+          name: get_weather
+          description: Get the current weather for a city.
+          parameters: '{"additionalProperties": false, "properties": {"city": {"type":
+            "string"}}, "required": ["city"], "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+    raw: !!binary |
+      CiIKHgocV2hhdCdzIHRoZSB3ZWF0aGVyIGluIFBhcmlzPxABEgtncm9rLTMtZmFzdIoBqgEKpwEK
+      C2dldF93ZWF0aGVyEiNHZXQgdGhlIGN1cnJlbnQgd2VhdGhlciBmb3IgYSBjaXR5LiJzeyJhZGRp
+      dGlvbmFsUHJvcGVydGllcyI6IGZhbHNlLCAicHJvcGVydGllcyI6IHsiY2l0eSI6IHsidHlwZSI6
+      ICJzdHJpbmcifX0sICJyZXF1aXJlZCI6IFsiY2l0eSJdLCAidHlwZSI6ICJvYmplY3QifZIBAggB
+  response_sample:
+    json:
+      id: 0df1fb1e-ff52-4237-52d3-8d4ef28014af
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_62175551
+            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: get_weather
+              arguments: '{"city":"Paris"}'
+      created: '2026-01-29T21:33:15.522327026Z'
+      model: grok-3
+      system_fingerprint: fp_a50f881eb7
+      usage:
+        completion_tokens: 26
+        prompt_tokens: 259
+        total_tokens: 285
+        prompt_text_tokens: 259
+        cached_prompt_text_tokens: 258
+      settings:
+        parallel_tool_calls: true
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - function:
+            name: get_weather
+            description: Get the current weather for a city.
+            parameters: '{"additionalProperties": false, "properties": {"city": {"type":
+              "string"}}, "required": ["city"], "type": "object"}'
+        top_p: 0.95
+    raw: !!binary |
+      CiQwZGYxZmIxZS1mZjUyLTQyMzctNTJkMy04ZDRlZjI4MDE0YWYSPAgEGjgQAho0Cg1jYWxsXzYy
+      MTc1NTUxEAEYAVIfCgtnZXRfd2VhdGhlchIQeyJjaXR5IjoiUGFyaXMifSoMCJuk78sGEPKniPkB
+      MgZncm9rLTM6DWZwX2E1MGY4ODFlYjdKEwgaEIMCGJ0CIIMCOIICWKj85QJavQEQAS0zMzM/OgII
+      AUKqAQqnAQoLZ2V0X3dlYXRoZXISI0dldCB0aGUgY3VycmVudCB3ZWF0aGVyIGZvciBhIGNpdHku
+      InN7ImFkZGl0aW9uYWxQcm9wZXJ0aWVzIjogZmFsc2UsICJwcm9wZXJ0aWVzIjogeyJjaXR5Ijog
+      eyJ0eXBlIjogInN0cmluZyJ9fSwgInJlcXVpcmVkIjogWyJjaXR5Il0sICJ0eXBlIjogIm9iamVj
+      dCJ9TTMzcz8=
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: What's the weather in Paris?
+        role: ROLE_USER
+      - content:
+        - text: ''
+        role: ROLE_ASSISTANT
+        tool_calls:
+        - id: call_62175551
+          type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+          status: TOOL_CALL_STATUS_COMPLETED
+          function:
+            name: get_weather
+            arguments: '{"city":"Paris"}'
+      - content:
+        - text: Sunny, 22C in Paris
+        role: ROLE_TOOL
+      model: grok-3-fast
+      tools:
+      - function:
+          name: get_weather
+          description: Get the current weather for a city.
+          parameters: '{"additionalProperties": false, "properties": {"city": {"type":
+            "string"}}, "required": ["city"], "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+    raw: !!binary |
+      CiIKHgocV2hhdCdzIHRoZSB3ZWF0aGVyIGluIFBhcmlzPxABCjwKAgoAEAIiNAoNY2FsbF82MjE3
+      NTU1MRABGAFSHwoLZ2V0X3dlYXRoZXISEHsiY2l0eSI6IlBhcmlzIn0KGQoVChNTdW5ueSwgMjJD
+      IGluIFBhcmlzEAUSC2dyb2stMy1mYXN0igGqAQqnAQoLZ2V0X3dlYXRoZXISI0dldCB0aGUgY3Vy
+      cmVudCB3ZWF0aGVyIGZvciBhIGNpdHkuInN7ImFkZGl0aW9uYWxQcm9wZXJ0aWVzIjogZmFsc2Us
+      ICJwcm9wZXJ0aWVzIjogeyJjaXR5IjogeyJ0eXBlIjogInN0cmluZyJ9fSwgInJlcXVpcmVkIjog
+      WyJjaXR5Il0sICJ0eXBlIjogIm9iamVjdCJ9kgECCAE=
+  response_sample:
+    json:
+      id: a74bdbd6-ab08-db29-f4aa-07077a7ed900
+      outputs:
+      - finish_reason: REASON_STOP
+        message:
+          content: The current weather in Paris is sunny with a temperature of 22°C.
+          role: ROLE_ASSISTANT
+      created: '2026-01-29T21:33:16.313676555Z'
+      model: grok-3
+      system_fingerprint: fp_a50f881eb7
+      usage:
+        completion_tokens: 15
+        prompt_tokens: 305
+        total_tokens: 320
+        prompt_text_tokens: 305
+        cached_prompt_text_tokens: 304
+      settings:
+        parallel_tool_calls: true
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - function:
+            name: get_weather
+            description: Get the current weather for a city.
+            parameters: '{"additionalProperties": false, "properties": {"city": {"type":
+              "string"}}, "required": ["city"], "type": "object"}'
+        top_p: 0.95
+    raw: !!binary |
+      CiRhNzRiZGJkNi1hYjA4LWRiMjktZjRhYS0wNzA3N2E3ZWQ5MDASSggDGkYKQlRoZSBjdXJyZW50
+      IHdlYXRoZXIgaW4gUGFyaXMgaXMgc3Vubnkgd2l0aCBhIHRlbXBlcmF0dXJlIG9mIDIywrBDLhAC
+      KgwInKTvywYQi6bJlQEyBmdyb2stMzoNZnBfYTUwZjg4MWViN0oTCA8QsQIYwAIgsQI4sAJYgKmW
+      Alq9ARABLTMzMz86AggBQqoBCqcBCgtnZXRfd2VhdGhlchIjR2V0IHRoZSBjdXJyZW50IHdlYXRo
+      ZXIgZm9yIGEgY2l0eS4ic3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3BlcnRp
+      ZXMiOiB7ImNpdHkiOiB7InR5cGUiOiAic3RyaW5nIn19LCAicmVxdWlyZWQiOiBbImNpdHkiXSwg
+      InR5cGUiOiAib2JqZWN0In1NMzNzPw==

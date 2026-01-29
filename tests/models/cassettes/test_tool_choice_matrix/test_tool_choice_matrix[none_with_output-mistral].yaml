@@ -1,0 +1,110 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '440'
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Tell me about Paris
+        role: user
+      model: mistral-large-latest
+      n: 1
+      stream: false
+      tool_choice: any
+      tools:
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3313'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019c0b9c-d479-72d1-a0fd-da7445b355b6
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city": "Paris", "summary": "Paris, the capital of France, is one of the most iconic and visited
+                cities in the world. Known as the \"City of Light\" (La Ville Lumière), Paris is celebrated for its rich history,
+                art, culture, architecture, and romance. \n\n**Key Highlights:**\n1. **Landmarks & Architecture**: Paris is
+                home to world-famous landmarks such as the **Eiffel Tower**, **Notre-Dame Cathedral**, **Louvre Museum**,
+                **Arc de Triomphe**, and **Sacré-Cœur Basilica**. The city''s architecture spans centuries, from medieval
+                structures to modern masterpieces.\n\n2. **Art & Culture**: The Louvre, the world''s largest art museum, houses
+                thousands of works, including the **Mona Lisa** and **Venus de Milo**. Other notable museums include the **Musée
+                d''Orsay**, **Centre Pompidou**, and **Musée de l''Orangerie**. Paris has also been a hub for artists like
+                Monet, Picasso, and Van Gogh.\n\n3. **Neighborhoods**: Paris is divided into 20 arrondissements (districts),
+                each with its own unique charm. The **Latin Quarter** is known for its student life, **Montmartre** for its
+                artistic history, **Le Marais** for its historic and trendy vibe, and **Champs-Élysées** for luxury shopping.\n\n4.
+                **Cuisine**: Paris is a paradise for food lovers. From croissants and baguettes in local bakeries to gourmet
+                dining in Michelin-starred restaurants, the city offers a diverse culinary experience. Don''t miss trying
+                French classics like **coq au vin**, **escargot**, **crème brûlée**, and **macarons**.\n\n5. **Parks & Gardens**:
+                Paris boasts beautiful green spaces like the **Luxembourg Gardens**, **Tuileries Garden**, **Bois de Boulogne**,
+                and **Parc des Buttes-Chaumont**, perfect for relaxation and leisurely strolls.\n\n6. **Fashion**: Paris is
+                a global fashion capital, hosting **Paris Fashion Week** and being home to luxury brands like Chanel, Dior,
+                Louis Vuitton, and Hermès. The city''s streets are a runway of style and elegance.\n\n7. **History**: Paris
+                has played a pivotal role in global history, from the French Revolution to World War II. The city''s museums,
+                monuments, and memorials offer deep insights into its past.\n\n8. **Romance**: Paris is often called the \"City
+                of Love\" for its enchanting atmosphere, charming cafés, and scenic views, especially along the **Seine River**.\n\n9.
+                **Transportation**: The city has an efficient public transportation system, including the **Métro**, buses,
+                and trains, making it easy to explore.\n\n10. **Events & Festivals**: Paris hosts numerous events throughout
+                the year, such as **Bastille Day** (July 14), **Paris Fashion Week**, **Nuit Blanche** (an all-night arts
+                festival), and **Christmas markets**.\n\nParis is a city that captivates the hearts of millions with its beauty,
+                creativity, and timeless allure."}'
+              name: final_result
+            id: nrVyckM2O
+            index: 0
+      created: 1769721353
+      id: 8eb41092bc5744f1806c5c01019fdda2
+      model: mistral-large-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 703
+        num_cached_tokens: 85
+        prompt_tokens: 86
+        total_tokens: 789
+    status:
+      code: 200
+      message: OK
+version: 1

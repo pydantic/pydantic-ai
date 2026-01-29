@@ -1,0 +1,104 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '644'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      n: 1
+      stream: false
+      tool_choice:
+        function:
+          name: get_weather
+        type: function
+      tools:
+      - function:
+          description: Get weather for a city
+          name: get_weather
+          parameters:
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+      - function:
+          description: Get time in a timezone
+          name: get_time
+          parameters:
+            properties:
+              timezone:
+                type: string
+            required:
+            - timezone
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '760'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: 9vggmcf10
+            type: function
+      created: 1769718269
+      id: chatcmpl-22569317-b40b-4d63-a817-be82ce9bb85d
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_f08cd12a81
+      usage:
+        completion_time: 0.066421531
+        completion_tokens: 29
+        prompt_time: 0.021794307
+        prompt_tokens: 757
+        queue_time: 0.073740324
+        total_time: 0.088215838
+        total_tokens: 786
+      usage_breakdown: null
+      x_groq:
+        id: req_01kg5pvgz1f119bxe96njvkbc1
+        seed: 1249737975
+    status:
+      code: 200
+      message: OK
+version: 1
