@@ -9,6 +9,7 @@ a task function to produce an evaluation report.
 
 from __future__ import annotations as _annotations
 
+import datetime
 import functools
 import inspect
 import sys
@@ -268,6 +269,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         *,
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
+        tags: Sequence[str] | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -287,6 +289,10 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             task_name: Optional override to the name of the task being executed, otherwise the name of the task
                 function will be used.
             metadata: Optional dict of experiment metadata.
+            tags: Optional list of tags to apply to this experiment. Tags are movable labels that can be used
+                to mark experiments (e.g., 'main', 'production', 'baseline'). When an experiment is run with
+                a tag, that tag is moved from any previous experiment to the new one within the same
+                dataset/task scope.
 
         Returns:
             A report containing the results of the evaluation.
@@ -301,6 +307,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         extra_attributes: dict[str, Any] = {'gen_ai.operation.name': 'experiment'}
         if metadata is not None:
             extra_attributes['metadata'] = metadata
+        if tags is not None:
+            extra_attributes['logfire.tags'] = list(tags)
         with (
             logfire_span(
                 'evaluate {name}',
@@ -349,6 +357,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 experiment_metadata=metadata,
                 span_id=span_id,
                 trace_id=trace_id,
+                start_timestamp=_get_span_start_timestamp(eval_span),
             )
             full_experiment_metadata: dict[str, Any] = {'n_cases': len(self.cases)}
             if metadata is not None:
@@ -371,6 +380,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         *,
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
+        tags: Sequence[str] | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -389,6 +399,10 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             task_name: Optional override to the name of the task being executed, otherwise the name of the task
                 function will be used.
             metadata: Optional dict of experiment metadata.
+            tags: Optional list of tags to apply to this experiment. Tags are movable labels that can be used
+                to mark experiments (e.g., 'main', 'production', 'baseline'). When an experiment is run with
+                a tag, that tag is moved from any previous experiment to the new one within the same
+                dataset/task scope.
 
         Returns:
             A report containing the results of the evaluation.
@@ -403,6 +417,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 retry_evaluators=retry_evaluators,
                 task_name=task_name,
                 metadata=metadata,
+                tags=tags,
             )
         )
 
@@ -1156,6 +1171,22 @@ def _get_span_duration(span: logfire_api.LogfireSpan, fallback: float) -> float:
         return (span.end_time - span.start_time) / 1_000_000_000  # type: ignore
     except (AttributeError, TypeError):  # pragma: lax no cover
         return fallback
+
+
+def _get_span_start_timestamp(span: logfire_api.LogfireSpan) -> datetime.datetime | None:
+    """Get the start timestamp of a span as a datetime.
+
+    Args:
+        span: The span to get the start timestamp for.
+
+    Returns:
+        The start timestamp of the span as a UTC datetime, or None if unavailable.
+    """
+    try:
+        start_time_ns: int = span.start_time  # type: ignore
+        return datetime.datetime.fromtimestamp(start_time_ns / 1_000_000_000, tz=datetime.timezone.utc)
+    except (AttributeError, TypeError):  # pragma: lax no cover
+        return None
 
 
 def _get_registry(
