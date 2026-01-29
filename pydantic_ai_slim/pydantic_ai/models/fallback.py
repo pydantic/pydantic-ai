@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, cast, get_origin
+from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, get_origin
 
 from opentelemetry.trace import get_current_span
 from typing_extensions import assert_never
@@ -24,8 +24,8 @@ if TYPE_CHECKING:
     from ..settings import ModelSettings
 
 # Type aliases for handlers (support both sync and async)
-ExceptionHandler = Callable[[Exception], bool | Awaitable[bool]]
-ResponseHandler = Callable[[ModelResponse], bool | Awaitable[bool]]
+ExceptionHandler = Callable[[Exception], Awaitable[bool]] | Callable[[Exception], bool]
+ResponseHandler = Callable[[ModelResponse], Awaitable[bool]] | Callable[[ModelResponse], bool]
 
 
 # The unified fallback_on type
@@ -56,13 +56,6 @@ def _is_exception_type(value: Any) -> TypeGuard[type[Exception]]:
     return isinstance(value, type) and issubclass(value, BaseException)
 
 
-def _is_exception_types_tuple(value: Any) -> TypeGuard[tuple[type[Exception], ...]]:
-    """Check if value is a tuple of exception types."""
-    if not isinstance(value, tuple):
-        return False
-    return all(_is_exception_type(item) for item in cast(tuple[object, ...], value))
-
-
 @dataclass(init=False)
 class FallbackModel(Model):
     """A model that uses one or more fallback models upon failure.
@@ -90,8 +83,8 @@ class FallbackModel(Model):
             fallback_on: Conditions that trigger fallback to the next model. Accepts:
 
                 - A tuple of exception types: `(ModelAPIError, RateLimitError)`
-                - An exception handler: `lambda exc: isinstance(exc, MyError)`
-                - A response handler: `def check(r: ModelResponse) -> bool`
+                - An exception handler (sync or async): `lambda exc: isinstance(exc, MyError)`
+                - A response handler (sync or async): `def check(r: ModelResponse) -> bool`
                 - A sequence mixing all of the above: `[ModelAPIError, exc_handler, response_handler]`
 
                 Handler type is auto-detected by inspecting type hints on the first parameter.
@@ -100,7 +93,7 @@ class FallbackModel(Model):
 
                 Note: For streaming requests, only exception-based fallback is supported, and only for
                 errors during stream initialization. Response handlers are ignored for streaming.
-                A future release will add streaming support for response-based fallback.
+                See https://github.com/pydantic/pydantic-ai/issues/4140.
         """
         super().__init__()
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
@@ -112,9 +105,9 @@ class FallbackModel(Model):
 
     def _parse_fallback_on(self, fallback_on: FallbackOn) -> None:
         """Parse the fallback_on parameter into exception and response handlers."""
-        if _is_exception_types_tuple(fallback_on):
-            # Tuple of exception types
-            self._exception_handlers.append(_exception_types_to_handler(fallback_on))
+        if isinstance(fallback_on, tuple):
+            # Tuple of exception types (typing guarantees tuple contents are exception types)
+            self._exception_handlers.append(_exception_types_to_handler(fallback_on))  # type: ignore[arg-type]
         elif _is_exception_type(fallback_on):
             # Single exception type
             self._exception_handlers.append(_exception_types_to_handler((fallback_on,)))
@@ -154,9 +147,9 @@ class FallbackModel(Model):
         """Check if any exception handler wants to trigger fallback."""
         for handler in self._exception_handlers:
             if is_async_callable(handler):
-                result = await cast(Awaitable[bool], handler(exc))
+                result = await handler(exc)
             else:
-                result = cast(bool, handler(exc))
+                result = handler(exc)
             if result:
                 return True
         return False
@@ -165,9 +158,9 @@ class FallbackModel(Model):
         """Check if any response handler wants to trigger fallback."""
         for handler in self._response_handlers:
             if is_async_callable(handler):
-                result = await cast(Awaitable[bool], handler(response))
+                result = await handler(response)
             else:
-                result = cast(bool, handler(response))
+                result = handler(response)
             if result:
                 return True
         return False
@@ -229,8 +222,8 @@ class FallbackModel(Model):
 
         Note: For streaming, only exception-based fallback is currently supported,
         and only for errors during stream initialization. Response handlers are
-        ignored for streaming requests. A future release will add streaming support
-        for response-based fallback.
+        ignored for streaming requests.
+        See https://github.com/pydantic/pydantic-ai/issues/4140.
         """
         exceptions: list[Exception] = []
 

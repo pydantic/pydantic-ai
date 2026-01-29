@@ -84,8 +84,11 @@ For details on when we'll accept contributions adding new models to Pydantic AI,
 ## Fallback Model
 
 You can use [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to attempt multiple models
-in sequence until one successfully returns a result. Under the hood, Pydantic AI automatically switches
-from one model to the next if the current model returns a 4xx or 5xx status code.
+in sequence until one succeeds. Pydantic AI can switch to the next model when the current model
+raises an exception (like a 4xx/5xx API error) **or** when the response content indicates a semantic
+failure (like a truncated response or a failed built-in tool call). This behavior is controlled by the
+[`fallback_on`][pydantic_ai.models.fallback.FallbackModel] parameter, which accepts exception types,
+exception handlers, and response handlers — all of which can be sync or async.
 
 !!! note
     The provider SDKs on which Models are based (like OpenAI, Anthropic, etc.) often have built-in retry logic that can delay the `FallbackModel` from activating.
@@ -236,18 +239,18 @@ passing a custom `fallback_on` argument to the `FallbackModel` constructor.
 !!! note
     Validation errors (from [structured output](../output.md#structured-output) or [tool parameters](../tools.md)) do **not** trigger fallback. These errors use the [retry mechanism](../agents.md#reflection-and-self-correction) instead, which re-prompts the same model to try again. This is intentional: validation errors stem from the non-deterministic nature of LLMs and may succeed on retry, whereas API errors (4xx/5xx) generally indicate issues that won't resolve by retrying the same request.
 
-!!! note "Streaming limitation"
-    For streaming requests, only exception-based fallback is currently supported, and only for errors during stream **initialization** (e.g., connection errors, authentication failures). If an exception occurs mid-stream after events have started flowing, it will propagate to the caller without triggering fallback. Response-based fallback for streaming is planned for a future release.
-
 ### Response-Based Fallback
 
 In addition to exception-based fallback, you can also trigger fallback based on the **content** of a model's response. This is useful when a model returns a successful HTTP response (no exception), but the response content indicates a semantic failure — for example, an unexpected finish reason or a built-in tool reporting failure.
 
+!!! note "Streaming limitation"
+    For streaming requests, only exception-based fallback is currently supported, and only for errors during stream **initialization** (e.g., connection errors, authentication failures). If an exception occurs mid-stream after events have started flowing, it will propagate to the caller without triggering fallback. Response-based fallback for streaming is planned for a future release (see [#4140](https://github.com/pydantic/pydantic-ai/issues/4140)).
+
 The `fallback_on` parameter accepts:
 
 - A tuple of exception types: `(ModelAPIError, ModelHTTPError)`
-- An exception handler: `lambda exc: isinstance(exc, MyError)`
-- A response handler: `def check(r: ModelResponse) -> bool`
+- An exception handler (sync or async): `lambda exc: isinstance(exc, MyError)`
+- A response handler (sync or async): `def check(r: ModelResponse) -> bool`
 - A list mixing all of the above: `[ModelAPIError, exc_handler, response_handler]`
 
 Handler type is auto-detected by inspecting type hints on the first parameter. If the first parameter is hinted as [`ModelResponse`][pydantic_ai.messages.ModelResponse], it's a response handler. Otherwise (including untyped handlers and lambdas), it's an exception handler.

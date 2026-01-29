@@ -1410,17 +1410,6 @@ def handler_with_bad_ref(x: "NonExistentType") -> bool:
     assert _is_response_handler(handler) is False  # pyright: ignore[reportArgumentType]
 
 
-def test_is_exception_types_tuple_with_non_exception() -> None:
-    """Test that tuples with non-exception types return False."""
-    from pydantic_ai.models.fallback import _is_exception_types_tuple  # pyright: ignore[reportPrivateUsage]
-
-    # Tuple with non-exception type
-    assert _is_exception_types_tuple((ValueError, str)) is False
-    assert _is_exception_types_tuple((int, float)) is False
-    # Valid exception tuple
-    assert _is_exception_types_tuple((ValueError, TypeError)) is True
-
-
 def test_fallback_on_single_exception_type_direct() -> None:
     """Test fallback_on with a single exception type (not in tuple/list)."""
     # This tests line 182-183 - single exception type
