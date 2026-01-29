@@ -51,6 +51,7 @@ dependencies = [
     "pydantic-evals=={{ version }}",
     "asyncpg>=0.30.0",
     "fastapi>=0.115.4",
+    # TODO: Update rag_surrealdb.py once logfire is updated to at least 4.19.0
     "logfire[asyncpg,fastapi,sqlite3,httpx]>=3.14.1",
     "python-multipart>=0.0.17",
     "rich>=13.9.2",
@@ -60,6 +61,7 @@ dependencies = [
     "mcp[cli]>=1.25.0,<2.0",
     "modal>=1.0.4",
     "duckdb>=1.3.2",
+    "surrealdb>=1.0.8",
     "datasets>=4.0.0",
     "pandas>=2.2.3",
 ]

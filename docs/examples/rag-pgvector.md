@@ -1,4 +1,4 @@
-# RAG
+# RAG with pgvector
 
 RAG search example. This demo allows you to ask question of the [logfire](https://pydantic.dev/logfire) documentation.
 
