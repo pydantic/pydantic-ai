@@ -119,12 +119,25 @@ class MontyRuntime(CodeRuntime):
                             try:
                                 results[cid] = {'return_value': task.result()}
 
-                            except (ModelRetry, CallDeferred, ApprovalRequired):
-                                # These are PyAI errors and should be handeled by PyAI not monty or the LLM
+                            except ModelRetry:
                                 # Cancel all the tool calls which are in flight
+                                # It makes sense to cancel the calls though because if in the chain something does not work most probably nothing works?
 
                                 for remaining in tasks.values():
                                     remaining.cancel()
+
+                                raise
+
+                            except (CallDeferred, ApprovalRequired):
+                                # This is the tricky bit, once this works most of it shold be fine
+                                # What should I do with the tasks that are currently in flight here
+                                # Do I dump them, take this approval and come back because tasks anyway is not going to be retained across runs(I think)?
+                                # If I finish them can I make it a part of the snapshot before I dump it?
+                                # So I would hope to do everything and then dump it for when it resumes?
+
+                                # I could have waited out the tool calls, saved the snapshot and resumed? Maybe something we should allow in Monty
+
+                                monty_state.dump()  # I wish I could store my results before I dumped it? :(
 
                                 raise
                             except Exception as e:
