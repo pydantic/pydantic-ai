@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 from pydantic import TypeAdapter
@@ -20,7 +20,7 @@ from pydantic_ai.runtime.abstract import (
 from pydantic_ai.runtime.monty import MontyRuntime
 
 from ..._run_context import AgentDepsT, RunContext
-from ...exceptions import ApprovalRequired, ModelRetry
+from ...exceptions import ModelRetry
 from ...tools import ToolDefinition
 from ..abstract import SchemaValidatorProt, ToolsetTool
 from ..function import FunctionToolset, FunctionToolsetTool

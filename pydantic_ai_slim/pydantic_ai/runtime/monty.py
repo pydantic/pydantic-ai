@@ -1,20 +1,3 @@
-"""CodeRuntime implementation backed by the Monty sandboxed Python interpreter.
-
-Monty executes LLM-generated code in a restricted environment and pauses
-whenever the code calls an external function (tool). This module implements
-the callback-based CodeRuntime protocol: the runtime drives a loop over
-Monty's pause points, invoking the caller's callback for each tool call.
-
-Concurrency model:
-    When Monty pauses at an external function call (MontySnapshot), the runtime
-    fires an asyncio.Task for the callback and tells Monty to defer the result
-    (``resume(future=...)``). Monty continues discovering independent calls
-    until it actually needs a value — at which point it returns a
-    MontyFutureSnapshot with the pending call IDs. The runtime then awaits
-    completed tasks and feeds partial results back to Monty. This allows
-    independent tool calls to execute concurrently.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -85,12 +68,9 @@ class MontyRuntime(CodeRuntime):
         except MontySyntaxError as e:
             raise CodeSyntaxError(e.display())
 
-        # We are good so now let us start
+        # Code type checking worked so let us try to run it
         monty_state: MontyComplete | MontyFutureSnapshot | MontySnapshot | None = None
         tasks: dict[int, asyncio.Task[Any]] = {}
-
-        # Need to wrap in try: except :(
-        # Wish there was a do while lol
 
         try:
             monty_state = monty.start()
@@ -138,9 +118,8 @@ class MontyRuntime(CodeRuntime):
                             try:
                                 results[cid] = {'return_value': task.result()}
 
-                            except (ModelRetry, CallDeferred, ApprovalRequired) as e:
+                            except (ModelRetry, CallDeferred, ApprovalRequired):
                                 # These are PyAI errors and should be handeled by PyAI not monty or the LLM
-
                                 # Cancel all the tool calls which are in flight
 
                                 for remaining in tasks.values():

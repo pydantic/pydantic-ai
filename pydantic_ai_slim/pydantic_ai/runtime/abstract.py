@@ -22,10 +22,6 @@ class FunctionCall:
     kwargs: dict[str, Any] = field(default_factory=lambda: {})  # keyword args
 
 
-# Exception Hierarchy
-#
-
-
 class CodeExecutionError(Exception):
     """Base for all code execution errors."""
 
