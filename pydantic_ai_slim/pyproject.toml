@@ -56,7 +56,7 @@ Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 dependencies = [
     "griffe>=1.14.0",
     "httpx>=0.27",
-    "pydantic>=2.10",
+    "pydantic>=2.12",
     "pydantic-graph=={{ version }}",
     "exceptiongroup>=1.2.2; python_version < '3.11'",
     "opentelemetry-api>=1.28.0",
