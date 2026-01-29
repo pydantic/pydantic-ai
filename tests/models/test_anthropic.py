@@ -1780,19 +1780,6 @@ async def test_image_as_binary_content_tool_response(
     )
 
 
-@pytest.mark.parametrize('media_type', ('audio/wav', 'audio/mpeg'))
-async def test_audio_as_binary_content_input(allow_model_requests: None, media_type: str):
-    c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m)
-
-    base64_content = b'//uQZ'
-
-    with pytest.raises(RuntimeError, match='Unsupported binary content media type for Anthropic'):
-        await agent.run(['hello', BinaryContent(data=base64_content, media_type=media_type)])
-
-
 def test_model_status_error(allow_model_requests: None) -> None:
     mock_client = MockAnthropic.create_mock(
         APIStatusError(

@@ -726,7 +726,7 @@ class AnthropicModel(Model):
 
                         # Iterate content directly to preserve order of mixed file/data content
                         content = request_part.content
-                        items: list[Any] = content if isinstance(content, list) else [content]
+                        items = list(content) if isinstance(content, list) else [content]
                         for item in items:
                             if isinstance(item, BinaryContent):
                                 if item.is_image or item.is_document:
@@ -1159,7 +1159,7 @@ class AnthropicModel(Model):
             raise RuntimeError(f'Unsupported binary content media type for Anthropic: {media_type}')
 
     @staticmethod
-    async def _map_user_prompt(
+    async def _map_user_prompt(  # noqa: C901
         part: UserPromptPart,
     ) -> AsyncGenerator[BetaContentBlockParam | CachePoint]:
         if isinstance(part.content, str):

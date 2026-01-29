@@ -506,7 +506,7 @@ class XaiModel(Model):
         file_content: list[UserContent] = []
 
         part_content = part.content
-        items: list[Any] = part_content if isinstance(part_content, list) else [part_content]
+        items = list(part_content) if isinstance(part_content, list) else [part_content]
         for item in items:
             if isinstance(item, (BinaryContent, ImageUrl, DocumentUrl)):
                 if isinstance(item, BinaryContent) and item.is_audio:

@@ -60,6 +60,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
+    BinaryImage,
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     CachePoint,
@@ -70,7 +71,7 @@ from pydantic_ai.profiles.grok import GrokModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
+from ..conftest import IsBytes, IsDatetime, IsNow, IsStr, try_import
 from .mock_xai import (
     MockXai,
     create_code_execution_response,
@@ -1234,19 +1235,12 @@ async def test_xai_image_url_tool_response(allow_model_requests: None, xai_provi
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file bd38f5',
-                        tool_call_id=IsStr(),
+                        content=ImageUrl(
+                            url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
+                        ),
+                        tool_call_id='call_37730393',
                         timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content=[
-                            'This is file bd38f5:',
-                            ImageUrl(
-                                url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
-                            ),
-                        ],
-                        timestamp=IsDatetime(),
-                    ),
+                    )
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -1307,17 +1301,10 @@ async def test_xai_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 241a70',
-                        tool_call_id=IsStr(),
+                        content=BinaryImage(data=IsBytes(), media_type='image/jpeg'),
+                        tool_call_id='call_76782371',
                         timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content=[
-                            'This is file 241a70:',
-                            IsInstance(BinaryContent),
-                        ],
-                        timestamp=IsDatetime(),
-                    ),
+                    )
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -1593,9 +1580,9 @@ async def test_xai_binary_content_unknown_media_type_raises(allow_model_requests
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
-    # Neither image/*, audio/*, nor a known document type => should fail during prompt mapping.
+    # Video binary content is not supported by xAI SDK
     bc = BinaryContent(b'123', media_type='video/mp4')
-    with pytest.raises(RuntimeError, match='Unsupported binary content type: video/mp4'):
+    with pytest.raises(NotImplementedError, match='VideoUrl/BinaryContent with video is not supported by xAI SDK'):
         await agent.run(['hello', bc])
 
 

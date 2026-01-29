@@ -79,6 +79,7 @@ if TYPE_CHECKING:
         ToolChoiceTypeDef,
         ToolConfigurationTypeDef,
         ToolResultBlockOutputTypeDef,
+        ToolResultContentBlockOutputTypeDef,
         ToolSpecificationTypeDef,
         ToolTypeDef,
         ToolUseBlockOutputTypeDef,
@@ -651,7 +652,7 @@ class BedrockConverseModel(Model):
 
                         # Iterate content directly to preserve order of mixed file/data content
                         part_content = part.content
-                        items: list[Any] = part_content if isinstance(part_content, list) else [part_content]
+                        items = list(part_content) if isinstance(part_content, list) else [part_content]
                         for item in items:
                             if isinstance(item, BinaryContent):
                                 file_block = await self._map_file_to_content_block(item, document_count)
@@ -778,9 +779,12 @@ class BedrockConverseModel(Model):
                     elif isinstance(item, BuiltinToolReturnPart):
                         if item.provider_name == self.system:
                             if item.tool_name == CodeExecutionTool.kind:
+                                result_content: list[ToolResultContentBlockOutputTypeDef] = (
+                                    [{'json': cast(dict[str, Any], item.content)}] if item.content else []
+                                )
                                 tool_result: ToolResultBlockOutputTypeDef = {
                                     'toolUseId': _utils.guard_tool_call_id(t=item),
-                                    'content': [{'json': item.content}] if item.content else [],
+                                    'content': result_content,
                                     'type': 'nova_code_interpreter_result',
                                 }
                                 if item.provider_details and 'status' in item.provider_details:

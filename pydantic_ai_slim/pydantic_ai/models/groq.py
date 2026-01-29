@@ -22,6 +22,7 @@ from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
     FilePart,
     FinishReason,
@@ -482,7 +483,7 @@ class GroqModel(Model):
                 file_content: list[UserContent] = []
 
                 part_content = part.content
-                items: list[Any] = part_content if isinstance(part_content, list) else [part_content]
+                items = list(part_content) if isinstance(part_content, list) else [part_content]
                 for item in items:
                     if isinstance(item, (BinaryContent, ImageUrl)):
                         if isinstance(item, BinaryContent) and not item.is_image:
@@ -542,6 +543,8 @@ class GroqModel(Model):
                     raise RuntimeError('AudioUrl is not supported in Groq.')
                 elif isinstance(item, VideoUrl):
                     raise RuntimeError('VideoUrl is not supported in Groq.')
+                elif isinstance(item, CachePoint):
+                    pass
                 else:
                     assert_never(item)
 

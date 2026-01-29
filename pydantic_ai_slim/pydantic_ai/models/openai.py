@@ -19,7 +19,12 @@ from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, u
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
-from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
+from .._utils import (
+    as_dict as _as_dict,
+    guard_tool_call_id as _guard_tool_call_id,
+    now_utc as _now_utc,
+    number_to_datetime,
+)
 from ..builtin_tools import (
     AbstractBuiltinTool,
     CodeExecutionTool,
@@ -1097,8 +1102,7 @@ class OpenAIChatModel(Model):
                 tool_content_parts: list[str] = []
                 file_content: list[UserContent] = []
 
-                part_content = part.content
-                items: list[Any] = part_content if isinstance(part_content, list) else [part_content]
+                items = list(part.content) if isinstance(part.content, list) else [part.content]  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
                 for item in items:
                     if isinstance(item, (BinaryContent, ImageUrl, AudioUrl, DocumentUrl, VideoUrl)):
                         tool_content_parts.append(f'See file {item.identifier}.')
@@ -1982,8 +1986,7 @@ class OpenAIResponsesModel(Model):
 
                     elif isinstance(item, BuiltinToolReturnPart):
                         if should_send_item_id:  # pragma: no branch
-                            content_is_dict = isinstance(item.content, dict)
-                            status = item.content.get('status') if content_is_dict else None
+                            status = content.get('status') if (content := _as_dict(item.content)) else None
                             kind_to_item = {
                                 CodeExecutionTool.kind: code_interpreter_item,
                                 WebSearchTool.kind: web_search_item,
@@ -2153,7 +2156,7 @@ class OpenAIResponsesModel(Model):
         return responses.EasyInputMessageParam(role='user', content=content)
 
     @staticmethod
-    async def _map_tool_return_output(
+    async def _map_tool_return_output(  # noqa: C901
         part: ToolReturnPart,
     ) -> str | list[ResponseInputTextContentParam | ResponseInputImageContentParam | ResponseInputFileContentParam]:
         """Map a `ToolReturnPart` to OpenAI Responses API output format, supporting multimodal content.
@@ -2168,8 +2171,7 @@ class OpenAIResponsesModel(Model):
         ] = []
 
         # Iterate content directly to preserve order of mixed file/data content
-        part_content = part.content
-        items: list[Any] = part_content if isinstance(part_content, list) else [part_content]
+        items: list[Any] = list(part.content) if isinstance(part.content, list) else [part.content]  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
         for item in items:
             if isinstance(item, BinaryContent):
                 if item.is_image:

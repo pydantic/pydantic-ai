@@ -708,7 +708,7 @@ class GoogleModel(Model):
 
         # Add multimodal files - iterate content directly to preserve relative file order
         part_content = part.content
-        items: list[Any] = part_content if isinstance(part_content, list) else [part_content]
+        items = list(part_content) if isinstance(part_content, list) else [part_content]
         for item in items:
             if isinstance(item, (BinaryContent, FileUrl)):
                 file_part = await self._map_file_to_part(item)

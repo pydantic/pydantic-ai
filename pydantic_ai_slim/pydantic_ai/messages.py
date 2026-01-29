@@ -26,7 +26,7 @@ from .exceptions import UnexpectedModelBehavior
 from .usage import RequestUsage
 
 if TYPE_CHECKING:
-    from .models.instrumented import InstrumentationSettings, InstrumentedModel
+    from .models.instrumented import InstrumentationSettings
 
 _mime_types = MimeTypes()
 # Replicate what is being done in `mimetypes.init()`
@@ -803,7 +803,7 @@ class BaseToolReturnPart:
     tool_name: str
     """The name of the "tool" was called."""
 
-    content: MultiModalContent | list[MultiModalContent | Any] | Any
+    content: MultiModalContent | list[MultiModalContent] | Any
     """The return value."""
 
     tool_call_id: str = field(default_factory=_generate_tool_call_id)
@@ -870,10 +870,10 @@ class BaseToolReturnPart:
         data = self.content_excluding_files
         if not data:
             return ''
-        elif len(data) == 1 and isinstance(data[0], str):
-            return data[0]
-        else:
-            return tool_return_ta.dump_json(data).decode()
+        value = data[0] if len(data) == 1 else data
+        if isinstance(value, str):
+            return value
+        return tool_return_ta.dump_json(value).decode()
 
     def model_response_object(self) -> dict[str, Any]:
         """Return a dictionary representation of the data content, wrapping non-dict types appropriately.
@@ -904,6 +904,8 @@ class BaseToolReturnPart:
         )
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        from .models.instrumented import InstrumentedModel
+
         part = _otel_messages.ToolCallResponsePart(
             type='tool_call_response',
             id=self.tool_call_id,
@@ -1509,6 +1511,8 @@ class ModelResponse:
         return result
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        from .models.instrumented import InstrumentedModel
+
         parts: list[_otel_messages.MessagePart] = []
         for part in self.parts:
             if isinstance(part, TextPart):
