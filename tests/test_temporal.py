@@ -3116,7 +3116,7 @@ binary_tool_agent = Agent(TestModel(), name='binary_tool_agent')
 @binary_tool_agent.tool
 def get_binary_data(ctx: RunContext[None]) -> list[str | BinaryContent]:
     """Return a list with text and BinaryContent."""
-    return ['test', BinaryContent(data=b'\x89PNG', media_type='image/png')]
+    return ['test', BinaryImage(data=b'\x89PNG', media_type='image/png')]
 
 
 binary_tool_temporal_agent = TemporalAgent(binary_tool_agent, activity_config=BASE_ACTIVITY_CONFIG)

@@ -466,7 +466,6 @@ class DocumentUrl(FileUrl):
 
 
 @pydantic_dataclass(
-    init=False,
     repr=False,
     config=pydantic.ConfigDict(
         ser_json_bytes='base64',
@@ -496,7 +495,6 @@ class BinaryContent:
     - `XaiModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     """
 
-    # Required for inline-snapshot which expects all `__init__` methods to take all field names as kwargs.
     _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
         compare=False, default=None
     )
@@ -504,8 +502,8 @@ class BinaryContent:
     kind: Literal['binary'] = 'binary'
     """Type identifier, this is available on all parts as a discriminator."""
 
-    # pydantic_dataclass replaces __init__ at class creation, so this body never executes.
-    # The signature is kept for pyright/IDE type hints and to accept _identifier from inline-snapshot repr.
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the `identifier` alias for the `_identifier` field.
     def __init__(
         self,
         data: bytes,
@@ -627,25 +625,7 @@ class BinaryContent:
 class BinaryImage(BinaryContent):
     """Binary content that's guaranteed to be an image."""
 
-    def __init__(
-        self,
-        data: bytes,
-        *,
-        media_type: str,
-        identifier: str | None = None,
-        vendor_metadata: dict[str, Any] | None = None,
-        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
-        kind: Literal['binary'] = 'binary',
-        _identifier: str | None = None,
-    ):
-        # We set the attributes directly to avoid Pydantic validation (which rejects inline-snapshot matchers).
-        # This differs from BinaryContent, which is a pydantic_dataclass (pydantic replaces its __init__ at class creation).
-        self.data = data
-        self.media_type = media_type
-        self._identifier = identifier or _identifier
-        self.vendor_metadata = vendor_metadata
-        self.kind = kind
-
+    def __post_init__(self):
         if not self.is_image:
             raise ValueError('`BinaryImage` must be have a media type that starts with "image/"')  # pragma: no cover
 
