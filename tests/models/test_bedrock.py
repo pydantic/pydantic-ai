@@ -57,9 +57,13 @@ with try_import() as imports_successful:
     from botocore.exceptions import ClientError
     from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
 
-    from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelName, BedrockModelSettings
+    from pydantic_ai.models.bedrock import (
+        BedrockConverseModel,
+        BedrockModelName,
+        BedrockModelSettings,
+    )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
-    from pydantic_ai.providers.bedrock import BedrockProvider
+    from pydantic_ai.providers.bedrock import BedrockModelProfile, BedrockProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
@@ -2772,9 +2776,8 @@ async def test_bedrock_prompt_cache_ttl_system_and_messages(bedrock_provider: Be
     """Test that TTL is applied to system instructions and automatic message caching."""
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
     settings = BedrockModelSettings(
-        bedrock_cache_instructions=True,
-        bedrock_cache_messages=True,
-        bedrock_prompt_cache_ttl='1h',
+        bedrock_cache_instructions='1h',
+        bedrock_cache_messages='1h',
     )
 
     req = [
@@ -2790,7 +2793,7 @@ async def test_bedrock_prompt_cache_ttl_system_and_messages(bedrock_provider: Be
 async def test_bedrock_prompt_cache_ttl_tools(bedrock_provider: BedrockProvider):
     """Test that TTL is applied to tool definition caching."""
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
-    settings = BedrockModelSettings(bedrock_cache_tool_definitions=True, bedrock_prompt_cache_ttl='1h')
+    settings = BedrockModelSettings(bedrock_cache_tool_definitions='1h')
 
     params = ModelRequestParameters(function_tools=[ToolDefinition(name='my_tool', parameters_json_schema={})])
     tool_config = model._map_tool_config(params, settings)  # type: ignore[reportPrivateUsage]
@@ -2804,9 +2807,27 @@ async def test_bedrock_prompt_cache_ttl_manual(bedrock_provider: BedrockProvider
     from itertools import count
 
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
-    settings = BedrockModelSettings(bedrock_prompt_cache_ttl='1h')
-
-    user_part = UserPromptPart(content=['Context', CachePoint(), 'Question'])
-    mapped = await model._map_user_prompt(user_part, count(), True, settings)  # type: ignore[reportPrivateUsage]
+    user_part = UserPromptPart(content=['Context', CachePoint(ttl='1h'), 'Question'])
+    # Need to pass BedrockModelProfile
+    profile = BedrockModelProfile.from_profile(model.profile)
+    mapped = await model._map_user_prompt(user_part, count(), profile, None)  # type: ignore[reportPrivateUsage]
 
     assert mapped[0]['content'][1] == {'cachePoint': {'type': 'default', 'ttl': '1h'}}
+
+
+async def test_bedrock_prompt_cache_ttl_unsupported_model(bedrock_provider: BedrockProvider):
+    """Test that TTL is omitted for models that don't support it."""
+    # Mistral models don't support prompt caching TTL
+    model = BedrockConverseModel('mistral.mistral-large-2407-v1:0', provider=bedrock_provider)
+    settings = BedrockModelSettings(bedrock_cache_messages='1h')
+
+    req = [ModelRequest(parts=[UserPromptPart(content='Hello')], timestamp=datetime.now())]
+    # We need to manually enable caching for the test as mistral doesn't support it by default
+    profile = BedrockModelProfile.from_profile(model.profile)
+    profile.bedrock_supports_prompt_caching = True
+    model.profile = profile
+
+    _, messages = await model._map_messages(req, ModelRequestParameters(), settings)  # type: ignore[reportPrivateUsage]
+
+    # TTL should be omitted even though it was requested
+    assert messages[-1]['content'][-1] == {'cachePoint': {'type': 'default'}}

@@ -42,6 +42,7 @@ class BedrockModelProfile(ModelProfile):
     bedrock_tool_result_format: Literal['text', 'json'] = 'text'
     bedrock_send_back_thinking_parts: bool = False
     bedrock_supports_prompt_caching: bool = False
+    bedrock_supports_prompt_cache_ttl: bool = False
     bedrock_supports_tool_caching: bool = False
 
 
@@ -97,6 +98,7 @@ class BedrockProvider(Provider[BaseClient]):
                 bedrock_supports_tool_choice=True,
                 bedrock_send_back_thinking_parts=True,
                 bedrock_supports_prompt_caching=True,
+                bedrock_supports_prompt_cache_ttl=True,
                 bedrock_supports_tool_caching=True,
             ).update(_without_builtin_tools(anthropic_model_profile(model_name))),
             'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json').update(

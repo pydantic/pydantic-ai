@@ -78,21 +78,21 @@ agent = Agent(model=model, model_settings=bedrock_model_settings)
 
 Bedrock supports [prompt caching](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html) on Anthropic models so you can reuse expensive context across requests. Pydantic AI provides four ways to use prompt caching:
 
-1. **Cache User Messages with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker to cache everything before it in the current user message.
-2. **Cache System Instructions**: Enable [`BedrockModelSettings.bedrock_cache_instructions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_instructions] to append a cache point after the system prompt.
-3. **Cache Tool Definitions**: Enable [`BedrockModelSettings.bedrock_cache_tool_definitions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_tool_definitions] to cache your tool schemas.
-4. **Cache All Messages**: Set [`BedrockModelSettings.bedrock_cache_messages`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_messages] to `True` to automatically cache the last user message.
+1. **Cache User Messages with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker to cache everything before it in the current user message. You can specify a TTL directly: `CachePoint(ttl='1h')`.
+2. **Cache System Instructions**: Enable [`BedrockModelSettings.bedrock_cache_instructions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_instructions] to append a cache point after the system prompt. Can be `True` (default 5m TTL), `'5m'`, or `'1h'`.
+3. **Cache Tool Definitions**: Enable [`BedrockModelSettings.bedrock_cache_tool_definitions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_tool_definitions] to cache your tool schemas. Can be `True` (default 5m TTL), `'5m'`, or `'1h'`.
+4. **Cache All Messages**: Set [`BedrockModelSettings.bedrock_cache_messages`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_messages] to automatically cache the last user message. Can be `True` (default 5m TTL), `'5m'`, or `'1h'`.
 
 ### Prompt Cache TTL
 
-By default, Bedrock prompt cache entries have a TTL of 5 minutes. Some models (like Claude 3.5/3.7 and Claude 4/4.5) support an extended 1-hour TTL. You can configure this via `bedrock_prompt_cache_ttl`:
+By default, Bedrock prompt cache entries have a TTL of 5 minutes. Some models (like Claude 3.5/3.7 and Claude 4/4.5) support an extended 1-hour TTL. You can configure this directly on each cache setting:
 
 ```python
 from pydantic_ai.models.bedrock import BedrockModelSettings
 
 bedrock_model_settings = BedrockModelSettings(
-    bedrock_cache_messages=True,
-    bedrock_prompt_cache_ttl='1h',  # '5m' or '1h'
+    bedrock_cache_messages='1h',  # '5m' or '1h'
+    bedrock_cache_instructions=True,  # Defaults to '5m'
 )
 ```
 

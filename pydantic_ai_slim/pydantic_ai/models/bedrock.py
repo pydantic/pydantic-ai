@@ -210,27 +210,30 @@ class BedrockModelSettings(ModelSettings, total=False):
     See more about it on <https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters.html>.
     """
 
-    bedrock_cache_tool_definitions: bool
+    bedrock_cache_tool_definitions: bool | Literal['5m', '1h']
     """Whether to add a cache point after the last tool definition.
 
     When enabled, the last tool in the `tools` array will include a `cachePoint`, allowing Bedrock to cache tool
     definitions and reduce costs for compatible models.
+    If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
     See https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html for more information.
     """
 
-    bedrock_cache_instructions: bool
+    bedrock_cache_instructions: bool | Literal['5m', '1h']
     """Whether to add a cache point after the system prompt blocks.
 
     When enabled, an extra `cachePoint` is appended to the system prompt so Bedrock can cache system instructions.
+    If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
     See https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html for more information.
     """
 
-    bedrock_cache_messages: bool
+    bedrock_cache_messages: bool | Literal['5m', '1h']
     """Convenience setting to enable caching for the last user message.
 
     When enabled, this automatically adds a cache point to the last content block
     in the final user message, which is useful for caching conversation history
     or context in multi-turn conversations.
+    If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
 
     Note: Uses 1 of Bedrock's 4 available cache points per request. Any additional CachePoint
     markers in messages will be automatically limited to respect the 4-cache-point maximum.
@@ -241,14 +244,6 @@ class BedrockModelSettings(ModelSettings, total=False):
     """Setting for optimizing performance and cost
 
     See more about it on <https://docs.aws.amazon.com/bedrock/latest/userguide/service-tiers-inference.html>.
-    """
-
-    bedrock_prompt_cache_ttl: Literal['5m', '1h']
-    """Time-to-live for prompt caching.
-    '5m' (5 minutes) - supported by all models (default)
-    '1h' (1 hour) - supported by Claude Opus 4.5, Haiku 4.5, Sonnet 4.5
-
-    See more about it on <https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html>.
     """
 
 
@@ -586,12 +581,9 @@ class BedrockConverseModel(Model):
             return None
 
         profile = BedrockModelProfile.from_profile(self.profile)
-        if (
-            model_settings
-            and model_settings.get('bedrock_cache_tool_definitions')
-            and profile.bedrock_supports_tool_caching
-        ):
-            tools.append(self._get_cache_point(model_settings))
+        if cache_setting := (model_settings or {}).get('bedrock_cache_tool_definitions'):
+            if profile.bedrock_supports_tool_caching:
+                tools.append(self._get_cache_point(cache_setting, profile))
 
         tool_choice: ToolChoiceTypeDef
         if not model_request_parameters.allow_text_output:
@@ -627,11 +619,7 @@ class BedrockConverseModel(Model):
                         if part.content:  # pragma: no branch
                             system_prompt.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
-                        bedrock_messages.extend(
-                            await self._map_user_prompt(
-                                part, document_count, profile.bedrock_supports_prompt_caching, settings
-                            )
-                        )
+                        bedrock_messages.extend(await self._map_user_prompt(part, document_count, profile, settings))
                     elif isinstance(part, ToolReturnPart):
                         assert part.tool_call_id is not None
                         bedrock_messages.append(
@@ -750,17 +738,19 @@ class BedrockConverseModel(Model):
         if instructions := self._get_instructions(messages, model_request_parameters):
             system_prompt.append({'text': instructions})
 
-        if system_prompt and settings.get('bedrock_cache_instructions') and profile.bedrock_supports_prompt_caching:
-            system_prompt.append(self._get_cache_point(settings))
+        if system_prompt and (cache_instructions := settings.get('bedrock_cache_instructions')):
+            if profile.bedrock_supports_prompt_caching:
+                system_prompt.append(self._get_cache_point(cache_instructions, profile))
 
-        if processed_messages and settings.get('bedrock_cache_messages') and profile.bedrock_supports_prompt_caching:
-            last_user_content = self._get_last_user_message_content(processed_messages)
-            if last_user_content is not None:
-                # AWS currently rejects cache points that directly follow non-text content.
-                # Insert a newline text block as a workaround.
-                if 'text' not in last_user_content[-1]:
-                    last_user_content.append({'text': '\n'})
-                last_user_content.append(self._get_cache_point(settings))
+        if processed_messages and (cache_messages := settings.get('bedrock_cache_messages')):
+            if profile.bedrock_supports_prompt_caching:
+                last_user_content = self._get_last_user_message_content(processed_messages)
+                if last_user_content is not None:
+                    # AWS currently rejects cache points that directly follow non-text content.
+                    # Insert a newline text block as a workaround.
+                    if 'text' not in last_user_content[-1]:
+                        last_user_content.append({'text': '\n'})
+                    last_user_content.append(self._get_cache_point(cache_messages, profile))
 
         return system_prompt, processed_messages
 
@@ -794,7 +784,7 @@ class BedrockConverseModel(Model):
     async def _map_user_prompt(  # noqa: C901
         part: UserPromptPart,
         document_count: Iterator[int],
-        supports_prompt_caching: bool,
+        profile: BedrockModelProfile,
         settings: BedrockModelSettings | None,
     ) -> list[MessageUnionTypeDef]:
         content: list[ContentBlockUnionTypeDef] = []
@@ -863,7 +853,7 @@ class BedrockConverseModel(Model):
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
                 elif isinstance(item, CachePoint):
-                    if not supports_prompt_caching:
+                    if not profile.bedrock_supports_prompt_caching:
                         # Silently skip CachePoint for models that don't support prompt caching
                         continue
                     if not content or 'cachePoint' in content[-1]:
@@ -876,7 +866,7 @@ class BedrockConverseModel(Model):
                         # Insert an empty text block as a workaround (see https://github.com/pydantic/pydantic-ai/issues/3418
                         # and https://github.com/pydantic/pydantic-ai/pull/2560#discussion_r2349209916).
                         content.append({'text': '\n'})
-                    content.append(BedrockConverseModel._get_cache_point(settings))
+                    content.append(BedrockConverseModel._get_cache_point(item.ttl, profile))
                 else:
                     assert_never(item)
         return [{'role': 'user', 'content': content}]
@@ -888,10 +878,13 @@ class BedrockConverseModel(Model):
         }
 
     @staticmethod
-    def _get_cache_point(settings: BedrockModelSettings | None) -> Any:
+    def _get_cache_point(ttl_setting: bool | Literal['5m', '1h'], profile: BedrockModelProfile) -> Any:
         cache_point: dict[str, Any] = {'type': 'default'}
-        if settings and (ttl := settings.get('bedrock_prompt_cache_ttl')):
-            cache_point['ttl'] = ttl
+        if profile.bedrock_supports_prompt_cache_ttl:
+            if ttl_setting is True:
+                cache_point['ttl'] = '5m'
+            elif isinstance(ttl_setting, str):
+                cache_point['ttl'] = ttl_setting
         return {'cachePoint': cache_point}
 
     @staticmethod
