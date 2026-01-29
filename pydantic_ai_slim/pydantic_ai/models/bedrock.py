@@ -45,7 +45,7 @@ from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.providers import Provider, infer_provider
-from pydantic_ai.providers.bedrock import BEDROCK_GEO_PREFIXES, BedrockModelProfile
+from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
@@ -363,7 +363,7 @@ class BedrockConverseModel(Model):
         settings = cast(BedrockModelSettings, model_settings or {})
         system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters, settings)
         params: CountTokensRequestTypeDef = {
-            'modelId': self._remove_inference_geo_prefix(self.model_name),
+            'modelId': remove_bedrock_geo_prefix(self.model_name),
             'input': {
                 'converse': {
                     'messages': bedrock_messages,
@@ -636,8 +636,9 @@ class BedrockConverseModel(Model):
         for message in messages:
             if isinstance(message, ModelRequest):
                 for part in message.parts:
-                    if isinstance(part, SystemPromptPart) and part.content:
-                        system_prompt.append({'text': part.content})
+                    if isinstance(part, SystemPromptPart):
+                        if part.content:  # pragma: no branch
+                            system_prompt.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
                         bedrock_messages.extend(
                             await self._map_user_prompt(part, document_count, profile.bedrock_supports_prompt_caching)
@@ -690,8 +691,7 @@ class BedrockConverseModel(Model):
                         user_content.extend(sibling_content)
                         bedrock_messages.append({'role': 'user', 'content': user_content})
                     elif isinstance(part, RetryPromptPart):
-                        # TODO(Marcelo): We need to add a test here.
-                        if part.tool_name is None:  # pragma: no cover
+                        if part.tool_name is None:
                             bedrock_messages.append({'role': 'user', 'content': [{'text': part.model_response()}]})
                         else:
                             assert part.tool_call_id is not None
@@ -709,6 +709,8 @@ class BedrockConverseModel(Model):
                                     ],
                                 }
                             )
+                    else:
+                        assert_never(part)
             elif isinstance(message, ModelResponse):
                 content: list[ContentBlockOutputTypeDef] = []
                 for item in message.parts:
@@ -1029,14 +1031,6 @@ class BedrockConverseModel(Model):
                 else:
                     new_content.append(block)
             message['content'] = list(reversed(new_content))  # Restore original order
-
-    @staticmethod
-    def _remove_inference_geo_prefix(model_name: BedrockModelName) -> BedrockModelName:
-        """Remove inference geographic prefix from model ID if present."""
-        for prefix in BEDROCK_GEO_PREFIXES:
-            if model_name.startswith(f'{prefix}.'):
-                return model_name.removeprefix(f'{prefix}.')
-        return model_name
 
 
 @dataclass

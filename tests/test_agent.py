@@ -6260,7 +6260,7 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
     user_prompt = 'call a lot of tools'
 
     if mode == 'contextmanager':
-        with agent.sequential_tool_calls():
+        with agent.parallel_tool_call_execution_mode('sequential'):
             result = agent.run_sync(user_prompt)
     else:
         result = agent.run_sync(user_prompt)
@@ -6394,7 +6394,7 @@ async def test_thinking_only_response_retry():
             )
 
     model = FunctionModel(model_function)
-    agent = Agent(model, system_prompt='You are a helpful assistant.')
+    agent = Agent(model, instructions='You are a helpful assistant.')
 
     result = await agent.run('Hello')
 
@@ -6402,21 +6402,18 @@ async def test_thinking_only_response_retry():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='You are a helpful assistant.',
-                        timestamp=IsDatetime(),
-                    ),
                     UserPromptPart(
                         content='Hello',
                         timestamp=IsDatetime(),
                     ),
                 ],
+                instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ThinkingPart(content='Let me think about this...')],
-                usage=RequestUsage(input_tokens=57, output_tokens=6),
+                usage=RequestUsage(input_tokens=51, output_tokens=6),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -6429,12 +6426,13 @@ async def test_thinking_only_response_retry():
                         timestamp=IsDatetime(),
                     )
                 ],
+                instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Final answer')],
-                usage=RequestUsage(input_tokens=73, output_tokens=8),
+                usage=RequestUsage(input_tokens=67, output_tokens=8),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
