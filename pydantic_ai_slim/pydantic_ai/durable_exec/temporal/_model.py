@@ -318,29 +318,30 @@ class TemporalModel(WrapperModel):
     def _current_model_id(self) -> str | None:
         return self._model_id_var.get()
 
+    def _current_model(self) -> models.Model | str:
+        """Get the current model, or the unregistered model ID string."""
+        model_id = self._current_model_id()
+        if model_id is None:
+            return self.wrapped
+        if model_id in self._models_by_id:
+            return self._models_by_id[model_id]
+        return model_id
+
     @property
     def model_name(self) -> str:
         """Get the model name, inferring from raw strings without provider construction."""
-        model_id = self._current_model_id()
-        if model_id is None:
-            return self.wrapped.model_name
-        if model_id in self._models_by_id:
-            return self._models_by_id[model_id].model_name
-        # Parse from string - no provider construction needed
-        _, model_name = parse_model_string(model_id)
-        return model_name
+        current = self._current_model()
+        if isinstance(current, str):
+            return parse_model_string(current)[1]
+        return current.model_name
 
     @property
     def system(self) -> str:
         """Get the system (provider) name, inferring from raw strings without provider construction."""
-        model_id = self._current_model_id()
-        if model_id is None:
-            return self.wrapped.system
-        if model_id in self._models_by_id:
-            return self._models_by_id[model_id].system
-        # Parse from string - no provider construction needed
-        provider, _ = parse_model_string(model_id)
-        return provider or self.wrapped.system
+        current = self._current_model()
+        if isinstance(current, str):
+            return parse_model_string(current)[0] or self.wrapped.system
+        return current.system
 
     @property
     def profile(self) -> ModelProfile:  # type: ignore[override]
@@ -349,12 +350,10 @@ class TemporalModel(WrapperModel):
         Note: This overrides a cached_property with a regular property because the profile
         depends on _current_model_id() which can change dynamically via using_model().
         """
-        model_id = self._current_model_id()
-        if model_id is None:
-            return self.wrapped.profile
-        if model_id in self._models_by_id:
-            return self._models_by_id[model_id].profile
-        return _infer_profile(model_id)
+        current = self._current_model()
+        if isinstance(current, str):
+            return _infer_profile(current)
+        return current.profile
 
     def prepare_request(
         self,

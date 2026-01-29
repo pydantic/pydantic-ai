@@ -48,6 +48,7 @@ from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, U
 from pydantic_ai.models import Model, ModelRequestParameters, cached_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
@@ -3312,3 +3313,63 @@ def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> Non
         result = plugin.configure_client(config)  # type: ignore[arg-type]
     assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
     assert result['data_converter'].payload_codec is codec
+
+
+def test_temporal_model_profile_with_no_provider_prefix() -> None:
+    """Test TemporalModel uses DEFAULT_PROFILE when model string has no inferable provider."""
+
+    default_model = TestModel(custom_output_text='default')
+    temporal_model = TemporalModel(
+        default_model,
+        activity_name_prefix='test__no_provider_prefix',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+    )
+
+    # A model string without a provider prefix that can't be inferred returns DEFAULT_PROFILE
+    with temporal_model.using_model('some-random-model'):
+        assert temporal_model.profile is DEFAULT_PROFILE
+
+
+def test_temporal_model_profile_with_unknown_provider() -> None:
+    """Test TemporalModel uses DEFAULT_PROFILE when provider is unknown."""
+
+    default_model = TestModel(custom_output_text='default')
+    temporal_model = TemporalModel(
+        default_model,
+        activity_name_prefix='test__unknown_provider',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+    )
+
+    # An unknown provider should return DEFAULT_PROFILE
+    with temporal_model.using_model('unknown-provider:some-model'):
+        assert temporal_model.profile is DEFAULT_PROFILE
+
+
+def test_temporal_model_prepare_request_with_unregistered_model_string() -> None:
+    """Test prepare_request uses inferred profile for unregistered model strings."""
+    default_model = TestModel(custom_output_text='default')
+    temporal_model = TemporalModel(
+        default_model,
+        activity_name_prefix='test__prepare_request_unregistered',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+    )
+
+    model_request_params = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[],
+        output_mode='text',
+        allow_text_output=True,
+        output_tools=[],
+        output_object=None,
+    )
+
+    # With an unregistered model string (not in models registry), prepare_request
+    # should use Model.prepare_request with the inferred profile
+    with temporal_model.using_model('openai:gpt-5'):
+        _, params = temporal_model.prepare_request(None, model_request_params)
+        # The call should succeed and return valid parameters
+        assert params is not None
+        assert params.output_mode == 'text'

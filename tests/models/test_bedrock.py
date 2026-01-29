@@ -111,7 +111,7 @@ class _StubBedrockProvider(Provider[Any]):
         return self._client
 
     @staticmethod
-    def model_profile(self, model_name: str):
+    def model_profile(model_name: str):
         return DEFAULT_PROFILE
 
 
