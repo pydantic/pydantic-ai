@@ -39,7 +39,7 @@ from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 
-from ..conftest import IsBytes, IsDatetime, IsStr, try_import
+from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
     import outlines
@@ -494,7 +494,7 @@ def test_request_image_binary(transformers_multimodal_model: OutlinesModel, bina
                     UserPromptPart(
                         content=[
                             "What's on the image?",
-                            BinaryImage(data=IsBytes(), media_type='image/png'),
+                            IsInstance(BinaryImage),
                         ],
                         timestamp=IsDatetime(),
                     )
