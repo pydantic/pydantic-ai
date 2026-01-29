@@ -12,7 +12,7 @@ from inspect import Parameter, signature
 from typing import TYPE_CHECKING, Any, Concatenate, cast, get_origin
 
 from pydantic import ConfigDict
-from pydantic._internal import _decorators, _generate_schema, _typing_extra
+from pydantic._internal import _decorators, _generate_schema
 from pydantic._internal._config import ConfigWrapper
 from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
