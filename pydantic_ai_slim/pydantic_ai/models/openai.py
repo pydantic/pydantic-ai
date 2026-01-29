@@ -661,12 +661,15 @@ class OpenAIChatModel(Model):
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk] | ModelResponse:
+        
+        tool_choice: ChatCompletionToolChoiceOptionParam | None
+
         tools, tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
         web_search_options = self._get_web_search_options(model_request_parameters)
 
         profile = OpenAIModelProfile.from_profile(self.profile)
         if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
+            tool_choice = None
         elif not model_request_parameters.allow_text_output and profile.openai_supports_tool_choice_required:
             tool_choice = 'required'
         else:
@@ -919,8 +922,7 @@ class OpenAIChatModel(Model):
 
         return tools, tool_choice
 
-
-      def _get_stream_options(self, model_settings: OpenAIChatModelSettings) -> chat.ChatCompletionStreamOptionsParam:
+    def _get_stream_options(self, model_settings: OpenAIChatModelSettings) -> chat.ChatCompletionStreamOptionsParam:
         """Build stream_options for the API request.
 
         Returns a dict with include_usage=True and optionally continuous_usage_stats if configured.
@@ -1551,7 +1553,7 @@ class OpenAIResponsesModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncStream[responses.ResponseStreamEvent]: ...
 
-    async def _responses_create(  # noqa: C901
+    async def _responses_create(
         self,
         messages: list[ModelRequest | ModelResponse],
         stream: bool,
