@@ -285,7 +285,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     def _make_tool_callback(
         self,
         tool: _CodeModeTool[AgentDepsT],
-        ctx: RunContext[AgentDepsT],
         code_mode_tool_manager: ToolManager[AgentDepsT],
         sanitized_to_original: dict[str, str],
     ) -> ToolCallback:
@@ -347,7 +346,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             tools=original_name_tools,
         )
 
-        callback = self._make_tool_callback(tool, ctx, code_mode_tool_manager, sanitized_to_original)
+        callback = self._make_tool_callback(tool, code_mode_tool_manager, sanitized_to_original)
 
         try:
             functions = list(tool.original_tools.keys())

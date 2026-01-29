@@ -41,7 +41,7 @@ class MontyRuntime(CodeRuntime):
     at which point the runtime awaits completed tasks and provides results.
     """
 
-    async def run(self, code: str, functions: list[str], call_tool: ToolCallback, signatures: list[str]) -> Any:
+    async def run(self, code: str, functions: list[str], call_tool: ToolCallback, *, signatures: list[str]) -> Any:
         """Start executing code in the Monty sandbox.
 
         Args:
@@ -134,3 +134,11 @@ class MontyRuntime(CodeRuntime):
                 monty_state = monty_state.resume(results=results)
 
         return monty_state
+
+    @staticmethod
+    def dump(monty_state: MontySnapshot | MontyFutureSnapshot) -> bytes:
+        return monty_state.dump()
+
+    @staticmethod
+    def load(dumped_monty_state: bytes) -> MontySnapshot:
+        return MontySnapshot.load(dumped_monty_state)
