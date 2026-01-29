@@ -1,0 +1,262 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '347'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the tallest mountain in Alberta? Provide one sentence with a citation.
+        role: user
+      instructions: Use web search and include citations in your answer.
+      model: gpt-5.2
+      stream: false
+      tool_choice: auto
+      tools:
+      - search_context_size: medium
+        type: web_search
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2758'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '4454'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1768703486
+      created_at: 1768703482
+      error: null
+      frequency_penalty: 0.0
+      id: resp_057daac88567bde400696c45fa056c81909529fd4ebb2a9760
+      incomplete_details: null
+      instructions: Use web search and include citations in your answer.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.2-2025-12-11
+      object: response
+      output:
+      - action:
+          queries:
+          - tallest mountain in Alberta
+          - Mount Columbia tallest mountain in Alberta elevation
+          query: tallest mountain in Alberta
+          type: search
+        id: ws_057daac88567bde400696c45fac8448190aa2141ad7de1b6bb
+        status: completed
+        type: web_search_call
+      - content:
+        - annotations:
+          - end_index: 211
+            start_index: 126
+            title: Mount Columbia | mountain, Alberta, Canada | Britannica
+            type: url_citation
+            url: https://www.britannica.com/place/Mount-Columbia?utm_source=openai
+          logprobs: []
+          text: The tallest mountain in Alberta is **Mount Columbia**, which rises to **3,747 m (12,294 ft)** and is Alberta's
+            highest point. ([britannica.com](https://www.britannica.com/place/Mount-Columbia?utm_source=openai))
+          type: output_text
+        id: msg_057daac88567bde400696c45fc489c81909c927a966ee61535
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: none
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - filters: null
+        search_context_size: medium
+        type: web_search
+        user_location:
+          city: null
+          country: US
+          region: null
+          timezone: null
+          type: approximate
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 8530
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 98
+        output_tokens_details:
+          reasoning_tokens: 49
+        total_tokens: 8628
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '347'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the tallest mountain in Alberta? Provide one sentence with a citation.
+        role: user
+      instructions: Use web search and include citations in your answer.
+      model: gpt-5.2
+      stream: false
+      tool_choice: auto
+      tools:
+      - search_context_size: medium
+        type: web_search
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2637'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '2525'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1768703490
+      created_at: 1768703487
+      error: null
+      frequency_penalty: 0.0
+      id: resp_03313d5bfbdedc9200696c45ffbc8c819cb6a3f1f2aac9b0cb
+      incomplete_details: null
+      instructions: Use web search and include citations in your answer.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.2-2025-12-11
+      object: response
+      output:
+      - action:
+          queries:
+          - tallest mountain in Alberta
+          query: tallest mountain in Alberta
+          type: search
+        id: ws_03313d5bfbdedc9200696c4600a030819c979fe1edae4c5f2e
+        status: completed
+        type: web_search_call
+      - content:
+        - annotations:
+          - end_index: 162
+            start_index: 77
+            title: Mount Columbia | mountain, Alberta, Canada | Britannica
+            type: url_citation
+            url: https://www.britannica.com/place/Mount-Columbia?utm_source=openai
+          logprobs: []
+          text: The tallest mountain in Alberta is **Mount Columbia** (3,747 m / 12,294 ft). ([britannica.com](https://www.britannica.com/place/Mount-Columbia?utm_source=openai))
+          type: output_text
+        id: msg_03313d5bfbdedc9200696c4601a4ac819cb6473c1fe9a83bc6
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: none
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - filters: null
+        search_context_size: medium
+        type: web_search
+        user_location:
+          city: null
+          country: US
+          region: null
+          timezone: null
+          type: approximate
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 8236
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 74
+        output_tokens_details:
+          reasoning_tokens: 34
+        total_tokens: 8310
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1
