@@ -105,7 +105,7 @@ The app cannot currently be mounted at a subpath (e.g., `/chat`) because the UI 
 
 By default, the web UI is fetched from a CDN and cached locally. You can provide `html_path` to override this for offline usage or enterprise environments.
 
-For offline usage, download the CHAT UI HTML file once while you have internet access:
+For offline usage, download the html file once while you have internet access:
 
 ```python
 from pydantic_ai.ui import CHAT_UI_URL_TEMPLATE, CHAT_UI_VERSION
@@ -114,8 +114,9 @@ chat_ui_url = CHAT_UI_URL_TEMPLATE.format(version=CHAT_UI_VERSION)
 
 print(chat_ui_url)  # Use this URL to download the UI HTML file
 #> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@1.0.0/dist/index.html
-
 ```
+
+You can then download the file using the URL printed above:
 
 ```bash
 curl -o ~/pydantic-ai-ui.html <chat_ui_url>
