@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
 
 from pydantic.errors import PydanticUserError
+from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
+from temporalio.converter import DataConverter, DefaultPayloadConverter
 from temporalio.plugin import SimplePlugin
 from temporalio.worker import WorkerConfig, WorkflowRunner
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
 from ...exceptions import UserError
 from ._agent import TemporalAgent
-from ._converter import PydanticAIPayloadConverter, make_data_converter, pydantic_ai_data_converter
 from ._logfire import LogfirePlugin
 from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset
@@ -25,8 +27,6 @@ __all__ = [
     'TemporalRunContext',
     'TemporalWrapperToolset',
     'PydanticAIWorkflow',
-    'PydanticAIPayloadConverter',
-    'pydantic_ai_data_converter',
 ]
 
 # We need eagerly import the anyio backends or it will happens inside workflow code and temporal has issues
@@ -39,6 +39,26 @@ try:
     import anyio._backends._trio  # pyright: ignore[reportUnusedImport]  # noqa: F401
 except ImportError:
     pass
+
+
+def _data_converter(converter: DataConverter | None) -> DataConverter:
+    if converter is None:
+        return pydantic_data_converter
+
+    # If the payload converter class is already a subclass of PydanticPayloadConverter,
+    # the converter is already compatible with Pydantic AI - return it as-is.
+    if issubclass(converter.payload_converter_class, PydanticPayloadConverter):
+        return converter
+
+    # If using a non-Pydantic payload converter, warn and replace just the payload converter class,
+    # preserving any custom payload_codec or failure_converter_class.
+    if converter.payload_converter_class is not DefaultPayloadConverter:
+        warnings.warn(
+            'A non-Pydantic Temporal payload converter was used which has been replaced with PydanticPayloadConverter. '
+            'To suppress this warning, ensure your payload_converter_class inherits from PydanticPayloadConverter.'
+        )
+
+    return replace(converter, payload_converter_class=PydanticPayloadConverter)
 
 
 def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
@@ -77,7 +97,7 @@ class PydanticAIPlugin(SimplePlugin):
     def __init__(self):
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='PydanticAIPlugin',
-            data_converter=make_data_converter,
+            data_converter=_data_converter,
             workflow_runner=_workflow_runner,
             workflow_failure_exception_types=[UserError, PydanticUserError],
         )

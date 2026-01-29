@@ -29,6 +29,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelSettings,
+    MultiModalContent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -62,7 +63,7 @@ try:
     from temporalio.client import Client, WorkflowFailureError
     from temporalio.common import RetryPolicy
     from temporalio.contrib.opentelemetry import TracingInterceptor
-    from temporalio.contrib.pydantic import PydanticPayloadConverter
+    from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
     from temporalio.converter import DataConverter, DefaultPayloadConverter, PayloadCodec
     from temporalio.exceptions import ApplicationError
     from temporalio.testing import WorkflowEnvironment
@@ -72,11 +73,9 @@ try:
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
         LogfirePlugin,
-        PydanticAIPayloadConverter,
         PydanticAIPlugin,
         PydanticAIWorkflow,
         TemporalAgent,
-        pydantic_ai_data_converter,
     )
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
@@ -3075,35 +3074,26 @@ class MockPayloadCodec(PayloadCodec):
         return list(payloads)
 
 
-def test_pydantic_ai_plugin_no_converter_returns_pydantic_ai_data_converter() -> None:
-    """When no converter is provided, PydanticAIPlugin uses pydantic_ai_data_converter."""
+def test_pydantic_ai_plugin_no_converter_returns_pydantic_data_converter() -> None:
+    """When no converter is provided, PydanticAIPlugin uses the standard pydantic_data_converter."""
     plugin = PydanticAIPlugin()
+    # Create a minimal config without data_converter
     config: dict[str, Any] = {}
     result = plugin.configure_client(config)  # type: ignore[arg-type]
-    assert result['data_converter'] is pydantic_ai_data_converter
+    assert result['data_converter'] is pydantic_data_converter
 
 
-def test_pydantic_ai_plugin_with_pydantic_payload_converter_upgraded() -> None:
-    """When converter uses PydanticPayloadConverter, upgrade to PydanticAIPayloadConverter."""
+def test_pydantic_ai_plugin_with_pydantic_payload_converter_unchanged() -> None:
+    """When converter already uses PydanticPayloadConverter, return it unchanged."""
     plugin = PydanticAIPlugin()
     converter = DataConverter(payload_converter_class=PydanticPayloadConverter)
-    config: dict[str, Any] = {'data_converter': converter}
-    result = plugin.configure_client(config)  # type: ignore[arg-type]
-    assert result['data_converter'] is not converter
-    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
-
-
-def test_pydantic_ai_plugin_with_pydantic_ai_payload_converter_unchanged() -> None:
-    """When converter already uses PydanticAIPayloadConverter, return it as-is."""
-    plugin = PydanticAIPlugin()
-    converter = DataConverter(payload_converter_class=PydanticAIPayloadConverter)
     config: dict[str, Any] = {'data_converter': converter}
     result = plugin.configure_client(config)  # type: ignore[arg-type]
     assert result['data_converter'] is converter
 
 
 def test_pydantic_ai_plugin_with_custom_pydantic_subclass_unchanged() -> None:
-    """When converter uses a custom subclass of PydanticPayloadConverter, preserve it (no upgrade)."""
+    """When converter uses a subclass of PydanticPayloadConverter, return it unchanged (no warning)."""
     plugin = PydanticAIPlugin()
     converter = DataConverter(payload_converter_class=CustomPydanticPayloadConverter)
     config: dict[str, Any] = {'data_converter': converter}
@@ -3113,13 +3103,13 @@ def test_pydantic_ai_plugin_with_custom_pydantic_subclass_unchanged() -> None:
 
 
 def test_pydantic_ai_plugin_with_default_payload_converter_replaced() -> None:
-    """When converter uses DefaultPayloadConverter, replace with PydanticAIPayloadConverter."""
+    """When converter uses DefaultPayloadConverter, replace payload_converter_class without warning."""
     plugin = PydanticAIPlugin()
     converter = DataConverter(payload_converter_class=DefaultPayloadConverter)
     config: dict[str, Any] = {'data_converter': converter}
     result = plugin.configure_client(config)  # type: ignore[arg-type]
     assert result['data_converter'] is not converter
-    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
+    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
 
 
 def test_pydantic_ai_plugin_preserves_custom_payload_codec() -> None:
@@ -3133,7 +3123,7 @@ def test_pydantic_ai_plugin_preserves_custom_payload_codec() -> None:
     config: dict[str, Any] = {'data_converter': converter}
     result = plugin.configure_client(config)  # type: ignore[arg-type]
     assert result['data_converter'] is not converter
-    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
+    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
     assert result['data_converter'].payload_codec is codec
 
 
@@ -3144,10 +3134,10 @@ def test_pydantic_ai_plugin_with_non_pydantic_converter_warns() -> None:
     config: dict[str, Any] = {'data_converter': converter}
     with pytest.warns(
         UserWarning,
-        match='A non-Pydantic Temporal payload converter was used which has been replaced with PydanticAIPayloadConverter',
+        match='A non-Pydantic Temporal payload converter was used which has been replaced with PydanticPayloadConverter',
     ):
         result = plugin.configure_client(config)  # type: ignore[arg-type]
-    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
+    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
 
 
 def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> None:
@@ -3161,68 +3151,97 @@ def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> Non
     config: dict[str, Any] = {'data_converter': converter}
     with pytest.warns(UserWarning):
         result = plugin.configure_client(config)  # type: ignore[arg-type]
-    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
+    assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
     assert result['data_converter'].payload_codec is codec
 
 
-# Tests for BinaryContent serialization in Temporal (#3702)
+# Tests for BinaryContent and DocumentUrl serialization in Temporal
+# This is a regression test for #3702 (BinaryContent) and verifies that FileUrl
+# instances (like DocumentUrl) with explicit media_type are properly preserved.
 
 
-binary_tool_agent = Agent(TestModel(), name='binary_tool_agent')
+multimodal_content_agent = Agent(TestModel(), name='multimodal_content_agent')
 
 
-@binary_tool_agent.tool
-def get_binary_data(ctx: RunContext[None]) -> list[str | BinaryContent]:
-    """Return a list with text and BinaryContent."""
-    return ['test', BinaryImage(data=b'\x89PNG', media_type='image/png')]
+@multimodal_content_agent.tool
+def get_multimodal_content(ctx: RunContext[None]) -> list[str | MultiModalContent]:
+    """Return a list with text, BinaryContent, and DocumentUrl."""
+    return [
+        'test',
+        BinaryImage(data=b'\x89PNG', media_type='image/png'),
+        # URL doesn't hint at media type, so media_type must be specified explicitly
+        DocumentUrl(url='https://example.com/doc/12345', media_type='application/pdf'),
+    ]
 
 
-binary_tool_temporal_agent = TemporalAgent(binary_tool_agent, activity_config=BASE_ACTIVITY_CONFIG)
+multimodal_content_temporal_agent = TemporalAgent(multimodal_content_agent, activity_config=BASE_ACTIVITY_CONFIG)
 
 
 @workflow.defn
-class BinaryToolWorkflow:
+class MultiModalContentWorkflow:
     @workflow.run
-    async def run(self, prompt: str) -> list[ModelMessage]:
-        result = await binary_tool_temporal_agent.run(prompt)
+    async def run(self, prompt: list[str | MultiModalContent]) -> list[ModelMessage]:
+        result = await multimodal_content_temporal_agent.run(prompt)
         return result.all_messages()
 
 
-async def test_binary_content_serialization_in_workflow(client: Client):
-    """Test that BinaryContent survives Temporal activity→workflow serialization.
+async def test_multimodal_content_serialization_in_workflow(client: Client):
+    """Test that BinaryContent and DocumentUrl survive Temporal serialization.
 
-    This is a regression test for #3702: MCP tools returning binary data failed
-    Temporal serialization with `PydanticSerializationError: invalid utf-8 sequence`.
+    This tests both:
+    1. Passing BinaryContent and DocumentUrl as input to agent.run (workflow→activity)
+    2. Returning BinaryContent and DocumentUrl from a tool (activity→workflow)
 
-    To fix, BinaryContent is serialized with base64 encoding and
-    properly reconstructed after deserialization.
+    BinaryContent is serialized with base64 encoding. DocumentUrl requires explicit
+    media_type since it cannot be inferred from the URL.
     """
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[BinaryToolWorkflow],
-        plugins=[AgentPlugin(binary_tool_temporal_agent)],
+        workflows=[MultiModalContentWorkflow],
+        plugins=[AgentPlugin(multimodal_content_temporal_agent)],
     ):
+        # Pass both BinaryContent and DocumentUrl as input
+        prompt: list[str | MultiModalContent] = [
+            'Process these files and call the tool',
+            BinaryImage(data=b'\x89PNG', media_type='image/png'),
+            DocumentUrl(url='https://example.com/doc/12345', media_type='application/pdf'),
+        ]
         messages = await client.execute_workflow(
-            BinaryToolWorkflow.run,
-            args=['Call the tool'],
-            id='test_binary_content_serialization',
+            MultiModalContentWorkflow.run,
+            args=[prompt],
+            id='test_multimodal_content_serialization',
             task_queue=TASK_QUEUE,
         )
         assert messages == snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content='Call the tool', timestamp=IsDatetime())],
+                    parts=[
+                        UserPromptPart(
+                            content=[
+                                'Process these files and call the tool',
+                                BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'),
+                                DocumentUrl(
+                                    url='https://example.com/doc/12345',
+                                    _media_type='application/pdf',
+                                    _identifier='eb8998',
+                                ),
+                            ],
+                            timestamp=IsDatetime(),
+                        )
+                    ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='get_binary_data', args={}, tool_call_id='pyd_ai_tool_call_id__get_binary_data'
+                            tool_name='get_multimodal_content',
+                            args={},
+                            tool_call_id='pyd_ai_tool_call_id__get_multimodal_content',
                         )
                     ],
-                    usage=RequestUsage(input_tokens=53, output_tokens=2),
+                    usage=RequestUsage(input_tokens=61, output_tokens=2),
                     model_name='test',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -3230,109 +3249,19 @@ async def test_binary_content_serialization_in_workflow(client: Client):
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
-                            tool_name='get_binary_data',
-                            content=['test', 'See file 4effda'],
-                            tool_call_id='pyd_ai_tool_call_id__get_binary_data',
+                            tool_name='get_multimodal_content',
+                            content=['test', 'See file 4effda', 'See file eb8998'],
+                            tool_call_id='pyd_ai_tool_call_id__get_multimodal_content',
                             timestamp=IsDatetime(),
                         ),
                         UserPromptPart(
                             content=[
                                 'This is file 4effda:',
                                 BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'),
-                            ],
-                            timestamp=IsDatetime(),
-                        ),
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='{"get_binary_data":["test","See file 4effda"]}')],
-                    usage=RequestUsage(input_tokens=68, output_tokens=10),
-                    model_name='test',
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                ),
-            ]
-        )
-
-
-# Tests for DocumentUrl serialization in Temporal
-# The key point is that media_type cannot be inferred from the URL and must be specified explicitly
-
-
-document_tool_agent = Agent(TestModel(), name='document_tool_agent')
-
-
-@document_tool_agent.tool
-def get_document(ctx: RunContext[None]) -> list[str | DocumentUrl]:
-    """Return a list with text and DocumentUrl."""
-    # URL doesn't hint at media type, so media_type must be specified explicitly
-    return ['test', DocumentUrl(url='https://example.com/doc/12345', media_type='application/pdf')]
-
-
-document_tool_temporal_agent = TemporalAgent(document_tool_agent, activity_config=BASE_ACTIVITY_CONFIG)
-
-
-@workflow.defn
-class DocumentToolWorkflow:
-    @workflow.run
-    async def run(self, prompt: str) -> list[ModelMessage]:
-        result = await document_tool_temporal_agent.run(prompt)
-        return result.all_messages()
-
-
-async def test_document_url_tool_return_serialization_in_workflow(client: Client):
-    """Test that DocumentUrl returned from a tool survives Temporal activity→workflow serialization.
-
-    This tests that FileUrl instances (like DocumentUrl) are properly serialized
-    and reconstructed after deserialization. The key point is that the media_type
-    cannot be inferred from the URL and must be specified explicitly.
-    """
-    async with Worker(
-        client,
-        task_queue=TASK_QUEUE,
-        workflows=[DocumentToolWorkflow],
-        plugins=[AgentPlugin(document_tool_temporal_agent)],
-    ):
-        messages = await client.execute_workflow(
-            DocumentToolWorkflow.run,
-            args=['Call the tool'],
-            id='test_document_url_tool_return_serialization',
-            task_queue=TASK_QUEUE,
-        )
-        assert messages == snapshot(
-            [
-                ModelRequest(
-                    parts=[UserPromptPart(content='Call the tool', timestamp=IsDatetime())],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            tool_name='get_document', args={}, tool_call_id='pyd_ai_tool_call_id__get_document'
-                        )
-                    ],
-                    usage=RequestUsage(input_tokens=53, output_tokens=2),
-                    model_name='test',
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='get_document',
-                            content=['test', 'See file eb8998'],
-                            tool_call_id='pyd_ai_tool_call_id__get_document',
-                            timestamp=IsDatetime(),
-                        ),
-                        UserPromptPart(
-                            content=[
                                 'This is file eb8998:',
                                 DocumentUrl(
                                     url='https://example.com/doc/12345',
-                                    media_type='application/pdf',
+                                    _media_type='application/pdf',
                                     _identifier='eb8998',
                                 ),
                             ],
@@ -3343,8 +3272,8 @@ async def test_document_url_tool_return_serialization_in_workflow(client: Client
                     run_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[TextPart(content='{"get_document":["test","See file eb8998"]}')],
-                    usage=RequestUsage(input_tokens=68, output_tokens=10),
+                    parts=[TextPart(content='{"get_multimodal_content":["test","See file 4effda","See file eb8998"]}')],
+                    usage=RequestUsage(input_tokens=84, output_tokens=13),
                     model_name='test',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -3352,66 +3281,23 @@ async def test_document_url_tool_return_serialization_in_workflow(client: Client
             ]
         )
 
-
-document_input_agent = Agent(TestModel(), name='document_input_agent')
-
-document_input_temporal_agent = TemporalAgent(document_input_agent, activity_config=BASE_ACTIVITY_CONFIG)
-
-
-@workflow.defn
-class DocumentInputWorkflow:
-    @workflow.run
-    async def run(self, prompt: list[str | DocumentUrl]) -> list[ModelMessage]:
-        result = await document_input_temporal_agent.run(prompt)
-        return result.all_messages()
-
-
-async def test_document_url_input_serialization_in_workflow(client: Client):
-    """Test that DocumentUrl passed to agent.run survives Temporal workflow→activity serialization.
-
-    This tests that FileUrl instances (like DocumentUrl) are properly serialized when passed
-    as input to a workflow and reconstructed for the activity. The key point is that the
-    media_type cannot be inferred from the URL and must be specified explicitly.
-    """
-    async with Worker(
-        client,
-        task_queue=TASK_QUEUE,
-        workflows=[DocumentInputWorkflow],
-        plugins=[AgentPlugin(document_input_temporal_agent)],
-    ):
-        # URL doesn't hint at media type, so media_type must be specified explicitly
-        doc = DocumentUrl(url='https://example.com/doc/12345', media_type='application/pdf')
-        messages = await client.execute_workflow(
-            DocumentInputWorkflow.run,
-            args=[['Describe this document', doc]],
-            id='test_document_url_input_serialization',
-            task_queue=TASK_QUEUE,
-        )
-        assert messages == snapshot(
-            [
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(
-                            content=[
-                                'Describe this document',
-                                DocumentUrl(
-                                    url='https://example.com/doc/12345',
-                                    media_type='application/pdf',
-                                    _identifier='eb8998',
-                                ),
-                            ],
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='success (no tool calls)')],
-                    usage=RequestUsage(input_tokens=54, output_tokens=4),
-                    model_name='test',
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                ),
-            ]
-        )
+        # Explicitly verify that media_type is preserved through serialization for both
+        # BinaryContent and DocumentUrl. This is important because _media_type has compare=False
+        # on DocumentUrl, so the snapshot comparison doesn't actually verify it. The media_type
+        # cannot be inferred from the URL, so if serialization loses it, accessing media_type
+        # would raise an error.
+        media_types = [
+            (type(content).__name__, content.media_type)
+            for message in messages
+            for part in message.parts
+            if isinstance(part, UserPromptPart)
+            for content in part.content
+            if isinstance(content, (BinaryContent, DocumentUrl))
+        ]
+        # Should have 4 items: 2 BinaryContent (input + tool return) and 2 DocumentUrl (input + tool return)
+        assert media_types == [
+            ('BinaryContent', 'image/png'),
+            ('DocumentUrl', 'application/pdf'),
+            ('BinaryContent', 'image/png'),
+            ('DocumentUrl', 'application/pdf'),
+        ]
