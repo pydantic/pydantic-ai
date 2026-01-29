@@ -10,13 +10,14 @@ from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
 import anyio
 from pydantic import TypeAdapter
-from typing_extensions import Self, TypeIs, TypeVar
+from typing_extensions import Self, TypeIs, TypeVar, deprecated
 
 from pydantic_graph import End
 
 from .. import (
     _agent_graph,
     _system_prompt,
+    _tool_manager,
     _utils,
     exceptions,
     messages as _messages,
@@ -597,6 +598,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                     tool_manager=graph_ctx.deps.tool_manager,
                                     tool_calls=stream.response.tool_calls,
                                     tool_call_results=None,
+                                    tool_call_metadata=None,
                                     final_result=final_result,
                                     ctx=graph_ctx,
                                     output_parts=parts,
@@ -964,11 +966,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
         task = asyncio.create_task(run_agent())
 
-        async with receive_stream:
-            async for message in receive_stream:
-                yield message
+        try:
+            async with receive_stream:
+                async for message in receive_stream:
+                    yield message
 
-        result = await task
+            result = await task
+
+        except asyncio.CancelledError as e:
+            task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
+            raise
+
         yield AgentRunResultEvent(result)
 
     @overload
@@ -1165,9 +1173,24 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     @staticmethod
     @contextmanager
+    def parallel_tool_call_execution_mode(mode: _tool_manager.ParallelExecutionMode = 'parallel') -> Iterator[None]:
+        """Set the parallel execution mode during the context.
+
+        Args:
+            mode: The execution mode for tool calls:
+                - 'parallel': Run tool calls in parallel, yielding events as they complete (default).
+                - 'sequential': Run tool calls one at a time in order.
+                - 'parallel_ordered_events': Run tool calls in parallel, but events are emitted in order, after all calls complete.
+        """
+        with ToolManager.parallel_execution_mode(mode):
+            yield
+
+    @staticmethod
+    @contextmanager
+    @deprecated('Use `parallel_execution_mode("sequential")` instead.')
     def sequential_tool_calls() -> Iterator[None]:
         """Run tool calls sequentially during the context."""
-        with ToolManager.sequential_tool_calls():
+        with ToolManager.parallel_execution_mode('sequential'):
             yield
 
     @staticmethod

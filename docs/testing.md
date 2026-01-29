@@ -39,7 +39,7 @@ from weather_service import WeatherService  # (2)!
 weather_agent = Agent(
     'openai:gpt-5',
     deps_type=WeatherService,
-    system_prompt='Providing a weather forecast at the locations the user provides.',
+    instructions='Providing a weather forecast at the locations the user provides.',
 )
 
 
@@ -90,7 +90,6 @@ from pydantic_ai import models, capture_run_messages, RequestUsage
 from pydantic_ai.models.test import TestModel
 from pydantic_ai import (
     ModelResponse,
-    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -119,15 +118,12 @@ async def test_forecast():
     assert messages == [  # (6)!
         ModelRequest(
             parts=[
-                SystemPromptPart(
-                    content='Providing a weather forecast at the locations the user provides.',
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
                 UserPromptPart(
                     content='What will the weather be like in London on 2024-11-28?',
                     timestamp=IsNow(tz=timezone.utc),  # (7)!
                 ),
             ],
+            instructions='Providing a weather forecast at the locations the user provides.',
             timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
         ),
@@ -143,7 +139,7 @@ async def test_forecast():
                 )
             ],
             usage=RequestUsage(
-                input_tokens=71,
+                input_tokens=60,
                 output_tokens=7,
             ),
             model_name='test',
@@ -159,6 +155,7 @@ async def test_forecast():
                     timestamp=IsNow(tz=timezone.utc),
                 ),
             ],
+            instructions='Providing a weather forecast at the locations the user provides.',
             timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
         ),
@@ -169,7 +166,7 @@ async def test_forecast():
                 )
             ],
             usage=RequestUsage(
-                input_tokens=77,
+                input_tokens=66,
                 output_tokens=16,
             ),
             model_name='test',
