@@ -161,6 +161,16 @@ When using [`UploadedFile`][pydantic_ai.messages.UploadedFile] you must set the 
 
 If you want to introduce portability into your agent logic to allow the same prompt history to work with different provider backends, you can use a [history processor][pydantic_ai.agent.Agent.history_processors] to remove or rewrite `UploadedFile` parts from messages before sending them to a provider that does not support them. Be aware that stripping out `UploadedFile` instances might confuse the model, especially if references to those files remain in the text.
 
+### Media Type Inference
+
+The `media_type` parameter is optional for [`UploadedFile`][pydantic_ai.messages.UploadedFile]. If not specified, PydanticAI will attempt to infer it from the `file_id`:
+
+1. If `file_id` is a URL or path with a recognizable file extension (e.g., `.pdf`, `.png`), the media type is inferred automatically
+2. For opaque file IDs (e.g., `'file-abc123'`), the media type defaults to `'application/octet-stream'`
+
+!!! tip
+    While `media_type` is optional, we recommend explicitly setting it when known to ensure correct handling by the model provider.
+
 ### Anthropic
 
 Follow the [Anthropic Files API docs](https://docs.anthropic.com/en/docs/build-with-claude/files) to upload files. You can access the underlying Anthropic client via `provider.client`.
@@ -279,7 +289,7 @@ asyncio.run(main())
 For Bedrock, files must be uploaded to S3 separately (e.g., using [boto3](https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/s3/client/put_object.html)). The assumed role must have `s3:GetObject` permission on the bucket.
 
 !!! note "`media_type` may be required"
-    Bedrock requires `media_type` when the file extension is ambiguous or missing. For S3 URLs with clear extensions like `.pdf`, `.png`, etc., it can be inferred automatically.
+    Bedrock requires `media_type` when the file extension is ambiguous or missing. For S3 URLs with clear extensions like `.pdf`, `.png`, etc., it can be inferred automatically,
 
 ```py {title="uploaded_file_bedrock.py" test="skip"}
 import asyncio
