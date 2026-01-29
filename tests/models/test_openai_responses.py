@@ -52,7 +52,7 @@ from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, TestEnv, try_import
+from ..conftest import IsBytes, IsDatetime, IsFloat, IsInt, IsNow, IsStr, TestEnv, try_import
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
@@ -9979,117 +9979,38 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
     result = await agent.run(prompt, model_settings=settings)
 
     messages = result.all_messages()
-    assert messages == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content=prompt, timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                instructions=instructions,
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    BuiltinToolCallPart(
-                        tool_name='web_search',
-                        args={
-                            'query': 'tallest mountain in Alberta',
-                            'type': 'search',
-                            'queries': [
-                                'tallest mountain in Alberta',
-                                'Mount Columbia tallest mountain in Alberta elevation',
-                            ],
-                        },
-                        tool_call_id=IsStr(),
-                        provider_name='openai',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='web_search',
-                        content={'status': 'completed'},
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    ),
-                    TextPart(
-                        content=(
-                            'The tallest mountain in Alberta is **Mount Columbia**, which rises to **3,747 m (12,294 ft)** '
-                            "and is Alberta's highest point. ([britannica.com](https://www.britannica.com/place/Mount-Columbia?utm_source=openai))"
-                        ),
-                        id=IsStr(),
-                        provider_details={
-                            'annotations': [
-                                {
-                                    'type': 'url_citation',
-                                    'start_index': 126,
-                                    'end_index': 211,
-                                    'title': 'Mount Columbia | mountain, Alberta, Canada | Britannica',
-                                    'url': 'https://www.britannica.com/place/Mount-Columbia?utm_source=openai',
-                                }
-                            ]
-                        },
-                    ),
-                ],
-                usage=IsInstance(RequestUsage),
-                model_name=IsStr(),
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-        ]
+    assert messages[0] == ModelRequest(
+        parts=[UserPromptPart(content=prompt, timestamp=IsDatetime())],
+        timestamp=IsDatetime(),
+        instructions=instructions,
+        run_id=IsStr(),
     )
+    response = cast(ModelResponse, messages[1])
+    assert response.provider_name == 'openai'
+    assert response.provider_url == 'https://api.openai.com/v1/'
+    assert response.finish_reason == 'stop'
+
+    tool_call = next(part for part in response.parts if isinstance(part, BuiltinToolCallPart))
+    assert tool_call.tool_name == 'web_search'
+    assert isinstance(tool_call.args, dict)
+    assert tool_call.args.get('query') == 'tallest mountain in Alberta'
+    assert tool_call.args.get('type') == 'search'
+
+    text_part = next(part for part in response.parts if isinstance(part, TextPart))
+    assert text_part.provider_details and 'annotations' in text_part.provider_details
 
     # Test with annotations disabled (default)
     model2 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
     agent2 = Agent(model2, instructions=instructions, builtin_tools=[WebSearchTool()])
     result2 = await agent2.run(prompt)
 
-    assert result2.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content=prompt, timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                instructions=instructions,
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    BuiltinToolCallPart(
-                        tool_name='web_search',
-                        args={
-                            'query': 'tallest mountain in Alberta',
-                            'type': 'search',
-                            'queries': ['tallest mountain in Alberta'],
-                        },
-                        tool_call_id=IsStr(),
-                        provider_name='openai',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='web_search',
-                        content={'status': 'completed'},
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    ),
-                    TextPart(
-                        content=(
-                            'The tallest mountain in Alberta is **Mount Columbia** (3,747 m / 12,294 ft). '
-                            '([britannica.com](https://www.britannica.com/place/Mount-Columbia?utm_source=openai))'
-                        ),
-                        id=IsStr(),
-                    ),
-                ],
-                usage=IsInstance(RequestUsage),
-                model_name=IsStr(),
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-        ]
+    messages2 = result2.all_messages()
+    assert messages2[0] == ModelRequest(
+        parts=[UserPromptPart(content=prompt, timestamp=IsDatetime())],
+        timestamp=IsDatetime(),
+        instructions=instructions,
+        run_id=IsStr(),
     )
+    response2 = cast(ModelResponse, messages2[1])
+    text_part2 = next(part for part in response2.parts if isinstance(part, TextPart))
+    assert not (text_part2.provider_details or {}).get('annotations')

@@ -2493,11 +2493,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     yield event
 
             elif isinstance(chunk, responses.ResponseTextDoneEvent):
-                # When text is done, add logprobs and annotations to provider_details if available
+                # Add annotations to provider_details if available
                 provider_details: dict[str, Any] = {}
-                if chunk.logprobs:
-                    provider_details['logprobs'] = _map_logprobs(chunk.logprobs)
-
                 annotations = _annotations_by_item.get(chunk.item_id)
                 if annotations:
                     provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
