@@ -179,7 +179,7 @@ class InstrumentationSettings:
                 description='Measures number of cached read and write tokens',
                 explicit_bucket_boundaries_advisory=TOKEN_HISTOGRAM_BOUNDARIES,
             )
-        except TypeError:
+        except TypeError:  # pragma: lax no cover
             self.cached_tokens_histogram = self.meter.create_histogram(
                 name='gen_ai.client.cached_token.usage',
                 unit='{token}',
