@@ -1,0 +1,172 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '348'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Call the get_file tool to get a image and describe what you see.
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_file
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '536'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: I'll get the file and describe what I see.
+        type: text
+      - id: toolu_01M9Doe3D3Y33Pqz15x9b7Gi
+        input: {}
+        name: get_file
+        type: tool_use
+      id: msg_019EYTCh1Q6peuCJM6L3zeRY
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 555
+        output_tokens: 48
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '834'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Call the get_file tool to get a image and describe what you see.
+          type: text
+        role: user
+      - content:
+        - text: I'll get the file and describe what I see.
+          type: text
+        - id: toolu_01M9Doe3D3Y33Pqz15x9b7Gi
+          input: {}
+          name: get_file
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: File attached
+            type: text
+          is_error: false
+          tool_use_id: toolu_01M9Doe3D3Y33Pqz15x9b7Gi
+          type: tool_result
+        - source:
+            type: url
+            url: https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png
+          type: image
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_file
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '907'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: |-
+          I can see the Google logo. It features the word "Google" written in a distinctive, colorful sans-serif typeface. Each letter is rendered in a different color from Google's signature palette:
+
+          - **G** - Blue
+          - **o** - Red
+          - **o** - Yellow
+          - **g** - Blue
+          - **l** - Green
+          - **e** - Red
+
+          The logo uses bright, primary colors and has a clean, modern, and friendly appearance. This is Google's well-known wordmark logo that has become one of the most recognizable brand identities in the world.
+        type: text
+      id: msg_01Vbxbnn5MXETipgLuCNQpsr
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 765
+        output_tokens: 131
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

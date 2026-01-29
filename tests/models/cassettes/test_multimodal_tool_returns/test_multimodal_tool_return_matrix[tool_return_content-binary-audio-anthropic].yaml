@@ -1,0 +1,167 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '348'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Call the get_file tool to get a audio and describe what you see.
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_file
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '590'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: I'll call the get_file tool to retrieve the audio file and describe what I can observe about it.
+        type: text
+      - id: toolu_01UcPePbFZVEX4eijzx5ij59
+        input: {}
+        name: get_file
+        type: tool_use
+      id: msg_01SdL2juKXcZp4WWXe9SbAcg
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 555
+        output_tokens: 59
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '821'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Call the get_file tool to get a audio and describe what you see.
+          type: text
+        role: user
+      - content:
+        - text: I'll call the get_file tool to retrieve the audio file and describe what I can observe about it.
+          type: text
+        - id: toolu_01UcPePbFZVEX4eijzx5ij59
+          input: {}
+          name: get_file
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: File attached
+            type: text
+          is_error: false
+          tool_use_id: toolu_01UcPePbFZVEX4eijzx5ij59
+          type: tool_result
+        - text: '[audio/mpeg not supported by Anthropic]'
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_file
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1229'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: "I can see that an audio file has been retrieved, specifically an MP3 file (audio/mpeg format). However, I'm
+          currently unable to process or analyze audio files directly. \n\nWhat I can tell you about what was retrieved:\n-
+          **File type**: MP3 (MPEG audio format)\n- **Format**: audio/mpeg\n\nUnfortunately, I cannot:\n- Listen to or transcribe
+          the audio content\n- Describe what sounds, speech, or music it contains\n- Provide details about duration, quality,
+          or other audio characteristics\n\nIf you'd like to know what's in this audio file, you could:\n1. Describe the content
+          to me\n2. Provide a transcript if it contains speech\n3. Tell me what you'd like to know about it\n\nIs there something
+          specific about this audio file you'd like help with, or would you like to share what it contains so I can assist
+          you better?"
+        type: text
+      id: msg_01SE85AmXanjoV2cbE83kgGy
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 645
+        output_tokens: 202
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

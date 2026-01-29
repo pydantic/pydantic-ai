@@ -1,0 +1,168 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '348'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Call the get_file tool to get a video and describe what you see.
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_file
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '571'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: I'll call the get_file tool to retrieve a video and then describe what I see.
+        type: text
+      - id: toolu_0117VbP2wXAmmQ89VvtMdoD7
+        input: {}
+        name: get_file
+        type: tool_use
+      id: msg_01MNV3xwANwtSW7eFAg3iye8
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 555
+        output_tokens: 56
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '825'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Call the get_file tool to get a video and describe what you see.
+          type: text
+        role: user
+      - content:
+        - text: I'll call the get_file tool to retrieve a video and then describe what I see.
+          type: text
+        - id: toolu_0117VbP2wXAmmQ89VvtMdoD7
+          input: {}
+          name: get_file
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: See file 9964e6.
+            type: text
+          is_error: false
+          tool_use_id: toolu_0117VbP2wXAmmQ89VvtMdoD7
+          type: tool_result
+        - text: 'This is file 9964e6: [video URL not supported by Anthropic]'
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_file
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1067'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: |-
+          I appreciate you sharing the file, but I'm unable to view or analyze video content. The system indicates this is a video file, but I don't have the capability to watch videos or extract frames from them to describe what's happening.
+
+          If you'd like me to help you with this video, you could:
+          1. **Describe what you see** in the video, and I can help analyze or discuss it
+          2. **Provide screenshots or still frames** from the video that I can examine
+          3. **Tell me what type of content** you're looking for help with (e.g., identifying objects, understanding actions, transcribing text, etc.)
+
+          Is there a specific aspect of this video you'd like help with?
+        type: text
+      id: msg_01Th2h4J2YGMQcnoJ1q5kKwQ
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 654
+        output_tokens: 157
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1
