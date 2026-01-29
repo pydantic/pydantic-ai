@@ -371,6 +371,45 @@ def my_flaky_tool(query: str) -> str:
 
 Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception message, which is sent back to the LLM to guide its next attempt. Both `ValidationError` and `ModelRetry` respect the `retries` setting configured on the `Tool` or `Agent`.
 
+### Tool Failures with ToolFailed
+
+While [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] is intended for expected retry scenarios (incorrect parameters, transient issues), the [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] exception is designed for genuine tool errors that should be traced as failures in telemetry while still allowing the agent to continue execution.
+
+This is particularly useful in parallel tool execution where some tools may fail but you want the agent to proceed with the successful results.
+
+```python
+from pydantic_ai import Agent, RunContext, ToolFailed
+
+
+agent = Agent('test')
+
+
+@agent.tool
+async def query_database(ctx: RunContext[None], query: str) -> str:
+    try:
+        # Attempt database query
+        result = await some_database_call(query)
+        return result
+    except AuthenticationError:
+        # Permanent failure - disable this tool for the rest of the run
+        raise ToolFailed("Database credentials invalid", disable=True)
+    except TemporaryConnectionError:
+        # Transient failure - keep tool available for retry
+        raise ToolFailed("Database temporarily unavailable", disable=False)
+```
+
+Key differences between `ModelRetry` and `ToolFailed`:
+
+- **`ModelRetry`**: Expected retry behavior, not traced as an error in telemetry
+- **`ToolFailed`**: Traced as an error in telemetry, indicates a genuine failure
+
+The `disable` parameter controls tool availability:
+
+- **`disable=False`** (default): Tool remains available. The model can retry with different arguments or try again later.
+- **`disable=True`**: Tool is disabled for the remainder of the agent run. Useful for permanent failures like missing credentials or unsupported operations.
+
+Like `ModelRetry`, `ToolFailed` generates a `RetryPromptPart` that informs the model of the failure, allowing it to adjust its approach or continue with other tools.
+
 ### Tool Timeout
 
 You can set a timeout for tool execution to prevent tools from running indefinitely. If a tool exceeds its timeout, it is treated as a failure and a retry prompt is sent to the model (counting towards the retry limit).
