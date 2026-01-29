@@ -42,7 +42,8 @@ class NebiusProvider(Provider[AsyncOpenAI]):
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile = {
             'meta-llama': meta_model_profile,
             'deepseek-ai': deepseek_model_profile,

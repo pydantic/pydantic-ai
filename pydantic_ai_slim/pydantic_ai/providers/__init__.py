@@ -43,7 +43,8 @@ class Provider(ABC, Generic[InterfaceClient]):
         """The client for the provider."""
         raise NotImplementedError()
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         """The model profile for the named model, if available."""
         return None  # pragma: no cover
 
@@ -169,7 +170,7 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .voyageai import VoyageAIProvider
 
         return VoyageAIProvider
-    else:  # pragma: no cover
+    else:
         raise ValueError(f'Unknown provider: {provider}')
 
 
