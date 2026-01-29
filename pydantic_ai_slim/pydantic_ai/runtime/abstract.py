@@ -19,7 +19,7 @@ class FunctionCall:
 
     function_name: str
     args: tuple[Any, ...] = ()  # Positional args
-    kwargs: dict[str, Any] = field(default_factory=dict)  # keyword args
+    kwargs: dict[str, Any] = field(default_factory=lambda: {})  # keyword args
 
 
 # Exception Hierarchy
@@ -40,8 +40,8 @@ class CodeSyntaxError(CodeExecutionError):
     pass
 
 
-class CodeTypeError(CodeExecutionError):
-    """Code has a type error."""
+class CodeTypingError(CodeExecutionError):
+    """Code has a typing error."""
 
     pass
 
@@ -52,6 +52,10 @@ class CodeRuntimeError(CodeExecutionError):
     pass
 
 
+# TODO: Consider whether this should be Coroutine[Any, Any, Any] instead of Awaitable[Any].
+# Awaitable is broader (covers Coroutine, Task, Future, __await__ objects), but
+# Coroutine would allow asyncio.create_task() directly without ensure_future().
+# Check what callers actually pass and whether the extra flexibility is needed.
 ToolCallback: TypeAlias = Callable[[FunctionCall], Awaitable[Any]]
 
 
@@ -59,12 +63,7 @@ class CodeRuntime(ABC):
     """Abstract base for code execution runtimes. Subclass per runtime provider."""
 
     @abstractmethod
-    async def run(
-        self,
-        code: str,
-        functions: list[str],
-        call_tool: ToolCallback,
-    ) -> Any:
+    async def run(self, code: str, functions: list[str], call_tool: ToolCallback, signatures: list[str]) -> Any:
         """Execute code, invoking call_tool for each external function call.
 
         Args:
@@ -81,38 +80,3 @@ class CodeRuntime(ABC):
             CodeRuntimeError: If execution fails.
         """
         ...
-
-    async def resume_with_tools(
-        self,
-        checkpoint: bytes,
-        call_tool: ToolCallback,
-    ) -> Any:
-        """Resume execution from a checkpoint.
-
-        Used to continue an execution that was interrupted mid-flight, e.g.
-        after an approval request.
-
-        Args:
-            checkpoint: Bytes previously obtained from a runtime checkpoint.
-            call_tool: Callback invoked for each remaining external function call.
-
-        Returns:
-            The final output of the code execution.
-
-        Raises:
-            CodeRuntimeError: If this runtime does not support checkpoint resumption.
-        """
-        raise CodeRuntimeError('This runtime does not support checkpoint resumption')
-
-    async def type_check(self, code: str, signatures: list[str]) -> None:
-        """Optional pre-execution type checking. Default: no-op.
-
-        Args:
-            code: The LLM-generated Python code to type check.
-            signatures: List of Python function signature strings for available tools.
-
-        Raises:
-            CodeTypeError: If type checking finds errors.
-            CodeSyntaxError: If the code can't be parsed.
-        """
-        pass

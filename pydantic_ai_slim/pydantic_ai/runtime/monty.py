@@ -18,23 +18,28 @@ Concurrency model:
 from __future__ import annotations
 
 import asyncio
-import base64
-import inspect
-import json
 from typing import Any
 
-from pydantic_ai.exceptions import ApprovalRequired
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from pydantic_ai.runtime.abstract import (
     CodeRuntime,
     CodeRuntimeError,
     CodeSyntaxError,
-    CodeTypeError,
+    CodeTypingError,
     FunctionCall,
     ToolCallback,
 )
 
 try:
-    import pydantic_monty as monty
+    from pydantic_monty import (
+        Monty,
+        MontyComplete,
+        MontyFutureSnapshot,
+        MontyRuntimeError,
+        MontySnapshot,
+        MontySyntaxError,
+        MontyTypingError,
+    )
 except ImportError:
     raise ImportError("MontyRuntime requires 'monty'. Install with: pip install 'pydantic-ai-slim[monty]'")
 
@@ -53,7 +58,7 @@ class MontyRuntime(CodeRuntime):
     at which point the runtime awaits completed tasks and provides results.
     """
 
-    async def run(self, code: str, functions: list[str], call_tool: ToolCallback) -> Any:
+    async def run(self, code: str, functions: list[str], call_tool: ToolCallback, signatures: list[str]) -> Any:
         """Start executing code in the Monty sandbox.
 
         Args:
@@ -68,328 +73,84 @@ class MontyRuntime(CodeRuntime):
             CodeSyntaxError: If Monty cannot parse the code.
             CodeRuntimeError: If execution fails.
         """
-        m = monty.Monty(code, external_functions=functions)
+        monty = Monty(code=code, external_functions=functions)
         try:
-            state = m.start()
-        except monty.MontySyntaxError as e:
+            # Well first of all let us type check because Monty allows that
+            await self._type_check(code, signatures)
+
+        except MontyTypingError as e:
+            raise CodeTypingError(e.display())
+        except MontyRuntimeError as e:
+            raise CodeRuntimeError(e.display())
+        except MontySyntaxError as e:
             raise CodeSyntaxError(e.display())
-        except monty.MontyRuntimeError as e:
+
+        # We are good so now let us start
+        monty_state: MontyComplete | MontyFutureSnapshot | MontySnapshot | None = None
+        tasks: dict[int, asyncio.Task[Any]] = {}
+
+        # Need to wrap in try: except :(
+        # Wish there was a do while lol
+
+        try:
+            monty_state = monty.start()
+            # Seperated in case we end up adding resume after all
+            monty_state = await MontyRuntime._execution_loop(monty_state, tasks, call_tool)
+
+        except MontyRuntimeError as e:
             raise CodeRuntimeError(e.display())
 
-        return await self._execution_loop(state, call_tool)
+        return monty_state.output
 
-    async def resume_with_tools(self, checkpoint: bytes, call_tool: ToolCallback) -> Any:
-        """Resume a paused execution from a serialized checkpoint.
-
-        The checkpoint is a JSON envelope containing the Monty VM state
-        plus pending call info for concurrent execution.
-
-        Args:
-            checkpoint: Bytes previously obtained from ``_build_checkpoint``.
-            call_tool: Callback invoked for each remaining external function call.
-
-        Returns:
-            The final output of the code execution.
-        """
-        state, pending_calls = self._load_checkpoint(checkpoint)
-        return await self._execution_loop(state, call_tool, pending_calls)
-
-    async def type_check(self, code: str, signatures: list[str]) -> None:
-        """Type check code using Monty's built-in type checker.
-
-        Prepends standard typing imports and the provided tool signatures as
-        prefix code so that Monty's checker can resolve external function types
-        without needing the actual implementations.
-
-        Args:
-            code: LLM-generated Python source code to type check.
-            signatures: Python function signature strings (e.g.
-                ``def get_weather(city: str) -> str: ...``) for available tools.
-
-        Raises:
-            CodeTypeError: If Monty's type checker finds type errors.
-            CodeSyntaxError: If the code cannot be parsed.
-        """
+    async def _type_check(self, code: str, signatures: list[str]):
         imports = 'from typing import Any, TypedDict, NotRequired, Literal\n\n'
         prefix_code = imports + '\n\n'.join(signatures)
-        try:
-            m = monty.Monty(code, external_functions=[])
-            m.type_check(prefix_code=prefix_code)
-        except monty.MontyTypingError as e:
-            raise CodeTypeError(e.display())
-        except monty.MontySyntaxError as e:
-            raise CodeSyntaxError(e.display())
-        except monty.MontyRuntimeError as e:
-            raise CodeRuntimeError(e.display())
 
+        monty = Monty(code=code)
+        monty.type_check(prefix_code=prefix_code)
+
+    @staticmethod
     async def _execution_loop(
-        self,
-        state: monty.MontySnapshot | monty.MontyFutureSnapshot | monty.MontyComplete,
-        call_tool: ToolCallback,
-        pending_calls: dict[int, FunctionCall] | None = None,
-    ) -> Any:
-        """Drive Monty's concurrent pause/resume loop.
-
-        The loop handles three Monty state types:
-
-        **Discovery phase** (``MontySnapshot``): Each external function call is
-        launched as an ``asyncio.Task`` via ``call_tool``, and the result is
-        deferred (``resume(future=...)``). Monty continues discovering the next
-        independent call until it needs a value.
-
-        **Resolution phase** (``MontyFutureSnapshot``): Monty needs deferred
-        values. The runtime awaits completed tasks and feeds results back.
-        If any task raises ``ApprovalRequired``, completed results are provided
-        as partial results, and the approval is surfaced with a checkpoint.
-
-        **Complete** (``MontyComplete``): Execution finished. Any remaining
-        side-effect-only tasks are awaited before returning.
-
-        On resume (via ``resume_with_tools``), previously-pending calls are
-        re-launched from the checkpoint's ``pending_calls`` info. The consumer
-        builds the callback with approval matching by tool name, so the
-        previously-blocked tool call succeeds on retry.
-
-        Args:
-            state: The current Monty state.
-            call_tool: Callback provided by ``CodeModeToolset._make_tool_callback()``.
-            pending_calls: Optional dict of call_id -> FunctionCall for resumed
-                concurrent executions. Tasks are re-launched for these calls.
-
-        Returns:
-            The final output once Monty completes.
-        """
-        tasks: dict[int, asyncio.Task[Any]] = {}
-        call_info: dict[int, FunctionCall] = {}
-
-        # Wrap the callback so we always get a proper coroutine for create_task.
-        # ToolCallback returns Awaitable[Any], but create_task needs a Coroutine.
-        async def _run_callback(fn_call: FunctionCall) -> Any:
-            result = await call_tool(fn_call)
-            if inspect.isawaitable(result):
-                return await result
-            return result
-
-        # On resume with pending calls: re-launch tasks for deferred calls.
-        if pending_calls:
-            for cid, call in pending_calls.items():
-                task = asyncio.create_task(_run_callback(call))
-                tasks[cid] = task
-                call_info[cid] = call
-
-        try:
-            while True:
-                if isinstance(state, monty.MontySnapshot):
-                    # === DISCOVERY PHASE ===
-                    # Fire-and-forget: launch a task for each call, defer the result,
-                    # and let Monty discover the next independent call.
-                    while isinstance(state, monty.MontySnapshot):
-                        call = FunctionCall(
-                            function_name=state.function_name,
-                            args=tuple(state.args) if state.args else (),
-                            kwargs=dict(state.kwargs) if state.kwargs else {},
-                        )
-                        task = asyncio.create_task(_run_callback(call))
-                        tasks[state.call_id] = task
-                        call_info[state.call_id] = call
-                        try:
-                            state = state.resume(future=...)
-                        except monty.MontyRuntimeError as e:
-                            await self._cancel_tasks(tasks)
-                            raise CodeRuntimeError(e.display())
-
-                elif isinstance(state, monty.MontyFutureSnapshot):
-                    # === RESOLUTION PHASE ===
-                    state = await self._resolve_futures(state, tasks, call_info)
-
-                else:
-                    # === COMPLETE ===
-                    assert isinstance(state, monty.MontyComplete)
-                    await self._await_remaining_tasks(tasks)
-                    return state.output
-        except BaseException:
-            await self._cancel_tasks(tasks)
-            raise
-
-    async def _resolve_futures(
-        self,
-        future_state: monty.MontyFutureSnapshot,
+        monty_state: MontyComplete | MontyFutureSnapshot | MontySnapshot,
         tasks: dict[int, asyncio.Task[Any]],
-        call_info: dict[int, FunctionCall],
-    ) -> monty.MontySnapshot | monty.MontyFutureSnapshot | monty.MontyComplete:
-        """Await tasks for pending call IDs and provide results to Monty.
+        call_tool: ToolCallback,
+    ):
+        while not isinstance(monty_state, MontyComplete):
+            if isinstance(monty_state, MontySnapshot):
+                # Do an external tool call
+                tasks[monty_state.call_id] = asyncio.ensure_future(
+                    call_tool(
+                        FunctionCall(
+                            function_name=monty_state.function_name,
+                            args=monty_state.args,
+                            kwargs=monty_state.kwargs,
+                        )
+                    )
+                )
+                monty_state = monty_state.resume(future=...)
+            elif isinstance(monty_state, MontyFutureSnapshot):
+                pending = [tasks[cid] for cid in monty_state.pending_call_ids if cid in tasks]
+                done, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                results: dict[int, Any] = {}
+                for task in done:
+                    for cid, t in list(tasks.items()):
+                        if t is task:
+                            try:
+                                results[cid] = {'return_value': task.result()}
 
-        Waits for all pending tasks to complete. If any raise
-        ``ApprovalRequired``, completed results are provided as a partial
-        resume, and the approval is re-raised with checkpoint metadata.
+                            except (ModelRetry, CallDeferred, ApprovalRequired) as e:
+                                # These are PyAI errors and should be handeled by PyAI not monty or the LLM
 
-        Args:
-            future_state: The Monty state waiting for future results.
-            tasks: Mapping of call_id to running asyncio.Task.
-            call_info: Mapping of call_id to FunctionCall (for checkpoint).
+                                # Cancel all the tool calls which are in flight
 
-        Returns:
-            The next Monty state after providing results.
-        """
-        pending_ids = future_state.pending_call_ids
-        pending_tasks = {cid: tasks[cid] for cid in pending_ids if cid in tasks}
-        task_to_cid: dict[asyncio.Task[Any], int] = {task: cid for cid, task in pending_tasks.items()}
+                                for remaining in tasks.values():
+                                    remaining.cancel()
 
-        completed: dict[int, monty.ExternalResult] = {}
-        approval_needed: dict[int, ApprovalRequired] = {}
+                                raise
+                            except Exception as e:
+                                results[cid] = {'exception': e}
+                            del tasks[cid]
+                            break
+                monty_state = monty_state.resume(results=results)
 
-        remaining = set(pending_tasks.values())
-        while remaining:
-            done, remaining = await asyncio.wait(remaining, return_when=asyncio.FIRST_COMPLETED)
-            for task in done:
-                cid = task_to_cid[task]
-                try:
-                    completed[cid] = monty.ExternalReturnValue(return_value=task.result())
-                except ApprovalRequired as e:
-                    approval_needed[cid] = e
-                except Exception:
-                    # Non-approval exceptions propagate up; cleanup handled
-                    # by the outer try/except in _execution_loop.
-                    raise
-
-        if approval_needed:
-            # Provide partial results for completed calls before checkpointing.
-            checkpoint_state: monty.MontySnapshot | monty.MontyFutureSnapshot = future_state
-            if completed:
-                try:
-                    resumed = future_state.resume(results=completed)
-                except monty.MontyRuntimeError as e:
-                    raise CodeRuntimeError(e.display())
-                # If partial results completed execution, approvals are moot.
-                if isinstance(resumed, monty.MontyComplete):
-                    return resumed
-                checkpoint_state = resumed
-
-            # TODO: Currently we surface one approval at a time (sequential rounds).
-            # Each round is efficient -- completed results are already provided to Monty
-            # via partial resume, so no work is repeated. But the user sees N approval
-            # dialogs for N concurrent tools needing approval.
-            #
-            # To batch all approvals into one user interaction:
-            # 1. Include ALL approval-needed calls in the ApprovalRequired metadata
-            #    (not just the first), e.g. `'approval_calls': [...]`
-            # 2. Update code_mode consumer to emit multiple `_approval_call` entries
-            # 3. Update _agent_graph.py `_populate_deferred_calls()` to expand one
-            #    outer run_code call into N synthetic deferred approval entries
-            # 4. Update DeferredToolResults handling to pass back N approval results
-            # 5. Update the callback to mark multiple calls as approved on resume
-            #
-            # Discussion pending on whether this UX improvement warrants the agent
-            # graph complexity.
-
-            # Pick the first deferred call for approval.
-            first_cid = min(approval_needed.keys())
-            first_exc = approval_needed[first_cid]
-
-            # Build enriched checkpoint: Monty state + pending call info.
-            remaining_calls = {cid: call_info[cid] for cid in approval_needed}
-            checkpoint = self._build_checkpoint(checkpoint_state, remaining_calls)
-
-            raise ApprovalRequired(
-                metadata={
-                    **(first_exc.metadata or {}),
-                    'runtime_checkpoint': checkpoint,
-                }
-            )
-
-        # All resolved -- provide all results and continue.
-        # Remove resolved tasks from tracking dicts.
-        for cid in pending_ids:
-            tasks.pop(cid, None)
-            call_info.pop(cid, None)
-
-        try:
-            return future_state.resume(results=completed)
-        except monty.MontyRuntimeError as e:
-            raise CodeRuntimeError(e.display())
-
-    # ------------------------------------------------------------------
-    # Checkpoint serialization
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _build_checkpoint(
-        state: monty.MontySnapshot | monty.MontyFutureSnapshot,
-        pending_calls: dict[int, FunctionCall],
-    ) -> bytes:
-        """Serialize Monty state and pending call info to a checkpoint.
-
-        The checkpoint is a JSON envelope containing the Monty dump
-        (base64-encoded) plus the ``FunctionCall`` info for each pending
-        call_id. This is necessary because ``MontyFutureSnapshot.pending_call_ids``
-        only gives IDs, not the function name/args/kwargs needed to re-launch
-        callbacks on resume.
-
-        Args:
-            state: The Monty snapshot to serialize.
-            pending_calls: Mapping of call_id -> FunctionCall for concurrent
-                calls that still need to be resolved.
-
-        Returns:
-            Opaque bytes suitable for ``_load_checkpoint``.
-        """
-        data = {
-            'monty': base64.b64encode(state.dump()).decode(),
-            'pending_calls': {
-                str(cid): {
-                    'function_name': call.function_name,
-                    'args': list(call.args),
-                    'kwargs': call.kwargs,
-                }
-                for cid, call in pending_calls.items()
-            },
-        }
-        return json.dumps(data).encode()
-
-    @staticmethod
-    def _load_checkpoint(
-        checkpoint: bytes,
-    ) -> tuple[monty.MontySnapshot | monty.MontyFutureSnapshot, dict[int, FunctionCall]]:
-        """Deserialize a checkpoint produced by ``_build_checkpoint``.
-
-        Args:
-            checkpoint: Bytes from ``_build_checkpoint``.
-
-        Returns:
-            A tuple of (Monty state, pending calls dict).
-        """
-        data = json.loads(checkpoint.decode())
-        monty_bytes = base64.b64decode(data['monty'])
-        # Try MontyFutureSnapshot first, fall back to MontySnapshot.
-        try:
-            state: monty.MontySnapshot | monty.MontyFutureSnapshot = monty.MontyFutureSnapshot.load(monty_bytes)
-        except Exception:
-            state = monty.MontySnapshot.load(monty_bytes)
-        pending_calls = {
-            int(cid): FunctionCall(
-                function_name=info['function_name'],
-                args=tuple(info['args']),
-                kwargs=info['kwargs'],
-            )
-            for cid, info in data['pending_calls'].items()
-        }
-        return state, pending_calls
-
-    # ------------------------------------------------------------------
-    # Task helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    async def _cancel_tasks(tasks: dict[int, asyncio.Task[Any]]) -> None:
-        """Cancel all running tasks and suppress cancellation errors."""
-        for task in tasks.values():
-            task.cancel()
-        await asyncio.gather(*tasks.values(), return_exceptions=True)
-        tasks.clear()
-
-    @staticmethod
-    async def _await_remaining_tasks(tasks: dict[int, asyncio.Task[Any]]) -> None:
-        """Await any still-running tasks (for side-effect-only calls)."""
-        pending = [t for t in tasks.values() if not t.done()]
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+        return monty_state

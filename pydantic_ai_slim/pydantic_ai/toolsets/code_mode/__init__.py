@@ -13,7 +13,7 @@ from pydantic_ai.runtime.abstract import (
     CodeRuntime,
     CodeRuntimeError,
     CodeSyntaxError,
-    CodeTypeError,
+    CodeTypingError,
     FunctionCall,
     ToolCallback,
 )
@@ -284,19 +284,18 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         self,
         tool: _CodeModeTool[AgentDepsT],
         ctx: RunContext[AgentDepsT],
-        checkpoint: dict[str, Any] | None,
+        # checkpoint: dict[str, Any] | None,
     ) -> ToolCallback:
         # Match approval by tool name rather than a boolean flag. With concurrent
         # execution, multiple callbacks fire simultaneously — a boolean consumed by
         # whichever task runs first would approve the wrong call. String matching
         # ensures only the callback whose original_name matches gets approved.
-        approved_tool_name: str | None = checkpoint.get('tool_name') if checkpoint else None
-        override_args: dict[str, Any] | None = (
-            ctx.tool_call_metadata.get('_override_args') if checkpoint and ctx.tool_call_metadata else None
-        )
+        # approved_tool_name: str | None = checkpoint.get('tool_name') if checkpoint else None
+        # override_args: dict[str, Any] | None = (
+        #     ctx.tool_call_metadata.get('_override_args') if checkpoint and ctx.tool_call_metadata else None
+        # )
 
         async def callback(call: FunctionCall) -> Any:
-            nonlocal approved_tool_name, override_args
             sanitized_name = call.function_name
             original_tool = tool.original_tools[sanitized_name]
             original_name = self._name_mapping.get_original(sanitized_name) or sanitized_name
@@ -312,24 +311,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     if i < len(param_names):
                         tool_kwargs[param_names[i]] = arg
 
-            # Approval matches by tool name (one-shot): only the callback whose
-            # original_name matches the approved tool gets marked approved.
-            this_call_approved = approved_tool_name is not None and original_name == approved_tool_name
-            if this_call_approved:
-                approved_tool_name = None  # consumed
-
-            # One-shot override from approval, gated on this_call_approved
-            if this_call_approved and override_args:
-                tool_kwargs = override_args
-                override_args = None
-
-            # When resuming from checkpoint, pass only the inner tool's original metadata
-            # to avoid leaking code_mode's checkpoint data into the inner tool's context.
-            inner_metadata = ctx.tool_call_metadata.get('original_metadata') if checkpoint else None
-            inner_ctx = replace(
-                ctx, tool_name=original_name, tool_call_approved=this_call_approved, tool_call_metadata=inner_metadata
-            )
-
             span_attributes = {
                 'gen_ai.tool.name': original_name,
                 'code_mode.inner_tool': True,
@@ -337,24 +318,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 'logfire.msg': f'code mode calling: {original_name}',
             }
 
-            try:
-                # TODO: Consider letting tool manager handle the span(Discussion with Douwe)?
-                span_name = f'code_mode_tool:{original_name}'
-                with ctx.tracer.start_as_current_span(span_name, attributes=span_attributes):
-                    return await super(CodeModeToolset, self).call_tool(
-                        original_name, tool_kwargs, inner_ctx, original_tool
-                    )
-            except ApprovalRequired as e:
-                # Attach tool info so the consumer can build _approval_call wrapping
-                raise ApprovalRequired(
-                    metadata={
-                        **(e.metadata or {}),
-                        'tool_name': original_name,
-                        'sanitized_name': sanitized_name,
-                        'tool_args': tool_kwargs,
-                        'original_metadata': e.metadata,
-                    }
-                )
+            # TODO: Consider letting tool manager handle the span(Discussion with Douwe)?
+            span_name = f'code_mode_tool:{original_name}'
+            with ctx.tracer.start_as_current_span(span_name, attributes=span_attributes):
+                return await super(CodeModeToolset, self).call_tool(original_name, tool_kwargs, ctx, original_tool)
 
         return callback
 
@@ -366,41 +333,18 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         assert isinstance(tool, _CodeModeTool)
         assert isinstance(code, str)
 
-        # if _find_await_expressions(code):
-        #     raise ModelRetry(
-        #         'await expressions are not supported. All functions are synchronous - call them directly without await.'
-        #     )
-
-        # Do we have a previous checkpoint we can resume from?
-        checkpoint: dict[str, Any] | None = None
-        if ctx.tool_call_approved and ctx.tool_call_metadata:
-            checkpoint = ctx.tool_call_metadata.get('code_mode')
-
-        callback = self._make_tool_callback(tool, ctx, checkpoint)
+        callback = self._make_tool_callback(tool, ctx)
 
         try:
             functions = list(tool.original_tools.keys())
-            if checkpoint and checkpoint.get('runtime_checkpoint'):
-                return await self.runtime.resume_with_tools(checkpoint['runtime_checkpoint'], callback)
-            await self.runtime.type_check(code, self._cached_signatures)
-            return await self.runtime.run(code, functions, callback)
-        except CodeTypeError as e:
+
+            return await self.runtime.run(
+                code, functions, callback, self._cached_signatures
+            )  # I don't know if it is wise to send a shared mutable state like this through?
+
+        except CodeTypingError as e:
             raise ModelRetry(f'Type error in generated code:\n{e.message}')
         except CodeSyntaxError as e:
             raise ModelRetry(f'Syntax error in generated code:\n{e.message}')
         except CodeRuntimeError as e:
             raise ModelRetry(f'Runtime error in generated code:\n{e.message}')
-        except ApprovalRequired as e:
-            # The runtime wraps runtime_checkpoint into metadata. We wrap that
-            # further as code_mode metadata and surface _approval_call for the agent graph.
-            metadata = e.metadata or {}
-            raise ApprovalRequired(
-                metadata={
-                    'code_mode': metadata,
-                    'original_metadata': metadata.get('original_metadata'),
-                    '_approval_call': {
-                        'tool_name': metadata.get('tool_name'),
-                        'args': metadata.get('tool_args'),
-                    },
-                }
-            )
