@@ -54,7 +54,7 @@ interactions:
       error:
         code: rate_limit_exceeded
         message: 'Rate limit reached for model `meta-llama/llama-4-maverick-17b-128e-instruct` in organization `org_01k0cr3hcdehfb2mcy22cp8p3y`
-          service tier `on_demand` on tokens per minute (TPM): Limit 6000, Used 5924, Requested 717. Please try again in 6.41s.
+          service tier `on_demand` on tokens per minute (TPM): Limit 6000, Used 5981, Requested 717. Please try again in 6.98s.
           Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing'
         type: tokens
     status:
@@ -73,7 +73,7 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=FH9LyTfTAjSaHrY5H9sdhbVuPAE8xdOxK1rGEfbtvtk-1769704610-1.0.1.1-kgFP4FAbN.P.kej4T9msxTxz6KzQ3tzHSRaxLAM6gjz_C6t7hVavDM9awm2ku923f757U4n3w3Oig0qSvw9lTk_HKZouW_d3Hp18g6SIb2A
+      - __cf_bm=jtm0k4etLjrTxa46bwTXz897hmvP_7ple08Gg.CszR8-1769707554.2523544-1.0.1.1-agrKOH6iO.oShcZ.dtFfUaFf.r9Am1XE51vWksOZAQTANmKuj_q0UMpmHFnerSDS7a3P_FFoR4TZrS99isiXAXGAJE.GqQNujho4n82hN7ea4foXMfjLd4riUJYSVNyv
       host:
       - api.groq.com
     method: POST
@@ -104,7 +104,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '697'
+      - '698'
       content-type:
       - application/json
       strict-transport-security:
@@ -124,26 +124,26 @@ interactions:
           - function:
               arguments: '{}'
               name: get_fruit_image
-            id: fedv1wt8f
+            id: z5jdvxkf7
             type: function
-      created: 1769704617
-      id: chatcmpl-6c4d76c3-f7fa-49f2-baf4-6de162f41a4d
+      created: 1769707562
+      id: chatcmpl-241cf2ad-60ae-46e3-bbfb-2d12ee630ce9
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       object: chat.completion
       service_tier: on_demand
       system_fingerprint: fp_992318f10a
       usage:
-        completion_time: 0.023821658
+        completion_time: 0.027219521
         completion_tokens: 22
-        prompt_time: 0.071894663
+        prompt_time: 0.087387126
         prompt_tokens: 716
-        queue_time: 0.074351163
-        total_time: 0.095716321
+        queue_time: 0.535601464
+        total_time: 0.114606647
         total_tokens: 738
       usage_breakdown: null
       x_groq:
-        id: req_01kg59txfwegbbxzbhj2jzme12
-        seed: 942943833
+        id: req_01kg5cmrk4e64v3s34ntxgebw3
+        seed: 1126549243
     status:
       code: 200
       message: OK
@@ -160,7 +160,7 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=FH9LyTfTAjSaHrY5H9sdhbVuPAE8xdOxK1rGEfbtvtk-1769704610-1.0.1.1-kgFP4FAbN.P.kej4T9msxTxz6KzQ3tzHSRaxLAM6gjz_C6t7hVavDM9awm2ku923f757U4n3w3Oig0qSvw9lTk_HKZouW_d3Hp18g6SIb2A
+      - __cf_bm=3DVWXgqMLmfl8J8Pkmt14S1qm5uZDvZXASi_eI7tP04-1769707562-1.0.1.1-H.aknjxOWZvffvlx5SVtsPacDwIUqdUUnWFzx1WFxX1gcRL1aTnDbumvrNBM7k6_J9a.RmsQY6KMsgkfQ4U_7r1xPwn5k2tQAEDN0MWiX_k
       host:
       - api.groq.com
     method: POST
@@ -173,11 +173,11 @@ interactions:
         - function:
             arguments: '{}'
             name: get_fruit_image
-          id: fedv1wt8f
+          id: z5jdvxkf7
           type: function
       - content: See file 241a70.
         role: tool
-        tool_call_id: fedv1wt8f
+        tool_call_id: z5jdvxkf7
       - content:
         - text: 'This is file 241a70:'
           type: text
@@ -221,7 +221,7 @@ interactions:
       error:
         code: rate_limit_exceeded
         message: 'Rate limit reached for model `meta-llama/llama-4-maverick-17b-128e-instruct` in organization `org_01k0cr3hcdehfb2mcy22cp8p3y`
-          service tier `on_demand` on tokens per minute (TPM): Limit 6000, Used 5897, Requested 781. Please try again in 6.78s.
+          service tier `on_demand` on tokens per minute (TPM): Limit 6000, Used 5910, Requested 781. Please try again in 6.91s.
           Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing'
         type: tokens
     status:
@@ -240,7 +240,7 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=FH9LyTfTAjSaHrY5H9sdhbVuPAE8xdOxK1rGEfbtvtk-1769704610-1.0.1.1-kgFP4FAbN.P.kej4T9msxTxz6KzQ3tzHSRaxLAM6gjz_C6t7hVavDM9awm2ku923f757U4n3w3Oig0qSvw9lTk_HKZouW_d3Hp18g6SIb2A
+      - __cf_bm=3DVWXgqMLmfl8J8Pkmt14S1qm5uZDvZXASi_eI7tP04-1769707562-1.0.1.1-H.aknjxOWZvffvlx5SVtsPacDwIUqdUUnWFzx1WFxX1gcRL1aTnDbumvrNBM7k6_J9a.RmsQY6KMsgkfQ4U_7r1xPwn5k2tQAEDN0MWiX_k
       host:
       - api.groq.com
     method: POST
@@ -253,11 +253,11 @@ interactions:
         - function:
             arguments: '{}'
             name: get_fruit_image
-          id: fedv1wt8f
+          id: z5jdvxkf7
           type: function
       - content: See file 241a70.
         role: tool
-        tool_call_id: fedv1wt8f
+        tool_call_id: z5jdvxkf7
       - content:
         - text: 'This is file 241a70:'
           type: text
@@ -288,7 +288,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '603'
+      - '602'
       content-type:
       - application/json
       strict-transport-security:
@@ -305,24 +305,24 @@ interactions:
         message:
           content: Kiwi
           role: assistant
-      created: 1769704626
-      id: chatcmpl-8be43053-65d4-4946-9be0-65cee13db5c1
+      created: 1769707570
+      id: chatcmpl-2abda213-3181-4037-b35e-8f6bae352035
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       object: chat.completion
       service_tier: on_demand
       system_fingerprint: fp_992318f10a
       usage:
-        completion_time: 0.028987947
+        completion_time: 0.011304265
         completion_tokens: 3
-        prompt_time: 0.034382684
+        prompt_time: 0.075101567
         prompt_tokens: 1507
-        queue_time: 0.146624253
-        total_time: 0.063370631
+        queue_time: 0.375455164
+        total_time: 0.086405832
         total_tokens: 1510
       usage_breakdown: null
       x_groq:
-        id: req_01kg59v56df4nrtkkqh5n63h1s
-        seed: 1898443719
+        id: req_01kg5cn0cyezvvanzmxhvmybnv
+        seed: 888317102
     status:
       code: 200
       message: OK

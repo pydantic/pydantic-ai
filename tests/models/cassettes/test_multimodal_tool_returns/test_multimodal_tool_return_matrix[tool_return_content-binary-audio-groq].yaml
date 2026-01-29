@@ -45,7 +45,7 @@ interactions:
       content-type:
       - application/json
       retry-after:
-      - '7'
+      - '1'
       strict-transport-security:
       - max-age=15552000
       vary:
@@ -54,7 +54,7 @@ interactions:
       error:
         code: rate_limit_exceeded
         message: 'Rate limit reached for model `meta-llama/llama-4-maverick-17b-128e-instruct` in organization `org_01k0cr3hcdehfb2mcy22cp8p3y`
-          service tier `on_demand` on tokens per minute (TPM): Limit 6000, Used 5915, Requested 709. Please try again in 6.239999999s.
+          service tier `on_demand` on tokens per minute (TPM): Limit 6000, Used 5324, Requested 709. Please try again in 329.999999ms.
           Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing'
         type: tokens
     status:
@@ -73,7 +73,7 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=PRnGlrRU2NKYtav1ABDtlUwsk_BSslyw6rjdHoBTkEE-1769704523-1.0.1.1-U5CHIhFJYhrIRwwKcuV1PpJxoBfO29C5TAYoTWKdF5eQPCqX5sAyDfYxoBTIyauIj9XHqHAZqA5mPx66PTteWUj8Rh1SnO7ylOtdHnAxMxQ
+      - __cf_bm=O.5HI54BHMvR8vN2Lgb4Lo5SMA4oUK2IGebtVphrhYY-1769706906-1.0.1.1-PLvZJY6U75NzGwWaVRpM0IvGt67GD6Pjx55aXfubmthffWuqHqAtWlTsw15hH.Glnyl7K2IItu0Fxhtrk19Kl0DH_Cr5K.mFuZGcprbJfAU
       host:
       - api.groq.com
     method: POST
@@ -104,7 +104,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '689'
+      - '690'
       content-type:
       - application/json
       strict-transport-security:
@@ -124,26 +124,26 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: a5ymvn0nr
+            id: 959g6hhdw
             type: function
-      created: 1769704531
-      id: chatcmpl-a3d45da7-b11a-40ac-ac18-c74dd35c2ee1
+      created: 1769706912
+      id: chatcmpl-5c1d404d-e96e-423c-8bfe-bcfc1a344034
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       object: chat.completion
       service_tier: on_demand
       system_fingerprint: fp_217b6e6136
       usage:
-        completion_time: 0.028949274
+        completion_time: 0.02582865
         completion_tokens: 20
-        prompt_time: 0.140890426
+        prompt_time: 3.936621051
         prompt_tokens: 708
-        queue_time: 0.218751812
-        total_time: 0.1698397
+        queue_time: 0.977147701
+        total_time: 3.962449701
         total_tokens: 728
       usage_breakdown: null
       x_groq:
-        id: req_01kg59r91yeg0r4cxyy29bfhrx
-        seed: 1145948781
+        id: req_01kg5c0sx1ev985vpddakkhjgc
+        seed: 1938952308
     status:
       code: 200
       message: OK

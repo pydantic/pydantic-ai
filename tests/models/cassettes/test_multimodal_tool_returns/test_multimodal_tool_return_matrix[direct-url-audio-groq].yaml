@@ -45,7 +45,7 @@ interactions:
       content-type:
       - application/json
       retry-after:
-      - '3'
+      - '5'
       strict-transport-security:
       - max-age=15552000
       vary:
@@ -54,7 +54,7 @@ interactions:
       error:
         code: rate_limit_exceeded
         message: 'Rate limit reached for model `meta-llama/llama-4-maverick-17b-128e-instruct` in organization `org_01k0cr3hcdehfb2mcy22cp8p3y`
-          service tier `on_demand` on tokens per minute (TPM): Limit 6000, Used 5585, Requested 709. Please try again in 2.94s.
+          service tier `on_demand` on tokens per minute (TPM): Limit 6000, Used 5715, Requested 709. Please try again in 4.24s.
           Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing'
         type: tokens
     status:
@@ -73,7 +73,7 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=scCUd5SxSa9a4Z0hhX.imhZd126QJK8kbvHlFD4KEU8-1769704485-1.0.1.1-Jbt7es0KStuHxHxP43evsFIsP2bm6mCu9F7mxt57o3TkT5Xo5pTVJqkNbee0XJQotGc2ziPqWQgswbx1XUfyH_8ZV0A3CpgEkWgOvNVeE3w
+      - __cf_bm=VnQ._y5jK07qNoQzEc0fpKba22muxWczwlTri92.yZA-1769706879-1.0.1.1-ozdUURQP_d60vQ3E6fXehoE77JBe_GfTjh7aiPdDhoSlaW0MEm5uY4JHgPBRiH7PIxoj2DtEBDViHMEx6vxQSjzmDc0DjTxZPH6hUU_AXTA
       host:
       - api.groq.com
     method: POST
@@ -104,7 +104,70 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '689'
+      - '402'
+      content-type:
+      - application/json
+      retry-after:
+      - '7'
+      strict-transport-security:
+      - max-age=15552000
+      vary:
+      - Origin
+    parsed_body:
+      error:
+        code: rate_limit_exceeded
+        message: 'Rate limit reached for model `meta-llama/llama-4-maverick-17b-128e-instruct` in organization `org_01k0cr3hcdehfb2mcy22cp8p3y`
+          service tier `on_demand` on tokens per minute (TPM): Limit 6000, Used 5910, Requested 709. Please try again in 6.19s.
+          Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing'
+        type: tokens
+    status:
+      code: 429
+      message: Too Many Requests
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '359'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=QtPnNb4SNtWZMIm0AAz.auxFvRippZqYtRqiQxD1qMQ-1769706884.8632433-1.0.1.1-3MNBPzTOTE9iz2YgzGjO.Dk9zN3iNnrE32DarxRB24m.OsIxrKeGf7lIpJkcvJ3OD2AZwn0QV_EptEUM84DuzHqf5uJnqzi9sCIBBOw6fjimbvGFq0q6.2huXTl8deNn
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Call the get_file tool to get a audio and describe what you see.
+        role: user
+      model: meta-llama/llama-4-maverick-17b-128e-instruct
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '690'
       content-type:
       - application/json
       strict-transport-security:
@@ -124,26 +187,26 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: bzpgqx9w9
+            id: 3ac04evgt
             type: function
-      created: 1769704489
-      id: chatcmpl-581da1a4-3130-4b4b-b064-dde96c8fbbd5
+      created: 1769706894
+      id: chatcmpl-ec37c8c0-297f-4a28-9230-981737deb4b7
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       object: chat.completion
       service_tier: on_demand
       system_fingerprint: fp_992318f10a
       usage:
-        completion_time: 0.023699698
+        completion_time: 0.024164615
         completion_tokens: 20
-        prompt_time: 0.908955844
+        prompt_time: 0.50657147
         prompt_tokens: 708
-        queue_time: 0.46857124
-        total_time: 0.932655542
+        queue_time: 2.010180486
+        total_time: 0.530736085
         total_tokens: 728
       usage_breakdown: null
       x_groq:
-        id: req_01kg59pzmkedhv76726fp1wjpm
-        seed: 465546713
+        id: req_01kg5c0arzfgtr8xz8z91bdrq7
+        seed: 1425265127
     status:
       code: 200
       message: OK

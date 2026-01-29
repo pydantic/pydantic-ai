@@ -41,70 +41,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '402'
-      content-type:
-      - application/json
-      retry-after:
-      - '6'
-      strict-transport-security:
-      - max-age=15552000
-      vary:
-      - Origin
-    parsed_body:
-      error:
-        code: rate_limit_exceeded
-        message: 'Rate limit reached for model `meta-llama/llama-4-maverick-17b-128e-instruct` in organization `org_01k0cr3hcdehfb2mcy22cp8p3y`
-          service tier `on_demand` on tokens per minute (TPM): Limit 6000, Used 5843, Requested 709. Please try again in 5.52s.
-          Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing'
-        type: tokens
-    status:
-      code: 429
-      message: Too Many Requests
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '359'
-      content-type:
-      - application/json
-      cookie:
-      - __cf_bm=XsvHl9yCcQt3OWrH0VRsjenJTkKT9tsldpae4D43Arw-1769704570-1.0.1.1-mRhaivC15nsQ1WdLwjip_Io3yqq0sonzjJiwL_cgi0bvfyWefc8T1oMSLRe8j6VGi5ATt1r4oiX5GedKjVxfGJkgpLhXUPqse0gvL6TR7Uw
-      host:
-      - api.groq.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: Call the get_file tool to get a video and describe what you see.
-        role: user
-      model: meta-llama/llama-4-maverick-17b-128e-instruct
-      n: 1
-      stream: false
-      tool_choice: auto
-      tools:
-      - function:
-          description: ''
-          name: get_file
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-    uri: https://api.groq.com/openai/v1/chat/completions
-  response:
-    headers:
-      alt-svc:
-      - h3=":443"; ma=86400
-      cache-control:
-      - private, max-age=0, no-store, no-cache, must-revalidate
-      connection:
-      - keep-alive
-      content-length:
-      - '691'
+      - '690'
       content-type:
       - application/json
       strict-transport-security:
@@ -124,26 +61,26 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: zrnkrr3g8
+            id: m1a5yktff
             type: function
-      created: 1769704576
-      id: chatcmpl-31f521e2-524f-42bd-893d-77bf04f82328
+      created: 1769707537
+      id: chatcmpl-dff07403-56f7-41f8-a659-27104007ff17
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       object: chat.completion
       service_tier: on_demand
       system_fingerprint: fp_992318f10a
       usage:
-        completion_time: 0.280151869
-        completion_tokens: 112
-        prompt_time: 0.015286655
+        completion_time: 0.342638802
+        completion_tokens: 162
+        prompt_time: 0.180720648
         prompt_tokens: 708
-        queue_time: 0.101476445
-        total_time: 0.295438524
-        total_tokens: 820
+        queue_time: 0.171400296
+        total_time: 0.52335945
+        total_tokens: 870
       usage_breakdown: null
       x_groq:
-        id: req_01kg59snhgf4cbwrxc279f2we5
-        seed: 189004930
+        id: req_01kg5cm0m1ezgtwywr6yz6qdbj
+        seed: 266410067
     status:
       code: 200
       message: OK
