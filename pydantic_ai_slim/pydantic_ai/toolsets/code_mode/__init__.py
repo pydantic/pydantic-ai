@@ -320,8 +320,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
             # TODO: Consider letting tool manager handle the span(Discussion with Douwe)?
             span_name = f'code_mode_tool:{original_name}'
-            with ctx.tracer.start_as_current_span(span_name, attributes=span_attributes):
-                return await super(CodeModeToolset, self).call_tool(original_name, tool_kwargs, ctx, original_tool)
+            # with ctx.tracer.start_as_current_span(span_name, attributes=span_attributes):
+
+            # I am calling the tool myself, tool manager does not handle it for me here, can I sort of let this bubble up to tool manager and come back down here?
+            return await super(CodeModeToolset, self).call_tool(original_name, tool_kwargs, ctx, original_tool)
 
         return callback
 
