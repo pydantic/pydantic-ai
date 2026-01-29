@@ -1169,16 +1169,6 @@ def _populate_deferred_calls(
         call = tool_calls[k]
         metadata = deferred_metadata_by_index[k]
 
-        # If metadata specifies an approval_call, substitute it for the approval entry.
-        # This allows wrapper tools (like code_mode) to surface inner tool info.
-        if metadata and (approval_info := metadata.get('_approval_call')):
-            call = _messages.ToolCallPart(
-                tool_name=approval_info['tool_name'],
-                args=approval_info.get('args'),
-                tool_call_id=call.tool_call_id,
-            )
-
-        output_deferred_calls[deferred_calls_by_index[k]].append(call)
         if metadata is not None:
             output_deferred_metadata[call.tool_call_id] = metadata
 
