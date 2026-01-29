@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '359'
+      - '379'
       content-type:
       - application/json
       host:
@@ -16,133 +16,7 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: Call the get_file tool to get a audio and describe what you see.
-        role: user
-      model: meta-llama/llama-4-maverick-17b-128e-instruct
-      n: 1
-      stream: false
-      tool_choice: auto
-      tools:
-      - function:
-          description: ''
-          name: get_file
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-    uri: https://api.groq.com/openai/v1/chat/completions
-  response:
-    headers:
-      alt-svc:
-      - h3=":443"; ma=86400
-      cache-control:
-      - private, max-age=0, no-store, no-cache, must-revalidate
-      connection:
-      - keep-alive
-      content-length:
-      - '402'
-      content-type:
-      - application/json
-      retry-after:
-      - '5'
-      strict-transport-security:
-      - max-age=15552000
-      vary:
-      - Origin
-    parsed_body:
-      error:
-        code: rate_limit_exceeded
-        message: 'Rate limit reached for model `meta-llama/llama-4-maverick-17b-128e-instruct` in organization `org_01k0cr3hcdehfb2mcy22cp8p3y`
-          service tier `on_demand` on tokens per minute (TPM): Limit 6000, Used 5715, Requested 709. Please try again in 4.24s.
-          Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing'
-        type: tokens
-    status:
-      code: 429
-      message: Too Many Requests
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '359'
-      content-type:
-      - application/json
-      cookie:
-      - __cf_bm=VnQ._y5jK07qNoQzEc0fpKba22muxWczwlTri92.yZA-1769706879-1.0.1.1-ozdUURQP_d60vQ3E6fXehoE77JBe_GfTjh7aiPdDhoSlaW0MEm5uY4JHgPBRiH7PIxoj2DtEBDViHMEx6vxQSjzmDc0DjTxZPH6hUU_AXTA
-      host:
-      - api.groq.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: Call the get_file tool to get a audio and describe what you see.
-        role: user
-      model: meta-llama/llama-4-maverick-17b-128e-instruct
-      n: 1
-      stream: false
-      tool_choice: auto
-      tools:
-      - function:
-          description: ''
-          name: get_file
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-    uri: https://api.groq.com/openai/v1/chat/completions
-  response:
-    headers:
-      alt-svc:
-      - h3=":443"; ma=86400
-      cache-control:
-      - private, max-age=0, no-store, no-cache, must-revalidate
-      connection:
-      - keep-alive
-      content-length:
-      - '402'
-      content-type:
-      - application/json
-      retry-after:
-      - '7'
-      strict-transport-security:
-      - max-age=15552000
-      vary:
-      - Origin
-    parsed_body:
-      error:
-        code: rate_limit_exceeded
-        message: 'Rate limit reached for model `meta-llama/llama-4-maverick-17b-128e-instruct` in organization `org_01k0cr3hcdehfb2mcy22cp8p3y`
-          service tier `on_demand` on tokens per minute (TPM): Limit 6000, Used 5910, Requested 709. Please try again in 6.19s.
-          Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing'
-        type: tokens
-    status:
-      code: 429
-      message: Too Many Requests
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '359'
-      content-type:
-      - application/json
-      cookie:
-      - __cf_bm=QtPnNb4SNtWZMIm0AAz.auxFvRippZqYtRqiQxD1qMQ-1769706884.8632433-1.0.1.1-3MNBPzTOTE9iz2YgzGjO.Dk9zN3iNnrE32DarxRB24m.OsIxrKeGf7lIpJkcvJ3OD2AZwn0QV_EptEUM84DuzHqf5uJnqzi9sCIBBOw6fjimbvGFq0q6.2huXTl8deNn
-      host:
-      - api.groq.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: Call the get_file tool to get a audio and describe what you see.
+      - content: Use the get_file tool now to retrieve a audio file, then describe what you received.
         role: user
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       n: 1
@@ -187,26 +61,26 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: 3ac04evgt
+            id: qamw0t8he
             type: function
-      created: 1769706894
-      id: chatcmpl-ec37c8c0-297f-4a28-9230-981737deb4b7
+      created: 1769715937
+      id: chatcmpl-e8c6e901-6c5d-4e2f-8f19-1b9a16386396
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       object: chat.completion
       service_tier: on_demand
       system_fingerprint: fp_992318f10a
       usage:
-        completion_time: 0.024164615
-        completion_tokens: 20
-        prompt_time: 0.50657147
-        prompt_tokens: 708
-        queue_time: 2.010180486
-        total_time: 0.530736085
-        total_tokens: 728
+        completion_time: 0.148027098
+        completion_tokens: 65
+        prompt_time: 0.070393061
+        prompt_tokens: 711
+        queue_time: 0.230143457
+        total_time: 0.218420159
+        total_tokens: 776
       usage_breakdown: null
       x_groq:
-        id: req_01kg5c0arzfgtr8xz8z91bdrq7
-        seed: 1425265127
+        id: req_01kg5mmbenfaks52bpg7vw1qm5
+        seed: 133270553
     status:
       code: 200
       message: OK

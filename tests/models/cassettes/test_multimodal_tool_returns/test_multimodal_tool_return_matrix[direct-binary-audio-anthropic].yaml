@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '348'
+      - '368'
       content-type:
       - application/json
       host:
@@ -18,7 +18,7 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: Call the get_file tool to get a audio and describe what you see.
+        - text: Use the get_file tool now to retrieve a audio file, then describe what you received.
           type: text
         role: user
       model: claude-sonnet-4-5
@@ -38,7 +38,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '549'
+      - '529'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -47,13 +49,13 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - text: I'll call the get_file tool to retrieve the audio file.
+      - text: I'll retrieve the file for you now.
         type: text
-      - id: toolu_01TXR966TcyJhMxJBizdGmMx
+      - id: toolu_01Cq7jGkKQprCtkKXzrAc7dW
         input: {}
         name: get_file
         type: tool_use
-      id: msg_01WWB4soTrJVfDSUYQghR97E
+      id: msg_01XuUernMLQcmH2ZZ8TjTuXS
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -65,8 +67,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 555
-        output_tokens: 51
+        input_tokens: 558
+        output_tokens: 46
         service_tier: standard
     status:
       code: 200
@@ -90,13 +92,13 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: Call the get_file tool to get a audio and describe what you see.
+        - text: Use the get_file tool now to retrieve a audio file, then describe what you received.
           type: text
         role: user
       - content:
-        - text: I'll call the get_file tool to retrieve the audio file.
+        - text: I'll retrieve the file for you now.
           type: text
-        - id: toolu_01TXR966TcyJhMxJBizdGmMx
+        - id: toolu_01Cq7jGkKQprCtkKXzrAc7dW
           input: {}
           name: get_file
           type: tool_use
@@ -106,7 +108,7 @@ interactions:
           - text: See file 2d36ae.
             type: text
           is_error: false
-          tool_use_id: toolu_01TXR966TcyJhMxJBizdGmMx
+          tool_use_id: toolu_01Cq7jGkKQprCtkKXzrAc7dW
           type: tool_result
         - text: 'This is file 2d36ae: [audio/mpeg not supported by Anthropic]'
           type: text
@@ -128,7 +130,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1134'
+      - '1028'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -137,17 +141,14 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - text: |-
-          I can see that you've uploaded an audio file in MP3 format (audio/mpeg). However, I'm currently unable to process or analyze audio files directly - I can only work with text and images.
-
-          If you'd like me to help you with this audio file, you could:
-          1. **Describe what's in the audio** - Tell me what kind of content it contains (music, speech, sound effects, etc.) and I can help discuss or analyze it
-          2. **Provide a transcript** - If it contains speech, you could share the text and I can work with that
-          3. **Ask specific questions** - Let me know what you'd like to know about the audio
-
-          I apologize for the limitation - while I can receive the file, I cannot actually listen to or analyze audio content at this time.
+      - text: "I received an audio file (file 2d36ae) in MP3 format (audio/mpeg). However, I'm unable to listen to or process
+          audio files, as Anthropic's system doesn't currently support audio analysis capabilities. \n\nThe file appears to
+          be an MP3 audio file, but I cannot determine:\n- What sounds, speech, or music it contains\n- The duration of the
+          audio\n- Any specific content or characteristics of the recording\n\nIf you'd like to know what's in this audio
+          file, you would need to describe it to me, or I could help you with tasks related to the file in other ways (like
+          discussing audio formats, transcription methods, etc.)."
         type: text
-      id: msg_01HBUQ4X5uL3qsMzp3hgdN6y
+      id: msg_01XKdbtKWcw9ZYy6DaHU9j12
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
@@ -159,8 +160,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 651
-        output_tokens: 178
+        input_tokens: 649
+        output_tokens: 150
         service_tier: standard
     status:
       code: 200

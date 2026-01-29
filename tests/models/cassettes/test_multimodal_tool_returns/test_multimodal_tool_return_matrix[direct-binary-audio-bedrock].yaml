@@ -7,7 +7,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        ZTdkNDc1YmQtM2YyMC00ZjBlLWI2MjMtY2E3MjAzZjU1MmNi
+        OGE4YTBiYTktZjkyNC00ZDQwLWJiOTEtMmVjZTkwOWYzZTI2
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -23,49 +23,49 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '514'
+      - '456'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1247
+        latencyMs: 1006
       output:
         message:
           content:
           - text: |
-              <thinking> To fulfill the user's request, I need to use the `get_file` tool to retrieve an audio file. Since the user did not specify which audio file to retrieve, I will assume any audio file is acceptable. </thinking>
+              <thinking> The user has requested to retrieve an audio file using the get_file tool. I will proceed to call the get_file tool to perform this action. </thinking>
           - toolUse:
               input: {}
               name: get_file
-              toolUseId: tooluse__QxvSLyyQOiLoyZhzAx4xQ
+              toolUseId: tooluse_u7BEYGaqR7-Iy_5cN78FYA
           role: assistant
       stopReason: tool_use
       usage:
         inputTokens: 396
-        outputTokens: 65
+        outputTokens: 50
         serverToolUsage: {}
-        totalTokens: 461
+        totalTokens: 446
     status:
       code: 200
       message: OK
 - request:
     body: '{"messages": [{"role": "user", "content": [{"text": "Use the get_file tool now to retrieve a audio file, then describe
-      what you received."}]}, {"role": "assistant", "content": [{"text": "<thinking> To fulfill the user''s request, I need
-      to use the `get_file` tool to retrieve an audio file. Since the user did not specify which audio file to retrieve, I
-      will assume any audio file is acceptable. </thinking>\n"}, {"toolUse": {"toolUseId": "tooluse__QxvSLyyQOiLoyZhzAx4xQ",
-      "name": "get_file", "input": {}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse__QxvSLyyQOiLoyZhzAx4xQ",
-      "content": [{"text": "See file 2d36ae."}], "status": "success"}}, {"text": "This is file 2d36ae: [Audio not supported
-      by Bedrock]"}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_file", "inputSchema":
-      {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}}}], "toolChoice": {"auto": {}}}}'
+      what you received."}]}, {"role": "assistant", "content": [{"text": "<thinking> The user has requested to retrieve an
+      audio file using the get_file tool. I will proceed to call the get_file tool to perform this action. </thinking>\n"},
+      {"toolUse": {"toolUseId": "tooluse_u7BEYGaqR7-Iy_5cN78FYA", "name": "get_file", "input": {}}}]}, {"role": "user", "content":
+      [{"toolResult": {"toolUseId": "tooluse_u7BEYGaqR7-Iy_5cN78FYA", "content": [{"text": "See file 2d36ae."}], "status":
+      "success"}}, {"text": "This is file 2d36ae: [Audio not supported by Bedrock]"}]}], "system": [], "inferenceConfig":
+      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_file", "inputSchema": {"json": {"additionalProperties": false,
+      "properties": {}, "type": "object"}}}}], "toolChoice": {"auto": {}}}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        Y2UxNjRiZmUtYWNhMy00NDI1LTllMTUtNjJjMTgyOTQxZWM5
+        M2I2NTk4ZDAtOGViYy00OTIzLWJiOGYtMTQ5YjAyNzY5ODQ4
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '958'
+      - '900'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -76,26 +76,25 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '738'
+      - '517'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1928
+        latencyMs: 1246
       output:
         message:
           content:
-          - text: |-
-              <thinking> The tool has returned a file named "2d36ae." However, the content of the file is not supported by Bedrock, which means I cannot directly describe the audio content. I will inform the user about the file name and the limitation. </thinking>
-
-              The tool has retrieved a file named "2d36ae." However, the content of the file is not supported by Bedrock, so I cannot describe the audio content directly. If you need specific information about the audio file, please let me know, and I'll do my best to assist you further.
+          - text: The get_file tool has returned an audio file with the identifier "2d36ae." However, the content of the audio
+              file is not supported by the current environment, so I cannot provide a description of its contents. If you
+              need further analysis or information about the file, please let me know how I can assist you.
           role: assistant
       stopReason: end_turn
       usage:
-        inputTokens: 515
-        outputTokens: 121
+        inputTokens: 500
+        outputTokens: 67
         serverToolUsage: {}
-        totalTokens: 636
+        totalTokens: 567
     status:
       code: 200
       message: OK

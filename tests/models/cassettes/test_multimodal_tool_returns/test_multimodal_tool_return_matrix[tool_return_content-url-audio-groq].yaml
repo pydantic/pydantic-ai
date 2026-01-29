@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '359'
+      - '379'
       content-type:
       - application/json
       host:
@@ -16,7 +16,7 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: Call the get_file tool to get a audio and describe what you see.
+      - content: Use the get_file tool now to retrieve a audio file, then describe what you received.
         role: user
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       n: 1
@@ -41,7 +41,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '690'
+      - '691'
       content-type:
       - application/json
       strict-transport-security:
@@ -61,26 +61,26 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: 3a2505nvn
+            id: 0mz8xnvqc
             type: function
-      created: 1769707536
-      id: chatcmpl-30cd17b6-3104-4a56-8216-b5b9483213d1
+      created: 1769716114
+      id: chatcmpl-d7245a27-b4c5-4e45-a595-62a5ff49385e
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       object: chat.completion
       service_tier: on_demand
       system_fingerprint: fp_992318f10a
       usage:
-        completion_time: 0.028303843
-        completion_tokens: 20
-        prompt_time: 0.069682701
-        prompt_tokens: 708
-        queue_time: 0.188095198
-        total_time: 0.097986544
-        total_tokens: 728
+        completion_time: 0.301666949
+        completion_tokens: 149
+        prompt_time: 0.039611769
+        prompt_tokens: 711
+        queue_time: 0.070274964
+        total_time: 0.341278718
+        total_tokens: 860
       usage_breakdown: null
       x_groq:
-        id: req_01kg5cm02nezgbzw81mgna2q13
-        seed: 265551367
+        id: req_01kg5mss36ef6scede8d958545
+        seed: 434306695
     status:
       code: 200
       message: OK

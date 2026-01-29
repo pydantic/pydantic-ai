@@ -8,17 +8,19 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '321'
+      - '381'
       content-type:
       - application/json
       host:
       - api.openai.com
     method: POST
     parsed_body:
+      include:
+      - reasoning.encrypted_content
       input:
-      - content: Call the get_file tool to get a audio and describe what you see.
+      - content: Use the get_file tool now to retrieve a audio file, then describe what you received.
         role: user
-      model: gpt-4.1-mini
+      model: gpt-5-mini
       stream: false
       tool_choice: auto
       tools:
@@ -38,13 +40,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1688'
+      - '3104'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '517'
+      - '4256'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -57,22 +59,26 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1769565232
-      created_at: 1769565231
+      completed_at: 1769716113
+      created_at: 1769716109
       error: null
       frequency_penalty: 0.0
-      id: resp_00b7420e652c84f70069796c2fd0808196be055539d92798c0
+      id: resp_0a57815b97e3bcd700697bb98d1cf481908dad6d2833372af4
       incomplete_details: null
       instructions: null
       max_output_tokens: null
       max_tool_calls: null
       metadata: {}
-      model: gpt-4.1-mini-2025-04-14
+      model: gpt-5-mini-2025-08-07
       object: response
       output:
+      - encrypted_content: gAAAAABpe7mRyokM-H4KItI9ATVvsJD_PFQ0R9I0ZQW6Qtn3tyGuIKM1_x4b9HWQuClU-4TPhycpPMgqoT4gbynNqgR4t8kpvMNAPKtXw3Yi26pMBVlDIlfg-RmFlC4ZL-6jNMEOeBn5Ottjw93hP-dpKdVWE--ea8TcQh63ZxcX5AtUMfVAqkZVAeNE6tM_DnlarXebyEhvWupud-6pV2Gfb36zqsJNhLpUtBEfRgqMaS0fxuFbXSw8sucy_fV7mjkHZ-gJjNDYvFxJ8_Qesvp_Mfp4dbWEesWLUMTIh_p4r9wcjuNadmR7JQK2n2XpFwQmmbF1WtkGhJr-LgbgZumYHJivU3IeQhZUyGv4UqObeJEcNiT1G9ICEDnMn6WrDDGEvlypDiSYPxwjZD8diW-g5t5NjIty3wJYcOYoUt5oB6ZtEDG_nirKjZYHDe9rUJsh8qFH0zceGfZaggKob4Y0bqRcD8H_flztVvlPaOsqV5WCyfDR-yH8qAn0Qmb4d4PQEyIw1LGQF1nDUqa1lpoaa_hB6V4tr2yQRfoEVVGxpa0IVMeAadoDUQyuBakzz45JRftM044LApJxG6ScSWjB2fITNBnET_aeB0CIFhB3wCvxOEUwwdBNP1dpzh2vk0_xwRmseAnGb260rifuULW_zJqMdET_JH3XjbM1z5dQz_9cE2baRR4I7eOL2VYZ1eFAtwWdlffSpeg1QEWP2chaQ9KsstwkF1aEbT9FJYQxsMggQiznTgC4yDVardf2hOLorEQLzLCKB92eihP6RjJS-cHSFiKBhDWGVv0t0gqHA9BM_m4s_Zfvybqx-aipM_qcMj6PBSRfqsSXvqI7sv5eLxuXzmKi69IsGvUotcf9WSN7EnBcuptUSuXk33Gv0yL4UTm7f8FV2DolyKIUOBuiAY2sBiBv6lkYOoibxHGs1OgGPjpZ3nNBgcUjJDo6ZuKvN52hUSqHKxWkRsgXwpSydtDzYUMdJrDtCe7YmZXUB20z0NQr-glsv0yfEBZA-RTNYsAuV_peIoMmHIiiT8mSkKV38mhgB_1Aj6UQvCYecrT2uRnxH-XggkzvHx9t7SNL6ypxJjYc9lHTUjt9WHzXwseUaRUK6pmAEQoHrZb26gWltZgxNTiA9svSATlNGwHcTaI-B7auk3GWlU4HaLuJdwl1TBbV0psrPdQXsUKqo3HRujls-vHbAm033LUccbwp8FgRxw81waqHdIm_2crtv-3M4eL81Q==
+        id: rs_0a57815b97e3bcd700697bb98de4a0819087b419bcafebf2f4
+        summary: []
+        type: reasoning
       - arguments: '{}'
-        call_id: call_Zi6Lstf6mctUIIjSxLUpzmhT
-        id: fc_00b7420e652c84f70069796c302af081969cb35139ca3ea27d
+        call_id: call_6FRnDDm3dwJb7GRlIMIgjRdU
+        id: fc_0a57815b97e3bcd700697bb98f4a588190a55a1499c8d54171
         name: get_file
         status: completed
         type: function_call
@@ -82,7 +88,7 @@ interactions:
       prompt_cache_key: null
       prompt_cache_retention: null
       reasoning:
-        effort: null
+        effort: medium
         summary: null
       safety_identifier: null
       service_tier: default
@@ -107,13 +113,13 @@ interactions:
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 40
+        input_tokens: 47
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 11
+        output_tokens: 80
         output_tokens_details:
-          reasoning_tokens: 0
-        total_tokens: 51
+          reasoning_tokens: 64
+        total_tokens: 127
       user: null
     status:
       code: 200
@@ -127,31 +133,38 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '647'
+      - '2125'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=1iDlL2CK9MgqTM1yw.4j4IkobCxRFnzGMHcqEjhHnqg-1769565232-1.0.1.1-XKPXqzXIYm4PljW8R6WR6u27MnXg0S0tOt.obBI7wBVbiOIcHW3bRF4b.I3YThkA5ijiPBeGoHd6ziZctP8EqTmMenh0fRgTZbTH6c5y9hY;
-        _cfuvid=W4jf5Y1OI1PBbEuacpbclDlFyhAPQQuMJXl0_K7sQHU-1769565232380-0.0.1.1-604800000
+      - __cf_bm=3UhTsvszhvZWGLLitU8sHkJedJ2HwG.3AuriRKicpNg-1769716113-1.0.1.1-xKTM8pJ14LQ42FnkwBm7R2TJSIMJ5O_RoUd7s8_lG5eXwLnN17hgEpbHeRNZ8Dagfe8jGcJRtAq2QwTrTX.aC4b0d9ML2hKbZQ3zovXLX.s;
+        _cfuvid=Fn6wTxY7VfhVTF6NQMPBTchGd8yJpV11EF1Piqw26pY-1769716113415-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
     parsed_body:
+      include:
+      - reasoning.encrypted_content
       input:
-      - content: Call the get_file tool to get a audio and describe what you see.
+      - content: Use the get_file tool now to retrieve a audio file, then describe what you received.
         role: user
+      - encrypted_content: gAAAAABpe7mRyokM-H4KItI9ATVvsJD_PFQ0R9I0ZQW6Qtn3tyGuIKM1_x4b9HWQuClU-4TPhycpPMgqoT4gbynNqgR4t8kpvMNAPKtXw3Yi26pMBVlDIlfg-RmFlC4ZL-6jNMEOeBn5Ottjw93hP-dpKdVWE--ea8TcQh63ZxcX5AtUMfVAqkZVAeNE6tM_DnlarXebyEhvWupud-6pV2Gfb36zqsJNhLpUtBEfRgqMaS0fxuFbXSw8sucy_fV7mjkHZ-gJjNDYvFxJ8_Qesvp_Mfp4dbWEesWLUMTIh_p4r9wcjuNadmR7JQK2n2XpFwQmmbF1WtkGhJr-LgbgZumYHJivU3IeQhZUyGv4UqObeJEcNiT1G9ICEDnMn6WrDDGEvlypDiSYPxwjZD8diW-g5t5NjIty3wJYcOYoUt5oB6ZtEDG_nirKjZYHDe9rUJsh8qFH0zceGfZaggKob4Y0bqRcD8H_flztVvlPaOsqV5WCyfDR-yH8qAn0Qmb4d4PQEyIw1LGQF1nDUqa1lpoaa_hB6V4tr2yQRfoEVVGxpa0IVMeAadoDUQyuBakzz45JRftM044LApJxG6ScSWjB2fITNBnET_aeB0CIFhB3wCvxOEUwwdBNP1dpzh2vk0_xwRmseAnGb260rifuULW_zJqMdET_JH3XjbM1z5dQz_9cE2baRR4I7eOL2VYZ1eFAtwWdlffSpeg1QEWP2chaQ9KsstwkF1aEbT9FJYQxsMggQiznTgC4yDVardf2hOLorEQLzLCKB92eihP6RjJS-cHSFiKBhDWGVv0t0gqHA9BM_m4s_Zfvybqx-aipM_qcMj6PBSRfqsSXvqI7sv5eLxuXzmKi69IsGvUotcf9WSN7EnBcuptUSuXk33Gv0yL4UTm7f8FV2DolyKIUOBuiAY2sBiBv6lkYOoibxHGs1OgGPjpZ3nNBgcUjJDo6ZuKvN52hUSqHKxWkRsgXwpSydtDzYUMdJrDtCe7YmZXUB20z0NQr-glsv0yfEBZA-RTNYsAuV_peIoMmHIiiT8mSkKV38mhgB_1Aj6UQvCYecrT2uRnxH-XggkzvHx9t7SNL6ypxJjYc9lHTUjt9WHzXwseUaRUK6pmAEQoHrZb26gWltZgxNTiA9svSATlNGwHcTaI-B7auk3GWlU4HaLuJdwl1TBbV0psrPdQXsUKqo3HRujls-vHbAm033LUccbwp8FgRxw81waqHdIm_2crtv-3M4eL81Q==
+        id: rs_0a57815b97e3bcd700697bb98de4a0819087b419bcafebf2f4
+        summary: []
+        type: reasoning
       - arguments: '{}'
-        call_id: call_Zi6Lstf6mctUIIjSxLUpzmhT
+        call_id: call_6FRnDDm3dwJb7GRlIMIgjRdU
+        id: fc_0a57815b97e3bcd700697bb98f4a588190a55a1499c8d54171
         name: get_file
         type: function_call
-      - call_id: call_Zi6Lstf6mctUIIjSxLUpzmhT
+      - call_id: call_6FRnDDm3dwJb7GRlIMIgjRdU
         output: File attached
         type: function_call_output
       - content:
-        - file_url: https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3
+        - file_url: https://download.samplelib.com/mp3/sample-3s.mp3
           type: input_file
         role: user
-      model: gpt-4.1-mini
+      model: gpt-5-mini
       stream: false
       tool_choice: auto
       tools:
@@ -177,7 +190,7 @@ interactions:
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '2038'
+      - '652'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:

@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '320'
+      - '338'
       content-type:
       - application/json
       host:
@@ -16,9 +16,9 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: Call the get_file tool to get a audio and describe what you see.
+      - content: Use the get_file tool now to retrieve a audio file, then describe what you received.
         role: user
-      model: gpt-4.1-mini
+      model: gpt-5-mini
       stream: false
       tool_choice: auto
       tools:
@@ -40,13 +40,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1064'
+      - '1029'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '487'
+      - '1391'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -59,7 +59,6 @@ interactions:
       choices:
       - finish_reason: tool_calls
         index: 0
-        logprobs: null
         message:
           annotations: []
           content: null
@@ -69,26 +68,26 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: call_H4BC9wCq3HQUw5oun4rQgyRG
+            id: call_Wve4WXaDGMiXs8sA78Um19Bu
             type: function
-      created: 1769565042
-      id: chatcmpl-D2ozapEYNihnBxDhNVdn7b2V4ZKOT
-      model: gpt-4.1-mini-2025-04-14
+      created: 1769715903
+      id: chatcmpl-D3SEpoXzycwYLwK262SwkVVTfX1vV
+      model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_376a7ccef1
+      system_fingerprint: null
       usage:
-        completion_tokens: 10
+        completion_tokens: 19
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 46
+        prompt_tokens: 129
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 56
+        total_tokens: 148
     status:
       code: 200
       message: OK
@@ -101,18 +100,18 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '72514'
+      - '72532'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=oH.UNV.Mzp25HKh0ABvVJy.hiC0TDZDd63H1oHnruso-1769565043-1.0.1.1-qVCpT0KJz_euKo.WZasXICCaW8kXXrtDY9IgEiFreV24FtXaz0cZiygUryVPEthCNwOaDpzNs0U_SRGSiRpGVpAfJO8EOg3pe_f5IMBgcMg;
-        _cfuvid=GgWJDY0_5UDd0Pt5vOgl1c9HVeqUkIJ9FNW2EwL7qy0-1769565043293-0.0.1.1-604800000
+      - __cf_bm=VwQ14SD637_Gm7eS4IZcp6GMP7Z.25gx5swrdKAaFBA-1769715904-1.0.1.1-wKjXnEOXMb24CxuCx_cDEMx2OSg8GfWrEaljZgU9wIT4Zd9QKScn.2DNMrbh372nBhrW6n7RIb8w4pbzRADc35.3KtmqjQJy1EZp4P8rzGc;
+        _cfuvid=KMDKbRF82dpJxxD0X1sdZFFpBwvGbHGlqnj4oDcg4XY-1769715904683-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
     parsed_body:
       messages:
-      - content: Call the get_file tool to get a audio and describe what you see.
+      - content: Use the get_file tool now to retrieve a audio file, then describe what you received.
         role: user
       - content: null
         role: assistant
@@ -120,11 +119,11 @@ interactions:
         - function:
             arguments: '{}'
             name: get_file
-          id: call_H4BC9wCq3HQUw5oun4rQgyRG
+          id: call_Wve4WXaDGMiXs8sA78Um19Bu
           type: function
       - content: See file 2d36ae.
         role: tool
-        tool_call_id: call_H4BC9wCq3HQUw5oun4rQgyRG
+        tool_call_id: call_Wve4WXaDGMiXs8sA78Um19Bu
       - content:
         - text: 'This is file 2d36ae:'
           type: text
@@ -133,7 +132,7 @@ interactions:
             format: mp3
           type: input_audio
         role: user
-      model: gpt-4.1-mini
+      model: gpt-5-mini
       stream: false
       tool_choice: auto
       tools:
@@ -161,7 +160,7 @@ interactions:
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '12'
+      - '10'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
