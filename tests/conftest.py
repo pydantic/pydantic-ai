@@ -472,11 +472,15 @@ def xai_api_key() -> str:
 
 
 @pytest.fixture(scope='function')  # Needs to be function scoped to get the request node name
-def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider]:
+def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider | None]:
     """xAI provider fixture backed by protobuf cassettes.
 
     Mirrors the `bedrock_provider` pattern: yields a provider, and callers can use `provider.client`.
+    Returns None for non-xAI tests to avoid loading cassettes unnecessarily.
     """
+    if 'xai' not in request.node.name:
+        yield None
+        return
 
     try:
         from pydantic_ai.providers.xai import XaiProvider
