@@ -1469,7 +1469,7 @@ class OpenAIResponsesModel(Model):
                 input=openai_messages,
                 model=self.model_name,
                 instructions=instructions,
-                previous_response_id=previous_response_id,
+                previous_response_id=previous_response_id or OMIT,
             )
         except APIStatusError as e:
             if model_response := _check_azure_content_filter(e, self.system, self.model_name):
