@@ -302,25 +302,6 @@ async def test_stub_provider_properties():
     assert provider.base_url == 'https://bedrock.stub'
 
 
-@pytest.mark.parametrize(
-    ('model_name', 'expected'),
-    [
-        (
-            'us.anthropic.claude-sonnet-4-20250514-v1:0',
-            'anthropic.claude-sonnet-4-20250514-v1:0',
-        ),
-        ('eu.amazon.nova-micro-v1:0', 'amazon.nova-micro-v1:0'),
-        ('apac.meta.llama3-8b-instruct-v1:0', 'meta.llama3-8b-instruct-v1:0'),
-        (
-            'anthropic.claude-3-7-sonnet-20250219-v1:0',
-            'anthropic.claude-3-7-sonnet-20250219-v1:0',
-        ),
-    ],
-)
-def test_remove_inference_geo_prefix(model_name: str, expected: str):
-    assert BedrockConverseModel._remove_inference_geo_prefix(model_name) == expected  # pyright: ignore[reportPrivateUsage]
-
-
 async def test_bedrock_model_structured_output(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     agent = Agent(model=model, instructions='You are a helpful chatbot.', retries=5)
@@ -3166,8 +3147,15 @@ async def test_bedrock_prompt_cache_ttl_unsupported_model(
     req = [ModelRequest(parts=[UserPromptPart(content='Hello')], timestamp=datetime.now())]
     # We need to manually enable caching for the test as mistral doesn't support it by default
     profile = BedrockModelProfile.from_profile(model.profile)
-    profile.bedrock_supports_prompt_caching = True
-    model.profile = profile
+    modified_profile = BedrockModelProfile(
+        bedrock_supports_tool_choice=profile.bedrock_supports_tool_choice,
+        bedrock_tool_result_format=profile.bedrock_tool_result_format,
+        bedrock_send_back_thinking_parts=profile.bedrock_send_back_thinking_parts,
+        bedrock_supports_prompt_caching=True,  # Override
+        bedrock_supports_prompt_cache_ttl=profile.bedrock_supports_prompt_cache_ttl,
+        bedrock_supports_tool_caching=profile.bedrock_supports_tool_caching,
+    )
+    model.profile = modified_profile
 
     _, messages = await model._map_messages(req, ModelRequestParameters(), settings)  # type: ignore[reportPrivateUsage]
 

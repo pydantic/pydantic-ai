@@ -878,7 +878,7 @@ class BedrockConverseModel(Model):
         }
 
     @staticmethod
-    def _get_cache_point(ttl_setting: bool | Literal['5m', '1h'], profile: BedrockModelProfile) -> Any:
+    def _get_cache_point(ttl_setting: bool | Literal['5m', '1h'] | None, profile: BedrockModelProfile) -> Any:
         cache_point: dict[str, Any] = {'type': 'default'}
         if getattr(profile, 'bedrock_supports_prompt_cache_ttl', False):
             if ttl_setting is True:
