@@ -99,6 +99,39 @@ class _ToXml:
 
     def _to_xml(self, value: Any, path: str, tag: str | None = None) -> ElementTree.Element:
         element = self._create_element(self.item_tag if tag is None else tag, path)
+        if self._set_scalar_text(element, value):
+            return element
+        if isinstance(value, Mapping):
+            if tag is None and path in self._element_names:
+                element.tag = self._element_names[path]
+            self._mapping_to_xml(element, value, path)  # pyright: ignore[reportUnknownArgumentType]
+            return element
+        if is_dataclass(value) and not isinstance(value, type):
+            self._init_structure_info()
+            if tag is None:
+                element.tag = value.__class__.__name__
+            self._mapping_to_xml(element, asdict(value), path)
+            return element
+        if isinstance(value, BaseModel):
+            self._init_structure_info()
+            if tag is None:
+                element.tag = value.__class__.__name__
+            # by dumping the model we loose all metadata in nested data structures,
+            # but we have collected it when called _init_structure_info
+            try:
+                mapping = value.model_dump(mode='json')
+            except PydanticSerializationError as e:
+                raise TypeError(f'Unsupported type for XML formatting: {e}') from e
+            self._mapping_to_xml(element, mapping, path)
+            return element
+        if isinstance(value, Iterable):
+            for n, item in enumerate(value):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
+                element.append(self._to_xml(value=item, path=f'{path}.[{n}]' if path else f'[{n}]'))
+            return element
+        raise TypeError(f'Unsupported type for XML formatting: {type(value)}')
+
+    def _set_scalar_text(self, element: ElementTree.Element, value: Any) -> bool:
+        """Set element.text for scalar types. Return True if handled, False otherwise."""
         if value is None:
             element.text = self.none_str
         elif isinstance(value, str):
@@ -111,32 +144,9 @@ class _ToXml:
             element.text = value.isoformat()
         elif isinstance(value, timedelta):
             element.text = str(value)
-        elif isinstance(value, Mapping):
-            if tag is None and path in self._element_names:
-                element.tag = self._element_names[path]
-            self._mapping_to_xml(element, value, path)  # pyright: ignore[reportUnknownArgumentType]
-        elif is_dataclass(value) and not isinstance(value, type):
-            self._init_structure_info()
-            if tag is None:
-                element.tag = value.__class__.__name__
-            self._mapping_to_xml(element, asdict(value), path)
-        elif isinstance(value, BaseModel):
-            self._init_structure_info()
-            if tag is None:
-                element.tag = value.__class__.__name__
-            # by dumping the model we loose all metadata in nested data structures,
-            # but we have collected it when called _init_structure_info
-            try:
-                mapping = value.model_dump(mode='json')
-            except PydanticSerializationError as e:
-                raise TypeError(f'Unsupported type for XML formatting: {e}') from e
-            self._mapping_to_xml(element, mapping, path)
-        elif isinstance(value, Iterable):
-            for n, item in enumerate(value):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
-                element.append(self._to_xml(value=item, path=f'{path}.[{n}]' if path else f'[{n}]'))
         else:
-            raise TypeError(f'Unsupported type for XML formatting: {type(value)}')
-        return element
+            return False
+        return True
 
     def _create_element(self, tag: str, path: str) -> ElementTree.Element:
         element = ElementTree.Element(tag)
