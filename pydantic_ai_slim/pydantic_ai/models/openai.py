@@ -924,7 +924,7 @@ class OpenAIChatModel(Model):
         _model: OpenAIChatModel
 
         texts: list[str] = field(default_factory=list[str])
-        thinkings: list[str] = field(default_factory=list[str])
+        thinkings: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
         tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = field(
             default_factory=list[ChatCompletionMessageFunctionToolCallParam]
         )
@@ -959,17 +959,16 @@ class OpenAIChatModel(Model):
             # Note: model responses from this model should only have one text item, so the following
             # shouldn't merge multiple texts into one unless you switch models between runs:
             if self.thinkings:
+                field_contents: dict[str, list[str]] = {}
                 if profile.openai_chat_send_back_thinking_parts == 'auto':
                     # Group by field name and set each field
-                    field_contents: dict[str, list[str]] = {}
                     for field_name, content in self.thinkings:
                         field_contents.setdefault(field_name, []).append(content)
-                    for field_name, contents in field_contents.items():
-                        message_param[field_name] = '\n\n'.join(contents)
-                elif profile.openai_chat_send_back_thinking_parts == 'field':  # pragma: no branch
-                    # Validated in OpenAIModelProfile.__post_init__, cast for type checker
-                    field = cast(str, profile.openai_chat_thinking_field)
-                    message_param[field] = '\n\n'.join(content for _, content in self.thinkings)
+                elif profile.openai_chat_send_back_thinking_parts == 'field':
+                    assert profile.openai_chat_thinking_field is not None
+                    field_contents = {profile.openai_chat_thinking_field: [content for _, content in self.thinkings]}
+                for field_name, contents in field_contents.items():
+                    message_param[field_name] = '\n\n'.join(contents)
             if self.texts:
                 message_param['content'] = '\n\n'.join(self.texts)
             else:
