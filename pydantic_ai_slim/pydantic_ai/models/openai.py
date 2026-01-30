@@ -324,8 +324,7 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     """Whether or not to store the output of this request in OpenAI's systems.
 
     If `False`, OpenAI will not store the request for its own internal review or training.
-    See [OpenAI API reference](https://platform.openai.com/docs/api-reference/chat/create#chat-create-store).   
-    """
+    See [OpenAI API reference](https://platform.openai.com/docs/api-reference/chat/create#chat-create-store)."""
 
     openai_user: str
     """A unique identifier representing the end-user, which can help OpenAI monitor and detect abuse.
