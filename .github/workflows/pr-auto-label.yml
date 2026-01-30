@@ -142,7 +142,11 @@ jobs:
     # Allows maintainers to override the auto-assigned category label via `/label <name>` comment.
     # This job removes any existing category label before applying the new one,
     # so `/label bug` on a PR labeled `chore` will replace `chore` with `bug`.
-    if: github.event_name == 'issue_comment' && github.event.issue.pull_request && startsWith(github.event.comment.body, '/label ')
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/label ') &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: ubuntu-latest
     steps:
       - name: Add label from comment
