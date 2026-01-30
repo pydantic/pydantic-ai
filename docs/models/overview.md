@@ -79,6 +79,41 @@ The best place to start is to review the source code for existing implementation
 
 For details on when we'll accept contributions adding new models to Pydantic AI, see the [contributing guidelines](../contributing.md#new-model-rules).
 
+## HTTP Request Concurrency
+
+You can limit the number of concurrent HTTP requests to a model using the `max_concurrency` parameter.
+This is useful for respecting rate limits or managing resource usage when running many agents in parallel
+with a shared model instance.
+
+```python {title="model_concurrency.py"}
+import asyncio
+
+from pydantic_ai import Agent, ConcurrencyLimiter
+from pydantic_ai.models.openai import OpenAIChatModel
+
+# Create a model with limited concurrent requests
+model = OpenAIChatModel('gpt-4o', max_concurrency=5)
+
+# Multiple agents can share this rate-limited model
+agent = Agent(model)
+
+
+async def main():
+    # These will be rate-limited to 5 concurrent HTTP requests
+    results = await asyncio.gather(
+        *[agent.run(f'Question {i}') for i in range(20)]
+    )
+    print(len(results))
+    #> 20
+```
+
+The `max_concurrency` parameter accepts:
+
+- An integer for simple limiting (e.g., `max_concurrency=5`)
+- A [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for advanced configuration with backpressure control
+
+When instrumentation is enabled, requests waiting for a concurrency slot appear as spans with
+attributes showing the queue depth and configured limits.
 
 <!-- TODO(Marcelo): We need to create a section in the docs about reliability. -->
 

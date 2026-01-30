@@ -22,6 +22,7 @@ from .. import (
     _output,
     _system_prompt,
     _utils,
+    concurrency as _concurrency,
     exceptions,
     messages as _messages,
     models,
@@ -167,6 +168,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     _event_stream_handler: EventStreamHandler[AgentDepsT] | None = dataclasses.field(repr=False)
 
+    _concurrency_limiter: _concurrency.RecordingSemaphore | None = dataclasses.field(repr=False)
+
     _enter_lock: Lock = dataclasses.field(repr=False)
     _entered_count: int = dataclasses.field(repr=False)
     _exit_stack: AsyncExitStack | None = dataclasses.field(repr=False)
@@ -197,6 +200,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
+        max_concurrency: _concurrency.ConcurrencyLimit = None,
     ) -> None: ...
 
     @overload
@@ -226,6 +230,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
+        max_concurrency: _concurrency.ConcurrencyLimit = None,
     ) -> None: ...
 
     def __init__(
@@ -253,6 +258,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
+        max_concurrency: _concurrency.ConcurrencyLimit = None,
         **_deprecated_kwargs: Any,
     ):
         """Create an agent.
@@ -320,6 +326,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tool_timeout: Default timeout in seconds for tool execution. If a tool takes longer than this,
                 the tool is considered to have failed and a retry prompt is returned to the model (counting towards the retry limit).
                 Individual tools can override this with their own timeout. Defaults to None (no timeout).
+            max_concurrency: Optional limit on concurrent agent runs. Can be an integer for simple limiting,
+                a [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for advanced configuration with backpressure,
+                or None (default) for no limiting. When the limit is reached, additional calls to `run()` or `iter()`
+                will wait until a slot becomes available.
         """
         if model is None or defer_model_check:
             self._model = model
@@ -383,6 +393,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.history_processors = history_processors or []
 
         self._event_stream_handler = event_stream_handler
+
+        if max_concurrency is not None:
+            self._concurrency_limiter = _concurrency.RecordingSemaphore.from_limit(max_concurrency)
+        else:
+            self._concurrency_limiter = None
 
         self._override_name: ContextVar[_utils.Option[str]] = ContextVar('_override_name', default=None)
         self._override_deps: ContextVar[_utils.Option[AgentDepsT]] = ContextVar('_override_deps', default=None)
@@ -704,13 +719,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         run_metadata: dict[str, Any] | None = None
         try:
-            async with graph.iter(
-                inputs=user_prompt_node,
-                state=state,
-                deps=graph_deps,
-                span=use_span(run_span) if run_span.is_recording() else None,
-                infer_name=False,
-            ) as graph_run:
+            async with (
+                _concurrency.get_concurrency_context(self._concurrency_limiter, f'agent:{agent_name}'),
+                graph.iter(
+                    inputs=user_prompt_node,
+                    state=state,
+                    deps=graph_deps,
+                    span=use_span(run_span) if run_span.is_recording() else None,
+                    infer_name=False,
+                ) as graph_run,
+            ):
                 async with toolset:
                     agent_run = AgentRun(graph_run)
                     run_metadata = self._resolve_and_store_metadata(agent_run.ctx, metadata)

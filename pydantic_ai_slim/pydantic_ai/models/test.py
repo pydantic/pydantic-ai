@@ -11,7 +11,7 @@ from typing import Any, Literal
 import pydantic_core
 from typing_extensions import assert_never
 
-from .. import _utils
+from .. import _utils, concurrency as _concurrency
 from .._run_context import RunContext
 from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS, AbstractBuiltinTool
 from ..exceptions import UserError
@@ -99,6 +99,7 @@ class TestModel(Model):
         model_name: str = 'test',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
+        max_concurrency: _concurrency.ConcurrencyLimit = None,
     ):
         """Initialize TestModel with optional settings and profile."""
         self.call_tools = call_tools
@@ -108,7 +109,7 @@ class TestModel(Model):
         self.last_model_request_parameters = None
         self._model_name = model_name
         self._system = 'test'
-        super().__init__(settings=settings, profile=profile)
+        super().__init__(settings=settings, profile=profile, max_concurrency=max_concurrency)
 
     async def request(
         self,

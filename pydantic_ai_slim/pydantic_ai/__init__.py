@@ -20,6 +20,7 @@ from .builtin_tools import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from .concurrency import ConcurrencyLimit, ConcurrencyLimiter
 from .embeddings import (
     Embedder,
     EmbeddingModel,
@@ -30,6 +31,7 @@ from .exceptions import (
     AgentRunError,
     ApprovalRequired,
     CallDeferred,
+    ConcurrencyLimitExceeded,
     FallbackExceptionGroup,
     IncompleteToolCall,
     ModelAPIError,
@@ -135,10 +137,14 @@ __all__ = (
     'EmbeddingModel',
     'EmbeddingSettings',
     'EmbeddingResult',
+    # concurrency
+    'ConcurrencyLimiter',
+    'ConcurrencyLimit',
     # exceptions
     'AgentRunError',
     'CallDeferred',
     'ApprovalRequired',
+    'ConcurrencyLimitExceeded',
     'ModelRetry',
     'ModelAPIError',
     'ModelHTTPError',
