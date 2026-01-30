@@ -81,18 +81,17 @@ For details on when we'll accept contributions adding new models to Pydantic AI,
 
 ## HTTP Request Concurrency
 
-You can limit the number of concurrent HTTP requests to a model using the `max_concurrency` parameter.
-This is useful for respecting rate limits or managing resource usage when running many agents in parallel
-with a shared model instance.
+You can limit the number of concurrent HTTP requests to a model using the
+[`ConcurrencyLimitedModel`][pydantic_ai.ConcurrencyLimitedModel] wrapper.
+This is useful for respecting rate limits or managing resource usage when running many agents in parallel.
 
 ```python {title="model_concurrency.py"}
 import asyncio
 
-from pydantic_ai import Agent, ConcurrencyLimiter
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai import Agent, ConcurrencyLimitedModel
 
-# Create a model with limited concurrent requests
-model = OpenAIChatModel('gpt-4o', max_concurrency=5)
+# Wrap a model with concurrency limiting
+model = ConcurrencyLimitedModel('openai:gpt-4o', limiter=5)
 
 # Multiple agents can share this rate-limited model
 agent = Agent(model)
@@ -107,13 +106,47 @@ async def main():
     #> 20
 ```
 
-The `max_concurrency` parameter accepts:
+The `limiter` parameter accepts:
 
-- An integer for simple limiting (e.g., `max_concurrency=5`)
+- An integer for simple limiting (e.g., `limiter=5`)
 - A [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for advanced configuration with backpressure control
+- A [`RecordingSemaphore`][pydantic_ai.concurrency.RecordingSemaphore] for sharing limits across multiple models
+
+### Shared Concurrency Limits
+
+To share a concurrency limit across multiple models (e.g., different models from the same provider),
+you can create a [`RecordingSemaphore`][pydantic_ai.concurrency.RecordingSemaphore] and pass it to
+multiple `ConcurrencyLimitedModel` instances:
+
+```python {title="shared_concurrency.py"}
+import asyncio
+
+from pydantic_ai import Agent, ConcurrencyLimitedModel, RecordingSemaphore
+
+# Create a shared semaphore with a descriptive name
+shared_semaphore = RecordingSemaphore(max_running=10, name='openai-pool')
+
+# Both models share the same concurrency limit
+model1 = ConcurrencyLimitedModel('openai:gpt-4o', limiter=shared_semaphore)
+model2 = ConcurrencyLimitedModel('openai:gpt-4o-mini', limiter=shared_semaphore)
+
+agent1 = Agent(model1)
+agent2 = Agent(model2)
+
+
+async def main():
+    # Total concurrent requests across both agents limited to 10
+    results = await asyncio.gather(
+        *[agent1.run(f'Question {i}') for i in range(10)],
+        *[agent2.run(f'Question {i}') for i in range(10)],
+    )
+    print(len(results))
+    #> 20
+```
 
 When instrumentation is enabled, requests waiting for a concurrency slot appear as spans with
-attributes showing the queue depth and configured limits.
+attributes showing the queue depth and configured limits. The `name` parameter on
+`RecordingSemaphore` helps identify shared semaphores in traces.
 
 <!-- TODO(Marcelo): We need to create a section in the docs about reliability. -->
 

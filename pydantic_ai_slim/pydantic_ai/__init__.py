@@ -20,7 +20,7 @@ from .builtin_tools import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from .concurrency import ConcurrencyLimit, ConcurrencyLimiter
+from .concurrency import ConcurrencyLimit, ConcurrencyLimiter, RecordingSemaphore
 from .embeddings import (
     Embedder,
     EmbeddingModel,
@@ -95,6 +95,7 @@ from .messages import (
     VideoMediaType,
     VideoUrl,
 )
+from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
 from .profiles import (
     DEFAULT_PROFILE,
@@ -140,6 +141,9 @@ __all__ = (
     # concurrency
     'ConcurrencyLimiter',
     'ConcurrencyLimit',
+    'ConcurrencyLimitedModel',
+    'RecordingSemaphore',
+    'limit_model_concurrency',
     # exceptions
     'AgentRunError',
     'CallDeferred',

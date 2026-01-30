@@ -328,8 +328,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 Individual tools can override this with their own timeout. Defaults to None (no timeout).
             max_concurrency: Optional limit on concurrent agent runs. Can be an integer for simple limiting,
                 a [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for advanced configuration with backpressure,
-                or None (default) for no limiting. When the limit is reached, additional calls to `run()` or `iter()`
-                will wait until a slot becomes available.
+                a [`RecordingSemaphore`][pydantic_ai.concurrency.RecordingSemaphore] for sharing limits across
+                multiple agents, or None (default) for no limiting. When the limit is reached, additional calls
+                to `run()` or `iter()` will wait until a slot becomes available.
         """
         if model is None or defer_model_check:
             self._model = model
@@ -394,10 +395,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._event_stream_handler = event_stream_handler
 
-        if max_concurrency is not None:
-            self._concurrency_limiter = _concurrency.RecordingSemaphore.from_limit(max_concurrency)
-        else:
-            self._concurrency_limiter = None
+        self._concurrency_limiter = _concurrency.normalize_to_semaphore(max_concurrency)
 
         self._override_name: ContextVar[_utils.Option[str]] = ContextVar('_override_name', default=None)
         self._override_deps: ContextVar[_utils.Option[AgentDepsT]] = ContextVar('_override_deps', default=None)

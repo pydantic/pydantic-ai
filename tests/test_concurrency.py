@@ -197,36 +197,19 @@ class TestAgentConcurrency:
         assert agent._concurrency_limiter._max_queued == 10
 
 
-class TestModelConcurrency:
-    """Tests for model-level concurrency limiting."""
+class TestConcurrencyLimitedModel:
+    """Tests for the ConcurrencyLimitedModel wrapper."""
 
-    async def test_model_no_limit_by_default(self):
-        """Test that models have no concurrency limit by default."""
-        model = TestModel()
-        assert model._concurrency_limiter is None
+    async def test_basic_concurrency_limit(self):
+        """Test that ConcurrencyLimitedModel limits concurrent requests."""
+        from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
 
-    async def test_model_with_int_concurrency(self):
-        """Test that model accepts int for max_concurrency."""
-        model = TestModel(max_concurrency=5)
-        assert model._concurrency_limiter is not None
-        assert model._concurrency_limiter._max_running == 5
-        assert model._concurrency_limiter._max_queued is None
-
-    async def test_model_with_limiter_concurrency(self):
-        """Test that model accepts ConcurrencyLimiter for max_concurrency."""
-        model = TestModel(max_concurrency=ConcurrencyLimiter(max_running=5, max_queued=10))
-        assert model._concurrency_limiter is not None
-        assert model._concurrency_limiter._max_running == 5
-        assert model._concurrency_limiter._max_queued == 10
-
-    async def test_model_concurrency_limits_requests(self):
-        """Test that model concurrency actually limits concurrent requests."""
         request_count = 0
         max_concurrent = 0
         lock = asyncio.Lock()
 
-        model = TestModel(max_concurrency=2)
-        original_request = TestModel.request.__get__(model)
+        base_model = TestModel()
+        original_request = TestModel.request.__get__(base_model)
 
         async def tracking_request(*args: Any, **kwargs: Any):
             nonlocal request_count, max_concurrent
@@ -240,10 +223,144 @@ class TestModelConcurrency:
                 async with lock:
                     request_count -= 1
 
-        model.request = tracking_request
+        base_model.request = tracking_request
 
+        model = ConcurrencyLimitedModel(base_model, limiter=2)
         agent = Agent(model)
 
         await asyncio.gather(*[agent.run(f'prompt {i}') for i in range(5)])
 
         assert max_concurrent <= 2
+
+    async def test_with_int_limiter(self):
+        """Test ConcurrencyLimitedModel with int limiter."""
+        from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
+
+        model = ConcurrencyLimitedModel(TestModel(), limiter=5)
+        assert model._semaphore._max_running == 5
+        assert model._semaphore._max_queued is None
+
+    async def test_with_concurrency_limiter(self):
+        """Test ConcurrencyLimitedModel with ConcurrencyLimiter."""
+        from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
+
+        model = ConcurrencyLimitedModel(TestModel(), limiter=ConcurrencyLimiter(max_running=5, max_queued=10))
+        assert model._semaphore._max_running == 5
+        assert model._semaphore._max_queued == 10
+
+    async def test_with_shared_semaphore(self):
+        """Test ConcurrencyLimitedModel with shared RecordingSemaphore."""
+        from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
+
+        shared_semaphore = RecordingSemaphore(max_running=3, name='shared-pool')
+        model1 = ConcurrencyLimitedModel(TestModel(), limiter=shared_semaphore)
+        model2 = ConcurrencyLimitedModel(TestModel(), limiter=shared_semaphore)
+
+        # Both models should share the same semaphore
+        assert model1._semaphore is model2._semaphore
+        assert model1._semaphore.name == 'shared-pool'
+
+    async def test_shared_semaphore_limits_across_models(self):
+        """Test that shared semaphore limits concurrent requests across multiple models."""
+        from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
+
+        request_count = 0
+        max_concurrent = 0
+        lock = asyncio.Lock()
+
+        shared_semaphore = RecordingSemaphore(max_running=2)
+
+        def create_tracking_model():
+            base_model = TestModel()
+            original_request = TestModel.request.__get__(base_model)
+
+            async def tracking_request(*args: Any, **kwargs: Any):
+                nonlocal request_count, max_concurrent
+                async with lock:
+                    request_count += 1
+                    max_concurrent = max(max_concurrent, request_count)
+                try:
+                    await asyncio.sleep(0.1)
+                    return await original_request(*args, **kwargs)
+                finally:
+                    async with lock:
+                        request_count -= 1
+
+            base_model.request = tracking_request
+            return ConcurrencyLimitedModel(base_model, limiter=shared_semaphore)
+
+        model1 = create_tracking_model()
+        model2 = create_tracking_model()
+
+        agent1 = Agent(model1)
+        agent2 = Agent(model2)
+
+        # Run 3 requests on each agent (6 total), but limit is 2
+        await asyncio.gather(
+            *[agent1.run(f'prompt {i}') for i in range(3)],
+            *[agent2.run(f'prompt {i}') for i in range(3)],
+        )
+
+        # Should never exceed 2 concurrent requests across both models
+        assert max_concurrent <= 2
+
+    async def test_limit_model_concurrency_helper(self):
+        """Test the limit_model_concurrency helper function."""
+        from pydantic_ai.models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
+
+        # With limiter
+        model = limit_model_concurrency(TestModel(), limiter=5)
+        assert isinstance(model, ConcurrencyLimitedModel)
+
+        # Without limiter (returns original)
+        base_model = TestModel()
+        model = limit_model_concurrency(base_model, limiter=None)
+        assert model is base_model
+
+        # With model name string
+        model = limit_model_concurrency('test', limiter=5)
+        assert isinstance(model, ConcurrencyLimitedModel)
+
+    async def test_model_properties_delegated(self):
+        """Test that model properties are properly delegated to wrapped model."""
+        from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
+
+        base_model = TestModel(model_name='custom-test')
+        model = ConcurrencyLimitedModel(base_model, limiter=5)
+
+        assert model.model_name == 'custom-test'
+        assert model.system == 'test'
+
+
+class TestAgentWithSharedSemaphore:
+    """Tests for agent with shared RecordingSemaphore."""
+
+    async def test_agent_with_shared_semaphore(self):
+        """Test that agents can share a RecordingSemaphore."""
+        shared_semaphore = RecordingSemaphore(max_running=2)
+
+        agent1 = Agent(TestModel(), max_concurrency=shared_semaphore)
+        agent2 = Agent(TestModel(), max_concurrency=shared_semaphore)
+
+        # Both agents should share the same semaphore
+        assert agent1._concurrency_limiter is agent2._concurrency_limiter
+
+
+class TestRecordingSemaphoreName:
+    """Tests for RecordingSemaphore name parameter."""
+
+    async def test_semaphore_with_name(self):
+        """Test that semaphore name is properly set and accessible."""
+        sem = RecordingSemaphore(max_running=5, name='my-semaphore')
+        assert sem.name == 'my-semaphore'
+
+    async def test_semaphore_without_name(self):
+        """Test that semaphore name is None by default."""
+        sem = RecordingSemaphore(max_running=5)
+        assert sem.name is None
+
+    async def test_from_limit_with_name(self):
+        """Test creating semaphore from limit with name."""
+        sem = RecordingSemaphore.from_limit(5, name='my-limit')
+        assert sem.name == 'my-limit'
+        assert sem._max_running == 5
