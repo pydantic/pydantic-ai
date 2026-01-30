@@ -46,7 +46,9 @@ from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..conftest import IsDatetime, IsInstance, IsStr, raise_if_exception, try_import
@@ -5748,3 +5750,87 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
             ),
         ]
     )
+
+
+@pytest.mark.vcr()
+async def test_groq_gpt_oss_default_native_output(allow_model_requests: None, groq_api_key: str):
+    """Test that GPT-OSS models default to native structured output.
+
+    This verifies that when using a plain output_type (no explicit NativeOutput/ToolOutput wrapper),
+    GPT-OSS models use native structured output by default instead of tool calling.
+    """
+    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    # No explicit NativeOutput/ToolOutput wrapper - uses profile default
+    agent = Agent(m, output_type=CityLocation)
+
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot(CityLocation(city='Paris', country='France'))
+
+    # Verify it used native output (TextPart with JSON) not tool calling (ToolCallPart)
+    response = result.response
+    assert isinstance(response, ModelResponse)
+    assert not any(isinstance(part, ToolCallPart) for part in response.parts), (
+        f'Expected native output but got tool call: {response.parts}'
+    )
+    assert any(isinstance(part, TextPart) for part in response.parts), (
+        f'Expected TextPart for native output: {response.parts}'
+    )
+
+
+@pytest.mark.vcr()
+async def test_groq_native_with_tools_falls_back_to_tool_output(allow_model_requests: None, groq_api_key: str):
+    """Test that native output automatically falls back to tool output when function tools are present.
+
+    Groq doesn't support native structured output (JSON mode) with function tools.
+    When an agent has function tools defined, the model should fall back to tool-based output.
+    """
+    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=CityLocation)
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:  # pragma: no cover
+        return f'Sunny in {city}'
+
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot(CityLocation(city='Paris', country='France'))
+
+    # Verify it used tool output (ToolCallPart) not native output
+    response = result.response
+    assert isinstance(response, ModelResponse)
+    assert any(isinstance(part, ToolCallPart) for part in response.parts), (
+        f'Expected tool output fallback when native + tools: {response.parts}'
+    )
+
+
+def test_groq_prepare_request_auto_mode_non_native_profile():
+    """Test that auto mode with non-native-default profile resolves to tool via base class.
+
+    When output_mode='auto' and profile defaults to 'tool', Groq's prepare_request
+    should NOT force tool mode (that's only for native-default profiles). The base
+    class then resolves 'auto' to the profile's default ('tool').
+    """
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key='test-key'))
+    assert m.profile.default_structured_output_mode == 'tool'
+
+    dummy_tool = ToolDefinition(
+        name='dummy',
+        description='A dummy tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    params = ModelRequestParameters(
+        function_tools=[dummy_tool],
+        output_mode='auto',
+    )
+
+    _, result_params = m.prepare_request(None, params)
+    assert result_params.output_mode == 'tool'
