@@ -2868,7 +2868,7 @@ def test_tool_return_schema():
         return ToolReturn(return_value='hello', content=[ImageUrl(url='https://example.com/image.jpg')])
 
     @agent.tool_plain
-    def tool_with_deferred_return() -> DeferredToolResult:
+    def tool_with_deferred_return() -> DeferredToolResult:  # pragma: no cover
         return ToolApproved()
 
     # DeferredToolResult has an insane token footprint, unsure if it is wise to do this but I will read more.
@@ -3652,6 +3652,34 @@ distinguish multiple files.\
             },
         ]
     )
+
+
+def test_tool_return_schema_with_docstring_description():
+    """Test that ToolReturn[T] picks up the return description from docstrings."""
+    agent = Agent(
+        FunctionModel(
+            get_json_schema,
+            profile=ModelProfile(
+                supports_json_schema_output=True,
+                supports_json_object_output=True,
+                supports_tool_return_schema=True,
+            ),
+        ),
+        include_tool_return_schema=True,
+    )
+
+    @agent.tool_plain
+    def my_tool() -> ToolReturn[int]:  # pragma: no cover
+        """Do something.
+
+        Returns:
+            The result value.
+        """
+        return ToolReturn(return_value=42)
+
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.output)
+    assert json_schema['return_schema'] == snapshot({'type': 'integer', 'description': 'The result value.'})
 
 
 def test_return_schema_e2e():

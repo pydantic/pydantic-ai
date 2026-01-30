@@ -98,6 +98,7 @@ async def test_model_tools(allow_model_requests: None):
                 'title': 'Foo',
                 'properties': {'bar': {'type': 'number', 'title': 'Bar'}},
             },
+            return_schema={'type': 'integer', 'title': 'FooResult'},
         ),
         ToolDefinition(
             name='apple',
