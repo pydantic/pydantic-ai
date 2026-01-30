@@ -2355,7 +2355,9 @@ async def test_tool_approval_denial_with_reason():
                         tool_name='delete_file',
                         tool_call_id='delete_1',
                         input={'path': 'important.txt'},
-                        approval=ToolApprovalResponded(id='denial-id', approved=False, reason='User cancelled the deletion'),
+                        approval=ToolApprovalResponded(
+                            id='denial-id', approved=False, reason='User cancelled the deletion'
+                        ),
                     ),
                     DynamicToolInputAvailablePart(
                         tool_name='delete_file',
