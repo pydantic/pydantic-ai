@@ -1609,20 +1609,20 @@ async def test_extra_headers(allow_model_requests: None, openai_api_key: str):
     await agent.run('hello')
 
 
-
 async def test_openai_store_false(allow_model_requests: None):
     """Test that openai_store=False is correctly passed to the OpenAI API."""
     c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m, model_settings=OpenAIChatModelSettings(openai_store=False))
-    
+
     result = await agent.run('test')
     assert result.output == 'hello'
-    
+
     # Verify the store parameter was passed to the mock
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert kwargs.get('store') is False
+
 
 async def test_openai_store_true(allow_model_requests: None):
     """Test that openai_store=True is correctly passed to the OpenAI API."""
@@ -1630,13 +1630,14 @@ async def test_openai_store_true(allow_model_requests: None):
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m, model_settings=OpenAIChatModelSettings(openai_store=True))
-    
+
     result = await agent.run('test')
     assert result.output == 'hello'
-    
+
     # Verify the store parameter was passed to the mock
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert kwargs.get('store') is True
+
 
 async def test_user_id(allow_model_requests: None, openai_api_key: str):
     # This test doesn't do anything, it's just here to ensure that calls with `user` don't cause errors, including type.
@@ -1644,7 +1645,6 @@ async def test_user_id(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m, model_settings=OpenAIChatModelSettings(openai_user='user_id'))
     await agent.run('hello')
-
 
 
 @dataclass

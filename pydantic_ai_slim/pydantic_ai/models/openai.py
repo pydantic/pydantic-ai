@@ -303,7 +303,6 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
 
     # ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
- 
     openai_reasoning_effort: ReasoningEffort
     """Constrains effort on reasoning for [reasoning models](https://platform.openai.com/docs/guides/reasoning).
 
@@ -320,14 +319,14 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
 
     openai_top_logprobs: int
     """Include log probabilities of the top n tokens in the response."""
-    
+
     openai_store: bool | None
     """Whether or not to store the output of this request in OpenAI's systems.
 
     If `False`, OpenAI will not store the request for its own internal review or training.
     See [OpenAI API reference](https://platform.openai.com/docs/api-reference/chat/create#chat-create-store).   
     """
-    
+
     openai_user: str
     """A unique identifier representing the end-user, which can help OpenAI monitor and detect abuse.
 
