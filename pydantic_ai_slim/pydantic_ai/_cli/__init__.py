@@ -13,7 +13,7 @@ from typing import Any
 from pydantic import ImportString, TypeAdapter, ValidationError
 from typing_inspection.introspection import get_literal_values
 
-from .. import __version__
+from .. import __version__, usage as _usage
 from .._run_context import AgentDepsT
 from ..agent import AbstractAgent, Agent
 from ..builtin_tools import BUILTIN_TOOLS_REQUIRING_CONFIG, SUPPORTED_BUILTIN_TOOLS
@@ -21,6 +21,7 @@ from ..exceptions import UserError
 from ..messages import ModelMessage, ModelResponse
 from ..models import KnownModelName, infer_model
 from ..output import OutputDataT
+from ..settings import ModelSettings
 
 try:
     import argcomplete
@@ -322,6 +323,8 @@ async def run_chat(
     config_dir: Path | None = None,
     deps: AgentDepsT = None,
     message_history: Sequence[ModelMessage] | None = None,
+    model_settings: ModelSettings | None = None,
+    usage_limits: _usage.UsageLimits | None = None,
 ) -> int:
     prompt_history_path = (config_dir or PYDANTIC_AI_HOME) / PROMPT_HISTORY_FILENAME
     prompt_history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -348,7 +351,9 @@ async def run_chat(
                 return exit_value
         else:
             try:
-                messages = await ask_agent(agent, text, stream, console, code_theme, deps, messages)
+                messages = await ask_agent(
+                    agent, text, stream, console, code_theme, deps, messages, model_settings, usage_limits
+                )
             except CancelledError:  # pragma: no cover
                 console.print('[dim]Interrupted[/dim]')
             except Exception as e:  # pragma: no cover
@@ -366,6 +371,8 @@ async def ask_agent(
     code_theme: str,
     deps: AgentDepsT = None,
     messages: Sequence[ModelMessage] | None = None,
+    model_settings: ModelSettings | None = None,
+    usage_limits: _usage.UsageLimits | None = None,
 ) -> list[ModelMessage]:
     status = Status('[dim]Working on it…[/dim]', console=console)
 
@@ -377,7 +384,9 @@ async def ask_agent(
         return result.all_messages()
 
     with status, ExitStack() as stack:
-        async with agent.iter(prompt, message_history=messages, deps=deps) as agent_run:
+        async with agent.iter(
+            prompt, message_history=messages, deps=deps, model_settings=model_settings, usage_limits=usage_limits
+        ) as agent_run:
             live = Live('', refresh_per_second=15, console=console, vertical_overflow='ellipsis')
             async for node in agent_run:
                 if Agent.is_model_request_node(node):

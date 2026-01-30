@@ -154,7 +154,7 @@ def _multi_modal_content_identifier(identifier: str | bytes) -> str:
     return hashlib.sha1(identifier).hexdigest()[:6]
 
 
-@dataclass(init=False, repr=False)
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
 class FileUrl(ABC):
     """Abstract base class for any URL-based file."""
 
@@ -187,6 +187,8 @@ class FileUrl(ABC):
         compare=False, default=None
     )
 
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the `media_type` and `identifier` aliases.
     def __init__(
         self,
         url: str,
@@ -195,12 +197,10 @@ class FileUrl(ABC):
         identifier: str | None = None,
         force_download: bool = False,
         vendor_metadata: dict[str, Any] | None = None,
-    ) -> None:
-        self.url = url
-        self._media_type = media_type
-        self._identifier = identifier
-        self.force_download = force_download
-        self.vendor_metadata = vendor_metadata
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _media_type: str | None = None,
+        _identifier: str | None = None,
+    ) -> None: ...  # pragma: no cover
 
     @pydantic.computed_field
     @property
@@ -239,7 +239,7 @@ class FileUrl(ABC):
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass(init=False, repr=False)
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
 class VideoUrl(FileUrl):
     """A URL to a video."""
 
@@ -251,6 +251,8 @@ class VideoUrl(FileUrl):
     kind: Literal['video-url'] = 'video-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the aliases for the `_media_type` and `_identifier` fields.
     def __init__(
         self,
         url: str,
@@ -263,15 +265,7 @@ class VideoUrl(FileUrl):
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
         _identifier: str | None = None,
-    ) -> None:
-        super().__init__(
-            url=url,
-            force_download=force_download,
-            vendor_metadata=vendor_metadata,
-            media_type=media_type or _media_type,
-            identifier=identifier or _identifier,
-        )
-        self.kind = kind
+    ) -> None: ...  # pragma: no cover
 
     def _infer_media_type(self) -> str:
         """Return the media type of the video, based on the url."""
@@ -304,7 +298,7 @@ class VideoUrl(FileUrl):
         return _video_format_lookup[self.media_type]
 
 
-@dataclass(init=False, repr=False)
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
 class AudioUrl(FileUrl):
     """A URL to an audio file."""
 
@@ -316,6 +310,8 @@ class AudioUrl(FileUrl):
     kind: Literal['audio-url'] = 'audio-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the aliases for the `_media_type` and `_identifier` fields.
     def __init__(
         self,
         url: str,
@@ -328,15 +324,7 @@ class AudioUrl(FileUrl):
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
         _identifier: str | None = None,
-    ) -> None:
-        super().__init__(
-            url=url,
-            force_download=force_download,
-            vendor_metadata=vendor_metadata,
-            media_type=media_type or _media_type,
-            identifier=identifier or _identifier,
-        )
-        self.kind = kind
+    ) -> None: ...  # pragma: no cover
 
     def _infer_media_type(self) -> str:
         """Return the media type of the audio file, based on the url.
@@ -357,7 +345,7 @@ class AudioUrl(FileUrl):
         return _audio_format_lookup[self.media_type]
 
 
-@dataclass(init=False, repr=False)
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
 class ImageUrl(FileUrl):
     """A URL to an image."""
 
@@ -369,6 +357,8 @@ class ImageUrl(FileUrl):
     kind: Literal['image-url'] = 'image-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the aliases for the `_media_type` and `_identifier` fields.
     def __init__(
         self,
         url: str,
@@ -381,15 +371,7 @@ class ImageUrl(FileUrl):
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
         _identifier: str | None = None,
-    ) -> None:
-        super().__init__(
-            url=url,
-            force_download=force_download,
-            vendor_metadata=vendor_metadata,
-            media_type=media_type or _media_type,
-            identifier=identifier or _identifier,
-        )
-        self.kind = kind
+    ) -> None: ...  # pragma: no cover
 
     def _infer_media_type(self) -> str:
         """Return the media type of the image, based on the url."""
@@ -409,7 +391,7 @@ class ImageUrl(FileUrl):
         return _image_format_lookup[self.media_type]
 
 
-@dataclass(init=False, repr=False)
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
 class DocumentUrl(FileUrl):
     """The URL of the document."""
 
@@ -421,6 +403,8 @@ class DocumentUrl(FileUrl):
     kind: Literal['document-url'] = 'document-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the aliases for the `_media_type` and `_identifier` fields.
     def __init__(
         self,
         url: str,
@@ -433,15 +417,7 @@ class DocumentUrl(FileUrl):
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
         _identifier: str | None = None,
-    ) -> None:
-        super().__init__(
-            url=url,
-            force_download=force_download,
-            vendor_metadata=vendor_metadata,
-            media_type=media_type or _media_type,
-            identifier=identifier or _identifier,
-        )
-        self.kind = kind
+    ) -> None: ...  # pragma: no cover
 
     def _infer_media_type(self) -> str:
         """Return the media type of the document, based on the url."""

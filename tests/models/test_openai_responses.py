@@ -58,7 +58,8 @@ from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, respons
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
     from openai.types.responses import ResponseFunctionWebSearch
-    from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
+    from openai.types.responses.response_output_message import Content, ResponseOutputMessage
+    from openai.types.responses.response_output_text import ResponseOutputText
     from openai.types.responses.response_reasoning_item import (
         Content as ReasoningContent,
         ResponseReasoningItem,
@@ -570,6 +571,78 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
                 )
 
     assert output_text == snapshot(['The capital of France is Paris.'])
+
+
+async def test_openai_include_raw_annotations_streaming(allow_model_requests: None, openai_api_key: str):
+    prompt = 'What is the tallest mountain in Alberta? Provide one sentence with a citation.'
+    instructions = 'Use web search and include citations in your answer.'
+
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model, instructions=instructions, builtin_tools=[WebSearchTool()])
+
+    settings = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
+
+    events = [event async for event in agent.run_stream_events(prompt, model_settings=settings)]
+    annotation_event = next(
+        event
+        for event in events
+        if isinstance(event, PartDeltaEvent)
+        and isinstance(event.delta, TextPartDelta)
+        and event.delta.provider_details
+        and 'annotations' in event.delta.provider_details
+    )
+    assert annotation_event.delta.provider_details == snapshot(
+        {
+            'annotations': [
+                {
+                    'type': 'url_citation',
+                    'start_index': 77,
+                    'end_index': 162,
+                    'title': 'Mount Columbia | mountain, Alberta, Canada | Britannica',
+                    'url': 'https://www.britannica.com/place/Mount-Columbia?utm_source=openai',
+                }
+            ]
+        }
+    )
+
+    model2 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
+    agent2 = Agent(model2, instructions=instructions, builtin_tools=[WebSearchTool()])
+    events2 = [event async for event in agent2.run_stream_events(prompt)]
+    assert not any(
+        (
+            isinstance(event, PartDeltaEvent)
+            and isinstance(event.delta, TextPartDelta)
+            and event.delta.provider_details
+            and 'annotations' in event.delta.provider_details
+        )
+        or (
+            isinstance(event, PartEndEvent)
+            and isinstance(event.part, TextPart)
+            and event.part.provider_details
+            and 'annotations' in event.part.provider_details
+        )
+        for event in events2
+    )
+
+    model3 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
+    agent3 = Agent(model3, instructions='Answer directly.')
+    settings3 = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
+    events3 = [event async for event in agent3.run_stream_events('What is 2+2?', model_settings=settings3)]
+    assert not any(
+        (
+            isinstance(event, PartDeltaEvent)
+            and isinstance(event.delta, TextPartDelta)
+            and event.delta.provider_details
+            and 'annotations' in event.delta.provider_details
+        )
+        or (
+            isinstance(event, PartEndEvent)
+            and isinstance(event.part, TextPart)
+            and event.part.provider_details
+            and 'annotations' in event.part.provider_details
+        )
+        for event in events3
+    )
 
 
 async def test_openai_responses_model_http_error(allow_model_requests: None, openai_api_key: str):
@@ -9887,3 +9960,53 @@ async def test_reasoning_summary_auto(allow_model_requests: None, openai_api_key
 
 I need to respond with a Python function for calculating the factorial. The user wants me to think step-by-step, but I need to keep my reasoning brief. I'll provide a brief explanation of how the function works and include some input validation. I could choose either an iterative or recursive approach. I'll keep the details high-level, showing only the essential steps before presenting the final code to the user.\
 """)
+
+
+async def test_openai_include_raw_annotations_non_streaming(allow_model_requests: None, openai_api_key: str):
+    """Test that text annotations are included in provider_details when the setting is enabled."""
+    prompt = 'What is the tallest mountain in Alberta? Provide one sentence with a citation.'
+    instructions = 'Use web search and include citations in your answer.'
+
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model, instructions=instructions, builtin_tools=[WebSearchTool()])
+
+    # Test with annotations enabled
+    settings = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
+    result = await agent.run(prompt, model_settings=settings)
+
+    messages = result.all_messages()
+    assert messages[0] == ModelRequest(
+        parts=[UserPromptPart(content=prompt, timestamp=IsDatetime())],
+        timestamp=IsDatetime(),
+        instructions=instructions,
+        run_id=IsStr(),
+    )
+    response = cast(ModelResponse, messages[1])
+    assert response.provider_name == 'openai'
+    assert response.provider_url == 'https://api.openai.com/v1/'
+    assert response.finish_reason == 'stop'
+
+    tool_call = next(part for part in response.parts if isinstance(part, BuiltinToolCallPart))
+    assert tool_call.tool_name == 'web_search'
+    assert isinstance(tool_call.args, dict)
+    assert tool_call.args.get('query') == 'tallest mountain in Alberta'
+    assert tool_call.args.get('type') == 'search'
+
+    text_part = next(part for part in response.parts if isinstance(part, TextPart))
+    assert text_part.provider_details and 'annotations' in text_part.provider_details
+
+    # Test with annotations disabled (default)
+    model2 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
+    agent2 = Agent(model2, instructions=instructions, builtin_tools=[WebSearchTool()])
+    result2 = await agent2.run(prompt)
+
+    messages2 = result2.all_messages()
+    assert messages2[0] == ModelRequest(
+        parts=[UserPromptPart(content=prompt, timestamp=IsDatetime())],
+        timestamp=IsDatetime(),
+        instructions=instructions,
+        run_id=IsStr(),
+    )
+    response2 = cast(ModelResponse, messages2[1])
+    text_part2 = next(part for part in response2.parts if isinstance(part, TextPart))
+    assert not (text_part2.provider_details or {}).get('annotations')
