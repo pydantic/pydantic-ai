@@ -3,6 +3,8 @@ name: PR Auto-Label
 on:
   pull_request:
     types: [opened, synchronize]
+  issue_comment:
+    types: [created]
 
 permissions:
   contents: read
@@ -12,6 +14,7 @@ permissions:
 jobs:
   size-label:
     name: Set Size Label
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Calculate PR size and set label
@@ -73,6 +76,7 @@ jobs:
 
   category-label:
     name: Set Category Label
+    if: github.event_name == 'pull_request' && github.event.action == 'opened'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -84,7 +88,7 @@ jobs:
         id: check-label
         run: |
           LABELS=$(gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --json labels --jq '.labels[].name')
-          CATEGORY_LABELS=("bug" "feature" "docs" "chore")
+          CATEGORY_LABELS=("bug" "feature" "docs" "chore" "dependency")
 
           for label in "${CATEGORY_LABELS[@]}"; do
             if echo "$LABELS" | grep -q "^${label}$"; then
@@ -116,13 +120,15 @@ jobs:
             - `bug`: Fixes something that isn't working correctly
             - `feature`: Adds new functionality or capabilities
             - `docs`: Documentation-only changes (no functional code changes)
-            - `chore`: Maintenance, refactoring, dependencies, CI/CD, or test-only changes
+            - `chore`: Maintenance, refactoring, dev dependencies, CI/CD, or test-only changes
+            - `dependency`: Production dependency updates
 
             Guidelines:
             - Look at the actual files changed, not just the PR title
             - If code AND docs are changed, prefer `feature` or `bug` over `docs`
             - Test-only changes (without functional code) are `chore`
-            - Dependency updates are `chore`
+            - Production dependency updates (in `[project.dependencies]` or `[project.optional-dependencies]`) are `dependency`
+            - Dev-only dependency updates (in `[dependency-groups]`) are `chore`
             - CI/workflow changes are `chore`
             - Refactoring without new functionality is `chore`
 
@@ -130,3 +136,82 @@ jobs:
             gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels --method POST -f "labels[]=<category>"
 
             Only output the gh command you ran and a brief explanation of why you chose that category.
+
+  add-label-from-comment:
+    name: Add Label from Comment
+    # Allows maintainers to override the auto-assigned category label via `/label <name>` comment.
+    # This job removes any existing category label before applying the new one,
+    # so `/label bug` on a PR labeled `chore` will replace `chore` with `bug`.
+    if: github.event_name == 'issue_comment' && github.event.issue.pull_request && startsWith(github.event.comment.body, '/label ')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add label from comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const categoryLabels = ['bug', 'feature', 'docs', 'chore', 'dependency'];
+            const comment = context.payload.comment.body.trim();
+            const match = comment.match(/^\/label\s+(\S+)/);
+
+            if (!match) {
+              console.log('No label found in comment');
+              return;
+            }
+
+            const requestedLabel = match[1].toLowerCase();
+            const prNumber = context.payload.issue.number;
+
+            if (!categoryLabels.includes(requestedLabel)) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `❌ \`${requestedLabel}\` is not a valid label. Allowed labels are: ${categoryLabels.map(l => '\`' + l + '\`').join(', ')}`
+              });
+              return;
+            }
+
+            try {
+              // Remove any existing category labels before adding the new one
+              const { data: currentLabels } = await github.rest.issues.listLabelsOnIssue({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber
+              });
+
+              for (const label of currentLabels) {
+                if (categoryLabels.includes(label.name) && label.name !== requestedLabel) {
+                  await github.rest.issues.removeLabel({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: prNumber,
+                    name: label.name
+                  });
+                }
+              }
+
+              // Add the requested label
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                labels: [requestedLabel]
+              });
+
+              // React with +1 to indicate success
+              await github.rest.reactions.createForIssueComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: context.payload.comment.id,
+                content: '+1'
+              });
+
+              console.log(`✅ Set label: ${requestedLabel}`);
+            } catch (error) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `❌ Failed to add label \`${requestedLabel}\`: ${error.message}`
+              });
+            }
