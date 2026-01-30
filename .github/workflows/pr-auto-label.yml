@@ -197,16 +197,6 @@ jobs:
                 issue_number: prNumber,
                 labels: [requestedLabel]
               });
-
-              // React with +1 to indicate success
-              await github.rest.reactions.createForIssueComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: context.payload.comment.id,
-                content: '+1'
-              });
-
-              console.log(`✅ Set label: ${requestedLabel}`);
             } catch (error) {
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
@@ -214,4 +204,20 @@ jobs:
                 issue_number: prNumber,
                 body: `❌ Failed to add label \`${requestedLabel}\`: ${error.message}`
               });
+              return;
             }
+
+            // React with +1 — outside the label try-catch so a reaction failure
+            // doesn't produce a misleading "Failed to add label" error
+            try {
+              await github.rest.reactions.createForIssueComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: context.payload.comment.id,
+                content: '+1'
+              });
+            } catch {
+              // Reaction is cosmetic; swallow the error
+            }
+
+            console.log(`✅ Set label: ${requestedLabel}`);
