@@ -26,11 +26,6 @@ class ExamplePydanticModel(BaseModel):
     age: int
 
 
-class ExamplePydanticModelWithDecimal(BaseModel):
-    name: str
-    age: Decimal
-
-
 class ExampleEnum(Enum):
     FOO = 1
     BAR = 2
@@ -630,13 +625,11 @@ def test_custom_null():
 
 
 def test_non_primitive_types():
-    assert format_as_xml(ExamplePydanticModelWithDecimal(name='John', age=Decimal('123.45')), mode='json') == snapshot("""\
+    class ExamplePydanticModelWithDecimal(BaseModel):
+        name: str
+        age: Decimal
+
+    assert format_as_xml(ExamplePydanticModelWithDecimal(name='John', age=Decimal('123.45'))) == snapshot("""\
 <name>John</name>
 <age>123.45</age>\
 """)
-
-    with pytest.raises(TypeError, match='Unsupported type for XML formatting'):
-        format_as_xml(ExamplePydanticModelWithDecimal(name='John', age=Decimal('123.45')), mode='python')
-
-    with pytest.raises(TypeError, match='Unsupported type for XML formatting'):
-        format_as_xml(ExamplePydanticModelWithDecimal(name='John', age=Decimal('123.45')))
