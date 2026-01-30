@@ -11,7 +11,7 @@ from datetime import datetime
 from functools import cached_property
 from typing import Any, Literal, cast, overload
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import assert_never, deprecated
 
@@ -345,7 +345,7 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     See the [OpenAI Prompt Caching documentation](https://platform.openai.com/docs/guides/prompt-caching#how-it-works) for more information.
     """
 
-    openai_prompt_cache_retention: Literal['in-memory', '24h']
+    openai_prompt_cache_retention: Literal['in_memory', '24h']
     """The retention policy for the prompt cache. Set to 24h to enable extended prompt caching, which keeps cached prefixes active for longer, up to a maximum of 24 hours.
 
     See the [OpenAI Prompt Caching documentation](https://platform.openai.com/docs/guides/prompt-caching#how-it-works) for more information.
@@ -447,6 +447,15 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """Whether to include the file search results in the response.
 
     Corresponds to the `file_search_call.results` value of the `include` parameter in the Responses API.
+    """
+
+    openai_include_raw_annotations: bool
+    """Whether to include the raw annotations in `TextPart.provider_details`.
+
+    When enabled, any annotations (e.g., citations from web search) will be available
+    in the `provider_details['annotations']` field of text parts.
+    This is opt-in since there may be overlap with native annotation support once
+    added via https://github.com/pydantic/pydantic-ai/issues/3126.
     """
 
 
@@ -685,6 +694,9 @@ class OpenAIChatModel(Model):
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
+
+            # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
+            prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
             return await self.client.chat.completions.create(
                 model=self.model_name,
                 messages=openai_messages,
@@ -711,7 +723,7 @@ class OpenAIChatModel(Model):
                 logprobs=model_settings.get('openai_logprobs', OMIT),
                 top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
                 prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
-                prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
+                prompt_cache_retention=prompt_cache_retention,
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -1240,6 +1252,9 @@ class OpenAIModel(OpenAIChatModel):
     """Deprecated alias for `OpenAIChatModel`."""
 
 
+responses_output_text_annotations_ta = TypeAdapter(list[responses.response_output_text.Annotation])
+
+
 @dataclass(init=False)
 class OpenAIResponsesModel(Model):
     """A model that uses the OpenAI Responses API.
@@ -1324,7 +1339,9 @@ class OpenAIResponsesModel(Model):
         if isinstance(response, ModelResponse):
             return response
 
-        return self._process_response(response, model_request_parameters)
+        return self._process_response(
+            response, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
+        )
 
     @asynccontextmanager
     async def request_stream(
@@ -1343,10 +1360,15 @@ class OpenAIResponsesModel(Model):
             messages, True, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
         async with response:
-            yield await self._process_streamed_response(response, model_request_parameters)
+            yield await self._process_streamed_response(
+                response, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
+            )
 
     def _process_response(  # noqa: C901
-        self, response: responses.Response, model_request_parameters: ModelRequestParameters
+        self,
+        response: responses.Response,
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         items: list[ModelResponsePart] = []
@@ -1390,6 +1412,11 @@ class OpenAIResponsesModel(Model):
                         part_provider_details: dict[str, Any] | None = None
                         if content.logprobs:
                             part_provider_details = {'logprobs': _map_logprobs(content.logprobs)}
+                        if model_settings.get('openai_include_raw_annotations') and content.annotations:
+                            part_provider_details = part_provider_details or {}
+                            part_provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
+                                list(content.annotations), warnings=False
+                            )
                         items.append(
                             TextPart(
                                 content.text,
@@ -1469,6 +1496,7 @@ class OpenAIResponsesModel(Model):
     async def _process_streamed_response(
         self,
         response: AsyncStream[responses.ResponseStreamEvent],
+        model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> OpenAIResponsesStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -1481,6 +1509,7 @@ class OpenAIResponsesModel(Model):
         return OpenAIResponsesStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=first_chunk.response.model,
+            _model_settings=model_settings,
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
@@ -1589,6 +1618,8 @@ class OpenAIResponsesModel(Model):
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
+            # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
+            prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
             return await self.client.responses.create(
                 input=openai_messages,
                 model=self.model_name,
@@ -1610,7 +1641,7 @@ class OpenAIResponsesModel(Model):
                 text=text or OMIT,
                 include=include or OMIT,
                 prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
-                prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
+                prompt_cache_retention=prompt_cache_retention,
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -1953,7 +1984,7 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(item, BuiltinToolReturnPart):
                         if should_send_item_id:  # pragma: no branch
                             content_is_dict = isinstance(item.content, dict)
-                            status = item.content.get('status') if content_is_dict else None
+                            status = cast(dict[str, Any], item.content).get('status') if content_is_dict else None
                             kind_to_item = {
                                 CodeExecutionTool.kind: code_interpreter_item,
                                 WebSearchTool.kind: web_search_item,
@@ -2297,6 +2328,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for OpenAI Responses API."""
 
     _model_name: OpenAIModelName
+    _model_settings: OpenAIResponsesModelSettings
     _response: AsyncIterable[responses.ResponseStreamEvent]
     _provider_name: str
     _provider_url: str
@@ -2304,6 +2336,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
+        # Track annotations by item_id and content_index
+        _annotations_by_item: dict[str, list[Any]] = {}
+
         if self._provider_timestamp is not None:  # pragma: no branch
             self.provider_details = {'timestamp': self._provider_timestamp}
 
@@ -2517,8 +2552,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # content already accumulated via delta events
 
             elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
-                # TODO(Marcelo): We should support annotations in the future.
-                pass  # there's nothing we need to do here
+                # Collect annotations if the setting is enabled
+                if self._model_settings.get('openai_include_raw_annotations'):
+                    _annotations_by_item.setdefault(chunk.item_id, []).append(chunk.annotation)
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
                 for event in self._parts_manager.handle_text_delta(
@@ -2530,7 +2566,22 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     yield event
 
             elif isinstance(chunk, responses.ResponseTextDoneEvent):
-                pass  # there's nothing we need to do here
+                # Add annotations to provider_details if available
+                provider_details: dict[str, Any] = {}
+                annotations = _annotations_by_item.get(chunk.item_id)
+                if annotations:
+                    provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
+                        list(annotations), warnings=False
+                    )
+
+                if provider_details:
+                    for event in self._parts_manager.handle_text_delta(
+                        vendor_part_id=chunk.item_id,
+                        content='',
+                        provider_name=self.provider_name,
+                        provider_details=provider_details,
+                    ):
+                        yield event
 
             elif isinstance(chunk, responses.ResponseWebSearchCallInProgressEvent):
                 pass  # there's nothing we need to do here
