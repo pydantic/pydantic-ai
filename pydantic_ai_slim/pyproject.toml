@@ -124,7 +124,7 @@ retries = ["tenacity>=8.2.3"]
 # Temporal
 temporal = ["temporalio==1.20.0"]
 # DBOS
-dbos = ["dbos>=1.14.0"]
+dbos = ["dbos>=2.10.0"]
 # Prefect
 prefect = ["prefect>=3.4.21"]
 
