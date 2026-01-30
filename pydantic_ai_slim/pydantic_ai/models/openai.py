@@ -924,7 +924,7 @@ class OpenAIChatModel(Model):
         _model: OpenAIChatModel
 
         texts: list[str] = field(default_factory=list[str])
-        thinkings: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
+        thinkings: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
         tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = field(
             default_factory=list[ChatCompletionMessageFunctionToolCallParam]
         )
@@ -961,12 +961,14 @@ class OpenAIChatModel(Model):
             if self.thinkings:
                 field_contents: dict[str, list[str]] = {}
                 if profile.openai_chat_send_back_thinking_parts == 'auto':
-                    # Group by field name and set each field
-                    for field_name, content in self.thinkings:
-                        field_contents.setdefault(field_name, []).append(content)
-                elif profile.openai_chat_send_back_thinking_parts == 'field':
+                    field_contents = self.thinkings
+                elif profile.openai_chat_send_back_thinking_parts == 'field':  # pragma: no branch
                     assert profile.openai_chat_thinking_field is not None
-                    field_contents = {profile.openai_chat_thinking_field: [content for _, content in self.thinkings]}
+                    field_contents = {
+                        profile.openai_chat_thinking_field: [
+                            content for content_list in self.thinkings.values() for content in content_list
+                        ]
+                    }
                 for field_name, contents in field_contents.items():
                     message_param[field_name] = '\n\n'.join(contents)
             if self.texts:
@@ -1008,7 +1010,7 @@ class OpenAIChatModel(Model):
                     and matches_custom_field
                 ):
                     # Store both content and field name for later use in _into_message_param
-                    self.thinkings.append((item.id, item.content))
+                    self.thinkings.setdefault(item.id, []).append(item.content)
                 else:
                     # Fall back to tags mode
                     start_tag, end_tag = self._model.profile.thinking_tags
@@ -1019,7 +1021,7 @@ class OpenAIChatModel(Model):
             elif include_method == 'field':
                 field = profile.openai_chat_thinking_field
                 if field:  # pragma: no branch
-                    self.thinkings.append((field, item.content))
+                    self.thinkings.setdefault(field, []).append(item.content)
 
         def _map_response_tool_call_part(self, item: ToolCallPart) -> None:
             """Maps a `ToolCallPart` to the response context.
