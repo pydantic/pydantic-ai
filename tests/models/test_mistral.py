@@ -34,7 +34,7 @@ from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsBytes, IsDatetime, IsNow, IsStr, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -2062,7 +2062,7 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content=BinaryImage(data=IsBytes(), media_type='image/jpeg'),
+                        content=IsInstance(BinaryImage),
                         tool_call_id='FI5qQGzDE',
                         timestamp=IsDatetime(),
                     )

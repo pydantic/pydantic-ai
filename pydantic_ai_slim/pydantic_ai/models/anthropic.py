@@ -725,9 +725,7 @@ class AnthropicModel(Model):
                         unsupported_files: list[BetaContentBlockParam] = []
 
                         # Iterate content directly to preserve order of mixed file/data content
-                        content = request_part.content
-                        items = list(content) if isinstance(content, list) else [content]
-                        for item in items:
+                        for item in request_part.content_items:
                             if isinstance(item, BinaryContent):
                                 if item.is_image or item.is_document:
                                     # Images and documents (PDF, text) go native in tool_result

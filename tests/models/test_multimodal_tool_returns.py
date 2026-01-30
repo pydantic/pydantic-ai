@@ -53,7 +53,6 @@ with try_import() as groq_available:
 
 with try_import() as xai_available:
     from pydantic_ai.models.xai import XaiModel
-    from pydantic_ai.providers.xai import XaiProvider
 
 pytestmark = [
     pytest.mark.anyio,
@@ -220,6 +219,7 @@ def create_model(
     provider: str,
     api_keys: dict[str, str],
     bedrock_provider: Any = None,
+    xai_provider: Any = None,
 ) -> Model:
     model_name = MODEL_CONFIGS[provider][0]
     if provider == 'anthropic':
@@ -236,7 +236,8 @@ def create_model(
     elif provider == 'groq':
         return GroqModel(model_name, provider=GroqProvider(api_key=api_keys['groq']))
     elif provider == 'xai':
-        return XaiModel(model_name, provider=XaiProvider(api_key=api_keys['xai']))
+        assert xai_provider is not None
+        return XaiModel(model_name, provider=xai_provider)
     else:
         raise ValueError(f'Unknown provider: {provider}')
 
@@ -413,6 +414,7 @@ async def test_multimodal_tool_return_matrix(
     return_style: ReturnStyle,
     api_keys: dict[str, str],
     bedrock_provider: Any,
+    xai_provider: Any,
     assets_path: Path,
     allow_model_requests: None,
 ):
@@ -421,7 +423,7 @@ async def test_multimodal_tool_return_matrix(
 
     error_info = get_error_details(provider, file_type, content_source, return_style)
     expectation: Expectation = 'error' if error_info else get_expectation(provider, file_type)
-    model = create_model(provider, api_keys, bedrock_provider)
+    model = create_model(provider, api_keys, bedrock_provider, xai_provider)
     content_factory = CONTENT_FACTORIES[(file_type, content_source)]
     content = content_factory(assets_path)
 
@@ -453,6 +455,7 @@ async def test_mixed_content_ordering(
     provider: str,
     api_keys: dict[str, str],
     bedrock_provider: Any,
+    xai_provider: Any,
     assets_path: Path,
     allow_model_requests: None,
 ):
@@ -464,7 +467,7 @@ async def test_mixed_content_ordering(
     if expectation == 'error':
         pytest.skip(f'{provider} does not support images')
 
-    model = create_model(provider, api_keys, bedrock_provider)
+    model = create_model(provider, api_keys, bedrock_provider, xai_provider)
     image = make_image_binary(assets_path)
 
     agent: Agent[None, str] = Agent(model)
@@ -485,6 +488,7 @@ async def test_multiple_files(
     provider: str,
     api_keys: dict[str, str],
     bedrock_provider: Any,
+    xai_provider: Any,
     assets_path: Path,
     allow_model_requests: None,
 ):
@@ -496,7 +500,7 @@ async def test_multiple_files(
     if expectation == 'error':
         pytest.skip(f'{provider} does not support images')
 
-    model = create_model(provider, api_keys, bedrock_provider)
+    model = create_model(provider, api_keys, bedrock_provider, xai_provider)
     image1 = make_image_binary(assets_path)
     image2 = make_image_url(assets_path)
 
@@ -518,6 +522,7 @@ async def test_model_sees_image_content(
     provider: str,
     api_keys: dict[str, str],
     bedrock_provider: Any,
+    xai_provider: Any,
     assets_path: Path,
     allow_model_requests: None,
 ):
@@ -529,7 +534,7 @@ async def test_model_sees_image_content(
     if expectation == 'error':
         pytest.skip(f'{provider} does not support images in tool returns')
 
-    model = create_model(provider, api_keys, bedrock_provider)
+    model = create_model(provider, api_keys, bedrock_provider, xai_provider)
     image = make_image_binary(assets_path)
 
     agent: Agent[None, str] = Agent(model)

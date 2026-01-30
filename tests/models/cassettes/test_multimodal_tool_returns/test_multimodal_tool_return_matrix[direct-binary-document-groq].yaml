@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '362'
+      - '409'
       content-type:
       - application/json
       host:
@@ -16,7 +16,7 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: Call the get_file tool to get a document and describe what you see.
+      - content: Use the get_file tool now to retrieve a document file, then describe what you received.
         role: user
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       n: 1
@@ -41,133 +41,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '402'
-      content-type:
-      - application/json
-      retry-after:
-      - '3'
-      strict-transport-security:
-      - max-age=15552000
-      vary:
-      - Origin
-    parsed_body:
-      error:
-        code: rate_limit_exceeded
-        message: 'Rate limit reached for model `meta-llama/llama-4-maverick-17b-128e-instruct` in organization `org_01k0cr3hcdehfb2mcy22cp8p3y`
-          service tier `on_demand` on tokens per minute (TPM): Limit 6000, Used 5572, Requested 709. Please try again in 2.81s.
-          Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing'
-        type: tokens
-    status:
-      code: 429
-      message: Too Many Requests
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '362'
-      content-type:
-      - application/json
-      cookie:
-      - __cf_bm=LPK0AFkZ1TUBJjJsRPpZKqpjlL6qT_vmsdjZDI1WRJo-1769706879-1.0.1.1-My_VnsXwI2tPHRqbRJaj9vf9v4oxjfGgQBV3GiCpAXf31MnwCqRT.TbBLWacduE1RQQmjn8md1pzSayA6WGxUzZvLtXKJarShpfgmGKEIpY
-      host:
-      - api.groq.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: Call the get_file tool to get a document and describe what you see.
-        role: user
-      model: meta-llama/llama-4-maverick-17b-128e-instruct
-      n: 1
-      stream: false
-      tool_choice: auto
-      tools:
-      - function:
-          description: ''
-          name: get_file
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-    uri: https://api.groq.com/openai/v1/chat/completions
-  response:
-    headers:
-      alt-svc:
-      - h3=":443"; ma=86400
-      cache-control:
-      - private, max-age=0, no-store, no-cache, must-revalidate
-      connection:
-      - keep-alive
-      content-length:
-      - '402'
-      content-type:
-      - application/json
-      retry-after:
-      - '2'
-      strict-transport-security:
-      - max-age=15552000
-      vary:
-      - Origin
-    parsed_body:
-      error:
-        code: rate_limit_exceeded
-        message: 'Rate limit reached for model `meta-llama/llama-4-maverick-17b-128e-instruct` in organization `org_01k0cr3hcdehfb2mcy22cp8p3y`
-          service tier `on_demand` on tokens per minute (TPM): Limit 6000, Used 5455, Requested 709. Please try again in 1.64s.
-          Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing'
-        type: tokens
-    status:
-      code: 429
-      message: Too Many Requests
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '362'
-      content-type:
-      - application/json
-      cookie:
-      - __cf_bm=HhOtH_cZUqKmbcTWr9SZxf2aq9ERS7dmKDozvTcbnag-1769706882.33612-1.0.1.1-_qF8TzVE0bDHp3t_YfvJWWTqz_sf2GyPEnzOxmN9R5c2he1XzCPwjF1qetsNQi7dFRISMygP8ZzH9r90at9HPcvI9L_sCQnLnL0EDiQDQhtiVauh5_5oGz2bUIZ1kL0K
-      host:
-      - api.groq.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: Call the get_file tool to get a document and describe what you see.
-        role: user
-      model: meta-llama/llama-4-maverick-17b-128e-instruct
-      n: 1
-      stream: false
-      tool_choice: auto
-      tools:
-      - function:
-          description: ''
-          name: get_file
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-    uri: https://api.groq.com/openai/v1/chat/completions
-  response:
-    headers:
-      alt-svc:
-      - h3=":443"; ma=86400
-      cache-control:
-      - private, max-age=0, no-store, no-cache, must-revalidate
-      connection:
-      - keep-alive
-      content-length:
-      - '698'
+      - '740'
       content-type:
       - application/json
       strict-transport-security:
@@ -187,26 +61,26 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: eyp2jytpw
+            id: 60c235cwk
             type: function
-      created: 1769706893
-      id: chatcmpl-de1f342d-2a9b-4321-9ed0-aa8c579bc941
+      created: 1769755964
+      id: chatcmpl-35125c49-5306-41b6-a0da-37f0104b7f9f
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       object: chat.completion
       service_tier: on_demand
       system_fingerprint: fp_217b6e6136
       usage:
-        completion_time: 0.037201375
-        completion_tokens: 25
-        prompt_time: 3.8192904800000003
-        prompt_tokens: 708
-        queue_time: 4.915801614
-        total_time: 3.856491855
-        total_tokens: 733
+        completion_time: 0.131450391
+        completion_tokens: 75
+        prompt_time: 0.491441369
+        prompt_tokens: 711
+        queue_time: 1.03282676
+        total_time: 0.62289176
+        total_tokens: 786
       usage_breakdown: null
       x_groq:
-        id: req_01kg5c03dsephskjhf96tczct5
-        seed: 1269083542
+        id: req_01kg6tsv94f91apb84gfj8gb2w
+        seed: 841940204
     status:
       code: 200
       message: OK

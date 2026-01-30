@@ -8,17 +8,19 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '321'
+      - '409'
       content-type:
       - application/json
       host:
       - api.openai.com
     method: POST
     parsed_body:
+      include:
+      - reasoning.encrypted_content
       input:
-      - content: Call the get_file tool to get a video and describe what you see.
+      - content: Use the get_file tool now to retrieve a video file, then describe what you received.
         role: user
-      model: gpt-4.1-mini
+      model: gpt-5-mini
       stream: false
       tool_choice: auto
       tools:
@@ -38,13 +40,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1688'
+      - '2782'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '548'
+      - '2324'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -57,22 +59,26 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1769565054
-      created_at: 1769565053
+      completed_at: 1769755925
+      created_at: 1769755923
       error: null
       frequency_penalty: 0.0
-      id: resp_0391879107af02f30069796b7d90d8819ca74d8860b247ca42
+      id: resp_0c6c94e82fb2a8a900697c5513b52c8194acc97480a4bf779a
       incomplete_details: null
       instructions: null
       max_output_tokens: null
       max_tool_calls: null
       metadata: {}
-      model: gpt-4.1-mini-2025-04-14
+      model: gpt-5-mini-2025-08-07
       object: response
       output:
+      - encrypted_content: gAAAAABpfFUWdLOiZwFWlRKPqig2Z_rQ9iAxsLr4eV2QM7za4ALcYceJg6DyznpsIMELm7iI_PMmkANiMEyIkp6d7UW9h21FIKlh2S7jXcAAfWMQcgffHf0R5OPYxVKwhh2oQ1vJzCLQ_XlcqmOYr4OijgjZ6Uwc7_UcVivW-70WdRKBGHxmEeZRIIEYqJA_on39MCTuoMAFAebQ8JCK8xouNBliEOct-U9_ZaUGlSBXtTWRVVo3PaNlO5SBoc3mZMMxsEjsKagH0mKB-pN_iVrk1GYfnbskT0pssXQLyP27yw4qxj0OcaFJm8HEzbWfw75IgxFEcfLO-EU8H2plvDX5WwzQ730pE15aG6Itm373gVcKX2yjrI1lpGIJ6Y5mJWD_czbO1CwH724NruCP_5FA9f_81n98mdFMaMa9SrPBqwWS98DPzcoDpKamX5b9iG1zuH6voA2WTdj197Q9nJxX1oLghO-wxOvrn-wMNQMnXqP8ZVSbUKPfH_XoYtkLelsmC8nEAoKAdwO6GZUQj225abxm3DW8nLsSbZpOkoGRLfUdbQO93lbkBcyF6LF4p7buPPvmmdyDAxvhqENEvx59z7OjDoUupTnmbGlxicTAk49IGG-cxY1ZtyTUJV5dCr8S3hX4XkKth8d6cTmMoaflLBx8atooWbbIwCUwut_6k51W1z0JS-hGt0OPKq7UAwJ6mcrBrPNgqDr70FRfXz1cnhCyh10Eh-rgzXjUY9EUQUqRgvtAmbCbtZMqsnmFOCsaINX_eHhsShxm09bSa6Efllvq8oVzrme7VaDxVHofg6lwVtR2GhhrZprYokk2_ASjNwZQD9kz04HyUhVlsHA1ZWpxgQEC1VRspplkqDV8O8M1XOqkPX_RFQySC8qHtCFSmS6AT7VzDBDEeQkMgbL17oO-avLFHVRjEsqgvVhNMl3EFNSVeT8i7GVziLVYfF0gQx1P4FUxUU1Qa6BJd4XUergfRLeJ2lEJevs-ms0yBJY2-0_S9XJN-dhPoXK2omHhzeSs4iAAQr3FO5w62hImGg4TK5qrW_cLVsjeCibPOJMbOs5XuAg0UkuOxIoLI8wpjPIaNV_qvEp5C2LvvDt6m-7bZy3RBQh9CJwSE89s8Es2zSa_PeaR5ugZmoi3ZrvXL-_h79tF3BrnuhyhKrY4wi1mXnJQLuOyIzegb9K3bIxPASv21Q_yBZbpZP8hAsD3uY1OxevEGDJcen9eMvcqW1O5h8g_6A==
+        id: rs_0c6c94e82fb2a8a900697c55144e6c8194ac2f56f139da4c99
+        summary: []
+        type: reasoning
       - arguments: '{}'
-        call_id: call_mlCwGj3MLHM1lhYjKkreRAFF
-        id: fc_0391879107af02f30069796b7e02ec819caefc327d1bd0d02a
+        call_id: call_ESBdIjZVKy9pri8xSYE4BCR2
+        id: fc_0c6c94e82fb2a8a900697c5515b9508194abc912cc76995087
         name: get_file
         status: completed
         type: function_call
@@ -82,7 +88,7 @@ interactions:
       prompt_cache_key: null
       prompt_cache_retention: null
       reasoning:
-        effort: null
+        effort: medium
         summary: null
       safety_identifier: null
       service_tier: default
@@ -107,13 +113,13 @@ interactions:
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 40
+        input_tokens: 47
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 11
+        output_tokens: 80
         output_tokens_details:
-          reasoning_tokens: 0
-        total_tokens: 51
+          reasoning_tokens: 64
+        total_tokens: 127
       user: null
     status:
       code: 200

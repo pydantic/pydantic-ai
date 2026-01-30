@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '323'
+      - '366'
       content-type:
       - application/json
       host:
@@ -16,9 +16,9 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: Call the get_file tool to get a document and describe what you see.
+      - content: Use the get_file tool now to retrieve a document file, then describe what you received.
         role: user
-      model: gpt-4.1-mini
+      model: gpt-5-mini
       stream: false
       tool_choice: auto
       tools:
@@ -40,13 +40,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1064'
+      - '748'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '451'
+      - '1138'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -59,7 +59,6 @@ interactions:
       choices:
       - finish_reason: tool_calls
         index: 0
-        logprobs: null
         message:
           annotations: []
           content: null
@@ -69,26 +68,26 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: call_e9PkYuCToXN4PrjjWzfjnUPo
+            id: call_ZYzz31sWkwi0vGxiqumF2W6h
             type: function
-      created: 1769565078
-      id: chatcmpl-D2p0Aq6VlWVRDuzq9xG6OEhcTfvMh
-      model: gpt-4.1-mini-2025-04-14
+      created: 1769755994
+      id: chatcmpl-D3cfSgoEvVEe1dmI79T4DMPcPrt2X
+      model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_376a7ccef1
+      system_fingerprint: null
       usage:
-        completion_tokens: 10
+        completion_tokens: 19
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 46
+        prompt_tokens: 129
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 56
+        total_tokens: 148
     status:
       code: 200
       message: OK
@@ -444,7 +443,7 @@ interactions:
       access-control-allow-origin:
       - '*'
       age:
-      - '0'
+      - '4'
       cache-control:
       - max-age=600
       connection:
@@ -456,7 +455,7 @@ interactions:
       etag:
       - '"680c9470-497a"'
       expires:
-      - Wed, 28 Jan 2026 02:01:12 GMT
+      - Fri, 30 Jan 2026 07:03:11 GMT
       last-modified:
       - Sat, 26 Apr 2025 08:08:16 GMT
       vary:
@@ -473,18 +472,18 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '25819'
+      - '25896'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=fJuAWgDMxdRFteHK5hVfb4t26jp6XijI6ET2O1S2ur0-1769565079-1.0.1.1-.BxPwahdguE5_6.X7oIJ1R9vDG15jllWwUmqo8jD203LFimACezEQlAQ9kC1phTRr5iRXwn8S7LxgzQB7o1NAOAi5OSCZB7s0IBVwBRrR.A;
-        _cfuvid=ydDmm0M.elQ8KPPK8GGTVtamDW0uSi0sEU2LtlC89nQ-1769565079142-0.0.1.1-604800000
+      - __cf_bm=Fjm4FeUTwqWsYSOcKgazfmoGrEYVAIiIzX4kwYhnvaA-1769755995-1.0.1.1-mFw8Se2H2CY9U4IrG4sd7D644HbSNjuuaYlEBfc7HiG6w3s6u_TxLb5N4diSY6aG6EFIFvX9PjyQJYpLY91q1fw.JkZA9rxFq0FOq7SL3yo;
+        _cfuvid=x5xuo0.7B44gADLWhh3SYAE9wJLpkTnP50B3Vfuthzg-1769755995625-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
     parsed_body:
       messages:
-      - content: Call the get_file tool to get a document and describe what you see.
+      - content: Use the get_file tool now to retrieve a document file, then describe what you received.
         role: user
       - content: null
         role: assistant
@@ -492,11 +491,11 @@ interactions:
         - function:
             arguments: '{}'
             name: get_file
-          id: call_e9PkYuCToXN4PrjjWzfjnUPo
+          id: call_ZYzz31sWkwi0vGxiqumF2W6h
           type: function
       - content: See file 99631f.
         role: tool
-        tool_call_id: call_e9PkYuCToXN4PrjjWzfjnUPo
+        tool_call_id: call_ZYzz31sWkwi0vGxiqumF2W6h
       - content:
         - text: 'This is file 99631f:'
           type: text
@@ -505,7 +504,7 @@ interactions:
             filename: filename.pdf
           type: file
         role: user
-      model: gpt-4.1-mini
+      model: gpt-5-mini
       stream: false
       tool_choice: auto
       tools:
@@ -527,13 +526,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1406'
+      - '1501'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '2266'
+      - '10943'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -546,35 +545,45 @@ interactions:
       choices:
       - finish_reason: stop
         index: 0
-        logprobs: null
         message:
           annotations: []
           content: |-
-            The document appears to be a simple text-based PDF titled "Sample PDF." It contains mostly placeholder text ("Lorem ipsum") arranged in paragraphs. The text includes typical lorem ipsum filler language used to simulate natural language content in typesetting.
+            I used the get_file tool and retrieved file ID 99631f. What I received:
+            - File type and pages: a single-page PDF (page 1).
+            - Title/header: "Sample PDF".
+            - First lines: "This is a simple PDF file. Fun fun fun."
+            - Main content: several paragraphs of placeholder text (Lorem ipsum-style) in English/Latin describing generic phrases about facilisis, pulvinar, scelerisque, cursus, etc. The parsed text for the full page was returned (you showed it to me).
+            - Images/graphics: there do not appear to be any non-text images or charts on the page -- the file is plain text rendered as a single page.
 
-            There are no images, charts, or complex visuals in this document, only continuous blocks of text. The content mostly consists of various Latin phrases with some English phrases like "Fun fun fun" and standard lorem ipsum stylistic elements.
+            If you want, I can:
+            - Provide a concise summary of the page,
+            - Extract the full plain text as a downloadable file,
+            - Count words/characters,
+            - Translate the text,
+            - Search for specific keywords or phrases,
+            - Show the rendered page image.
 
-            If you want, I can help you analyze or summarize specific parts of the document.
+            Which would you like me to do next?
           refusal: null
           role: assistant
-      created: 1769565081
-      id: chatcmpl-D2p0DA9n6B86JUQveGMM0eMNBIrLr
-      model: gpt-4.1-mini-2025-04-14
+      created: 1769755996
+      id: chatcmpl-D3cfUl20xPVerkiayLFPe5a6t54NG
+      model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_376a7ccef1
+      system_fingerprint: null
       usage:
-        completion_tokens: 110
+        completion_tokens: 532
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 0
+          reasoning_tokens: 320
           rejected_prediction_tokens: 0
-        prompt_tokens: 1036
+        prompt_tokens: 1126
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 1146
+        total_tokens: 1658
     status:
       code: 200
       message: OK

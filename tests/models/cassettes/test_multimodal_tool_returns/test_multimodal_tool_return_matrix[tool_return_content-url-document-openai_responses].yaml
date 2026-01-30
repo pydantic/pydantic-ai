@@ -8,17 +8,19 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '324'
+      - '412'
       content-type:
       - application/json
       host:
       - api.openai.com
     method: POST
     parsed_body:
+      include:
+      - reasoning.encrypted_content
       input:
-      - content: Call the get_file tool to get a document and describe what you see.
+      - content: Use the get_file tool now to retrieve a document file, then describe what you received.
         role: user
-      model: gpt-4.1-mini
+      model: gpt-5-mini
       stream: false
       tool_choice: auto
       tools:
@@ -38,13 +40,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1688'
+      - '2673'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '570'
+      - '2183'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -57,22 +59,26 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1769565206
-      created_at: 1769565206
+      completed_at: 1769756145
+      created_at: 1769756143
       error: null
       frequency_penalty: 0.0
-      id: resp_01bc5e9f7030bb1b0069796c16190c8196bcc03334b58eab38
+      id: resp_0596fe59f844866400697c55efd9a88190a3b45c04825f8c60
       incomplete_details: null
       instructions: null
       max_output_tokens: null
       max_tool_calls: null
       metadata: {}
-      model: gpt-4.1-mini-2025-04-14
+      model: gpt-5-mini-2025-08-07
       object: response
       output:
+      - encrypted_content: gAAAAABpfFXy27zikVvb4kpPxYJB8Xe9rX98TLqImyZ7VUXWRu9wZEQoa7k04FBnGMOQoJ0EYvVq5bzaSWpgcL7G9mvJ9MKjuu2yUKiAnXk6WJon6sVlSiwqm7NwPxRqShi3lT0gYrT8wu3hBBWe5kSN6PJxdxk3sZsye06qNOIRjZJH2sDdQyXGXPG7rqMALaAe44yg2MusM8pEvGFCApLXEmSR7634HHAfgEvQoBZo2bVMOkWzKmZBh8QuZheh7MVA_cAshzs4co7o-g9MH5ZyZpoasJOgBASJLHlOLa7jwxJm3viaVuaN5M8hCPDq0d51mLQCn1NWFmrmTfclmTgxBHME7j7noDeaoZzypcbjqvzfyzxlYPumSCHXazMAKYE0-hEuZMKGlIggYpcnhnM2im8NG_IysgbdU4fbobIfzXoxbcSDhQSwGxB4vlEr-q3H9hsIVlzvPuu6ty931cyXJQEx-Ogvkbxauw1ADK2SGXnhyHvuQBXMwMsRdBnjKDYoCyt9CVmv3hyl7ubfv0XtZjV66qZLrgDgtpmVbiOyfexQqLTC4wDQY22OgINSJMtWMCJjeDR2Ep5qp6cGvlhvKyrAzFzPuNpYUUxJynWLp2L3U4tSf2pzkWD0EKMEcDF34YIsjO3dhqPCPFZQIMNdBIP6rI08Rs8gN3sGdwJlFVR2KbGb-1bsNjgcvwapYrl2sX3evbCBP39KmAEk9vqc2rjZ4kCNAdXYu4jLusaFvvWpoBG4CNuE9spGiHzKhKSkAtJr2H8AnaPRHNMgbAxevcLATJj9wNGcyiDmtT3jdUGSwmQaHJdypZ59aQBkkXKS96HUuZBn12_EgS8eGxXsKbhEQVyL0V3-GbxifRSRTwKcG65Ih6AKelYfWlxpc1Aw4LrQ_GA2RmuvZQ8_1AQo_-TwKTohkmAZ2CHj5OMAtKUnn-xAHBOBcflo5vcmmXUFC7LBsWIW4ke_8RY2rlhqSpsL1lNKoqoV85dm7wWf82YqPpss3zkgPKBhFFvvcxbPCqIAcf0EYhS3of8WqgffqWslYk1xt7d-AVVK9ip1CRudD6aZZjHGst5N9c8ByaTPbBs2mZLpzmWBNDFFGbOBYASLTxgx5sA1ZWdYcbagOgDXseKCd2c=
+        id: rs_0596fe59f844866400697c55f026448190a68bd646d5d51415
+        summary: []
+        type: reasoning
       - arguments: '{}'
-        call_id: call_DHPartE0x8gwtnzPAleOJAK7
-        id: fc_01bc5e9f7030bb1b0069796c167edc8196bdd2f84b59a06c06
+        call_id: call_ef4EwMdFcWCjCkuuTuT4j91I
+        id: fc_0596fe59f844866400697c55f117dc8190b4fa266c9964465e
         name: get_file
         status: completed
         type: function_call
@@ -82,7 +88,7 @@ interactions:
       prompt_cache_key: null
       prompt_cache_retention: null
       reasoning:
-        effort: null
+        effort: medium
         summary: null
       safety_identifier: null
       service_tier: default
@@ -107,13 +113,13 @@ interactions:
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 40
+        input_tokens: 47
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 11
+        output_tokens: 63
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 51
+        total_tokens: 110
       user: null
     status:
       code: 200
@@ -127,31 +133,38 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '625'
+      - '2067'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=HPfx0GH2_xHR6qt5_LWBeNvTtgg76YAvG_0FT2LOdfA-1769565206-1.0.1.1-t1O7fKD7xiH7cPi6y6Ov0qrkiHWW1Z.99pmYiPGXGvNUyQao47F6DrC7j3jjaYS65H6rCQEf8c9_0uKIo7nuzuEspbuWQUikH_QTq2dVKHM;
-        _cfuvid=CRRjI2ccqXw3AG1zoTuo4pFX9lHDLaav6k5cF7NOq14-1769565206711-0.0.1.1-604800000
+      - __cf_bm=jrt.7LBcwrVUULKpZ2YJfF8MWOsNtdfLXhDX49pUezM-1769756146-1.0.1.1-vdK5yOnUL7cb2TvfXXS35MKnmKYw__Zc16TeoxGChCEefs.gCUF8GZ0Qd_AhbcA02CYiscyPn67ZPKfIb3oWF8w2fiTXBm3W_fdkQvUU89A;
+        _cfuvid=xEEq4xGgWshaHBHb6P5CZqO6BS83bxKsmo.pc2mAhS0-1769756146071-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
     parsed_body:
+      include:
+      - reasoning.encrypted_content
       input:
-      - content: Call the get_file tool to get a document and describe what you see.
+      - content: Use the get_file tool now to retrieve a document file, then describe what you received.
         role: user
+      - encrypted_content: gAAAAABpfFXy27zikVvb4kpPxYJB8Xe9rX98TLqImyZ7VUXWRu9wZEQoa7k04FBnGMOQoJ0EYvVq5bzaSWpgcL7G9mvJ9MKjuu2yUKiAnXk6WJon6sVlSiwqm7NwPxRqShi3lT0gYrT8wu3hBBWe5kSN6PJxdxk3sZsye06qNOIRjZJH2sDdQyXGXPG7rqMALaAe44yg2MusM8pEvGFCApLXEmSR7634HHAfgEvQoBZo2bVMOkWzKmZBh8QuZheh7MVA_cAshzs4co7o-g9MH5ZyZpoasJOgBASJLHlOLa7jwxJm3viaVuaN5M8hCPDq0d51mLQCn1NWFmrmTfclmTgxBHME7j7noDeaoZzypcbjqvzfyzxlYPumSCHXazMAKYE0-hEuZMKGlIggYpcnhnM2im8NG_IysgbdU4fbobIfzXoxbcSDhQSwGxB4vlEr-q3H9hsIVlzvPuu6ty931cyXJQEx-Ogvkbxauw1ADK2SGXnhyHvuQBXMwMsRdBnjKDYoCyt9CVmv3hyl7ubfv0XtZjV66qZLrgDgtpmVbiOyfexQqLTC4wDQY22OgINSJMtWMCJjeDR2Ep5qp6cGvlhvKyrAzFzPuNpYUUxJynWLp2L3U4tSf2pzkWD0EKMEcDF34YIsjO3dhqPCPFZQIMNdBIP6rI08Rs8gN3sGdwJlFVR2KbGb-1bsNjgcvwapYrl2sX3evbCBP39KmAEk9vqc2rjZ4kCNAdXYu4jLusaFvvWpoBG4CNuE9spGiHzKhKSkAtJr2H8AnaPRHNMgbAxevcLATJj9wNGcyiDmtT3jdUGSwmQaHJdypZ59aQBkkXKS96HUuZBn12_EgS8eGxXsKbhEQVyL0V3-GbxifRSRTwKcG65Ih6AKelYfWlxpc1Aw4LrQ_GA2RmuvZQ8_1AQo_-TwKTohkmAZ2CHj5OMAtKUnn-xAHBOBcflo5vcmmXUFC7LBsWIW4ke_8RY2rlhqSpsL1lNKoqoV85dm7wWf82YqPpss3zkgPKBhFFvvcxbPCqIAcf0EYhS3of8WqgffqWslYk1xt7d-AVVK9ip1CRudD6aZZjHGst5N9c8ByaTPbBs2mZLpzmWBNDFFGbOBYASLTxgx5sA1ZWdYcbagOgDXseKCd2c=
+        id: rs_0596fe59f844866400697c55f026448190a68bd646d5d51415
+        summary: []
+        type: reasoning
       - arguments: '{}'
-        call_id: call_DHPartE0x8gwtnzPAleOJAK7
+        call_id: call_ef4EwMdFcWCjCkuuTuT4j91I
+        id: fc_0596fe59f844866400697c55f117dc8190b4fa266c9964465e
         name: get_file
         type: function_call
-      - call_id: call_DHPartE0x8gwtnzPAleOJAK7
+      - call_id: call_ef4EwMdFcWCjCkuuTuT4j91I
         output: File attached
         type: function_call_output
       - content:
         - file_url: https://pdfobject.com/pdf/sample.pdf
           type: input_file
         role: user
-      model: gpt-4.1-mini
+      model: gpt-5-mini
       stream: false
       tool_choice: auto
       tools:
@@ -171,13 +184,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2391'
+      - '6712'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '2918'
+      - '11069'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -190,33 +203,42 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1769565209
-      created_at: 1769565207
+      completed_at: 1769756157
+      created_at: 1769756146
       error: null
       frequency_penalty: 0.0
-      id: resp_09b64baa239167c00069796c17081081a396b02bda4b8ee7ff
+      id: resp_0596fe59f844866400697c55f23e988190b8b04fc10457e8b1
       incomplete_details: null
       instructions: null
       max_output_tokens: null
       max_tool_calls: null
       metadata: {}
-      model: gpt-4.1-mini-2025-04-14
+      model: gpt-5-mini-2025-08-07
       object: response
       output:
+      - encrypted_content: gAAAAABpfFX9dUgOUbZtRxLE1B6jQSb5EDUbcUDmUR8lY_cLbSkz62ROu0SP1uwmUco20S7njNdTvqun0XDU31jeubC74T02QKchXoC8eyES_vAX1l4lrEOvi5orN0UP9PRJNWUE3Xbu3Y95zzY2OVsWw90itR9nzv934vfdwSBbcW6z-Xp0Kk8gW_tadX7_71nKXBOk7mSFvgokz4tHQ6MNVD70OLf0J_osJoeYOFXtVtz3PbTgsEuk3EDVc_Hql_JkXiRoFoE5Z6OUFmAN8s5gMqkClnzra56617Gne_m3Tx_AaWeJ05XuEZyOrzOszGLj0ZCtK9pA30fpZAw9wkdDPGZtnOvHgjtiBSeJ86oGnGx1ka0RTUjo-hb5vFbI5em4t5DH680pd05fd-q_erNywU91r1952wHGAiA64UyZEXygupxf5ixJYF71xRfIWSrsXdxXPHqjehhicDflIYPzOCjbQZrdIzdLtUhD-OP5Pz4FRwbFT45QEANtWAdAFD2I6ykU6nYh36kqq5LArwFC6vkpqyGrBSRffVypSvBSMw4oVGmKvTtEY9w6UfUamkNAZ4J-T3sB7PEi4cAGQZnbCeOlSFAfLELL84YgiVLnxzx6yhQ5duD4tQTNp8qoMH579FvwHzeWNvtEV5gg_2HvXH_TMDq18LPaVzGnSISfbYeDzIRwXK0kxGi0BYZwDr5dX1jwIQTdp1EbWDGdOhYYQb2qoPz6IOr5jF9Yb_Mqx6bNOSAkoUmJtd_zPkHqxTKptOXQ9wF1k3l-YYOPvxCXplavIUQv27IWdY0sSzMGf_538TqrQgY_ilpcsEdcZDGTM68GKMxxbyyZk-4n_EOHJoVI6Hra8pquX5kNRrRQXOos67YZvrwKDuewQLorGvbyEfr57v1pdwpmEW3U5CmjEDOJxKyHciMfM3qvQ0Ayhaw2hTYMVpyddSUXWE57WFJnJEO7LiFpCjakYGJCLTZZ14vuYGTzGMcx4qrhOoJ6ABMIK1rM9KIyCiW0KXfO9V5Km_suM20YHKNCh6NMGg2SkNWzJNYoqwsHtDxZmLjxcMWeUyULjr5Jk-xBjZg-wFYek8IAWZx9AHbjarfFxr2i7eB9uYwZezla9TmI_Ek7pY2bBxh1N5e2JWEF3NVKrl0aJdNOvi7s_iJDonZd6x7SEg6TEmNAGq-UADF-u0RL7H1tcbAY1bsLrm3i89LWictrnxs23F8SHFMBUbJBcYEMeFjQvqt5Yx7ql0KNA0BG-pXvH7pSfqF_1YA6_LX6SbDiizsLh5s_Aoiel5RYhzeLoxEPytmh3ikvwnMVUCKlFIgk5qaQzb_iE2w-D26Y6talc1Q1adM605S2Fo3OBNJBxadKwzzFSYrR4D5vTJZUNn8hCWjeE0FBqgOdngLjl2UTEm9K4crFGr6GXYtybNHtsHI77oi52zXqoM0RhyC0kpzfjjjojd8Ob1DkyL9jfCfA6yG0ljPvdVlsNjcga21ns2Dsb3wWCcNNFbWp9hABzcEpdkd136PJ2BoxvOYMdf2pp_9D2NPU9WTwc9YlTMnUOOmxX7kfu8WL0_QodhEBBktu-E1Vc3C27Av-QTya_ABmnAMoBC4YOkXbDXE2jt4gJHmgx7hD_opbePdJ-_eCK1paMxqfYROyjCMjauXzoEUSxlltoT_6TsiDAjDdBGgMHeos9bxF5cdKMlzoHiqLLLdMGLKlIQU9196qU-_QPFVJ917SR6Q9sG1gllzYXaMozn9VJaL955HmTinTWG4nl6lu87E8wcLcFEOZlFVHB6po_Z00p-_NOqr93JpSNvZMeSpfdxLA23LBKYLKyrTvJc_Ic303gYt4AnaabDZMTFIMsth7nM2GAby8BqjbbKDhf7AMHJhP0BG5qj60Ve9ch0YGhfw0SoZE_nua20k_qfXPU25zK9OVWW0qod9d0eZe3XFAnO2GoeLBo1hicj8XzJVUFcosRRe_qwwEQ_Kl3AGdGjAKLS4YKUbgm-lOpemHLw1H5VKw_Jc0hdtmslwd0jWXmDxU9v4W0hfChUD59ZpAliEm74EN5RaqC8-kTKyJvFLTUvC_h3nG8nTjsD-BRhnUZhobuEeQzTr3gBxnLSK9976ZhX9ft9UK3IpzBztOcDIzaL4FbKhAUsOEiEKzapYIoQHmhR_DKGodZBgp9DJDvq_MuktwNp2W7Orl80gF27dA_x2fsFtesWovLzA5j7pTLbufu57NGvF6OqRX56D8u7njdne8z3dPwNauINKO0PQHmbLa-lXctBdiZBQAnknmujYkvr7huxteyQDEV-Hqb3srl4RtNdFYCWdrmtT8efCEcawHeDxOnHU4TOjyWeREEpACvItkBSuIqI_rK2r51BQSBgQfZ0IErd8MxpB4aA6WBlyE-midav2a6HiuLqwg10JFSjZ4UVEslAIvFwC-bfVIjYzYoPVi5mSmRiI1sfPFO1zbGckPodeoP3FwJtXFQ3V-bihqs0QKYAufEqPeWfer7xqjmoXsOcpnoTlV8xQI1NW1Oq19Et2fcO60VHi88y9XWBzZqVwWJB_3nrLIBUdVYjx2uCQDrTzCDk9__Uvy4Q5UM7G9MhswxPUe2IV4oVsDZKlBPaU7KL57PyOu-A3w1Nm6Fv1XDpEbATrgrQFC-kNFeFmBk2r5WNqtrkndBye3Aw6nUCvotR3_iZ8q0wN0c6gqx-E8qUmEvb401MC2uzc-xIBpBkXo02z3j2zu3_9JYVEP55YMwqy-3qKoVTRsFGY5LWrnhc65a0H1O498jaWvEzzUliYVe8aEP-u6-sHSMR26HIVqusgQ5X_BOw34DvKbhDmbN8iBOynQkDc5OaPvkeYiCLxmQtfKIye8g2abVgxt9F8EAhAr9IZszlCC1QaoSFhbm93zmPQtYyalVMlwDb4HqgoC61A8bhRuQH2kRHiyOxgi3-k65_I2dtVj3f4CYX06bqY9BYZ0jFv2zVP-DZwMqN5CmlPpQwu_nTgBJozoJCBzkhxASvGr0Fws9FBlMQVbD_t5Xn5C04KTxdKr0e2hlKJxZjXkzm8neOutYnXG2d8mwxXSzCEv_3A-ketILbFosVebK4hW136zhZbpCy-ONyBq1CmJcwKkwK6OJTlIkfHHdYs2C9EByLDjvzNnO_VRoSeaJ9DOQmibW0cslT04wy9WrsTpAYrA_Xjsg4MOOCugZkPmp2rRfFNeC3W0F2dG0iu0ZBrNU_5QijbNbLsG_uo1WtVy8bwhZoqjyH1Hkz6nCxgFOGBurfjdPXvcuFefh0p-t74WOzkG_5wpYoMHWr8cLykaLu_qOeWCIzSkDGwtPLduHNkx03IphpQaHmXUPZcZ7ehsU9ngj6bdn7Limcl2CoDVM-T87AND6MrR5O9gXkeP2vUp0pZ5iwylDUIDCcOQV2wZTIV4mKuJJbFuo_c38Tf9ShyJS-IypQ_jN04TD-F6pt3ju4_QAAIKCOSEfOyCsTh4jBaKn12p9Ju-wUwypZSMOXyC93uYpJQGRpcvjVTIutrJ9jtXxJs3t3x3tW88_qYlXIo7PWOKw2EYNLpk3djoEQSHUlZe-FVPaFzwkYQoN9tCvkDse1OcTiiAeYGxHR-gnYG7oFWnD_oMLbLXS2QUhJnUjCmYJcyhTWqGmp54vqPJba3l8f43CQU7Hqm1LcyvoNAeSIX5z6R5TeWpZVCtuvPw2_ZJkBCDBQdyaHn6KXuFjBQ_Rq5GBZkocH2ZgUfLln94qRGMNM4qQT7CERrTpSfvqwGSlay5VzeSrHB2Ej8rkLlkfGsG6lOmtR4KtQMmG-Aqx9NHacEgf3udBG2fh-wKnSvy0iSkIuToAEW1HUsHEUXox6HOR0WeWBBNCw6_k43y_VVQJ66zevWB8tPih9W-5AFTx69m2IfRrRVCloUzquCGN3nqqqqVfVmJZ6Mayen1wWIUYiX1dLvMR6x55tDD5p7Lblt5d9iHWroIb6bbTuoKqHYv7XPkgrffvMmDXzyh0y2CuSU8eRydKPx_ryDkkhGhUlsUKqL01OlPwuajjHa8xAC3NuKIcpUi17aDUVueU9dq8wT9EuVLCuNdi0tV_ge-gNf43WnbDZ1PnkJTqOcmaQp3jMhcO4Ca8eknTs2rnewVhj8q5PHPYXEIV0xbAFO7nlCHlnoav7Va8fdIAK_lkvLEzIrRpXvba7iK_6i8sCPP8qafedqvNLfyom74FUnMDFRtDZ4s4Voi5YEjoiYOgTEY9zNhGrXDn06MP24-YnJWLfdXPY5JQ0eJLipBJRIdB6lFAbOkEEsVYf3uOtfa-ebj
+        id: rs_0596fe59f844866400697c55f2d5cc81908fdbfbea89835ee0
+        summary: []
+        type: reasoning
       - content:
         - annotations: []
           logprobs: []
           text: |-
-            The document is a simple PDF file that contains mostly placeholder text. It starts with a short introduction:
+            I retrieved a PDF titled "Sample PDF". What I received:
 
-            "Sample PDF
-            This is a simple PDF file. Fun fun fun."
+            - Format: a short, text-only PDF (appears to be a single page).
+            - Contents: a short title/header ("Sample PDF") followed by a brief lead sentence ("This is a simple PDF file. Fun fun fun.") and five paragraphs of placeholder/boilerplate text (lots of "Lorem ipsum"-style sentences mixed with English), i.e., generic sample copy about layout/typography rather than substantive topic.
+            - Structure: plain paragraphs (no images, tables, or obvious metadata shown in the text you pasted).
+            - Use case: looks like a sample/demo document for testing layout or extraction.
 
-            The rest of the text is a passage filled with classic "Lorem ipsum" dummy text, which is commonly used as a placeholder in typesetting and design. The Lorem ipsum text includes multiple paragraphs with sentences in Latin-like structure, used to fill space and demonstrate the visual form of a document without meaningful content.
-
-            Overall, the PDF appears to serve as an example or test document rather than containing actual substantive content.
+            Would you like me to (pick one)
+            - provide a concise summary of the text,
+            - extract the full plain text as a downloadable file,
+            - count words/characters or paragraphs,
+            - translate the text,
+            or do something else with it?
           type: output_text
-        id: msg_09b64baa239167c00069796c182ab881a3b51ec04f5f64c7f3
+        id: msg_0596fe59f844866400697c55f9d1588190aef16f7fba6664f4
         role: assistant
         status: completed
         type: message
@@ -226,7 +248,7 @@ interactions:
       prompt_cache_key: null
       prompt_cache_retention: null
       reasoning:
-        effort: null
+        effort: medium
         summary: null
       safety_identifier: null
       service_tier: default
@@ -251,13 +273,13 @@ interactions:
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 799
+        input_tokens: 815
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 118
+        output_tokens: 726
         output_tokens_details:
-          reasoning_tokens: 0
-        total_tokens: 917
+          reasoning_tokens: 512
+        total_tokens: 1541
       user: null
     status:
       code: 200

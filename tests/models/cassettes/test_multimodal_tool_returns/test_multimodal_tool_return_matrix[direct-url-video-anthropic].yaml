@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '348'
+      - '396'
       content-type:
       - application/json
       host:
@@ -18,7 +18,7 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: Call the get_file tool to get a video and describe what you see.
+        - text: Use the get_file tool now to retrieve a video file, then describe what you received.
           type: text
         role: user
       model: claude-sonnet-4-5
@@ -38,7 +38,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '571'
+      - '569'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -47,13 +49,13 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - text: I'll call the get_file tool to retrieve a video and then describe what I see.
+      - text: I'll retrieve the file for you now.
         type: text
-      - id: toolu_0117VbP2wXAmmQ89VvtMdoD7
+      - id: toolu_01Lasu4HeytW2vWLFmmMAHsy
         input: {}
         name: get_file
         type: tool_use
-      id: msg_01MNV3xwANwtSW7eFAg3iye8
+      id: msg_015cdf12Fe91RVRM46Ds5iGt
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -65,8 +67,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 555
-        output_tokens: 56
+        input_tokens: 558
+        output_tokens: 46
         service_tier: standard
     status:
       code: 200
@@ -80,7 +82,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '825'
+      - '864'
       content-type:
       - application/json
       host:
@@ -90,13 +92,13 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: Call the get_file tool to get a video and describe what you see.
+        - text: Use the get_file tool now to retrieve a video file, then describe what you received.
           type: text
         role: user
       - content:
-        - text: I'll call the get_file tool to retrieve a video and then describe what I see.
+        - text: I'll retrieve the file for you now.
           type: text
-        - id: toolu_0117VbP2wXAmmQ89VvtMdoD7
+        - id: toolu_01Lasu4HeytW2vWLFmmMAHsy
           input: {}
           name: get_file
           type: tool_use
@@ -106,7 +108,7 @@ interactions:
           - text: See file 9964e6.
             type: text
           is_error: false
-          tool_use_id: toolu_0117VbP2wXAmmQ89VvtMdoD7
+          tool_use_id: toolu_01Lasu4HeytW2vWLFmmMAHsy
           type: tool_result
         - text: 'This is file 9964e6: [video URL not supported by Anthropic]'
           type: text
@@ -128,7 +130,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1067'
+      - '1030'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -138,16 +142,16 @@ interactions:
     parsed_body:
       content:
       - text: |-
-          I appreciate you sharing the file, but I'm unable to view or analyze video content. The system indicates this is a video file, but I don't have the capability to watch videos or extract frames from them to describe what's happening.
+          I received a video file (file ID: 9964e6). However, I'm unable to play or view video files directly. The system indicates this is a video URL format that isn't supported by my current capabilities.
 
-          If you'd like me to help you with this video, you could:
-          1. **Describe what you see** in the video, and I can help analyze or discuss it
-          2. **Provide screenshots or still frames** from the video that I can examine
-          3. **Tell me what type of content** you're looking for help with (e.g., identifying objects, understanding actions, transcribing text, etc.)
+          To describe what's in the video, I would need the video to be in a format I can analyze, or you could provide me with:
+          - A description of what the video contains
+          - Screenshots or frames from the video
+          - Information about what the video is supposed to show
 
-          Is there a specific aspect of this video you'd like help with?
+          Is there something specific about this video you'd like help with, or would you be able to provide it in an alternative format?
         type: text
-      id: msg_01Th2h4J2YGMQcnoJ1q5kKwQ
+      id: msg_01Khe9Ad1eufXoGHqzYPddD7
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
@@ -159,8 +163,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 654
-        output_tokens: 157
+        input_tokens: 647
+        output_tokens: 134
         service_tier: standard
     status:
       code: 200

@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '350'
+      - '370'
       content-type:
       - application/json
       host:
@@ -17,7 +17,7 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: Call the get_file tool to get a image and describe what you see.
+        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
         role: user
       generationConfig:
         responseModalities:
@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1788'
+      - '5902'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1841
+      - gfet4t7; dur=6005
       transfer-encoding:
       - chunked
       vary:
@@ -54,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_file
-            thoughtSignature: Cp4GAXLI2nwYNj23VjmAdxrIu+No4Fr0KJ+BAICjlryaBvyp18eVGO77zz4e2AFDNVYS6EyLq0sfSwUd1Rd9oa3UP5nTzhHFTGiNGdl3JSj/CaY4N9QNuzUz7p7898uguxFc/vW6/2IzlRzn3UQVmOEpPA/IFCBiuVWDVIvh9mSCqQG2H14XYma6w9U6ch/awE6SugBiibeyeyYbUSN7ZEoOMf1U4g2H2nopgyotjiRa2KAfGl+vxbqdBkRkTdARcNfGADNKjDYv55WbDfyodWtE1aeWkYBsLhYJtHkmsSkJEuJt4F9HqMyAuRH+hRcKK6sF/309Beuc21HHzPjtB3+X8qVaCLbcpPmWgmzltPlJ6MHeWsh6XtT3INpWTZW6hoN14afxL/yKj/TvBHro3l6WkaJa9LaFeGL824ZGeopEvGoHRbpzLysDJ9saFWPwG+j2oJ6OItB5yIdnccN8yUwJyTJdyczac6ebMBNxBq6WY0VJ0tQZGe8WjYsWZAg5oF+MNGwnnJeDsKT8JFQO75nAT6DZL20JmJz4z8qY7TcLWWRhRHfHi8cD4Y2zeaJU+8/6tzGAySgQng3ov6KNrnf9HJf/kisrEQVDl7vJKb/TCpmoWqjXWz8H77KEJfiJ7TyU2uLX+Xa7sGKniUICboXH6FV8VwwU66RzxhvY/P5hTZP1sEl4Us8tM580JDN3hciQv/6PSHtCcu9Q7CRQ2wTMlntPmbep8/Fb9Cvpgcc5MdYWVxTF3EH41NgY6Is4CHu4rMweRES0AE267gGjZgMagGJrfPcuzU5f6LRGSF79uu1TAfYgNMqoSROvNZOOO75J4fQWmRkwAgvCkSTuWgSN5sPvoX1vir8xxS+Vpp/46cZXtk6qxzUs3/SjTCnnGYeBZopuxBDRbW2Yq74ojIWQaTuilgCmB/6yFa/Iehfl7ILAALVJphds7ZQ/PMKYWbMDTNj+375/QQqSehXgsSTqjbQVfabz1bje7A6nme4aOmNoQvVbo/uzxo1C90KJwdIfLNwbc6iFOnZDXOvr8RCB1bEGltp9g/cgOGyKFl2Y
+            thoughtSignature: CtcfAXLI2nw/odXAkYI12n1BtcY9ItU9Pn3nEIHqS262SSLj8i66WnzTzNpUDNcW+W7LYo92QPRhJMQkOSZ8kG/xdrDtzDORuT1S1CtznfTlbhpLzDP07Z3bjGce4FQZg9Re2P5ILXxOJ3deOAjYRThd3/x1qHXzswi1p4sUd7Dh1aMSzsIUxuQpKJC0dSwgJeLLLT2DlnanHNtZX3h5dlsL3UUgAAoiW4lyfi/sgZmqmhS7h3PGtqrppvldZztnXBCiwl+EELKNqbGDMzrCZziuRugWBpgfwICNJHb7NKvG4PRftZyyU1GsTQbDn3ncuPuUqTj4elBApCR5eICOS+K1UTOrqom0xrTfvXk4gE+TLDBw5T8CHUoWL+OH1k2+jyIQAAl2fctRHQe/D2ufnY4vG7ra/GSYe/go6xjso2bDUu6MvJUcMfeEYS6fUxfYMH7DParsJRakT9KFxkbKkw9ERF/Ewd05FCt7DU/ww1TTAYq0bNV80+OjCroNZSOKAUk7B8k6Pm7uYLx8fDGOZnO45SQ7/9NySpPAwxBKcfaKAtC7diHPtLl6220PT0uVw3Em5ozJQ7Ew7Rrs08foFciPs51jTxv0B60JqYCQhceppu2aY82NqsTF+O5ePVYITtZDwxuhMC2lj5Z3iPfLIEDWQOatEupu/iuRMVTHpW3rGzzKFTR3HsU63ti5vZlqDKos6nJwhZ2WgVXSAXrfGGFZS1OoGVU0q7kGl35WGfPy0ohMD+Ze2kp3bvMm9YFaWQ7jtLnAeAYJUUHiOwRY0YIXcEXMG1Jax/mmmiJUAujqU0J+nCsKcNC8F+OYB1mFxxh386pDE4jdQIkV0xee58LKNxLcDVx4+F5pxu6xyYwVvMRl9TwdW5dbY5SGrktOXbnWL5z1/t8iWN1boFgYqntyd6PKep6TleBHqqoB8WTIXVXQReFUQpi53MQ3cFVl60nkw1d3amJUUIlnpFUxpPOcskkzyedPEEdDZ2aD+5+WBpKuSrZMzOFvVMr6XWyHy+Tc8rrvZhmItH/+IReXF5lZIpPlQ0/XXHu1L9Kv8Dbo7NLY9cjyUMGHfn5ICfyu65aS5XmJwa4CmEpS/M4Z83kr51UVL1v9hjg4RPdk1oDsxo1pwS8HChYjhRVQAUnBCrJsGjUUEs42TJtHzLugeUrCzH+gucXgBDkmtrR4XPLh7+v4F4K+udw1JnP3ei+8w1i9OqfUW5QXOIXohn0arWDtk5VaX2DGnUXtkphLUpOygZ8BR7DyUTlrU9N5f7oLVZM1tWnptrjm5Y1Dy7Wtr0mGbrJ/nRQRkvAiG8425hR0rdxaGSWmlhW/8xj1VAd7KyH9Q+ZPT7thcAN+E29ot2zQc6L9u5PTBcrgNlLf/7L9sOWwFPF5LHjpjxtK8Lm2vlt2X4RH2mjiCwWgm1+695PT/C87EJAMU33yy5CWh9iEFN9fINM8LEbjlmM3zossOB82f3VrDPwdv/skoXI37DvhLe2kwbFLfGXPtHAdqB+qLk69ulJnb3r5WYbUwvRZHMCOz2DEs0C8UVih9hxI/6lTkxpKRydKdW8yDKrJgioFlB6LjKgDXO7Q/STT+nLQ1U0un1dwC8oTTZqizH3ZNzmoCn2qETD+OY07Msy7FDUnyUjZtv3pInvRmevyX4ytqpsSTN4LeTIzXhTpo++YGMdh6z0x4fUWmD12oRwYwAWbtIG+zsT5M4S49F6Ua5KeXif2xW2nF9zRTBJfti8I5svy/GWaWFMzgTk+QNsBOR5QU+rZXqYIXP7xavqc1h/4r1Yl1s3GvZV40rrzaMuevy81Bm25mqo0c5LGaydBheSidoBOaUvP7emSR8gHulhajlLn9P40nHjUnN4LrJB6P0r6ZuPPQOi1RiV3O6FMvGskFWlrvTOp5OKn9tjmMLcw8szPwlU0Ag2IYJhO04KIAPFhoWFqbbtULRG8HZUKc1ZiTRfryHlIe7fzubUD1Bmzh3sYjpZpuFESrHNouELI5KTCT4VN6CM1PNFHZU3o4MBVQBrlguso5bCZVl275N6OHvdLqTNhgHkljcXhrqd5H78u+LEfWqcB0mcYWjIm9xdTk3w19slHJSpIklWVLYVCzo+d/u0zsJaSDOPnMWnXMOHij5rRO3369yEE+tHdH2MPlo5iqI9LL6ETJwiDX9BG4ShUxDVr56IW/L/mbtWMq0bbkY6BpXD/zFnGgwZG9lTNf32Rc05bknh5wDZu82foYfUglpj5QfuEmJZbvUlBYU3Fv1x42mZDLDkntRAdOXgcXzxBJPSk2kR21EDlePxJRPP7IBT6ts86IBKNBqOsJtmcMuNo9lJAnvGr2d/y7Y1eeXOdUq5VJM7i673MCbczZ74TtjwlQuFwfnldxTGUJvUDyqoyKj79LZRuW5gZQD+BIODqLWYkAlp4bvCGAiCxKAuKKTeoVrG+4bEWLN0DQw+3WV08R1A3B6Mb18nMCuEuSsv2Y+iDIIpX9mHx7KeH3F5MhfyXIaWBCz+kr9PBKWtGVIIjs2WfCtdIER72T+GMd3mKZ3B87rEPaQjpY/FDi72AAo44/pZ97uwVAYaqrciv4eBmqND47nYKAseCzcMgeddLEsuyO4J3/4zMpwepMI7y0pM/yS33nWXPG4XA6HcFTYQvc3jU/MlAQ+8eC9/QzhR7NrZTp75Z1sixDVxU1w0iMFIfifvjUx4NOOcTLEMYJFQFI4cjWThtWZUAdW+NJcrLK7PYwN+XuO9qiDDD0YCn2UG0BMPoRJw4ik6Y66ncMQB+nX9S9pBWQSR9pm49xJC3vVaQjI7Ua7Bk16eyu0L1wdu9fQ1cPQvcIghnycJEajkK0GO9wlbMegSaZbV04g9Y7Js2RqH8tZ3ooSbDIdkxZLeMfG1lcaGPwpYxd/nfmedq0q6VchgJpPsbt6HVaSDoUhMSoOY8FFOzdQQKnxL6i+Mxk9IdMnLoh452gN8aTQG+xCk0ObysJx9EYBtV+P0tSIOc2TtIbmJ0LuZWIKz4sL9EU6VORZ/V8bjZFR6Kre47wNORsot7cqWvwXxyt5cxoW4I7q58AOs3T5XPsmxh4H65K949LbM8iyNDr1NHTje/XfC7XHsZZFCVS/Ucgc7h/CeOQ7yR1Kz9FJCdqN/WnffjAbzbcqc27BNhzqI4iOSytMl5Uizw5IF4wWh1BfgosHGvDepFAwdmA4Pr6kfbQIEl1YI87d6vhn2T0KRo7wuoSUgeSoKxGfo1LJIuGNyNG2rcHTY9QaIcjV20/eZTkxquZRnY6Fiin5cJ0KTV1u3kFqwTV+5cJyW3sbjMDjU815QP4XZp0To7Kc/ZJIgLKiNithqIcmsJoGJManV2pRVM1aYQvQuF7c23+oEykJWRBAI3PzAqahhMRJ6wd/q2KL+Vzq//RtlnUwJYuQun0vNzlw3TvsHC7jLLt0yG0g36pqdOqlNfA/TIOPWyyOiWv8dsuS5en7/ornmnJXzA3r5Y3Pihr1eP+vC1aJ/z2cyMUKp3eDisEDwC9/dfUazvtPeBmb4msQn51RQgLgJx7oppiwyAN0ro0pJnAVm/4h5AhscfTIVwVFpsJ+lmGQqqX1cS57JF8htLrvfnwSp4G7uGUArGw1hYIChHInLwAf6Uua98u9AfnN9vu1IXPdhKDrpp8q2UPSKlkyjz4thtZsZGN4VJIPApAYCFflKaXxtXJyzLvaWCkHovERIoi6ZpxqbN1iz8bDojoFecgV9Xvl/2IcPrNjqTVUTDllONCWibev9+ukjf9QeBHAX5idLVW9GEy75Qw9yY0eXSji91+6pdUvnNdSLFWmVfiXkfoxn/4K9ATDGXljs+DY77B6wrPXHvCA0D3fnjf5FVwK8OTRZDV6T2MHs1ZC9iANREUMPs+PKrrImlYZ7oO/yBPGITm2Rs8Qlk1IGmGhGmWzHxYt6Qd4szI0njhUZjZp3oXHDPgyxALJnK9z3u2w/sg5WC50DIOj0G8V0QLFYevAQPyIxUG7eXr8aFXcEOhNTMXBWOGkrCMgHtyGZYKv2N+j6m0wdB4Z01ZhrwfyZsaOpOpw+eMHHHBg5aBAVw8U+nsmaapGLvW0TDxTmR4KTQ/Y13Na3r1aLTU24JpwQ2wMnZvP/Lrq4eKJGzz7muoXc2LFggpytv5cMMSrnsMsEPNBva7NrPFeV27zuWehnHtfq5Rc+bOq7sfYCzz5ALDTMQY5JxTds48NCLJjC7ZH04yz1s+5KqsdkSb8tpoCf0LKy3g9h5DcnsueqWX/4kx6TZdm1gw1IodmaeWh+KwHuXFzHpu24Ga9wUTeUfIOjivL7TE4Qxf2qygdRjdAPB7yK/RNayp2ZTf2tQPhqcfvk80+jb+LgQFUBw9fKlCPyMdcQKuqYvYWLYNHdgHeuVw7g46Uab8OkADGpYg7f89norSyOxnWYHDHdDnEwGre2iPI8lIcWccC72NiFSd1tqCbpILMk2u5fy8wXsSPvr3FC9p+lgOfPTLQaLmyRSc9gtYlSxBpSkHMI9uYGMf7reVr261nnU0Vw1+vziS7f6t7V+s1WBluUvQ2V8dtXYlCrTooZV+/tNsy1FQ47XmnCmD6G6JfNX5a1IN+fF9TcvAquNx3hUnS4wrOjsH9MNa3yJ7aw3bqmGqWz/NYKq6bf19tRbyTMBQ2DdhAeE1GCZaqWZtwXu6HKvzXgvPsQ/lV/i8uy3uSmWI2nJKDPNg4Zv/PgVFi3573bmL9FmOcdkgtt0d0e7/qJsw5B+X1AbZWj2p7RwUxtwYsyAwz0hHmPXvP0ZiNAAnkVVi5pqOzWGXOZwX/K8Nyq3WC3P2UhbwNdcMFoUuEgWzfrsUq9zqwKIMtx8w6mGIu+5kBO523KhSHjLLGQbcV+cGBRWzhcgUpPHaGODSY7/g+4MjhWxbo4pkvME82iNNL789s/4ferTTWAmD2vMz1sBiKbjhunbrO3kmpDe/G17wzTxG+pWchC/jEA7eY2JOYiFKb5oMDZi1j8x0oOO6PEsqfpDJIsJEgy1CsjLsUExQTNNdDn2CGWUtds0TaiWRX22pPEHDmr0iHWaNm3LzeIud559C7sKqu5aALMMwGr5PnB7eNDoDECJ7vI+Kn1xXyNVCrz5QlmVpYWlaDxajwVLr7SDbkLCL5BLq596ZnNDLNIoQIyCDvCMYwq7qtJb326k5PVxIIbDpM5cToDpwS26vA+jMz2cOPBNespfU9/5iuNdslXR50Sdi6irMF99VOlRdRumMa4g6TdmB0MTs7SIMrU6XhpkUJagwoaNDkOEyn2SVgQ6TJ+TM5M5tZjHWKof7Ga9oJ3OAH1Auo2i002WzrwLfhNBeXG9kIDvY+HAbL2Mtm8ylSZt4XJoMD5CkkKRfWPRUVgerqe3M92Pv1TbYDJh8f4IrzZob4EA18FDw6X9ZbY=
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: 9X97aei0L6SjqtsP39zouQI
+      responseId: WVV8abzuOLa_qtsPh-z9kAI
       usageMetadata:
         candidatesTokenCount: 10
-        promptTokenCount: 38
+        promptTokenCount: 41
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 38
-        thoughtsTokenCount: 175
-        totalTokenCount: 223
+          tokenCount: 41
+        thoughtsTokenCount: 964
+        totalTokenCount: 1015
     status:
       code: 200
       message: OK
@@ -81,7 +81,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '133259'
+      - '137623'
       content-type:
       - application/json
       host:
@@ -90,18 +90,18 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: Call the get_file tool to get a image and describe what you see.
+        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
         role: user
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_9ee4413bae744d08a3b7ff55399fa0c9
+            id: pyd_ai_2c6f53abf3c84b5f974d9e8d1b83a237
             name: get_file
-          thoughtSignature: Cp4GAXLI2nwYNj23VjmAdxrIu-No4Fr0KJ-BAICjlryaBvyp18eVGO77zz4e2AFDNVYS6EyLq0sfSwUd1Rd9oa3UP5nTzhHFTGiNGdl3JSj_CaY4N9QNuzUz7p7898uguxFc_vW6_2IzlRzn3UQVmOEpPA_IFCBiuVWDVIvh9mSCqQG2H14XYma6w9U6ch_awE6SugBiibeyeyYbUSN7ZEoOMf1U4g2H2nopgyotjiRa2KAfGl-vxbqdBkRkTdARcNfGADNKjDYv55WbDfyodWtE1aeWkYBsLhYJtHkmsSkJEuJt4F9HqMyAuRH-hRcKK6sF_309Beuc21HHzPjtB3-X8qVaCLbcpPmWgmzltPlJ6MHeWsh6XtT3INpWTZW6hoN14afxL_yKj_TvBHro3l6WkaJa9LaFeGL824ZGeopEvGoHRbpzLysDJ9saFWPwG-j2oJ6OItB5yIdnccN8yUwJyTJdyczac6ebMBNxBq6WY0VJ0tQZGe8WjYsWZAg5oF-MNGwnnJeDsKT8JFQO75nAT6DZL20JmJz4z8qY7TcLWWRhRHfHi8cD4Y2zeaJU-8_6tzGAySgQng3ov6KNrnf9HJf_kisrEQVDl7vJKb_TCpmoWqjXWz8H77KEJfiJ7TyU2uLX-Xa7sGKniUICboXH6FV8VwwU66RzxhvY_P5hTZP1sEl4Us8tM580JDN3hciQv_6PSHtCcu9Q7CRQ2wTMlntPmbep8_Fb9Cvpgcc5MdYWVxTF3EH41NgY6Is4CHu4rMweRES0AE267gGjZgMagGJrfPcuzU5f6LRGSF79uu1TAfYgNMqoSROvNZOOO75J4fQWmRkwAgvCkSTuWgSN5sPvoX1vir8xxS-Vpp_46cZXtk6qxzUs3_SjTCnnGYeBZopuxBDRbW2Yq74ojIWQaTuilgCmB_6yFa_Iehfl7ILAALVJphds7ZQ_PMKYWbMDTNj-375_QQqSehXgsSTqjbQVfabz1bje7A6nme4aOmNoQvVbo_uzxo1C90KJwdIfLNwbc6iFOnZDXOvr8RCB1bEGltp9g_cgOGyKFl2Y
+          thoughtSignature: CtcfAXLI2nw_odXAkYI12n1BtcY9ItU9Pn3nEIHqS262SSLj8i66WnzTzNpUDNcW-W7LYo92QPRhJMQkOSZ8kG_xdrDtzDORuT1S1CtznfTlbhpLzDP07Z3bjGce4FQZg9Re2P5ILXxOJ3deOAjYRThd3_x1qHXzswi1p4sUd7Dh1aMSzsIUxuQpKJC0dSwgJeLLLT2DlnanHNtZX3h5dlsL3UUgAAoiW4lyfi_sgZmqmhS7h3PGtqrppvldZztnXBCiwl-EELKNqbGDMzrCZziuRugWBpgfwICNJHb7NKvG4PRftZyyU1GsTQbDn3ncuPuUqTj4elBApCR5eICOS-K1UTOrqom0xrTfvXk4gE-TLDBw5T8CHUoWL-OH1k2-jyIQAAl2fctRHQe_D2ufnY4vG7ra_GSYe_go6xjso2bDUu6MvJUcMfeEYS6fUxfYMH7DParsJRakT9KFxkbKkw9ERF_Ewd05FCt7DU_ww1TTAYq0bNV80-OjCroNZSOKAUk7B8k6Pm7uYLx8fDGOZnO45SQ7_9NySpPAwxBKcfaKAtC7diHPtLl6220PT0uVw3Em5ozJQ7Ew7Rrs08foFciPs51jTxv0B60JqYCQhceppu2aY82NqsTF-O5ePVYITtZDwxuhMC2lj5Z3iPfLIEDWQOatEupu_iuRMVTHpW3rGzzKFTR3HsU63ti5vZlqDKos6nJwhZ2WgVXSAXrfGGFZS1OoGVU0q7kGl35WGfPy0ohMD-Ze2kp3bvMm9YFaWQ7jtLnAeAYJUUHiOwRY0YIXcEXMG1Jax_mmmiJUAujqU0J-nCsKcNC8F-OYB1mFxxh386pDE4jdQIkV0xee58LKNxLcDVx4-F5pxu6xyYwVvMRl9TwdW5dbY5SGrktOXbnWL5z1_t8iWN1boFgYqntyd6PKep6TleBHqqoB8WTIXVXQReFUQpi53MQ3cFVl60nkw1d3amJUUIlnpFUxpPOcskkzyedPEEdDZ2aD-5-WBpKuSrZMzOFvVMr6XWyHy-Tc8rrvZhmItH_-IReXF5lZIpPlQ0_XXHu1L9Kv8Dbo7NLY9cjyUMGHfn5ICfyu65aS5XmJwa4CmEpS_M4Z83kr51UVL1v9hjg4RPdk1oDsxo1pwS8HChYjhRVQAUnBCrJsGjUUEs42TJtHzLugeUrCzH-gucXgBDkmtrR4XPLh7-v4F4K-udw1JnP3ei-8w1i9OqfUW5QXOIXohn0arWDtk5VaX2DGnUXtkphLUpOygZ8BR7DyUTlrU9N5f7oLVZM1tWnptrjm5Y1Dy7Wtr0mGbrJ_nRQRkvAiG8425hR0rdxaGSWmlhW_8xj1VAd7KyH9Q-ZPT7thcAN-E29ot2zQc6L9u5PTBcrgNlLf_7L9sOWwFPF5LHjpjxtK8Lm2vlt2X4RH2mjiCwWgm1-695PT_C87EJAMU33yy5CWh9iEFN9fINM8LEbjlmM3zossOB82f3VrDPwdv_skoXI37DvhLe2kwbFLfGXPtHAdqB-qLk69ulJnb3r5WYbUwvRZHMCOz2DEs0C8UVih9hxI_6lTkxpKRydKdW8yDKrJgioFlB6LjKgDXO7Q_STT-nLQ1U0un1dwC8oTTZqizH3ZNzmoCn2qETD-OY07Msy7FDUnyUjZtv3pInvRmevyX4ytqpsSTN4LeTIzXhTpo--YGMdh6z0x4fUWmD12oRwYwAWbtIG-zsT5M4S49F6Ua5KeXif2xW2nF9zRTBJfti8I5svy_GWaWFMzgTk-QNsBOR5QU-rZXqYIXP7xavqc1h_4r1Yl1s3GvZV40rrzaMuevy81Bm25mqo0c5LGaydBheSidoBOaUvP7emSR8gHulhajlLn9P40nHjUnN4LrJB6P0r6ZuPPQOi1RiV3O6FMvGskFWlrvTOp5OKn9tjmMLcw8szPwlU0Ag2IYJhO04KIAPFhoWFqbbtULRG8HZUKc1ZiTRfryHlIe7fzubUD1Bmzh3sYjpZpuFESrHNouELI5KTCT4VN6CM1PNFHZU3o4MBVQBrlguso5bCZVl275N6OHvdLqTNhgHkljcXhrqd5H78u-LEfWqcB0mcYWjIm9xdTk3w19slHJSpIklWVLYVCzo-d_u0zsJaSDOPnMWnXMOHij5rRO3369yEE-tHdH2MPlo5iqI9LL6ETJwiDX9BG4ShUxDVr56IW_L_mbtWMq0bbkY6BpXD_zFnGgwZG9lTNf32Rc05bknh5wDZu82foYfUglpj5QfuEmJZbvUlBYU3Fv1x42mZDLDkntRAdOXgcXzxBJPSk2kR21EDlePxJRPP7IBT6ts86IBKNBqOsJtmcMuNo9lJAnvGr2d_y7Y1eeXOdUq5VJM7i673MCbczZ74TtjwlQuFwfnldxTGUJvUDyqoyKj79LZRuW5gZQD-BIODqLWYkAlp4bvCGAiCxKAuKKTeoVrG-4bEWLN0DQw-3WV08R1A3B6Mb18nMCuEuSsv2Y-iDIIpX9mHx7KeH3F5MhfyXIaWBCz-kr9PBKWtGVIIjs2WfCtdIER72T-GMd3mKZ3B87rEPaQjpY_FDi72AAo44_pZ97uwVAYaqrciv4eBmqND47nYKAseCzcMgeddLEsuyO4J3_4zMpwepMI7y0pM_yS33nWXPG4XA6HcFTYQvc3jU_MlAQ-8eC9_QzhR7NrZTp75Z1sixDVxU1w0iMFIfifvjUx4NOOcTLEMYJFQFI4cjWThtWZUAdW-NJcrLK7PYwN-XuO9qiDDD0YCn2UG0BMPoRJw4ik6Y66ncMQB-nX9S9pBWQSR9pm49xJC3vVaQjI7Ua7Bk16eyu0L1wdu9fQ1cPQvcIghnycJEajkK0GO9wlbMegSaZbV04g9Y7Js2RqH8tZ3ooSbDIdkxZLeMfG1lcaGPwpYxd_nfmedq0q6VchgJpPsbt6HVaSDoUhMSoOY8FFOzdQQKnxL6i-Mxk9IdMnLoh452gN8aTQG-xCk0ObysJx9EYBtV-P0tSIOc2TtIbmJ0LuZWIKz4sL9EU6VORZ_V8bjZFR6Kre47wNORsot7cqWvwXxyt5cxoW4I7q58AOs3T5XPsmxh4H65K949LbM8iyNDr1NHTje_XfC7XHsZZFCVS_Ucgc7h_CeOQ7yR1Kz9FJCdqN_WnffjAbzbcqc27BNhzqI4iOSytMl5Uizw5IF4wWh1BfgosHGvDepFAwdmA4Pr6kfbQIEl1YI87d6vhn2T0KRo7wuoSUgeSoKxGfo1LJIuGNyNG2rcHTY9QaIcjV20_eZTkxquZRnY6Fiin5cJ0KTV1u3kFqwTV-5cJyW3sbjMDjU815QP4XZp0To7Kc_ZJIgLKiNithqIcmsJoGJManV2pRVM1aYQvQuF7c23-oEykJWRBAI3PzAqahhMRJ6wd_q2KL-Vzq__RtlnUwJYuQun0vNzlw3TvsHC7jLLt0yG0g36pqdOqlNfA_TIOPWyyOiWv8dsuS5en7_ornmnJXzA3r5Y3Pihr1eP-vC1aJ_z2cyMUKp3eDisEDwC9_dfUazvtPeBmb4msQn51RQgLgJx7oppiwyAN0ro0pJnAVm_4h5AhscfTIVwVFpsJ-lmGQqqX1cS57JF8htLrvfnwSp4G7uGUArGw1hYIChHInLwAf6Uua98u9AfnN9vu1IXPdhKDrpp8q2UPSKlkyjz4thtZsZGN4VJIPApAYCFflKaXxtXJyzLvaWCkHovERIoi6ZpxqbN1iz8bDojoFecgV9Xvl_2IcPrNjqTVUTDllONCWibev9-ukjf9QeBHAX5idLVW9GEy75Qw9yY0eXSji91-6pdUvnNdSLFWmVfiXkfoxn_4K9ATDGXljs-DY77B6wrPXHvCA0D3fnjf5FVwK8OTRZDV6T2MHs1ZC9iANREUMPs-PKrrImlYZ7oO_yBPGITm2Rs8Qlk1IGmGhGmWzHxYt6Qd4szI0njhUZjZp3oXHDPgyxALJnK9z3u2w_sg5WC50DIOj0G8V0QLFYevAQPyIxUG7eXr8aFXcEOhNTMXBWOGkrCMgHtyGZYKv2N-j6m0wdB4Z01ZhrwfyZsaOpOpw-eMHHHBg5aBAVw8U-nsmaapGLvW0TDxTmR4KTQ_Y13Na3r1aLTU24JpwQ2wMnZvP_Lrq4eKJGzz7muoXc2LFggpytv5cMMSrnsMsEPNBva7NrPFeV27zuWehnHtfq5Rc-bOq7sfYCzz5ALDTMQY5JxTds48NCLJjC7ZH04yz1s-5KqsdkSb8tpoCf0LKy3g9h5DcnsueqWX_4kx6TZdm1gw1IodmaeWh-KwHuXFzHpu24Ga9wUTeUfIOjivL7TE4Qxf2qygdRjdAPB7yK_RNayp2ZTf2tQPhqcfvk80-jb-LgQFUBw9fKlCPyMdcQKuqYvYWLYNHdgHeuVw7g46Uab8OkADGpYg7f89norSyOxnWYHDHdDnEwGre2iPI8lIcWccC72NiFSd1tqCbpILMk2u5fy8wXsSPvr3FC9p-lgOfPTLQaLmyRSc9gtYlSxBpSkHMI9uYGMf7reVr261nnU0Vw1-vziS7f6t7V-s1WBluUvQ2V8dtXYlCrTooZV-_tNsy1FQ47XmnCmD6G6JfNX5a1IN-fF9TcvAquNx3hUnS4wrOjsH9MNa3yJ7aw3bqmGqWz_NYKq6bf19tRbyTMBQ2DdhAeE1GCZaqWZtwXu6HKvzXgvPsQ_lV_i8uy3uSmWI2nJKDPNg4Zv_PgVFi3573bmL9FmOcdkgtt0d0e7_qJsw5B-X1AbZWj2p7RwUxtwYsyAwz0hHmPXvP0ZiNAAnkVVi5pqOzWGXOZwX_K8Nyq3WC3P2UhbwNdcMFoUuEgWzfrsUq9zqwKIMtx8w6mGIu-5kBO523KhSHjLLGQbcV-cGBRWzhcgUpPHaGODSY7_g-4MjhWxbo4pkvME82iNNL789s_4ferTTWAmD2vMz1sBiKbjhunbrO3kmpDe_G17wzTxG-pWchC_jEA7eY2JOYiFKb5oMDZi1j8x0oOO6PEsqfpDJIsJEgy1CsjLsUExQTNNdDn2CGWUtds0TaiWRX22pPEHDmr0iHWaNm3LzeIud559C7sKqu5aALMMwGr5PnB7eNDoDECJ7vI-Kn1xXyNVCrz5QlmVpYWlaDxajwVLr7SDbkLCL5BLq596ZnNDLNIoQIyCDvCMYwq7qtJb326k5PVxIIbDpM5cToDpwS26vA-jMz2cOPBNespfU9_5iuNdslXR50Sdi6irMF99VOlRdRumMa4g6TdmB0MTs7SIMrU6XhpkUJagwoaNDkOEyn2SVgQ6TJ-TM5M5tZjHWKof7Ga9oJ3OAH1Auo2i002WzrwLfhNBeXG9kIDvY-HAbL2Mtm8ylSZt4XJoMD5CkkKRfWPRUVgerqe3M92Pv1TbYDJh8f4IrzZob4EA18FDw6X9ZbY=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_9ee4413bae744d08a3b7ff55399fa0c9
+            id: pyd_ai_2c6f53abf3c84b5f974d9e8d1b83a237
             name: get_file
             response:
               return_value: File attached
@@ -128,11 +128,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '2168'
+      - '1582'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2530
+      - gfet4t7; dur=2597
       transfer-encoding:
       - chunked
       vary:
@@ -143,27 +143,25 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: The image displays a close-up, cross-section view of a kiwi fruit against a plain white background. The
-              fruit reveals its characteristic vibrant green flesh, with a lighter, almost creamy yellow-white core in the
-              very center. Radiating outwards from this core are numerous small, dark, and glossy black seeds, arranged in
-              a circular pattern within the green pulp. The outermost edge shows the thin, fuzzy, light brown skin of the
-              kiwi. The overall appearance is fresh and clear, highlighting the internal structure and colors of the fruit.
-            thoughtSignature: CtcFAXLI2nzei4xXedVhtgu0Ii8IzIaT8n6tz8Ude6S7xRu7mJI+KeHeV3EClgoQmLfq+VDmiAneB06np96ppkpvbmbBXZmT3ZuzxbOE7vm4Vnv+nYthhsGUqf2VVZ8aJgvEFR7BfQq5zUZ5/IYAkS+AthHmflBc/+pbRtfhWMv/9xssAW4OUVBFxaXaJxOYmaeCcGAowtSrKH/l117E8SBGBktZiq3dT4sXXs8tz9zsSVvQgo++cresRO/lBNhTrrdKovPE4xpTfvPNbuxJsnvMSu6tc4exXpzsjg3WIOtEgjGrw/MoY/chqU6yan6pc6YEdwxfTDz+sEi8ykUe+3zrSIe2x7LL+1JjOnzQ9LLTF637omTTn6S++ik7tXGSIjwipvyX0na0oFousBC9bPs+wete+vXvh0F8S5ytpA0pEr6ahs4w1yhuJkB78XCdkkObG+rs8RER60qFVEnw8qo3i67xpyP56IfFgCDjf9oE/WviboYjUVYJ+CZx1I145wula9/V5BCkk8BwfqJkNihPuv07CL2M71t60d22LYxvZPznoWcqCH4uOdgjcUWa3eF2A1grYErAb3U2+eHwlyPC3U8LRLL1FCky3BVJaz7ElO2NHTI2ybPK92ubh27KUWYg9kfjNLQlFSs17JQDedotpiT0UMBwUHuImpYGAiF7AOQrr0OPc8T5tq7hvXjoBdBprEAJ+aPQdBMZxuSKCWpwozFKZmixLucbW/OPW+nM4rox+0uy7WSqRlSAFexYdauMeLkIVD5mBqEbVKfgO+CSC3tX6gmJ+nm3m9hPiNZVMJ/Z1+b/CG8/9G/IYtVT2blI/A0Bjy7VId8TmnruCMuw/lzC7X8hOyFKNk1JKFap4UUDc5nSDeZ+BAGB3YmVj/aVKICE3PujtpCcuP9jtR5r2w6EPVJ2b1rDBV+brkDTRk1pmCa2SW0hkElriRbzgFcQqe5hGvtubQ==
+          - text: I received an image of a kiwi fruit sliced in half, revealing its vibrant green flesh, a pale yellow-white
+              core, and numerous small black seeds arranged in a circular pattern around the core. The outer edge of the kiwi
+              shows its characteristic fuzzy brown skin. The background is a plain white.
+            thoughtSignature: CvkEAXLI2nzPD9S48PuktAgAzbaqcCRfgi8KIws4cHPuPIL4MFEC9GWSdoUYPbitdf8VkV5PR7CIUX62dyfaL0pVMO9y7LwO5JLxzcfkXMOpLCb0lwRouknBtzXDITlVuYaK7fXtsQqx9AUBXYvOUEufxhpyxALYd8WWcNa1CNyaIV+UxUSvfExjlHG2CB5dTkD0NpPeW2kXCFUAxWes+GXuwu5dTT4Fq6tCA3g7I+XY1/CBwdW8FUSUBz0ZGrgvmHcW3VJjxSuCAQJ/LcfcQ5/wt7DjulPX8Hx93bqmpPZTfWcwu1bsOnbZ0TGEZqIMpDcwH/S/b+m/XmQ5dadC/QEjsyUBVeENlwyBqnrUhQmUQeIeaD+YgmcNWM/SxL5VGR5JaJsfjrF6eP9EZXU4Oy9OsBDBL7KO5r8DRR7b7FFGfGeakHdjrS7hoPvswyZvoJO3L6IwpoTKxVYHC6E3Ru3+jNyi/TKhQngo10Ci4U/93w82vUoEI22E/+N5efHRFBf/UwRjWMeONJ9uVpFHGR9Mz3d5qS7pf748oqTyShk1+DRTQevPz5yd80wd42LsasiHB+qfGzN19HWlSaig/Jy2uYq6Hx52VW/a/ved0qTqzkktlp5Q9i9f10NrBj39whh39E9xSW4DXTYLLBwtoyTIYb83j1Wuh5nxv0fUzy+UgB5jnRhNf7STcvM8D7MIGom4tfeC2zYXSRQFflODmuaGxQzpeMQl/+HrvPIhyBsW9fpvJIt+LVLhRm5DIHSJBwElDTiUlJWXOun0U1p0XZ9NVEw72eRTu9b7eHQfawhwzMnCivw0jzTusS3MpFUW0UO37qkneb3wTKYf
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: -H97aaKpGJq2qtsPi9DHcQ
+      responseId: XFV8af7gKZGKqtsPvvuEqAw
       usageMetadata:
-        candidatesTokenCount: 107
-        promptTokenCount: 325
+        candidatesTokenCount: 59
+        promptTokenCount: 328
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 67
+          tokenCount: 70
         - modality: IMAGE
           tokenCount: 258
-        thoughtsTokenCount: 156
-        totalTokenCount: 588
+        thoughtsTokenCount: 125
+        totalTokenCount: 512
     status:
       code: 200
       message: OK

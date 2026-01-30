@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '348'
+      - '396'
       content-type:
       - application/json
       host:
@@ -18,7 +18,7 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: Call the get_file tool to get a image and describe what you see.
+        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
           type: text
         role: user
       model: claude-sonnet-4-5
@@ -38,7 +38,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '572'
+      - '569'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -47,13 +49,13 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - text: I'll call the get_file tool to retrieve an image and then describe it for you.
+      - text: I'll retrieve the file for you now.
         type: text
-      - id: toolu_01GUMvcmU34QT8vakd7cDJEM
+      - id: toolu_01221iGaWWSYWuNdJm5NbDGd
         input: {}
         name: get_file
         type: tool_use
-      id: msg_01PyWQnXdWAXCAZC3gkx8AmZ
+      id: msg_0139UPExfQsvtW8huP6M5Wk4
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -65,8 +67,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 555
-        output_tokens: 56
+        input_tokens: 558
+        output_tokens: 46
         service_tier: standard
     status:
       code: 200
@@ -80,7 +82,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '132211'
+      - '132250'
       content-type:
       - application/json
       host:
@@ -90,13 +92,13 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: Call the get_file tool to get a image and describe what you see.
+        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
           type: text
         role: user
       - content:
-        - text: I'll call the get_file tool to retrieve an image and then describe it for you.
+        - text: I'll retrieve the file for you now.
           type: text
-        - id: toolu_01GUMvcmU34QT8vakd7cDJEM
+        - id: toolu_01221iGaWWSYWuNdJm5NbDGd
           input: {}
           name: get_file
           type: tool_use
@@ -109,7 +111,7 @@ interactions:
               type: base64
             type: image
           is_error: false
-          tool_use_id: toolu_01GUMvcmU34QT8vakd7cDJEM
+          tool_use_id: toolu_01221iGaWWSYWuNdJm5NbDGd
           type: tool_result
         role: user
       model: claude-sonnet-4-5
@@ -129,7 +131,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1425'
+      - '1132'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -139,19 +143,19 @@ interactions:
     parsed_body:
       content:
       - text: |-
-          This is a beautiful close-up photograph of a kiwi fruit that has been cut in half. The image shows:
+          I received an image of a **kiwi fruit cross-section**. The image shows:
 
-          - **A cross-section of a kiwi** displaying its distinctive internal structure
-          - **Bright green flesh** with a radiant, starburst pattern emanating from the center
-          - **A pale, cream-colored center** that forms the core of the fruit
-          - **Tiny black seeds** arranged in a circular pattern around the center, creating a striking visual contrast
-          - **Brown, fuzzy skin** visible around the edges of the fruit
-          - **Fine hairs** on the outer skin that are characteristic of kiwi fruit
-          - **White background** that makes the vibrant green color of the fruit really pop
+          - A kiwi fruit cut in half, displaying its interior
+          - Vibrant green flesh with a characteristic radial pattern
+          - A pale, creamy-white center
+          - Small black seeds arranged in a circular pattern around the center, creating a starburst or sunburst effect
+          - The outer edge shows the brown, fuzzy skin of the kiwi
+          - The fruit appears fresh and juicy with visible texture in the flesh
+          - The image is photographed against a white background, giving it a clean, professional look
 
-          The image is shot from directly above, showing the perfect symmetry and natural geometric pattern of the kiwi's interior. The lighting brings out the translucent quality of the flesh and the texture of both the seeds and the fuzzy exterior. It's a very appetizing and visually appealing photograph that highlights the natural beauty of this fruit.
+          This is a classic cross-sectional view of a kiwi fruit that beautifully showcases its distinctive internal structure and natural beauty.
         type: text
-      id: msg_01U1PxuYScJRPDpHpbVpEzD6
+      id: msg_01J3JUEPVAz8itKi53GhcYzn
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
@@ -163,8 +167,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 1099
-        output_tokens: 233
+        input_tokens: 1092
+        output_tokens: 165
         service_tier: standard
     status:
       code: 200

@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '350'
+      - '370'
       content-type:
       - application/json
       host:
@@ -17,7 +17,7 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: Call the get_file tool to get a video and describe what you see.
+        - text: Use the get_file tool now to retrieve a video file, then describe what you received.
         role: user
       generationConfig:
         responseModalities:
@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1453'
+      - '1049'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1610
+      - gfet4t7; dur=1468
       transfer-encoding:
       - chunked
       vary:
@@ -54,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_file
-            thoughtSignature: CqUEAXLI2nz+dXVf6jNarnqWQz3vpKPALX4NvHbCQFxeiQmbI/9fbKIkB27gjdxs7Y7WuIo5rE89ZPD/xEaADTMLNpbM/eFdaZcP5iXeY4S083Su4DtRrU26akk/Oyj12aksnihQykHtvFxUM6fpo5ukz2rTyTUlpPCyh+rYFLynRE/G7YMiLYbcmTdFGZBXvKhFWxhQ4ggMCbfy1razZ4Jaj1xpBOsIEJAHUIIC92qhm8dmEabd0C/CS5Oa+MqpBAEwvlxNzaPd4jjfMsyxD4KY25whRoEqDygCVjnnntBXMLunj8pf9CNdn/K7hBlIpdWl2WkAWfxyw16rQJH/b2iUniNroh2gRjZy/9g9PjArkwsltvmBkmRy71lozOhnxmeCbkNOOUPGz1LxksvKp425dkxrr5g+6WobYWdQiWv2tA5FDgoF3Lj15X82OlYj0sS3F3AG6OyzXwnyF6aTjPApgRVVaOH7MlDi81GQxwZqVWXiiIslA/80ArHW18HU8jo/IjupBqxf7SlqMexBA0txaeX5isYjurXV3PxIKFoGJKgd/RcUd/DJNPNXxGy79eFmBT/LHiwkOpCDoTyU34XwknbuNuVFp96TPPpwsUoMxz5PlEcOF2TFKmri/zfviKyrRQzRyIJCZG0Kh6L1/yR8pJMf9FL14rylok7uqrzzyU/yooXWm87VN8RXecIA59mN9qokg8ABgcFXbT63zlJQHJq/DGeZ
+            thoughtSignature: CqADAXLI2nz3fwCKQe+daQovOqo9IoHcd3IN2vENHhXIx59CGhKgZepFtvZC7UKls3M3+Lfg0Pcm7vZZyFvtTNGcIOylqBaXIYeu98Ypdq1ShYyvhqSVYvUINiHN0trLsmaVB4H2jDGgBL1fspCvhr8rjobdtjGyfTo85bmHZ0KCocolWZzdPkqknnEXDSGytv/keQA6fvv01AdTx/sQkL6hcb70KlqidLd3S5HneXlToqwmUr41OIKTsRlIKxO/okgyBImZzFEQdjRvGaU9y9dBEKBSR6wuU6J8EM+MOKrLXe64dRFdMTTsMyhChYVKMFn5gAokB9lGCr4ssSbL6k8S7wtITpsptDkSA0k6I4uEWauMBfKoVwI/ikMA/RrYpsar3klB4TkHBDwAOrK+KsV9TQXQoiuUz/40EpNy5fR8jpiS+rjo1kqzsvoOFBj4WcYXEcHvvUKR+23XX6/4GBfdlYwMq3ii3fER4Va2NbitIl8ZSOEBcqM5GdAoS93keuVvSXVOeIouBqQFo1ViTcGLmMdhNDtcazuJY1mSBtEIVXc=
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: KIF7afZv59DPsg-yssYZ
+      responseId: ulV8aabsBq2tqtsPnOeoqQI
       usageMetadata:
         candidatesTokenCount: 10
-        promptTokenCount: 38
+        promptTokenCount: 41
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 38
-        thoughtsTokenCount: 121
-        totalTokenCount: 169
+          tokenCount: 41
+        thoughtsTokenCount: 101
+        totalTokenCount: 152
     status:
       code: 200
       message: OK
@@ -81,7 +81,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '836898'
+      - '836742'
       content-type:
       - application/json
       host:
@@ -90,18 +90,18 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: Call the get_file tool to get a video and describe what you see.
+        - text: Use the get_file tool now to retrieve a video file, then describe what you received.
         role: user
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_1d15e93ffbe047a283183da70975a757
+            id: pyd_ai_b093542a2aeb4464a53555097efb5200
             name: get_file
-          thoughtSignature: CqUEAXLI2nz-dXVf6jNarnqWQz3vpKPALX4NvHbCQFxeiQmbI_9fbKIkB27gjdxs7Y7WuIo5rE89ZPD_xEaADTMLNpbM_eFdaZcP5iXeY4S083Su4DtRrU26akk_Oyj12aksnihQykHtvFxUM6fpo5ukz2rTyTUlpPCyh-rYFLynRE_G7YMiLYbcmTdFGZBXvKhFWxhQ4ggMCbfy1razZ4Jaj1xpBOsIEJAHUIIC92qhm8dmEabd0C_CS5Oa-MqpBAEwvlxNzaPd4jjfMsyxD4KY25whRoEqDygCVjnnntBXMLunj8pf9CNdn_K7hBlIpdWl2WkAWfxyw16rQJH_b2iUniNroh2gRjZy_9g9PjArkwsltvmBkmRy71lozOhnxmeCbkNOOUPGz1LxksvKp425dkxrr5g-6WobYWdQiWv2tA5FDgoF3Lj15X82OlYj0sS3F3AG6OyzXwnyF6aTjPApgRVVaOH7MlDi81GQxwZqVWXiiIslA_80ArHW18HU8jo_IjupBqxf7SlqMexBA0txaeX5isYjurXV3PxIKFoGJKgd_RcUd_DJNPNXxGy79eFmBT_LHiwkOpCDoTyU34XwknbuNuVFp96TPPpwsUoMxz5PlEcOF2TFKmri_zfviKyrRQzRyIJCZG0Kh6L1_yR8pJMf9FL14rylok7uqrzzyU_yooXWm87VN8RXecIA59mN9qokg8ABgcFXbT63zlJQHJq_DGeZ
+          thoughtSignature: CqADAXLI2nz3fwCKQe-daQovOqo9IoHcd3IN2vENHhXIx59CGhKgZepFtvZC7UKls3M3-Lfg0Pcm7vZZyFvtTNGcIOylqBaXIYeu98Ypdq1ShYyvhqSVYvUINiHN0trLsmaVB4H2jDGgBL1fspCvhr8rjobdtjGyfTo85bmHZ0KCocolWZzdPkqknnEXDSGytv_keQA6fvv01AdTx_sQkL6hcb70KlqidLd3S5HneXlToqwmUr41OIKTsRlIKxO_okgyBImZzFEQdjRvGaU9y9dBEKBSR6wuU6J8EM-MOKrLXe64dRFdMTTsMyhChYVKMFn5gAokB9lGCr4ssSbL6k8S7wtITpsptDkSA0k6I4uEWauMBfKoVwI_ikMA_RrYpsar3klB4TkHBDwAOrK-KsV9TQXQoiuUz_40EpNy5fR8jpiS-rjo1kqzsvoOFBj4WcYXEcHvvUKR-23XX6_4GBfdlYwMq3ii3fER4Va2NbitIl8ZSOEBcqM5GdAoS93keuVvSXVOeIouBqQFo1ViTcGLmMdhNDtcazuJY1mSBtEIVXc=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_1d15e93ffbe047a283183da70975a757
+            id: pyd_ai_b093542a2aeb4464a53555097efb5200
             name: get_file
             response:
               return_value: File attached
@@ -128,11 +128,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1832'
+      - '1452'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=3614
+      - gfet4t7; dur=3905
       transfer-encoding:
       - chunked
       vary:
@@ -143,28 +143,28 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: I see a camera set up on a tripod, seemingly in a desert or canyon landscape. The camera has a monitor attached
-              which displays a scenic view of a winding path through rocky mountains, bathed in warm, golden light, suggesting
-              either sunrise or sunset. The background of the shot, beyond the camera, is blurred but appears to be the same
-              natural landscape with softly lit mountains in the distance.
-            thoughtSignature: CpIEAXLI2nwOCfHWwTT127r8iOyhvUobff5DOxqVa0jstMX5qqzhybIGqYX2wbHC1hjS920hv88olLWaDGqziRUz7C7MxFiw70/sHyTuuZ+QJTUcnFnxYw6EwbYHjf2gDMuAUOPesvT56df5J6P2PcIS1hoLPezM4jO/VWYaxyU8YG4EpCWJnffwdkL8nvvTdxiGr1Qi1xU/q+D4dpefaXycRl+Lv/lVKw39M/3IqmIJAoX6rf55TlJTXX6QuutDEIwcxX862ufaHxylN2PY5WgoEKXZhIJuZZWTrODYNOJS0GwxEnYCoimObCsCFMZ2RMvMd3lgAeRXNTRSRAW+pykPBfYHZ3UIZQhChQVk2VtKA92CEQHbrxrK2y1XV8jHg/pQbBOA427g2x3ozkdJDCh1v0qDYhsxAUx8LFa6OkfQP7mF8AIq5m97R4rXIMRvyQhrz6v7A10EZfZ648074yNFS3pftqvoOUqKQB7naIEHZzAN2Sv/058Ayx0aVGmsxR4gQW8VAuX4AFwMGLNuxQFRaka38DqobiC8dbt3N7+uSAmq15ogWi25rfrrH30iQErUjCYddlM2yI1NZXrcISh+liNqiDUKH1gFfzUS4TPrBP5dKZC8RV2kwg3XL8wbjwEsw/z8KZGGH88m9yfRJX7PTsPZypFRsssnoO3GUoDcyRZ6ThqFVyvBArIjD5sGAazcS6o=
+          - text: The image shows a camera mounted on a tripod, with a monitor displaying a clear shot of a landscape. The
+              monitor shows a path leading into a rocky canyon with mountains in the distance under a bright sky, suggesting
+              a desert or arid environment. The background of the image is blurred, but appears to be a similar outdoor setting
+              with a path and mountains.
+            thoughtSignature: CsoDAXLI2nxQcpp0X1a6zw+hbCt6uHZhc367y7ruezg9pHWOtmZbl2YcTgbSIkY6a9lJjM1V8VF5a4O5IKVjrr1iyFSfKR/8CWlxDKmtVM3GJ7192E9ev/MHclFaZzJSuYmRkJF8v+vtPM2pJkPM9bRyyqecsBBYkCHg2D/xArEQ4d42UuBHa/WIwD8RIZsrNvaExfQi1riPHh6b9spU/vT5wsDRSH9kdbEAUY6M84GogwwKXnbxp5ys5bfLFEnBNbCfhJQ0Yk0hZOOfl9e77+heaH2v6ksfVdQDH4AJIFGNZapsuQgNT4aTkMkJQw4OJEYFFB385VWYnZX9IVtM13/xcoU0HDuMhp5Ex85ImKnBJb1qZaYtQtzk6QNDgrjm3gw8RvHHFE7aCRvG7g3MtwZsl2tt5ZHv7Z8keVLd3D6v23oKUddoGHu2vPoxoIbZkmc8STirG1EJZpDYHaRzAwIRX7vkWWGgyn9KTqgCD3oSzPAFKPA0JEfA/1G0sLgkK8fGbMVuStoYix/z+9yMboX6x2g689q4tNTD3pwNkv8tEmBbmSCAyPw1WEOp4GWXzeQpmNw67uvpiM4I+SoCAY2nWQlvJkmiIS1rZ1s=
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: K4F7aY26L_7Xz7IPldPBwQ8
+      responseId: vlV8abv0CfqtqtsPy5aLmAI
       usageMetadata:
-        candidatesTokenCount: 78
-        promptTokenCount: 637
+        candidatesTokenCount: 70
+        promptTokenCount: 640
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 67
+          tokenCount: 70
         - modality: VIDEO
           tokenCount: 526
         - modality: AUDIO
           tokenCount: 44
-        thoughtsTokenCount: 107
-        totalTokenCount: 822
+        thoughtsTokenCount: 91
+        totalTokenCount: 801
     status:
       code: 200
       message: OK

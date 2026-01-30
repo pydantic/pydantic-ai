@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '345'
+      - '373'
       content-type:
       - application/json
       host:
@@ -38,7 +38,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '557'
+      - '610'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -47,13 +49,13 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - text: I'll call the get_two_images tool to retrieve the images.
+      - text: I'll call the get_two_images tool to retrieve and describe the images.
         type: text
-      - id: toolu_01UQRhkqC9EZr9zBgX42j8LH
+      - id: toolu_012tbQJXMB8qxgMdPWNBzmsD
         input: {}
         name: get_two_images
         type: tool_use
-      id: msg_01PBpBRbscPLHHTQZoanEZ8M
+      id: msg_0112EAUaE7AfFzYvUSxBUhhY
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -66,7 +68,7 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         input_tokens: 555
-        output_tokens: 54
+        output_tokens: 56
         service_tier: standard
     status:
       code: 200
@@ -80,7 +82,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '132325'
+      - '132368'
       content-type:
       - application/json
       host:
@@ -94,9 +96,9 @@ interactions:
           type: text
         role: user
       - content:
-        - text: I'll call the get_two_images tool to retrieve the images.
+        - text: I'll call the get_two_images tool to retrieve and describe the images.
           type: text
-        - id: toolu_01UQRhkqC9EZr9zBgX42j8LH
+        - id: toolu_012tbQJXMB8qxgMdPWNBzmsD
           input: {}
           name: get_two_images
           type: tool_use
@@ -110,10 +112,10 @@ interactions:
             type: image
           - source:
               type: url
-              url: https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png
+              url: https://www.gstatic.com/webp/gallery3/1.png
             type: image
           is_error: false
-          tool_use_id: toolu_01UQRhkqC9EZr9zBgX42j8LH
+          tool_use_id: toolu_012tbQJXMB8qxgMdPWNBzmsD
           type: tool_result
         role: user
       model: claude-sonnet-4-5
@@ -133,7 +135,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1169'
+      - '1668'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -143,13 +147,28 @@ interactions:
     parsed_body:
       content:
       - text: |-
-          I can see two images:
+          Based on the two images returned, here's what I see:
 
-          1. **First image**: A cross-section of a kiwi fruit. The image shows the vibrant green flesh of the kiwi with its distinctive radial pattern. In the center, there's a lighter, pale yellow-white core surrounded by a ring of small black seeds arranged in a starburst pattern. The outer edge shows the fuzzy brown skin of the kiwi. The image is very detailed and shows the natural beauty and structure of the fruit.
+          **Image 1: Kiwi Fruit Cross-Section**
+          This is a beautiful close-up photograph of a kiwi fruit that has been sliced in half. The image shows the distinctive internal structure of the kiwi with:
+          - Bright green flesh surrounding the center
+          - A pale, creamy white/light green core in the middle
+          - Small black seeds arranged in a radial pattern around the center, creating a starburst effect
+          - Fine, fuzzy brown skin visible around the edges
+          - The texture and moisture of the fruit is clearly visible, giving it a fresh appearance
 
-          2. **Second image**: The Google logo, featuring the company name in its iconic colorful design. The letters are displayed in the following colors: 'G' in blue, first 'o' in red, second 'o' in yellow, 'g' in blue, 'l' in green, and 'e' in red. This is Google's well-known branding with its clean, modern sans-serif font.
+          **Image 2: Orange/Peach Colored Rose**
+          This is an elegant photograph of a rose flower with:
+          - Soft peachy-orange petals with hints of yellow
+          - The petals have a delicate, layered appearance typical of roses
+          - A pink/coral colored rosebud visible at the top of the stem
+          - A brown/woody stem with what appears to be a small green leaf
+          - The image has a clean white background, giving it an artistic, isolated quality
+          - The rose appears to have water droplets or dew on some petals, adding to its fresh appearance
+
+          Both images are high-quality, well-lit photographs that highlight the natural beauty and details of their subjects.
         type: text
-      id: msg_015sVyYu9zAYLwGuPGsmK18m
+      id: msg_01JRQfnvHa7RwDwF2iLQ4T5J
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
@@ -161,8 +180,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 1250
-        output_tokens: 203
+        input_tokens: 1277
+        output_tokens: 297
         service_tier: standard
     status:
       code: 200

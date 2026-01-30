@@ -48,7 +48,6 @@ from pydantic_ai import (
 from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
-    BinaryImage,
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
@@ -58,7 +57,7 @@ from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from ..conftest import IsBytes, IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
 from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
 
@@ -1690,94 +1689,6 @@ async def test_document_url_text_force_download() -> None:
 
         mock_download.assert_called_once()
         assert mock_download.call_args[0][0].url == 'https://example.com/doc.txt'
-
-
-async def test_image_as_binary_content_tool_response(
-    allow_model_requests: None, anthropic_api_key: str, image_content: BinaryContent
-):
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m)
-
-    @agent.tool_plain
-    async def get_image() -> BinaryContent:
-        return image_content
-
-    result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content=['What fruit is in the image you can get from the get_image tool?'],
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(content="I'll get the image and identify the fruit in it."),
-                    ToolCallPart(tool_name='get_image', args={}, tool_call_id='toolu_01W2SWpTnHpv1vZaLEknhfkj'),
-                ],
-                usage=RequestUsage(
-                    input_tokens=555,
-                    output_tokens=49,
-                    details={
-                        'cache_creation_input_tokens': 0,
-                        'cache_read_input_tokens': 0,
-                        'input_tokens': 555,
-                        'output_tokens': 49,
-                    },
-                ),
-                model_name='claude-sonnet-4-5-20250929',
-                timestamp=IsDatetime(),
-                provider_name='anthropic',
-                provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'tool_use'},
-                provider_response_id='msg_01HQ5juE8oecrwBkoYMJi5fp',
-                finish_reason='tool_call',
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='get_image',
-                        content=BinaryImage(data=IsBytes(), media_type='image/jpeg'),
-                        tool_call_id='toolu_01W2SWpTnHpv1vZaLEknhfkj',
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(
-                        content='The fruit in the image is a **kiwi** (also known as kiwifruit). The image shows a cross-section of the kiwi, revealing its distinctive bright green flesh, small black seeds arranged in a radial pattern around the pale center, and the brown fuzzy skin around the edge.'
-                    )
-                ],
-                usage=RequestUsage(
-                    input_tokens=1100,
-                    output_tokens=68,
-                    details={
-                        'cache_creation_input_tokens': 0,
-                        'cache_read_input_tokens': 0,
-                        'input_tokens': 1100,
-                        'output_tokens': 68,
-                    },
-                ),
-                model_name='claude-sonnet-4-5-20250929',
-                timestamp=IsDatetime(),
-                provider_name='anthropic',
-                provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_015Cd8nysLLEjXi7JEm7A9DF',
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-        ]
-    )
 
 
 def test_model_status_error(allow_model_requests: None) -> None:

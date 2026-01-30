@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1179'
+      - '856'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1750
+      - gfet4t7; dur=1275
       transfer-encoding:
       - chunked
       vary:
@@ -54,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_file
-            thoughtSignature: CtQCAXLI2nzMfjL3i+rv0hYmdYPevwy/MoFK+sUhiFnNcPN32tjqjUpBPxukPVa+XAdbgduJrMF0f7Yaj7My/zeCJ4F3aNfswNgpxyM5xGK2SGbu2Lr3D+6Tb6zdzPpXr53gZ30VaA66LexUm70czOybJrySy+I17fB7pq6ljYhswJU5Hn3wKpSuN7i7dx39wIcc7PAULynynJs9mhnBVkVrW3mh6Wmz0KjgYq8xDoqEwuCbJdOHjeTqfSiOhUt6Qw3VgiGNsl0UPb3ADFYsHb7LjgVQn9ziCixBHk+ZtErbPfbLORz/hSVr8pDa6dvzAPl5IyVUUR7T/V7Vc13TagIATEzrTDqetIu2z7HeiDJ6nuX89Rr2M6YWDHIh7iJPdH8mcfWOf2rEnX9uPhNoHrhAN2rzE4eW18wpC0BoAKW1c74Hr6neTsHDj+w7pP643TU7+5tZGg==
+            thoughtSignature: CpECAXLI2nwraHke+Qw5kryN6fWnPuEiDCyGrMfGgp4GFRGaGQVTaXqtXaQ9fHl4m9OoquMC4YuNqOZ3X0UOLKRBKY7oY/7KyMcsC7yw0vxj4w4xTcfkLT5PPak+LKQd1gcMNBz1YJR7jZcjaWRoK9p7HFWudv1cDvSioR68Bc03s5lKb4sCjcRPXcZrFwgizUHl6W9nr7wTOC213EMXw8lrDqZuHwGb6MkTbhjEzpb+fsgVShtuvYoUh1Cj+0GzYihweR6qwDj7pwfCGAdMGFmQXf+H0gY2CYdr8uU+/StJ7H/bJ8kYyRPNUNKYlZHSscEAI27X/Ko8RYP+Rf6qKGpP+AL3glJ0ZoZK5UvMfmyD1usL
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: M7p7aczwA7esz7IP-I6r-AM
+      responseId: 6VV8abC3FNu2qtsP-4am4Ag
       usageMetadata:
         candidatesTokenCount: 10
         promptTokenCount: 41
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 41
-        thoughtsTokenCount: 74
-        totalTokenCount: 125
+        thoughtsTokenCount: 56
+        totalTokenCount: 107
     status:
       code: 200
       message: OK
@@ -1029,7 +1029,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '70679'
+      - '70587'
       content-type:
       - application/json
       host:
@@ -1043,13 +1043,13 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_2dac6d6d24d44f08af6420d8d8d3d633
+            id: pyd_ai_0a5ac87380ed46b0b45f4a8f5b06d91b
             name: get_file
-          thoughtSignature: CtQCAXLI2nzMfjL3i-rv0hYmdYPevwy_MoFK-sUhiFnNcPN32tjqjUpBPxukPVa-XAdbgduJrMF0f7Yaj7My_zeCJ4F3aNfswNgpxyM5xGK2SGbu2Lr3D-6Tb6zdzPpXr53gZ30VaA66LexUm70czOybJrySy-I17fB7pq6ljYhswJU5Hn3wKpSuN7i7dx39wIcc7PAULynynJs9mhnBVkVrW3mh6Wmz0KjgYq8xDoqEwuCbJdOHjeTqfSiOhUt6Qw3VgiGNsl0UPb3ADFYsHb7LjgVQn9ziCixBHk-ZtErbPfbLORz_hSVr8pDa6dvzAPl5IyVUUR7T_V7Vc13TagIATEzrTDqetIu2z7HeiDJ6nuX89Rr2M6YWDHIh7iJPdH8mcfWOf2rEnX9uPhNoHrhAN2rzE4eW18wpC0BoAKW1c74Hr6neTsHDj-w7pP643TU7-5tZGg==
+          thoughtSignature: CpECAXLI2nwraHke-Qw5kryN6fWnPuEiDCyGrMfGgp4GFRGaGQVTaXqtXaQ9fHl4m9OoquMC4YuNqOZ3X0UOLKRBKY7oY_7KyMcsC7yw0vxj4w4xTcfkLT5PPak-LKQd1gcMNBz1YJR7jZcjaWRoK9p7HFWudv1cDvSioR68Bc03s5lKb4sCjcRPXcZrFwgizUHl6W9nr7wTOC213EMXw8lrDqZuHwGb6MkTbhjEzpb-fsgVShtuvYoUh1Cj-0GzYihweR6qwDj7pwfCGAdMGFmQXf-H0gY2CYdr8uU-_StJ7H_bJ8kYyRPNUNKYlZHSscEAI27X_Ko8RYP-Rf6qKGpP-AL3glJ0ZoZK5UvMfmyD1usL
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_2dac6d6d24d44f08af6420d8d8d3d633
+            id: pyd_ai_0a5ac87380ed46b0b45f4a8f5b06d91b
             name: get_file
             response:
               return_value: File attached
@@ -1076,11 +1076,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '2109'
+      - '2153'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=3099
+      - gfet4t7; dur=4958
       transfer-encoding:
       - chunked
       vary:
@@ -1091,24 +1091,24 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: I'm sorry, I cannot process or describe audio files. My previous action only indicated that a file was attached,
-              but I don't have the capability to interpret its content or analyze the audio you provided.
-            thoughtSignature: CqcHAXLI2nyIqdUuSQnETxkRr/lwv0q2RUYVNDTGUBKoWN603RiN6ypVGB5/vULXj0stBYSNSta8rZ2Qdv6bVTPW2sKoo6A7hZ1u6hC+1PAKqU6rj1meGiROnFCeg+VgENSOHdb9qlO4A+pcVR7noWVmvQjxFxGf7NfdxGoAjdXPpFkP7EhzAkpIvM+Tby1ed855mdOQ2CNDIqdSFi5jGrhsd8tYUj8Tyfp5n6d91D96i7v9gk66Vlxp00HyOPqPCwxPpEUqmu/Y9gnVQ54a7mNLCShnLpwDQba7fbu49QA0FJ8KrsYsUrQ9gjkpN+cds9QRPiLKuUdEDe0rwAOa9mbQtrX5Lw3wQgoc8D64M3HDko67KmDi9SqJ8Ka2oXy5YlvVCzVogcjR6ifPMlYrEOnhgEzsyRkiW1FJ/PfCNBi+ZoUPfiBVzPAXFTyXhcr45uDLVBlmjrkqZgEWhPW+qPR6tKeRL3sRF9oZJxoY6r3eoVevMBKGDDqGBs57z/GcpShPvYIrGVGWKnKI+WuLlfiVR7dDfz/09mCQ1G7oSJ5ICH0NAWOaPwQGQlGUpgiDpt+Py6Kn+TxYZzZMAyV3+BmPYAx1LJEBXLPSvJJRB9iyAMVTqP1YrShJuk98NDH4Z7KG2J+B4p3TNVVjOJYInGPXwBlACG1HT4TtlWD3p6vJoCMT/qE7mnMqM6+NbIjzWo9Irxb7nbH9JqvTHtbkb+ppHfzk52NmT0Dtqn7VF1EoWN12rLSyzIVsBSFbrqPFjXQ/KyhTE3tjHjeDo7TiA1rEBr7SgX2eGZS2Gc5pQjZMZziEIN+g5/3xDZZjekBN2h4u/3XXvtlh3LhOgWesb8g76bxlUxtOszfDHLuPd1Dw8HYcv2F0Mr4eWvJSei8Jns4oBguOAWYrUwNXhK1y8pDRy9z/Zy3aF5pJRZ5DVjtWEpe6ZDL1bI6S7a1Md6ikvrDlvOA8Cstl7ZvgK9BeqOpg96HNEk9Ij5UPp+CR+I9gzw7PeFH/1dBjHC3q76h087/YiHcbR6AqTzDCAKYBpXyUHNMU+QulrRHVuVc7DXzXc/GPa1rGGlSmkG88AwThRgC0EHmwzI11vfYcvVkeZDLI3TB2iNFMBPb9lxRReRSNcwsbeQgcH+GiCMr+oi6Q+c8AuiBTSAH+2QwCxft9L6caOlAKnj4wdnmCPzcIfBoVzSPwW1DGKgEwPvKfYx75XORhems6kUEApHBgA1SQWDAnRh0K0J6wjaQ=
+          - text: I received a file according to the `get_file` tool, but I cannot process or describe the actual audio content
+              of the file or interpret the timestamps you provided. The tool only confirmed that a file was attached.
+            thoughtSignature: CuAIAXLI2nx/Kn6U4k/D3pdorT0XiCf2xZwfIiBQc3ukavOOkfH2xdCSOtndx7gdAwKCO7CHJCasZVBT/3YRXcTkXUewo5XdstYL+FmQE9PzQC2nzPoQRQktqroOF/DqvID2pfaxAYVqBzJw6/OxDZHBhJVtYQsrXrlYPYo1+9N86gI1Ouj2d4ZoD4UJQaVNEFC8WXgZG/rBJMPQprKFAldynI049NsbVkdnBN1xzAyuVgE72mCXeYbY3LMdJt5dKOzvCaL8J6i+FRXhXpMKyoRAMqHiMrSgGkFwKh61OMcCBd6lQ/Y1tMJoBA3lmLEsF9YK5XcQVvjOP4UDxNesuuZ9aCzHaVxwsgAdO2m8sywrz2IvsBC18ikSjQgNGcXzQ7ZBOB+NR3WzqkN/KyWsACVCv69JGqb1tdua7Kr/GL0d8Wuzhf1bCb6i1KLAQbCtEzUBPL0VMvEyZvl8DX0S2ElHQK51/ro6vbE1g/s43UuMmgZ+gVX+oTrSwYAeNHbi6r9w48mL+FA+BKk2I33RaMKI4iP1COVq8hDCEksVB22sR5KbL0Qfr3CZn7Bdc4dWZmemrRcr6gMkMlSjovnJ6eaJSRxDEzjupCYNqVJIZCOjprpoxfJyGvULQJ1Gs3UgLKgqzv7z1BoC2L9sZvLI8LiQ7Vl6xoSajRlqiubD+UMTQd/CZu+fpHWNcSdwuTdzkZNtGnWhuLak8XkcY2DDvRhXY7yc2M9/bLMtjPcv3nHqyfFFsdoSYNqksK0P4z0KEJx2TwW/8j0Al5sbtbOwxNE874zCeENXIGPKG3jBaQGDihFThDMh8fAFtZzjeYaQBkEAig7RZat9leW8E5ThwaTevIQMPg5TbcdapmAN2t0bzfl1z1wykDFhavvzYQQ2P7vtV9n9PdKgL9OR4PTASuufEq6U7JnOhLmpqVOLKwVIsbT2uhzNSXKU9f+fSo8I/XL1zfqOljXs2StSgnc7cjn2Zc9cACb1TScCW/Si7xYfqA8LTzv5XsvUhYhU5uAb5LcPOvbxfWegK2wh6Xvq1MQy26kO24pfUcRlRjaZZGbNBorlzsssxZp3w1eXSVCGFbaThUKY3xrGgsewgfJg10Zh6hZIrSVXK9/jnGdcKtoVU+9JEzzR5TUj0u9VL6Bi1uAeuSrAfHKjYNB8WKL92G4bcZQeLBGbXULhemOg0MtneCJDgXl0FnNMHAKZli9bcbg1KY0L3Do7tINL+/zD/Qq5j5hU4gD9dKb1NGacvHX9nPC6o61DHvnAFmcKsAOfHnjwvfECDoTrvD2Fqkk8J/g9d9jHSX9rDnIwIpw0ZjZ+eTHxGSo7DV6WzmqgmVtu/Glw6s8XCOmlPuD1CDGM6ePZmhkHlU2/fy9fZ0Vf6ysakHO2AbeYiQqoQSCPrTOLX1NOQSwUOr7chrtaom8Pv+9+ztdjUfzAkwvSRrdQsqsqkYK57CqRuNzGRTpzrc6GQosDsx6o+0SNV1eskKpnFU3b9w==
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: N7p7af77DoaGz7IP_LGRkAE
+      responseId: 8FV8aYCJGLKcqtsPzrDQoAI
       usageMetadata:
-        candidatesTokenCount: 43
+        candidatesTokenCount: 44
         promptTokenCount: 174
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 70
         - modality: AUDIO
           tokenCount: 104
-        thoughtsTokenCount: 201
-        totalTokenCount: 418
+        thoughtsTokenCount: 262
+        totalTokenCount: 480
     status:
       code: 200
       message: OK

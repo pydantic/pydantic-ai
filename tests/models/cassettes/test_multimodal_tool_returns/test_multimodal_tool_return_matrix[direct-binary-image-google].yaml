@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '350'
+      - '370'
       content-type:
       - application/json
       host:
@@ -17,7 +17,7 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: Call the get_file tool to get a image and describe what you see.
+        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
         role: user
       generationConfig:
         responseModalities:
@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1484'
+      - '1169'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1942
+      - gfet4t7; dur=1460
       transfer-encoding:
       - chunked
       vary:
@@ -54,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_file
-            thoughtSignature: CrgEAXLI2nyD/fWXsUb8hQpA0ZeTyrW0AnMVqTDyJ8p2kTp29Jzktk7JewCDQW0QZdvKPB9+NCWopknUiGSPArkxKGddyEDHhDLkFF36Z/cTX6aKya1WONI4lLlPPltM1IJnmnGZ9ltD8sxGGs/kQ/zDvnJK5ob3/sSh7zaGrKlruNwxUDpazFezC59dJrhHo2lT3U/ynpUsIzyKnLBH+LUj6WOHBPJkZeqv0VQUZ5E7Cam8C/1EOcQ7Vap32ytADvxoy/b5qZCEgUx6Kcyyg8NabhFwB+0BK9x5OnmMIr9NMbk6AKyiISUlmjpHPdZAeQXjqnH0/HGmKrnpax4gZPGOmhgYvy1mn5LvGcEi0Nh3wBw3Zwo/j1IfsP+toESBNzqWy14MYaDa1BW8TeoGe7eWHtjv29yjcY+lIFjSTjx4jq8l9wcK8eESiAnZ9VEXoxlArF8fwq8G0mU0P26MoEi/chUgBvpnrr01avdruu8Zodha0HQrnNpuuOnSqfvRbepgFnVPR8QmS+cIvhlonbwLTWNcGqWog9Mj35ry6SensX/0HEkD8jvlCPgGOCd5VhNhFADXLpHLoRUSu6B0xPfej0WKD8YHqusKlK5telSgaXq5W/u/y9/KFdkyEX598pUL6zxn9WlRp1JyH8fe+ElqEuHc7bvdIMIrcJvmK1jmrcQ8pszBwcIW74hz7E3FJJiJNniaJPiO8IPnOxt0+aUr7bLFzLt2B8XjqoFAgLrb0/fM1t4Ie/Acgg==
+            thoughtSignature: CvkDAXLI2nx4j5+iabNHGJWBhlks/Lyt/3da7wUkqn+ogrvOhW5tX8EU0u0pOkAxM/Z1qxe9yCRL9OwhjAn0azf8LuNxriEBsgCTcGaoT+stKFLL5ZvqmyTiV3wFDLe8uG5/+E4CSnvZ1RPLKJI5blga79L642Plr/O3StQItLIGVwtbLCcgpf+hQyBAurtARX5oHqKGU9dhDp53RvWQZm/c8NBBB2VKTtpeAH4H/+ZkrL9XTAiqXKLiO0LXh98mFfJg1R/TZeVPhBNtT2ar0x4h4B/cRmmuh10lVpjyxjQ4qQeFUPn+/txfOWmWCeppa64tCRUrItUhPXUHbKm92bUunMJcFVrfitLOyVwnsoQT5aINGHQj83gLLfDvWfIHWgoTrg7Adm0p1Y7UdNelgwbgzt3FiH5FIm3nkseROAl9+4LL9hUXkfbB5DZ4BnnIcPv4kuu/sYwHGkDv4NxKU+LBZRy0VD88kKfYxNXsvw5acKCdCJWJH6wJ1FS/TcEouq3bIyggsqaAB3bGSHVXbk15XHXGXZpkPbHg+nD1rCoaEWiCOm1cn3QJIP14TSIooT4u+KS9x5UAOQp3r2YCZYOG2WAej0ThH+5U8F4IH5WpBa0u2/3SBTiYS/B0NLVkHWGOaXDKpP/017sT9oia18sIaBAfpbsXf6DlJQ==
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: xH97aZTCMJGKqtsPvPuEqAw
+      responseId: AFV8abOsH7KcqtsPzrDQoAI
       usageMetadata:
         candidatesTokenCount: 10
-        promptTokenCount: 38
+        promptTokenCount: 41
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 38
-        thoughtsTokenCount: 134
-        totalTokenCount: 182
+          tokenCount: 41
+        thoughtsTokenCount: 118
+        totalTokenCount: 169
     status:
       code: 200
       message: OK
@@ -81,7 +81,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '132924'
+      - '132860'
       content-type:
       - application/json
       host:
@@ -90,18 +90,18 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: Call the get_file tool to get a image and describe what you see.
+        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
         role: user
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_662ed34d5923425eba26b89f6a925731
+            id: pyd_ai_1631b0cce26146ce9e0656b3ced392e3
             name: get_file
-          thoughtSignature: CrgEAXLI2nyD_fWXsUb8hQpA0ZeTyrW0AnMVqTDyJ8p2kTp29Jzktk7JewCDQW0QZdvKPB9-NCWopknUiGSPArkxKGddyEDHhDLkFF36Z_cTX6aKya1WONI4lLlPPltM1IJnmnGZ9ltD8sxGGs_kQ_zDvnJK5ob3_sSh7zaGrKlruNwxUDpazFezC59dJrhHo2lT3U_ynpUsIzyKnLBH-LUj6WOHBPJkZeqv0VQUZ5E7Cam8C_1EOcQ7Vap32ytADvxoy_b5qZCEgUx6Kcyyg8NabhFwB-0BK9x5OnmMIr9NMbk6AKyiISUlmjpHPdZAeQXjqnH0_HGmKrnpax4gZPGOmhgYvy1mn5LvGcEi0Nh3wBw3Zwo_j1IfsP-toESBNzqWy14MYaDa1BW8TeoGe7eWHtjv29yjcY-lIFjSTjx4jq8l9wcK8eESiAnZ9VEXoxlArF8fwq8G0mU0P26MoEi_chUgBvpnrr01avdruu8Zodha0HQrnNpuuOnSqfvRbepgFnVPR8QmS-cIvhlonbwLTWNcGqWog9Mj35ry6SensX_0HEkD8jvlCPgGOCd5VhNhFADXLpHLoRUSu6B0xPfej0WKD8YHqusKlK5telSgaXq5W_u_y9_KFdkyEX598pUL6zxn9WlRp1JyH8fe-ElqEuHc7bvdIMIrcJvmK1jmrcQ8pszBwcIW74hz7E3FJJiJNniaJPiO8IPnOxt0-aUr7bLFzLt2B8XjqoFAgLrb0_fM1t4Ie_Acgg==
+          thoughtSignature: CvkDAXLI2nx4j5-iabNHGJWBhlks_Lyt_3da7wUkqn-ogrvOhW5tX8EU0u0pOkAxM_Z1qxe9yCRL9OwhjAn0azf8LuNxriEBsgCTcGaoT-stKFLL5ZvqmyTiV3wFDLe8uG5_-E4CSnvZ1RPLKJI5blga79L642Plr_O3StQItLIGVwtbLCcgpf-hQyBAurtARX5oHqKGU9dhDp53RvWQZm_c8NBBB2VKTtpeAH4H_-ZkrL9XTAiqXKLiO0LXh98mFfJg1R_TZeVPhBNtT2ar0x4h4B_cRmmuh10lVpjyxjQ4qQeFUPn-_txfOWmWCeppa64tCRUrItUhPXUHbKm92bUunMJcFVrfitLOyVwnsoQT5aINGHQj83gLLfDvWfIHWgoTrg7Adm0p1Y7UdNelgwbgzt3FiH5FIm3nkseROAl9-4LL9hUXkfbB5DZ4BnnIcPv4kuu_sYwHGkDv4NxKU-LBZRy0VD88kKfYxNXsvw5acKCdCJWJH6wJ1FS_TcEouq3bIyggsqaAB3bGSHVXbk15XHXGXZpkPbHg-nD1rCoaEWiCOm1cn3QJIP14TSIooT4u-KS9x5UAOQp3r2YCZYOG2WAej0ThH-5U8F4IH5WpBa0u2_3SBTiYS_B0NLVkHWGOaXDKpP_017sT9oia18sIaBAfpbsXf6DlJQ==
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_662ed34d5923425eba26b89f6a925731
+            id: pyd_ai_1631b0cce26146ce9e0656b3ced392e3
             name: get_file
             response: {}
         role: user
@@ -127,11 +127,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '2635'
+      - '1628'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=3487
+      - gfet4t7; dur=2930
       transfer-encoding:
       - chunked
       vary:
@@ -142,26 +142,26 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: The image shows a cross-section of a kiwi fruit against a white background. The fruit is vibrant green,
-              with a lighter, almost yellowish-white core in the center, surrounded by numerous small, black seeds arranged
-              in a radial pattern. The green flesh displays faint lighter veins extending outwards from the core. The outer
-              edge of the kiwi has a thin, fuzzy, brownish skin. The overall appearance is fresh and visually appealing.
-            thoughtSignature: CocJAXLI2nwV0ge/At7bUZwhr3Mse3/YTo/8K8vicd0uV1pQ6/eChxp/ERUNEkaLDoqG151KjjZE/N6IqDsQtiV18Mp7QEkKe0NfKRb31chc92Ji+zzANs7UnasceAgaL+W1gpH5UHYskxsUsuf0Pob1/lzAh524ZG7SPJFrUUN8w73+/CNzxHHlTYZRWstdfgM1++/HDFBBtMQNiu55hbZUZ+ugejIA6nsaIEHgt74YRV8ktw3Rbri7lUMcoFk9tSF4pHrgP4/zg4r0JIpJJSAAApB3ef4EgN/jq7fd/blpeqbvK12o2vs0P8yLRUWaA4lCa/Uy0h9v0t/CRGdfNUiuk7G1QsxiKrKwR5ZzWgzLR9lUzAG31VKWgNur0VNDhi/38XIslCyXA3ZB+t+3pKPzu1L6ajf3ZwlvE4SuC9uAjCWuWc6eMTfQxSAwdC4tHf2OKphKVRM7+mWYziSF9ZR7cRHvLuSdvLxF2eR0oY9i3v2D3qALmJU4fTYU6jVuBmf1Tu49fFwRn8qPpCGHWY087WUnZJipNTTIW/jaHwbkKysa0fm5CjxfXMvky4h1qshgNgbwwa2MNJqvZLjkfj11rbNfbn5/NMYlUb0fN3lpSZwCQhavI7z5lMWVDRiNqGdxSkLmPJIXcIALjkfcjYTFQKIcTLQA5mYElZpEA1bkOfcFAWeuh9fOtsTsXQhTVQMKB9Rz3+tspuWtnLC/8DIzLrMFYGLrjCwvYvzJ8xF1yQWgMket+rpilaf0b2Z6udCr3PzPWO1mSyaUMFszG4SryuczKxhbs0QgpB1Yx1lCRHrIshgxBnAXHYsbyTHRJTve8w3x41UL1n9jL6tuphL6D1KwlUq5PtxdioVwXpW3ZLBgWoJifvZ/h26U1Ji+3aNdHc1KBYCPihz8SbKS/htvEMa+MuCEVQ9fhey8MqkUdkxpI1zI1K4y6FEmE40ML1alfjfW3TK1QWT3sL7pT5g41Py/bDXiYZ4SlGWAIG1hGjGWpfW6fqEJfpvh+T8PCWwdhp3yO4yVxs48FO1wwpsEDjA3CSFez1ZAOrqG0gyhzSCkNf2A1AffrA3IcAQVKWnUTwS3R81VeJvxNnaNtGCiIjLG+kaMHrt/hprOkBOrDhEvPZHgmLhXNpXG3KUO6TWnEUxu4+/bniAFsq11RbNobyEHK7RkbGUp8N8vCEGemPpKSMQkiHMa2rBk7ii8hU4Nd7cHXLlLP4gpDwiFqML+znl+7gaA/2r5Etur/earqkA2ldLOKJ+cGvb1PpHl4A8lTqQ/MvmSqboqi2CtZqKMAh/Wr6+sreIzEt/MP4g1lR2JJO758CeiYQj/9bGjPYvwVf3yApzS/rjz31K1w8EBDAPAIQfT1CSgcuRnnurPDDvjpH/+BTlKP7L6bfW8aPXcNdLYczVm0TVvUgBXrRGtK4CVvfYYcmFLd/tDgklGoXSiur4F+DcjycQ9yamzs+gysse5IIMcXf38rhcO73Yrq//35xkMpCq/Q0hv2C3efxE0S2KqZg970enKlsOnxQDNdbDdczpW6A==
+          - text: |-
+              I did not receive an image file from the `get_file` tool call, as the response was empty.
+
+              However, I can describe the image you provided. It's a close-up shot of a kiwi fruit cut in half, revealing its vibrant green flesh, a pale yellow-white core, and numerous small, black edible seeds arranged in a radial pattern. The fuzzy brown skin of the kiwi is visible around the edge. The image is brightly lit and focuses on the texture and colors of the fruit.
+            thoughtSignature: Cp4EAXLI2nz1Z8497A7RvO+gecDJ79XTDg/N4gA2mdplJVdEKuAPMBGcOmojOtrGjGiKPNwmhX6pnya6h4IyLYK2sahH+5E1FhiCUeFiUN1rRNXA90z3FMx/SBa0TCrYXhsY/PGZro/6qOt3oo0nYPrJyXv7C7PImJpSPNp8qMFW18CCzrbxizjAhO9eY9bJ1dNzJ9UidmWlx+d/Q1Pw4XD8FMarz0SBOMiRs5BSrn+14t0EzGgaOem7PqbEeJzpxLm/OLUnLyx8w5xIjNCtaJa09Jw3Y/j7EoUMC+YA7U4FIiy1Cc/kbHQSND+oXiWpc1qGpZqba0zwN37vvJRj8qlyso0LehQcPRb6xhZ2VC4/MMNWQfRyT/n5uFdzBRWs1NJjw6yF3FWAgYkIDxkXNXlp7aeJ9k6+KckBRbolDNduC16K4pO0JKXzxZYGVq7qHgj/vOQTe0SCdhUk0MD+WIoaF6EySu+MNx0G4fHGtm/VYHBcsER9NkOp5M6ZycVr7MWy7aQHiDw9m5icv93fgh984mZuiG+GMTjdeNri0qeAaI5O/dag7Kx45hvcI237AmgOF8Zoo2XdZ66UtN17DSD25mSNqnivF2w0rQUfNPCFkcI8JqO76GMWOEhWaj+HuV2Wr7IuNsBjK2j8METPPCVh1XpyCl5fIjgiLcIZeGPLjgc3VI1hJmg17qZrSIyLdGN8idKLXFNK87WCaKuyYaM=
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: yH97aaP_GKu-qtsPvbuDoQI
+      responseId: A1V8aa-qIfqtqtsPy5aLmAI
       usageMetadata:
-        candidatesTokenCount: 85
-        promptTokenCount: 318
+        candidatesTokenCount: 105
+        promptTokenCount: 321
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 60
+          tokenCount: 63
         - modality: IMAGE
           tokenCount: 258
-        thoughtsTokenCount: 244
-        totalTokenCount: 647
+        thoughtsTokenCount: 119
+        totalTokenCount: 545
     status:
       code: 200
       message: OK

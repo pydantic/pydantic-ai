@@ -485,7 +485,8 @@ def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider]:
         pytest.skip('xai_sdk not installed')
 
     cassette_name = sanitize_filename(request.node.name, 240)
-    cassette_path = Path(__file__).parent / 'models' / 'cassettes' / 'test_xai' / f'{cassette_name}.xai.yaml'
+    test_module = cast(str, request.node.fspath.basename.replace('.py', ''))
+    cassette_path = Path(__file__).parent / 'models' / 'cassettes' / test_module / f'{cassette_name}.xai.yaml'
     record_mode: str | None
     try:
         # Provided by `pytest-recording` as `--record-mode=...` (dest is typically `record_mode`).

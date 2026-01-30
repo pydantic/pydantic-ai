@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '353'
+      - '373'
       content-type:
       - application/json
       host:
@@ -17,7 +17,7 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: Call the get_file tool to get a document and describe what you see.
+        - text: Use the get_file tool now to retrieve a document file, then describe what you received.
         role: user
       generationConfig:
         responseModalities:
@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1022'
+      - '1165'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1234
+      - gfet4t7; dur=1043
       transfer-encoding:
       - chunked
       vary:
@@ -54,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_file
-            thoughtSignature: Ct8BAXLI2nzlDRgibKJtK+KR/7zNhEpS5JKmheeV5EuFTyyVBxy4rgCcTQ47pN4jkN/1mT0kfGd1zQrvDRvKrHpIJyPqEmtTQ+HrvijG557KUCLQrAb+Fg0/xq3itHisWUITEc4As5M0T+cGV4Qzoz2PzeCMHa3AedgKjp5WGM0/fncJIuOA6ZMFx6Wswh9/eSw7ZGwNcENuh7QjHs2JSbN+mWSIJRqJRpE82KRfMhBc/qLRk5psFMREXkbqk3NGaK4Zz3vhouhQVNt7gIbEg0M2LdFDAJalBRhT7YjLM9UgaA==
+            thoughtSignature: CvgDAXLI2nxvm6AAn1yoq8mu+YssrQxAQ8ozVZQwEm+NTYT2DorCz8UHOUwas5edL8hcqPZ5ISMq/S0mnjte1xb2tmDaZlSycInE+1wuHfdsLuBOBwkC//Jo8ozPA1DVLsYsh5pLK/+0Etn0DgtDhnmUxBtnniwZDlpkQ8vz1q+s6uc03cup11fv1+atUIg+oq4uHsa2vf5u4aQxBXRvOadiHcXY7XGfuSeyrgOWrs/iPCM7ujX/B8WgzPZ6NcseIGJDWR0h8/GI0/+0z7Zwml7+piUZjKBSnAZAe/bIpnsnGWe/LhDv5yzeH3SCtFqqarq75dDkkMxEV0aVNLU9emJMNe/qwhxu8H1uhxYsGL9iPjpiNmsNSqzj2ooAjY9IR6K3+Kp5wktyoL46R6PTMeQAlRFAu/FtK+JS5N37lY2/bBYJUhWDG+F84PPCysum0pNU0z1q55r9LXvlUVuQKnWK99d/uBOJ8ev47b94X+eIm7/Gy+dXgVjTMOvO2lX3IFYXyGvMgFNEyQWJUEK/9OOTCPXHdrsTQLxRmr17suJHtrk//kXNWAWtP+fWObWSkKRLqJ95CanlRTWAYY0TPUsLX7CsuSP/ZfwqC9MrJhsLMbScFIOiZJ34d3sZD9iGxpikW1irsa4bIDdNVNBFc3QiJjcv/Jrgn9Ef
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: yX97abHrMOOmqtsPwsKc8Ag
+      responseId: IlV8afrZE-mtqtsP6ZjwuAo
       usageMetadata:
         candidatesTokenCount: 10
-        promptTokenCount: 38
+        promptTokenCount: 41
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 38
-        thoughtsTokenCount: 48
-        totalTokenCount: 96
+          tokenCount: 41
+        thoughtsTokenCount: 119
+        totalTokenCount: 170
     status:
       code: 200
       message: OK
@@ -81,7 +81,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '18728'
+      - '19120'
       content-type:
       - application/json
       host:
@@ -90,18 +90,18 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: Call the get_file tool to get a document and describe what you see.
+        - text: Use the get_file tool now to retrieve a document file, then describe what you received.
         role: user
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_05cbf1ccd3964207a3ea4e714964f3a5
+            id: pyd_ai_98f6801c943d4b7094f0b1dc8b15debe
             name: get_file
-          thoughtSignature: Ct8BAXLI2nzlDRgibKJtK-KR_7zNhEpS5JKmheeV5EuFTyyVBxy4rgCcTQ47pN4jkN_1mT0kfGd1zQrvDRvKrHpIJyPqEmtTQ-HrvijG557KUCLQrAb-Fg0_xq3itHisWUITEc4As5M0T-cGV4Qzoz2PzeCMHa3AedgKjp5WGM0_fncJIuOA6ZMFx6Wswh9_eSw7ZGwNcENuh7QjHs2JSbN-mWSIJRqJRpE82KRfMhBc_qLRk5psFMREXkbqk3NGaK4Zz3vhouhQVNt7gIbEg0M2LdFDAJalBRhT7YjLM9UgaA==
+          thoughtSignature: CvgDAXLI2nxvm6AAn1yoq8mu-YssrQxAQ8ozVZQwEm-NTYT2DorCz8UHOUwas5edL8hcqPZ5ISMq_S0mnjte1xb2tmDaZlSycInE-1wuHfdsLuBOBwkC__Jo8ozPA1DVLsYsh5pLK_-0Etn0DgtDhnmUxBtnniwZDlpkQ8vz1q-s6uc03cup11fv1-atUIg-oq4uHsa2vf5u4aQxBXRvOadiHcXY7XGfuSeyrgOWrs_iPCM7ujX_B8WgzPZ6NcseIGJDWR0h8_GI0_-0z7Zwml7-piUZjKBSnAZAe_bIpnsnGWe_LhDv5yzeH3SCtFqqarq75dDkkMxEV0aVNLU9emJMNe_qwhxu8H1uhxYsGL9iPjpiNmsNSqzj2ooAjY9IR6K3-Kp5wktyoL46R6PTMeQAlRFAu_FtK-JS5N37lY2_bBYJUhWDG-F84PPCysum0pNU0z1q55r9LXvlUVuQKnWK99d_uBOJ8ev47b94X-eIm7_Gy-dXgVjTMOvO2lX3IFYXyGvMgFNEyQWJUEK_9OOTCPXHdrsTQLxRmr17suJHtrk__kXNWAWtP-fWObWSkKRLqJ95CanlRTWAYY0TPUsLX7CsuSP_ZfwqC9MrJhsLMbScFIOiZJ34d3sZD9iGxpikW1irsa4bIDdNVNBFc3QiJjcv_Jrgn9Ef
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_05cbf1ccd3964207a3ea4e714964f3a5
+            id: pyd_ai_98f6801c943d4b7094f0b1dc8b15debe
             name: get_file
             response: {}
         role: user
@@ -127,11 +127,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1409'
+      - '1296'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2751
+      - gfet4t7; dur=2513
       transfer-encoding:
       - chunked
       vary:
@@ -142,23 +142,24 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: The document is a "Dummy PDF file" with only that text visible on the page.
-            thoughtSignature: CvgDAXLI2nwiRqzsa2wN5oxdGLxFDf89cLxiQ0OpBknuOc8y8JaiS0PRKRpjQyTmyq80GoWqfwn9sEUrQASWETVl/m8AM32VwU/7bLHwnWQkmYvk1VJ+NLrN5IJ3sidKdG6gIfNGB8vCUBh7AS8fX5sYnOQuGbrrtJb/5RwlnGgklpfp3WVZ2v6GsI0veA50QnOVSz6Lw6FaL5hfHA2k021RCelBYRJ3wF+ZdaLxhA0mHcySf+jfOksZeythObm5SeaYk/HT9YtFJGOHPNemrnuY1oz85YTSfqcdV0MMkkcbvzfEFxF3uxor0lhk2ZK97iOTEx4G1NOLjNqkRb4LfqAyRnTfCWaTMjUk28uDtiljFsY9aae+r06TNx8434s/A4KKfOUjH2mv8f+QsCjQCulEtLm56gh56KAovnqJ+CfiAYbeJkbszcOF5EEvXBHWkxWpMTLHleqesIF0+EiUrJWqJa+x4PCezPiURbSKQwIM3hW6Lha0zTOC2sltswBBO2QMMwtPOXXfGEQq3AFbFz4GcMAp4pPfFqSUTP7+oVnhbv9cmQM+/qXFG6NR0HnESxf4Asmk6YmX06LZRc5EHvJe0uw1zZPorxzaIf9msy67Ou8gnV+S28Y/wmqrMTKu0PZjh9hTLpEVLicLUwRmXtQQYkQzguMlyIEm
+          - text: I received a file that appears to be a "Dummy PDF file". The content of the file, as extracted by OCR, simply
+              states "Dummy PDF file".
+            thoughtSignature: CpQEAXLI2nyPHezU0Ni4D7iFJrqlGkfKtwyCJfqnvYaqYUastGeYuDb7SjSC+iHQ9iE/OizifaTDSvMwDwFUsvZyDwQPdwbKv/tNkk7lnibCd7WWhsqn2qBrfebQ5wzPYhOxPTeRJ54dM8136TmDHqZJN6gyybQZhU82hnZYn7JQcHgehCRH1O27AfWfllJjBe0RITrkE7WeJ61zOl8BEratc4hyIBN0GwPCrF6vpL703vSRtasRZWS8i+aiE0g4YbjqoI+0/u8vcXQNwBmjjwiLpC1UudRGa6IpZsQcFV9cTfPcjy0gjFOjvoBVg9EeeRRbw6X2JC17nFhwRJSbh35D0DVHo+KpMns735bhElr1yNrmLsuOkmOI75KLsQJRZzF3Gn4sE/9t+575FUH5whZYgNGD/TKul+/IQLuzj/qZ9vEMclke/TESxZ+Q5kITDCnhfFwf8MQR2DW0mYqLAj5E93XGmUJ/MMCvA6d9+DpScTuuMImeYHfzdDu308thbPn5BnRndoPMeG/ft/sb/STHZULHKQLu01j5FvuyW0XcWvMFWx50413cSflUCsM9qH+X3uIZ3oi7m+szjFGFQWqvk1be3ICrZ+d1NVZiPagObl97Gk2ztXJm+DR+5Oly6rELd0mLMX+g68DdAk3NojSPQA1o0RONLqn+VhA+3JJJPkx8zYH3JwHR5eMe9OLsnHlEdw9YHg==
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: zH97aZOwKqOfqtsP8cSBqQk
+      responseId: JVV8abd9uZ2q2w-juIKgCw
       usageMetadata:
-        candidatesTokenCount: 18
-        promptTokenCount: 318
+        candidatesTokenCount: 32
+        promptTokenCount: 321
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 60
+          tokenCount: 63
         - modality: DOCUMENT
           tokenCount: 258
         thoughtsTokenCount: 119
-        totalTokenCount: 455
+        totalTokenCount: 472
     status:
       code: 200
       message: OK

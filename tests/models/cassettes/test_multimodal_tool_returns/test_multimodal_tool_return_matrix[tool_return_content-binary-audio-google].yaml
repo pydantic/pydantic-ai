@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1251'
+      - '2353'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2680
+      - gfet4t7; dur=2565
       transfer-encoding:
       - chunked
       vary:
@@ -54,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_file
-            thoughtSignature: CosDAXLI2nwY2TSxRwtmGWaHRirAY/WfuHUqOQpeyblWmt90xHQGjNk+fPnFCJPlNmUJbRftkKorDtNuXDQEZNG/LeD5ZhnzTHCp7guXgKefGJC/fuupyYdUE67UVBz8X1VY0gUnOiW6QPGoUrmHz2tZGKu8zivRmkzB8d8DWtAAdR4U0CkYiu+b0FG9htdDdAWaE/v0S0VWzzsrZXIkNBHDc/Kw98BVxjrbYwvNWcOJq3Rxl0OKNqsuV/FCh3gaZvzSvwQs2hPplI0KO3s/A7z7pqEWcVDRiVwGDZfJJ10L4YrREIi5ff5m8v8/qH9ot/LhNikRXs3jcE2HlZWYACTiEjrTwyJuCL3t4NclkiEFIxCFRJKj1/rFVr53GjNGrGn4AhYndgy74c2Pn/kolNpS3CE3EpJ6zlHjrlzlBc7vczqx9kq23BJZCvul6hbKoCMRxILL4ZZZq4tVpPZDRQ2HJ4QKcFJLpjvyPlnc/T2a1VDbVgUBjr/WgHZrtLYx5jW9f1rrZ1HlKXaMvZ8=
+            thoughtSignature: CvEKAXLI2nxF7seMp5ZMJ/SDZ1vtGU9bkMUYeG0Nh23nQmZVug+ZfjtxyA3w5pwxUxscRtCVLxNU1XGLd7CW5wOxrL9rXLlr7yOK1yhLoRE1NhqB7/UFxI4RkgyiyzcDb5+MOiNt/ZBsTLXjsjtp6KuPUFFGVAQ2KY6KePGGMPvjoLMipVE07wETphNh1ykHqBqHrkGwHjQhv6tgEo2TcTDCj11TZLL+s7UWYM3eEUqI5Z/J7AmlhA1vfPj77zrFSymmlufFgmI+jFbB+rv7yVjUZ4JfDRvPjP6k8yYTAwaVjc4l1k0apYLYAEzN5Td+b1uxNIKTtVY3gTSGKS/Ycjl0ZdYuA4WosFwU53oa2iZOucjX4PMbBH7QXDRsgLX13MO9N1BxBmk/szRJk3Q34jezdUcdQYJFeq6bTA/hvKkESLlkjbJz1KkECSif+JorlbPML48RWHBimNR8fKnjC5QBtvY3RFG6fighFfJoeoHzuqTwVP0owoy0Z1Ie+139H72AYMVNvMnQ6Y3i9PX5SwL3koDw60Sq+yudFfDB6oybAXvQeLVIigQY1y2h5kYUkto+BBPWYWG2GUTzjZx7nOukFOCH+48MI1NpLd7S5cHx7lCK9PfNVVJZBcksFOBNoKhX46MT4hL6OWLVeuX5x8bUXJRBajZm0oXKppKGBksLIOhD3mmQbyacun2t1eExg+IZO5qSgfzKMWUPCFxL9fOw71siMzIFvgDIgmQnet5zug9STBJfY1kuY2a4/14JJ/9Jzo90yeJlTW51h0DxjEsX31DYSui2qHy3j00hSFHTd+NWfGFbfZ3gyNmkP/73hrO974MYLVSWjHlywZt8jArX2/qO0l9Gwwzq+y4GnMJKhUA/jVFSKlDuOixHEcZ+MWSJEfcbqdToDCNjoHQdrJkGKjl7KmncKWDosKV5H+aLHZR1590I4arspKqt37xq3g5cNAJsh6sOQh0FuGquoy10upIQVsX6rF1b4lw34693cnnRuHuKXNzaJko2M1vgvpDNLZTHzhEaFQQr62Rv3zQ6hMTsiQWIyJDc8fvlqeChmie4XQXzknVa9RSnaSxJ7Nlsr0NWWiwYAXesB+HebYUC2hKtshLpmPy/74XGsXNJo13JiqxR/yMiejyWcP8y1Xy3y8jcyFRbZFjxKtVNtKfEpdVZIkFtdxui61sUKEcy/D11MpHRMKes/QcSftJSXzF+w6n3gQbTnH2sow4rVOiC5sv39/Nv6JR5ck13HO+K8rj+1Aw/4Ji8faTG9OpbIDcpKPoFd9SeFYMsC7mtyNv9vkoE6BISRsAg/MfUJSbuThasyVpbRyX/hCbxc/I/TyT0iDCn4rHLcfMG1MSlKKZtgrDRyKJh0cXUjrxmX44ngE0zLn74eYo8NUy5odewyk8XJxa6cDkjro8iWqpwEi0NhD0bkxoijXRCOEt2bfew1Imgl0SgM3Om1j4eNE35uzkpkQiKODp2AkNyfiivyAuyEDzU3YZhlG5FeHDjBdHJbzLiONIDFyuEoZfDryyGrJ6A72dJTbjPOGlZWDeHI2qLqsNFXWPfHCwg+SjzPMVI4RzAcQcDB+zeg7l68Lm+g14NkY7JxuH4Zas/1YcetwCw2RUAQA1R9jcXN6u5Bp42Hoy03GgCxRLmtzM7tBVMYLmy4/Ih1L1LWLQg2uEvIZlna1SBWxw/GqJfDft9GRAV+QFaR2LvXFc5OsNR7os8QTKblQyXvivxyaEk0QHYmOBltu3O86ITeApSGM/AqPubeaZf3SXAVFeYoQDQqfin2NywsKLlwTAmcJWP805o0Q1cA7/z/fYT8cGLJY3a82d3wmYr7TRyzPPYa7jWE0sQN/Dn7g==
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: Lbp7aY_tEJKcz7IPkbq5wQ8
+      responseId: qlV8aZqcCp-pqtsPhovV6QM
       usageMetadata:
         candidatesTokenCount: 10
         promptTokenCount: 41
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 41
-        thoughtsTokenCount: 82
-        totalTokenCount: 133
+        thoughtsTokenCount: 334
+        totalTokenCount: 385
     status:
       code: 200
       message: OK
@@ -81,7 +81,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '73119'
+      - '74451'
       content-type:
       - application/json
       host:
@@ -95,13 +95,13 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_af134a7c9b1a453c8af15cff8a91e4b2
+            id: pyd_ai_fe6bab803295488fabd6758487316c98
             name: get_file
-          thoughtSignature: CosDAXLI2nwY2TSxRwtmGWaHRirAY_WfuHUqOQpeyblWmt90xHQGjNk-fPnFCJPlNmUJbRftkKorDtNuXDQEZNG_LeD5ZhnzTHCp7guXgKefGJC_fuupyYdUE67UVBz8X1VY0gUnOiW6QPGoUrmHz2tZGKu8zivRmkzB8d8DWtAAdR4U0CkYiu-b0FG9htdDdAWaE_v0S0VWzzsrZXIkNBHDc_Kw98BVxjrbYwvNWcOJq3Rxl0OKNqsuV_FCh3gaZvzSvwQs2hPplI0KO3s_A7z7pqEWcVDRiVwGDZfJJ10L4YrREIi5ff5m8v8_qH9ot_LhNikRXs3jcE2HlZWYACTiEjrTwyJuCL3t4NclkiEFIxCFRJKj1_rFVr53GjNGrGn4AhYndgy74c2Pn_kolNpS3CE3EpJ6zlHjrlzlBc7vczqx9kq23BJZCvul6hbKoCMRxILL4ZZZq4tVpPZDRQ2HJ4QKcFJLpjvyPlnc_T2a1VDbVgUBjr_WgHZrtLYx5jW9f1rrZ1HlKXaMvZ8=
+          thoughtSignature: CvEKAXLI2nxF7seMp5ZMJ_SDZ1vtGU9bkMUYeG0Nh23nQmZVug-ZfjtxyA3w5pwxUxscRtCVLxNU1XGLd7CW5wOxrL9rXLlr7yOK1yhLoRE1NhqB7_UFxI4RkgyiyzcDb5-MOiNt_ZBsTLXjsjtp6KuPUFFGVAQ2KY6KePGGMPvjoLMipVE07wETphNh1ykHqBqHrkGwHjQhv6tgEo2TcTDCj11TZLL-s7UWYM3eEUqI5Z_J7AmlhA1vfPj77zrFSymmlufFgmI-jFbB-rv7yVjUZ4JfDRvPjP6k8yYTAwaVjc4l1k0apYLYAEzN5Td-b1uxNIKTtVY3gTSGKS_Ycjl0ZdYuA4WosFwU53oa2iZOucjX4PMbBH7QXDRsgLX13MO9N1BxBmk_szRJk3Q34jezdUcdQYJFeq6bTA_hvKkESLlkjbJz1KkECSif-JorlbPML48RWHBimNR8fKnjC5QBtvY3RFG6fighFfJoeoHzuqTwVP0owoy0Z1Ie-139H72AYMVNvMnQ6Y3i9PX5SwL3koDw60Sq-yudFfDB6oybAXvQeLVIigQY1y2h5kYUkto-BBPWYWG2GUTzjZx7nOukFOCH-48MI1NpLd7S5cHx7lCK9PfNVVJZBcksFOBNoKhX46MT4hL6OWLVeuX5x8bUXJRBajZm0oXKppKGBksLIOhD3mmQbyacun2t1eExg-IZO5qSgfzKMWUPCFxL9fOw71siMzIFvgDIgmQnet5zug9STBJfY1kuY2a4_14JJ_9Jzo90yeJlTW51h0DxjEsX31DYSui2qHy3j00hSFHTd-NWfGFbfZ3gyNmkP_73hrO974MYLVSWjHlywZt8jArX2_qO0l9Gwwzq-y4GnMJKhUA_jVFSKlDuOixHEcZ-MWSJEfcbqdToDCNjoHQdrJkGKjl7KmncKWDosKV5H-aLHZR1590I4arspKqt37xq3g5cNAJsh6sOQh0FuGquoy10upIQVsX6rF1b4lw34693cnnRuHuKXNzaJko2M1vgvpDNLZTHzhEaFQQr62Rv3zQ6hMTsiQWIyJDc8fvlqeChmie4XQXzknVa9RSnaSxJ7Nlsr0NWWiwYAXesB-HebYUC2hKtshLpmPy_74XGsXNJo13JiqxR_yMiejyWcP8y1Xy3y8jcyFRbZFjxKtVNtKfEpdVZIkFtdxui61sUKEcy_D11MpHRMKes_QcSftJSXzF-w6n3gQbTnH2sow4rVOiC5sv39_Nv6JR5ck13HO-K8rj-1Aw_4Ji8faTG9OpbIDcpKPoFd9SeFYMsC7mtyNv9vkoE6BISRsAg_MfUJSbuThasyVpbRyX_hCbxc_I_TyT0iDCn4rHLcfMG1MSlKKZtgrDRyKJh0cXUjrxmX44ngE0zLn74eYo8NUy5odewyk8XJxa6cDkjro8iWqpwEi0NhD0bkxoijXRCOEt2bfew1Imgl0SgM3Om1j4eNE35uzkpkQiKODp2AkNyfiivyAuyEDzU3YZhlG5FeHDjBdHJbzLiONIDFyuEoZfDryyGrJ6A72dJTbjPOGlZWDeHI2qLqsNFXWPfHCwg-SjzPMVI4RzAcQcDB-zeg7l68Lm-g14NkY7JxuH4Zas_1YcetwCw2RUAQA1R9jcXN6u5Bp42Hoy03GgCxRLmtzM7tBVMYLmy4_Ih1L1LWLQg2uEvIZlna1SBWxw_GqJfDft9GRAV-QFaR2LvXFc5OsNR7os8QTKblQyXvivxyaEk0QHYmOBltu3O86ITeApSGM_AqPubeaZf3SXAVFeYoQDQqfin2NywsKLlwTAmcJWP805o0Q1cA7_z_fYT8cGLJY3a82d3wmYr7TRyzPPYa7jWE0sQN_Dn7g==
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_af134a7c9b1a453c8af15cff8a91e4b2
+            id: pyd_ai_fe6bab803295488fabd6758487316c98
             name: get_file
             response:
               return_value: File attached
@@ -128,11 +128,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1110'
+      - '777'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2438
+      - gfet4t7; dur=2728
       transfer-encoding:
       - chunked
       vary:
@@ -143,23 +143,23 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: The audio file contains a male voice introducing himself by saying, "Hello, my name is Marcelo."
-            thoughtSignature: CokCAXLI2nyyZ5105RuAH52ABJPVRKUxyczHtAF9tGi4/vKWKL+fT7Azewu8NFdH30wAleZNBQPcYuOTtKV0UXISOQ7cZA4oXLj4zf93FBpp1JbjBTRTR5ehk7SirSM6Gs5zgyMEZ+8PdtvGuS6Um5oFsHoG2OK38ngtQ6qNI5xsXnckSYAFtHIXcz2YlxTUOpBewz2u4wYeaAq2NwMtK9F+J+cRx5qISVTTxKAx3nYWeil/sXYL5lbhVVoK97EEYodQrZQVPUFyfHRql8GQkL632XEY84gxgLw/7ayRAGJV91FFO8/N0rBBi6PlvcW0XR7QuP6iL7S52EGdYr+DKcE9rlPMwrRBUPiUug==
+          - text: The audio file contains a male voice saying, "Hello, my name is Marcelo."
+            thoughtSignature: CsIBAXLI2nwMIpvWSrPg6IHI2LEEvV+M0ejkTNXGZ3NCkxpsRcp4CW7ar28b9+6EblfPvESAAEKUnmF/hZYypB1W+FOJJ70uH0QH96aJo9P4LIwF4trm9T4wrD5+XlvsRr1rECb4bhbCy8EYVAb9ESaSBLTpnW09hAov9RY+moCaHyJMFHDMfeqLAoa8kJkDHk5jPdyXljglzoUFGc1KdGiHaMp4SapdMdX8WmMCx6wvhjZhOFFZoMeWSaD/XsREUBhXKs4=
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: L7p7af2KMYnUz7IPpa3XoAQ
+      responseId: rVV8aZlEraeq2w--s9zwCA
       usageMetadata:
-        candidatesTokenCount: 20
+        candidatesTokenCount: 17
         promptTokenCount: 214
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 70
         - modality: AUDIO
           tokenCount: 144
-        thoughtsTokenCount: 52
-        totalTokenCount: 286
+        thoughtsTokenCount: 34
+        totalTokenCount: 265
     status:
       code: 200
       message: OK

@@ -861,6 +861,17 @@ class BaseToolReturnPart:
         """
         return self._split_content()[0]
 
+    @property
+    def content_items(self) -> list[Any]:
+        """Return content as a list for iteration.
+
+        If content is already a list, returns it directly. Otherwise wraps single values in a list.
+        This handles the type narrowing for `ToolReturnContent` in one place.
+        """
+        if isinstance(self.content, list):
+            return self.content  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+        return [self.content]
+
     def model_response_str(self) -> str:
         """Return a string representation of the data content for the model.
 

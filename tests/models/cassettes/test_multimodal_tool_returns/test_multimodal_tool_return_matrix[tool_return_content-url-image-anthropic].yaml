@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '348'
+      - '396'
       content-type:
       - application/json
       host:
@@ -18,7 +18,7 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: Call the get_file tool to get a image and describe what you see.
+        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
           type: text
         role: user
       model: claude-sonnet-4-5
@@ -38,7 +38,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '536'
+      - '598'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -47,13 +49,13 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - text: I'll get the file and describe what I see.
+      - text: I'll retrieve the file for you and then describe what I receive.
         type: text
-      - id: toolu_01M9Doe3D3Y33Pqz15x9b7Gi
+      - id: toolu_01QEva8jYVM11Muw9fnn4MVL
         input: {}
         name: get_file
         type: tool_use
-      id: msg_019EYTCh1Q6peuCJM6L3zeRY
+      id: msg_012tHygSURidKLUZ6Zsz7u6m
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -65,8 +67,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 555
-        output_tokens: 48
+        input_tokens: 558
+        output_tokens: 51
         service_tier: standard
     status:
       code: 200
@@ -80,7 +82,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '834'
+      - '901'
       content-type:
       - application/json
       host:
@@ -90,13 +92,13 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: Call the get_file tool to get a image and describe what you see.
+        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
           type: text
         role: user
       - content:
-        - text: I'll get the file and describe what I see.
+        - text: I'll retrieve the file for you and then describe what I receive.
           type: text
-        - id: toolu_01M9Doe3D3Y33Pqz15x9b7Gi
+        - id: toolu_01QEva8jYVM11Muw9fnn4MVL
           input: {}
           name: get_file
           type: tool_use
@@ -106,11 +108,11 @@ interactions:
           - text: File attached
             type: text
           is_error: false
-          tool_use_id: toolu_01M9Doe3D3Y33Pqz15x9b7Gi
+          tool_use_id: toolu_01QEva8jYVM11Muw9fnn4MVL
           type: tool_result
         - source:
             type: url
-            url: https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png
+            url: https://www.gstatic.com/webp/gallery3/1.png
           type: image
         role: user
       model: claude-sonnet-4-5
@@ -130,7 +132,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '907'
+      - '1449'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -140,18 +144,21 @@ interactions:
     parsed_body:
       content:
       - text: |-
-          I can see the Google logo. It features the word "Google" written in a distinctive, colorful sans-serif typeface. Each letter is rendered in a different color from Google's signature palette:
+          I received a beautiful image of an orange-yellow rose. Here's what I can describe:
 
-          - **G** - Blue
-          - **o** - Red
-          - **o** - Yellow
-          - **g** - Blue
-          - **l** - Green
-          - **e** - Red
+          **Main Subject:** A single rose bloom in warm, vibrant colors - primarily orange with yellow undertones and hints of peachy tones.
 
-          The logo uses bright, primary colors and has a clean, modern, and friendly appearance. This is Google's well-known wordmark logo that has become one of the most recognizable brand identities in the world.
+          **Details:**
+          - The rose petals have a soft, delicate appearance with water droplets visible on some of the petals, giving it a fresh, dewy look
+          - There's a pink rosebud visible at the top of the stem
+          - The stem is brown/dark and curves elegantly, with what appears to be a small green leaf or two attached
+          - The petals show natural texture and gradation of color, with the outer petals appearing more orange and the inner areas showing more yellow
+
+          **Background:** The image has a clean white background, making the rose stand out prominently
+
+          **Overall Impression:** This is a professionally photographed or isolated image of a rose, likely meant for decorative purposes, greeting cards, or botanical illustration. The water droplets add freshness and vitality to the composition.
         type: text
-      id: msg_01Vbxbnn5MXETipgLuCNQpsr
+      id: msg_01WW29ubzc1UFa5PvrbEyGbd
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
@@ -163,8 +170,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 765
-        output_tokens: 131
+        input_tokens: 796
+        output_tokens: 225
         service_tier: standard
     status:
       code: 200

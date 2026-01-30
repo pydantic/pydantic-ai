@@ -482,9 +482,7 @@ class GroqModel(Model):
                 tool_content_parts: list[str] = []
                 file_content: list[UserContent] = []
 
-                part_content = part.content
-                items = list(part_content) if isinstance(part_content, list) else [part_content]
-                for item in items:
+                for item in part.content_items:
                     if isinstance(item, (BinaryContent, ImageUrl)):
                         if isinstance(item, BinaryContent) and not item.is_image:
                             raise RuntimeError('Only images are supported for binary content in Groq.')

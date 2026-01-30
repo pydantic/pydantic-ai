@@ -7,7 +7,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        YmE4NWMzMzYtZmI0MS00NjU3LWI2MWItOGFhYTJmMDUwYzAx
+        MGE1YjhkZDQtY2I5Ny00MDk2LTgyNzktOTFlZDRkMmVhZmY3
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -23,12 +23,12 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '471'
+      - '498'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1043
+        latencyMs: 1066
       output:
         message:
           content:
@@ -37,7 +37,7 @@ interactions:
           - toolUse:
               input: {}
               name: get_file
-              toolUseId: tooluse_izzz3EovQ-qB6tVLdv3pTQ
+              toolUseId: tooluse_bPSyeWKZRy6qASMPgHVImA
           role: assistant
       stopReason: tool_use
       usage:
@@ -52,15 +52,15 @@ interactions:
     body: '{"messages": [{"role": "user", "content": [{"text": "Use the get_file tool now to retrieve a audio file, then describe
       what you received."}]}, {"role": "assistant", "content": [{"text": "<thinking> I need to use the get_file tool to retrieve
       an audio file. Since the tool does not require any specific arguments, I will call it without any parameters. </thinking>\n"},
-      {"toolUse": {"toolUseId": "tooluse_izzz3EovQ-qB6tVLdv3pTQ", "name": "get_file", "input": {}}}]}, {"role": "user", "content":
-      [{"toolResult": {"toolUseId": "tooluse_izzz3EovQ-qB6tVLdv3pTQ", "content": [{"text": "See file 4660af."}], "status":
+      {"toolUse": {"toolUseId": "tooluse_bPSyeWKZRy6qASMPgHVImA", "name": "get_file", "input": {}}}]}, {"role": "user", "content":
+      [{"toolResult": {"toolUseId": "tooluse_bPSyeWKZRy6qASMPgHVImA", "content": [{"text": "See file 4660af."}], "status":
       "success"}}, {"text": "This is file 4660af: [Audio not supported by Bedrock]"}]}], "system": [], "inferenceConfig":
       {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_file", "inputSchema": {"json": {"additionalProperties": false,
       "properties": {}, "type": "object"}}}}], "toolChoice": {"auto": {}}}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        NThlY2QzZDYtZmI0Yy00MjQxLWI2NjEtNzlhZWRmMGRlZGJm
+        ZjY2NjJjMjItM2RhMS00Yzg0LTk1MmMtMTkwNjhmNmI1ZWQw
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -76,26 +76,25 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '661'
+      - '515'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1796
+        latencyMs: 1138
       output:
         message:
           content:
-          - text: |-
-              <thinking> The get_file tool has returned a file named "4660af". However, the file is not supported by Bedrock, which means I cannot directly describe its content. I need to inform the user about this limitation. </thinking>
-
-              I'm sorry, but the audio file I retrieved, named "4660af", is not supported by Bedrock, and I cannot describe its content. If you have any other requests or need assistance with a different type of file, please let me know.
+          - text: I have retrieved the audio file named "4660af". Unfortunately, the audio content is not supported by the
+              current environment, so I cannot provide a detailed description of the audio content. If you have any specific
+              questions about the file or need further assistance, please let me know.
           role: assistant
       stopReason: end_turn
       usage:
         inputTokens: 502
-        outputTokens: 108
+        outputTokens: 58
         serverToolUsage: {}
-        totalTokens: 610
+        totalTokens: 560
     status:
       code: 200
       message: OK

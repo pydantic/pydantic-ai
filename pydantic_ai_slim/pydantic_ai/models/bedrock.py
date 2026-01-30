@@ -651,9 +651,7 @@ class BedrockConverseModel(Model):
                         sibling_content: list[ContentBlockUnionTypeDef] = []
 
                         # Iterate content directly to preserve order of mixed file/data content
-                        part_content = part.content
-                        items = list(part_content) if isinstance(part_content, list) else [part_content]
-                        for item in items:
+                        for item in part.content_items:
                             if isinstance(item, BinaryContent):
                                 file_block = await self._map_file_to_content_block(item, document_count)
                                 if file_block is not None:

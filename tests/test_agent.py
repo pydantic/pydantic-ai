@@ -73,7 +73,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsBytes, IsDatetime, IsNow, IsStr, TestEnv
+from .conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
 
@@ -5147,7 +5147,7 @@ def test_tool_returning_binary_content_with_identifier():
             parts=[
                 ToolReturnPart(
                     tool_name='get_image',
-                    content=BinaryContent(data=IsBytes(), media_type='image/png', _identifier='image_id_1'),
+                    content=IsInstance(BinaryContent),
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                 )

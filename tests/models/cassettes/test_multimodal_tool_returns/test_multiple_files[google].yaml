@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1237'
+      - '1038'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1369
+      - gfet4t7; dur=1460
       transfer-encoding:
       - chunked
       vary:
@@ -54,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_two_images
-            thoughtSignature: Cv0CAXLI2nzLSq8tA0eb2dpstZuSniN9DvBhyKQGUmSJPjQDf2s84nKUriFMsWLI+182TPtMX3Cz4myb1fe+KLpWKiQBsB6ffA3IFXY03VA4BIQATwvGIB70+hYRSj1U86zwE5ecE8EVdw5IxqZ9dIqSK9MnrSiohdpMvWs+8etP4mKApFkJCn6Eu/Lsr0SK+JvZxLI9SZooRSkFe6rRdHgeC7s451HC/76mTX0+lrRe6y/0yPc5g1NM1MGWHFEuMUROJdlVRR4YxKoqE4Gyz0g97otZFi0xLUXEbNoCmtvDyWB6G7pCZRuuf7BL/XclqDO3JqZiD9Nhc2AhtV+GjmdPkZIElQWhpVM253XKvA9LUj5TRGwWoGsazaJfdTRYT7e67LiDT/XKIEouI+fjDApoHo0mW8dUYU4WdS1yRVj2jui51R+4MuX60rtCEndNUIFUb4gjw2wD6e/PFRyEbD5TOHxmHeOM7miQ2bjVOyqmwhglF00kFgYEyWA1WhhF
+            thoughtSignature: CpUDAXLI2nyR+hs6917KlpAtcv7Z/YADzbwO3K0k/nBuhGcUfXqZT8p36LVf0eieicS2O4C2VEwBRp6mhanMpisl+mqyj0HGGs1AJpdhRJTRDyzyaTIX2Z2AOtTQaWISs2GMtKORcp5fy55LCLX+on0QDTzxeeUpnOzya/cHgu73fyjPBfhCM0st80LBJiZ8NK7TJk51KCEkIS3hDECLcPnbK/v1uxn7OGGvP4VaTemFz55s/VBoHL5dedHW25lk+iVzW/U5Ws7aK9qfh4RM/FlGDLj0LHRC3YRFqVYEeHrwxUTHq2JXJsWIEeKb1PiBIVPVlA6DKpsCQR7m2EV3FXrtDV/d3b6QGdcqR9GLhiLiuoXl3hbxaXpldluKa/6Xlk4MoO6fvlSI7x1chF0dGpPEpkI3ywSWsdiEmZneAnw/ULEL3u6DBVf+ZFnfYUBqWW2YOkG93l9zBCoYRn2vMicKCZ5AKY56JLhf0VxrPrjvU/N5p6dCbHXUYiUeW88CH8omz69zbSW1qMPSLPnDiQ82zSWjg+27
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: IJN7aezDG76Hz7IP_KaW6Qg
+      responseId: H1Z8acelOresz7IP-I6r-AM
       usageMetadata:
         candidatesTokenCount: 12
         promptTokenCount: 38
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 38
-        thoughtsTokenCount: 89
-        totalTokenCount: 139
+        thoughtsTokenCount: 91
+        totalTokenCount: 141
     status:
       code: 200
       message: OK
@@ -2081,7 +2081,7 @@ interactions:
       accept-ranges:
       - bytes
       age:
-      - '1075'
+      - '50486'
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       cache-control:
@@ -2097,7 +2097,7 @@ interactions:
       cross-origin-resource-policy:
       - cross-origin
       expires:
-      - Fri, 29 Jan 2027 16:46:37 GMT
+      - Fri, 29 Jan 2027 16:55:06 GMT
       last-modified:
       - Fri, 23 Apr 2021 09:38:00 GMT
       report-to:
@@ -2116,7 +2116,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '283856'
+      - '283888'
       content-type:
       - application/json
       host:
@@ -2130,13 +2130,13 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_776422ef71ea4cc79100c231edb9e64b
+            id: pyd_ai_b432a2881719423e8275a08ae1d01113
             name: get_two_images
-          thoughtSignature: Cv0CAXLI2nzLSq8tA0eb2dpstZuSniN9DvBhyKQGUmSJPjQDf2s84nKUriFMsWLI-182TPtMX3Cz4myb1fe-KLpWKiQBsB6ffA3IFXY03VA4BIQATwvGIB70-hYRSj1U86zwE5ecE8EVdw5IxqZ9dIqSK9MnrSiohdpMvWs-8etP4mKApFkJCn6Eu_Lsr0SK-JvZxLI9SZooRSkFe6rRdHgeC7s451HC_76mTX0-lrRe6y_0yPc5g1NM1MGWHFEuMUROJdlVRR4YxKoqE4Gyz0g97otZFi0xLUXEbNoCmtvDyWB6G7pCZRuuf7BL_XclqDO3JqZiD9Nhc2AhtV-GjmdPkZIElQWhpVM253XKvA9LUj5TRGwWoGsazaJfdTRYT7e67LiDT_XKIEouI-fjDApoHo0mW8dUYU4WdS1yRVj2jui51R-4MuX60rtCEndNUIFUb4gjw2wD6e_PFRyEbD5TOHxmHeOM7miQ2bjVOyqmwhglF00kFgYEyWA1WhhF
+          thoughtSignature: CpUDAXLI2nyR-hs6917KlpAtcv7Z_YADzbwO3K0k_nBuhGcUfXqZT8p36LVf0eieicS2O4C2VEwBRp6mhanMpisl-mqyj0HGGs1AJpdhRJTRDyzyaTIX2Z2AOtTQaWISs2GMtKORcp5fy55LCLX-on0QDTzxeeUpnOzya_cHgu73fyjPBfhCM0st80LBJiZ8NK7TJk51KCEkIS3hDECLcPnbK_v1uxn7OGGvP4VaTemFz55s_VBoHL5dedHW25lk-iVzW_U5Ws7aK9qfh4RM_FlGDLj0LHRC3YRFqVYEeHrwxUTHq2JXJsWIEeKb1PiBIVPVlA6DKpsCQR7m2EV3FXrtDV_d3b6QGdcqR9GLhiLiuoXl3hbxaXpldluKa_6Xlk4MoO6fvlSI7x1chF0dGpPEpkI3ywSWsdiEmZneAnw_ULEL3u6DBVf-ZFnfYUBqWW2YOkG93l9zBCoYRn2vMicKCZ5AKY56JLhf0VxrPrjvU_N5p6dCbHXUYiUeW88CH8omz69zbSW1qMPSLPnDiQ82zSWjg-27
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_776422ef71ea4cc79100c231edb9e64b
+            id: pyd_ai_b432a2881719423e8275a08ae1d01113
             name: get_two_images
             response: {}
         role: user
@@ -2165,11 +2165,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1956'
+      - '2020'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2758
+      - gfet4t7; dur=2427
       transfer-encoding:
       - chunked
       vary:
@@ -2180,26 +2180,25 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: I see two images. The first image is a cross-section of a kiwi fruit, showcasing its vibrant green flesh,
-              a white core, and numerous small black seeds arranged in a circular pattern. The second image is a close-up
-              of a yellow and orange rose with water droplets on its petals. The rose is on a stem, and the background features
-              horizontal stripes of varying colors, mainly greens and browns.
-            thoughtSignature: CqgFAXLI2nyOgU1Bke/7lfmg5poVzzfELhb3240K3t5F3eBT4Bae8G630bn98CXJfTE62Ij3dpHBo1dt1w8kn4ciimRrCmPcLJ68ZaGizlWJiqz6CZrj9kg8QSnEyc24aJk7STR7pzxOO+Z8FbvmuikVXgjd00dUb1/ZI26xh6AosSzoUouHKM/UhYc/J8Ptcpl7ysRkapsCi9B2b6G1e+6gKUbmkj72du656hJNDLWKe4WU48OnxeFqb9/fbQph/jwxNowEL8Yi3z6+DfqnmDzm1goPZIUhlxn24h1sl5IJoCkSobTfzRWQFk3PAEp5xBjCSijkAbTHJC6qIHkdIn6U4xMjNxtNUGwbcYBvEMM8Us6KEzrQYI25wb6hGaLU1V4Uzu1X9zm4fP31/WmEaO59T5qr1LqVU+38s6vMn0xILek5S5PcIknqpBSNFABAFhRg848AZUPaZ56dWCEZyp2+Gcb3lV6mR/DXqaVFc/ionyCf3C9IEtoIfK30BaG0W7BdF05PBPhBOrRSsauEZ58evRuGDOeWbnIEhwgDkUKwZsKBBn/0XJYxVYHkKxyQMM1HS8Mjd2tkhtgRpdvTxcFnYHj4VHI41MYFbOc2II5mgK5tuW2KYbrMMcdbCVhehS1beGDvQDf+t4cjvvWZc8tesvwKzK1P+RJWZ2ndTKBJ1Y/yXFr6riE5TI05a6sSIrGPhMIxWJvDJypRgn69F4JU3Ia9rhrHlRtzMKnEzPeeIQbkHtoHYnTcm3nr98JuaJffUqWeFixMalZ+9oYJZZHxcY1lkuH5HANCpUrJsFvtfx8fGkvLLT7vncRpcoqgwggotfS4ZX3btLgVuT5WdIMh6f4thH8+ZXXtvfTcpgDRHLN7iwESxbqhQ1enJceS9/PpnN+JWUdSITg=
+          - text: I see two images. The first image is a cross-section of a kiwi fruit, showing its green flesh, black seeds,
+              and white core. The second image is a close-up of a vibrant orange and yellow rose with water droplets on its
+              petals, set against a horizontally striped background.
+            thoughtSignature: CtAHAXLI2nyegGoBPGgqPsyH7F2AJ21sbIOX+tMmS9oTYVRucHdxaVsEGH0NtwayEyMb3H7bxkpD2FDcOVgqaUUhJf8A0PlgQ79OZIz78ksiwmymHjv82hY6glxAzJT9nVx0A0V5HsxXwkarmXS/vGOEc0p6SYuVB+/ypxCTNATfujGbKs1Mp/mHMTCT4ZHHvqQzj7+1+5l6ZfUabkeKQEidFUiLrBkn1ecXRqwSBzDTrjCF+MY37zml5tNho8kUAMuUmlyGWReMOfrpYj3hAvJa0eDnLZ1MgBPjGJnJYMt47ybRzgrPfWf+uiT92y0AM92359gZFWHhMtzB4FIaQfAoCIQY4ih2k5f2H3jlJjkv6/1NauHjzq8S4vPbWKwRvFS/ED7Pm5SbCWHd6Vkd1nUgWqmLqU4xc2VT7n6rmdfWfmXev8EwOxakNZjI5msVdP6raHUDnlpOe6zmRpI4B9obJtq/1UgLa8HRP3KcLn27289Q2z/g7dPIaiJdY6o4rZcH4VdWf6ydwDnXbHHsJJykdL4A5eZ7ObbOeP5plTxbYzjYd+8/AS2W4EvR/EQiSBwYmmHu6N5ubKcUEu1FtR8gT4GQWDNFaqwQ1J7QumWMpltt31t+dbHujazfPQlhtw8wU/eyxoL20X3ysTrVnlfpKV6WB89rpvFU65xEpAH1Dp2vqi5g50BuisQnRTz37egm2jkAnko57n7x007Qq2BLEicj89sL19GpKB+q3Cs+ruNhYnWoyuXTQgNkC0n5H6f0z58rsN94iVG2WITr8Zeqe7yk7VPsEmIqoT5tqZ9gsxi8pWTYFCmCO1RDQvtIXm2D3ojRiPydnOpz3KlahHsyXr6lgQTOun96SIywBgCqnWuVx/LZqIB13Y2KWrVfJobfRTDZdopYplMfm4uSDCeK/4cZp15hM3lMDjCIOu4Vh/K1pprhDTt7cPR4uJQzujDA+GlsYkzUHmws2nYS8oi1vhCtPlm9cGdZEoaA2Cp63NKX+zqQqbvliCV5qVk+hBW6mD6tEzc7ZB8gWN+YKhq+Kc9fn6p26i45ld8mVnkfLetVrHoZPQaFuHnPIamTUsRAytcVp+6aHRF/AHz1XJLfy5vcpAFWGu/nj16jMjGsmvn3DhoS7o9pQQN1+o6CfCRxvZ+wyJ85aINqJbyCqWDRYOx00gjCBBu46llpxAdleg6QD55hDS9qZZ6m1gB1iVTybbNJWuElCsOJdZcG843tZWHlCP/l6sIzE+e5Cazq8fdi0jIFyflobu7LRmdbQl6krbtz5TrbDyGdyx0nG87s3Q==
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: I5N7aeDAIImcz7IP3NWJ2Q8
+      responseId: IlZ8acffJMbUz7IPnZaZmQQ
       usageMetadata:
-        candidatesTokenCount: 82
+        candidatesTokenCount: 59
         promptTokenCount: 580
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 64
         - modality: IMAGE
           tokenCount: 516
-        thoughtsTokenCount: 147
-        totalTokenCount: 809
+        thoughtsTokenCount: 202
+        totalTokenCount: 841
     status:
       code: 200
       message: OK

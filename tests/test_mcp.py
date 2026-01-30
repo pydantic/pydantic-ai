@@ -44,7 +44,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from .conftest import IsBytes, IsDatetime, IsNow, IsStr, try_import
+from .conftest import IsBytes, IsDatetime, IsInstance, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
     from mcp import ErrorData, McpError, SamplingMessage
@@ -708,7 +708,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     parts=[
                         ToolReturnPart(
                             tool_name='get_image_resource',
-                            content=BinaryImage(data=IsBytes(), media_type='image/jpeg', _identifier='241a70'),
+                            content=IsInstance(BinaryImage),
                             tool_call_id='call_nFsDHYDZigO0rOHqmChZ3pmt',
                             timestamp=IsDatetime(),
                         )
@@ -802,7 +802,7 @@ async def test_tool_returning_image_resource_link(
                     parts=[
                         ToolReturnPart(
                             tool_name='get_image_resource_link',
-                            content=BinaryImage(data=IsBytes(), media_type='image/jpeg', _identifier='241a70'),
+                            content=IsInstance(BinaryImage),
                             tool_call_id='call_eVFgn54V9Nuh8Y4zvuzkYjUp',
                             timestamp=IsDatetime(),
                         )
@@ -1035,7 +1035,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     parts=[
                         ToolReturnPart(
                             tool_name='get_image_resource',
-                            content=BinaryImage(data=IsBytes(), media_type='image/jpeg', _identifier='241a70'),
+                            content=IsInstance(BinaryImage),
                             tool_call_id='call_KL2BXptkWmKifse91X727M7y',
                             timestamp=IsDatetime(),
                         )
@@ -1509,7 +1509,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                                 'This is a string',
                                 'Another string',
                                 {'foo': 'bar', 'baz': 123},
-                                BinaryImage(data=IsBytes(), media_type='image/jpg'),
+                                IsInstance(BinaryImage),
                             ],
                             tool_call_id='call_pyHWn85cReaMKhKpY5J4cGev',
                             timestamp=IsDatetime(),

@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '350'
+      - '370'
       content-type:
       - application/json
       host:
@@ -17,7 +17,7 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: Call the get_file tool to get a image and describe what you see.
+        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
         role: user
       generationConfig:
         responseModalities:
@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1772'
+      - '920'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1786
+      - gfet4t7; dur=2198
       transfer-encoding:
       - chunked
       vary:
@@ -54,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_file
-            thoughtSignature: CpIGAXLI2nwqV/BjzIki81X2WgkoVWsRzSbvVObsBq4KFTOfDgZQjd7bW8rV1OmXfMoA2mNfHgU3i6a0IsPmY0ERxd3trLZvO8cS+Lg71VKPrAnZQo1LTxKp8DF6a3/ilhM7Uhnxiq6TinjEqbzFuM7H6cHqe0wzxWkLwt1ivYMhX7ZInXoiLRTHZphyhoL3XGt2CaqbBLaoyb3vE1RMVjY0HEhRGcKFyr5LKyeLl34wHA54sEc2oBW08XyByZdA0MTu18UgfvVkAAoom3Z7AToRI1UCMMiNHd81cD7pGZooLAHiO0s5p7QquYrow3F5dCe7TLXqSrkZMIDB5t72ePivw2CLMfB4EV754OxzB5UAlOZlNyKy2ZClKLDPqvr4iGYVaxLPOj0ALLUkU9mSlUIXujoehYMmsQdJvDP08ZXWEPNjU7Jx9JAtsIoYX6r0VWmtfYi7coIEi58X77G2Jxxw0v9OGRuNFX4nb6HlnZ9Iq/zx1WXkGmWDEbdwTMf+/uawJ/iD6yPKSvmTb8MKgrafiAwCJ9k35X+vB9setUR1UXW9Bh9/v8nq+k0wU13JIT27PEVNQfw2JAGEd23+eHY0Em6fHdB2shq6qdageMuYp0LZw2kZ2iLLLkZywROZzfBmbqblUcUsqRH1/FA3IyoLTFG6UqgSq9L4CMgApL8Whdp9cD0/tPAzHbul/gCYM40hH9y1VpF//szw5IQeuPSrbeOghyQBh/NcKWBuGIWSm/yXHgWcOtHd2tXCam/PZF2C4783frdb53Bj239R37etRwlpscEHD4Jn8B0O6djYWEMwbQQpSZgZ8yXaYCSOWKuGLJaSeC+boC4wNoHKBXDBVaLlm58W0ilp6cR1anJPI9UZfi3EeLocsbenv65V5Bj2XAv930spt6zMgPPx6D7k1zy50BqrX+uFiDJBf8Qx/RqKUbFvyILq3A1R/ONlQfu9XftN0DsFbjZHO/aUfVK1HCETj97UiIplXrWz9fnrYnyv/Mzb13bKTRoeIojTQxYVt4nppTIN3SdHzGCcSb/fip94
+            thoughtSignature: CsACAXLI2nzZtjSuuOlnkKllBISaRa+/Di3jsWcvhUTgFMbW6LF4dH7RAkp9TuaZK1C3fAuRQlD88/ZSzadi14Idff4FmYb3mDhXEe6aq6Q1sbR+eQyW4WMUl1PVfhadsqvrzLgVVS/qPC9HqSnmKUs3nFraFfb7ypRJzamOzvjjsIhHjeWtvSUxk4FCCn+t9wASdIvl9RBsFw8pUlUjzV4kCjVCqUvoHwVCvtfAyRCeNmmzVqTNcwH1aqVcf8HEm/YuoNynY/3T3J8YHB3ut+1+7F+zySsCWbrjkS0EsTl4JmybGsepFYB89fkrIe9IiQKWos2Upz6NIfjS1D2o6IpubuT3oseUs4YTl5qRZeSga6wDntaBdWMB3G9wv7ELVKWy6YIhMz9VTf1QwMKH3jcuVsjeenWbPI8QXmzuleExXZ0=
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: G5N7afKJI5PQz7IP1MSm0Q8
+      responseId: 1FV8abiBIoClqtsPqqvSyAI
       usageMetadata:
         candidatesTokenCount: 10
-        promptTokenCount: 38
+        promptTokenCount: 41
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 38
-        thoughtsTokenCount: 180
-        totalTokenCount: 228
+          tokenCount: 41
+        thoughtsTokenCount: 66
+        totalTokenCount: 117
     status:
       code: 200
       message: OK
@@ -2081,7 +2081,7 @@ interactions:
       accept-ranges:
       - bytes
       age:
-      - '1070'
+      - '50411'
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       cache-control:
@@ -2097,7 +2097,7 @@ interactions:
       cross-origin-resource-policy:
       - cross-origin
       expires:
-      - Fri, 29 Jan 2027 16:46:37 GMT
+      - Fri, 29 Jan 2027 16:55:06 GMT
       last-modified:
       - Fri, 23 Apr 2021 09:38:00 GMT
       report-to:
@@ -2116,7 +2116,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '152930'
+      - '152330'
       content-type:
       - application/json
       host:
@@ -2125,18 +2125,18 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: Call the get_file tool to get a image and describe what you see.
+        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
         role: user
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_9076f3c20f48487c99abdfd0c7c68e49
+            id: pyd_ai_ddce99f995c94531ba7946d9973a5bdc
             name: get_file
-          thoughtSignature: CpIGAXLI2nwqV_BjzIki81X2WgkoVWsRzSbvVObsBq4KFTOfDgZQjd7bW8rV1OmXfMoA2mNfHgU3i6a0IsPmY0ERxd3trLZvO8cS-Lg71VKPrAnZQo1LTxKp8DF6a3_ilhM7Uhnxiq6TinjEqbzFuM7H6cHqe0wzxWkLwt1ivYMhX7ZInXoiLRTHZphyhoL3XGt2CaqbBLaoyb3vE1RMVjY0HEhRGcKFyr5LKyeLl34wHA54sEc2oBW08XyByZdA0MTu18UgfvVkAAoom3Z7AToRI1UCMMiNHd81cD7pGZooLAHiO0s5p7QquYrow3F5dCe7TLXqSrkZMIDB5t72ePivw2CLMfB4EV754OxzB5UAlOZlNyKy2ZClKLDPqvr4iGYVaxLPOj0ALLUkU9mSlUIXujoehYMmsQdJvDP08ZXWEPNjU7Jx9JAtsIoYX6r0VWmtfYi7coIEi58X77G2Jxxw0v9OGRuNFX4nb6HlnZ9Iq_zx1WXkGmWDEbdwTMf-_uawJ_iD6yPKSvmTb8MKgrafiAwCJ9k35X-vB9setUR1UXW9Bh9_v8nq-k0wU13JIT27PEVNQfw2JAGEd23-eHY0Em6fHdB2shq6qdageMuYp0LZw2kZ2iLLLkZywROZzfBmbqblUcUsqRH1_FA3IyoLTFG6UqgSq9L4CMgApL8Whdp9cD0_tPAzHbul_gCYM40hH9y1VpF__szw5IQeuPSrbeOghyQBh_NcKWBuGIWSm_yXHgWcOtHd2tXCam_PZF2C4783frdb53Bj239R37etRwlpscEHD4Jn8B0O6djYWEMwbQQpSZgZ8yXaYCSOWKuGLJaSeC-boC4wNoHKBXDBVaLlm58W0ilp6cR1anJPI9UZfi3EeLocsbenv65V5Bj2XAv930spt6zMgPPx6D7k1zy50BqrX-uFiDJBf8Qx_RqKUbFvyILq3A1R_ONlQfu9XftN0DsFbjZHO_aUfVK1HCETj97UiIplXrWz9fnrYnyv_Mzb13bKTRoeIojTQxYVt4nppTIN3SdHzGCcSb_fip94
+          thoughtSignature: CsACAXLI2nzZtjSuuOlnkKllBISaRa-_Di3jsWcvhUTgFMbW6LF4dH7RAkp9TuaZK1C3fAuRQlD88_ZSzadi14Idff4FmYb3mDhXEe6aq6Q1sbR-eQyW4WMUl1PVfhadsqvrzLgVVS_qPC9HqSnmKUs3nFraFfb7ypRJzamOzvjjsIhHjeWtvSUxk4FCCn-t9wASdIvl9RBsFw8pUlUjzV4kCjVCqUvoHwVCvtfAyRCeNmmzVqTNcwH1aqVcf8HEm_YuoNynY_3T3J8YHB3ut-1-7F-zySsCWbrjkS0EsTl4JmybGsepFYB89fkrIe9IiQKWos2Upz6NIfjS1D2o6IpubuT3oseUs4YTl5qRZeSga6wDntaBdWMB3G9wv7ELVKWy6YIhMz9VTf1QwMKH3jcuVsjeenWbPI8QXmzuleExXZ0=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_9076f3c20f48487c99abdfd0c7c68e49
+            id: pyd_ai_ddce99f995c94531ba7946d9973a5bdc
             name: get_file
             response:
               return_value: File attached
@@ -2163,11 +2163,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '2328'
+      - '1727'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=3062
+      - gfet4t7; dur=3205
       transfer-encoding:
       - chunked
       vary:
@@ -2178,27 +2178,26 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: The image displays a close-up of a vibrant yellow rose, which also exhibits hints of orange and pink, particularly
-              on its outer petals. Numerous clear water droplets are visible on the petals, suggesting recent rain or dew.
-              The rose is attached to a reddish-brown stem, from which a few small green leaves emerge. The background is
-              horizontally striped with varying shades of green and brown. The rose is positioned diagonally, with its full
-              bloom towards the lower left and the stem extending upwards and to the right.
-            thoughtSignature: Ct8GAXLI2nyenCsS5DMnGkfZxTnjpLfScVWkZjiuCvpkUc0lRVGdnhm/mgLHdeEprdu//IXPlFOO8i1o+vzUWQsqpYKPoQYh4nY10osGyC1dJ6GWi+b25qp5jrrcMAD4y08RO6rvPs7N8pr4Jq8mIQKS0u5gFu6goWN6Kx0wD+VD2tQqOGMajSjqu6Gns0h1VC0o4SgfOdseY224VuFqrCTo5Z7+FTq5ZmCIEH61vCAFs6pIor1k5t3qUV1zzZrN20M0VpzcIGFIrZv0P6Q1w5NBBDXxy30W2ztqEOecBlSOa9OY00eiEn+j9EEas0kGz+tVp6OtWyQCdoF84hIV79zmhV7FIkgbgZMxiT1LR1Z1FkOkISEcyAktM12RsQJDMHLusINq1o8l9Gx7YSBzQCgFdQhvqfbpo0rEo4XWOta4QaFUWO+/PFX/Uh9WVxJEMb7tP6PlVvCeUxHW2dR+u+5afxfwS3dAFDKVLEAhuRz3sjYE74Z8Yut4g2Mq8PlThev+nLnAHcuEjpvcpCoGiFMBvSQddgqEnTqye0Ms/qT5JVa7VRMR3lgSMXZYax+m/z1+tjxEBlQ5KvfZ31UbFJQkV1Wm4e1gquDNHvoInuYgH8+S0R1nDssS3eKDo7Lb+kdsrzuOGpgzWITne5E1nLsJ0KXB/EvcD7pcbxNcNqYcH4GK6ciEqH1KrI6U5eJP3tEsuVqowZ0n8vl8pSbagB6k9wdjQMrisw/zsz4MNX8IuWDVnGZYqBAeKdbUJYnnmE+flhYqDae1gO+ZEyxQ4H5g9sJOlD15Uz8VFAvJQ3YbX7dI0O1aMqrJJ0ljZz/46ZbrrWrw76pm/npKp2LAN7gAPlRxJRtdk92Exa2HEDXqUsBYllSzlwnOYJ7cJm843obSlHSG5cw6rjHr7ThR/EcAT8JdipGS33AFKfoQkK3W/bEvvn4yKwW05gf6iFcu99JRLwa4OSfLXBhSxwyPsRuGU9+J1SrxB1KXVyEMtwwzZUaQjx1IQy9K5tj+dT09e7MAtq+pknxyv7UxvwR1f79WmGcLfJcshh106qooTBN0Gfz1G81Hs7aJ/mTT+akrxvMUodXp+TPBOdVPmvkxH2rYv+bnthUl5G58fSWeTUXrqAVFnRGOMuDyACyeIoZIFes=
+          - text: I received an image of a yellow-orange rose, with many small water droplets visible on its petals, especially
+              on the top, slightly pinkish-tinged petal. The rose is in bloom, with many layers of petals visible. It appears
+              to be on a stem with a few green leaves. The background is a mix of horizontal green and brown stripes, suggesting
+              a natural, possibly out-of-focus, environment.
+            thoughtSignature: CqEFAXLI2nyi/Np52ws535lQRXSfqDKfK6rPAVvjvbNw0VC+QFHFwlw6KRrNCR9kNDJkCT1egW5LIPSHivOiExrbj0G6CXm5U33bHhrahZMlkC5C8zAr+UbyVLQVOtazjfqQ/poxKeluVV2BcNdyNmkP2dngTMoyqWBx2OJ6Tbw+78p3zc+uVb5U0vu93cvqtzl5SjatSZFcBthyT9JcPau6iF2Ln+mbFwcQQ7j6tx7qCgdZ/0kW1CxU4wuzWqru/nuJcV2WzBs9ll4d8c0MCsmT3ZKo/gaEEQ+5Iuh/5ayWIDmYj2mQvTm+CAf9j4xpykxZ1G72X/4ZpUNDHXfNwC8oliLyKk4gqiMSBwRBMlYc7TymUP/P4+SBYM5iYCyoDQNrYcxiRrECudCAdtOJND33KV/jxDrm9EqYgD2vsWO3lV4blLrK6GshhxzpyQUyffAyCk2HMT+NgfT07nrTYmWeo3EZP3e/lhspP2A9Gs9ZWlvDTIcd5bxIkNnNWchCS5p5+CycsxeXjky8FAfrUyUEozBaYNcHGAIz/1qDiTG+fikZHKwdXPf4fVxLA4jYf5b6oMYDNDPkCF8miH1isV0FI6R5nOUg+1wgAq/v6NtwkN0Dt1HfhO0rAC2KI/mSiz3npv4OFVStjjTrc0eVeWygpuqiDaIDUH1ZVuxAuL3s48q1kHhbj9oA6lWpAa96SqsQDwdXMZBL0pxPApu25yuSDhQVlWC7zp4kjjpr5rdU7fsounwx+n1Djuz3WrGOZVA3RW8pflatGTSDqSqb/7OrQlBnE43fPWEKy0DSHeIOhpWXuWtofWBnWHcfonDLG093Nb3Uo6epGyLSAGGcfVXW3JYR/L9dS3qJqR3198CgFCdUrf70WFlGzUN+gyIUfcZp2Q==
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: HpN7acuBNaDVz7IPusDKGQ
+      responseId: 2VV8ab7hAbewqtsP46qH2AM
       usageMetadata:
-        candidatesTokenCount: 101
-        promptTokenCount: 325
+        candidatesTokenCount: 85
+        promptTokenCount: 328
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 67
+          tokenCount: 70
         - modality: IMAGE
           tokenCount: 258
-        thoughtsTokenCount: 163
-        totalTokenCount: 589
+        thoughtsTokenCount: 146
+        totalTokenCount: 559
     status:
       code: 200
       message: OK

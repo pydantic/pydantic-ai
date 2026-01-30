@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '939'
+      - '764'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1139
+      - gfet4t7; dur=1186
       transfer-encoding:
       - chunked
       vary:
@@ -54,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_mixed_content
-            thoughtSignature: CpsBAXLI2nxGAjCt1x5GvG7/qO1/MgCUmqDRiZ98opzVl95HJK5UUcmtTuTNM86AXT0vJtBH9QNA1M3ZpTvb13V0zhGhWQ81z7A6iGYrOMw0deuuQInBQ79IKbRXN8/1cAe5sF4W9Ewczmps8EHSIqu0hc+YC6jGcKCZqMhdEmHaekCDGLs7KR7/lrm0mgKJEnkbXVxMUKBciwNa/Nk=
+            thoughtSignature: CsUBAXLI2nwkm8s7YvMGjnUaqCYq8LZkU7Vc8NtwwTIAYVzXiPW3UxufSaZw3eWJv0qoiIufXC7BmC9FmnEUnrWXvQW9MM9nOq4jpdYsbqyUAYpXWskXD3r7cIxXgkapV9kXfQWWbmnfM4loYe5YwVuw3ZXngl66jluEElczvw8N4gi/u0iLxw+WD7z/73D478HI0VW0sperOU86jjhfEAWYpkS5XQ055x7nDb4j6ur165g5vvoFQNu09uSfk6c9sCpCWaGC6cc=
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: JYB7aYWCErSiqtsPnfGi-Qo
+      responseId: DlZ8ae74Hb67mtkP1bHf0Ag
       usageMetadata:
         candidatesTokenCount: 12
         promptTokenCount: 38
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 38
-        thoughtsTokenCount: 30
-        totalTokenCount: 80
+        thoughtsTokenCount: 37
+        totalTokenCount: 87
     status:
       code: 200
       message: OK
@@ -81,7 +81,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '132458'
+      - '132514'
       content-type:
       - application/json
       host:
@@ -95,13 +95,13 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_156300ea39af48649a329e68e9bf6108
+            id: pyd_ai_188ea24dd5894ffda8c17130c30286d8
             name: get_mixed_content
-          thoughtSignature: CpsBAXLI2nxGAjCt1x5GvG7_qO1_MgCUmqDRiZ98opzVl95HJK5UUcmtTuTNM86AXT0vJtBH9QNA1M3ZpTvb13V0zhGhWQ81z7A6iGYrOMw0deuuQInBQ79IKbRXN8_1cAe5sF4W9Ewczmps8EHSIqu0hc-YC6jGcKCZqMhdEmHaekCDGLs7KR7_lrm0mgKJEnkbXVxMUKBciwNa_Nk=
+          thoughtSignature: CsUBAXLI2nwkm8s7YvMGjnUaqCYq8LZkU7Vc8NtwwTIAYVzXiPW3UxufSaZw3eWJv0qoiIufXC7BmC9FmnEUnrWXvQW9MM9nOq4jpdYsbqyUAYpXWskXD3r7cIxXgkapV9kXfQWWbmnfM4loYe5YwVuw3ZXngl66jluEElczvw8N4gi_u0iLxw-WD7z_73D478HI0VW0sperOU86jjhfEAWYpkS5XQ055x7nDb4j6ur165g5vvoFQNu09uSfk6c9sCpCWaGC6cc=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_156300ea39af48649a329e68e9bf6108
+            id: pyd_ai_188ea24dd5894ffda8c17130c30286d8
             name: get_mixed_content
             response:
               return_value:
@@ -130,11 +130,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1552'
+      - '2534'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2161
+      - gfet4t7; dur=3081
       transfer-encoding:
       - chunked
       vary:
@@ -145,24 +145,26 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: I received a list. The first item in the list is the text "Here is the image:", and the second item is a
-              dictionary with the key "metadata" and the value "test".
-            thoughtSignature: CqAEAXLI2nyM6DaoDA10JLIqY6kfJAzZL8bEnYxJJtHePY1VrQX9owVF13gNUXq1DfaUSH33mTe6VLYS3IZt/R/c4WqLUlzEZeRaU1ft7SG7+lsrWlch1RHMWfrIFIQGR1k5IC0Xr+3EERsb5Yi50sEwKK/QMFRN5geMyMiCMKjrQoob2NBI0nhndz2JyalH1mIvJXYu49ObWBBJ9f68mMrhLeBGfqqSZPLSF0ObKX6O+rQJyE2aM3IDuxyf3ie9sbB5xs2rPaLYml+U77D0zyBB/kfQDiALcTzThbpPrDRANtH2ZIPcUd3LYJ/dXoK/b0FYj/F4Q80DgqtX63QL2w3m+/4LJhB0P7ByhA5nDF4Te2537eQnoWIGAybH4khs4wjQil3yx1c3hr3MaHUgB5LRFjKqckYCF8/J5s2h35Q2GDHri4f5QMtEYH9/NNlKxqwKhXUjbPqlAxYOr5pi+et8fBwPy4H1IB2nfmVWhYcdSHOJum0pQ4IzYRgZXrQ1TgMPCJey5h7SilfkvGVmiH/1/p1i6qXA1YL/MNwMzgdjn8JF80LV1OfOGVMTrcNLqsx08x1kL/+wIgGpS5SPgqMLUCCUequg1avpJnArwwtvLZc8nZxsP44C9LtgB5G+P8sTafrSuXokiBv7ZNPpz0K/76RCMEpl8ZVMJeXe1P/VNjCzs8L6Qc0CGlYaeuurumxKmo7Zv03GCu99ReoK5k6etg==
+          - text: |-
+              The `get_mixed_content` tool returned a list containing the string "Here is the image:" and a dictionary `{"metadata": "test"}`. It did not return any image data itself.
+
+              However, you have provided an image of a kiwi, sliced in half, showing its green flesh, white core, and black seeds, along with several cropped versions of the same image.
+            thoughtSignature: CpkKAXLI2ny4gEgZ0aKnZiLsfHVLGKEphksEKudMSIAsV2Sn5tyw0J/vWknbm1+F7xdY1OuU/s2ODO3QrD9E3CWyOSHYJo48f/bF+T7/KNJpCsffqkJrxKhyoOdXRcC0KmaUBwJO//dWSxGBn4ZrD6fQnbkmx1jFk+swy+ftHIQQoKl3fDVMCE+TRvxa1h/EWno1/laOnZAuX7ugjYgwanaGiuaIwvF5Ij36Bfh/6y/xGLUNMeuRwUikn/knwqXnzUy7hEBZVRI83IkSDQYhN5j10ZsP4Pc/c0jriACE7wyaKQdFBR8oan7pRAVaGLHVivkx2P2c9auQhuLF3dRUdacPEhfimYZYVncJSB9BML4AAa4w4d+UhSe76HRxM+Un6mBgoJg9lFaKnGGWL5bLgQ9T2lYcKv3jGAiDBlufAasXFvSwV6FUpBLiz8JKBnDUpFA9DT/Y42/qYDB/edpw1bLd6PJjjT5paHdKJXZX3zb+43noFG+1+zurGwrd8jXdNsGb8SDHFkWB5n6QT2JhMSRld1f1M46yltbxzCrAwEnbz07DRf9KgCQz02nVyq5BryJ0bKa5xVLnvh/h5uE5PgkJuKi0xJbd7y7eb6sQ2NKwCWvyGq3iwXwowincv0S99wqlIYaGsAw7+OLq/BBPIakVhumklO7RjNIptP/rLLkJ4OaaIc+EvvWpvxUmb9dmIFxLUOUdf8FkHR69L4Fao2v5C3pCxu6fsSq4Nv63krJBZH7TBgo1dBpmZfFneceompwKexR6ZYEtuiZGI60ThkUBqbnblXWi8dXakjC8UyH5t6c3o4yK1e3BM2DCq+w8Lj4LHS+8DuMU9WuyOwObQbbg3x53p+fH3PuIbPDoHtEELyGttnnBtWVwVlkd0b0tfdrgtc+SG6ksmZ54WNfmcc5A2nKI+370pVEiHKBRovpisdq81q61QkJcjX0QiAj9zmokN3lDtEmayCZojuCzxSweqt9A870246/UVdZTFtuN6IOUY82XUqweKBfMWma4eu57GxWblCVD9hq9vCVZBZAu3ypCNialky4bADwCCWKGtR8lGc66ZvDBYrLjW7dJJk+f6/loRcWapO8fnC1nOn1ALNDPCrwTafWYHaV0ODCHFMLZmSWX04JzN79wPYFhA3A+eh05OezIMsJWIk2pccepgngNenVmWw11aBg5GRsQPJqM+ixf52KRaHcoKHtezHEtTThskxiJ2QJkR62x14objEhPBcHD2fHNeYjvkFibN0vlL6RK8pEADjqg0WCQYsNoMpVTkNTo8+XOXx+zEh4kZNK5Ej8yKrfbrsLhlG3PL6BiUkOTUut6NJ99YLd2eWFtyl3dujoJOeRWyNgo3cDsScGSyFwSnf8d1xdOk2aGif4Ne0xODFgP9PFrwoQccIhYpCKp9NnU8ApGmCQZfNNMSretWPrmSK2efgsf7BjKB+1Aw51SGtLtWhxATEV2RtMX/z9w06mcF0ATAKCgugxa5l40iu9nl1VCSFWRRvTytC9bLQ7hfn3BtHpm4gtscHofAQyj2Pwf4Nh7qgnlRxGPyBwDLZs0oqmCbDkNcAY28sLqUShdkH2LEoUBwBzhMXQpsiAq53j71IBQAJM1Iu0WlIpSGuid/971gFt0faTNihdpsTiNNoJ6LG3SESVDyiT2Iw/+Zpa/O6o4WnjjWAxkf6BD+nIKw8KEfO7Y5mNaHN1wZHNDQoqmnjWLaATuw7NfUXyzKknEPwoo
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: J4B7abq8IM2kqtsP8sG2uAI
+      responseId: EVZ8aYzJKPOsmtkPh9TSgQk
       usageMetadata:
-        candidatesTokenCount: 39
+        candidatesTokenCount: 80
         promptTokenCount: 339
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 81
         - modality: IMAGE
           tokenCount: 258
-        thoughtsTokenCount: 126
-        totalTokenCount: 504
+        thoughtsTokenCount: 293
+        totalTokenCount: 712
     status:
       code: 200
       message: OK

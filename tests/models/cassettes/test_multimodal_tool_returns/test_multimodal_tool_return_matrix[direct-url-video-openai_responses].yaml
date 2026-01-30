@@ -8,17 +8,19 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '321'
+      - '409'
       content-type:
       - application/json
       host:
       - api.openai.com
     method: POST
     parsed_body:
+      include:
+      - reasoning.encrypted_content
       input:
-      - content: Call the get_file tool to get a video and describe what you see.
+      - content: Use the get_file tool now to retrieve a video file, then describe what you received.
         role: user
-      model: gpt-4.1-mini
+      model: gpt-5-mini
       stream: false
       tool_choice: auto
       tools:
@@ -38,13 +40,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1688'
+      - '2500'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '529'
+      - '1347'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -57,22 +59,26 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1769565127
-      created_at: 1769565126
+      completed_at: 1769756073
+      created_at: 1769756072
       error: null
       frequency_penalty: 0.0
-      id: resp_003c7428aed9abfd0069796bc6e6588194b9c155ef5e0b606c
+      id: resp_0a2cbe71479a739000697c55a8ac448196a991d45fb10c2ed1
       incomplete_details: null
       instructions: null
       max_output_tokens: null
       max_tool_calls: null
       metadata: {}
-      model: gpt-4.1-mini-2025-04-14
+      model: gpt-5-mini-2025-08-07
       object: response
       output:
+      - encrypted_content: gAAAAABpfFWqEHcoiRDuvQgENH_vcTv5ZEqKPOvhYtqtoTHcwz8PqddRtQpbgFNc_-GKILM8VZx0SkewNz0Wjozwj99ZM9GRObpEqY809XHysuxFLWTga2WVzKtVlZrXWAbh0ParNK6r3O8wetpQu8yh9QbUPqbqYStJXDuWpDqmUcz59Jk3w-kgruhI0WPRG2xVx3bPjjBxItXX-zsxZ22fBSzb2iuCTmP5pmvYM1iCAUjwFdbvbWrxlnnVjNb2q1vFuh04NBY_pqNIutHGcWwHnRC1o-3pJ3FSnpysCuxdQFQPi6nsvY58nQDjAjnVVjeY0cQC1R0zkiVUmHxQ2hBV1Xj6jo519K75Jk5uPth0fOfBOHW1ZNNcMxNGmZ2gufHDmR0VSMncoiYyzt2P-on4-U4D609XG8b7DV_oGGkSMI0E6ubKcX2I6-HzhnRDEbsLoF3PcVjH6nu5VplcN2VJBuX6TmhCMgAogpamhQkoDDuI-9uEMFpyT4uSRnKOi-cR4lvdEQFeXqg8b1n95GrCEqgRYGj_U7mWaP-yPSigva2SVUG1VzZA9aempb-YIMsJ1dyDkGQrzdvyiFShxsMJbySs8EXD8vsGlOlIc_c1H1GV6aumbUNcyKnD3cbgVa4pzVfsTlyB_iKe8GAiNstG-5wB3l9Sg2hnVUet4p877ioqHco5V1zBJoZA1wejsT2xyHn4JQyoRD2J1xLYohdlXJuSdF_Z95OQZQQSqaJA00pNLeVu8VnnSaeNoBhMjXA0tnjTjYTExbikRoaL8iHGclQyMWUWvcgqWj9nCZZIYKF6j9OYAYEUMAYdgi93f3Xm-haoEdO2FQ23g_u0wYxQea55Gwxh3yHNrWrh325aFBmwlbY93lhTYrbJrjujK8wKLJm88FrXikphU3Gg6Tw4KOq16Wtosr6F8zJ9OBojHGKv3PJETGF0roRT-cOee_T6BVBe7PHK
+        id: rs_0a2cbe71479a739000697c55a8f99c8196b6f98f42ca20db03
+        summary: []
+        type: reasoning
       - arguments: '{}'
-        call_id: call_JNPnr23WeSioaDzdRgZ2VyJT
-        id: fc_003c7428aed9abfd0069796bc74e508194ac6206573aebdfc4
+        call_id: call_hjjIwRqvRDmq1jgBbMJIGuWE
+        id: fc_0a2cbe71479a739000697c55a9c2f88196bbe236ee8882b99b
         name: get_file
         status: completed
         type: function_call
@@ -82,7 +88,7 @@ interactions:
       prompt_cache_key: null
       prompt_cache_retention: null
       reasoning:
-        effort: null
+        effort: medium
         summary: null
       safety_identifier: null
       service_tier: default
@@ -107,13 +113,13 @@ interactions:
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 40
+        input_tokens: 47
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 11
+        output_tokens: 39
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 51
+        total_tokens: 86
       user: null
     status:
       code: 200

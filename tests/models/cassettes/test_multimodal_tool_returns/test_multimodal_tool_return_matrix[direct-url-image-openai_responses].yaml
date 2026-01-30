@@ -8,17 +8,19 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '321'
+      - '409'
       content-type:
       - application/json
       host:
       - api.openai.com
     method: POST
     parsed_body:
+      include:
+      - reasoning.encrypted_content
       input:
-      - content: Call the get_file tool to get a image and describe what you see.
+      - content: Use the get_file tool now to retrieve a image file, then describe what you received.
         role: user
-      model: gpt-4.1-mini
+      model: gpt-5-mini
       stream: false
       tool_choice: auto
       tools:
@@ -38,13 +40,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1688'
+      - '2673'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '793'
+      - '1627'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -57,22 +59,26 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1769565066
-      created_at: 1769565065
+      completed_at: 1769755960
+      created_at: 1769755958
       error: null
       frequency_penalty: 0.0
-      id: resp_03f9c410afe36afd0069796b8985a48190916596756c01caac
+      id: resp_0d71712c80b81bf300697c55369b80819e907d93811c8f5e68
       incomplete_details: null
       instructions: null
       max_output_tokens: null
       max_tool_calls: null
       metadata: {}
-      model: gpt-4.1-mini-2025-04-14
+      model: gpt-5-mini-2025-08-07
       object: response
       output:
+      - encrypted_content: gAAAAABpfFU4a7df7JVI9p79QLejNpd7i4d5kn8PVvL_p4HvZ0Zo7LfSnPTvudfFl18bIJbjc-EFcPRZyiceaygbMuk2dtM-T3lGOoee04sF9tGGGVxHSNm1rM3vBdwSDsJu-6f0zCCEpnCEFqn18-cPVuRb8uqPoZSrniOo1K7Wz5u7nLVSrJ-msgF6BBD3eRO8GE6rgpnGxEooYu4GIHuNo0DQX-OMJXrbIHGYe3Gqj0rwk-W_7hFlu87_1zwfjY2VZ-nU_NMxKdGaS2OktUjAHAbCr76kNSX7cfGOcqfcC0CdqHqgyEiUAih-nOhV_UAcnvGjV-a5I3_NyNaO9EmGFVHkkWn6NZAzLS5eYInuedAcZaLmfK_QmXZ8JelPZLzp_TfzN2XklQCSYGRDi-aH4iJRVFpdH3OHkT1zOzPHBoYYV4Ax_F5xh3IxVTsswbRm13pCOekcINSivUy3lu0fm91cseAjEOXMtxFHTM0olycgwX_0SYyuA_PHBk9I2p7UB12pZXvL0CTOciUMVdPzCa4AtUf84FSap3j1Q1yh3Zm4f1SeWe_Tq9HHR2f3N-QDbX0CexM8X_WT_nTb6tDtvpK8gBgITHwEfuyDVw1R2kSgGn6L1R0GLlb7Xr4E0He6PxPISnZqy_yes4o56rjSo4pfD7bB6uK7kwT-sVO_q__APSQmbEmg2ja7vaK3YmZe4BS31i2i9bAEQPKKmOcoQai6xmGBuda_8tgk8QD5_Bng-EC-XPouAbWIzJ306xBgncJZWrmBlMYXdPu5P_3dvmGnWPL1vhhm8H8X7bn5jwpncolSc89YHTEO1jLDEJofieSejQrE7EPGxfY5c39jk42fXJRLU4saudU2XsZppA2vibAyEfQnZ7QJTTnB_fLslIlhunAHmzc8ebqJBukLMUjW2N5BxpJkuNDlxGW_XemZRU0L709_8yP5XN12oUw6dAnwXtAy76LNLnpEhfKFOOLpZWWScl0HWkPjixWBQ3m-o81NCDof_1bcTDOU5puDMtodLmuSe8I8yjTDEexzilAOwd7EYwwJlrMCa8vmmDjDjmf-gqw4Uz7YUEPau18Zz31_ULfBVsDSUegemokoS4RMSCG-bls61HsFtuFo7cU2nqjwvHs=
+        id: rs_0d71712c80b81bf300697c55371d98819eb07ab76686bb84e4
+        summary: []
+        type: reasoning
       - arguments: '{}'
-        call_id: call_gLwfMobAccJqhCKCpH23Jnxt
-        id: fc_03f9c410afe36afd0069796b8a20808190bf82bc05c8d01046
+        call_id: call_zd08AtkzAfinqMYyid2fH1ps
+        id: fc_0d71712c80b81bf300697c5537e8bc819e8d1f08234af738d1
         name: get_file
         status: completed
         type: function_call
@@ -82,7 +88,7 @@ interactions:
       prompt_cache_key: null
       prompt_cache_retention: null
       reasoning:
-        effort: null
+        effort: medium
         summary: null
       safety_identifier: null
       service_tier: default
@@ -107,13 +113,13 @@ interactions:
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 40
+        input_tokens: 47
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 11
+        output_tokens: 64
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 51
+        total_tokens: 111
       user: null
     status:
       code: 200
@@ -127,30 +133,37 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '644'
+      - '2045'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=h72H3JHq4N7SB0byb5VDJWFY3DimeXuCZA9rPK9bCy8-1769565066-1.0.1.1-btSPpmpPa0u.HhkgNKXMuq4nBpDifTLz9YHwEw5P7pu9iSjpRkg.C95sHvhaXigd_HF2ngvB3KaPm8dnZKxTQ471h76_ykqUQHb23y0sZ.w;
-        _cfuvid=BxQroziwcuPpXWRN2jJXO.OCsS0QMTlG3qp1.n_2w7Q-1769565066361-0.0.1.1-604800000
+      - __cf_bm=B1SSQXQ2j1Fu.p3YngRiRpS6QtWUBl82buV_S0jUVfY-1769755960-1.0.1.1-.Y.5XJJKiJDKGlDoqiuvPIen9rm_cRz6EbdSZENT2khS7Egw86cwBYXe4y4lb8PH7623PP1XH_ZTvjwAu7Ic3SdHGWGyMjSDeqgARtQWfE4;
+        _cfuvid=Hvpo2SQ3OrplpF6vFyfEfayVBoGp4bn1TdxmpTvTyo8-1769755960271-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
     parsed_body:
+      include:
+      - reasoning.encrypted_content
       input:
-      - content: Call the get_file tool to get a image and describe what you see.
+      - content: Use the get_file tool now to retrieve a image file, then describe what you received.
         role: user
+      - encrypted_content: gAAAAABpfFU4a7df7JVI9p79QLejNpd7i4d5kn8PVvL_p4HvZ0Zo7LfSnPTvudfFl18bIJbjc-EFcPRZyiceaygbMuk2dtM-T3lGOoee04sF9tGGGVxHSNm1rM3vBdwSDsJu-6f0zCCEpnCEFqn18-cPVuRb8uqPoZSrniOo1K7Wz5u7nLVSrJ-msgF6BBD3eRO8GE6rgpnGxEooYu4GIHuNo0DQX-OMJXrbIHGYe3Gqj0rwk-W_7hFlu87_1zwfjY2VZ-nU_NMxKdGaS2OktUjAHAbCr76kNSX7cfGOcqfcC0CdqHqgyEiUAih-nOhV_UAcnvGjV-a5I3_NyNaO9EmGFVHkkWn6NZAzLS5eYInuedAcZaLmfK_QmXZ8JelPZLzp_TfzN2XklQCSYGRDi-aH4iJRVFpdH3OHkT1zOzPHBoYYV4Ax_F5xh3IxVTsswbRm13pCOekcINSivUy3lu0fm91cseAjEOXMtxFHTM0olycgwX_0SYyuA_PHBk9I2p7UB12pZXvL0CTOciUMVdPzCa4AtUf84FSap3j1Q1yh3Zm4f1SeWe_Tq9HHR2f3N-QDbX0CexM8X_WT_nTb6tDtvpK8gBgITHwEfuyDVw1R2kSgGn6L1R0GLlb7Xr4E0He6PxPISnZqy_yes4o56rjSo4pfD7bB6uK7kwT-sVO_q__APSQmbEmg2ja7vaK3YmZe4BS31i2i9bAEQPKKmOcoQai6xmGBuda_8tgk8QD5_Bng-EC-XPouAbWIzJ306xBgncJZWrmBlMYXdPu5P_3dvmGnWPL1vhhm8H8X7bn5jwpncolSc89YHTEO1jLDEJofieSejQrE7EPGxfY5c39jk42fXJRLU4saudU2XsZppA2vibAyEfQnZ7QJTTnB_fLslIlhunAHmzc8ebqJBukLMUjW2N5BxpJkuNDlxGW_XemZRU0L709_8yP5XN12oUw6dAnwXtAy76LNLnpEhfKFOOLpZWWScl0HWkPjixWBQ3m-o81NCDof_1bcTDOU5puDMtodLmuSe8I8yjTDEexzilAOwd7EYwwJlrMCa8vmmDjDjmf-gqw4Uz7YUEPau18Zz31_ULfBVsDSUegemokoS4RMSCG-bls61HsFtuFo7cU2nqjwvHs=
+        id: rs_0d71712c80b81bf300697c55371d98819eb07ab76686bb84e4
+        summary: []
+        type: reasoning
       - arguments: '{}'
-        call_id: call_gLwfMobAccJqhCKCpH23Jnxt
+        call_id: call_zd08AtkzAfinqMYyid2fH1ps
+        id: fc_0d71712c80b81bf300697c5537e8bc819e8d1f08234af738d1
         name: get_file
         type: function_call
-      - call_id: call_gLwfMobAccJqhCKCpH23Jnxt
+      - call_id: call_zd08AtkzAfinqMYyid2fH1ps
         output:
         - detail: auto
-          image_url: https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png
+          image_url: https://www.gstatic.com/webp/gallery3/1.png
           type: input_image
         type: function_call_output
-      model: gpt-4.1-mini
+      model: gpt-5-mini
       stream: false
       tool_choice: auto
       tools:
@@ -170,13 +183,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2123'
+      - '6092'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '2560'
+      - '10912'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -189,28 +202,42 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1769565069
-      created_at: 1769565066
+      completed_at: 1769755971
+      created_at: 1769755960
       error: null
       frequency_penalty: 0.0
-      id: resp_0d2ac8edc12611c90069796b8aaaec8196bade65325ee9cced
+      id: resp_0d71712c80b81bf300697c553865ac819e9fdf496d613d2f92
       incomplete_details: null
       instructions: null
       max_output_tokens: null
       max_tool_calls: null
       metadata: {}
-      model: gpt-4.1-mini-2025-04-14
+      model: gpt-5-mini-2025-08-07
       object: response
       output:
+      - encrypted_content: gAAAAABpfFVDiRysLZH8OqCmgV3i3CJdGlK1afsk7u5N55Qsl0fOqdAd8xIGNAJ57hKHkCDiHkBGshxjvroDWK90EF6vnOmOUdnTSCUzA_JLTV60OYKBFNbjesS01X9vKHrZKC2nkcHZ7eJyx50Y1goa7lRGjFUY3ovjpnAXWHWeEOallT_GTzF7KJuftqkgZeViVMXUTOQGiIji9cv19eUFzgea097QFc7EZnhxDxeKlg0E1gvHYKQ8DE1sxDrDXyiiiEk4UnNYBw9Api_lGzjymjFgOFOOywGkeA4UMyFKqCofwkHi0ESnDEFwkumZEOt5yAs6Y848PHzOxKGwc_c4lHGrfkfINYI7c_EDlwXlLOPuA-cXHXdSMTE4NXMyW0-HjIdS_VbfXSa7ZzzChB0W7lxpbJ0zGcVBwJJx5tbOZhDpBvWxkh3qCDsfNDQa-bQ5pnQgTJev9s_Cx7mfqgN-1VrNCcOcD0TvHBFH9TALadUoI_eY4fGyh2ZHuQUFywGbtwKUc5n7m4y9OOk5Hz8wNVPnA8JBkIe3bmE1lXt3GTgi-1R42za0UbYkQb91nFpFauzu9SVbhZYXTErSdoyzslqgGUhdJjK3jiCf2Zjq9WflzhNRX3SiWncOEwQgd_4tOBxLJpMnsAuy8AVScKc3hYH2uLuP-VFooKycqognZuOv0Co1WUn3cHI2rLwkAP8LWUun-g93HfYU2Y19eHk-_S8ujRDC0Tou0pzGVG-hIqe99Jz-Rntsc9Y6JKfwnJcl-zTlOWUHY0Ne0VvcY0rEmXOaJ7hlrzS20yI73r7Mtfv8Q-ogqNBbVwdjjKzIn8FpcbQ-m5Skv1yDbWNfb2O-oSSt32yCmggJgEbIVIPnA4MEbSZkjomNcwusNIl9dzK-HFHx4H5rpJDtEdM95MqTGG4MzEkUEdhk-iSVWY04t7BQUBJbdph8QS2vyhTigFVuDRDN5Shz9tERnrlte0oUXUPDyPo_hobqZjAZCNLI1aRo1t3oloRiX027Yjt8gPM-XAx_bSTcposdo3DsVVr_C6IE0zPDRxPFlsBt4HbvQ9LDluHhvnpp4AmbQxM3SMVG8esigigx0Uc6ZYuGDnEGNVapB4Nx0-M6XhY1mGDsxQf5elAOL28jxxXeD469zuf5NNdz78OOkHEa6Cjspc1f4SMEvljDK9CH3s-vkkcpzJluka4rHsLjEl-HvPJCv8jhq6jYIR9ZikHBlgXUNFnEWGWIimTZZ7ktQ_kGjXln37vgxoOPllvRfuIi-MEUiWDrc6ct9PXHuqqgDXBE0w0nukaQPrzJoAVjfgJn7lYiVB16bNzrfLsvPFTAGEx5pgAqbzftaJ9qB-D3diADNpX5g_b1Sd1Gzw3rPHXOYXiopnafVDyHECU8Zn5OcDY7I8eXapA6XRuWy63yvDAaAmqKYNp6pBLaCDPGrytmZcv9tC2uKqzwky-ajnG8n8E4QQikOOASmoTopizb8dvADR6AKfaHjIli4LBBU0PuSRtkSfv5xBqXDurTeiexfN94QxajWakHaOsJPPrs1De5-qmFlltSyE0J6tmw5IZEaAUWTqf1h_6n324fa5OQ10KK9o_3R8IX00-htGcp8Vf13q0514k7WDjtD6beso1Ee2MZy28tJ_SvUM39aNfuSVx3FOD20y_GyAzp-eK-8Bz39nyrZ7M4ZyBn-yVYk2WzCGXmjCZqcANxX1pdq2eyls0FQ2TvBxKzo_WvJB1IbRjNfpVSSZ-tSOTiqGAwwTS-kl04xVuLy7VcRjpXOKmPZp8eGy5OIkVbyQoV8iY3CESYQFLQU10BU9gUT1HeemUXcOjSGuTOZfYDZsvmAKVdss0z5yPqYREQGI0_kTddcp18Z9VsSyRIBx0aWlx7blGaOqpHKI077J9lk4HnkzsPKgXlvwqTncCeszJBWLvUwgT3HehHSkQjoLcJv7lXpewFS5EZsOeV6iJE0gkjKJ5dNZkdrYDefvhhLjvXFm6pcRLlSH_-l16UYmeGcAN1ZBT5R9O_DE7fRitsRkkqwjkAPykKgnk5jhR6LcG_t5UI5kFSQvihKoHSMrB73TCw-z1ayWoN2h3Dc6ZNghxKVCO08xFGMSMPkHhUU9S73lhkpaJmT40RtOb2bvPc77-6utdrhhhKs7YR-qEXIIODEPjxxbeYmKteHPU39j0CpQSWXJN-mTJTiSSaqf7s25CLzqfquoKQkScQOhumYKP-Zvev40lJ4vcnQJ8JAYjNN_gOpDrYSPQKurFwe-rmoB7lVS7RXwUUWINqEj4XVidm_ipYyNirg3zHvQPag03aSe4Bb-C78ChJdscyeNPU5klHUdP0vx_avWY6HFDGXdwv3tZUWdyDiYbXoYIRdovL7bu4ICCwCrUAv88jw1TFrG8VkQveK4PZP8bKjbPlbJFcvVbOUIDqU2kbA9vmt7LFBezBBMbZIakprDTdtJcW2Yj4XJvYjLpdvPz9Rsyy88_EYaI_FZotIZJZOXw4mncYNGi6S2zY5aIUEyhvtL6p_LH-n6wwuhjv5tK88SA7GbUsgIYfHBo8MInoAzuS73FkdXMOU4ZerMfHqqQaqtAWj6_6mRfOqiGv0LyU8Ho_ZsGJfpROj6GYUpnZmIVSLlZ8azTNNH6lRzPVN2mpbca56kRi8J2QyXBLxcG_C7u72Aj9-ilPHpXNaMdn2S5DJOAclf2sZsfY0wW2uWoxbdunJecMMXsYKv5gBre4vD8fZqKJCB5MqyjJ7WKdeQzM6IR2OONmwzxyORibOigkybKdgJnTl6QvRM7Lzaa8NoehhYpyj7F20B-dS-ksrLbL56g4SDPvQ42ZSBIdnkDI0c44HI4z27VW0UhLqNuq0avofXwZGYalUC0PNkr7yuujgSTiZm1IuKbbBZSvHgegLH7eILG25hd-QWUySY7H3HSUCD8S9j8OBTfdn1zd0jA4mBKFk_EapuyUNgYDpz8UTlyv2MlZU-u1FhYOFpXPYCVNk9iA5vh_UTSFvRsdTZNwdJir-RDHWC3UZChuGHYboC1UTZadT3Es58tDK3HgKKWFV-iwm31BkkDfAHLW7dbeV8kmn3jyvkjEaJCuisavzoJ008rOdr-__Re4Q-uoqh6DIVx90yzBrZ0pbEj8U9w_9M9djw8yEJf27kD9ubAOb-a4QVPfj2Rf25bsfnkVhPyc03UQHZZZmzbPcHd18atVZbQePmhvRwzOR4OyPIsb-TPCHThqoglUGTVwMHjkEKmv9xWb4IGIBbclKtGHItmxE5RaIRHzN4MvSJ95nS0QfxnQt8YDgUYWZmOmkjnN3tM_7gZE1lG_s4IVlVtLTWfStglkIGLwS_kKMjhVIl_tx0-D5CApiHL_tHRfUuuyBfZKqH1ojG4R1hs-tcdzCAQv_NRXD6HqI5R2qgZbd_ScLSc8BYYPpwsKO-ULvst8j6jKp_EPqtCFM65-Zg4uMcrzHZ5jIIXjAmych56LXdRIRbGBRhBbG7BRWftVvPR-9sxkE1U_HaaFt220CygDSiYexI0CzEQVaYTbixCfx3GAa6t3U2qr2eid18MBnC3y_EoSiBIMkF_ymXnWtLbYY4TnclHJL2EN_-kpRjwJ_d1N4eakXbVNPBcdMPmeibGzy8ZHs-sYMxLkalOuMCz6TDzc4ndPx8rVQSj2WA4sjbRL1elkLg==
+        id: rs_0d71712c80b81bf300697c5539887c819ebc1422e1b0b0c0dd
+        summary: []
+        type: reasoning
       - content:
         - annotations: []
           logprobs: []
-          text: 'The image is the Google logo. It features the word "Google" written in a clean, sans-serif font with each
-            letter in a different color: the first "G" is blue, the first "o" is red, the second "o" is yellow, the "g" is
-            blue, the "l" is green, and the "e" is red. The style of the logo is simple and colorful, consistent with Google''s
-            branding.'
+          text: |-
+            I used the tool and received an image of a single rose. Description:
+
+            - Subject: one rose bloom on a short piece of stem with a small leaf/sepals visible.
+            - Colors: the petals are a warm yellow with orange and slight pinkish edges; some areas are more saturated orange.
+            - Details: there are water droplets (dew) visible on the top petals.
+            - Orientation: the bloom is angled downward and facing left.
+            - Background: the background has been removed (appears transparent or isolated); the viewer shows horizontal color bands/artifacts around the flower.
+            - Approximate size: roughly 400 × 275 pixels (approximate).
+
+            Would you like any of the following?
+            - A concise alt-text string for accessibility.
+            - A cleaned/flattened version (white or colored background).
+            - Color or contrast adjustments, cropping, or a vector/transparent-optimized export.
           type: output_text
-        id: msg_0d2ac8edc12611c90069796b8b3aec8196800a8d29ee514ab4
+        id: msg_0d71712c80b81bf300697c554099e4819ebcab08d60a2d03ea
         role: assistant
         status: completed
         type: message
@@ -220,7 +247,7 @@ interactions:
       prompt_cache_key: null
       prompt_cache_retention: null
       reasoning:
-        effort: null
+        effort: medium
         summary: null
       safety_identifier: null
       service_tier: default
@@ -245,13 +272,13 @@ interactions:
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 224
+        input_tokens: 283
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 93
+        output_tokens: 628
         output_tokens_details:
-          reasoning_tokens: 0
-        total_tokens: 317
+          reasoning_tokens: 384
+        total_tokens: 911
       user: null
     status:
       code: 200

@@ -41,7 +41,7 @@ from pydantic_ai import (
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.exceptions import ContentFilterError
-from pydantic_ai.messages import BinaryImage, SystemPromptPart
+from pydantic_ai.messages import SystemPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
@@ -50,7 +50,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsBytes, IsDatetime, IsNow, IsStr, TestEnv, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, try_import
 from .mock_openai import (
     MockOpenAI,
     MockOpenAIResponses,
@@ -1277,87 +1277,6 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                     'timestamp': datetime(2025, 4, 29, 21, 8, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-BRmTI0Y2zmkGw27kLarhsmiFQTGxR',
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-        ]
-    )
-
-
-async def test_image_as_binary_content_tool_response(
-    allow_model_requests: None, image_content: BinaryContent, openai_api_key: str
-):
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(m)
-
-    @agent.tool_plain
-    async def get_image() -> BinaryContent:
-        return image_content
-
-    result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content=['What fruit is in the image you can get from the get_image tool?'],
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_1FnV4RIOyM7T9BxPHbSuUexJ')],
-                usage=RequestUsage(
-                    input_tokens=46,
-                    output_tokens=10,
-                    details={
-                        'accepted_prediction_tokens': 0,
-                        'audio_tokens': 0,
-                        'reasoning_tokens': 0,
-                        'rejected_prediction_tokens': 0,
-                    },
-                ),
-                model_name='gpt-4o-2024-08-06',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
-                provider_response_id='chatcmpl-Cpwffm3QIHBYzhoYYZSF7Et1tiiqI',
-                finish_reason='tool_call',
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='get_image',
-                        content=BinaryImage(data=IsBytes(), media_type='image/jpeg'),
-                        tool_call_id='call_1FnV4RIOyM7T9BxPHbSuUexJ',
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='The fruit in the image is a kiwi.')],
-                usage=RequestUsage(
-                    input_tokens=847,
-                    output_tokens=10,
-                    details={
-                        'accepted_prediction_tokens': 0,
-                        'audio_tokens': 0,
-                        'reasoning_tokens': 0,
-                        'rejected_prediction_tokens': 0,
-                    },
-                ),
-                model_name='gpt-4o-2024-08-06',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
-                provider_response_id='chatcmpl-CpwfhFC1iUmDKeoxOTSN7KP8D11aq',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),

@@ -505,9 +505,7 @@ class XaiModel(Model):
         tool_content_parts: list[str] = []
         file_content: list[UserContent] = []
 
-        part_content = part.content
-        items = list(part_content) if isinstance(part_content, list) else [part_content]
-        for item in items:
+        for item in part.content_items:
             if isinstance(item, (BinaryContent, ImageUrl, DocumentUrl)):
                 if isinstance(item, BinaryContent) and item.is_audio:
                     raise NotImplementedError('AudioUrl/BinaryContent with audio is not supported by xAI SDK')

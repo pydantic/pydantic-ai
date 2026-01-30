@@ -1228,13 +1228,12 @@ async def _call_tool(
     if isinstance(tool_result, _messages.ToolReturn):
         tool_return = tool_result
     elif isinstance(tool_result, list) and any(isinstance(i, _messages.ToolReturn) for i in tool_result):  # pyright: ignore[reportUnknownVariableType]
-        # Validate no nested ToolReturn objects in list results
         raise exceptions.UserError(
             f'The return value of tool {tool_call.tool_name!r} contains invalid nested `ToolReturn` objects. '
             f'`ToolReturn` should be used directly.'
         )
     else:
-        tool_return = _messages.ToolReturn(return_value=tool_result)
+        tool_return = _messages.ToolReturn(return_value=tool_result)  # pyright: ignore[reportUnknownArgumentType]
 
     return_part = _messages.ToolReturnPart(
         tool_name=tool_call.tool_name,

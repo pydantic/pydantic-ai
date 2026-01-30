@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '351'
+      - '399'
       content-type:
       - application/json
       host:
@@ -18,7 +18,7 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: Call the get_file tool to get a document and describe what you see.
+        - text: Use the get_file tool now to retrieve a document file, then describe what you received.
           type: text
         role: user
       model: claude-sonnet-4-5
@@ -38,7 +38,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '547'
+      - '578'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -47,13 +49,13 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - text: I'll call the get_file tool to retrieve the document.
+      - text: I'll retrieve the document file for you now.
         type: text
-      - id: toolu_01CJaViyAHkksYMtfPbLwDuQ
+      - id: toolu_01NUKFKzJGsoWPnhZDhECzvK
         input: {}
         name: get_file
         type: tool_use
-      id: msg_01XF88rbPNcfXPgyeT4f23D8
+      id: msg_01Y8Ro8f2JbPhQMSDh6b9GEx
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -65,8 +67,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 555
-        output_tokens: 50
+        input_tokens: 558
+        output_tokens: 47
         service_tier: standard
     status:
       code: 200
@@ -80,7 +82,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '18453'
+      - '18526'
       content-type:
       - application/json
       host:
@@ -90,13 +92,13 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: Call the get_file tool to get a document and describe what you see.
+        - text: Use the get_file tool now to retrieve a document file, then describe what you received.
           type: text
         role: user
       - content:
-        - text: I'll call the get_file tool to retrieve the document.
+        - text: I'll retrieve the document file for you now.
           type: text
-        - id: toolu_01CJaViyAHkksYMtfPbLwDuQ
+        - id: toolu_01NUKFKzJGsoWPnhZDhECzvK
           input: {}
           name: get_file
           type: tool_use
@@ -109,7 +111,7 @@ interactions:
               type: base64
             type: document
           is_error: false
-          tool_use_id: toolu_01CJaViyAHkksYMtfPbLwDuQ
+          tool_use_id: toolu_01NUKFKzJGsoWPnhZDhECzvK
           type: tool_result
         role: user
       model: claude-sonnet-4-5
@@ -129,7 +131,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1156'
+      - '1017'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -139,18 +143,17 @@ interactions:
     parsed_body:
       content:
       - text: |-
-          I can see a PDF document that has been retrieved. Here's what I observe:
+          I received a PDF document with the following characteristics:
 
-          **Document Description:**
-          - **Type:** PDF file (application/pdf)
-          - **Content:** This is a single-page document with minimal content
-          - **Title:** "Dummy PDF file" - displayed as a heading in the upper left portion of the page
-          - **Layout:** The document appears to be mostly blank/empty with a white or light gray background, containing only the title text
-          - **Purpose:** Based on the title, this appears to be a test or placeholder PDF file, commonly used for testing file handling, upload functionality, or as a sample document
+          **Document Type:** PDF file (application/pdf media type)
 
-          This is a very simple, bare-bones PDF with essentially just a title and no other substantial content, images, or formatting elements.
+          **Content:** The document contains a single page with the heading "Dummy PDF file" displayed at the top of the page. The rest of the page appears to be blank/empty space.
+
+          **Structure:** This is a simple, minimal test/placeholder PDF document with very little content - just the title text on an otherwise empty page.
+
+          This appears to be a sample or dummy file, likely used for testing purposes rather than containing actual substantive content.
         type: text
-      id: msg_01LeKecRyMS2NWNhhoB49ZGf
+      id: msg_0187CCXrS5u56fXT1ww4BqBR
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
@@ -163,7 +166,7 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         input_tokens: 2218
-        output_tokens: 167
+        output_tokens: 121
         service_tier: standard
     status:
       code: 200

@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '353'
+      - '373'
       content-type:
       - application/json
       host:
@@ -17,7 +17,7 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: Call the get_file tool to get a document and describe what you see.
+        - text: Use the get_file tool now to retrieve a document file, then describe what you received.
         role: user
       generationConfig:
         responseModalities:
@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1211'
+      - '719'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1583
+      - gfet4t7; dur=815
       transfer-encoding:
       - chunked
       vary:
@@ -54,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_file
-            thoughtSignature: Cu4CAXLI2nzy75YbqoiGKysH7CkhRNQwxYRPcDYUWMgbO8ccpzIa+xY7bnbTFEeVWcDhS/F5fZp+kH/nC4xgSj5F7WFMW9jQYXsIYo+XoDoZ7b3VSxJHk1t9+1tNaG+uEE0BttIqGhCfmsIVDiwqhnlTOeI8qnw9Imi2mAeHdw7ql3h3nzRTJ3IxaXYPAgT8ULIfwuKX/1kj3qJ4lNPEB5knwd3oeXmGloVhyz95HGQylQXx9IDNXijbgYJoUmDcya85pY6nzq+dypU8n2lGEpRuajj9hbrs2Ic9rDgKu6ILqFINOlKtOHNUGTl0YNkbCubvmHMYDXubfXiGe+LoDvRb92VuJ9au22m+DZjw8e+nweSFixHeMTWaI2Xs6MCK5v78CTorB1GY9zd8OrO8PmI+xicyiwjtCNRjEajZjh2CoRD3Su35nXb176aD7UUITntJ7+yvBefz1Ls1BaUOqhqrrHUrXkI8CEnTBeKgBw34
+            thoughtSignature: CqkBAXLI2nxmfYPUhA5yKygEuIsq6nr3b5xwvYunhZKnsGvi/llCH7Ogiw0B9ieQjfSm6JTNWssHdHZgFfF1fU1ETfx+0uihfW/kT6LHBrg7P/dBgSFE/7sUZhutWpLHpiPipkD/uz08zzAZsSSvPHZdtsmFIfmQLyr5CYUabGc+Zn1tySX2bMAAHXj5gK1+HAL20EUChwV4bgRkSx2E8YUT1NcHEWLqkYRSsA==
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: DIB7affiBaOfqtsP8cSBqQk
+      responseId: 2FV8adHmGoSnqtsP-qXkqQI
       usageMetadata:
         candidatesTokenCount: 10
-        promptTokenCount: 38
+        promptTokenCount: 41
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 38
-        thoughtsTokenCount: 85
-        totalTokenCount: 133
+          tokenCount: 41
+        thoughtsTokenCount: 34
+        totalTokenCount: 85
     status:
       code: 200
       message: OK
@@ -424,7 +424,7 @@ interactions:
       access-control-allow-origin:
       - '*'
       age:
-      - '44'
+      - '0'
       cache-control:
       - max-age=600
       connection:
@@ -436,7 +436,7 @@ interactions:
       etag:
       - '"680c9470-497a"'
       expires:
-      - Thu, 29 Jan 2026 15:11:09 GMT
+      - Fri, 30 Jan 2026 07:03:11 GMT
       last-modified:
       - Sat, 26 Apr 2025 08:08:16 GMT
       vary:
@@ -453,7 +453,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '26339'
+      - '26099'
       content-type:
       - application/json
       host:
@@ -462,18 +462,18 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: Call the get_file tool to get a document and describe what you see.
+        - text: Use the get_file tool now to retrieve a document file, then describe what you received.
         role: user
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_635e21b7ac14472aa4faf1a4f207b577
+            id: pyd_ai_c1e44c37e1604a7ea74d6611df10889b
             name: get_file
-          thoughtSignature: Cu4CAXLI2nzy75YbqoiGKysH7CkhRNQwxYRPcDYUWMgbO8ccpzIa-xY7bnbTFEeVWcDhS_F5fZp-kH_nC4xgSj5F7WFMW9jQYXsIYo-XoDoZ7b3VSxJHk1t9-1tNaG-uEE0BttIqGhCfmsIVDiwqhnlTOeI8qnw9Imi2mAeHdw7ql3h3nzRTJ3IxaXYPAgT8ULIfwuKX_1kj3qJ4lNPEB5knwd3oeXmGloVhyz95HGQylQXx9IDNXijbgYJoUmDcya85pY6nzq-dypU8n2lGEpRuajj9hbrs2Ic9rDgKu6ILqFINOlKtOHNUGTl0YNkbCubvmHMYDXubfXiGe-LoDvRb92VuJ9au22m-DZjw8e-nweSFixHeMTWaI2Xs6MCK5v78CTorB1GY9zd8OrO8PmI-xicyiwjtCNRjEajZjh2CoRD3Su35nXb176aD7UUITntJ7-yvBefz1Ls1BaUOqhqrrHUrXkI8CEnTBeKgBw34
+          thoughtSignature: CqkBAXLI2nxmfYPUhA5yKygEuIsq6nr3b5xwvYunhZKnsGvi_llCH7Ogiw0B9ieQjfSm6JTNWssHdHZgFfF1fU1ETfx-0uihfW_kT6LHBrg7P_dBgSFE_7sUZhutWpLHpiPipkD_uz08zzAZsSSvPHZdtsmFIfmQLyr5CYUabGc-Zn1tySX2bMAAHXj5gK1-HAL20EUChwV4bgRkSx2E8YUT1NcHEWLqkYRSsA==
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_635e21b7ac14472aa4faf1a4f207b577
+            id: pyd_ai_c1e44c37e1604a7ea74d6611df10889b
             name: get_file
             response:
               return_value: File attached
@@ -500,11 +500,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '800'
+      - '594'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1879
+      - gfet4t7; dur=2153
       transfer-encoding:
       - chunked
       vary:
@@ -515,22 +515,22 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: The document is titled "Sample PDF" and has the subtitle "This is a simple PDF file. Fun fun fun." Below
-              the title and subtitle, there are four paragraphs of placeholder text (Lorem ipsum dolor sit amet...).
+          - text: I received a PDF document titled "Sample PDF". The document states, "This is a simple PDF file. Fun fun
+              fun." Below the title, there are four paragraphs of Latin-like placeholder text (Lorem ipsum).
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: DoB7aZWCC6e6qtsPu6HCsA0
+      responseId: 3FV8aYLyMMnmqtsP2tSnmQI
       usageMetadata:
         candidatesTokenCount: 44
-        promptTokenCount: 325
+        promptTokenCount: 328
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 67
+          tokenCount: 70
         - modality: DOCUMENT
           tokenCount: 258
-        totalTokenCount: 369
+        totalTokenCount: 372
     status:
       code: 200
       message: OK

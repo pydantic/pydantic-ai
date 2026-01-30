@@ -60,7 +60,6 @@ from pydantic_ai import (
 )
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
-    BinaryImage,
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     CachePoint,
@@ -71,7 +70,7 @@ from pydantic_ai.profiles.grok import GrokModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsBytes, IsDatetime, IsNow, IsStr, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, try_import
 from .mock_xai import (
     MockXai,
     create_code_execution_response,
@@ -1248,70 +1247,6 @@ async def test_xai_image_url_tool_response(allow_model_requests: None, xai_provi
             ModelResponse(
                 parts=[TextPart(content='The image shows a single raw potato.')],
                 usage=RequestUsage(input_tokens=657, output_tokens=8, details={'cache_read_tokens': 371}),
-                model_name=XAI_NON_REASONING_MODEL,
-                timestamp=IsDatetime(),
-                provider_name='xai',
-                provider_url='https://api.x.ai/v1',
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-        ]
-    )
-
-
-async def test_xai_image_as_binary_content_tool_response(
-    allow_model_requests: None, image_content: BinaryContent, xai_provider: XaiProvider
-):
-    """Test xAI with binary image content from tool response."""
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
-    agent = Agent(m)
-
-    @agent.tool_plain
-    async def get_image() -> BinaryContent:
-        return image_content
-
-    result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
-
-    # Verify the complete message history with snapshot
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content=['What fruit is in the image you can get from the get_image tool?'],
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=356, output_tokens=15, details={'cache_read_tokens': 314}),
-                model_name=XAI_NON_REASONING_MODEL,
-                timestamp=IsDatetime(),
-                provider_name='xai',
-                provider_url='https://api.x.ai/v1',
-                provider_response_id=IsStr(),
-                finish_reason='tool_call',
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='get_image',
-                        content=BinaryImage(data=IsBytes(), media_type='image/jpeg'),
-                        tool_call_id='call_76782371',
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='Kiwi')],
-                usage=RequestUsage(input_tokens=657, output_tokens=2, details={'cache_read_tokens': 371}),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',

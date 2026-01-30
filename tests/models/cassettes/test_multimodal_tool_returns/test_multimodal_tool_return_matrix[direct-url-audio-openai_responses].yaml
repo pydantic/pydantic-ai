@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '381'
+      - '409'
       content-type:
       - application/json
       host:
@@ -40,13 +40,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '3015'
+      - '2802'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '1882'
+      - '1590'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -59,11 +59,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1769715934
-      created_at: 1769715932
+      completed_at: 1769756049
+      created_at: 1769756048
       error: null
       frequency_penalty: 0.0
-      id: resp_0ffb2e764c2a75bc00697bb8dcf3848194848c5cfe1a59b976
+      id: resp_0194e7f3e570573700697c55904a24819e82c7b1ce9f1ee14f
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -72,13 +72,13 @@ interactions:
       model: gpt-5-mini-2025-08-07
       object: response
       output:
-      - encrypted_content: gAAAAABpe7je9EhTbMNZq0fI3IngbrB0THyZZCiSmfJKJKgDepHarvmxU5JpJLK01tGFr0pIaJIH1DzEWO3xRrMzSOeuckZIZrFmcQoEqponn4DZp03iurc3633v-2BCqgILB5nkRCtYmIzLAn0cUfqoEpWAbW25zlb0l5J_6H9MqzD1rrXaWy9VtdQBhLTr5A7qrQ1KtvzLlEkZVYvuruwTdpKdcBDuByKsEUdHIwx83cXEaStko-9pl0uKAjvk2LcMTfGFnRXUudFKYwzZhNvX3HQlsBShbCZNAr_3GqYyiOU1KlB9u98qr6nkSlbA5jyn7PzNoOlmpnCskvtRPjWnAMI0RXzx0MJgrvogAhJRKG8_8DpJgY8KoLUqQRNEUl8_8hJucBa0eiy8FwnrYiwhy9fbYe-RUuLLmqq34xkh-f1LjPq14--xxdJAStkRQmuoXypa5ieF1ReNJj71FCgkzwfpF0DyY19HUyL3PT7fyGeA_7WES9GyVoWSKjbAsW4Q-WyKT16EFN2XexcrAbKBuHFvbTqbEVDbc_0pFLcnBQCfKmmFqjIwNF_SHFTCXPY4aKdAh4-Z_QoKa27irbVMDFcgZ15LHabAewVInIbbJ9d-4Dk-QWTxvYrAuK7WMKvMhuPoFJAf8vwuzv3B_nXTOaL_95Z6atnSJSOsh_Aqt2p2ISQngEDq9dN4ZQOVnvbwBTKwsa793kJ8aj-9uGm8fZFTKIWSlWOZjVqNBGF1ftw8PgU2FX1bwINUeTNkzJpbBjttMk12P4_eifK8g5Clcc5g-UIHJt7VHylAOXq01BI9t9YkqEh9r4tH1jstpxMte_fxHs1Dldy4ZtOXprxYV9Za2u8BZv0e52urv737VrBfDmpqrhgRUqji56VwRo8bYLnlZA7SS8xgEAKY61iiHJhRVdd6fPBwaqX3aKL95QpdM8sqWTTgdXkXHeJjA4-MDgaPAoJGqqTT3gv_-Xvzd_Sh6gFjysd9c8LbXrHviMQ7H6K__at68e7fBWBfrfjFFlu0OITF74MfOjkyIIYiChVMrRPw6hRO0migxHZXv9bZl-IkNEfpoc4ziyNCsvEzjih5AClYmSYofWr9KpWQ0vtJiHkO0yk9fr2MFcyxSu57VZPCrCXpxIKBJrJZi84nSgId5DJ2
-        id: rs_0ffb2e764c2a75bc00697bb8dd73ac81949c09309219c62ff3
+      - encrypted_content: gAAAAABpfFWRbUimgv5cxwAP-PQHSC0RX7lyrOgH2htN2dcd1tXepGg2bnV0AsDt5Q1UBjceswHt-BLNZlRYBwDcLaiL3r-EA8nModOKU5SFSHcsz6ujmbH-RFh4F8s7AQOJs9eIjaIByyr2NLW5O_XcWokfPP1HcA1amOHuqLUcsbMpRnXTNffg7o_TKEiCHYrtn7WkTx5taYCFqYCfkOg-We0Yzi5PfTmQ5eFmRRKBtSYfiJMhbsHJI2fODiah8WIrqvqt9pfBSKOZ8DlAKOqsLJdAygKW1kyZfSR4YMTwEeJPkQlCSg7IpTj3EjLUssTKpvHa7l9GU_-VTjC9k7Wc6lLPSC-4tg8ta4KVnz6aOo6Pfd16_Rbu3l0cNOScZAKAcIIj69NBqLFdwFOoGSf0NqEnmRU2XpyJgBu1igi5xP75OCiMSxkhYN3krqVLhzVPZTmSxoxycCLsI4UvDmLjqrttE9fKQEu03qBmtqdt_6Yy4z5vayzQk7UA-4xR-oE9d2BbJ3q6t29iDfRLcQkefi1Ca-8zdwiwVHN62o8W5OLMT-nfgU6K-iDxYFARNvlqjUVDHqGwnGFge5eN9Q7rZRZEJTFBgh8H-JpYc_ycVR9iW0LhxvDkQLB0xt031j2hj9mUmgeHvCmf2Hjo2wl4cl-B5XWccBtUcSM0XqthtbXNEbfaVEdZl3xaI4VkDY3-x1QWNwBBzcThGuKl6Hq14kwvrrtaQ4MlgKlVfFYl0KvP_2fsPnPq6TqsK34yVtZ6B1x-ugSUpq48LTL_JTYBU9xY4oMU-QHkfxttYBzOmq5MGAGOguCIUIntQYdNNiPz-_zhnG59O3zxYSN9DPqqV4bdbu4t6DasQ_0oHLj5OUfHNmC737Wz-ZcpGPSW8NYQEuk0vL4Pdu9BrwtyXuvfufnxVX8AAIbB9msklALta8C6O01KiQsBEfSGqnvPw4y_4xD2EshMxg_zsjVQ0nEYxgT6-hInFIGBJa_O4AToladbVjl-AkWwuVRx8e6Lshz1UI7OuRKf4MZo7hXMOp34k2y05mqk0KrCHvDBMyb067CxA9k9f0Hma19QMEfrtR7tutV9Yl0fMC0W0NtlRSjLsnoH0PDn4INw401OW_4KhpBneJgCcQCogwNV1I3AVWNH3rems5o7S5xpvgaUU5QN5JgEX0vrHvHLaEXpAet3mQIDWCd_VYqgPyA7dnkvKpS0fs9nB6N-AGlDdP_y-hts0LES4Y3_p8m_ZnyyE50NUUqh5RA7mmY=
+        id: rs_0194e7f3e570573700697c5590874c819eb4bb92b9389ff90a
         summary: []
         type: reasoning
       - arguments: '{}'
-        call_id: call_4lBzODe5EWeWFqlE9CwWSmBF
-        id: fc_0ffb2e764c2a75bc00697bb8de5abc8194a634e19baeca721e
+        call_id: call_5JoQ8s4SES2YiYK0pXp7RmQg
+        id: fc_0194e7f3e570573700697c5591a510819eafee68c748119f6b
         name: get_file
         status: completed
         type: function_call
@@ -116,10 +116,10 @@ interactions:
         input_tokens: 47
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 64
+        output_tokens: 84
         output_tokens_details:
-          reasoning_tokens: 0
-        total_tokens: 111
+          reasoning_tokens: 64
+        total_tokens: 131
       user: null
     status:
       code: 200
@@ -133,12 +133,12 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1995'
+      - '2158'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=cCVcErj21ZCOd_ONzsTs_sx4Ysyc38GUa_lKuyCyOIc-1769715934-1.0.1.1-zTeAg4pVzDVZ01zAawgIXo2j_LrnDqgZFE7PqSCeivDlGLumgB5MDcqzSf__e2vZIzpwRY6_s6tKdwpswaJ6ufWH4MpdP_hMI_rTN5Kc7cw;
-        _cfuvid=w6YOIS5d2MFf3cacLYnePJmZcsfhyDXlkoTE3SSOy1A-1769715934868-0.0.1.1-604800000
+      - __cf_bm=5qdiEmxVez2iH7i3AZw1L3pQadMjqKv1zfxqe5Re6Ck-1769756049-1.0.1.1-Xvu4FgdVNpCzk_2_GwF2X0mxGYIQIM8cQB9GzCl3aYrm4D2IExoxrjqOx_iJ6vm4JQ3d5ek3by9vjsCTZIaRYW1CQhmpdeM1gwvM5qVqTuI;
+        _cfuvid=NGNcqkvCF7CjXzmt76jQ0FwxKqNkXr8q2Gbl7gIFRFY-1769756049918-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -148,16 +148,16 @@ interactions:
       input:
       - content: Use the get_file tool now to retrieve a audio file, then describe what you received.
         role: user
-      - encrypted_content: gAAAAABpe7je9EhTbMNZq0fI3IngbrB0THyZZCiSmfJKJKgDepHarvmxU5JpJLK01tGFr0pIaJIH1DzEWO3xRrMzSOeuckZIZrFmcQoEqponn4DZp03iurc3633v-2BCqgILB5nkRCtYmIzLAn0cUfqoEpWAbW25zlb0l5J_6H9MqzD1rrXaWy9VtdQBhLTr5A7qrQ1KtvzLlEkZVYvuruwTdpKdcBDuByKsEUdHIwx83cXEaStko-9pl0uKAjvk2LcMTfGFnRXUudFKYwzZhNvX3HQlsBShbCZNAr_3GqYyiOU1KlB9u98qr6nkSlbA5jyn7PzNoOlmpnCskvtRPjWnAMI0RXzx0MJgrvogAhJRKG8_8DpJgY8KoLUqQRNEUl8_8hJucBa0eiy8FwnrYiwhy9fbYe-RUuLLmqq34xkh-f1LjPq14--xxdJAStkRQmuoXypa5ieF1ReNJj71FCgkzwfpF0DyY19HUyL3PT7fyGeA_7WES9GyVoWSKjbAsW4Q-WyKT16EFN2XexcrAbKBuHFvbTqbEVDbc_0pFLcnBQCfKmmFqjIwNF_SHFTCXPY4aKdAh4-Z_QoKa27irbVMDFcgZ15LHabAewVInIbbJ9d-4Dk-QWTxvYrAuK7WMKvMhuPoFJAf8vwuzv3B_nXTOaL_95Z6atnSJSOsh_Aqt2p2ISQngEDq9dN4ZQOVnvbwBTKwsa793kJ8aj-9uGm8fZFTKIWSlWOZjVqNBGF1ftw8PgU2FX1bwINUeTNkzJpbBjttMk12P4_eifK8g5Clcc5g-UIHJt7VHylAOXq01BI9t9YkqEh9r4tH1jstpxMte_fxHs1Dldy4ZtOXprxYV9Za2u8BZv0e52urv737VrBfDmpqrhgRUqji56VwRo8bYLnlZA7SS8xgEAKY61iiHJhRVdd6fPBwaqX3aKL95QpdM8sqWTTgdXkXHeJjA4-MDgaPAoJGqqTT3gv_-Xvzd_Sh6gFjysd9c8LbXrHviMQ7H6K__at68e7fBWBfrfjFFlu0OITF74MfOjkyIIYiChVMrRPw6hRO0migxHZXv9bZl-IkNEfpoc4ziyNCsvEzjih5AClYmSYofWr9KpWQ0vtJiHkO0yk9fr2MFcyxSu57VZPCrCXpxIKBJrJZi84nSgId5DJ2
-        id: rs_0ffb2e764c2a75bc00697bb8dd73ac81949c09309219c62ff3
+      - encrypted_content: gAAAAABpfFWRbUimgv5cxwAP-PQHSC0RX7lyrOgH2htN2dcd1tXepGg2bnV0AsDt5Q1UBjceswHt-BLNZlRYBwDcLaiL3r-EA8nModOKU5SFSHcsz6ujmbH-RFh4F8s7AQOJs9eIjaIByyr2NLW5O_XcWokfPP1HcA1amOHuqLUcsbMpRnXTNffg7o_TKEiCHYrtn7WkTx5taYCFqYCfkOg-We0Yzi5PfTmQ5eFmRRKBtSYfiJMhbsHJI2fODiah8WIrqvqt9pfBSKOZ8DlAKOqsLJdAygKW1kyZfSR4YMTwEeJPkQlCSg7IpTj3EjLUssTKpvHa7l9GU_-VTjC9k7Wc6lLPSC-4tg8ta4KVnz6aOo6Pfd16_Rbu3l0cNOScZAKAcIIj69NBqLFdwFOoGSf0NqEnmRU2XpyJgBu1igi5xP75OCiMSxkhYN3krqVLhzVPZTmSxoxycCLsI4UvDmLjqrttE9fKQEu03qBmtqdt_6Yy4z5vayzQk7UA-4xR-oE9d2BbJ3q6t29iDfRLcQkefi1Ca-8zdwiwVHN62o8W5OLMT-nfgU6K-iDxYFARNvlqjUVDHqGwnGFge5eN9Q7rZRZEJTFBgh8H-JpYc_ycVR9iW0LhxvDkQLB0xt031j2hj9mUmgeHvCmf2Hjo2wl4cl-B5XWccBtUcSM0XqthtbXNEbfaVEdZl3xaI4VkDY3-x1QWNwBBzcThGuKl6Hq14kwvrrtaQ4MlgKlVfFYl0KvP_2fsPnPq6TqsK34yVtZ6B1x-ugSUpq48LTL_JTYBU9xY4oMU-QHkfxttYBzOmq5MGAGOguCIUIntQYdNNiPz-_zhnG59O3zxYSN9DPqqV4bdbu4t6DasQ_0oHLj5OUfHNmC737Wz-ZcpGPSW8NYQEuk0vL4Pdu9BrwtyXuvfufnxVX8AAIbB9msklALta8C6O01KiQsBEfSGqnvPw4y_4xD2EshMxg_zsjVQ0nEYxgT6-hInFIGBJa_O4AToladbVjl-AkWwuVRx8e6Lshz1UI7OuRKf4MZo7hXMOp34k2y05mqk0KrCHvDBMyb067CxA9k9f0Hma19QMEfrtR7tutV9Yl0fMC0W0NtlRSjLsnoH0PDn4INw401OW_4KhpBneJgCcQCogwNV1I3AVWNH3rems5o7S5xpvgaUU5QN5JgEX0vrHvHLaEXpAet3mQIDWCd_VYqgPyA7dnkvKpS0fs9nB6N-AGlDdP_y-hts0LES4Y3_p8m_ZnyyE50NUUqh5RA7mmY=
+        id: rs_0194e7f3e570573700697c5590874c819eb4bb92b9389ff90a
         summary: []
         type: reasoning
       - arguments: '{}'
-        call_id: call_4lBzODe5EWeWFqlE9CwWSmBF
-        id: fc_0ffb2e764c2a75bc00697bb8de5abc8194a634e19baeca721e
+        call_id: call_5JoQ8s4SES2YiYK0pXp7RmQg
+        id: fc_0194e7f3e570573700697c5591a510819eafee68c748119f6b
         name: get_file
         type: function_call
-      - call_id: call_4lBzODe5EWeWFqlE9CwWSmBF
+      - call_id: call_5JoQ8s4SES2YiYK0pXp7RmQg
         output:
         - file_url: https://download.samplelib.com/mp3/sample-3s.mp3
           type: input_file
@@ -182,13 +182,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '201'
+      - '177'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '855'
+      - '981'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:

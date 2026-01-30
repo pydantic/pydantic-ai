@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '359'
+      - '406'
       content-type:
       - application/json
       host:
@@ -16,7 +16,7 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: Call the get_file tool to get a video and describe what you see.
+      - content: Use the get_file tool now to retrieve a video file, then describe what you received.
         role: user
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       n: 1
@@ -41,7 +41,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '690'
+      - '741'
       content-type:
       - application/json
       strict-transport-security:
@@ -61,26 +61,26 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: m1a5yktff
+            id: wm373xh8a
             type: function
-      created: 1769707537
-      id: chatcmpl-dff07403-56f7-41f8-a659-27104007ff17
+      created: 1769756175
+      id: chatcmpl-51beb223-2704-4db8-86fa-ce239eed17cc
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       object: chat.completion
       service_tier: on_demand
       system_fingerprint: fp_992318f10a
       usage:
-        completion_time: 0.342638802
-        completion_tokens: 162
-        prompt_time: 0.180720648
-        prompt_tokens: 708
-        queue_time: 0.171400296
-        total_time: 0.52335945
-        total_tokens: 870
+        completion_time: 0.176970223
+        completion_tokens: 82
+        prompt_time: 0.017032468
+        prompt_tokens: 711
+        queue_time: 0.175000873
+        total_time: 0.194002691
+        total_tokens: 793
       usage_breakdown: null
       x_groq:
-        id: req_01kg5cm0m1ezgtwywr6yz6qdbj
-        seed: 266410067
+        id: req_01kg6v0aegf9e9xqt69mrc10w3
+        seed: 52617031
     status:
       code: 200
       message: OK

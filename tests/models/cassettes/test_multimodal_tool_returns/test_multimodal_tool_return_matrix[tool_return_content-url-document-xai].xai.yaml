@@ -1,0 +1,219 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: Use the get_file tool now to retrieve a document file, then describe
+            what you received.
+        role: ROLE_USER
+      model: grok-4-1-fast-non-reasoning
+      tools:
+      - function:
+          name: get_file
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+    raw: !!binary |
+      Cl0KWQpXVXNlIHRoZSBnZXRfZmlsZSB0b29sIG5vdyB0byByZXRyaWV2ZSBhIGRvY3VtZW50IGZp
+      bGUsIHRoZW4gZGVzY3JpYmUgd2hhdCB5b3UgcmVjZWl2ZWQuEAESG2dyb2stNC0xLWZhc3Qtbm9u
+      LXJlYXNvbmluZ4oBUQpPCghnZXRfZmlsZSJDeyJhZGRpdGlvbmFsUHJvcGVydGllcyI6IGZhbHNl
+      LCAicHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggB
+  response_sample:
+    json:
+      id: da45a962-a2a5-7f97-f7d7-b63bf78405b2
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_91587616
+            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: get_file
+              arguments: '{}'
+      created: '2026-01-30T16:37:08.630023920Z'
+      model: grok-4-1-fast-non-reasoning
+      system_fingerprint: fp_9bb3d5b553
+      usage:
+        completion_tokens: 15
+        prompt_tokens: 359
+        total_tokens: 374
+        prompt_text_tokens: 359
+        cached_prompt_text_tokens: 358
+      settings:
+        parallel_tool_calls: true
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - function:
+            name: get_file
+            parameters: '{"additionalProperties": false, "properties": {}, "type":
+              "object"}'
+        top_p: 0.95
+    raw: !!binary |
+      CiRkYTQ1YTk2Mi1hMmE1LTdmOTctZjdkNy1iNjNiZjc4NDA1YjISKwgEGicQAhojCg1jYWxsXzkx
+      NTg3NjE2EAEYAVIOCghnZXRfZmlsZRICe30qDAi0vPPLBhDwzbWsAjIbZ3Jvay00LTEtZmFzdC1u
+      b24tcmVhc29uaW5nOg1mcF85YmIzZDViNTUzShIIDxDnAhj2AiDnAjjmAliA0A9aYxABLTMzMz86
+      AggBQlEKTwoIZ2V0X2ZpbGUiQ3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3Bl
+      cnRpZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In1NMzNzPw==
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: Use the get_file tool now to retrieve a document file, then describe
+            what you received.
+        role: ROLE_USER
+      - content:
+        - text: ''
+        role: ROLE_ASSISTANT
+        tool_calls:
+        - id: call_91587616
+          type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+          status: TOOL_CALL_STATUS_COMPLETED
+          function:
+            name: get_file
+            arguments: '{}'
+      - content:
+        - file:
+            file_id: file_3b919552-4f53-436a-b2d5-b32d5837f37c
+        role: ROLE_USER
+      - content:
+        - text: File attached
+        role: ROLE_TOOL
+      model: grok-4-1-fast-non-reasoning
+      tools:
+      - function:
+          name: get_file
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+    raw: !!binary |
+      Cl0KWQpXVXNlIHRoZSBnZXRfZmlsZSB0b29sIG5vdyB0byByZXRyaWV2ZSBhIGRvY3VtZW50IGZp
+      bGUsIHRoZW4gZGVzY3JpYmUgd2hhdCB5b3UgcmVjZWl2ZWQuEAEKKwoCCgAQAiIjCg1jYWxsXzkx
+      NTg3NjE2EAEYAVIOCghnZXRfZmlsZRICe30KMQotGisKKWZpbGVfM2I5MTk1NTItNGY1My00MzZh
+      LWIyZDUtYjMyZDU4MzdmMzdjEAEKEwoPCg1GaWxlIGF0dGFjaGVkEAUSG2dyb2stNC0xLWZhc3Qt
+      bm9uLXJlYXNvbmluZ4oBUQpPCghnZXRfZmlsZSJDeyJhZGRpdGlvbmFsUHJvcGVydGllcyI6IGZh
+      bHNlLCAicHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggB
+  response_sample:
+    json:
+      id: 4af987db-3d17-c278-75fd-6a79213d3107
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_52717585
+            type: TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: search_pdf_attachment
+              arguments: '{"file_name":"99631f.application/pdf","query":"Summarize
+                the entire content of this PDF document, including key topics, main
+                points, and any notable details like title, author, or date.","mode":"keyword"}'
+      - finish_reason: REASON_TOOL_CALLS
+        index: 2
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_26691540
+            type: TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: search_pdf_attachment
+              arguments: '{"file_name":"99631f.application/pdf","query":"title author
+                date content topics","mode":"keyword"}'
+          - id: call_96536010
+            type: TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: search_pdf_attachment
+              arguments: '{"file_name":"99631f.application/pdf","query":"what is this
+                document about","mode":"keyword"}'
+          - id: call_50902986
+            type: TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: browse_pdf_attachment
+              arguments: '{"file_name":"99631f.application/pdf","pages":"1-5"}'
+      - finish_reason: REASON_STOP
+        index: 6
+        message:
+          content: '**I received a simple sample PDF file named "99631f.application/pdf".**
+
+
+            It''s titled **"Sample PDF"** at the top, with the subtitle **"This is
+            a simple PDF file. Fun fun fun."** on page 1.
+
+
+            The content is mostly **Lorem Ipsum placeholder text**—the classic dummy
+            text used in design and publishing to fill space. It includes multiple
+            paragraphs of Latin-like gibberish starting with "Lorem ipsum dolor sit
+            amet, consectetuer adipiscing elit..." and continuing with varied placeholder
+            sentences about various nonsensical topics (no real meaning, just filler).
+
+
+            No author, date, or specific topics are mentioned—it''s purely a demo
+            file, likely for testing PDF handling. The text cuts off mid-sentence
+            at the end of page 1, but that''s the essence: a basic, fun-labeled Lorem
+            Ipsum document.'
+          role: ROLE_ASSISTANT
+      created: '2026-01-30T16:37:12.306716517Z'
+      model: grok-4-1-fast-non-reasoning
+      system_fingerprint: fp_9bb3d5b553
+      usage:
+        completion_tokens: 404
+        prompt_tokens: 4738
+        total_tokens: 5142
+        prompt_text_tokens: 3970
+        prompt_image_tokens: 768
+        cached_prompt_text_tokens: 2094
+        server_side_tools_used:
+        - SERVER_SIDE_TOOL_ATTACHMENT_SEARCH
+        - SERVER_SIDE_TOOL_ATTACHMENT_SEARCH
+        - SERVER_SIDE_TOOL_ATTACHMENT_SEARCH
+        - SERVER_SIDE_TOOL_ATTACHMENT_SEARCH
+      settings:
+        parallel_tool_calls: true
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - function:
+            name: get_file
+            parameters: '{"additionalProperties": false, "properties": {}, "type":
+              "object"}'
+        top_p: 0.95
+    raw: !!binary |
+      CiQ0YWY5ODdkYi0zZDE3LWMyNzgtNzVmZC02YTc5MjEzZDMxMDcShgIIBBqBAhACGvwBCg1jYWxs
+      XzUyNzE3NTg1EAcYAVLmAQoVc2VhcmNoX3BkZl9hdHRhY2htZW50EswBeyJmaWxlX25hbWUiOiI5
+      OTYzMWYuYXBwbGljYXRpb24vcGRmIiwicXVlcnkiOiJTdW1tYXJpemUgdGhlIGVudGlyZSBjb250
+      ZW50IG9mIHRoaXMgUERGIGRvY3VtZW50LCBpbmNsdWRpbmcga2V5IHRvcGljcywgbWFpbiBwb2lu
+      dHMsIGFuZCBhbnkgbm90YWJsZSBkZXRhaWxzIGxpa2UgdGl0bGUsIGF1dGhvciwgb3IgZGF0ZS4i
+      LCJtb2RlIjoia2V5d29yZCJ9Eo4DCAQQAhqHAxACGpABCg1jYWxsXzI2NjkxNTQwEAcYAVJ7ChVz
+      ZWFyY2hfcGRmX2F0dGFjaG1lbnQSYnsiZmlsZV9uYW1lIjoiOTk2MzFmLmFwcGxpY2F0aW9uL3Bk
+      ZiIsInF1ZXJ5IjoidGl0bGUgYXV0aG9yIGRhdGUgY29udGVudCB0b3BpY3MiLCJtb2RlIjoia2V5
+      d29yZCJ9GosBCg1jYWxsXzk2NTM2MDEwEAcYAVJ2ChVzZWFyY2hfcGRmX2F0dGFjaG1lbnQSXXsi
+      ZmlsZV9uYW1lIjoiOTk2MzFmLmFwcGxpY2F0aW9uL3BkZiIsInF1ZXJ5Ijoid2hhdCBpcyB0aGlz
+      IGRvY3VtZW50IGFib3V0IiwibW9kZSI6ImtleXdvcmQifRpiCg1jYWxsXzUwOTAyOTg2EAcYAVJN
+      ChVicm93c2VfcGRmX2F0dGFjaG1lbnQSNHsiZmlsZV9uYW1lIjoiOTk2MzFmLmFwcGxpY2F0aW9u
+      L3BkZiIsInBhZ2VzIjoiMS01In0SowYIAxAGGpwGCpcGKipJIHJlY2VpdmVkIGEgc2ltcGxlIHNh
+      bXBsZSBQREYgZmlsZSBuYW1lZCAiOTk2MzFmLmFwcGxpY2F0aW9uL3BkZiIuKioKCkl0J3MgdGl0
+      bGVkICoqIlNhbXBsZSBQREYiKiogYXQgdGhlIHRvcCwgd2l0aCB0aGUgc3VidGl0bGUgKioiVGhp
+      cyBpcyBhIHNpbXBsZSBQREYgZmlsZS4gRnVuIGZ1biBmdW4uIioqIG9uIHBhZ2UgMS4KClRoZSBj
+      b250ZW50IGlzIG1vc3RseSAqKkxvcmVtIElwc3VtIHBsYWNlaG9sZGVyIHRleHQqKuKAlHRoZSBj
+      bGFzc2ljIGR1bW15IHRleHQgdXNlZCBpbiBkZXNpZ24gYW5kIHB1Ymxpc2hpbmcgdG8gZmlsbCBz
+      cGFjZS4gSXQgaW5jbHVkZXMgbXVsdGlwbGUgcGFyYWdyYXBocyBvZiBMYXRpbi1saWtlIGdpYmJl
+      cmlzaCBzdGFydGluZyB3aXRoICJMb3JlbSBpcHN1bSBkb2xvciBzaXQgYW1ldCwgY29uc2VjdGV0
+      dWVyIGFkaXBpc2NpbmcgZWxpdC4uLiIgYW5kIGNvbnRpbnVpbmcgd2l0aCB2YXJpZWQgcGxhY2Vo
+      b2xkZXIgc2VudGVuY2VzIGFib3V0IHZhcmlvdXMgbm9uc2Vuc2ljYWwgdG9waWNzIChubyByZWFs
+      IG1lYW5pbmcsIGp1c3QgZmlsbGVyKS4KCk5vIGF1dGhvciwgZGF0ZSwgb3Igc3BlY2lmaWMgdG9w
+      aWNzIGFyZSBtZW50aW9uZWTigJRpdCdzIHB1cmVseSBhIGRlbW8gZmlsZSwgbGlrZWx5IGZvciB0
+      ZXN0aW5nIFBERiBoYW5kbGluZy4gVGhlIHRleHQgY3V0cyBvZmYgbWlkLXNlbnRlbmNlIGF0IHRo
+      ZSBlbmQgb2YgcGFnZSAxLCBidXQgdGhhdCdzIHRoZSBlc3NlbmNlOiBhIGJhc2ljLCBmdW4tbGFi
+      ZWxlZCBMb3JlbSBJcHN1bSBkb2N1bWVudC4QAioMCLi888sGEOW+oJIBMhtncm9rLTQtMS1mYXN0
+      LW5vbi1yZWFzb25pbmc6DWZwXzliYjNkNWI1NTNKHQiUAxCCJRiWKCCCHyiABjiuEEoECAgICFi4
+      /axjWmMQAS0zMzM/OgIIAUJRCk8KCGdldF9maWxlIkN7ImFkZGl0aW9uYWxQcm9wZXJ0aWVzIjog
+      ZmFsc2UsICJwcm9wZXJ0aWVzIjoge30sICJ0eXBlIjogIm9iamVjdCJ9TTMzcz8=

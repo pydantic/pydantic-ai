@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '359'
+      - '406'
       content-type:
       - application/json
       host:
@@ -16,7 +16,7 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: Call the get_file tool to get a image and describe what you see.
+      - content: Use the get_file tool now to retrieve a image file, then describe what you received.
         role: user
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       n: 1
@@ -41,7 +41,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '698'
+      - '742'
       content-type:
       - application/json
       strict-transport-security:
@@ -61,26 +61,26 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: cdsc9s27t
+            id: ae1hh7t1r
             type: function
-      created: 1769706873
-      id: chatcmpl-d4e23fe0-65cb-4564-a585-bc4e09f5a5c9
+      created: 1769755925
+      id: chatcmpl-2c8b8b07-1566-48bf-8127-64fc4ddb35ac
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       object: chat.completion
       service_tier: on_demand
-      system_fingerprint: fp_992318f10a
+      system_fingerprint: fp_217b6e6136
       usage:
-        completion_time: 0.186011132
-        completion_tokens: 95
-        prompt_time: 0.761475409
-        prompt_tokens: 708
-        queue_time: 4.9151654449999995
-        total_time: 0.947486541
-        total_tokens: 803
+        completion_time: 0.099769123
+        completion_tokens: 54
+        prompt_time: 0.128636447
+        prompt_tokens: 711
+        queue_time: 0.773669566
+        total_time: 0.22840557
+        total_tokens: 765
       usage_breakdown: null
       x_groq:
-        id: req_01kg5bzjpeepfajsashggshdq5
-        seed: 1826631036
+        id: req_01kg6trnqff70am75fh34dr9b0
+        seed: 1071359634
     status:
       code: 200
       message: OK
@@ -93,28 +93,28 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '132125'
+      - '132202'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=TGOHloMyfNB7jFzRbOcep7Mg.DJ5xH_PEbcZBzFdzKM-1769706873-1.0.1.1-Ad2mUqB9UEXJqzGWVtrbc0c1Nk1uJiyeXj.rvzj6Y_OCIPgFwY0Cy4y7EHBVmI3QjjcFu.oQs8yN3cX7XrFyd9ewW5.73cbdDTzMFlfpid4
+      - __cf_bm=CJjxHINNIWeH8zK3xK4N4tOcDFCWn.YfLQbPD5Xrc2A-1769755924.0536778-1.0.1.1-_ospOu5kTdDNi_ste.5ZGcCXF7qaya81qMae9X3TpOGaI06xIiY1QtWINoqeahsP.BgUpCA8FBmS.P828VyJmTmsJWunPcOaq_bHFRVQiUOsytd04LTU3PKfiZ98MNin
       host:
       - api.groq.com
     method: POST
     parsed_body:
       messages:
-      - content: Call the get_file tool to get a image and describe what you see.
+      - content: Use the get_file tool now to retrieve a image file, then describe what you received.
         role: user
       - role: assistant
         tool_calls:
         - function:
             arguments: '{}'
             name: get_file
-          id: cdsc9s27t
+          id: ae1hh7t1r
           type: function
       - content: See file 241a70.
         role: tool
-        tool_call_id: cdsc9s27t
+        tool_call_id: ae1hh7t1r
       - content:
         - text: 'This is file 241a70:'
           type: text
@@ -145,7 +145,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '859'
+      - '844'
       content-type:
       - application/json
       strict-transport-security:
@@ -160,28 +160,27 @@ interactions:
         index: 0
         logprobs: null
         message:
-          content: The image depicts a kiwi fruit cut in half, showcasing its vibrant green flesh and black seeds arranged
-            in a circular pattern around a white center. The outer skin is fuzzy and brown. The fruit is set against a plain
-            white background, highlighting its details.
+          content: The file received is an image of a kiwi fruit cut in half, showcasing its vibrant green flesh and black
+            seeds arranged around a central white area. The outer edge is fuzzy, characteristic of kiwi skin.
           role: assistant
-      created: 1769706879
-      id: chatcmpl-dc1df998-f7f5-409a-bb17-5fda09099273
+      created: 1769755926
+      id: chatcmpl-af589cb0-12db-44d9-b650-d13df7121a8a
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       object: chat.completion
       service_tier: on_demand
-      system_fingerprint: fp_217b6e6136
+      system_fingerprint: fp_992318f10a
       usage:
-        completion_time: 0.283172655
-        completion_tokens: 52
-        prompt_time: 0.040721918
-        prompt_tokens: 1497
-        queue_time: 5.172285519
-        total_time: 0.323894573
-        total_tokens: 1549
+        completion_time: 0.193672467
+        completion_tokens: 43
+        prompt_time: 0.033594955
+        prompt_tokens: 1500
+        queue_time: 0.24633515
+        total_time: 0.227267422
+        total_tokens: 1543
       usage_breakdown: null
       x_groq:
-        id: req_01kg5bzrm7esba592yyvhz0ta4
-        seed: 248104053
+        id: req_01kg6trq81f22bqby9j9ecmhcp
+        seed: 1814558362
     status:
       code: 200
       message: OK

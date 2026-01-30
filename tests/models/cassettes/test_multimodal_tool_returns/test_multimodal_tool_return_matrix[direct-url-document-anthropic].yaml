@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '351'
+      - '399'
       content-type:
       - application/json
       host:
@@ -18,7 +18,7 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: Call the get_file tool to get a document and describe what you see.
+        - text: Use the get_file tool now to retrieve a document file, then describe what you received.
           type: text
         role: user
       model: claude-sonnet-4-5
@@ -38,7 +38,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '468'
+      - '578'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -47,11 +49,13 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - id: toolu_01CrRMbbyq4xEt5wiiyJDe7o
+      - text: I'll retrieve the document file for you now.
+        type: text
+      - id: toolu_01DYjF6b6WH32BRAxbVibdG5
         input: {}
         name: get_file
         type: tool_use
-      id: msg_01K1cnmV2k2H4UzxaUkr2hre
+      id: msg_01CnJoNLbZB4WimamtqCQmtv
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -63,8 +67,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 555
-        output_tokens: 36
+        input_tokens: 558
+        output_tokens: 47
         service_tier: standard
     status:
       code: 200
@@ -78,7 +82,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '687'
+      - '837'
       content-type:
       - application/json
       host:
@@ -88,11 +92,13 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: Call the get_file tool to get a document and describe what you see.
+        - text: Use the get_file tool now to retrieve a document file, then describe what you received.
           type: text
         role: user
       - content:
-        - id: toolu_01CrRMbbyq4xEt5wiiyJDe7o
+        - text: I'll retrieve the document file for you now.
+          type: text
+        - id: toolu_01DYjF6b6WH32BRAxbVibdG5
           input: {}
           name: get_file
           type: tool_use
@@ -104,7 +110,7 @@ interactions:
               url: https://pdfobject.com/pdf/sample.pdf
             type: document
           is_error: false
-          tool_use_id: toolu_01CrRMbbyq4xEt5wiiyJDe7o
+          tool_use_id: toolu_01DYjF6b6WH32BRAxbVibdG5
           type: tool_result
         role: user
       model: claude-sonnet-4-5
@@ -124,7 +130,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1426'
+      - '1471'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -134,22 +142,26 @@ interactions:
     parsed_body:
       content:
       - text: |-
-          I can see a **Sample PDF document** with the following characteristics:
+          I received a **PDF document** with the following characteristics:
+
+          **Document Type:** PDF file (application/pdf media type)
 
           **Title:** "Sample PDF"
 
           **Subtitle:** "This is a simple PDF file. Fun fun fun."
 
-          **Content:** The document contains multiple paragraphs of Lorem Ipsum placeholder text - the standard dummy text commonly used in publishing and design. The text is Latin-like gibberish that starts with the classic "Lorem ipsum dolor sit amet, consectetuer adipiscing elit..." and continues with various Latin-sounding words and phrases.
+          **Content:** The document appears to be a sample or test PDF containing Lorem Ipsum placeholder text - the classic "dummy text" used in publishing and graphic design. The text is organized in several paragraphs spanning what appears to be a single page.
 
-          **Structure:** The document appears to be a single page with:
-          - A large title at the top
-          - An italicized subtitle beneath it
-          - Several paragraphs of body text arranged in a clean, readable format
+          **Structure:** The document has:
+          - A large heading that says "Sample PDF"
+          - A subtitle in italics
+          - Multiple paragraphs of Lorem Ipsum text that discuss various Latin phrases commonly used as filler text
 
-          **Purpose:** This appears to be a test or sample PDF file, likely used for demonstration purposes, testing PDF readers, or as a template. The "Fun fun fun" in the subtitle and the use of standard Lorem Ipsum text confirms this is meant as a simple example document rather than containing any real content.
+          **Purpose:** This appears to be a demonstration or test PDF file, likely used for testing PDF reading capabilities, as indicated by its title and the use of standard Lorem Ipsum placeholder text rather than meaningful content.
+
+          The document is clearly formatted and contains standard typographic elements typical of a simple PDF document.
         type: text
-      id: msg_0149rcCVf8jcfYtJtz3V1eyD
+      id: msg_01DgeTaL5EaZu2ZMCwCoPvNu
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
@@ -161,8 +173,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 3272
-        output_tokens: 223
+        input_tokens: 3285
+        output_tokens: 216
         service_tier: standard
     status:
       code: 200

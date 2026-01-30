@@ -8,17 +8,19 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '321'
+      - '409'
       content-type:
       - application/json
       host:
       - api.openai.com
     method: POST
     parsed_body:
+      include:
+      - reasoning.encrypted_content
       input:
-      - content: Call the get_file tool to get a image and describe what you see.
+      - content: Use the get_file tool now to retrieve a image file, then describe what you received.
         role: user
-      model: gpt-4.1-mini
+      model: gpt-5-mini
       stream: false
       tool_choice: auto
       tools:
@@ -38,13 +40,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1688'
+      - '2717'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '508'
+      - '1388'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -57,22 +59,26 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1769565189
-      created_at: 1769565188
+      completed_at: 1769756091
+      created_at: 1769756090
       error: null
       frequency_penalty: 0.0
-      id: resp_0eae981d62f3e8860069796c04b7c88195aa19c084adffada4
+      id: resp_07ef75f83d1ae30400697c55ba570081a38f40bec6bf21653c
       incomplete_details: null
       instructions: null
       max_output_tokens: null
       max_tool_calls: null
       metadata: {}
-      model: gpt-4.1-mini-2025-04-14
+      model: gpt-5-mini-2025-08-07
       object: response
       output:
+      - encrypted_content: gAAAAABpfFW7G2EnyDL06JNz0avkqScBjpwx5B31xQfzdMmQUCitVTqKCM4QXWIaW8KhRoPsuIfq5Kv6cXhu2vrOZRfxT89i0H5O0oSmvTMVVLWPwO_sjjXHddyzqS1yapTkPabAF4Z2PxGM-9NTIVEh9GKqw8xocSflyqYWe_5rnSN_RDhplQqxUTt5L9k_fUO47c3nUSM6qKKhY_zDJFzxpm4sazaojrsMry8DrnMP796uTxchzGhMGXGw4L4LmLuiCuAyM3ZY_MBG6aMbz2IQelVGgx15jEtAuAGFXNTnqoNqhe3-IGyDmzF-wBXbRC_BJIYBQaZ8cuAExaMRmgqNDh-f6wnj4pjMt1jjpiMnODyVTXWsD2Z2jCUb9TVU02UFYYJYfhrb5M2Rk_LdBLM8me7jAA6NQekkqHgPUmwIRLa4zEOeRyRts8KDbA2jLNS_qXsEgt7jzjTNXNcofa9rAUmewiqfLuDGSUBwdiZMPieoep7hBsTZ4yO2qZKCpG6sGl6h9_RRUFUlSLRgf5pTvS9g6yN79mMs2VytKEr9EI4SCnZVbPX8_mz_CwYxHKTPgfh7OhL7Oh6xvjKRbEcM3-Vn5LyRNyopGCZYEcl85CmjXILU--Lw4512kJQ-bnr5bNk8jiNLeW5A2FgFCz1byUK9iu7oqaZRuNMAPZypiLw2OuWeudadiPWwpfavYe0_GGjlksT7PCM3KXACe3UyrvTn6AqgBgipgA8jewLKODVwwxSR0p5dYxiTqgEIQ3N_wbqOhy7KLbGxEmfEiNrfU9tMfvO0ZPO_bfpkFU-6y_qETMuAs6-A2tMrE7lFkBgBfZwzyetRZYfgaznUldUaVGFqPZQTB9HSRb0OPCFiJNrU--cahgskTxvCLVfIM_sNC1zIO09m2W4dj3nffW6TASDs-OmfZozbwHANFBKuSzoaeiPwsh9tEclQnp8G_zFhOYyGcS7Kwr6LdtKIY60jIKdMjoRcmF8kb9hBapuAjNVD0WgLrdj5o4KX12wPObAQcI23To5OY3FEy5pB9ZVhzJG4ntLJHLW8B762NC2i0xsK99G_KAQUEHCAK8QR-EKk2oho0PsB2HGn1mJ23yPpU-kVNisCpjUJl8XoeXSP8bD8iIuweKxy7IbKU-vjv7sGhrY4RF6sGE9xaNU4eW1jwCwQhNx3Rg==
+        id: rs_07ef75f83d1ae30400697c55ba934881a380fe0c1fd2fa977c
+        summary: []
+        type: reasoning
       - arguments: '{}'
-        call_id: call_CIDv2t1uV3ESI5SIw1xvE9vR
-        id: fc_0eae981d62f3e8860069796c0517bc8195990072f2e221bb67
+        call_id: call_iIad4ZgCjlriFpIBM7yCyKMH
+        id: fc_07ef75f83d1ae30400697c55bb85c481a3b1de04a88b395573
         name: get_file
         status: completed
         type: function_call
@@ -82,7 +88,7 @@ interactions:
       prompt_cache_key: null
       prompt_cache_retention: null
       reasoning:
-        effort: null
+        effort: medium
         summary: null
       safety_identifier: null
       service_tier: default
@@ -107,13 +113,13 @@ interactions:
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 40
+        input_tokens: 47
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 11
+        output_tokens: 70
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 51
+        total_tokens: 117
       user: null
     status:
       code: 200
@@ -127,32 +133,39 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '686'
+      - '2135'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=eXiNHhbnRvmi2LpKqhdraBYoDItrJIakubrb1_SE9PM-1769565189-1.0.1.1-nvEHphOuK7ayug.yz_V.kmblgGgY8EkpSywX4RExqoxPbJmpVpwMOxcNTDyDyAcQPpzK8VTGon9AlflVkTAzd5yOc6f.NIBByNAQiXPliA0;
-        _cfuvid=bzMma_eqGkzoZOThJGtAjCzgWnflJj5tmXfXbFQTb4o-1769565189274-0.0.1.1-604800000
+      - __cf_bm=OoDIUpMSVsJoSDTg0Gr5sLKDFMZqX8geq1O_NuNdKoQ-1769756091-1.0.1.1-Dhk8J_MCKnVycKQdpCh67eoE.6l6tFwG.j9274uMmsybhU9tKMJFLpwy_DShn4kYsAZ4y2jXsbMBknCa3Q90lXHKp6wt9YMbnOrnMiUazu8;
+        _cfuvid=tnmSb0JLXW_W3PtfZROj6LgzMx1LsGBkAPH5aP2ARXU-1769756091765-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
     parsed_body:
+      include:
+      - reasoning.encrypted_content
       input:
-      - content: Call the get_file tool to get a image and describe what you see.
+      - content: Use the get_file tool now to retrieve a image file, then describe what you received.
         role: user
+      - encrypted_content: gAAAAABpfFW7G2EnyDL06JNz0avkqScBjpwx5B31xQfzdMmQUCitVTqKCM4QXWIaW8KhRoPsuIfq5Kv6cXhu2vrOZRfxT89i0H5O0oSmvTMVVLWPwO_sjjXHddyzqS1yapTkPabAF4Z2PxGM-9NTIVEh9GKqw8xocSflyqYWe_5rnSN_RDhplQqxUTt5L9k_fUO47c3nUSM6qKKhY_zDJFzxpm4sazaojrsMry8DrnMP796uTxchzGhMGXGw4L4LmLuiCuAyM3ZY_MBG6aMbz2IQelVGgx15jEtAuAGFXNTnqoNqhe3-IGyDmzF-wBXbRC_BJIYBQaZ8cuAExaMRmgqNDh-f6wnj4pjMt1jjpiMnODyVTXWsD2Z2jCUb9TVU02UFYYJYfhrb5M2Rk_LdBLM8me7jAA6NQekkqHgPUmwIRLa4zEOeRyRts8KDbA2jLNS_qXsEgt7jzjTNXNcofa9rAUmewiqfLuDGSUBwdiZMPieoep7hBsTZ4yO2qZKCpG6sGl6h9_RRUFUlSLRgf5pTvS9g6yN79mMs2VytKEr9EI4SCnZVbPX8_mz_CwYxHKTPgfh7OhL7Oh6xvjKRbEcM3-Vn5LyRNyopGCZYEcl85CmjXILU--Lw4512kJQ-bnr5bNk8jiNLeW5A2FgFCz1byUK9iu7oqaZRuNMAPZypiLw2OuWeudadiPWwpfavYe0_GGjlksT7PCM3KXACe3UyrvTn6AqgBgipgA8jewLKODVwwxSR0p5dYxiTqgEIQ3N_wbqOhy7KLbGxEmfEiNrfU9tMfvO0ZPO_bfpkFU-6y_qETMuAs6-A2tMrE7lFkBgBfZwzyetRZYfgaznUldUaVGFqPZQTB9HSRb0OPCFiJNrU--cahgskTxvCLVfIM_sNC1zIO09m2W4dj3nffW6TASDs-OmfZozbwHANFBKuSzoaeiPwsh9tEclQnp8G_zFhOYyGcS7Kwr6LdtKIY60jIKdMjoRcmF8kb9hBapuAjNVD0WgLrdj5o4KX12wPObAQcI23To5OY3FEy5pB9ZVhzJG4ntLJHLW8B762NC2i0xsK99G_KAQUEHCAK8QR-EKk2oho0PsB2HGn1mJ23yPpU-kVNisCpjUJl8XoeXSP8bD8iIuweKxy7IbKU-vjv7sGhrY4RF6sGE9xaNU4eW1jwCwQhNx3Rg==
+        id: rs_07ef75f83d1ae30400697c55ba934881a380fe0c1fd2fa977c
+        summary: []
+        type: reasoning
       - arguments: '{}'
-        call_id: call_CIDv2t1uV3ESI5SIw1xvE9vR
+        call_id: call_iIad4ZgCjlriFpIBM7yCyKMH
+        id: fc_07ef75f83d1ae30400697c55bb85c481a3b1de04a88b395573
         name: get_file
         type: function_call
-      - call_id: call_CIDv2t1uV3ESI5SIw1xvE9vR
+      - call_id: call_iIad4ZgCjlriFpIBM7yCyKMH
         output: File attached
         type: function_call_output
       - content:
         - detail: auto
-          image_url: https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png
+          image_url: https://www.gstatic.com/webp/gallery3/1.png
           type: input_image
         role: user
-      model: gpt-4.1-mini
+      model: gpt-5-mini
       stream: false
       tool_choice: auto
       tools:
@@ -172,13 +185,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2131'
+      - '6553'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '2346'
+      - '13001'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -191,28 +204,38 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1769565191
-      created_at: 1769565189
+      completed_at: 1769756104
+      created_at: 1769756092
       error: null
       frequency_penalty: 0.0
-      id: resp_063a47a434723c1e0069796c0592fc8190b0b56de5eebdfaa0
+      id: resp_07ef75f83d1ae30400697c55bbe44c81a39fec7ce41282167d
       incomplete_details: null
       instructions: null
       max_output_tokens: null
       max_tool_calls: null
       metadata: {}
-      model: gpt-4.1-mini-2025-04-14
+      model: gpt-5-mini-2025-08-07
       object: response
       output:
+      - encrypted_content: gAAAAABpfFXIiFusO-f7Ng6DUhS1ovqtepmxLCFu4qhafIVLmnA30UZMPJeAT7d-Vx1tw4Iq617s6QBqZ29XoDMSHlwepveH9xPJfmYNZIa1OI9NSsPz97H9iRtZHFZjdtrUAqxNmL1-831rZ0Ugd1FlsU9b9xYlXxrGccZzdM_Sn8kxjKVw74RfJOxOzpxyzvC_AOs9jen2XXT7TV6n-ynOF3fM4duiooDhBWuh5tH6OfMxzEZJwfcROVZsmY7cXN_EfjIAXZpEFWQ1on-kBuDmualovMvQTHmhuKy-84crjr2tlHoz5DBqnnWXKdyDZcGH4rsf_amUjvNQnnObC7YSnAzbt06oUqpIIk4zOyR11q3Nb7JpuJDtbkOxTgCoEhttP2q2knt_1KUwtA0ibEul6Uw3XacpkItCx4y-n__zwrhi3hDyep2lesWhG3W5Oz6-bU-ksw7jEvOheLTRh1GrBKjF-CRC2O5LMvylFI2SRg1ud--CU3nNIHOoWq7s2UPZraiArmOjWUefBgiXFBbnWOFnMdNjWsExfHYv-mOawfrRVuFKx_MYzDuWaie2C8xJFr4VgBsaO4lUfBruuY9NIKno4nzv7MZmH3augBd6vLNeoId6nnh-P3-TgKTac6HRr5N6ZZccWpSq3gRMICCU2rHm5Es7qa1Af3D7-qMC78NEiRPQivXEWRr3aBtYXPPIwcRPx_JuoaShOyQofsmjLH6xY1x0OHixkjOwNJfM0Hl9KTkOSgqEWDKkmzy003K2BPEs4NUAatBFaJzChYL5fK3J6RnISFr31jcL9dnVgMvJJNLEkmfPOYj_mpqaflf87S_9H99x18RKHka0dGlnYrK9XV6KSMlmCweHiMLlTrrN3okBAWBt0O6br7wnkMw0zGbnS8jBcmVkDTHx-jwshLbQrQQTGtX1pkpitzfS5-H-WZkblRoX10fV6nIp1A0x2XA14fKIh95WuDW_0GjLTHstYCHHC9afuyTzT--LnHEEx6I5DD6vnAxhxIjFnxT368ekK4alrfcmU3VKuZBi9Ns4mDDnTE2P2smnNYLrb3CTk16wt9iVGCz5n-D187__U2EZtVVmVmKLcWxQLjmyd4Gew4dufmX3KqMrwPlQEDfs9wMwASb9qfpJx4qfNE5A2TRbwTkeZexBp6UhbogubMIlt3GUCyHuA_SPHHbsjDfZRgz8flyTaRx0rr_sJ_XrT4lKIae6YiNjei-tgtF0awUVcZnvArGQQkaWRAR0oZPCBltITPV1Q6PceGwrnhxMVqwEjtZuHkm-e7zGGd-Na1LlD6jpBhS-zJJCEW84fx10WyCLQUpWCk-8nRr8iaAY2iLCfEKk8jOU-HOEDfgha-JZy4btR95o0Y1FQXGze3O6LhJZ36bPJaQpdzkRwVEEcfKc-WIvmDgPDBfg11_cq9Y9MwKGKLRbkO618eKGtrNTW_kKSdrVzIljw4NID-Pi-eTnqi4dHxvKTHCzu_a3tmWzA_1UOiKPnJRPUA09aDNBZTDlOOfaapwZehMu4Z_umvYouS8NhmdwJnwtShG9yERhTOGdQLSO97T-_PzOT1BQ1kugI4anCI3PGiHqbRRj-btK3DX6Ep0PwQv0_R75tIMJZz96mjCiP0MxAd-UUsZMg_1peM-nom_2u6XRifuicMhdKI-xJbYGsNwuGz-YgbHXF0JMsZTW8TJtpVxzdtlOIy420Z6I6oFRqxycg9lUEUrAykzCaGeIzjd2dLNP1jsNs9qWFaAr3j7ix49qW4sB9bK1GXnEKxRzw4nk9CPA3g6tsQsHHqs4-BPI30rX18rH0_Tzsc359z9rwDOC5sn7oPd-HWgVKlsb60sFATXd1PRP7EJbTFiPwzS5A8W-yzEqhI2fQhva1tMhwBnVRt7O8JzHG4K_PNCunm5a0YnWQdmeAd2TOdPFEtO3anzneh9uftR2ETyv9g-y6If4iXR46UDKdIyvoTsn1gtSYsOxok4vZ-idpP9xenaLAY9mKqy8Zd7vOUi_elPhmjih0WxEqxtKAXv7apI6x45iehWKLaPaDE463Q4HUNyoVtzanmr66dvBvlR4l-1hXTJyBVeLWU4xECRJakA1uLpsle6FHfmoEL6utatKkc0_tGfDhjvs8JwI_g_GHstey-xtKD-2deZrlx8gKn06guznPnE-fR3TW5PzwCGxzGVABEhojOA5QwD4jntiWg9wVQ3OEmOiv7xuW0LYp35OBYX3KIUugD28P1_M6HaQM65rHouZHg98OkgT17HiVz7wKZkF-SSbDDPViDc4hMZtcpdlU5e3cGE6LTlecK3mWfpb6VlfZrP_fHJTndIGHGZX-ARiEQITT0tgcGl3h7P5woKGQsRed8NLP7L445DsS4cV0yp0CwYyvmrKpudJS4JtG3GGNkAA-I9UP6E5oj2h_0ofXefm0E4sxU7WycIxortgAXNHgbn3Rxx6yzXz4zkTnbBodozAVJyANIqnftCq7-HszGCJLizJHVTmLcc1EScLD3FjZFtG0ZPJTCcL2_wipD4Ren2n49q4_PjwKBvrbEXDgy_eQCuJVRoyHykd5b49F-A047av0uKzQ1omTqUtWtrdVP4oSaoj1ZeQDpLZYFsV2vFBuUn_-OBqVk1wXf-YU9AEYENWtsL8ch83MK8jl9XPp07UuMslKjInb3LQOwMjafphl6ZC4jJpy3y41NSJJCU1cOTv8PM14bOKuejrU207Q2zj8sCGh-bhOmoOvu3mBZGTNwd9uvu6ulJoZ6Hw7QmtAhb17bhuLdGcTcYizKiwBbOh7y4jst177fFljTc-dUwTUX1yHcmcrgvsXeFYZAYw1p0bJ2otUOWz8oBThDgp1ErQlIaEqEh3R-gkLTJK3nRY-MhT7CXSl0t-I7CEjHI3vY1ZSmteBNPWsYsHhTqdT75XdY8LRvfXslMEBgndoze1a9xebbE6t1-RBCj-KBGQa9-afFXYwQNGRh9C_czcn7EUlV18Tu8CMkF6kx34Q_EnVk0lVsE80qfRd9cA2FSN1Nc3J1xpH5qASalakIb_ahEWe4E7Dzhw3jLydbKicJivByZK23lPItjNbY8KHey-wbudF1Cboja6PmUhol2vusPubn7-ojQybC3x0JXGKiqJ0FEWP1r6RsoI8LjkXApg4X8IAd0kD5Tfn6GpA9aw3TXObdJ7Tb0ROnyVMYZZbxM0jH10rikHbhW0y3dw9c99U3OWtTKlvZZKJF_Xb_SilGs3n9KwXejIH2CnfgIa-eKczqAOhqUe4RoGOs0sDDxWvJ2teUH9Jk2Ls4uZcv6mTtJiSeUeWpSjO5T74eRLaj_0hc6enGoHoY9X7DPaUL1eGS6VHAhP0kp571RQVbPAPW7eWcGnNu3t-G8dOXuT-sj99eqUU-3gOn25m0EYexp3-dUxpebNB_1EF7HAoNPQXBPdkuzyfqvEpyK_GDFls2GoAnORs6R3l4wucwDQgMtxxjUwyP23mBmlDEIWvvc8n4ZvFA2RsVUudxNZ7hMDpmfwFIuRdb-7htgex_sthqUtQsJNXlRl3bb307Nn8_0hl84nxXaVvXvuqtrKuB110OG90udfSUSc2-Q1KQ_27QkpPkQj7Be2I6J4kZjdJR2WqbmAt45B7_TA7TKB6zmQ2fUYFm5MUrv2AN7vop-KYfb-1LUKCUU8wUsdp_QHsZL59X0UOU8hhpH7fOcRT4kUIG7ONV2_4OcxP6sy4JoG4buj2LLTeNLDObioiHbD0x6aq3Oasj1Sc3-d5GJwbq1pu3GrGesBJug57IVAsadgHMxHocXddubHtaOF7q23i0uQ7rQj4o0swKpeTJwmU8qmW8cYOLvPVmch7E7-TbrK7gWFA2cUmx7dnLPFMXff_Wm7RLHgKXFKyDsQjexN50AwI5JUwW7_1Yf8SoVEKJvTf1GHsqHKSlrovjfsfJkdUhshipael4rVbN4VWrVdm-wP4jCGfSRJhCQ03bHsHtLUKlNfgFaiz_YQFmoxX_YpSqF7hzuEjSrJTI9qqVQ9NcKEwjH1SbbVxBdkFXmh3LcnbxyUnj5CJ1V3X2nUyF8RV0L_U131zFkCR0QQsY1UWrupnoY3vj_0K1lZ8qzb__Ii52Ye_9rvPc_WI-lvI4o6OndzegguGv0RHwmg5b9BRgF5MZaHHyFvJhO1yUiJawn8VULd1hJpspZn624dS2FYZS1-SqFDrkpuAfowQsxXL4j4J7whXmMpRH7W
+        id: rs_07ef75f83d1ae30400697c55bc9b1481a38409162d49ad83ac
+        summary: []
+        type: reasoning
       - content:
         - annotations: []
           logprobs: []
-          text: 'The image shows the Google logo. It features the word "Google" in a clean, sans-serif font. The letters are
-            colored in the company''s signature colors: blue for "G" and "g," red for the first "o" and "e," yellow for the
-            second "o," and green for the "l." This logo is well-known as the branding for the Google search engine and other
-            Google products.'
+          text: |-
+            I retrieved an image file showing a single rose blossom. Description:
+
+            - Subject: One rose, viewed from the side/three-quarter angle.
+            - Colors: Warm yellow to orange petals with slightly pinkish-orange edges and small red speckles.
+            - Details: Visible water/dew droplets on the upper petal; petals look fresh and slightly curled inward.
+            - Stem/leaf: A short section of stem and a small green leaf are visible at the top right.
+            - Background: The flower is isolated -- the background appears removed/transparent (image likely a PNG with the flower cut out).
+            - Approximate image dimensions (from the file preview): about 243 × 399 pixels.
+            - Overall impression: A high-quality, clean cut-out of a fresh yellow-orange rose, suitable for graphic or design use.
           type: output_text
-        id: msg_063a47a434723c1e0069796c0684388190a68e38cfe828b8b3
+        id: msg_07ef75f83d1ae30400697c55c64d7881a3bf6c336047c1db8d
         role: assistant
         status: completed
         type: message
@@ -222,7 +245,7 @@ interactions:
       prompt_cache_key: null
       prompt_cache_retention: null
       reasoning:
-        effort: null
+        effort: medium
         summary: null
       safety_identifier: null
       service_tier: default
@@ -247,13 +270,13 @@ interactions:
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 230
+        input_tokens: 239
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 86
+        output_tokens: 672
         output_tokens_details:
-          reasoning_tokens: 0
-        total_tokens: 316
+          reasoning_tokens: 448
+        total_tokens: 911
       user: null
     status:
       code: 200

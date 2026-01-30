@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '350'
+      - '370'
       content-type:
       - application/json
       host:
@@ -17,7 +17,7 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: Call the get_file tool to get a video and describe what you see.
+        - text: Use the get_file tool now to retrieve a video file, then describe what you received.
         role: user
       generationConfig:
         responseModalities:
@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1231'
+      - '2053'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1044
+      - gfet4t7; dur=2270
       transfer-encoding:
       - chunked
       vary:
@@ -54,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_file
-            thoughtSignature: CvwCAXLI2nxkdyZkwHprXIEQSmKw16ewhxcg44X5AEIlmIR0JLEwNqq/Qn9IINlGOUKa32D2UAppcCylnFLoBdHuXzxar5wXSDjK4T2NjFY0sud5UbL6J81O5bksty72C9vYyjwCf7n2sh/upN21ZABS6/grC/syQt4MDXQ40VrVItvO9g2CGl6KeAmCVJY78ORPltzwsB+PSA4hmVUGud/qAk9IPDWcgC9SqXUDzTX/I+uBgkZx590dqx1FbZFnQAOKwU8How6dL6T4mur32i8vR4WZV1HJzI7pW4DbJjwxklmcGLqSoLvga49yDwirLWFShveYV5rooi7lGTcVwT8iEgXccO1VzutaELwJnMpUHJkEKOTANSkOk8ngSNd+vBbz7SuXLBR+rJR6SOoFnRs1GhyzTLbLPBAi692M+rxMskcuH57frLcvBZMZlgDz1ZdBeROlS2yY31QJMMcRm89ArH5zaAY9ZL5rvqmjQej58rNND4Pw9Wd7F9DcBxk=
+            thoughtSignature: CpIJAXLI2nxUEbuOw0L8ZiFmu3Aptj9LbUHuu73i22TPPYgNyFWftqfbsK9axqOyeEzt3ybxZtDO39rkKU9+vJ+czynvBSjFtGQClJKP2VcFZ4qyooF2wtpJz6dxWb9MP823uq1ZTjcXOA1/1fcJXjq5q5pNIkKUABvNRLeYqJpuv2E2TF2s8uAC2MClADqkqlAax8uviBuoO15Lug7JMIzLGVT7CP43JniE24/ZJ1SIwfwwvZ5KTqJnHJW7/x0i9QJGDXRgCYnQotFId5LfyALhfLNp/Q/g2lYXlAnNsmlkyu1GQDhNcYGgKQzFtST5msMoqpF7LpEJ4I7jQEKhgKC9YSdiKrDPO/wBwlfBx1RUtXREQIdY4XTeai+yXI+JtvNBBjs19J2U/BJQao5mJnJzCOyhaC8cyddqJ0yPbda+E6F2KzhG5DbacAm7AIE93d4y016wGwkEQyxxD/go3Kdizq2zSYBOutAHYPxL6b6c+ye2nbm2hagu14UtvS8ITk+xZhSyV1OMQdDLIxybhdehunnAb73Rbh+m1QwN7fh0oJxhllUTSZQcDyjURR/WM0BGnuWnNvunugj/VQF2x3OqxZq1NFW5HzDgez2Cfy+Ef0n1pCvgR/ijSM+F7kupQuoNqJIoEPowdPGnVoTA4c9kODjDwWDVyhNl6EcOkc1TR4mpVgg24cfS0FQr/OjXnJdk0Oj6HW6zXTaJZGUt4HPglN9Kn/GFB7QDsoaMHqxY4znjdaEcUkrZ/YCXJXqI85TyyA7otgpBJQlYnatW+h40mY2Xb7juQ920piRXxNAj9sMnMQDUnQKaewLyO5OfzIi4W7wMPOl/0SM/W5TFVl+Ym60PZZPFb5frkyy6zHO5K/ebEykmJPY7gVTHc3Aj7wIN5WNkC0VZX0pfCsnYUJaq8qRnJCmaaETgd6FuIKSE9236omp3F/0dlFnSCGpZtZW0aOsoLB36G5vcqGymgro65kxvfOr8SpR3G9suBjYCDPUSPzoY4cZ5F7W4B7AIM833dHgO2qm29onbWEEUo9JQ/VFuhuDAsxjULOrg8pP4Es1nhwLSsVxjKtdLAHiOHwNZuH/T0br9/SA1IAY5xAH79rvF/9QVIl6MNF3cTzHoamcRP5Xfg7NYTnPyqUqlI9LkUWQ5hQF3sPJlDCf08giqg33FjH55grBA+otqy1EgoC+5mv69lII41l30BlW+XdOe14WkgMNN8jaL38NwUpUk5vuw26JLYih6dyXbVQsH4Gu8wSNqQSrR0V1WfriOZLS47KRnkDvgJhFBifZ4+vbfDnazg1PE2DdETHbC9srL49ArBhSzOqdbrodGfQFaX+oHcKFG2pAAJMRf5HwCyI1A7ST6MA9hGOuPTRlDJ25hnUhaJcVN7d9rOcwsmY8VF250rbtqOWS5I1J6cN6CrSQVtgQVVa47Bh+Yhhs1nCGAgmqYAApdWQrmWynQO3X0GppU59J18h+3h3aKWZxRDQflMIjflk+XajOD9+4krAC2c7mYpbaYkJgvKU4+AwoH33XcCNfAAPG4teXChI+1cp6R63QT
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: 0397acWuI6O1qtsPzf_4mAI
+      responseId: DVV8adeoAdSxqtsPtZHw0QI
       usageMetadata:
         candidatesTokenCount: 10
-        promptTokenCount: 38
+        promptTokenCount: 41
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 38
-        thoughtsTokenCount: 75
-        totalTokenCount: 123
+          tokenCount: 41
+        thoughtsTokenCount: 265
+        totalTokenCount: 316
     status:
       code: 200
       message: OK
@@ -81,7 +81,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '836643'
+      - '837715'
       content-type:
       - application/json
       host:
@@ -90,18 +90,18 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: Call the get_file tool to get a video and describe what you see.
+        - text: Use the get_file tool now to retrieve a video file, then describe what you received.
         role: user
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_0a913ec7914c4497912cc200bacb50e4
+            id: pyd_ai_ba15528e9f314fbd80d5b0a378286804
             name: get_file
-          thoughtSignature: CvwCAXLI2nxkdyZkwHprXIEQSmKw16ewhxcg44X5AEIlmIR0JLEwNqq_Qn9IINlGOUKa32D2UAppcCylnFLoBdHuXzxar5wXSDjK4T2NjFY0sud5UbL6J81O5bksty72C9vYyjwCf7n2sh_upN21ZABS6_grC_syQt4MDXQ40VrVItvO9g2CGl6KeAmCVJY78ORPltzwsB-PSA4hmVUGud_qAk9IPDWcgC9SqXUDzTX_I-uBgkZx590dqx1FbZFnQAOKwU8How6dL6T4mur32i8vR4WZV1HJzI7pW4DbJjwxklmcGLqSoLvga49yDwirLWFShveYV5rooi7lGTcVwT8iEgXccO1VzutaELwJnMpUHJkEKOTANSkOk8ngSNd-vBbz7SuXLBR-rJR6SOoFnRs1GhyzTLbLPBAi692M-rxMskcuH57frLcvBZMZlgDz1ZdBeROlS2yY31QJMMcRm89ArH5zaAY9ZL5rvqmjQej58rNND4Pw9Wd7F9DcBxk=
+          thoughtSignature: CpIJAXLI2nxUEbuOw0L8ZiFmu3Aptj9LbUHuu73i22TPPYgNyFWftqfbsK9axqOyeEzt3ybxZtDO39rkKU9-vJ-czynvBSjFtGQClJKP2VcFZ4qyooF2wtpJz6dxWb9MP823uq1ZTjcXOA1_1fcJXjq5q5pNIkKUABvNRLeYqJpuv2E2TF2s8uAC2MClADqkqlAax8uviBuoO15Lug7JMIzLGVT7CP43JniE24_ZJ1SIwfwwvZ5KTqJnHJW7_x0i9QJGDXRgCYnQotFId5LfyALhfLNp_Q_g2lYXlAnNsmlkyu1GQDhNcYGgKQzFtST5msMoqpF7LpEJ4I7jQEKhgKC9YSdiKrDPO_wBwlfBx1RUtXREQIdY4XTeai-yXI-JtvNBBjs19J2U_BJQao5mJnJzCOyhaC8cyddqJ0yPbda-E6F2KzhG5DbacAm7AIE93d4y016wGwkEQyxxD_go3Kdizq2zSYBOutAHYPxL6b6c-ye2nbm2hagu14UtvS8ITk-xZhSyV1OMQdDLIxybhdehunnAb73Rbh-m1QwN7fh0oJxhllUTSZQcDyjURR_WM0BGnuWnNvunugj_VQF2x3OqxZq1NFW5HzDgez2Cfy-Ef0n1pCvgR_ijSM-F7kupQuoNqJIoEPowdPGnVoTA4c9kODjDwWDVyhNl6EcOkc1TR4mpVgg24cfS0FQr_OjXnJdk0Oj6HW6zXTaJZGUt4HPglN9Kn_GFB7QDsoaMHqxY4znjdaEcUkrZ_YCXJXqI85TyyA7otgpBJQlYnatW-h40mY2Xb7juQ920piRXxNAj9sMnMQDUnQKaewLyO5OfzIi4W7wMPOl_0SM_W5TFVl-Ym60PZZPFb5frkyy6zHO5K_ebEykmJPY7gVTHc3Aj7wIN5WNkC0VZX0pfCsnYUJaq8qRnJCmaaETgd6FuIKSE9236omp3F_0dlFnSCGpZtZW0aOsoLB36G5vcqGymgro65kxvfOr8SpR3G9suBjYCDPUSPzoY4cZ5F7W4B7AIM833dHgO2qm29onbWEEUo9JQ_VFuhuDAsxjULOrg8pP4Es1nhwLSsVxjKtdLAHiOHwNZuH_T0br9_SA1IAY5xAH79rvF_9QVIl6MNF3cTzHoamcRP5Xfg7NYTnPyqUqlI9LkUWQ5hQF3sPJlDCf08giqg33FjH55grBA-otqy1EgoC-5mv69lII41l30BlW-XdOe14WkgMNN8jaL38NwUpUk5vuw26JLYih6dyXbVQsH4Gu8wSNqQSrR0V1WfriOZLS47KRnkDvgJhFBifZ4-vbfDnazg1PE2DdETHbC9srL49ArBhSzOqdbrodGfQFaX-oHcKFG2pAAJMRf5HwCyI1A7ST6MA9hGOuPTRlDJ25hnUhaJcVN7d9rOcwsmY8VF250rbtqOWS5I1J6cN6CrSQVtgQVVa47Bh-Yhhs1nCGAgmqYAApdWQrmWynQO3X0GppU59J18h-3h3aKWZxRDQflMIjflk-XajOD9-4krAC2c7mYpbaYkJgvKU4-AwoH33XcCNfAAPG4teXChI-1cp6R63QT
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_0a913ec7914c4497912cc200bacb50e4
+            id: pyd_ai_ba15528e9f314fbd80d5b0a378286804
             name: get_file
             response: {}
         role: user
@@ -127,11 +127,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1457'
+      - '1234'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=3544
+      - gfet4t7; dur=3367
       transfer-encoding:
       - chunked
       vary:
@@ -142,28 +142,26 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: The image shows a camera with an external monitor set up outdoors. The monitor displays a rocky, mountainous
-              path at what appears to be either sunrise or sunset, given the warm lighting. In the background, out of focus,
-              there are more mountains with a similar warm, golden glow. The foreground shows what looks like a dirt road
-              or path leading into the distance.
-            thoughtSignature: CpMCAXLI2nzwfbWGjGkyEl2jyAi7hPAUwSjSe2V7tnGNFqWHSICE0knPjK7iTAOxdzMEi3AK+bAh920WEaNByrna+bIJpZ8pR/VDN8/YsINliQIWxm9ooO6PAysr8+vnnj1dHR5THYYxG7tK0n6jh8xpJ+coSCbixjI0TuhHhB4rXjiSNLt3QmajbBPG9yErf8Ji9WSmzMCIcmv9yLDFaK+jsc8/s4moTjle7EwVKQGfqLExO/O1gwtN27E7y+sbJdRVRJ64k4evhkRLeP5gu8kwR4iQtPARjMTQWZO12vDDElF6QmgaA9NegLapTljGVYFDxS8DLj/uEw9fhCn7IyrblFJ5BuIgZ/B7qebaH9tsqbO1jDM=
+          - text: Based on the `get_file` tool's response, I did not receive a video file or any file at all. The response
+              was an empty dictionary.
+            thoughtSignature: Cs8DAXLI2nwW6b+gxKw+i39IusG0vBh9xYGx9qJd+sOSwT7DeAukf7rAncWE9HxrqfRLqwRhp34D0egd3yc7eHBYQ4YuqGlvZEA+u6acsGBPMzha6eU0J4okHEITmsXPiqC3ffK/QqaRQEuU+H0aNEvGzhIC5TbsANz8vgZpgl9Gmdb3SDHptQyLNaQP4UtKL6ICwFddiVkIIqJncm9DcHdXYiZ9ocfGipPhHRGm1iTL8PqeU5agmItdMdjrG+v1yxcliKXhq1AHIblO+C95u60ARMGErW4R8NQFgMMC2c9uXO+nEDV4dfxok8Zwc1l/WZoFRRuQbjL6GfIcqkRJ98/cpSI29J92BDLNywl7ggYSTyQcSZHa8Baee7ivnd/BFcOoHF0gPzEDSxUdERkFqUIZrcyZA3/t0f24aBJXphQerkgPb+0wBCocFukgo2zHKVyQbawXqQs1D3dzQIAA8kFlroOY/s1MbMymyOZdnKMUCYKmbW++rcRJzDg7ezIMndPWJfWw9TnCJop+t3ob97gMVYkLEY4PvtMD50CotyKakE6+je4/jwt1rxr6MD0VGdjwiIRgWntR6jT6v2HahPRWO5XM2fufGfVBqc4Ipic//w==
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: 1397abG-EceqqtsPtbCn6Qg
+      responseId: EFV8aajhH5OuqtsP9bvk6AY
       usageMetadata:
-        candidatesTokenCount: 72
-        promptTokenCount: 630
+        candidatesTokenCount: 33
+        promptTokenCount: 633
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 60
+          tokenCount: 63
         - modality: VIDEO
           tokenCount: 526
         - modality: AUDIO
           tokenCount: 44
-        thoughtsTokenCount: 49
-        totalTokenCount: 751
+        thoughtsTokenCount: 109
+        totalTokenCount: 775
     status:
       code: 200
       message: OK

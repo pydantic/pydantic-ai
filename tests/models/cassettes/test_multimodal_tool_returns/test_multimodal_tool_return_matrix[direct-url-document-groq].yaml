@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '362'
+      - '409'
       content-type:
       - application/json
       host:
@@ -16,7 +16,7 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: Call the get_file tool to get a document and describe what you see.
+      - content: Use the get_file tool now to retrieve a document file, then describe what you received.
         role: user
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       n: 1
@@ -41,7 +41,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '690'
+      - '741'
       content-type:
       - application/json
       strict-transport-security:
@@ -61,26 +61,26 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: tz8trh8rs
+            id: x7w92ee7q
             type: function
-      created: 1769706879
-      id: chatcmpl-ee549e10-2cfb-419b-b7e3-74f79665b369
+      created: 1769756017
+      id: chatcmpl-94ee5b51-2c58-4794-b7e6-39d5bcc0dfb9
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       object: chat.completion
       service_tier: on_demand
       system_fingerprint: fp_992318f10a
       usage:
-        completion_time: 0.409538959
-        completion_tokens: 195
-        prompt_time: 0.912039971
-        prompt_tokens: 708
-        queue_time: 1.729784709
-        total_time: 1.32157893
-        total_tokens: 903
+        completion_time: 0.12608953
+        completion_tokens: 50
+        prompt_time: 0.052964533
+        prompt_tokens: 711
+        queue_time: 0.767453131
+        total_time: 0.179054063
+        total_tokens: 761
       usage_breakdown: null
       x_groq:
-        id: req_01kg5bzvhvfgprfb3ywjsdfg3y
-        seed: 239292368
+        id: req_01kg6tvg10f29sc199gbzqtdx7
+        seed: 520445355
     status:
       code: 200
       message: OK

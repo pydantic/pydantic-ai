@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '320'
+      - '363'
       content-type:
       - application/json
       host:
@@ -16,9 +16,9 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: Call the get_file tool to get a image and describe what you see.
+      - content: Use the get_file tool now to retrieve a image file, then describe what you received.
         role: user
-      model: gpt-4.1-mini
+      model: gpt-5-mini
       stream: false
       tool_choice: auto
       tools:
@@ -40,13 +40,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1064'
+      - '748'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '456'
+      - '1200'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -59,7 +59,6 @@ interactions:
       choices:
       - finish_reason: tool_calls
         index: 0
-        logprobs: null
         message:
           annotations: []
           content: null
@@ -69,26 +68,26 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: call_qBcdwWufbKrSKubRDyDWlJ9T
+            id: call_0CzaeoivppCoRnRJzaUhQk5P
             type: function
-      created: 1769565061
-      id: chatcmpl-D2ozthGfO7Bz4nlpFns0ZEJAogO1n
-      model: gpt-4.1-mini-2025-04-14
+      created: 1769755947
+      id: chatcmpl-D3cehHBRehaOJcpn9K6I3EJ0aQGr6
+      model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_376a7ccef1
+      system_fingerprint: null
       usage:
-        completion_tokens: 10
+        completion_tokens: 19
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 46
+        prompt_tokens: 129
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 56
+        total_tokens: 148
     status:
       code: 200
       message: OK
@@ -101,18 +100,18 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '768'
+      - '804'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=4FkNoLPnImxxuY6agbWPExTPIINcUx7Sox6jd4pSlOM-1769565061-1.0.1.1-Wnay7jlKgpzuCK.8E3bqM5l.1pQYnOcx89_3bY2tgQIJUGsgtAa1aI5k.yYLQqbFrdhQttspC5N3REAxu6H1_2Ix0kD56xMITgmaT1p_zhw;
-        _cfuvid=9AleC2nmaT7JIDSQDR9T_MABtmAtXfnoz4GMYXA2TLU-1769565061825-0.0.1.1-604800000
+      - __cf_bm=De1kpMJG5U3Yns8Q37BzQZhbtpQ01OvKp90sy3Oh1_4-1769755948-1.0.1.1-gv_vmEHNfxK8HXV1CNo17KXFqS9H6_oWXKGIPf.rChew95hbf_CXrt3gXVOldPjyTl2wm_5D_9Pcf5RN2CezRcrscDs8WEmS7q0cR5mtH98;
+        _cfuvid=IfspPdikqlEjwt6A_95wHgS5Qrkvkpc6gQRn5F1l1d4-1769755948799-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
     parsed_body:
       messages:
-      - content: Call the get_file tool to get a image and describe what you see.
+      - content: Use the get_file tool now to retrieve a image file, then describe what you received.
         role: user
       - content: null
         role: assistant
@@ -120,19 +119,19 @@ interactions:
         - function:
             arguments: '{}'
             name: get_file
-          id: call_qBcdwWufbKrSKubRDyDWlJ9T
+          id: call_0CzaeoivppCoRnRJzaUhQk5P
           type: function
-      - content: See file daf116.
+      - content: See file 6a18c6.
         role: tool
-        tool_call_id: call_qBcdwWufbKrSKubRDyDWlJ9T
+        tool_call_id: call_0CzaeoivppCoRnRJzaUhQk5P
       - content:
-        - text: 'This is file daf116:'
+        - text: 'This is file 6a18c6:'
           type: text
         - image_url:
-            url: https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png
+            url: https://www.gstatic.com/webp/gallery3/1.png
           type: image_url
         role: user
-      model: gpt-4.1-mini
+      model: gpt-5-mini
       stream: false
       tool_choice: auto
       tools:
@@ -154,13 +153,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1218'
+      - '1298'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '1643'
+      - '9116'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -173,33 +172,38 @@ interactions:
       choices:
       - finish_reason: stop
         index: 0
-        logprobs: null
         message:
           annotations: []
-          content: 'The image shows the Google logo. It consists of the word "Google" written in a clean, sans-serif font
-            with each letter in a distinct color: blue for the first "G," red for the first "o," yellow for the second "o,"
-            blue for the "g," green for the "l," and red for the "e." The design is simple and colorful, representing the
-            well-known brand of the Google search engine and its related services.'
+          content: |-
+            You provided an image of a single rose bloom. Description:
+
+            - Flower type: a rose (single blossom).
+            - Colors: warm yellow with orange and reddish edges; subtle greenish-yellow near the base of some petals.
+            - Details: visible water droplets on the upper petals; petals are curled and layered in a close-up view.
+            - Orientation: bloom is angled toward the left, with a short green stem and a leaf visible toward the upper right.
+            - Background: the flower appears isolated from any natural background (the background is uniform/neutral in the provided image).
+
+            If you want, I can remove the background, enhance colors, estimate a palette, or create captions/alt text for this image.
           refusal: null
           role: assistant
-      created: 1769565063
-      id: chatcmpl-D2ozvzVkNfsjDjYEoaa2VUKJxytov
-      model: gpt-4.1-mini-2025-04-14
+      created: 1769755949
+      id: chatcmpl-D3cejf1vnFT3y21UVqTNLYZyA1HVl
+      model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_376a7ccef1
+      system_fingerprint: null
       usage:
-        completion_tokens: 94
+        completion_tokens: 405
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 0
+          reasoning_tokens: 256
           rejected_prediction_tokens: 0
-        prompt_tokens: 246
+        prompt_tokens: 334
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 340
+        total_tokens: 739
     status:
       code: 200
       message: OK
