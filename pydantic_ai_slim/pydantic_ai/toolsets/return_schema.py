@@ -35,7 +35,9 @@ class ReturnSchemaToolset(WrapperToolset[AgentDepsT]):
         original_tools = await super().get_tools(ctx)
 
         def _gate_return_schema(tool: ToolsetTool[AgentDepsT]) -> ToolsetTool[AgentDepsT]:
-            opted_in = (self.include_return_schema or tool.include_return_schema) and tool.tool_def.return_schema is not None
+            opted_in = (
+                self.include_return_schema or tool.include_return_schema
+            ) and tool.tool_def.return_schema is not None
             if opted_in:
                 # Keep return_schema as-is; model layer will decide how to present it
                 return tool

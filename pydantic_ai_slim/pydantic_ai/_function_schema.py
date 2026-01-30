@@ -231,7 +231,9 @@ def function_schema(  # noqa: C901
             pass
     elif return_annotation:  # ELIF!
         try:
-            return_schema = TypeAdapter(return_annotation).json_schema(schema_generator=schema_generator, mode='serialization')
+            return_schema = TypeAdapter(return_annotation).json_schema(
+                schema_generator=schema_generator, mode='serialization'
+            )
             if return_description and 'description' not in return_schema:
                 return_schema['description'] = return_description
         except (PydanticSchemaGenerationError, PydanticUserError):
