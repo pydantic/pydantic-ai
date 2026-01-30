@@ -3175,19 +3175,19 @@ async def test_stream_tool_returning_user_content():
             PartDeltaEvent(
                 index=0,
                 delta=TextPartDelta(
-                    content_delta='{"get_image":{"url":"https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.j'
+                    content_delta='{"get_image":{"url":"https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg","'
                 ),
             ),
             PartDeltaEvent(
                 index=0,
                 delta=TextPartDelta(
-                    content_delta='pg","force_download":false,"vendor_metadata":null,"_media_type":null,"_identifier":null,"kind":"image-url"}}'
+                    content_delta='force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":"image/jpeg","identifier":"bd38f5"}}'
                 ),
             ),
             PartEndEvent(
                 index=0,
                 part=TextPart(
-                    content='{"get_image":{"url":"https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg","force_download":false,"vendor_metadata":null,"_media_type":null,"_identifier":null,"kind":"image-url"}}'
+                    content='{"get_image":{"url":"https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg","force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":"image/jpeg","identifier":"bd38f5"}}'
                 ),
             ),
         ]

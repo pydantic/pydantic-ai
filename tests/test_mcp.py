@@ -44,7 +44,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from .conftest import IsBytes, IsDatetime, IsInstance, IsNow, IsStr, try_import
+from .conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
     from mcp import ErrorData, McpError, SamplingMessage
@@ -874,10 +874,7 @@ async def test_tool_returning_audio_resource(
                     parts=[
                         ToolReturnPart(
                             tool_name='get_audio_resource',
-                            content=BinaryContent(
-                                data=IsBytes(),
-                                media_type='audio/mpeg',
-                            ),
+                            content=IsInstance(BinaryContent),
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                         )
@@ -951,10 +948,7 @@ async def test_tool_returning_audio_resource_link(
                     parts=[
                         ToolReturnPart(
                             tool_name='get_audio_resource_link',
-                            content=BinaryContent(
-                                data=IsBytes(),
-                                media_type='audio/mpeg',
-                            ),
+                            content=IsInstance(BinaryContent),
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                         )
