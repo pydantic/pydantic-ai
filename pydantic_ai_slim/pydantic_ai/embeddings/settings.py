@@ -23,6 +23,7 @@ class EmbeddingSettings(TypedDict, total=False):
     * Cohere
     * Google
     * Sentence Transformers
+    * Bedrock
     * VoyageAI
     """
 
@@ -37,12 +38,13 @@ class EmbeddingSettings(TypedDict, total=False):
     [`count_tokens()`][pydantic_ai.embeddings.Embedder.count_tokens] to implement
     your own truncation logic.
 
-    Provider-specific truncation settings (e.g., `cohere_truncate`) take precedence
-    if specified.
+    Provider-specific truncation settings (e.g., `cohere_truncate`, `bedrock_cohere_truncate`)
+    take precedence if specified.
 
     Supported by:
 
     * Cohere
+    * Bedrock (Cohere and Nova models)
     * VoyageAI
     """
 

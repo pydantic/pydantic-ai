@@ -58,6 +58,12 @@ KnownEmbeddingModelName = TypeAliasType(
         'voyageai:voyage-finance-2',
         'voyageai:voyage-law-2',
         'voyageai:voyage-code-2',
+        'bedrock:amazon.titan-embed-text-v1',
+        'bedrock:amazon.titan-embed-text-v2:0',
+        'bedrock:cohere.embed-english-v3',
+        'bedrock:cohere.embed-multilingual-v3',
+        'bedrock:cohere.embed-v4:0',
+        'bedrock:amazon.nova-2-multimodal-embeddings-v1:0',
     ],
 )
 """Known model names that can be used with the `model` parameter of [`Embedder`][pydantic_ai.embeddings.Embedder].
@@ -106,6 +112,10 @@ def infer_embedding_model(
         from .cohere import CohereEmbeddingModel
 
         return CohereEmbeddingModel(model_name, provider=provider)
+    elif model_kind == 'bedrock':
+        from .bedrock import BedrockEmbeddingModel
+
+        return BedrockEmbeddingModel(model_name, provider=provider)
     elif model_kind in ('google-gla', 'google-vertex'):
         from .google import GoogleEmbeddingModel
 
