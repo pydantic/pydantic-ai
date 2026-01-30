@@ -254,11 +254,22 @@ async def test_image_output_json_schema():
     agent = Agent("test", output_type=BinaryImage)
     assert agent.output_json_schema() == snapshot(
         {
-            'description': "Binary content that's guaranteed to be an image.",
-            'properties': {
-                'data': {'format': 'base64url', 'title': 'Data', 'type': 'string'},
-                'media_type': {
-                    'anyOf': [
+            "description": "Binary content that's guaranteed to be an image.",
+            "properties": {
+                "data": {"format": "base64url", "title": "Data", "type": "string"},
+                "media_type": {
+                    "anyOf": [
+                        {
+                            "enum": [
+                                "audio/wav",
+                                "audio/mpeg",
+                                "audio/ogg",
+                                "audio/flac",
+                                "audio/aiff",
+                                "audio/aac",
+                            ],
+                            "type": "string",
+                        },
                         {
                             "enum": [
                                 "image/jpeg",
@@ -333,11 +344,15 @@ distinguish multiple files.\
                 {"type": "string"},
                 {"type": "boolean"},
                 {
-                    'description': "Binary content that's guaranteed to be an image.",
-                    'properties': {
-                        'data': {'format': 'base64url', 'title': 'Data', 'type': 'string'},
-                        'media_type': {
-                            'anyOf': [
+                    "description": "Binary content that's guaranteed to be an image.",
+                    "properties": {
+                        "data": {
+                            "format": "base64url",
+                            "title": "Data",
+                            "type": "string",
+                        },
+                        "media_type": {
+                            "anyOf": [
                                 {
                                     "enum": [
                                         "audio/wav",
@@ -511,11 +526,15 @@ async def test_deferred_output_json_schema():
         {
             "anyOf": [
                 {
-                    'description': "Binary content that's guaranteed to be an image.",
-                    'properties': {
-                        'data': {'format': 'base64url', 'title': 'Data', 'type': 'string'},
-                        'media_type': {
-                            'anyOf': [
+                    "description": "Binary content that's guaranteed to be an image.",
+                    "properties": {
+                        "data": {
+                            "format": "base64url",
+                            "title": "Data",
+                            "type": "string",
+                        },
+                        "media_type": {
+                            "anyOf": [
                                 {
                                     "enum": [
                                         "audio/wav",
