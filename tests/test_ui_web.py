@@ -464,7 +464,7 @@ async def test_get_ui_html_custom_url(monkeypatch: pytest.MonkeyPatch, tmp_path:
 
     # URL is used directly, no version templating
     custom_url = 'https://my-internal-cdn.example.com/ui/index.html'
-    result = await _get_ui_html(html_path=custom_url)
+    result = await _get_ui_html(html_source=custom_url)
 
     assert result == test_content
     assert len(captured_url) == 1
@@ -502,7 +502,7 @@ async def test_get_ui_html_custom_url_caching(monkeypatch: pytest.MonkeyPatch, t
     custom_url = 'https://my-internal-cdn.example.com/ui/cached.html'
 
     # First call should fetch from URL
-    result1 = await _get_ui_html(html_path=custom_url)
+    result1 = await _get_ui_html(html_source=custom_url)
     assert result1 == test_content
     assert fetch_count == 1
 
@@ -513,15 +513,15 @@ async def test_get_ui_html_custom_url_caching(monkeypatch: pytest.MonkeyPatch, t
     assert cache_file.read_bytes() == test_content
 
     # Second call should use cache, not fetch again
-    result2 = await _get_ui_html(html_path=custom_url)
+    result2 = await _get_ui_html(html_source=custom_url)
     assert result2 == test_content
     assert fetch_count == 1  # Still 1, not 2
 
 
-def test_agent_to_web_with_html_path():
-    """Test that Agent.to_web() accepts html_path parameter."""
+def test_agent_to_web_with_html_source():
+    """Test that Agent.to_web() accepts html_source parameter."""
     agent = Agent('test')
-    app = agent.to_web(html_path='https://custom-cdn.example.com/ui/index.html')
+    app = agent.to_web(html_source='https://custom-cdn.example.com/ui/index.html')
 
     assert isinstance(app, Starlette)
 
@@ -534,7 +534,7 @@ async def test_get_ui_html_local_file_path_string(monkeypatch: pytest.MonkeyPatc
     local_file = tmp_path / 'custom-ui.html'
     local_file.write_bytes(test_html)
 
-    result = await app_module._get_ui_html(html_path=str(local_file))  # pyright: ignore[reportPrivateUsage]
+    result = await app_module._get_ui_html(html_source=str(local_file))  # pyright: ignore[reportPrivateUsage]
 
     assert result == test_html
 
@@ -547,7 +547,7 @@ async def test_get_ui_html_local_file_path_instance(monkeypatch: pytest.MonkeyPa
     local_file = tmp_path / 'path-ui.html'
     local_file.write_bytes(test_html)
 
-    result = await app_module._get_ui_html(html_path=local_file)  # pyright: ignore[reportPrivateUsage]
+    result = await app_module._get_ui_html(html_source=local_file)  # pyright: ignore[reportPrivateUsage]
 
     assert result == test_html
 
@@ -559,24 +559,24 @@ async def test_get_ui_html_local_file_not_found(monkeypatch: pytest.MonkeyPatch,
     nonexistent_path = str(tmp_path / 'nonexistent-ui.html')
 
     with pytest.raises(FileNotFoundError, match='Local UI file not found'):
-        await app_module._get_ui_html(html_path=nonexistent_path)  # pyright: ignore[reportPrivateUsage]
+        await app_module._get_ui_html(html_source=nonexistent_path)  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.anyio
-async def test_get_ui_html_path_instance_not_found(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+async def test_get_ui_html_source_instance_not_found(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that _get_ui_html raises FileNotFoundError for missing Path instances."""
     # Try to use a non-existent Path instance
     nonexistent_path = tmp_path / 'nonexistent-ui.html'
 
     with pytest.raises(FileNotFoundError, match='Local UI file not found'):
-        await app_module._get_ui_html(html_path=nonexistent_path)  # pyright: ignore[reportPrivateUsage]
+        await app_module._get_ui_html(html_source=nonexistent_path)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_chat_app_index_file_not_found(tmp_path: Path):
-    """Test that index endpoint raises FileNotFoundError for non-existent html_path file."""
+    """Test that index endpoint raises FileNotFoundError for non-existent html_source file."""
     agent = Agent('test')
     nonexistent_file = tmp_path / 'nonexistent-ui.html'
-    app = create_web_app(agent, html_path=str(nonexistent_file))
+    app = create_web_app(agent, html_source=str(nonexistent_file))
 
     with TestClient(app, raise_server_exceptions=True) as client:
         with pytest.raises(FileNotFoundError, match='Local UI file not found'):
