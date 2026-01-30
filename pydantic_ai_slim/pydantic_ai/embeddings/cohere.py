@@ -76,6 +76,8 @@ class CohereEmbeddingSettings(EmbeddingSettings, total=False):
     - `'NONE'` (default): Raise an error if input exceeds max tokens.
     - `'END'`: Truncate the end of the input text.
     - `'START'`: Truncate the start of the input text.
+
+    Note: This setting overrides the standard `truncate` boolean setting when specified.
     """
 
 
@@ -159,6 +161,14 @@ class CohereEmbeddingModel(EmbeddingModel):
         if extra_body := settings.get('extra_body'):  # pragma: no cover
             request_options['additional_body_parameters'] = cast(dict[str, Any], extra_body)
 
+        # Determine truncation strategy: cohere_truncate takes precedence over truncate
+        if 'cohere_truncate' in settings:
+            truncate = settings['cohere_truncate']
+        elif settings.get('truncate'):
+            truncate = 'END'
+        else:
+            truncate = 'NONE'
+
         try:
             response = await self._client.embed(
                 model=self.model_name,
@@ -166,7 +176,7 @@ class CohereEmbeddingModel(EmbeddingModel):
                 output_dimension=settings.get('dimensions'),
                 input_type=cohere_input_type,
                 max_tokens=settings.get('cohere_max_tokens'),
-                truncate=settings.get('cohere_truncate', 'NONE'),
+                truncate=truncate,
                 request_options=request_options,
             )
         except ApiError as e:

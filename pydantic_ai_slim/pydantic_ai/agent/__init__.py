@@ -37,7 +37,7 @@ from .._agent_graph import (
     capture_run_messages,
 )
 from .._output import OutputToolset
-from .._tool_manager import ToolManager
+from .._tool_manager import ParallelExecutionMode, ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec
@@ -89,6 +89,7 @@ __all__ = (
     'ModelRequestNode',
     'UserPromptNode',
     'InstrumentationSettings',
+    'ParallelExecutionMode',
     'WrapperAgent',
     'AbstractAgent',
     'EventStreamHandler',
@@ -627,7 +628,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 output_toolset.max_retries = self._max_result_retries
                 output_toolset.output_validators = output_validators
         toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
-        tool_manager = ToolManager[AgentDepsT](toolset)
+        tool_manager = ToolManager[AgentDepsT](toolset, default_max_retries=self._max_tool_retries)
 
         # Build the graph
         graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)

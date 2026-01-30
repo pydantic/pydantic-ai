@@ -64,6 +64,7 @@ from pydantic_ai.builtin_tools import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
@@ -2988,6 +2989,73 @@ def test_unknown_tool_fix():
     )
 
 
+def test_unknown_tool_multiple_retries():
+    num_retries = 2
+
+    def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
+
+    agent = Agent(FunctionModel(empty), retries=num_retries)
+
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(2\) for output validation'):
+            agent.run_sync('Hello')
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='function:empty:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        tool_name='foobar',
+                        content="Unknown tool name: 'foobar'. No tools available.",
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=65, output_tokens=4),
+                model_name='function:empty:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        tool_name='foobar',
+                        content="Unknown tool name: 'foobar'. No tools available.",
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=79, output_tokens=6),
+                model_name='function:empty:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 def test_tool_exceeds_token_limit_error():
     def return_incomplete_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         resp = ModelResponse(parts=[ToolCallPart('dummy_tool', args='{"foo": "bar",')])
@@ -4834,7 +4902,13 @@ def test_binary_content_serializable():
             },
             {
                 'parts': [
-                    {'content': 'success (no tool calls)', 'id': None, 'part_kind': 'text', 'provider_details': None}
+                    {
+                        'content': 'success (no tool calls)',
+                        'id': None,
+                        'provider_name': None,
+                        'part_kind': 'text',
+                        'provider_details': None,
+                    }
                 ],
                 'usage': {
                     'input_tokens': 56,
@@ -4898,7 +4972,13 @@ def test_image_url_serializable_missing_media_type():
             },
             {
                 'parts': [
-                    {'content': 'success (no tool calls)', 'id': None, 'part_kind': 'text', 'provider_details': None}
+                    {
+                        'content': 'success (no tool calls)',
+                        'id': None,
+                        'provider_name': None,
+                        'part_kind': 'text',
+                        'provider_details': None,
+                    }
                 ],
                 'usage': {
                     'input_tokens': 51,
@@ -4969,7 +5049,13 @@ def test_image_url_serializable():
             },
             {
                 'parts': [
-                    {'content': 'success (no tool calls)', 'id': None, 'part_kind': 'text', 'provider_details': None}
+                    {
+                        'content': 'success (no tool calls)',
+                        'id': None,
+                        'provider_name': None,
+                        'part_kind': 'text',
+                        'provider_details': None,
+                    }
                 ],
                 'usage': {
                     'input_tokens': 51,
@@ -5017,8 +5103,8 @@ def test_tool_return_part_binary_content_serialization():
             'data': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzgAAAAASUVORK5CYII=',
             'media_type': 'image/png',
             'vendor_metadata': None,
-            '_identifier': None,
             'kind': 'binary',
+            'identifier': '14a01a',
         }
     )
 
@@ -6237,7 +6323,7 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
     user_prompt = 'call a lot of tools'
 
     if mode == 'contextmanager':
-        with agent.sequential_tool_calls():
+        with agent.parallel_tool_call_execution_mode('sequential'):
             result = agent.run_sync(user_prompt)
     else:
         result = agent.run_sync(user_prompt)
@@ -6371,7 +6457,7 @@ async def test_thinking_only_response_retry():
             )
 
     model = FunctionModel(model_function)
-    agent = Agent(model, system_prompt='You are a helpful assistant.')
+    agent = Agent(model, instructions='You are a helpful assistant.')
 
     result = await agent.run('Hello')
 
@@ -6379,21 +6465,18 @@ async def test_thinking_only_response_retry():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='You are a helpful assistant.',
-                        timestamp=IsDatetime(),
-                    ),
                     UserPromptPart(
                         content='Hello',
                         timestamp=IsDatetime(),
                     ),
                 ],
+                instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ThinkingPart(content='Let me think about this...')],
-                usage=RequestUsage(input_tokens=57, output_tokens=6),
+                usage=RequestUsage(input_tokens=51, output_tokens=6),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -6406,12 +6489,13 @@ async def test_thinking_only_response_retry():
                         timestamp=IsDatetime(),
                     )
                 ],
+                instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Final answer')],
-                usage=RequestUsage(input_tokens=73, output_tokens=8),
+                usage=RequestUsage(input_tokens=67, output_tokens=8),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -7524,3 +7608,43 @@ async def test_dynamic_tool_in_run_call():
     assert isinstance(tool, WebSearchTool)
     assert tool.user_location is not None
     assert tool.user_location.get('city') == 'Berlin'
+
+
+async def test_central_content_filter_handling():
+    """
+    Test that the agent graph correctly raises ContentFilterError
+    when a model returns finish_reason='content_filter' AND empty content.
+    """
+
+    async def filtered_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[],
+            model_name='test-model',
+            finish_reason='content_filter',
+            provider_details={'finish_reason': 'content_filter'},
+        )
+
+    model = FunctionModel(function=filtered_response, model_name='test-model')
+    agent = Agent(model)
+
+    with pytest.raises(ContentFilterError, match="Content filter triggered. Finish reason: 'content_filter'"):
+        await agent.run('Trigger filter')
+
+
+async def test_central_content_filter_with_partial_content():
+    """
+    Test that the agent graph returns partial content (does not raise exception)
+    even if finish_reason='content_filter', provided parts are not empty.
+    """
+
+    async def filtered_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('Partially generated content...')], model_name='test-model', finish_reason='content_filter'
+        )
+
+    model = FunctionModel(function=filtered_response, model_name='test-model')
+    agent = Agent(model)
+
+    # Should NOT raise ContentFilterError
+    result = await agent.run('Trigger filter')
+    assert result.output == 'Partially generated content...'

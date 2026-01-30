@@ -123,6 +123,16 @@ def test_binary_content_image(media_type: str, format: str):
     assert binary_content.format == format
 
 
+def test_binary_image_requires_image_media_type():
+    # Valid image media type should work
+    img = BinaryImage(data=b'test', media_type='image/png')
+    assert img.is_image
+
+    # Non-image media type should raise
+    with pytest.raises(ValueError, match='`BinaryImage` must have a media type that starts with "image/"'):
+        BinaryImage(data=b'test', media_type='text/plain')
+
+
 @pytest.mark.parametrize(
     'media_type, format',
     [
@@ -710,3 +720,21 @@ def test_binary_content_from_path(tmp_path: Path):
     assert binary_content == snapshot(
         BinaryImage(data=b'\xff\xd8\xff\xe0' + b'0' * 100, media_type='image/jpeg', _identifier='bc8d49')
     )
+
+    # test yaml file
+    test_yaml_file = tmp_path / 'config.yaml'
+    test_yaml_file.write_text('key: value', encoding='utf-8')
+    binary_content = BinaryContent.from_path(test_yaml_file)
+    assert binary_content == snapshot(BinaryContent(data=b'key: value', media_type='application/yaml'))
+
+    # test yml file (alternative extension)
+    test_yml_file = tmp_path / 'docker-compose.yml'
+    test_yml_file.write_text('version: "3"', encoding='utf-8')
+    binary_content = BinaryContent.from_path(test_yml_file)
+    assert binary_content == snapshot(BinaryContent(data=b'version: "3"', media_type='application/yaml'))
+
+    # test toml file
+    test_toml_file = tmp_path / 'pyproject.toml'
+    test_toml_file.write_text('[project]\nname = "test"', encoding='utf-8')
+    binary_content = BinaryContent.from_path(test_toml_file)
+    assert binary_content == snapshot(BinaryContent(data=b'[project]\nname = "test"', media_type='application/toml'))

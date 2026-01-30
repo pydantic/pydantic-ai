@@ -2,6 +2,7 @@
 
 <!-- Please add the issue number that should be closed when this PR is merged. -->
 <!-- If there is no issue, please create one first, even for simple bug fixes. -->
+
 - Closes #<issue>
 
 ### Pre-Review Checklist
@@ -12,7 +13,7 @@
 - [ ] Any **AI generated code** has been reviewed line-by-line by the human PR author, who stands by it.
 - [ ] No **breaking changes** in accordance with the [version policy](https://github.com/pydantic/pydantic-ai/blob/main/docs/version-policy.md).
 - [ ] **Linting and type checking** pass per `make format` and `make typecheck`.
-- [ ] **PR title** is fit for the release changelog.
+- [ ] **PR title** is fit for the [release changelog](https://github.com/pydantic/pydantic-ai/releases).
 
 ### Pre-Merge Checklist
 

@@ -12,10 +12,17 @@ from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
+from pydantic_ai.messages import ToolReturnContent
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._run_context import TemporalRunContext
+
+
+@dataclass
+@with_config(ConfigDict(arbitrary_types_allowed=True))
+class GetToolsParams:
+    serialized_run_context: Any
 
 
 @dataclass
@@ -47,7 +54,7 @@ class _ModelRetry:
 
 @dataclass
 class _ToolReturn:
-    result: Any
+    result: ToolReturnContent
     kind: Literal['tool_return'] = 'tool_return'
 
 

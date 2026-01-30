@@ -184,7 +184,7 @@ class Response:
 @dataclass
 class BasicSpan:
     content: str
-    children: list[BasicSpan] = field(default_factory=list)
+    children: list[BasicSpan] = field(default_factory=list['BasicSpan'])
     parent_id: int | None = field(repr=False, compare=False, default=None)
 
 
@@ -211,7 +211,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
     @flow(name='test_complex_agent_run_in_flow')
     async def run_complex_agent() -> Response:
         # Use sequential tool calls to avoid flaky test due to non-deterministic ordering
-        with Agent.sequential_tool_calls():
+        with Agent.parallel_tool_call_execution_mode('sequential'):
             result = await complex_prefect_agent.run(
                 'Tell me: the capital of the country; the weather there; the product name', deps=Deps(country='Mexico')
             )
