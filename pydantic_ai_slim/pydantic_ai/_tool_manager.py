@@ -41,6 +41,13 @@ class ToolManager(Generic[AgentDepsT]):
     """Names of tools that failed in this run step."""
     default_max_retries: int = 1
     """Default number of times to retry a tool"""
+    include_return_schema: bool = False
+    """Whether to include return schemas in tool definitions (agent-level flag).
+
+    When True, all tools get their return_schema preserved.
+    When False, only tools with per-tool include_return_schema=True get preserved.
+    Tools without opt-in have return_schema cleared to None.
+    """
 
     @classmethod
     @contextmanager
@@ -79,11 +86,22 @@ class ToolManager(Generic[AgentDepsT]):
             }
             ctx = replace(ctx, retries=retries)
 
+        tools = await self.toolset.get_tools(ctx)
+
+        # Gate return_schema: clear it unless opted in at agent or tool level
+        for name, tool in list(tools.items()):
+            opted_in = (
+                self.include_return_schema or tool.include_return_schema
+            ) and tool.tool_def.return_schema is not None
+            if not opted_in:
+                tools[name] = replace(tool, tool_def=replace(tool.tool_def, return_schema=None))
+
         return self.__class__(
             toolset=self.toolset,
             ctx=ctx,
-            tools=await self.toolset.get_tools(ctx),
+            tools=tools,
             default_max_retries=self.default_max_retries,
+            include_return_schema=self.include_return_schema,
         )
 
     @property

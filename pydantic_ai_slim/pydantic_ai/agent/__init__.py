@@ -15,7 +15,6 @@ from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeVar, deprecated
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, InstrumentationNames
-from pydantic_ai.toolsets.return_schema import ReturnSchemaToolset
 
 from .. import (
     _agent_graph,
@@ -628,7 +627,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 output_toolset.max_retries = self._max_result_retries
                 output_toolset.output_validators = output_validators
         toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
-        tool_manager = ToolManager[AgentDepsT](toolset, default_max_retries=self._max_tool_retries)
+        tool_manager = ToolManager[AgentDepsT](
+            toolset,
+            default_max_retries=self._max_tool_retries,
+            include_return_schema=self._include_tool_return_schema,
+        )
 
         # Build the graph
         graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
@@ -1526,10 +1529,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)
-
-        # Agent by default has _include_tool_return_schema set to False, so we maintain backward compatibility here.
-
-        toolset = ReturnSchemaToolset(toolset, include_return_schema=self._include_tool_return_schema)
 
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
         if output_toolset is not None:
