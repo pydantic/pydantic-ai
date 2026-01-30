@@ -20,7 +20,7 @@ jobs:
       - name: Calculate PR size and set label
         run: |
           # Fetch file changes for this PR
-          FILES=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files --paginate)
+          FILES=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files --paginate | jq -s 'add')
 
           # Calculate lines by category (excluding uv.lock and cassettes)
           CODE=$(echo "$FILES" | jq '[.[] | select(
