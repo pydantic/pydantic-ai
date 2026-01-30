@@ -13,6 +13,8 @@ from rich.console import Console
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import UsageLimits
 
 from .conftest import TestEnv, try_import
 
@@ -304,6 +306,8 @@ def test_agent_to_cli_sync(mocker: MockerFixture, env: TestEnv):
         prog_name='pydantic-ai',
         deps=None,
         message_history=None,
+        model_settings=None,
+        usage_limits=None,
     )
 
 
@@ -320,6 +324,8 @@ async def test_agent_to_cli_async(mocker: MockerFixture, env: TestEnv):
         prog_name='pydantic-ai',
         deps=None,
         message_history=None,
+        model_settings=None,
+        usage_limits=None,
     )
 
 
@@ -340,6 +346,8 @@ async def test_agent_to_cli_with_message_history(mocker: MockerFixture, env: Tes
         prog_name='pydantic-ai',
         deps=None,
         message_history=test_messages,
+        model_settings=None,
+        usage_limits=None,
     )
 
 
@@ -359,6 +367,8 @@ def test_agent_to_cli_sync_with_message_history(mocker: MockerFixture, env: Test
         prog_name='pydantic-ai',
         deps=None,
         message_history=test_messages,
+        model_settings=None,
+        usage_limits=None,
     )
 
 
@@ -686,3 +696,48 @@ def test_run_web_command_cli_models_passed_to_create_web_app(
     call_kwargs = mock_create_app.call_args.kwargs
     # CLI models passed as list; agent model merging/deduplication happens in create_web_app
     assert call_kwargs.get('models') == ['openai:gpt-5', 'anthropic:claude-sonnet-4-5']
+
+
+def test_agent_to_cli_sync_with_args(mocker: MockerFixture, env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
+    mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
+
+    model_settings = ModelSettings(temperature=0.5)
+    usage_limits = UsageLimits(request_limit=10)
+
+    cli_agent.to_cli_sync(model_settings=model_settings, usage_limits=usage_limits)
+
+    mock_run_chat.assert_awaited_once_with(
+        stream=True,
+        agent=IsInstance(Agent),
+        console=IsInstance(Console),
+        code_theme='monokai',
+        prog_name='pydantic-ai',
+        deps=None,
+        message_history=None,
+        model_settings=model_settings,
+        usage_limits=usage_limits,
+    )
+
+
+@pytest.mark.anyio
+async def test_agent_to_cli_async_with_args(mocker: MockerFixture, env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
+    mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
+
+    model_settings = ModelSettings(temperature=0.5)
+    usage_limits = UsageLimits(request_limit=10)
+
+    await cli_agent.to_cli(model_settings=model_settings, usage_limits=usage_limits)
+
+    mock_run_chat.assert_awaited_once_with(
+        stream=True,
+        agent=IsInstance(Agent),
+        console=IsInstance(Console),
+        code_theme='monokai',
+        prog_name='pydantic-ai',
+        deps=None,
+        message_history=None,
+        model_settings=model_settings,
+        usage_limits=usage_limits,
+    )

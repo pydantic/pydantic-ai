@@ -123,6 +123,16 @@ def test_binary_content_image(media_type: str, format: str):
     assert binary_content.format == format
 
 
+def test_binary_image_requires_image_media_type():
+    # Valid image media type should work
+    img = BinaryImage(data=b'test', media_type='image/png')
+    assert img.is_image
+
+    # Non-image media type should raise
+    with pytest.raises(ValueError, match='`BinaryImage` must have a media type that starts with "image/"'):
+        BinaryImage(data=b'test', media_type='text/plain')
+
+
 @pytest.mark.parametrize(
     'media_type, format',
     [
