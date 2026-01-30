@@ -236,7 +236,7 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
     slf.output_tokens += incr_usage.output_tokens
 
     for key, value in incr_usage.details.items():
-        if value and isinstance(value, (int, float)):
+        if value is not None and isinstance(value, (int, float)):
             slf.details[key] = slf.details.get(key, 0) + value
 
 
