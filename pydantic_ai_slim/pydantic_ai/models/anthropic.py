@@ -406,6 +406,7 @@ class AnthropicModel(Model):
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._limit_cache_points(system_prompt, anthropic_messages, tools)
         output_format = self._native_output_format(model_request_parameters)
+        output_config = {"format": output_format} if output_format is not None else OMIT
         betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
         betas.update(builtin_tool_betas)
         container = self._get_container(messages, model_settings)
@@ -418,7 +419,7 @@ class AnthropicModel(Model):
                 tools=tools or OMIT,
                 tool_choice=tool_choice or OMIT,
                 mcp_servers=mcp_servers or OMIT,
-                output_format=output_format or OMIT,
+                output_config=output_config,
                 betas=sorted(betas) or OMIT,
                 stream=stream,
                 thinking=model_settings.get('anthropic_thinking', OMIT),
@@ -494,6 +495,7 @@ class AnthropicModel(Model):
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._limit_cache_points(system_prompt, anthropic_messages, tools)
         output_format = self._native_output_format(model_request_parameters)
+        output_config = {"format": output_format} if output_format is not None else OMIT
         betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
         betas.update(builtin_tool_betas)
         try:
@@ -505,7 +507,7 @@ class AnthropicModel(Model):
                 tool_choice=tool_choice or OMIT,
                 mcp_servers=mcp_servers or OMIT,
                 betas=sorted(betas) or OMIT,
-                output_format=output_format or OMIT,
+                output_config=output_config,
                 thinking=model_settings.get('anthropic_thinking', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 extra_headers=extra_headers,

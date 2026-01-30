@@ -182,7 +182,8 @@ def test_native_output_supported_model(
     agent.run_sync('What is the capital of France?')
 
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
-    output_format = completion_kwargs['output_format']
+    output_config = completion_kwargs['output_config']
+    output_format = output_config['format']
     betas = completion_kwargs['betas']
 
     assert output_format['type'] == 'json_schema'
