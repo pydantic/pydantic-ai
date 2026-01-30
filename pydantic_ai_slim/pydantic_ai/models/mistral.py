@@ -293,6 +293,13 @@ class MistralModel(Model):
                     'type': 'json_object'
                 },  # TODO: Should be able to use json_schema now: https://docs.mistral.ai/capabilities/structured-output/custom_structured_output/, https://github.com/mistralai/client-python/blob/bc4adf335968c8a272e1ab7da8461c9943d8e701/src/mistralai/extra/utils/response_format.py#L9
                 stream=True,
+                temperature=model_settings.get('temperature', UNSET),
+                top_p=model_settings.get('top_p', 1),
+                max_tokens=model_settings.get('max_tokens', UNSET),
+                timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
+                presence_penalty=model_settings.get('presence_penalty'),
+                frequency_penalty=model_settings.get('frequency_penalty'),
+                stop=model_settings.get('stop_sequences', None),
                 http_headers={'User-Agent': get_user_agent()},
             )
 

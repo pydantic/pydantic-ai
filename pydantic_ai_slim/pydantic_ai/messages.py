@@ -5,7 +5,7 @@ import hashlib
 import mimetypes
 import os
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from mimetypes import MimeTypes
@@ -17,8 +17,10 @@ from urllib.parse import urlparse
 import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
-from opentelemetry._logs import LogRecord  # pyright: ignore[reportPrivateImportUsage]
-from typing_extensions import deprecated
+from opentelemetry._logs import LogRecord
+from opentelemetry.util.types import AnyValue
+from pydantic.dataclasses import dataclass as pydantic_dataclass
+from typing_extensions import TypeAliasType, deprecated
 
 from . import _otel_messages, _utils
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -152,7 +154,7 @@ def _multi_modal_content_identifier(identifier: str | bytes) -> str:
     return hashlib.sha1(identifier).hexdigest()[:6]
 
 
-@dataclass(init=False, repr=False)
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
 class FileUrl(ABC):
     """Abstract base class for any URL-based file."""
 
@@ -185,6 +187,8 @@ class FileUrl(ABC):
         compare=False, default=None
     )
 
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the `media_type` and `identifier` aliases.
     def __init__(
         self,
         url: str,
@@ -193,12 +197,10 @@ class FileUrl(ABC):
         identifier: str | None = None,
         force_download: bool = False,
         vendor_metadata: dict[str, Any] | None = None,
-    ) -> None:
-        self.url = url
-        self._media_type = media_type
-        self._identifier = identifier
-        self.force_download = force_download
-        self.vendor_metadata = vendor_metadata
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _media_type: str | None = None,
+        _identifier: str | None = None,
+    ) -> None: ...  # pragma: no cover
 
     @pydantic.computed_field
     @property
@@ -237,7 +239,7 @@ class FileUrl(ABC):
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass(init=False, repr=False)
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
 class VideoUrl(FileUrl):
     """A URL to a video."""
 
@@ -249,6 +251,8 @@ class VideoUrl(FileUrl):
     kind: Literal['video-url'] = 'video-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the aliases for the `_media_type` and `_identifier` fields.
     def __init__(
         self,
         url: str,
@@ -261,15 +265,7 @@ class VideoUrl(FileUrl):
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
         _identifier: str | None = None,
-    ) -> None:
-        super().__init__(
-            url=url,
-            force_download=force_download,
-            vendor_metadata=vendor_metadata,
-            media_type=media_type or _media_type,
-            identifier=identifier or _identifier,
-        )
-        self.kind = kind
+    ) -> None: ...  # pragma: no cover
 
     def _infer_media_type(self) -> str:
         """Return the media type of the video, based on the url."""
@@ -302,7 +298,7 @@ class VideoUrl(FileUrl):
         return _video_format_lookup[self.media_type]
 
 
-@dataclass(init=False, repr=False)
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
 class AudioUrl(FileUrl):
     """A URL to an audio file."""
 
@@ -314,6 +310,8 @@ class AudioUrl(FileUrl):
     kind: Literal['audio-url'] = 'audio-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the aliases for the `_media_type` and `_identifier` fields.
     def __init__(
         self,
         url: str,
@@ -326,15 +324,7 @@ class AudioUrl(FileUrl):
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
         _identifier: str | None = None,
-    ) -> None:
-        super().__init__(
-            url=url,
-            force_download=force_download,
-            vendor_metadata=vendor_metadata,
-            media_type=media_type or _media_type,
-            identifier=identifier or _identifier,
-        )
-        self.kind = kind
+    ) -> None: ...  # pragma: no cover
 
     def _infer_media_type(self) -> str:
         """Return the media type of the audio file, based on the url.
@@ -355,7 +345,7 @@ class AudioUrl(FileUrl):
         return _audio_format_lookup[self.media_type]
 
 
-@dataclass(init=False, repr=False)
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
 class ImageUrl(FileUrl):
     """A URL to an image."""
 
@@ -367,6 +357,8 @@ class ImageUrl(FileUrl):
     kind: Literal['image-url'] = 'image-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the aliases for the `_media_type` and `_identifier` fields.
     def __init__(
         self,
         url: str,
@@ -379,15 +371,7 @@ class ImageUrl(FileUrl):
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
         _identifier: str | None = None,
-    ) -> None:
-        super().__init__(
-            url=url,
-            force_download=force_download,
-            vendor_metadata=vendor_metadata,
-            media_type=media_type or _media_type,
-            identifier=identifier or _identifier,
-        )
-        self.kind = kind
+    ) -> None: ...  # pragma: no cover
 
     def _infer_media_type(self) -> str:
         """Return the media type of the image, based on the url."""
@@ -407,7 +391,7 @@ class ImageUrl(FileUrl):
         return _image_format_lookup[self.media_type]
 
 
-@dataclass(init=False, repr=False)
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
 class DocumentUrl(FileUrl):
     """The URL of the document."""
 
@@ -419,6 +403,8 @@ class DocumentUrl(FileUrl):
     kind: Literal['document-url'] = 'document-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the aliases for the `_media_type` and `_identifier` fields.
     def __init__(
         self,
         url: str,
@@ -431,15 +417,7 @@ class DocumentUrl(FileUrl):
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
         _identifier: str | None = None,
-    ) -> None:
-        super().__init__(
-            url=url,
-            force_download=force_download,
-            vendor_metadata=vendor_metadata,
-            media_type=media_type or _media_type,
-            identifier=identifier or _identifier,
-        )
-        self.kind = kind
+    ) -> None: ...  # pragma: no cover
 
     def _infer_media_type(self) -> str:
         """Return the media type of the document, based on the url."""
@@ -463,7 +441,13 @@ class DocumentUrl(FileUrl):
             raise ValueError(f'Unknown document media type: {media_type}') from e
 
 
-@dataclass(init=False, repr=False)
+@pydantic_dataclass(
+    repr=False,
+    config=pydantic.ConfigDict(
+        ser_json_bytes='base64',
+        val_json_bytes='base64',
+    ),
+)
 class BinaryContent:
     """Binary content, e.g. an audio or image file."""
 
@@ -494,6 +478,8 @@ class BinaryContent:
     kind: Literal['binary'] = 'binary'
     """Type identifier, this is available on all parts as a discriminator."""
 
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the `identifier` alias for the `_identifier` field.
     def __init__(
         self,
         data: bytes,
@@ -504,12 +490,7 @@ class BinaryContent:
         kind: Literal['binary'] = 'binary',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _identifier: str | None = None,
-    ) -> None:
-        self.data = data
-        self.media_type = media_type
-        self._identifier = identifier or _identifier
-        self.vendor_metadata = vendor_metadata
-        self.kind = kind
+    ) -> None: ...  # pragma: no cover
 
     @staticmethod
     def narrow_type(bc: BinaryContent) -> BinaryContent | BinaryImage:
@@ -617,26 +598,33 @@ class BinaryContent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@pydantic_dataclass(
+    repr=False,
+    config=pydantic.ConfigDict(
+        ser_json_bytes='base64',
+        val_json_bytes='base64',
+    ),
+)
 class BinaryImage(BinaryContent):
     """Binary content that's guaranteed to be an image."""
 
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the `identifier` alias for the `_identifier` field.
     def __init__(
         self,
         data: bytes,
         *,
-        media_type: str,
+        media_type: ImageMediaType | str,
         identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
-        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         kind: Literal['binary'] = 'binary',
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _identifier: str | None = None,
-    ):
-        super().__init__(
-            data=data, media_type=media_type, identifier=identifier or _identifier, vendor_metadata=vendor_metadata
-        )
+    ) -> None: ...  # pragma: no cover
 
+    def __post_init__(self):
         if not self.is_image:
-            raise ValueError('`BinaryImage` must be have a media type that starts with "image/"')  # pragma: no cover
+            raise ValueError('`BinaryImage` must have a media type that starts with "image/"')
 
 
 @dataclass
@@ -677,7 +665,7 @@ class ToolReturn:
     - Optional metadata for application use
     """
 
-    return_value: Any
+    return_value: ToolReturnContent
     """The return value to be used in the tool response."""
 
     _: KW_ONLY
@@ -795,6 +783,17 @@ tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
     Any, config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )
 
+if TYPE_CHECKING:
+    # Simpler type for static analysis - recursive TypeAliasType with Any produces spurious Unknown types
+    ToolReturnContent: TypeAlias = MultiModalContent | Sequence[Any] | Mapping[str, Any] | Any
+else:
+    # Recursive type for runtime Pydantic validation - enables automatic reconstruction of
+    # BinaryContent/FileUrl objects nested inside dicts/lists during deserialization
+    ToolReturnContent = TypeAliasType(
+        'ToolReturnContent',
+        MultiModalContent | Sequence['ToolReturnContent'] | Mapping[str, 'ToolReturnContent'] | Any,
+    )
+
 
 @dataclass(repr=False)
 class BaseToolReturnPart:
@@ -803,7 +802,7 @@ class BaseToolReturnPart:
     tool_name: str
     """The name of the "tool" was called."""
 
-    content: Any
+    content: ToolReturnContent
     """The return value."""
 
     tool_call_id: str = field(default_factory=_generate_tool_call_id)
@@ -837,14 +836,17 @@ class BaseToolReturnPart:
             return {'return_value': json_content}
 
     def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
+        body: AnyValue = {
+            'role': 'tool',
+            'id': self.tool_call_id,
+            'name': self.tool_name,
+        }
+        if settings.include_content:
+            body['content'] = self.content  # pyright: ignore[reportArgumentType]
+
         return LogRecord(
+            body=body,
             attributes={'event.name': 'gen_ai.tool.message'},
-            body={
-                **({'content': self.content} if settings.include_content else {}),
-                'role': 'tool',
-                'id': self.tool_call_id,
-                'name': self.tool_name,
-            },
         )
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
@@ -885,12 +887,16 @@ class BuiltinToolReturnPart(BaseToolReturnPart):
     _: KW_ONLY
 
     provider_name: str | None = None
-    """The name of the provider that generated the response."""
+    """The name of the provider that generated the response.
+
+    Required to be set when `provider_details` is set.
+    """
 
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    When this field is set, `provider_name` is required to identify the provider that generated this data."""
 
     part_kind: Literal['builtin-tool-return'] = 'builtin-tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1039,12 +1045,23 @@ class TextPart:
     _: KW_ONLY
 
     id: str | None = None
-    """An optional identifier of the text part."""
+    """An optional identifier of the text part.
+
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
+
+    provider_name: str | None = None
+    """The name of the provider that generated the response.
+
+    Required to be set when `provider_details` or `id` is set.
+    """
 
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
 
     part_kind: Literal['text'] = 'text'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1066,7 +1083,10 @@ class ThinkingPart:
     _: KW_ONLY
 
     id: str | None = None
-    """The identifier of the thinking part."""
+    """The identifier of the thinking part.
+
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
 
     signature: str | None = None
     """The signature of the thinking.
@@ -1077,18 +1097,23 @@ class ThinkingPart:
     * Bedrock (corresponds to the `signature` field)
     * Google (corresponds to the `thought_signature` field)
     * OpenAI (corresponds to the `encrypted_content` field)
+
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
     provider_name: str | None = None
     """The name of the provider that generated the response.
 
     Signatures are only sent back to the same provider.
+    Required to be set when `provider_details`, `id` or `signature` is set.
     """
 
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
 
     part_kind: Literal['thinking'] = 'thinking'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1110,16 +1135,23 @@ class FilePart:
     _: KW_ONLY
 
     id: str | None = None
-    """The identifier of the file part."""
+    """The identifier of the file part.
+
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
 
     provider_name: str | None = None
     """The name of the provider that generated the response.
+
+    Required to be set when `provider_details` or `id` is set.
     """
 
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
 
     part_kind: Literal['file'] = 'file'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1155,12 +1187,23 @@ class BaseToolCallPart:
     id: str | None = None
     """An optional identifier of the tool call part, separate from the tool call ID.
 
-    This is used by some APIs like OpenAI Responses."""
+    This is used by some APIs like OpenAI Responses.
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
+
+    provider_name: str | None = None
+    """The name of the provider that generated the response.
+
+    Builtin tool calls are only sent back to the same provider.
+    Required to be set when `provider_details` or `id` is set.
+    """
 
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
 
     def args_as_dict(self) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
@@ -1213,12 +1256,6 @@ class BuiltinToolCallPart(BaseToolCallPart):
     """A tool call to a built-in tool."""
 
     _: KW_ONLY
-
-    provider_name: str | None = None
-    """The name of the provider that generated the response.
-
-    Built-in tool calls are only sent back to the same provider.
-    """
 
     part_kind: Literal['builtin-tool-call'] = 'builtin-tool-call'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1505,10 +1542,19 @@ class TextPartDelta:
 
     _: KW_ONLY
 
+    provider_name: str | None = None
+    """The name of the provider that generated the response.
+
+    This is required to be set when `provider_details` is set and the initial TextPart does not have a `provider_name` or it has changed.
+    """
+
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
 
     part_delta_kind: Literal['text'] = 'text'
     """Part delta type identifier, used as a discriminator."""
@@ -1530,6 +1576,7 @@ class TextPartDelta:
         return replace(
             part,
             content=part.content + self.content_delta,
+            provider_name=self.provider_name or part.provider_name,
             provider_details={**(part.provider_details or {}), **(self.provider_details or {})} or None,
         )
 
@@ -1553,6 +1600,7 @@ class ThinkingPartDelta:
     """Optional provider name for the thinking part.
 
     Signatures are only sent back to the same provider.
+    Required to be set when `provider_details` is set and the initial ThinkingPart does not have a `provider_name` or it has changed.
     """
 
     provider_details: ProviderDetailsDelta = None
@@ -1561,7 +1609,9 @@ class ThinkingPartDelta:
     Can be a dict to merge with existing details, or a callable that takes
     the existing details and returns updated details.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+
+    When this field is set, `provider_name` is required to identify the provider that generated this data."""
 
     part_delta_kind: Literal['thinking'] = 'thinking'
     """Part delta type identifier, used as a discriminator."""
@@ -1662,10 +1712,19 @@ class ToolCallPartDelta:
     Note this is never treated as a delta — it can replace None, but otherwise if a
     non-matching value is provided an error will be raised."""
 
+    provider_name: str | None = None
+    """The name of the provider that generated the response.
+
+    This is required to be set when `provider_details` is set and the initial ToolCallPart does not have a `provider_name` or it has changed.
+    """
+
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
 
     part_delta_kind: Literal['tool_call'] = 'tool_call'
     """Part delta type identifier, used as a discriminator."""
@@ -1683,6 +1742,7 @@ class ToolCallPartDelta:
             self.tool_name_delta,
             self.args_delta,
             self.tool_call_id or _generate_tool_call_id(),
+            provider_name=self.provider_name,
             provider_details=self.provider_details,
         )
 
@@ -1744,6 +1804,9 @@ class ToolCallPartDelta:
         if self.tool_call_id:
             delta = replace(delta, tool_call_id=self.tool_call_id)
 
+        if self.provider_name:
+            delta = replace(delta, provider_name=self.provider_name)
+
         if self.provider_details:
             merged_provider_details = {**(delta.provider_details or {}), **self.provider_details}
             delta = replace(delta, provider_details=merged_provider_details)
@@ -1754,6 +1817,7 @@ class ToolCallPartDelta:
                 delta.tool_name_delta,
                 delta.args_delta,
                 delta.tool_call_id or _generate_tool_call_id(),
+                provider_name=delta.provider_name,
                 provider_details=delta.provider_details,
             )
 
@@ -1779,6 +1843,9 @@ class ToolCallPartDelta:
 
         if self.tool_call_id:
             part = replace(part, tool_call_id=self.tool_call_id)
+
+        if self.provider_name:
+            part = replace(part, provider_name=self.provider_name)
 
         if self.provider_details:
             merged_provider_details = {**(part.provider_details or {}), **self.provider_details}

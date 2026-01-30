@@ -558,17 +558,14 @@ class GoogleModel(Model):
         return contents, config
 
     def _process_response(self, response: GenerateContentResponse) -> ModelResponse:
-        if not response.candidates:
-            raise UnexpectedModelBehavior('Expected at least one candidate in Gemini response')  # pragma: no cover
-
-        candidate = response.candidates[0]
+        candidate = response.candidates[0] if response.candidates else None
 
         vendor_id = response.response_id
         finish_reason: FinishReason | None = None
         vendor_details: dict[str, Any] = {}
 
-        raw_finish_reason = candidate.finish_reason
-        if raw_finish_reason:  # pragma: no branch
+        raw_finish_reason = candidate.finish_reason if candidate else None
+        if raw_finish_reason and candidate:  # pragma: no branch
             vendor_details = {'finish_reason': raw_finish_reason.value}
             # Add safety ratings to provider details
             if candidate.safety_ratings:
@@ -578,15 +575,18 @@ class GoogleModel(Model):
         if response.create_time is not None:  # pragma: no branch
             vendor_details['timestamp'] = response.create_time
 
-        if candidate.content is None or candidate.content.parts is None:
+        if candidate is None or candidate.content is None or candidate.content.parts is None:
             parts = []
         else:
             parts = candidate.content.parts or []
 
         usage = _metadata_as_usage(response, provider=self._provider.name, provider_url=self._provider.base_url)
+        grounding_metadata = candidate.grounding_metadata if candidate else None
+        url_context_metadata = candidate.url_context_metadata if candidate else None
+
         return _process_response_from_parts(
             parts,
-            candidate.grounding_metadata,
+            grounding_metadata,
             response.model_version or self._model_name,
             self._provider.name,
             self._provider.base_url,
@@ -594,7 +594,7 @@ class GoogleModel(Model):
             vendor_id=vendor_id,
             vendor_details=vendor_details or None,
             finish_reason=finish_reason,
-            url_context_metadata=candidate.url_context_metadata,
+            url_context_metadata=url_context_metadata,
         )
 
     async def _process_streamed_response(
@@ -848,12 +848,18 @@ class GeminiStreamedResponse(StreamedResponse):
                         continue
                     if part.thought:
                         for event in self._parts_manager.handle_thinking_delta(
-                            vendor_part_id=None, content=part.text, provider_details=provider_details
+                            vendor_part_id=None,
+                            content=part.text,
+                            provider_name=self.provider_name if provider_details else None,
+                            provider_details=provider_details,
                         ):
                             yield event
                     else:
                         for event in self._parts_manager.handle_text_delta(
-                            vendor_part_id=None, content=part.text, provider_details=provider_details
+                            vendor_part_id=None,
+                            content=part.text,
+                            provider_name=self.provider_name if provider_details else None,
+                            provider_details=provider_details,
                         ):
                             yield event
                 elif part.function_call:
@@ -862,6 +868,7 @@ class GeminiStreamedResponse(StreamedResponse):
                         tool_name=part.function_call.name,
                         args=part.function_call.args,
                         tool_call_id=part.function_call.id,
+                        provider_name=self.provider_name if provider_details else None,
                         provider_details=provider_details,
                     )
                     if maybe_event is not None:  # pragma: no branch
@@ -878,7 +885,11 @@ class GeminiStreamedResponse(StreamedResponse):
                     content = BinaryContent(data=data, media_type=mime_type)
                     yield self._parts_manager.handle_part(
                         vendor_part_id=uuid4(),
-                        part=FilePart(content=BinaryContent.narrow_type(content), provider_details=provider_details),
+                        part=FilePart(
+                            content=BinaryContent.narrow_type(content),
+                            provider_name=self.provider_name if provider_details else None,
+                            provider_details=provider_details,
+                        ),
                     )
                 elif part.executable_code is not None:
                     part_obj = self._handle_executable_code_streaming(part.executable_code)
@@ -994,7 +1005,7 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
         if (
             item.provider_details
             and (thought_signature := item.provider_details.get('thought_signature'))
-            and m.provider_name == provider_name
+            and (m.provider_name == provider_name or item.provider_name == provider_name)
         ):
             part['thought_signature'] = base64.b64decode(thought_signature)
         elif thinking_part_signature:
@@ -1053,6 +1064,58 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
     return ContentDict(role='model', parts=parts)
 
 
+def _process_part(
+    part: Part, code_execution_tool_call_id: str | None, provider_name: str
+) -> tuple[ModelResponsePart | None, str | None]:
+    """Process a Google Part and return the corresponding ModelResponsePart.
+
+    Returns:
+        A tuple of (item, code_execution_tool_call_id). Returns (None, id) if the part should be skipped.
+    """
+    provider_details: dict[str, Any] | None = None
+    if part.thought_signature:
+        # Per https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#thought-signatures:
+        # - Always send the thought_signature back to the model inside its original Part.
+        # - Don't merge a Part containing a signature with one that does not. This breaks the positional context of the thought.
+        # - Don't combine two Parts that both contain signatures, as the signature strings cannot be merged.
+        thought_signature = base64.b64encode(part.thought_signature).decode('utf-8')
+        provider_details = {'thought_signature': thought_signature}
+
+    if part.executable_code is not None:
+        code_execution_tool_call_id = _utils.generate_tool_call_id()
+        item = _map_executable_code(part.executable_code, provider_name, code_execution_tool_call_id)
+    elif part.code_execution_result is not None:
+        assert code_execution_tool_call_id is not None
+        item = _map_code_execution_result(part.code_execution_result, provider_name, code_execution_tool_call_id)
+    elif part.text is not None:
+        # Google sometimes sends empty text parts, we don't want to add them to the response
+        if len(part.text) == 0 and not provider_details:
+            return None, code_execution_tool_call_id
+        if part.thought:
+            item = ThinkingPart(content=part.text)
+        else:
+            item = TextPart(content=part.text)
+    elif part.function_call:
+        assert part.function_call.name is not None
+        item = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args)
+        if part.function_call.id is not None:
+            item.tool_call_id = part.function_call.id  # pragma: no cover
+    elif inline_data := part.inline_data:
+        data = inline_data.data
+        mime_type = inline_data.mime_type
+        assert data and mime_type, 'Inline data must have data and mime type'
+        content = BinaryContent(data=data, media_type=mime_type)
+        item = FilePart(content=BinaryContent.narrow_type(content))
+    else:  # pragma: no cover
+        raise UnexpectedModelBehavior(f'Unsupported response from Gemini: {part!r}')
+
+    if provider_details:
+        item.provider_details = {**(item.provider_details or {}), **provider_details}
+        item.provider_name = provider_name
+
+    return item, code_execution_tool_call_id
+
+
 def _process_response_from_parts(
     parts: list[Part],
     grounding_metadata: GroundingMetadata | None,
@@ -1084,47 +1147,10 @@ def _process_response_from_parts(
     item: ModelResponsePart | None = None
     code_execution_tool_call_id: str | None = None
     for part in parts:
-        provider_details: dict[str, Any] | None = None
-        if part.thought_signature:
-            # Per https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#thought-signatures:
-            # - Always send the thought_signature back to the model inside its original Part.
-            # - Don't merge a Part containing a signature with one that does not. This breaks the positional context of the thought.
-            # - Don't combine two Parts that both contain signatures, as the signature strings cannot be merged.
-            thought_signature = base64.b64encode(part.thought_signature).decode('utf-8')
-            provider_details = {'thought_signature': thought_signature}
+        item, code_execution_tool_call_id = _process_part(part, code_execution_tool_call_id, provider_name)
+        if item is not None:
+            items.append(item)
 
-        if part.executable_code is not None:
-            code_execution_tool_call_id = _utils.generate_tool_call_id()
-            item = _map_executable_code(part.executable_code, provider_name, code_execution_tool_call_id)
-        elif part.code_execution_result is not None:
-            assert code_execution_tool_call_id is not None
-            item = _map_code_execution_result(part.code_execution_result, provider_name, code_execution_tool_call_id)
-        elif part.text is not None:
-            # Google sometimes sends empty text parts, we don't want to add them to the response
-            if len(part.text) == 0 and not provider_details:
-                continue
-            if part.thought:
-                item = ThinkingPart(content=part.text)
-            else:
-                item = TextPart(content=part.text)
-        elif part.function_call:
-            assert part.function_call.name is not None
-            item = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args)
-            if part.function_call.id is not None:
-                item.tool_call_id = part.function_call.id  # pragma: no cover
-        elif inline_data := part.inline_data:
-            data = inline_data.data
-            mime_type = inline_data.mime_type
-            assert data and mime_type, 'Inline data must have data and mime type'
-            content = BinaryContent(data=data, media_type=mime_type)
-            item = FilePart(content=BinaryContent.narrow_type(content))
-        else:  # pragma: no cover
-            raise UnexpectedModelBehavior(f'Unsupported response from Gemini: {part!r}')
-
-        if provider_details:
-            item.provider_details = {**(item.provider_details or {}), **provider_details}
-
-        items.append(item)
     return ModelResponse(
         parts=items,
         model_name=model_name,
