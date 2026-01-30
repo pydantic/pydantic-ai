@@ -47,7 +47,7 @@ class UsageBase:
         dict[str, int],
         # `details` can not be `None` any longer, but we still want to support deserializing model responses stored in a DB before this was changed
         BeforeValidator(lambda d: d or {}),
-    ] = dataclasses.field(default_factory=dict)
+    ] = dataclasses.field(default_factory=dict[str, int])
     """Any extra details returned by the model."""
 
     @property
@@ -197,7 +197,7 @@ class RunUsage(UsageBase):
     output_tokens: int = 0
     """Total number of output/completion tokens."""
 
-    details: dict[str, int] = dataclasses.field(default_factory=dict)
+    details: dict[str, int] = dataclasses.field(default_factory=dict[str, int])
     """Any extra details returned by the model."""
 
     def incr(self, incr_usage: RunUsage | RequestUsage) -> None:
