@@ -78,6 +78,7 @@ async def _get_ui_html(html_path: str | Path | None = None) -> bytes:
 
     # Handle Path instances
     if isinstance(html_path, Path):
+        html_path = html_path.expanduser()
         if html_path.is_file():
             return html_path.read_bytes()
         raise FileNotFoundError(f'Local UI file not found: {html_path}')
