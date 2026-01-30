@@ -10,7 +10,7 @@ import base64
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
@@ -19,7 +19,7 @@ from typing import Any, Generic, Literal, TypeVar, get_args, overload
 import httpx
 from typing_extensions import TypeAliasType, TypedDict
 
-from .. import _utils, concurrency as _concurrency
+from .. import _utils
 from .._json_schema import JsonSchemaTransformer
 from .._output import OutputObjectDefinition, StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
@@ -623,45 +623,26 @@ class Model(ABC):
 
     _profile: ModelProfileSpec | None = None
     _settings: ModelSettings | None = None
-    _concurrency_limiter: _concurrency.RecordingSemaphore | None = None
 
     def __init__(
         self,
         *,
         settings: ModelSettings | None = None,
         profile: ModelProfileSpec | None = None,
-        max_concurrency: _concurrency.ConcurrencyLimit = None,
     ) -> None:
         """Initialize the model with optional settings and profile.
 
         Args:
             settings: Model-specific settings that will be used as defaults for this model.
             profile: The model profile to use.
-            max_concurrency: Optional limit on concurrent HTTP requests to this model. Can be an integer
-                for simple limiting, a [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for advanced
-                configuration with backpressure, or None (default) for no limiting.
         """
         self._settings = settings
         self._profile = profile
-        if max_concurrency is not None:
-            # Name will be set lazily when model_name is available
-            self._concurrency_limiter = _concurrency.RecordingSemaphore.from_limit(max_concurrency)
-        else:
-            self._concurrency_limiter = None
 
     @property
     def settings(self) -> ModelSettings | None:
         """Get the model settings."""
         return self._settings
-
-    def get_concurrency_context(self) -> AbstractAsyncContextManager[None]:
-        """Get a context manager for HTTP request concurrency limiting.
-
-        If a concurrency limiter is configured, returns it. Otherwise returns a no-op context manager.
-        This is used internally by the agent graph to wrap model requests, but can also be used
-        directly when making manual requests to the model.
-        """
-        return _concurrency.get_concurrency_context(self._concurrency_limiter, f'model:{self.model_name}')
 
     @abstractmethod
     async def request(

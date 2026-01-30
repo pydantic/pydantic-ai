@@ -28,12 +28,13 @@ class ConcurrencyLimiter:
     max_queued: int | None = None
 
 
-ConcurrencyLimit: TypeAlias = 'int | ConcurrencyLimiter | None'
+ConcurrencyLimit: TypeAlias = 'int | ConcurrencyLimiter | RecordingSemaphore | None'
 """Type alias for concurrency limit configuration.
 
 Can be:
 - An `int`: Simple limit on concurrent operations (unlimited queue).
 - A `ConcurrencyLimiter`: Full configuration with optional backpressure.
+- A `RecordingSemaphore`: A pre-created semaphore instance for sharing across multiple models/agents.
 - `None`: No concurrency limiting (default).
 """
 
@@ -51,6 +52,7 @@ class RecordingSemaphore:
         max_running: int,
         *,
         max_queued: int | None = None,
+        name: str | None = None,
         tracer: Tracer | None = None,
     ):
         """Initialize the RecordingSemaphore.
@@ -58,11 +60,14 @@ class RecordingSemaphore:
         Args:
             max_running: Maximum number of concurrent operations.
             max_queued: Maximum queue depth before raising ConcurrencyLimitExceeded.
+            name: Optional name for this semaphore, used for observability when sharing
+                a semaphore across multiple models or agents.
             tracer: OpenTelemetry tracer for span creation.
         """
         self._semaphore = anyio.Semaphore(max_running)
         self._max_running = max_running
         self._max_queued = max_queued
+        self._name = name
         self._waiting_count = 0
         self._tracer = tracer
 
@@ -71,25 +76,33 @@ class RecordingSemaphore:
         cls,
         limit: int | ConcurrencyLimiter,
         *,
+        name: str | None = None,
         tracer: Tracer | None = None,
     ) -> Self:
         """Create a RecordingSemaphore from a ConcurrencyLimit configuration.
 
         Args:
             limit: Either an int for simple limiting or a ConcurrencyLimiter for full config.
+            name: Optional name for this semaphore, used for observability.
             tracer: OpenTelemetry tracer for span creation.
 
         Returns:
             A configured RecordingSemaphore.
         """
         if isinstance(limit, int):
-            return cls(max_running=limit, tracer=tracer)
+            return cls(max_running=limit, name=name, tracer=tracer)
         else:
             return cls(
                 max_running=limit.max_running,
                 max_queued=limit.max_queued,
+                name=name,
                 tracer=tracer,
             )
+
+    @property
+    def name(self) -> str | None:
+        """Name of the semaphore for observability."""
+        return self._name
 
     @property
     def waiting_count(self) -> int:
@@ -102,11 +115,11 @@ class RecordingSemaphore:
             return self._tracer
         return get_tracer('pydantic-ai')
 
-    async def acquire(self, name: str) -> None:
+    async def acquire(self, source: str) -> None:
         """Acquire the semaphore, creating a span if waiting is required.
 
         Args:
-            name: Identifier for observability (e.g., 'agent:my-agent' or 'model:gpt-4').
+            source: Identifier for the source of this acquisition (e.g., 'agent:my-agent' or 'model:gpt-4').
         """
         from .exceptions import ConcurrencyLimitExceeded
 
@@ -120,25 +133,29 @@ class RecordingSemaphore:
         # We need to wait - track and check queue limits
         self._waiting_count += 1
         try:
+            # Use semaphore name if set, otherwise use source for error messages
+            display_name = self._name or source
             if self._max_queued is not None and self._waiting_count > self._max_queued:
                 raise ConcurrencyLimitExceeded(
                     f'Concurrency queue depth ({self._waiting_count}) exceeds max_queued ({self._max_queued})'
-                    + (f' for {name}' if name else '')
+                    + (f' for {display_name}' if display_name else '')
                 )
 
             # Create a span for observability while waiting
             tracer = self._get_tracer()
             attributes: dict[str, str | int] = {
-                'limiter_name': name,
+                'source': source,
                 'waiting_count': self._waiting_count,
                 'max_running': self._max_running,
             }
+            if self._name is not None:
+                attributes['limiter_name'] = self._name
             if self._max_queued is not None:
                 attributes['max_queued'] = self._max_queued
-            with tracer.start_as_current_span(
-                f'waiting for {name} concurrency',
-                attributes=attributes,
-            ):
+
+            # Span name uses semaphore name if set, otherwise source
+            span_name = f'waiting for {display_name} concurrency'
+            with tracer.start_as_current_span(span_name, attributes=attributes):
                 await self._semaphore.acquire()
         finally:
             self._waiting_count -= 1
@@ -155,9 +172,9 @@ async def _null_context() -> AsyncIterator[None]:
 
 
 @asynccontextmanager
-async def _semaphore_context(semaphore: RecordingSemaphore, name: str) -> AsyncIterator[None]:
-    """Context manager that acquires and releases a semaphore with the given name."""
-    await semaphore.acquire(name)
+async def _semaphore_context(semaphore: RecordingSemaphore, source: str) -> AsyncIterator[None]:
+    """Context manager that acquires and releases a semaphore with the given source."""
+    await semaphore.acquire(source)
     try:
         yield
     finally:
@@ -166,7 +183,7 @@ async def _semaphore_context(semaphore: RecordingSemaphore, name: str) -> AsyncI
 
 def get_concurrency_context(
     limiter: RecordingSemaphore | None,
-    name: str = 'unnamed',
+    source: str = 'unnamed',
 ) -> AbstractAsyncContextManager[None]:
     """Get an async context manager for the concurrency limiter.
 
@@ -174,11 +191,33 @@ def get_concurrency_context(
 
     Args:
         limiter: The RecordingSemaphore or None.
-        name: Identifier for observability (e.g., 'agent:my-agent' or 'model:gpt-4').
+        source: Identifier for the source of this acquisition (e.g., 'agent:my-agent' or 'model:gpt-4').
 
     Returns:
         An async context manager.
     """
     if limiter is None:
         return _null_context()
-    return _semaphore_context(limiter, name)
+    return _semaphore_context(limiter, source)
+
+
+def normalize_to_semaphore(
+    limit: ConcurrencyLimit,
+    *,
+    name: str | None = None,
+) -> RecordingSemaphore | None:
+    """Normalize a concurrency limit configuration to a RecordingSemaphore.
+
+    Args:
+        limit: The concurrency limit configuration.
+        name: Optional name for the semaphore if one is created.
+
+    Returns:
+        A RecordingSemaphore if limit is not None, otherwise None.
+    """
+    if limit is None:
+        return None
+    elif isinstance(limit, RecordingSemaphore):
+        return limit
+    else:
+        return RecordingSemaphore.from_limit(limit, name=name)
