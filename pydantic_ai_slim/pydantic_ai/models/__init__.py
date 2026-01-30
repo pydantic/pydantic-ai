@@ -701,6 +701,16 @@ class Model(ABC):
                     output_object=_customize_output_object(transformer, output_object),
                 )
 
+        # For models that don't natively support tool return schemas,
+        # inject the return schema as JSON text into the tool description as a fallback
+        if not self.profile.supports_tool_return_schema:
+            model_request_parameters = replace(
+                model_request_parameters,
+                function_tools=[
+                    _inject_return_schema_in_description(t) for t in model_request_parameters.function_tools
+                ],
+            )
+
         return model_request_parameters
 
     def prepare_request(
@@ -1337,9 +1347,17 @@ def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: Tool
     """
     schema_transformer = transformer(tool_def.parameters_json_schema, strict=tool_def.strict)
     parameters_json_schema = schema_transformer.walk()
+
+    # Also transform return_schema if present (e.g., strip unsupported fields for Google)
+    return_schema = tool_def.return_schema
+    if return_schema is not None:
+        return_schema_transformer = transformer(return_schema)
+        return_schema = return_schema_transformer.walk()
+
     return replace(
         tool_def,
         parameters_json_schema=parameters_json_schema,
+        return_schema=return_schema,
         strict=schema_transformer.is_strict_compatible if tool_def.strict is None else tool_def.strict,
     )
 
@@ -1352,6 +1370,20 @@ def _customize_output_object(transformer: type[JsonSchemaTransformer], output_ob
         json_schema=json_schema,
         strict=schema_transformer.is_strict_compatible if output_object.strict is None else output_object.strict,
     )
+
+
+def _inject_return_schema_in_description(tool_def: ToolDefinition) -> ToolDefinition:
+    """Inject the return schema as JSON text into the tool description.
+
+    This is a fallback for models that don't natively support tool return schemas.
+    """
+    if tool_def.return_schema is None:
+        return tool_def
+    import json
+
+    base_desc = tool_def.description or ''
+    description = '\n\n'.join([base_desc, 'Return schema:', json.dumps(tool_def.return_schema, indent=2)])
+    return replace(tool_def, description=description)
 
 
 def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestParameters) -> FinalResultEvent | None:

@@ -556,7 +556,7 @@ def test_logfire(
                                 'kind': 'function',
                                 'metadata': None,
                                 'timeout': None,
-                                'return_schema': {'type': 'string'},
+                                'return_schema': None,
                             }
                         ],
                         'builtin_tools': [],
