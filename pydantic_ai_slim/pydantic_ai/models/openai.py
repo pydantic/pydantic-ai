@@ -1763,6 +1763,9 @@ class OpenAIResponsesModel(Model):
         request_params = self._build_responses_request_params(request_input, model_settings)
         extra_headers, timeout = self._build_request_options(model_settings)
 
+        # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
+        prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
+
         try:
             response = await self.client.responses.create(
                 model=request_params.model,
@@ -1784,7 +1787,7 @@ class OpenAIResponsesModel(Model):
                 user=model_settings.get('openai_user', OMIT),
                 include=include or OMIT,
                 prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
-                prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
+                prompt_cache_retention=prompt_cache_retention,
                 timeout=timeout,
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
