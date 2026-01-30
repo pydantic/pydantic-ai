@@ -174,7 +174,7 @@ def create_model(
     elif provider == 'xai':
         assert xai_provider is not None
         return XaiModel(model_name, provider=xai_provider)
-    else:
+    else:  # pragma: no cover
         raise ValueError(f'Unknown provider: {provider}')
 
 
@@ -276,7 +276,7 @@ def _get_xai_tool_choice(xai_provider: Any) -> Any:
         if hasattr(interaction, 'request_json') and interaction.request_json:
             tc = interaction.request_json.get('tool_choice')
             if tc is None:
-                return None
+                return None  # pragma: no cover
             if isinstance(tc, dict):
                 mode: str | None = tc.get('mode')  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
                 if mode == 'TOOL_MODE_AUTO':
@@ -411,7 +411,7 @@ async def test_tool_choice_matrix(
     allow_model_requests: None,
     vcr: Any,
 ):
-    if not is_provider_available(provider):
+    if not is_provider_available(provider):  # pragma: no cover
         pytest.skip(f'{provider} dependencies not installed')
 
     expectation = SUPPORT_MATRIX.get((provider, scenario))
