@@ -3565,42 +3565,6 @@ async def test_tool_choice_fallback_response_api(allow_model_requests: None) -> 
     assert get_mock_responses_kwargs(mock_client)[0]['tool_choice'] == 'auto'
 
 
-async def test_responses_count_tokens(allow_model_requests: None, openai_api_key: str) -> None:
-    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
-
-    result = await model.count_tokens(
-        [ModelRequest(parts=[], instructions='Follow the system instructions.')],
-        OpenAIResponsesModelSettings(timeout=123.0),
-        ModelRequestParameters(),
-    )
-
-    assert result.input_tokens == snapshot(16)
-
-
-async def test_responses_count_tokens_no_messages(allow_model_requests: None, openai_api_key: str) -> None:
-    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
-
-    with pytest.raises(UserError, match='Cannot count tokens without any messages or a previous response ID'):
-        await model.count_tokens([], None, ModelRequestParameters())
-
-
-async def test_responses_count_tokens_with_tools(allow_model_requests: None, openai_api_key: str) -> None:
-    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
-
-    tool_def = ToolDefinition(
-        name='get_weather',
-        description='Get the weather for a location',
-        parameters_json_schema={'type': 'object', 'properties': {'location': {'type': 'string'}}},
-    )
-    result = await model.count_tokens(
-        [ModelRequest.user_text_prompt('What is the weather in Paris?')],
-        None,
-        ModelRequestParameters(function_tools=[tool_def], allow_text_output=False),
-    )
-
-    assert result.input_tokens == snapshot(51)
-
-
 async def test_openai_model_settings_temperature_ignored_on_gpt_5(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)

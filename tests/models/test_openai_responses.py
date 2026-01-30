@@ -9891,3 +9891,39 @@ async def test_reasoning_summary_auto(allow_model_requests: None, openai_api_key
 
 I need to respond with a Python function for calculating the factorial. The user wants me to think step-by-step, but I need to keep my reasoning brief. I'll provide a brief explanation of how the function works and include some input validation. I could choose either an iterative or recursive approach. I'll keep the details high-level, showing only the essential steps before presenting the final code to the user.\
 """)
+
+
+async def test_responses_count_tokens(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    result = await model.count_tokens(
+        [ModelRequest(parts=[], instructions='Follow the system instructions.')],
+        OpenAIResponsesModelSettings(timeout=123.0),
+        ModelRequestParameters(),
+    )
+
+    assert result.input_tokens == snapshot(16)
+
+
+async def test_responses_count_tokens_no_messages(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    with pytest.raises(UserError, match='Cannot count tokens without any messages or a previous response ID'):
+        await model.count_tokens([], None, ModelRequestParameters())
+
+
+async def test_responses_count_tokens_with_tools(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    tool_def = ToolDefinition(
+        name='get_weather',
+        description='Get the weather for a location',
+        parameters_json_schema={'type': 'object', 'properties': {'location': {'type': 'string'}}},
+    )
+    result = await model.count_tokens(
+        [ModelRequest.user_text_prompt('What is the weather in Paris?')],
+        None,
+        ModelRequestParameters(function_tools=[tool_def], allow_text_output=False),
+    )
+
+    assert result.input_tokens == snapshot(51)

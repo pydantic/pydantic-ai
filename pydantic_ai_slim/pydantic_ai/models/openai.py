@@ -1324,13 +1324,18 @@ class OpenAIResponsesModel(Model):
             messages,
             settings,
             model_request_parameters,
-            allow_instructions_only=True,
         )
-        request_params = self._build_responses_request_params(
-            request_input,
-            settings,
-            include_text_verbosity=False,
-        )
+
+        # Validate that we have something meaningful to count tokens for
+        if (
+            request_input.instructions is OMIT
+            and not request_input.previous_response_id
+            and len(request_input.messages) == 1
+            and request_input.messages[0].get('content') == ''
+        ):
+            raise UserError('Cannot count tokens without any messages or a previous response ID.')
+
+        request_params = self._build_responses_request_params(request_input, settings)
 
         try:
             extra_headers, timeout = self._build_request_options(settings)
@@ -1528,8 +1533,6 @@ class OpenAIResponsesModel(Model):
         messages: list[ModelRequest | ModelResponse],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-        *,
-        allow_instructions_only: bool,
     ) -> _ResponsesRequestInput:
         """Build common request input parameters for the Responses API.
 
@@ -1552,7 +1555,7 @@ class OpenAIResponsesModel(Model):
         if previous_response_id == 'auto':
             previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
 
-        instructions, response_messages = await self._map_messages(messages, model_settings, model_request_parameters)
+        instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
         reasoning = self._get_reasoning(model_settings)
 
         text: responses.ResponseTextConfigParam | None = None
@@ -1567,16 +1570,14 @@ class OpenAIResponsesModel(Model):
             # > Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'.
             # Apparently they're only checking input messages for "JSON", not instructions.
             assert isinstance(instructions, str)
-            system_prompt_count = sum(1 for m in response_messages if m.get('role') == 'system')
-            response_messages.insert(
+            system_prompt_count = sum(1 for m in openai_messages if m.get('role') == 'system')
+            openai_messages.insert(
                 system_prompt_count, responses.EasyInputMessageParam(role='system', content=instructions)
             )
             instructions = OMIT
 
-        if not response_messages and not previous_response_id:
-            if allow_instructions_only and instructions is OMIT:
-                raise UserError('Cannot count tokens without any messages or a previous response ID.')
-            response_messages.append(
+        if not openai_messages and not previous_response_id:
+            openai_messages.append(
                 responses.EasyInputMessageParam(
                     role='user',
                     content='',
@@ -1588,7 +1589,7 @@ class OpenAIResponsesModel(Model):
             tool_choice=tool_choice,
             previous_response_id=previous_response_id,
             instructions=instructions,
-            messages=response_messages,
+            messages=openai_messages,
             reasoning=reasoning,
             text=text,
         )
@@ -1597,11 +1598,9 @@ class OpenAIResponsesModel(Model):
         self,
         request_input: _ResponsesRequestInput,
         model_settings: OpenAIResponsesModelSettings,
-        *,
-        include_text_verbosity: bool,
     ) -> _ResponsesRequestParams:
         text = request_input.text
-        if include_text_verbosity and (verbosity := model_settings.get('openai_text_verbosity')):
+        if verbosity := model_settings.get('openai_text_verbosity'):
             text = text or {}
             text['verbosity'] = verbosity
 
@@ -1622,7 +1621,7 @@ class OpenAIResponsesModel(Model):
     def _build_request_options(
         model_settings: OpenAIResponsesModelSettings,
     ) -> tuple[dict[str, str], float | Timeout | NotGiven]:
-        extra_headers = model_settings.get('extra_headers', {})
+        extra_headers = dict(model_settings.get('extra_headers', {}))
         extra_headers.setdefault('User-Agent', get_user_agent())
         timeout = model_settings.get('timeout', NOT_GIVEN)
         return extra_headers, timeout
@@ -1656,7 +1655,6 @@ class OpenAIResponsesModel(Model):
             messages,
             model_settings,
             model_request_parameters,
-            allow_instructions_only=False,
         )
 
         profile = OpenAIModelProfile.from_profile(self.profile)
@@ -1676,11 +1674,7 @@ class OpenAIResponsesModel(Model):
         if model_settings.get('openai_logprobs'):
             include.append('message.output_text.logprobs')
 
-        request_params = self._build_responses_request_params(
-            request_input,
-            model_settings,
-            include_text_verbosity=True,
-        )
+        request_params = self._build_responses_request_params(request_input, model_settings)
         extra_headers, timeout = self._build_request_options(model_settings)
 
         try:
