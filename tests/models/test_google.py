@@ -4,6 +4,7 @@ import base64
 import datetime
 import json
 import os
+import random
 import re
 import tempfile
 from collections.abc import AsyncIterator
@@ -1998,6 +1999,34 @@ I'm ready to assist you with a wide range of tasks, from answering questions and
 
 How can I help you today?\
 """)
+
+
+async def test_google_instructions_only_with_tool_calls(allow_model_requests: None, google_provider: GoogleProvider):
+    """Test that tools work when using instructions-only without a user prompt.
+
+    This tests the fix for https://github.com/pydantic/pydantic-ai/issues/3692 where the second
+    request (after tool results) would fail because contents started with role=model instead of
+    role=user. The fix prepends an empty user turn when the first content is a model response.
+    """
+    m = GoogleModel('gemini-3-flash-preview', provider=google_provider)
+    agent: Agent[None, list[str]] = Agent(m, output_type=list[str])
+
+    @agent.instructions
+    def agent_instructions() -> str:
+        return 'Tell three jokes. Generate topics with the generate_topic tool.'
+
+    @agent.tool_plain
+    def generate_topic() -> str:
+        return random.choice(('cars', 'penguins', 'golf'))
+
+    result = await agent.run()
+    assert result.output == snapshot(
+        [
+            'What kind of car does a sheep drive? A Lamborghini!',
+            "Why don't you see penguins in Great Britain? Because they're afraid of Wales!",
+            'What happened when the wheel was invented? It caused a revolution!',
+        ]
+    )
 
 
 async def test_google_model_empty_assistant_response(allow_model_requests: None, google_provider: GoogleProvider):
@@ -5594,5 +5623,59 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
                     },
                 ],
             }
+        ]
+    )
+
+
+async def test_google_prepends_empty_user_turn_when_first_content_is_model(google_provider: GoogleProvider):
+    """Test that an empty user turn is prepended when contents start with a model response.
+
+    This happens when there's a conversation history with a model response (containing tool calls)
+    followed by tool results, but no initial user prompt. The Gemini API requires that function
+    call turns come immediately after a user turn or function response turn.
+
+    See https://github.com/pydantic/pydantic-ai/issues/3692
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='generate_topic', args={}, tool_call_id='test_id'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='generate_topic', content='penguins', tool_call_id='test_id'),
+            ]
+        ),
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents == snapshot(
+        [
+            {'role': 'user', 'parts': [{'text': ''}]},
+            {
+                'role': 'model',
+                'parts': [
+                    {
+                        'function_call': {'name': 'generate_topic', 'args': {}, 'id': 'test_id'},
+                        'thought_signature': b'skip_thought_signature_validator',
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'function_response': {
+                            'name': 'generate_topic',
+                            'response': {'return_value': 'penguins'},
+                            'id': 'test_id',
+                        }
+                    },
+                ],
+            },
         ]
     )
