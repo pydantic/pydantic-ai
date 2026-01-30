@@ -1253,6 +1253,7 @@ class OpenAIResponsesModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters | None = None,
     ):
+        check_allow_model_requests()
         response = await self._responses_compact(
             messages, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
