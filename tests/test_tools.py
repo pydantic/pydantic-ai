@@ -59,11 +59,11 @@ def test_tool_no_ctx():
 
         @agent.tool  # pyright: ignore[reportArgumentType]
         def invalid_tool(x: int) -> str:  # pragma: no cover
-            return "Hello"
+            return 'Hello'
 
     assert str(exc_info.value) == snapshot(
-        "Error generating schema for test_tool_no_ctx.<locals>.invalid_tool:\n"
-        "  First parameter of tools that take context must be annotated with RunContext[...]"
+        'Error generating schema for test_tool_no_ctx.<locals>.invalid_tool:\n'
+        '  First parameter of tools that take context must be annotated with RunContext[...]'
     )
 
 
@@ -74,11 +74,11 @@ def test_tool_plain_with_ctx():
 
         @agent.tool_plain
         async def invalid_tool(ctx: RunContext[None]) -> str:  # pragma: no cover
-            return "Hello"
+            return 'Hello'
 
     assert str(exc_info.value) == snapshot(
-        "Error generating schema for test_tool_plain_with_ctx.<locals>.invalid_tool:\n"
-        "  RunContext annotations can only be used with tools that take context"
+        'Error generating schema for test_tool_plain_with_ctx.<locals>.invalid_tool:\n'
+        '  RunContext annotations can only be used with tools that take context'
     )
 
 
@@ -89,14 +89,14 @@ def test_builtin_tool_registration():
 
     with pytest.raises(
         UserError,
-        match="Error generating schema for min:\n  no signature found for builtin <built-in function min>",
+        match='Error generating schema for min:\n  no signature found for builtin <built-in function min>',
     ):
         agent = Agent(TestModel())
         agent.tool_plain(min)
 
     with pytest.raises(
         UserError,
-        match="Error generating schema for max:\n  no signature found for builtin <built-in function max>",
+        match='Error generating schema for max:\n  no signature found for builtin <built-in function max>',
     ):
         agent = Agent(TestModel())
         agent.tool_plain(max)
@@ -109,12 +109,12 @@ def test_tool_ctx_second():
 
         @agent.tool  # pyright: ignore[reportArgumentType]
         def invalid_tool(x: int, ctx: RunContext[None]) -> str:  # pragma: no cover
-            return "Hello"
+            return 'Hello'
 
     assert str(exc_info.value) == snapshot(
-        "Error generating schema for test_tool_ctx_second.<locals>.invalid_tool:\n"
-        "  First parameter of tools that take context must be annotated with RunContext[...]\n"
-        "  RunContext annotations can only be used as the first argument"
+        'Error generating schema for test_tool_ctx_second.<locals>.invalid_tool:\n'
+        '  First parameter of tools that take context must be annotated with RunContext[...]\n'
+        '  RunContext annotations can only be used as the first argument'
     )
 
 
@@ -125,47 +125,43 @@ async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
         foo: The foo thing.
         bar: The bar thing.
     """
-    return f"{foo} {bar}"
+    return f'{foo} {bar}'
 
 
-async def get_json_schema(
-    _messages: list[ModelMessage], info: AgentInfo
-) -> ModelResponse:
+async def get_json_schema(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     if len(info.function_tools) == 1:
         r = info.function_tools[0]
         return ModelResponse(parts=[TextPart(pydantic_core.to_json(r).decode())])
     else:
-        return ModelResponse(
-            parts=[TextPart(pydantic_core.to_json(info.function_tools).decode())]
-        )
+        return ModelResponse(parts=[TextPart(pydantic_core.to_json(info.function_tools).decode())])
 
 
-@pytest.mark.parametrize("docstring_format", ["google", "auto"])
-def test_docstring_google(docstring_format: Literal["google", "auto"]):
+@pytest.mark.parametrize('docstring_format', ['google', 'auto'])
+def test_docstring_google(docstring_format: Literal['google', 'auto']):
     agent = Agent(FunctionModel(get_json_schema))
     agent.tool_plain(docstring_format=docstring_format)(google_style_docstring)
 
-    result = agent.run_sync("Hello")
+    result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
-            "name": "google_style_docstring",
-            "description": "Do foobar stuff, a lot.",
-            "parameters_json_schema": {
-                "properties": {
-                    "foo": {"description": "The foo thing.", "type": "integer"},
-                    "bar": {"description": "The bar thing.", "type": "string"},
+            'name': 'google_style_docstring',
+            'description': 'Do foobar stuff, a lot.',
+            'parameters_json_schema': {
+                'properties': {
+                    'foo': {'description': 'The foo thing.', 'type': 'integer'},
+                    'bar': {'description': 'The bar thing.', 'type': 'string'},
                 },
-                "required": ["foo", "bar"],
-                "type": "object",
-                "additionalProperties": False,
+                'required': ['foo', 'bar'],
+                'type': 'object',
+                'additionalProperties': False,
             },
-            "outer_typed_dict_key": None,
-            "strict": None,
-            "kind": "function",
-            "sequential": False,
-            "metadata": None,
-            "timeout": None,
+            'outer_typed_dict_key': None,
+            'strict': None,
+            'kind': 'function',
+            'sequential': False,
+            'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -178,31 +174,29 @@ def sphinx_style_docstring(foo: int, /) -> str:  # pragma: no cover
     return str(foo)
 
 
-@pytest.mark.parametrize("docstring_format", ["sphinx", "auto"])
-def test_docstring_sphinx(docstring_format: Literal["sphinx", "auto"]):
+@pytest.mark.parametrize('docstring_format', ['sphinx', 'auto'])
+def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
     agent = Agent(FunctionModel(get_json_schema))
     agent.tool_plain(docstring_format=docstring_format)(sphinx_style_docstring)
 
-    result = agent.run_sync("Hello")
+    result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
-            "name": "sphinx_style_docstring",
-            "description": "Sphinx style docstring.",
-            "parameters_json_schema": {
-                "properties": {
-                    "foo": {"description": "The foo thing.", "type": "integer"}
-                },
-                "required": ["foo"],
-                "type": "object",
-                "additionalProperties": False,
+            'name': 'sphinx_style_docstring',
+            'description': 'Sphinx style docstring.',
+            'parameters_json_schema': {
+                'properties': {'foo': {'description': 'The foo thing.', 'type': 'integer'}},
+                'required': ['foo'],
+                'type': 'object',
+                'additionalProperties': False,
             },
-            "outer_typed_dict_key": None,
-            "strict": None,
-            "kind": "function",
-            "sequential": False,
-            "metadata": None,
-            "timeout": None,
+            'outer_typed_dict_key': None,
+            'strict': None,
+            'kind': 'function',
+            'sequential': False,
+            'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -217,35 +211,35 @@ def numpy_style_docstring(*, foo: int, bar: str) -> str:  # pragma: no cover
     bar : str
         The bar thing.
     """
-    return f"{foo} {bar}"
+    return f'{foo} {bar}'
 
 
-@pytest.mark.parametrize("docstring_format", ["numpy", "auto"])
-def test_docstring_numpy(docstring_format: Literal["numpy", "auto"]):
+@pytest.mark.parametrize('docstring_format', ['numpy', 'auto'])
+def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
     agent = Agent(FunctionModel(get_json_schema))
     agent.tool_plain(docstring_format=docstring_format)(numpy_style_docstring)
 
-    result = agent.run_sync("Hello")
+    result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
-            "name": "numpy_style_docstring",
-            "description": "Numpy style docstring.",
-            "parameters_json_schema": {
-                "properties": {
-                    "foo": {"description": "The foo thing.", "type": "integer"},
-                    "bar": {"description": "The bar thing.", "type": "string"},
+            'name': 'numpy_style_docstring',
+            'description': 'Numpy style docstring.',
+            'parameters_json_schema': {
+                'properties': {
+                    'foo': {'description': 'The foo thing.', 'type': 'integer'},
+                    'bar': {'description': 'The bar thing.', 'type': 'string'},
                 },
-                "required": ["foo", "bar"],
-                "type": "object",
-                "additionalProperties": False,
+                'required': ['foo', 'bar'],
+                'type': 'object',
+                'additionalProperties': False,
             },
-            "outer_typed_dict_key": None,
-            "strict": None,
-            "kind": "function",
-            "sequential": False,
-            "metadata": None,
-            "timeout": None,
+            'outer_typed_dict_key': None,
+            'strict': None,
+            'kind': 'function',
+            'sequential': False,
+            'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -265,32 +259,30 @@ def test_google_style_with_returns():
         return str(x)
 
     agent.tool_plain(my_tool)
-    result = agent.run_sync("Hello")
+    result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
-            "name": "my_tool",
-            "description": """\
+            'name': 'my_tool',
+            'description': """\
 <summary>A function that does something.</summary>
 <returns>
 <type>str</type>
 <description>The result as a string.</description>
 </returns>\
 """,
-            "parameters_json_schema": {
-                "additionalProperties": False,
-                "properties": {
-                    "x": {"description": "The input value.", "type": "integer"}
-                },
-                "required": ["x"],
-                "type": "object",
+            'parameters_json_schema': {
+                'additionalProperties': False,
+                'properties': {'x': {'description': 'The input value.', 'type': 'integer'}},
+                'required': ['x'],
+                'type': 'object',
             },
-            "outer_typed_dict_key": None,
-            "strict": None,
-            "kind": "function",
-            "sequential": False,
-            "metadata": None,
-            "timeout": None,
+            'outer_typed_dict_key': None,
+            'strict': None,
+            'kind': 'function',
+            'sequential': False,
+            'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -307,33 +299,31 @@ def test_sphinx_style_with_returns():
         """
         return str(x)
 
-    agent.tool_plain(docstring_format="sphinx")(my_tool)
-    result = agent.run_sync("Hello")
+    agent.tool_plain(docstring_format='sphinx')(my_tool)
+    result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
-            "name": "my_tool",
-            "description": """\
+            'name': 'my_tool',
+            'description': """\
 <summary>A sphinx function with returns.</summary>
 <returns>
 <type>str</type>
 <description>The result as a string with type.</description>
 </returns>\
 """,
-            "parameters_json_schema": {
-                "additionalProperties": False,
-                "properties": {
-                    "x": {"description": "The input value.", "type": "integer"}
-                },
-                "required": ["x"],
-                "type": "object",
+            'parameters_json_schema': {
+                'additionalProperties': False,
+                'properties': {'x': {'description': 'The input value.', 'type': 'integer'}},
+                'required': ['x'],
+                'type': 'object',
             },
-            "outer_typed_dict_key": None,
-            "strict": None,
-            "kind": "function",
-            "sequential": False,
-            "metadata": None,
-            "timeout": None,
+            'outer_typed_dict_key': None,
+            'strict': None,
+            'kind': 'function',
+            'sequential': False,
+            'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -356,33 +346,31 @@ def test_numpy_style_with_returns():
         """
         return str(x)
 
-    agent.tool_plain(docstring_format="numpy")(my_tool)
-    result = agent.run_sync("Hello")
+    agent.tool_plain(docstring_format='numpy')(my_tool)
+    result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
-            "name": "my_tool",
-            "description": """\
+            'name': 'my_tool',
+            'description': """\
 <summary>A numpy function with returns.</summary>
 <returns>
 <type>str</type>
 <description>The result as a string with type.</description>
 </returns>\
 """,
-            "parameters_json_schema": {
-                "additionalProperties": False,
-                "properties": {
-                    "x": {"description": "The input value.", "type": "integer"}
-                },
-                "required": ["x"],
-                "type": "object",
+            'parameters_json_schema': {
+                'additionalProperties': False,
+                'properties': {'x': {'description': 'The input value.', 'type': 'integer'}},
+                'required': ['x'],
+                'type': 'object',
             },
-            "outer_typed_dict_key": None,
-            "strict": None,
-            "kind": "function",
-            "sequential": False,
-            "metadata": None,
-            "timeout": None,
+            'outer_typed_dict_key': None,
+            'strict': None,
+            'kind': 'function',
+            'sequential': False,
+            'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -393,35 +381,35 @@ def only_returns_type() -> str:  # pragma: no cover
     Returns:
         str: The result as a string.
     """
-    return "foo"
+    return 'foo'
 
 
 def test_only_returns_type():
     agent = Agent(FunctionModel(get_json_schema))
     agent.tool_plain(only_returns_type)
 
-    result = agent.run_sync("Hello")
+    result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
-            "name": "only_returns_type",
-            "description": """\
+            'name': 'only_returns_type',
+            'description': """\
 <returns>
 <type>str</type>
 <description>The result as a string.</description>
 </returns>\
 """,
-            "parameters_json_schema": {
-                "additionalProperties": False,
-                "properties": {},
-                "type": "object",
+            'parameters_json_schema': {
+                'additionalProperties': False,
+                'properties': {},
+                'type': 'object',
             },
-            "outer_typed_dict_key": None,
-            "strict": None,
-            "kind": "function",
-            "sequential": False,
-            "metadata": None,
-            "timeout": None,
+            'outer_typed_dict_key': None,
+            'strict': None,
+            'kind': 'function',
+            'sequential': False,
+            'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -435,23 +423,23 @@ def test_docstring_unknown():
     agent = Agent(FunctionModel(get_json_schema))
     agent.tool_plain(unknown_docstring)
 
-    result = agent.run_sync("Hello")
+    result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
-            "name": "unknown_docstring",
-            "description": "Unknown style docstring.",
-            "parameters_json_schema": {
-                "additionalProperties": True,
-                "properties": {},
-                "type": "object",
+            'name': 'unknown_docstring',
+            'description': 'Unknown style docstring.',
+            'parameters_json_schema': {
+                'additionalProperties': True,
+                'properties': {},
+                'type': 'object',
             },
-            "outer_typed_dict_key": None,
-            "strict": None,
-            "kind": "function",
-            "sequential": False,
-            "metadata": None,
-            "timeout": None,
+            'outer_typed_dict_key': None,
+            'strict': None,
+            'kind': 'function',
+            'sequential': False,
+            'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -470,32 +458,32 @@ async def google_style_docstring_no_body(
 # fmt: on
 
 
-@pytest.mark.parametrize("docstring_format", ["google", "auto"])
-def test_docstring_google_no_body(docstring_format: Literal["google", "auto"]):
+@pytest.mark.parametrize('docstring_format', ['google', 'auto'])
+def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
     agent = Agent(FunctionModel(get_json_schema))
     agent.tool_plain(docstring_format=docstring_format)(google_style_docstring_no_body)
 
-    result = agent.run_sync("")
+    result = agent.run_sync('')
     json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
-            "name": "google_style_docstring_no_body",
-            "description": "",
-            "parameters_json_schema": {
-                "properties": {
-                    "foo": {"description": "The foo thing.", "type": "integer"},
-                    "bar": {"description": "from fields", "type": "string"},
+            'name': 'google_style_docstring_no_body',
+            'description': '',
+            'parameters_json_schema': {
+                'properties': {
+                    'foo': {'description': 'The foo thing.', 'type': 'integer'},
+                    'bar': {'description': 'from fields', 'type': 'string'},
                 },
-                "required": ["foo", "bar"],
-                "type": "object",
-                "additionalProperties": False,
+                'required': ['foo', 'bar'],
+                'type': 'object',
+                'additionalProperties': False,
             },
-            "outer_typed_dict_key": None,
-            "strict": None,
-            "kind": "function",
-            "sequential": False,
-            "metadata": None,
-            "timeout": None,
+            'outer_typed_dict_key': None,
+            'strict': None,
+            'kind': 'function',
+            'sequential': False,
+            'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -510,33 +498,33 @@ def test_takes_just_model():
 
     @agent.tool_plain
     def takes_just_model(model: Foo) -> str:
-        return f"{model.x} {model.y}"
+        return f'{model.x} {model.y}'
 
-    result = agent.run_sync("", model=FunctionModel(get_json_schema))
+    result = agent.run_sync('', model=FunctionModel(get_json_schema))
     json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
-            "name": "takes_just_model",
-            "description": None,
-            "parameters_json_schema": {
-                "properties": {
-                    "x": {"type": "integer"},
-                    "y": {"type": "string"},
+            'name': 'takes_just_model',
+            'description': None,
+            'parameters_json_schema': {
+                'properties': {
+                    'x': {'type': 'integer'},
+                    'y': {'type': 'string'},
                 },
-                "required": ["x", "y"],
-                "title": "Foo",
-                "type": "object",
+                'required': ['x', 'y'],
+                'title': 'Foo',
+                'type': 'object',
             },
-            "outer_typed_dict_key": None,
-            "strict": None,
-            "kind": "function",
-            "sequential": False,
-            "metadata": None,
-            "timeout": None,
+            'outer_typed_dict_key': None,
+            'strict': None,
+            'kind': 'function',
+            'sequential': False,
+            'metadata': None,
+            'timeout': None,
         }
     )
 
-    result = agent.run_sync("", model=TestModel())
+    result = agent.run_sync('', model=TestModel())
     assert result.output == snapshot('{"takes_just_model":"0 a"}')
 
 
@@ -545,44 +533,44 @@ def test_takes_model_and_int():
 
     @agent.tool_plain
     def takes_just_model(model: Foo, z: int) -> str:
-        return f"{model.x} {model.y} {z}"
+        return f'{model.x} {model.y} {z}'
 
-    result = agent.run_sync("", model=FunctionModel(get_json_schema))
+    result = agent.run_sync('', model=FunctionModel(get_json_schema))
     json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
-            "name": "takes_just_model",
-            "description": None,
-            "parameters_json_schema": {
-                "$defs": {
-                    "Foo": {
-                        "properties": {
-                            "x": {"type": "integer"},
-                            "y": {"type": "string"},
+            'name': 'takes_just_model',
+            'description': None,
+            'parameters_json_schema': {
+                '$defs': {
+                    'Foo': {
+                        'properties': {
+                            'x': {'type': 'integer'},
+                            'y': {'type': 'string'},
                         },
-                        "required": ["x", "y"],
-                        "title": "Foo",
-                        "type": "object",
+                        'required': ['x', 'y'],
+                        'title': 'Foo',
+                        'type': 'object',
                     }
                 },
-                "properties": {
-                    "model": {"$ref": "#/$defs/Foo"},
-                    "z": {"type": "integer"},
+                'properties': {
+                    'model': {'$ref': '#/$defs/Foo'},
+                    'z': {'type': 'integer'},
                 },
-                "required": ["model", "z"],
-                "type": "object",
-                "additionalProperties": False,
+                'required': ['model', 'z'],
+                'type': 'object',
+                'additionalProperties': False,
             },
-            "outer_typed_dict_key": None,
-            "strict": None,
-            "kind": "function",
-            "sequential": False,
-            "metadata": None,
-            "timeout": None,
+            'outer_typed_dict_key': None,
+            'strict': None,
+            'kind': 'function',
+            'sequential': False,
+            'metadata': None,
+            'timeout': None,
         }
     )
 
-    result = agent.run_sync("", model=TestModel())
+    result = agent.run_sync('', model=TestModel())
     assert result.output == snapshot('{"takes_just_model":"0 a 0"}')
 
 
@@ -594,19 +582,19 @@ def test_init_tool_plain():
         call_args.append(x)
         return x + 1
 
-    agent = Agent("test", tools=[Tool(plain_tool)], retries=7)
-    result = agent.run_sync("foobar")
+    agent = Agent('test', tools=[Tool(plain_tool)], retries=7)
+    result = agent.run_sync('foobar')
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0])
-    assert agent._function_toolset.tools["plain_tool"].takes_ctx is False
-    assert agent._function_toolset.tools["plain_tool"].max_retries == 7
+    assert agent._function_toolset.tools['plain_tool'].takes_ctx is False
+    assert agent._function_toolset.tools['plain_tool'].max_retries == 7
 
-    agent_infer = Agent("test", tools=[plain_tool], retries=7)
-    result = agent_infer.run_sync("foobar")
+    agent_infer = Agent('test', tools=[plain_tool], retries=7)
+    result = agent_infer.run_sync('foobar')
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0, 0])
-    assert agent_infer._function_toolset.tools["plain_tool"].takes_ctx is False
-    assert agent_infer._function_toolset.tools["plain_tool"].max_retries == 7
+    assert agent_infer._function_toolset.tools['plain_tool'].takes_ctx is False
+    assert agent_infer._function_toolset.tools['plain_tool'].max_retries == 7
 
 
 def ctx_tool(ctx: RunContext[int], x: int) -> int:
@@ -616,20 +604,20 @@ def ctx_tool(ctx: RunContext[int], x: int) -> int:
 # pyright: reportPrivateUsage=false
 def test_init_tool_ctx():
     agent = Agent(
-        "test",
+        'test',
         tools=[Tool(ctx_tool, takes_ctx=True, max_retries=3)],
         deps_type=int,
         retries=7,
     )
-    result = agent.run_sync("foobar", deps=5)
+    result = agent.run_sync('foobar', deps=5)
     assert result.output == snapshot('{"ctx_tool":5}')
-    assert agent._function_toolset.tools["ctx_tool"].takes_ctx is True
-    assert agent._function_toolset.tools["ctx_tool"].max_retries == 3
+    assert agent._function_toolset.tools['ctx_tool'].takes_ctx is True
+    assert agent._function_toolset.tools['ctx_tool'].max_retries == 3
 
-    agent_infer = Agent("test", tools=[ctx_tool], deps_type=int)
-    result = agent_infer.run_sync("foobar", deps=6)
+    agent_infer = Agent('test', tools=[ctx_tool], deps_type=int)
+    result = agent_infer.run_sync('foobar', deps=6)
     assert result.output == snapshot('{"ctx_tool":6}')
-    assert agent_infer._function_toolset.tools["ctx_tool"].takes_ctx is True
+    assert agent_infer._function_toolset.tools['ctx_tool'].takes_ctx is True
 
 
 def test_repeat_tool_by_rename():
@@ -638,31 +626,25 @@ def test_repeat_tool_by_rename():
     2. add tool `foo` then rename it to `bar`, causing a conflict with `bar`
     """
 
-    with pytest.raises(
-        UserError, match="Tool name conflicts with existing tool: 'ctx_tool'"
-    ):
-        Agent("test", tools=[Tool(ctx_tool), ctx_tool], deps_type=int)
+    with pytest.raises(UserError, match="Tool name conflicts with existing tool: 'ctx_tool'"):
+        Agent('test', tools=[Tool(ctx_tool), ctx_tool], deps_type=int)
 
-    agent = Agent("test")
+    agent = Agent('test')
 
-    async def change_tool_name(
-        ctx: RunContext[None], tool_def: ToolDefinition
-    ) -> ToolDefinition | None:
-        tool_def.name = "bar"
+    async def change_tool_name(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        tool_def.name = 'bar'
         return tool_def
 
     @agent.tool_plain
     def bar(x: int, y: str) -> str:  # pragma: no cover
-        return f"{x} {y}"
+        return f'{x} {y}'
 
     @agent.tool_plain(prepare=change_tool_name)
     def foo(x: int, y: str) -> str:  # pragma: no cover
-        return f"{x} {y}"
+        return f'{x} {y}'
 
-    with pytest.raises(
-        UserError, match=r"Renaming tool 'foo' to 'bar' conflicts with existing tool."
-    ):
-        agent.run_sync("")
+    with pytest.raises(UserError, match=r"Renaming tool 'foo' to 'bar' conflicts with existing tool."):
+        agent.run_sync('')
 
 
 def test_repeat_tool():
@@ -671,33 +653,29 @@ def test_repeat_tool():
     2. add tool `bar`, causing a conflict with `bar`
     """
 
-    agent = Agent("test")
+    agent = Agent('test')
 
-    async def change_tool_name(
-        ctx: RunContext[None], tool_def: ToolDefinition
-    ) -> ToolDefinition | None:
-        tool_def.name = "bar"
+    async def change_tool_name(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        tool_def.name = 'bar'
         return tool_def
 
     @agent.tool_plain(prepare=change_tool_name)
     def foo(x: int, y: str) -> str:  # pragma: no cover
-        return f"{x} {y}"
+        return f'{x} {y}'
 
     @agent.tool_plain
     def bar(x: int, y: str) -> str:  # pragma: no cover
-        return f"{x} {y}"
+        return f'{x} {y}'
 
-    with pytest.raises(
-        UserError, match="Tool name conflicts with previously renamed tool: 'bar'."
-    ):
-        agent.run_sync("")
+    with pytest.raises(UserError, match="Tool name conflicts with previously renamed tool: 'bar'."):
+        agent.run_sync('')
 
 
 def test_tool_return_conflict():
     # this is okay
-    Agent("test", tools=[ctx_tool], deps_type=int).run_sync("", deps=0)
+    Agent('test', tools=[ctx_tool], deps_type=int).run_sync('', deps=0)
     # this is also okay
-    Agent("test", tools=[ctx_tool], deps_type=int, output_type=int).run_sync("", deps=0)
+    Agent('test', tools=[ctx_tool], deps_type=int, output_type=int).run_sync('', deps=0)
     # this raises an error
     with pytest.raises(
         UserError,
@@ -706,11 +684,11 @@ def test_tool_return_conflict():
         ),
     ):
         Agent(
-            "test",
+            'test',
             tools=[ctx_tool],
             deps_type=int,
-            output_type=ToolOutput(int, name="ctx_tool"),
-        ).run_sync("", deps=0)
+            output_type=ToolOutput(int, name='ctx_tool'),
+        ).run_sync('', deps=0)
 
 
 def test_tool_name_conflict_hint():
@@ -725,18 +703,18 @@ def test_tool_name_conflict_hint():
             return x + 1  # pragma: no cover
 
         def foo_tool(x: str) -> str:
-            return x + "foo"  # pragma: no cover
+            return x + 'foo'  # pragma: no cover
 
-        function_toolset = FunctionToolset([tool], id="tool")
-        prefixed_toolset = PrefixedToolset(function_toolset, "foo")
-        Agent("test", tools=[foo_tool], toolsets=[prefixed_toolset]).run_sync("")
+        function_toolset = FunctionToolset([tool], id='tool')
+        prefixed_toolset = PrefixedToolset(function_toolset, 'foo')
+        Agent('test', tools=[foo_tool], toolsets=[prefixed_toolset]).run_sync('')
 
 
 def test_init_ctx_tool_invalid():
     def plain_tool(x: int) -> int:  # pragma: no cover
         return x + 1
 
-    m = r"First parameter of tools that take context must be annotated with RunContext\[\.\.\.\]"
+    m = r'First parameter of tools that take context must be annotated with RunContext\[\.\.\.\]'
     with pytest.raises(UserError, match=m):
         Tool(plain_tool, takes_ctx=True)
 
@@ -744,65 +722,63 @@ def test_init_ctx_tool_invalid():
 def test_init_plain_tool_invalid():
     with pytest.raises(
         UserError,
-        match="RunContext annotations can only be used with tools that take context",
+        match='RunContext annotations can only be used with tools that take context',
     ):
         Tool(ctx_tool, takes_ctx=False)
 
 
 @pytest.mark.parametrize(
-    "args, expected",
+    'args, expected',
     [
-        ("", {}),
-        ({"x": 42, "y": "value"}, {"x": 42, "y": "value"}),
-        ('{"a": 1, "b": "c"}', {"a": 1, "b": "c"}),
+        ('', {}),
+        ({'x': 42, 'y': 'value'}, {'x': 42, 'y': 'value'}),
+        ('{"a": 1, "b": "c"}', {'a': 1, 'b': 'c'}),
     ],
 )
-def test_tool_call_part_args_as_dict(
-    args: str | dict[str, Any], expected: dict[str, Any]
-):
-    part = ToolCallPart(tool_name="foo", args=args)
+def test_tool_call_part_args_as_dict(args: str | dict[str, Any], expected: dict[str, Any]):
+    part = ToolCallPart(tool_name='foo', args=args)
     result = part.args_as_dict()
     assert result == expected
 
 
 def test_return_pydantic_model():
-    agent = Agent("test")
+    agent = Agent('test')
 
     @agent.tool_plain
     def return_pydantic_model(x: int) -> Foo:
-        return Foo(x=x, y="a")
+        return Foo(x=x, y='a')
 
-    result = agent.run_sync("")
+    result = agent.run_sync('')
     assert result.output == snapshot('{"return_pydantic_model":{"x":0,"y":"a"}}')
 
 
 def test_return_bytes():
-    agent = Agent("test")
+    agent = Agent('test')
 
     @agent.tool_plain
     def return_pydantic_model() -> bytes:
-        return "🐈 Hello".encode()
+        return '🐈 Hello'.encode()
 
-    result = agent.run_sync("")
+    result = agent.run_sync('')
     assert result.output == snapshot('{"return_pydantic_model":"🐈 Hello"}')
 
 
 def test_return_bytes_invalid():
-    agent = Agent("test")
+    agent = Agent('test')
 
     @agent.tool_plain
     def return_pydantic_model() -> bytes:
-        return b"\00 \x81"
+        return b'\00 \x81'
 
     with pytest.raises(
         PydanticSerializationError,
-        match="invalid utf-8 sequence of 1 bytes from index 2",
+        match='invalid utf-8 sequence of 1 bytes from index 2',
     ):
-        agent.run_sync("")
+        agent.run_sync('')
 
 
 def test_return_unknown():
-    agent = Agent("test")
+    agent = Agent('test')
 
     class Foobar:
         pass
@@ -811,10 +787,8 @@ def test_return_unknown():
     def return_pydantic_model() -> Foobar:
         return Foobar()
 
-    with pytest.raises(
-        PydanticSerializationError, match="Unable to serialize unknown type:"
-    ):
-        agent.run_sync("")
+    with pytest.raises(PydanticSerializationError, match='Unable to serialize unknown type:'):
+        agent.run_sync('')
 
 
 def test_dynamic_cls_tool():
@@ -828,58 +802,54 @@ def test_dynamic_cls_tool():
             super().__init__(**kwargs)
 
         def tool_function(self, x: int, y: str) -> str:
-            return f"{self.spam} {x} {y}"
+            return f'{self.spam} {x} {y}'
 
         async def prepare_tool_def(self, ctx: RunContext[int]) -> ToolDefinition | None:
             if ctx.deps != 42:
                 return await super().prepare_tool_def(ctx)
 
-    agent = Agent("test", tools=[MyTool(spam=777)], deps_type=int)
-    r = agent.run_sync("", deps=1)
+    agent = Agent('test', tools=[MyTool(spam=777)], deps_type=int)
+    r = agent.run_sync('', deps=1)
     assert r.output == snapshot('{"tool_function":"777 0 a"}')
 
-    r = agent.run_sync("", deps=42)
-    assert r.output == snapshot("success (no tool calls)")
+    r = agent.run_sync('', deps=42)
+    assert r.output == snapshot('success (no tool calls)')
 
 
 def test_dynamic_plain_tool_decorator():
-    agent = Agent("test", deps_type=int)
+    agent = Agent('test', deps_type=int)
 
-    async def prepare_tool_def(
-        ctx: RunContext[int], tool_def: ToolDefinition
-    ) -> ToolDefinition | None:
+    async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> ToolDefinition | None:
         if ctx.deps != 42:
             return tool_def
 
     @agent.tool_plain(prepare=prepare_tool_def)
     def foobar(x: int, y: str) -> str:
-        return f"{x} {y}"
+        return f'{x} {y}'
 
-    r = agent.run_sync("", deps=1)
+    r = agent.run_sync('', deps=1)
     assert r.output == snapshot('{"foobar":"0 a"}')
 
-    r = agent.run_sync("", deps=42)
-    assert r.output == snapshot("success (no tool calls)")
+    r = agent.run_sync('', deps=42)
+    assert r.output == snapshot('success (no tool calls)')
 
 
 def test_dynamic_tool_decorator():
-    agent = Agent("test", deps_type=int)
+    agent = Agent('test', deps_type=int)
 
-    async def prepare_tool_def(
-        ctx: RunContext[int], tool_def: ToolDefinition
-    ) -> ToolDefinition | None:
+    async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> ToolDefinition | None:
         if ctx.deps != 42:
             return tool_def
 
     @agent.tool(prepare=prepare_tool_def)
     def foobar(ctx: RunContext[int], x: int, y: str) -> str:
-        return f"{ctx.deps} {x} {y}"
+        return f'{ctx.deps} {x} {y}'
 
-    r = agent.run_sync("", deps=1)
+    r = agent.run_sync('', deps=1)
     assert r.output == snapshot('{"foobar":"1 0 a"}')
 
-    r = agent.run_sync("", deps=42)
-    assert r.output == snapshot("success (no tool calls)")
+    r = agent.run_sync('', deps=42)
+    assert r.output == snapshot('success (no tool calls)')
 
 
 def test_plain_tool_name():
@@ -887,10 +857,10 @@ def test_plain_tool_name():
 
     def my_tool(arg: str) -> str: ...  # pragma: no branch
 
-    agent.tool_plain(name="foo_tool")(my_tool)
-    result = agent.run_sync("Hello")
+    agent.tool_plain(name='foo_tool')(my_tool)
+    result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
-    assert json_schema["name"] == "foo_tool"
+    assert json_schema['name'] == 'foo_tool'
 
 
 def test_tool_name():
@@ -898,47 +868,41 @@ def test_tool_name():
 
     def my_tool(ctx: RunContext, arg: str) -> str: ...  # pragma: no branch
 
-    agent.tool(name="foo_tool")(my_tool)
-    result = agent.run_sync("Hello")
+    agent.tool(name='foo_tool')(my_tool)
+    result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
-    assert json_schema["name"] == "foo_tool"
+    assert json_schema['name'] == 'foo_tool'
 
 
 def test_dynamic_tool_use_messages():
-    async def repeat_call_foobar(
-        _messages: list[ModelMessage], info: AgentInfo
-    ) -> ModelResponse:
+    async def repeat_call_foobar(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if info.function_tools:
             tool = info.function_tools[0]
-            return ModelResponse(parts=[ToolCallPart(tool.name, {"x": 42, "y": "a"})])
+            return ModelResponse(parts=[ToolCallPart(tool.name, {'x': 42, 'y': 'a'})])
         else:
-            return ModelResponse(parts=[TextPart("done")])
+            return ModelResponse(parts=[TextPart('done')])
 
     agent = Agent(FunctionModel(repeat_call_foobar), deps_type=int)
 
-    async def prepare_tool_def(
-        ctx: RunContext[int], tool_def: ToolDefinition
-    ) -> ToolDefinition | None:
+    async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> ToolDefinition | None:
         if len(ctx.messages) < 5:
             return tool_def
 
     @agent.tool(prepare=prepare_tool_def)
     def foobar(ctx: RunContext[int], x: int, y: str) -> str:
-        return f"{ctx.deps} {x} {y}"
+        return f'{ctx.deps} {x} {y}'
 
-    r = agent.run_sync("", deps=1)
-    assert r.output == snapshot("done")
-    message_part_kinds = [
-        (m.kind, [p.part_kind for p in m.parts]) for m in r.all_messages()
-    ]
+    r = agent.run_sync('', deps=1)
+    assert r.output == snapshot('done')
+    message_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in r.all_messages()]
     assert message_part_kinds == snapshot(
         [
-            ("request", ["user-prompt"]),
-            ("response", ["tool-call"]),
-            ("request", ["tool-return"]),
-            ("response", ["tool-call"]),
-            ("request", ["tool-return"]),
-            ("response", ["text"]),
+            ('request', ['user-prompt']),
+            ('response', ['tool-call']),
+            ('request', ['tool-return']),
+            ('response', ['tool-call']),
+            ('request', ['tool-return']),
+            ('response', ['text']),
         ]
     )
 
@@ -954,14 +918,14 @@ def ctx_tool(ctx: RunContext[int], x: int) -> int:
 
 agent = Agent('test', tools=[ctx_tool], deps_type=int)
     """)
-    result = mod.agent.run_sync("foobar", deps=5)
+    result = mod.agent.run_sync('foobar', deps=5)
     assert result.output == snapshot('{"ctx_tool":5}')
 
 
 async def tool_without_return_annotation_in_docstring() -> str:  # pragma: no cover
     """A tool that documents what it returns but doesn't have a return annotation in the docstring."""
 
-    return ""
+    return ''
 
 
 def test_suppress_griffe_logging(caplog: LogCaptureFixture):
@@ -970,23 +934,23 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
     agent = Agent(FunctionModel(get_json_schema))
     agent.tool_plain(tool_without_return_annotation_in_docstring)
 
-    result = agent.run_sync("")
+    result = agent.run_sync('')
     json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
-            "description": "A tool that documents what it returns but doesn't have a return annotation in the docstring.",
-            "name": "tool_without_return_annotation_in_docstring",
-            "outer_typed_dict_key": None,
-            "parameters_json_schema": {
-                "additionalProperties": False,
-                "properties": {},
-                "type": "object",
+            'description': "A tool that documents what it returns but doesn't have a return annotation in the docstring.",
+            'name': 'tool_without_return_annotation_in_docstring',
+            'outer_typed_dict_key': None,
+            'parameters_json_schema': {
+                'additionalProperties': False,
+                'properties': {},
+                'type': 'object',
             },
-            "strict": None,
-            "kind": "function",
-            "sequential": False,
-            "metadata": None,
-            "timeout": None,
+            'strict': None,
+            'kind': 'function',
+            'sequential': False,
+            'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -995,47 +959,39 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
     assert caplog.messages == snapshot([])
 
 
-async def missing_parameter_descriptions_docstring(
-    foo: int, bar: str
-) -> str:  # pragma: no cover
+async def missing_parameter_descriptions_docstring(foo: int, bar: str) -> str:  # pragma: no cover
     """Describes function ops, but missing parameter descriptions."""
-    return f"{foo} {bar}"
+    return f'{foo} {bar}'
 
 
 def test_enforce_parameter_descriptions() -> None:
     agent = Agent(FunctionModel(get_json_schema))
 
     with pytest.raises(UserError) as exc_info:
-        agent.tool_plain(require_parameter_descriptions=True)(
-            missing_parameter_descriptions_docstring
-        )
+        agent.tool_plain(require_parameter_descriptions=True)(missing_parameter_descriptions_docstring)
 
     error_reason = exc_info.value.args[0]
     error_parts = [
-        "Error generating schema for missing_parameter_descriptions_docstring",
-        "Missing parameter descriptions for ",
-        "foo",
-        "bar",
+        'Error generating schema for missing_parameter_descriptions_docstring',
+        'Missing parameter descriptions for ',
+        'foo',
+        'bar',
     ]
     assert all(err_part in error_reason for err_part in error_parts)
 
 
 def test_enforce_parameter_descriptions_noraise() -> None:
-    async def complete_parameter_descriptions_docstring(
-        ctx: RunContext, foo: int
-    ) -> str:  # pragma: no cover
+    async def complete_parameter_descriptions_docstring(ctx: RunContext, foo: int) -> str:  # pragma: no cover
         """Describes function ops, but missing ctx description and contains non-existent parameter description.
 
         :param foo: The foo thing.
         :param bar: The bar thing.
         """
-        return f"{foo}"
+        return f'{foo}'
 
     agent = Agent(FunctionModel(get_json_schema))
 
-    agent.tool(require_parameter_descriptions=True)(
-        complete_parameter_descriptions_docstring
-    )
+    agent.tool(require_parameter_descriptions=True)(complete_parameter_descriptions_docstring)
 
 
 def test_json_schema_required_parameters():
@@ -1049,68 +1005,66 @@ def test_json_schema_required_parameters():
     def my_tool_plain(*, a: int = 1, b: int) -> int:
         raise NotImplementedError
 
-    result = agent.run_sync("Hello")
+    result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         [
             {
-                "description": None,
-                "name": "my_tool",
-                "outer_typed_dict_key": None,
-                "parameters_json_schema": {
-                    "additionalProperties": False,
-                    "properties": {
-                        "a": {"type": "integer"},
-                        "b": {"default": 1, "type": "integer"},
+                'description': None,
+                'name': 'my_tool',
+                'outer_typed_dict_key': None,
+                'parameters_json_schema': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'a': {'type': 'integer'},
+                        'b': {'default': 1, 'type': 'integer'},
                     },
-                    "required": ["a"],
-                    "type": "object",
+                    'required': ['a'],
+                    'type': 'object',
                 },
-                "strict": None,
-                "kind": "function",
-                "sequential": False,
-                "metadata": None,
-                "timeout": None,
+                'strict': None,
+                'kind': 'function',
+                'sequential': False,
+                'metadata': None,
+                'timeout': None,
             },
             {
-                "description": None,
-                "name": "my_tool_plain",
-                "outer_typed_dict_key": None,
-                "parameters_json_schema": {
-                    "additionalProperties": False,
-                    "properties": {
-                        "a": {"default": 1, "type": "integer"},
-                        "b": {"type": "integer"},
+                'description': None,
+                'name': 'my_tool_plain',
+                'outer_typed_dict_key': None,
+                'parameters_json_schema': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'a': {'default': 1, 'type': 'integer'},
+                        'b': {'type': 'integer'},
                     },
-                    "required": ["b"],
-                    "type": "object",
+                    'required': ['b'],
+                    'type': 'object',
                 },
-                "strict": None,
-                "kind": "function",
-                "sequential": False,
-                "metadata": None,
-                "timeout": None,
+                'strict': None,
+                'kind': 'function',
+                'sequential': False,
+                'metadata': None,
+                'timeout': None,
             },
         ]
     )
 
 
 def test_call_tool_without_unrequired_parameters():
-    async def call_tools_first(
-        messages: list[ModelMessage], info: AgentInfo
-    ) -> ModelResponse:
+    async def call_tools_first(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name="my_tool", args={"a": 13}),
-                    ToolCallPart(tool_name="my_tool", args={"a": 13, "b": 4}),
-                    ToolCallPart(tool_name="my_tool_plain", args={"b": 17}),
-                    ToolCallPart(tool_name="my_tool_plain", args={"a": 4, "b": 17}),
-                    ToolCallPart(tool_name="no_args_tool", args=""),
+                    ToolCallPart(tool_name='my_tool', args={'a': 13}),
+                    ToolCallPart(tool_name='my_tool', args={'a': 13, 'b': 4}),
+                    ToolCallPart(tool_name='my_tool_plain', args={'b': 17}),
+                    ToolCallPart(tool_name='my_tool_plain', args={'a': 4, 'b': 17}),
+                    ToolCallPart(tool_name='no_args_tool', args=''),
                 ]
             )
         else:
-            return ModelResponse(parts=[TextPart("finished")])
+            return ModelResponse(parts=[TextPart('finished')])
 
     agent = Agent(FunctionModel(call_tools_first))
 
@@ -1126,25 +1080,21 @@ def test_call_tool_without_unrequired_parameters():
     def my_tool_plain(*, a: int = 3, b: int) -> int:
         return a * b
 
-    result = agent.run_sync("Hello")
+    result = agent.run_sync('Hello')
     all_messages = result.all_messages()
     first_response = all_messages[1]
     second_request = all_messages[2]
     assert isinstance(first_response, ModelResponse)
     assert isinstance(second_request, ModelRequest)
-    tool_call_args = [
-        p.args for p in first_response.parts if isinstance(p, ToolCallPart)
-    ]
-    tool_returns = [
-        p.content for p in second_request.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_call_args = [p.args for p in first_response.parts if isinstance(p, ToolCallPart)]
+    tool_returns = [p.content for p in second_request.parts if isinstance(p, ToolReturnPart)]
     assert tool_call_args == snapshot(
         [
-            {"a": 13},
-            {"a": 13, "b": 4},
-            {"b": 17},
-            {"a": 4, "b": 17},
-            "",
+            {'a': 13},
+            {'a': 13, 'b': 4},
+            {'b': 17},
+            {'a': 4, 'b': 17},
+            '',
         ]
     )
     assert tool_returns == snapshot([15, 17, 51, 68, None])
@@ -1152,61 +1102,57 @@ def test_call_tool_without_unrequired_parameters():
 
 def test_schema_generator():
     class MyGenerateJsonSchema(GenerateJsonSchema):
-        def typed_dict_schema(
-            self, schema: core_schema.TypedDictSchema
-        ) -> JsonSchemaValue:
+        def typed_dict_schema(self, schema: core_schema.TypedDictSchema) -> JsonSchemaValue:
             # Add useless property titles just to show we can
             s = super().typed_dict_schema(schema)
-            for p in s.get("properties", {}):
-                s["properties"][p]["title"] = f"{s['properties'][p].get('title')} title"
+            for p in s.get('properties', {}):
+                s['properties'][p]['title'] = f'{s["properties"][p].get("title")} title'
             return s
 
     agent = Agent(FunctionModel(get_json_schema))
 
     def my_tool(
-        x: Annotated[str | None, WithJsonSchema({"type": "string"})] = None,
+        x: Annotated[str | None, WithJsonSchema({'type': 'string'})] = None,
         **kwargs: Any,
     ):
         return x  # pragma: no cover
 
-    agent.tool_plain(name="my_tool_1")(my_tool)
-    agent.tool_plain(name="my_tool_2", schema_generator=MyGenerateJsonSchema)(my_tool)
+    agent.tool_plain(name='my_tool_1')(my_tool)
+    agent.tool_plain(name='my_tool_2', schema_generator=MyGenerateJsonSchema)(my_tool)
 
-    result = agent.run_sync("Hello")
+    result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         [
             {
-                "description": None,
-                "name": "my_tool_1",
-                "outer_typed_dict_key": None,
-                "parameters_json_schema": {
-                    "additionalProperties": True,
-                    "properties": {"x": {"default": None, "type": "string"}},
-                    "type": "object",
+                'description': None,
+                'name': 'my_tool_1',
+                'outer_typed_dict_key': None,
+                'parameters_json_schema': {
+                    'additionalProperties': True,
+                    'properties': {'x': {'default': None, 'type': 'string'}},
+                    'type': 'object',
                 },
-                "strict": None,
-                "kind": "function",
-                "sequential": False,
-                "metadata": None,
-                "timeout": None,
+                'strict': None,
+                'kind': 'function',
+                'sequential': False,
+                'metadata': None,
+                'timeout': None,
             },
             {
-                "description": None,
-                "name": "my_tool_2",
-                "outer_typed_dict_key": None,
-                "parameters_json_schema": {
-                    "additionalProperties": True,
-                    "properties": {
-                        "x": {"default": None, "type": "string", "title": "X title"}
-                    },
-                    "type": "object",
+                'description': None,
+                'name': 'my_tool_2',
+                'outer_typed_dict_key': None,
+                'parameters_json_schema': {
+                    'additionalProperties': True,
+                    'properties': {'x': {'default': None, 'type': 'string', 'title': 'X title'}},
+                    'type': 'object',
                 },
-                "strict": None,
-                "kind": "function",
-                "sequential": False,
-                "metadata": None,
-                "timeout": None,
+                'strict': None,
+                'kind': 'function',
+                'sequential': False,
+                'metadata': None,
+                'timeout': None,
             },
         ]
     )
@@ -1224,35 +1170,33 @@ def test_tool_parameters_with_attribute_docstrings():
     @agent.tool_plain
     def get_score(data: Data) -> int: ...  # pragma: no branch
 
-    result = agent.run_sync("Hello")
+    result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
-            "name": "get_score",
-            "description": None,
-            "parameters_json_schema": {
-                "properties": {
-                    "a": {"description": "The first parameter", "type": "integer"},
-                    "b": {"description": "The second parameter", "type": "integer"},
+            'name': 'get_score',
+            'description': None,
+            'parameters_json_schema': {
+                'properties': {
+                    'a': {'description': 'The first parameter', 'type': 'integer'},
+                    'b': {'description': 'The second parameter', 'type': 'integer'},
                 },
-                "required": ["a", "b"],
-                "title": "Data",
-                "type": "object",
+                'required': ['a', 'b'],
+                'title': 'Data',
+                'type': 'object',
             },
-            "outer_typed_dict_key": None,
-            "strict": None,
-            "kind": "function",
-            "sequential": False,
-            "metadata": None,
-            "timeout": None,
+            'outer_typed_dict_key': None,
+            'strict': None,
+            'kind': 'function',
+            'sequential': False,
+            'metadata': None,
+            'timeout': None,
         }
     )
 
 
 def test_dynamic_tools_agent_wide():
-    async def prepare_tool_defs(
-        ctx: RunContext[int], tool_defs: list[ToolDefinition]
-    ) -> list[ToolDefinition] | None:
+    async def prepare_tool_defs(ctx: RunContext[int], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
         if ctx.deps == 42:
             return []
         elif ctx.deps == 43:
@@ -1261,76 +1205,76 @@ def test_dynamic_tools_agent_wide():
             return [replace(tool_def, strict=True) for tool_def in tool_defs]
         return tool_defs
 
-    agent = Agent("test", deps_type=int, prepare_tools=prepare_tool_defs)
+    agent = Agent('test', deps_type=int, prepare_tools=prepare_tool_defs)
 
     @agent.tool
     def foobar(ctx: RunContext[int], x: int, y: str) -> str:
-        return f"{ctx.deps} {x} {y}"
+        return f'{ctx.deps} {x} {y}'
 
-    result = agent.run_sync("", deps=42)
-    assert result.output == snapshot("success (no tool calls)")
+    result = agent.run_sync('', deps=42)
+    assert result.output == snapshot('success (no tool calls)')
 
-    result = agent.run_sync("", deps=43)
-    assert result.output == snapshot("success (no tool calls)")
+    result = agent.run_sync('', deps=43)
+    assert result.output == snapshot('success (no tool calls)')
 
     with agent.override(model=FunctionModel(get_json_schema)):
-        result = agent.run_sync("", deps=21)
+        result = agent.run_sync('', deps=21)
         json_schema = json.loads(result.output)
-        assert agent._function_toolset.tools["foobar"].strict is None
-        assert json_schema["strict"] is True
+        assert agent._function_toolset.tools['foobar'].strict is None
+        assert json_schema['strict'] is True
 
-    result = agent.run_sync("", deps=1)
+    result = agent.run_sync('', deps=1)
     assert result.output == snapshot('{"foobar":"1 0 a"}')
 
 
 def test_function_tool_consistent_with_schema():
     def function(*args: Any, **kwargs: Any) -> str:
         assert len(args) == 0
-        assert set(kwargs) == {"one", "two"}
-        return "I like being called like this"
+        assert set(kwargs) == {'one', 'two'}
+        return 'I like being called like this'
 
     json_schema = {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "one": {"description": "first argument", "type": "string"},
-            "two": {"description": "second argument", "type": "object"},
+        'type': 'object',
+        'additionalProperties': False,
+        'properties': {
+            'one': {'description': 'first argument', 'type': 'string'},
+            'two': {'description': 'second argument', 'type': 'object'},
         },
-        "required": ["one", "two"],
+        'required': ['one', 'two'],
     }
     pydantic_tool = Tool.from_schema(
         function,
-        name="foobar",
-        description="does foobar stuff",
+        name='foobar',
+        description='does foobar stuff',
         json_schema=json_schema,
     )
 
-    agent = Agent("test", tools=[pydantic_tool], retries=0)
-    result = agent.run_sync("foobar")
+    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    result = agent.run_sync('foobar')
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
-    assert agent._function_toolset.tools["foobar"].takes_ctx is False
-    assert agent._function_toolset.tools["foobar"].max_retries == 0
+    assert agent._function_toolset.tools['foobar'].takes_ctx is False
+    assert agent._function_toolset.tools['foobar'].max_retries == 0
 
 
 def test_function_tool_from_schema_with_ctx():
     def function(ctx: RunContext[str], *args: Any, **kwargs: Any) -> str:
         assert len(args) == 0
-        assert set(kwargs) == {"one", "two"}
-        return ctx.deps + "I like being called like this"
+        assert set(kwargs) == {'one', 'two'}
+        return ctx.deps + 'I like being called like this'
 
     json_schema = {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "one": {"description": "first argument", "type": "string"},
-            "two": {"description": "second argument", "type": "object"},
+        'type': 'object',
+        'additionalProperties': False,
+        'properties': {
+            'one': {'description': 'first argument', 'type': 'string'},
+            'two': {'description': 'second argument', 'type': 'object'},
         },
-        "required": ["one", "two"],
+        'required': ['one', 'two'],
     }
     pydantic_tool = Tool[str].from_schema(
         function,
-        name="foobar",
-        description="does foobar stuff",
+        name='foobar',
+        description='does foobar stuff',
         json_schema=json_schema,
         takes_ctx=True,
     )
@@ -1338,70 +1282,68 @@ def test_function_tool_from_schema_with_ctx():
     assert pydantic_tool.takes_ctx is True
     assert pydantic_tool.function_schema.takes_ctx is True
 
-    agent = Agent("test", tools=[pydantic_tool], retries=0, deps_type=str)
-    result = agent.run_sync("foobar", deps="Hello, ")
-    assert result.output == snapshot(
-        '{"foobar":"Hello, I like being called like this"}'
-    )
-    assert agent._function_toolset.tools["foobar"].takes_ctx is True
-    assert agent._function_toolset.tools["foobar"].max_retries == 0
+    agent = Agent('test', tools=[pydantic_tool], retries=0, deps_type=str)
+    result = agent.run_sync('foobar', deps='Hello, ')
+    assert result.output == snapshot('{"foobar":"Hello, I like being called like this"}')
+    assert agent._function_toolset.tools['foobar'].takes_ctx is True
+    assert agent._function_toolset.tools['foobar'].max_retries == 0
 
 
 def test_function_tool_inconsistent_with_schema():
     def function(three: str, four: int) -> str:
-        return "Coverage made me call this"
+        return 'Coverage made me call this'
 
     json_schema = {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "one": {"description": "first argument", "type": "string"},
-            "two": {"description": "second argument", "type": "object"},
+        'type': 'object',
+        'additionalProperties': False,
+        'properties': {
+            'one': {'description': 'first argument', 'type': 'string'},
+            'two': {'description': 'second argument', 'type': 'object'},
         },
-        "required": ["one", "two"],
+        'required': ['one', 'two'],
     }
     pydantic_tool = Tool.from_schema(
         function,
-        name="foobar",
-        description="does foobar stuff",
+        name='foobar',
+        description='does foobar stuff',
         json_schema=json_schema,
     )
 
-    agent = Agent("test", tools=[pydantic_tool], retries=0)
+    agent = Agent('test', tools=[pydantic_tool], retries=0)
     with pytest.raises(TypeError, match=".* got an unexpected keyword argument 'one'"):
-        agent.run_sync("foobar")
+        agent.run_sync('foobar')
 
-    result = function("three", 4)
-    assert result == "Coverage made me call this"
+    result = function('three', 4)
+    assert result == 'Coverage made me call this'
 
 
 def test_async_function_tool_consistent_with_schema():
     async def function(*args: Any, **kwargs: Any) -> str:
         assert len(args) == 0
-        assert set(kwargs) == {"one", "two"}
-        return "I like being called like this"
+        assert set(kwargs) == {'one', 'two'}
+        return 'I like being called like this'
 
     json_schema = {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "one": {"description": "first argument", "type": "string"},
-            "two": {"description": "second argument", "type": "object"},
+        'type': 'object',
+        'additionalProperties': False,
+        'properties': {
+            'one': {'description': 'first argument', 'type': 'string'},
+            'two': {'description': 'second argument', 'type': 'object'},
         },
-        "required": ["one", "two"],
+        'required': ['one', 'two'],
     }
     pydantic_tool = Tool.from_schema(
         function,
-        name="foobar",
-        description="does foobar stuff",
+        name='foobar',
+        description='does foobar stuff',
         json_schema=json_schema,
     )
 
-    agent = Agent("test", tools=[pydantic_tool], retries=0)
-    result = agent.run_sync("foobar")
+    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    result = agent.run_sync('foobar')
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
-    assert agent._function_toolset.tools["foobar"].takes_ctx is False
-    assert agent._function_toolset.tools["foobar"].max_retries == 0
+    assert agent._function_toolset.tools['foobar'].takes_ctx is False
+    assert agent._function_toolset.tools['foobar'].max_retries == 0
 
 
 def test_tool_retries():
@@ -1413,19 +1355,15 @@ def test_tool_retries():
     call_max_retries: list[int] = []
     call_last_attempt: list[bool] = []
 
-    async def prepare_tool_defs(
-        ctx: RunContext[None], tool_defs: list[ToolDefinition]
-    ) -> list[ToolDefinition] | None:
+    async def prepare_tool_defs(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
         nonlocal prepare_tools_retries
-        retry = ctx.retries.get("infinite_retry_tool", 0)
+        retry = ctx.retries.get('infinite_retry_tool', 0)
         prepare_tools_retries.append(retry)
         return tool_defs
 
     agent = Agent(TestModel(), retries=3, prepare_tools=prepare_tool_defs)
 
-    async def prepare_tool_def(
-        ctx: RunContext[None], tool_def: ToolDefinition
-    ) -> ToolDefinition | None:
+    async def prepare_tool_def(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
         nonlocal prepare_retries
         prepare_retries.append(ctx.retry)
         prepare_max_retries.append(ctx.max_retries)
@@ -1438,13 +1376,13 @@ def test_tool_retries():
         call_retries.append(ctx.retry)
         call_max_retries.append(ctx.max_retries)
         call_last_attempt.append(ctx.last_attempt)
-        raise ModelRetry("Please try again.")
+        raise ModelRetry('Please try again.')
 
     with pytest.raises(
         UnexpectedModelBehavior,
         match="Tool 'infinite_retry_tool' exceeded max retries count of 5",
     ):
-        agent.run_sync("Begin infinite retry loop!")
+        agent.run_sync('Begin infinite retry loop!')
 
     assert prepare_tools_retries == snapshot([0, 1, 2, 3, 4, 5])
 
@@ -1464,13 +1402,9 @@ def test_tool_raises_call_deferred():
     def my_tool(x: int) -> int:
         raise CallDeferred
 
-    result = agent.run_sync("Hello")
+    result = agent.run_sync('Hello')
     assert result.output == snapshot(
-        DeferredToolRequests(
-            calls=[
-                ToolCallPart(tool_name="my_tool", args={"x": 0}, tool_call_id=IsStr())
-            ]
-        )
+        DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
     )
 
 
@@ -1479,13 +1413,13 @@ def test_tool_raises_approval_required():
         if len(messages) == 1:
             return ModelResponse(
                 parts=[
-                    ToolCallPart("my_tool", {"x": 1}, tool_call_id="my_tool"),
+                    ToolCallPart('my_tool', {'x': 1}, tool_call_id='my_tool'),
                 ]
             )
         else:
             return ModelResponse(
                 parts=[
-                    TextPart("Done!"),
+                    TextPart('Done!'),
                 ]
             )
 
@@ -1497,28 +1431,22 @@ def test_tool_raises_approval_required():
             raise ApprovalRequired
         return x * 42
 
-    result = agent.run_sync("Hello")
+    result = agent.run_sync('Hello')
     messages = result.all_messages()
     assert result.output == snapshot(
-        DeferredToolRequests(
-            approvals=[
-                ToolCallPart(tool_name="my_tool", args={"x": 1}, tool_call_id="my_tool")
-            ]
-        )
+        DeferredToolRequests(approvals=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='my_tool')])
     )
 
     result = agent.run_sync(
         message_history=messages,
-        deferred_tool_results=DeferredToolResults(
-            approvals={"my_tool": ToolApproved(override_args={"x": 2})}
-        ),
+        deferred_tool_results=DeferredToolResults(approvals={'my_tool': ToolApproved(override_args={'x': 2})}),
     )
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content="Hello",
+                        content='Hello',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1526,22 +1454,18 @@ def test_tool_raises_approval_required():
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name="my_tool", args={"x": 1}, tool_call_id="my_tool"
-                    )
-                ],
+                parts=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='my_tool')],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
-                model_name="function:llm:",
+                model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name="my_tool",
+                        tool_name='my_tool',
                         content=84,
-                        tool_call_id="my_tool",
+                        tool_call_id='my_tool',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1549,15 +1473,15 @@ def test_tool_raises_approval_required():
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content="Done!")],
+                parts=[TextPart(content='Done!')],
                 usage=RequestUsage(input_tokens=52, output_tokens=5),
-                model_name="function:llm:",
+                model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
     )
-    assert result.output == snapshot("Done!")
+    assert result.output == snapshot('Done!')
 
 
 def test_approval_required_with_user_prompt():
@@ -1568,7 +1492,7 @@ def test_approval_required_with_user_prompt():
             # First call: request approval
             return ModelResponse(
                 parts=[
-                    ToolCallPart("my_tool", {"x": 1}, tool_call_id="my_tool"),
+                    ToolCallPart('my_tool', {'x': 1}, tool_call_id='my_tool'),
                 ]
             )
         else:
@@ -1577,20 +1501,14 @@ def test_approval_required_with_user_prompt():
             assert isinstance(last_request, ModelRequest)
 
             # Verify we received both tool return and user prompt
-            has_tool_return = any(
-                isinstance(p, ToolReturnPart) for p in last_request.parts
-            )
-            has_user_prompt = any(
-                isinstance(p, UserPromptPart) for p in last_request.parts
-            )
-            assert has_tool_return, "Expected tool return in request"
-            assert has_user_prompt, "Expected user prompt in request"
+            has_tool_return = any(isinstance(p, ToolReturnPart) for p in last_request.parts)
+            has_user_prompt = any(isinstance(p, UserPromptPart) for p in last_request.parts)
+            assert has_tool_return, 'Expected tool return in request'
+            assert has_user_prompt, 'Expected user prompt in request'
 
             # Get user prompt content
-            user_prompt = next(
-                p.content for p in last_request.parts if isinstance(p, UserPromptPart)
-            )
-            return ModelResponse(parts=[TextPart(f"Tool executed and {user_prompt}")])
+            user_prompt = next(p.content for p in last_request.parts if isinstance(p, UserPromptPart))
+            return ModelResponse(parts=[TextPart(f'Tool executed and {user_prompt}')])
 
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
@@ -1601,22 +1519,22 @@ def test_approval_required_with_user_prompt():
         return x * 42
 
     # First run: get approval request
-    result = agent.run_sync("Hello")
+    result = agent.run_sync('Hello')
     messages = result.all_messages()
     assert isinstance(result.output, DeferredToolRequests)
     assert len(result.output.approvals) == 1
 
     # Second run: provide approval AND user prompt
     result = agent.run_sync(
-        user_prompt="continue with extra instructions",
+        user_prompt='continue with extra instructions',
         message_history=messages,
-        deferred_tool_results=DeferredToolResults(approvals={"my_tool": True}),
+        deferred_tool_results=DeferredToolResults(approvals={'my_tool': True}),
     )
 
     # Verify the response includes both tool result and user prompt
     assert isinstance(result.output, str)
-    assert "continue with extra instructions" in result.output
-    assert "Tool executed" in result.output
+    assert 'continue with extra instructions' in result.output
+    assert 'Tool executed' in result.output
 
 
 def test_call_deferred_with_metadata():
@@ -1625,18 +1543,16 @@ def test_call_deferred_with_metadata():
 
     @agent.tool_plain
     def my_tool(x: int) -> int:
-        raise CallDeferred(metadata={"task_id": "task-123", "estimated_cost": 25.50})
+        raise CallDeferred(metadata={'task_id': 'task-123', 'estimated_cost': 25.50})
 
-    result = agent.run_sync("Hello")
+    result = agent.run_sync('Hello')
     assert result.output == snapshot(
         DeferredToolRequests(
-            calls=[
-                ToolCallPart(tool_name="my_tool", args={"x": 0}, tool_call_id=IsStr())
-            ],
+            calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
             metadata={
-                "pyd_ai_tool_call_id__my_tool": {
-                    "task_id": "task-123",
-                    "estimated_cost": 25.5,
+                'pyd_ai_tool_call_id__my_tool': {
+                    'task_id': 'task-123',
+                    'estimated_cost': 25.5,
                 }
             },
         )
@@ -1650,13 +1566,13 @@ def test_approval_required_with_metadata():
         if len(messages) == 1:
             return ModelResponse(
                 parts=[
-                    ToolCallPart("my_tool", {"x": 1}, tool_call_id="my_tool"),
+                    ToolCallPart('my_tool', {'x': 1}, tool_call_id='my_tool'),
                 ]
             )
         else:
             return ModelResponse(
                 parts=[
-                    TextPart("Done!"),
+                    TextPart('Done!'),
                 ]
             )
 
@@ -1667,24 +1583,22 @@ def test_approval_required_with_metadata():
         if not ctx.tool_call_approved:
             raise ApprovalRequired(
                 metadata={
-                    "reason": "High compute cost",
-                    "estimated_time": "5 minutes",
-                    "cost_usd": 100.0,
+                    'reason': 'High compute cost',
+                    'estimated_time': '5 minutes',
+                    'cost_usd': 100.0,
                 }
             )
         return x * 42
 
-    result = agent.run_sync("Hello")
+    result = agent.run_sync('Hello')
     assert result.output == snapshot(
         DeferredToolRequests(
-            approvals=[
-                ToolCallPart(tool_name="my_tool", args={"x": 1}, tool_call_id=IsStr())
-            ],
+            approvals=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id=IsStr())],
             metadata={
-                "my_tool": {
-                    "reason": "High compute cost",
-                    "estimated_time": "5 minutes",
-                    "cost_usd": 100.0,
+                'my_tool': {
+                    'reason': 'High compute cost',
+                    'estimated_time': '5 minutes',
+                    'cost_usd': 100.0,
                 }
             },
         )
@@ -1694,11 +1608,9 @@ def test_approval_required_with_metadata():
     messages = result.all_messages()
     result = agent.run_sync(
         message_history=messages,
-        deferred_tool_results=DeferredToolResults(
-            approvals={"my_tool": ToolApproved()}
-        ),
+        deferred_tool_results=DeferredToolResults(approvals={'my_tool': ToolApproved()}),
     )
-    assert result.output == "Done!"
+    assert result.output == 'Done!'
 
 
 def test_call_deferred_without_metadata():
@@ -1709,7 +1621,7 @@ def test_call_deferred_without_metadata():
     def my_tool(x: int) -> int:
         raise CallDeferred  # No metadata
 
-    result = agent.run_sync("Hello")
+    result = agent.run_sync('Hello')
     assert isinstance(result.output, DeferredToolRequests)
     assert len(result.output.calls) == 1
 
@@ -1725,13 +1637,13 @@ def test_approval_required_without_metadata():
         if len(messages) == 1:
             return ModelResponse(
                 parts=[
-                    ToolCallPart("my_tool", {"x": 1}, tool_call_id="my_tool"),
+                    ToolCallPart('my_tool', {'x': 1}, tool_call_id='my_tool'),
                 ]
             )
         else:
             return ModelResponse(
                 parts=[
-                    TextPart("Done!"),
+                    TextPart('Done!'),
                 ]
             )
 
@@ -1743,22 +1655,20 @@ def test_approval_required_without_metadata():
             raise ApprovalRequired  # No metadata
         return x * 42
 
-    result = agent.run_sync("Hello")
+    result = agent.run_sync('Hello')
     assert isinstance(result.output, DeferredToolRequests)
     assert len(result.output.approvals) == 1
 
     # Should have an empty metadata dict for this tool
-    assert result.output.metadata.get("my_tool", {}) == {}
+    assert result.output.metadata.get('my_tool', {}) == {}
 
     # Continue with approval
     messages = result.all_messages()
     result = agent.run_sync(
         message_history=messages,
-        deferred_tool_results=DeferredToolResults(
-            approvals={"my_tool": ToolApproved()}
-        ),
+        deferred_tool_results=DeferredToolResults(approvals={'my_tool': ToolApproved()}),
     )
-    assert result.output == "Done!"
+    assert result.output == 'Done!'
 
 
 def test_mixed_deferred_tools_with_metadata():
@@ -1768,33 +1678,31 @@ def test_mixed_deferred_tools_with_metadata():
         if len(messages) == 1:
             return ModelResponse(
                 parts=[
-                    ToolCallPart("tool_a", {"x": 1}, tool_call_id="call_a"),
-                    ToolCallPart("tool_b", {"y": 2}, tool_call_id="call_b"),
-                    ToolCallPart("tool_c", {"z": 3}, tool_call_id="call_c"),
+                    ToolCallPart('tool_a', {'x': 1}, tool_call_id='call_a'),
+                    ToolCallPart('tool_b', {'y': 2}, tool_call_id='call_b'),
+                    ToolCallPart('tool_c', {'z': 3}, tool_call_id='call_c'),
                 ]
             )
         else:
-            return ModelResponse(parts=[TextPart("Done!")])
+            return ModelResponse(parts=[TextPart('Done!')])
 
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
     def tool_a(ctx: RunContext[None], x: int) -> int:
-        raise CallDeferred(metadata={"type": "external", "priority": "high"})
+        raise CallDeferred(metadata={'type': 'external', 'priority': 'high'})
 
     @agent.tool
     def tool_b(ctx: RunContext[None], y: int) -> int:
         if not ctx.tool_call_approved:
-            raise ApprovalRequired(
-                metadata={"reason": "Needs approval", "level": "manager"}
-            )
+            raise ApprovalRequired(metadata={'reason': 'Needs approval', 'level': 'manager'})
         return y * 10
 
     @agent.tool
     def tool_c(ctx: RunContext[None], z: int) -> int:
         raise CallDeferred  # No metadata
 
-    result = agent.run_sync("Hello")
+    result = agent.run_sync('Hello')
     assert isinstance(result.output, DeferredToolRequests)
 
     # Check that we have the right tools deferred
@@ -1802,23 +1710,23 @@ def test_mixed_deferred_tools_with_metadata():
     assert len(result.output.approvals) == 1  # tool_b
 
     # Check metadata
-    assert result.output.metadata["call_a"] == {"type": "external", "priority": "high"}
-    assert result.output.metadata["call_b"] == {
-        "reason": "Needs approval",
-        "level": "manager",
+    assert result.output.metadata['call_a'] == {'type': 'external', 'priority': 'high'}
+    assert result.output.metadata['call_b'] == {
+        'reason': 'Needs approval',
+        'level': 'manager',
     }
-    assert result.output.metadata.get("call_c", {}) == {}
+    assert result.output.metadata.get('call_c', {}) == {}
 
     # Continue with results for all three tools
     messages = result.all_messages()
     result = agent.run_sync(
         message_history=messages,
         deferred_tool_results=DeferredToolResults(
-            calls={"call_a": 10, "call_c": 30},
-            approvals={"call_b": ToolApproved()},
+            calls={'call_a': 10, 'call_c': 30},
+            approvals={'call_b': ToolApproved()},
         ),
     )
-    assert result.output == "Done!"
+    assert result.output == 'Done!'
 
 
 def test_deferred_tool_with_output_type():
@@ -1828,12 +1736,12 @@ def test_deferred_tool_with_output_type():
     deferred_toolset = ExternalToolset(
         [
             ToolDefinition(
-                name="my_tool",
-                description="",
+                name='my_tool',
+                description='',
                 parameters_json_schema={
-                    "type": "object",
-                    "properties": {"x": {"type": "integer"}},
-                    "required": ["x"],
+                    'type': 'object',
+                    'properties': {'x': {'type': 'integer'}},
+                    'required': ['x'],
                 },
             ),
         ]
@@ -1844,8 +1752,8 @@ def test_deferred_tool_with_output_type():
         toolsets=[deferred_toolset],
     )
 
-    result = agent.run_sync("Hello")
-    assert result.output == snapshot(MyModel(foo="a"))
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(MyModel(foo='a'))
 
 
 def test_deferred_tool_with_tool_output_type():
@@ -1855,12 +1763,12 @@ def test_deferred_tool_with_tool_output_type():
     deferred_toolset = ExternalToolset(
         [
             ToolDefinition(
-                name="my_tool",
-                description="",
+                name='my_tool',
+                description='',
                 parameters_json_schema={
-                    "type": "object",
-                    "properties": {"x": {"type": "integer"}},
-                    "required": ["x"],
+                    'type': 'object',
+                    'properties': {'x': {'type': 'integer'}},
+                    'required': ['x'],
                 },
             ),
         ]
@@ -1871,46 +1779,46 @@ def test_deferred_tool_with_tool_output_type():
         toolsets=[deferred_toolset],
     )
 
-    result = agent.run_sync("Hello")
-    assert result.output == snapshot(MyModel(foo="a"))
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(MyModel(foo='a'))
 
 
 async def test_deferred_tool_without_output_type():
     deferred_toolset = ExternalToolset(
         [
             ToolDefinition(
-                name="my_tool",
-                description="",
+                name='my_tool',
+                description='',
                 parameters_json_schema={
-                    "type": "object",
-                    "properties": {"x": {"type": "integer"}},
-                    "required": ["x"],
+                    'type': 'object',
+                    'properties': {'x': {'type': 'integer'}},
+                    'required': ['x'],
                 },
             ),
         ]
     )
     agent = Agent(TestModel(), toolsets=[deferred_toolset])
 
-    msg = "A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent."
+    msg = 'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
 
     with pytest.raises(UserError, match=msg):
-        await agent.run("Hello")
+        await agent.run('Hello')
 
     with pytest.raises(UserError, match=msg):
-        async with agent.run_stream("Hello") as result:
+        async with agent.run_stream('Hello') as result:
             await result.get_output()
 
 
 def test_output_type_deferred_tool_requests_by_itself():
     with pytest.raises(
         UserError,
-        match="At least one output type must be provided other than `DeferredToolRequests`.",
+        match='At least one output type must be provided other than `DeferredToolRequests`.',
     ):
         Agent(TestModel(), output_type=DeferredToolRequests)
 
 
 def test_output_type_empty():
-    with pytest.raises(UserError, match="At least one output type must be provided."):
+    with pytest.raises(UserError, match='At least one output type must be provided.'):
         Agent(TestModel(), output_type=[])
 
 
@@ -1921,23 +1829,17 @@ def test_parallel_tool_return_with_deferred():
         if len(messages) == 1:
             return ModelResponse(
                 parts=[
+                    ToolCallPart('get_price', {'fruit': 'apple'}, tool_call_id='get_price_apple'),
                     ToolCallPart(
-                        "get_price", {"fruit": "apple"}, tool_call_id="get_price_apple"
+                        'get_price',
+                        {'fruit': 'banana'},
+                        tool_call_id='get_price_banana',
                     ),
-                    ToolCallPart(
-                        "get_price",
-                        {"fruit": "banana"},
-                        tool_call_id="get_price_banana",
-                    ),
-                    ToolCallPart(
-                        "get_price", {"fruit": "pear"}, tool_call_id="get_price_pear"
-                    ),
-                    ToolCallPart(
-                        "get_price", {"fruit": "grape"}, tool_call_id="get_price_grape"
-                    ),
-                    ToolCallPart("buy", {"fruit": "apple"}, tool_call_id="buy_apple"),
-                    ToolCallPart("buy", {"fruit": "banana"}, tool_call_id="buy_banana"),
-                    ToolCallPart("buy", {"fruit": "pear"}, tool_call_id="buy_pear"),
+                    ToolCallPart('get_price', {'fruit': 'pear'}, tool_call_id='get_price_pear'),
+                    ToolCallPart('get_price', {'fruit': 'grape'}, tool_call_id='get_price_grape'),
+                    ToolCallPart('buy', {'fruit': 'apple'}, tool_call_id='buy_apple'),
+                    ToolCallPart('buy', {'fruit': 'banana'}, tool_call_id='buy_banana'),
+                    ToolCallPart('buy', {'fruit': 'pear'}, tool_call_id='buy_pear'),
                 ]
             )
         else:
@@ -1945,7 +1847,7 @@ def test_parallel_tool_return_with_deferred():
             final_received_messages = messages
             return ModelResponse(
                 parts=[
-                    TextPart("Done!"),
+                    TextPart('Done!'),
                 ]
             )
 
@@ -1953,22 +1855,20 @@ def test_parallel_tool_return_with_deferred():
 
     @agent.tool_plain
     def get_price(fruit: str) -> ToolReturn:
-        if fruit in ["apple", "pear"]:
+        if fruit in ['apple', 'pear']:
             return ToolReturn(
                 return_value=10.0,
-                content=f"The price of {fruit} is 10.0.",
-                metadata={"fruit": fruit, "price": 10.0},
+                content=f'The price of {fruit} is 10.0.',
+                metadata={'fruit': fruit, 'price': 10.0},
             )
         else:
-            raise ModelRetry(f"Unknown fruit: {fruit}")
+            raise ModelRetry(f'Unknown fruit: {fruit}')
 
     @agent.tool_plain
     def buy(fruit: str):
         raise CallDeferred
 
-    result = agent.run_sync(
-        "What do an apple, a banana, a pear and a grape cost? Also buy me a pear."
-    )
+    result = agent.run_sync('What do an apple, a banana, a pear and a grape cost? Also buy me a pear.')
 
     messages = result.all_messages()
     assert messages == snapshot(
@@ -1976,7 +1876,7 @@ def test_parallel_tool_return_with_deferred():
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content="What do an apple, a banana, a pear and a grape cost? Also buy me a pear.",
+                        content='What do an apple, a banana, a pear and a grape cost? Also buy me a pear.',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1986,78 +1886,76 @@ def test_parallel_tool_return_with_deferred():
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name="get_price",
-                        args={"fruit": "apple"},
-                        tool_call_id="get_price_apple",
+                        tool_name='get_price',
+                        args={'fruit': 'apple'},
+                        tool_call_id='get_price_apple',
                     ),
                     ToolCallPart(
-                        tool_name="get_price",
-                        args={"fruit": "banana"},
-                        tool_call_id="get_price_banana",
+                        tool_name='get_price',
+                        args={'fruit': 'banana'},
+                        tool_call_id='get_price_banana',
                     ),
                     ToolCallPart(
-                        tool_name="get_price",
-                        args={"fruit": "pear"},
-                        tool_call_id="get_price_pear",
+                        tool_name='get_price',
+                        args={'fruit': 'pear'},
+                        tool_call_id='get_price_pear',
                     ),
                     ToolCallPart(
-                        tool_name="get_price",
-                        args={"fruit": "grape"},
-                        tool_call_id="get_price_grape",
+                        tool_name='get_price',
+                        args={'fruit': 'grape'},
+                        tool_call_id='get_price_grape',
                     ),
                     ToolCallPart(
-                        tool_name="buy",
-                        args={"fruit": "apple"},
-                        tool_call_id="buy_apple",
+                        tool_name='buy',
+                        args={'fruit': 'apple'},
+                        tool_call_id='buy_apple',
                     ),
                     ToolCallPart(
-                        tool_name="buy",
-                        args={"fruit": "banana"},
-                        tool_call_id="buy_banana",
+                        tool_name='buy',
+                        args={'fruit': 'banana'},
+                        tool_call_id='buy_banana',
                     ),
-                    ToolCallPart(
-                        tool_name="buy", args={"fruit": "pear"}, tool_call_id="buy_pear"
-                    ),
+                    ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
                 ],
                 usage=RequestUsage(input_tokens=68, output_tokens=35),
-                model_name="function:llm:",
+                model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name="get_price",
+                        tool_name='get_price',
                         content=10.0,
-                        tool_call_id="get_price_apple",
-                        metadata={"fruit": "apple", "price": 10.0},
+                        tool_call_id='get_price_apple',
+                        metadata={'fruit': 'apple', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
                     RetryPromptPart(
-                        content="Unknown fruit: banana",
-                        tool_name="get_price",
-                        tool_call_id="get_price_banana",
+                        content='Unknown fruit: banana',
+                        tool_name='get_price',
+                        tool_call_id='get_price_banana',
                         timestamp=IsDatetime(),
                     ),
                     ToolReturnPart(
-                        tool_name="get_price",
+                        tool_name='get_price',
                         content=10.0,
-                        tool_call_id="get_price_pear",
-                        metadata={"fruit": "pear", "price": 10.0},
+                        tool_call_id='get_price_pear',
+                        metadata={'fruit': 'pear', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
                     RetryPromptPart(
-                        content="Unknown fruit: grape",
-                        tool_name="get_price",
-                        tool_call_id="get_price_grape",
+                        content='Unknown fruit: grape',
+                        tool_name='get_price',
+                        tool_call_id='get_price_grape',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content="The price of apple is 10.0.",
+                        content='The price of apple is 10.0.',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content="The price of pear is 10.0.",
+                        content='The price of pear is 10.0.',
                         timestamp=IsDatetime(),
                     ),
                 ],
@@ -2069,15 +1967,9 @@ def test_parallel_tool_return_with_deferred():
     assert result.output == snapshot(
         DeferredToolRequests(
             calls=[
-                ToolCallPart(
-                    tool_name="buy", args={"fruit": "apple"}, tool_call_id="buy_apple"
-                ),
-                ToolCallPart(
-                    tool_name="buy", args={"fruit": "banana"}, tool_call_id="buy_banana"
-                ),
-                ToolCallPart(
-                    tool_name="buy", args={"fruit": "pear"}, tool_call_id="buy_pear"
-                ),
+                ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple'),
+                ToolCallPart(tool_name='buy', args={'fruit': 'banana'}, tool_call_id='buy_banana'),
+                ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
             ]
         )
     )
@@ -2086,14 +1978,14 @@ def test_parallel_tool_return_with_deferred():
         message_history=messages,
         deferred_tool_results=DeferredToolResults(
             calls={
-                "buy_apple": ModelRetry("Apples are not available"),
-                "buy_banana": ToolReturn(
+                'buy_apple': ModelRetry('Apples are not available'),
+                'buy_banana': ToolReturn(
                     return_value=True,
-                    content="I bought a banana",
-                    metadata={"fruit": "banana", "price": 100.0},
+                    content='I bought a banana',
+                    metadata={'fruit': 'banana', 'price': 100.0},
                 ),
-                "buy_pear": RetryPromptPart(
-                    content="The purchase of pears was denied.",
+                'buy_pear': RetryPromptPart(
+                    content='The purchase of pears was denied.',
                 ),
             },
         ),
@@ -2103,7 +1995,7 @@ def test_parallel_tool_return_with_deferred():
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content="What do an apple, a banana, a pear and a grape cost? Also buy me a pear.",
+                        content='What do an apple, a banana, a pear and a grape cost? Also buy me a pear.',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -2113,78 +2005,76 @@ def test_parallel_tool_return_with_deferred():
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name="get_price",
-                        args={"fruit": "apple"},
-                        tool_call_id="get_price_apple",
+                        tool_name='get_price',
+                        args={'fruit': 'apple'},
+                        tool_call_id='get_price_apple',
                     ),
                     ToolCallPart(
-                        tool_name="get_price",
-                        args={"fruit": "banana"},
-                        tool_call_id="get_price_banana",
+                        tool_name='get_price',
+                        args={'fruit': 'banana'},
+                        tool_call_id='get_price_banana',
                     ),
                     ToolCallPart(
-                        tool_name="get_price",
-                        args={"fruit": "pear"},
-                        tool_call_id="get_price_pear",
+                        tool_name='get_price',
+                        args={'fruit': 'pear'},
+                        tool_call_id='get_price_pear',
                     ),
                     ToolCallPart(
-                        tool_name="get_price",
-                        args={"fruit": "grape"},
-                        tool_call_id="get_price_grape",
+                        tool_name='get_price',
+                        args={'fruit': 'grape'},
+                        tool_call_id='get_price_grape',
                     ),
                     ToolCallPart(
-                        tool_name="buy",
-                        args={"fruit": "apple"},
-                        tool_call_id="buy_apple",
+                        tool_name='buy',
+                        args={'fruit': 'apple'},
+                        tool_call_id='buy_apple',
                     ),
                     ToolCallPart(
-                        tool_name="buy",
-                        args={"fruit": "banana"},
-                        tool_call_id="buy_banana",
+                        tool_name='buy',
+                        args={'fruit': 'banana'},
+                        tool_call_id='buy_banana',
                     ),
-                    ToolCallPart(
-                        tool_name="buy", args={"fruit": "pear"}, tool_call_id="buy_pear"
-                    ),
+                    ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
                 ],
                 usage=RequestUsage(input_tokens=68, output_tokens=35),
-                model_name="function:llm:",
+                model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name="get_price",
+                        tool_name='get_price',
                         content=10.0,
-                        tool_call_id="get_price_apple",
-                        metadata={"fruit": "apple", "price": 10.0},
+                        tool_call_id='get_price_apple',
+                        metadata={'fruit': 'apple', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
                     RetryPromptPart(
-                        content="Unknown fruit: banana",
-                        tool_name="get_price",
-                        tool_call_id="get_price_banana",
+                        content='Unknown fruit: banana',
+                        tool_name='get_price',
+                        tool_call_id='get_price_banana',
                         timestamp=IsDatetime(),
                     ),
                     ToolReturnPart(
-                        tool_name="get_price",
+                        tool_name='get_price',
                         content=10.0,
-                        tool_call_id="get_price_pear",
-                        metadata={"fruit": "pear", "price": 10.0},
+                        tool_call_id='get_price_pear',
+                        metadata={'fruit': 'pear', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
                     RetryPromptPart(
-                        content="Unknown fruit: grape",
-                        tool_name="get_price",
-                        tool_call_id="get_price_grape",
+                        content='Unknown fruit: grape',
+                        tool_name='get_price',
+                        tool_call_id='get_price_grape',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content="The price of apple is 10.0.",
+                        content='The price of apple is 10.0.',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content="The price of pear is 10.0.",
+                        content='The price of pear is 10.0.',
                         timestamp=IsDatetime(),
                     ),
                 ],
@@ -2194,26 +2084,26 @@ def test_parallel_tool_return_with_deferred():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content="Apples are not available",
-                        tool_name="buy",
-                        tool_call_id="buy_apple",
+                        content='Apples are not available',
+                        tool_name='buy',
+                        tool_call_id='buy_apple',
                         timestamp=IsDatetime(),
                     ),
                     ToolReturnPart(
-                        tool_name="buy",
+                        tool_name='buy',
                         content=True,
-                        tool_call_id="buy_banana",
-                        metadata={"fruit": "banana", "price": 100.0},
+                        tool_call_id='buy_banana',
+                        metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
                     ),
                     RetryPromptPart(
-                        content="The purchase of pears was denied.",
-                        tool_name="buy",
-                        tool_call_id="buy_pear",
+                        content='The purchase of pears was denied.',
+                        tool_name='buy',
+                        tool_call_id='buy_pear',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content="I bought a banana",
+                        content='I bought a banana',
                         timestamp=IsDatetime(),
                     ),
                 ],
@@ -2221,9 +2111,9 @@ def test_parallel_tool_return_with_deferred():
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content="Done!")],
+                parts=[TextPart(content='Done!')],
                 usage=RequestUsage(input_tokens=137, output_tokens=36),
-                model_name="function:llm:",
+                model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
@@ -2235,26 +2125,26 @@ def test_parallel_tool_return_with_deferred():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content="Apples are not available",
-                        tool_name="buy",
-                        tool_call_id="buy_apple",
+                        content='Apples are not available',
+                        tool_name='buy',
+                        tool_call_id='buy_apple',
                         timestamp=IsDatetime(),
                     ),
                     ToolReturnPart(
-                        tool_name="buy",
+                        tool_name='buy',
                         content=True,
-                        tool_call_id="buy_banana",
-                        metadata={"fruit": "banana", "price": 100.0},
+                        tool_call_id='buy_banana',
+                        metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
                     ),
                     RetryPromptPart(
-                        content="The purchase of pears was denied.",
-                        tool_name="buy",
-                        tool_call_id="buy_pear",
+                        content='The purchase of pears was denied.',
+                        tool_name='buy',
+                        tool_call_id='buy_pear',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content="I bought a banana",
+                        content='I bought a banana',
                         timestamp=IsDatetime(),
                     ),
                 ],
@@ -2262,9 +2152,9 @@ def test_parallel_tool_return_with_deferred():
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content="Done!")],
+                parts=[TextPart(content='Done!')],
                 usage=RequestUsage(input_tokens=137, output_tokens=36),
-                model_name="function:llm:",
+                model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
@@ -2276,7 +2166,7 @@ def test_parallel_tool_return_with_deferred():
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content="What do an apple, a banana, a pear and a grape cost? Also buy me a pear.",
+                        content='What do an apple, a banana, a pear and a grape cost? Also buy me a pear.',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -2286,101 +2176,99 @@ def test_parallel_tool_return_with_deferred():
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name="get_price",
-                        args={"fruit": "apple"},
-                        tool_call_id="get_price_apple",
+                        tool_name='get_price',
+                        args={'fruit': 'apple'},
+                        tool_call_id='get_price_apple',
                     ),
                     ToolCallPart(
-                        tool_name="get_price",
-                        args={"fruit": "banana"},
-                        tool_call_id="get_price_banana",
+                        tool_name='get_price',
+                        args={'fruit': 'banana'},
+                        tool_call_id='get_price_banana',
                     ),
                     ToolCallPart(
-                        tool_name="get_price",
-                        args={"fruit": "pear"},
-                        tool_call_id="get_price_pear",
+                        tool_name='get_price',
+                        args={'fruit': 'pear'},
+                        tool_call_id='get_price_pear',
                     ),
                     ToolCallPart(
-                        tool_name="get_price",
-                        args={"fruit": "grape"},
-                        tool_call_id="get_price_grape",
+                        tool_name='get_price',
+                        args={'fruit': 'grape'},
+                        tool_call_id='get_price_grape',
                     ),
                     ToolCallPart(
-                        tool_name="buy",
-                        args={"fruit": "apple"},
-                        tool_call_id="buy_apple",
+                        tool_name='buy',
+                        args={'fruit': 'apple'},
+                        tool_call_id='buy_apple',
                     ),
                     ToolCallPart(
-                        tool_name="buy",
-                        args={"fruit": "banana"},
-                        tool_call_id="buy_banana",
+                        tool_name='buy',
+                        args={'fruit': 'banana'},
+                        tool_call_id='buy_banana',
                     ),
-                    ToolCallPart(
-                        tool_name="buy", args={"fruit": "pear"}, tool_call_id="buy_pear"
-                    ),
+                    ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
                 ],
                 usage=RequestUsage(input_tokens=68, output_tokens=35),
-                model_name="function:llm:",
+                model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name="get_price",
+                        tool_name='get_price',
                         content=10.0,
-                        tool_call_id="get_price_apple",
-                        metadata={"fruit": "apple", "price": 10.0},
+                        tool_call_id='get_price_apple',
+                        metadata={'fruit': 'apple', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
                     RetryPromptPart(
-                        content="Unknown fruit: banana",
-                        tool_name="get_price",
-                        tool_call_id="get_price_banana",
+                        content='Unknown fruit: banana',
+                        tool_name='get_price',
+                        tool_call_id='get_price_banana',
                         timestamp=IsDatetime(),
                     ),
                     ToolReturnPart(
-                        tool_name="get_price",
+                        tool_name='get_price',
                         content=10.0,
-                        tool_call_id="get_price_pear",
-                        metadata={"fruit": "pear", "price": 10.0},
+                        tool_call_id='get_price_pear',
+                        metadata={'fruit': 'pear', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
                     RetryPromptPart(
-                        content="Unknown fruit: grape",
-                        tool_name="get_price",
-                        tool_call_id="get_price_grape",
+                        content='Unknown fruit: grape',
+                        tool_name='get_price',
+                        tool_call_id='get_price_grape',
                         timestamp=IsDatetime(),
                     ),
                     RetryPromptPart(
-                        content="Apples are not available",
-                        tool_name="buy",
-                        tool_call_id="buy_apple",
+                        content='Apples are not available',
+                        tool_name='buy',
+                        tool_call_id='buy_apple',
                         timestamp=IsDatetime(),
                     ),
                     ToolReturnPart(
-                        tool_name="buy",
+                        tool_name='buy',
                         content=True,
-                        tool_call_id="buy_banana",
-                        metadata={"fruit": "banana", "price": 100.0},
+                        tool_call_id='buy_banana',
+                        metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
                     ),
                     RetryPromptPart(
-                        content="The purchase of pears was denied.",
-                        tool_name="buy",
-                        tool_call_id="buy_pear",
+                        content='The purchase of pears was denied.',
+                        tool_name='buy',
+                        tool_call_id='buy_pear',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content="The price of apple is 10.0.",
+                        content='The price of apple is 10.0.',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content="The price of pear is 10.0.",
+                        content='The price of pear is 10.0.',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content="I bought a banana",
+                        content='I bought a banana',
                         timestamp=IsDatetime(),
                     ),
                 ],
@@ -2394,34 +2282,30 @@ def test_deferred_tool_call_approved_fails():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(
             parts=[
-                ToolCallPart("foo", {"x": 0}, tool_call_id="foo"),
+                ToolCallPart('foo', {'x': 0}, tool_call_id='foo'),
             ]
         )
 
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
-    async def defer(
-        ctx: RunContext[None], tool_def: ToolDefinition
-    ) -> ToolDefinition | None:
-        return replace(tool_def, kind="external")
+    async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        return replace(tool_def, kind='external')
 
     @agent.tool_plain(prepare=defer)
     def foo(x: int) -> int:
         return x + 1  # pragma: no cover
 
-    result = agent.run_sync("foo")
+    result = agent.run_sync('foo')
     assert result.output == snapshot(
-        DeferredToolRequests(
-            calls=[ToolCallPart(tool_name="foo", args={"x": 0}, tool_call_id="foo")]
-        )
+        DeferredToolRequests(calls=[ToolCallPart(tool_name='foo', args={'x': 0}, tool_call_id='foo')])
     )
 
-    with pytest.raises(RuntimeError, match="External tools cannot be called"):
+    with pytest.raises(RuntimeError, match='External tools cannot be called'):
         agent.run_sync(
             message_history=result.all_messages(),
             deferred_tool_results=DeferredToolResults(
                 approvals={
-                    "foo": True,
+                    'foo': True,
                 },
             ),
         )
@@ -2432,15 +2316,15 @@ async def test_approval_required_toolset():
         if len(messages) == 1:
             return ModelResponse(
                 parts=[
-                    ToolCallPart("foo", {"x": 1}, tool_call_id="foo1"),
-                    ToolCallPart("foo", {"x": 2}, tool_call_id="foo2"),
-                    ToolCallPart("bar", {"x": 3}, tool_call_id="bar"),
+                    ToolCallPart('foo', {'x': 1}, tool_call_id='foo1'),
+                    ToolCallPart('foo', {'x': 2}, tool_call_id='foo2'),
+                    ToolCallPart('bar', {'x': 3}, tool_call_id='bar'),
                 ]
             )
         else:
             return ModelResponse(
                 parts=[
-                    TextPart("Done!"),
+                    TextPart('Done!'),
                 ]
             )
 
@@ -2454,22 +2338,18 @@ async def test_approval_required_toolset():
     def bar(x: int) -> int:
         return x * 3
 
-    toolset = toolset.approval_required(
-        lambda ctx, tool_def, tool_args: tool_def.name == "foo"
-    )
+    toolset = toolset.approval_required(lambda ctx, tool_def, tool_args: tool_def.name == 'foo')
 
-    agent = Agent(
-        FunctionModel(llm), toolsets=[toolset], output_type=[str, DeferredToolRequests]
-    )
+    agent = Agent(FunctionModel(llm), toolsets=[toolset], output_type=[str, DeferredToolRequests])
 
-    result = await agent.run("foo")
+    result = await agent.run('foo')
     messages = result.all_messages()
     assert messages == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content="foo",
+                        content='foo',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -2478,21 +2358,21 @@ async def test_approval_required_toolset():
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name="foo", args={"x": 1}, tool_call_id="foo1"),
-                    ToolCallPart(tool_name="foo", args={"x": 2}, tool_call_id="foo2"),
-                    ToolCallPart(tool_name="bar", args={"x": 3}, tool_call_id="bar"),
+                    ToolCallPart(tool_name='foo', args={'x': 1}, tool_call_id='foo1'),
+                    ToolCallPart(tool_name='foo', args={'x': 2}, tool_call_id='foo2'),
+                    ToolCallPart(tool_name='bar', args={'x': 3}, tool_call_id='bar'),
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=12),
-                model_name="function:llm:",
+                model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name="bar",
+                        tool_name='bar',
                         content=9,
-                        tool_call_id="bar",
+                        tool_call_id='bar',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -2504,8 +2384,8 @@ async def test_approval_required_toolset():
     assert result.output == snapshot(
         DeferredToolRequests(
             approvals=[
-                ToolCallPart(tool_name="foo", args={"x": 1}, tool_call_id="foo1"),
-                ToolCallPart(tool_name="foo", args={"x": 2}, tool_call_id="foo2"),
+                ToolCallPart(tool_name='foo', args={'x': 1}, tool_call_id='foo1'),
+                ToolCallPart(tool_name='foo', args={'x': 2}, tool_call_id='foo2'),
             ]
         )
     )
@@ -2514,8 +2394,8 @@ async def test_approval_required_toolset():
         message_history=messages,
         deferred_tool_results=DeferredToolResults(
             approvals={
-                "foo1": True,
-                "foo2": False,
+                'foo1': True,
+                'foo2': False,
             },
         ),
     )
@@ -2524,7 +2404,7 @@ async def test_approval_required_toolset():
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content="foo",
+                        content='foo',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -2533,21 +2413,21 @@ async def test_approval_required_toolset():
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name="foo", args={"x": 1}, tool_call_id="foo1"),
-                    ToolCallPart(tool_name="foo", args={"x": 2}, tool_call_id="foo2"),
-                    ToolCallPart(tool_name="bar", args={"x": 3}, tool_call_id="bar"),
+                    ToolCallPart(tool_name='foo', args={'x': 1}, tool_call_id='foo1'),
+                    ToolCallPart(tool_name='foo', args={'x': 2}, tool_call_id='foo2'),
+                    ToolCallPart(tool_name='bar', args={'x': 3}, tool_call_id='bar'),
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=12),
-                model_name="function:llm:",
+                model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name="bar",
+                        tool_name='bar',
                         content=9,
-                        tool_call_id="bar",
+                        tool_call_id='bar',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -2557,15 +2437,15 @@ async def test_approval_required_toolset():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name="foo",
+                        tool_name='foo',
                         content=2,
-                        tool_call_id="foo1",
+                        tool_call_id='foo1',
                         timestamp=IsDatetime(),
                     ),
                     ToolReturnPart(
-                        tool_name="foo",
-                        content="The tool call was denied.",
-                        tool_call_id="foo2",
+                        tool_name='foo',
+                        content='The tool call was denied.',
+                        tool_call_id='foo2',
                         timestamp=IsDatetime(),
                     ),
                 ],
@@ -2573,77 +2453,77 @@ async def test_approval_required_toolset():
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content="Done!")],
+                parts=[TextPart(content='Done!')],
                 usage=RequestUsage(input_tokens=59, output_tokens=13),
-                model_name="function:llm:",
+                model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
     )
-    assert result.output == snapshot("Done!")
+    assert result.output == snapshot('Done!')
 
 
 def test_deferred_tool_results_serializable():
     results = DeferredToolResults(
         calls={
-            "tool-return": ToolReturn(
+            'tool-return': ToolReturn(
                 return_value=1,
-                content="The tool call was approved.",
-                metadata={"foo": "bar"},
+                content='The tool call was approved.',
+                metadata={'foo': 'bar'},
             ),
-            "model-retry": ModelRetry("The tool call was denied."),
-            "retry-prompt-part": RetryPromptPart(
-                content="The tool call was denied.",
-                tool_name="foo",
-                tool_call_id="foo",
+            'model-retry': ModelRetry('The tool call was denied.'),
+            'retry-prompt-part': RetryPromptPart(
+                content='The tool call was denied.',
+                tool_name='foo',
+                tool_call_id='foo',
             ),
-            "any": {"foo": "bar"},
+            'any': {'foo': 'bar'},
         },
         approvals={
-            "true": True,
-            "false": False,
-            "tool-approved": ToolApproved(override_args={"foo": "bar"}),
-            "tool-denied": ToolDenied("The tool call was denied."),
+            'true': True,
+            'false': False,
+            'tool-approved': ToolApproved(override_args={'foo': 'bar'}),
+            'tool-denied': ToolDenied('The tool call was denied.'),
         },
     )
     results_ta = TypeAdapter(DeferredToolResults)
     serialized = results_ta.dump_python(results)
     assert serialized == snapshot(
         {
-            "calls": {
-                "tool-return": {
-                    "return_value": 1,
-                    "content": "The tool call was approved.",
-                    "metadata": {"foo": "bar"},
-                    "kind": "tool-return",
+            'calls': {
+                'tool-return': {
+                    'return_value': 1,
+                    'content': 'The tool call was approved.',
+                    'metadata': {'foo': 'bar'},
+                    'kind': 'tool-return',
                 },
-                "model-retry": {
-                    "message": "The tool call was denied.",
-                    "kind": "model-retry",
+                'model-retry': {
+                    'message': 'The tool call was denied.',
+                    'kind': 'model-retry',
                 },
-                "retry-prompt-part": {
-                    "content": "The tool call was denied.",
-                    "tool_name": "foo",
-                    "tool_call_id": "foo",
-                    "timestamp": IsDatetime(),
-                    "part_kind": "retry-prompt",
+                'retry-prompt-part': {
+                    'content': 'The tool call was denied.',
+                    'tool_name': 'foo',
+                    'tool_call_id': 'foo',
+                    'timestamp': IsDatetime(),
+                    'part_kind': 'retry-prompt',
                 },
-                "any": {"foo": "bar"},
+                'any': {'foo': 'bar'},
             },
-            "approvals": {
-                "true": True,
-                "false": False,
-                "tool-approved": {
-                    "override_args": {"foo": "bar"},
-                    "kind": "tool-approved",
+            'approvals': {
+                'true': True,
+                'false': False,
+                'tool-approved': {
+                    'override_args': {'foo': 'bar'},
+                    'kind': 'tool-approved',
                 },
-                "tool-denied": {
-                    "message": "The tool call was denied.",
-                    "kind": "tool-denied",
+                'tool-denied': {
+                    'message': 'The tool call was denied.',
+                    'kind': 'tool-denied',
                 },
             },
-            "metadata": {},
+            'metadata': {},
         }
     )
     deserialized = results_ta.validate_python(serialized)
@@ -2652,7 +2532,7 @@ def test_deferred_tool_results_serializable():
 
 def test_tool_metadata():
     """Test that metadata is properly set on tools."""
-    metadata = {"category": "test", "version": "1.0"}
+    metadata = {'category': 'test', 'version': '1.0'}
 
     def simple_tool(ctx: RunContext[None], x: int) -> int:
         return x * 2  # pragma: no cover
@@ -2662,47 +2542,47 @@ def test_tool_metadata():
     assert tool.tool_def.metadata == metadata
 
     # Test with agent decorator
-    agent = Agent("test")
+    agent = Agent('test')
 
-    @agent.tool(metadata={"source": "agent"})
+    @agent.tool(metadata={'source': 'agent'})
     def agent_tool(ctx: RunContext[None], y: int) -> int:
         return y + 1  # pragma: no cover
 
-    agent_tool_def = agent._function_toolset.tools["agent_tool"]
-    assert agent_tool_def.metadata == {"source": "agent"}
+    agent_tool_def = agent._function_toolset.tools['agent_tool']
+    assert agent_tool_def.metadata == {'source': 'agent'}
 
     # Test with agent.tool_plain decorator
-    @agent.tool_plain(metadata={"type": "plain"})
+    @agent.tool_plain(metadata={'type': 'plain'})
     def plain_tool(z: int) -> int:
         return z * 3  # pragma: no cover
 
-    plain_tool_def = agent._function_toolset.tools["plain_tool"]
-    assert plain_tool_def.metadata == {"type": "plain"}
+    plain_tool_def = agent._function_toolset.tools['plain_tool']
+    assert plain_tool_def.metadata == {'type': 'plain'}
 
     # Test with FunctionToolset.tool decorator
-    toolset = FunctionToolset(metadata={"foo": "bar"})
+    toolset = FunctionToolset(metadata={'foo': 'bar'})
 
     @toolset.tool
     def toolset_plain_tool(a: str) -> str:
         return a.upper()  # pragma: no cover
 
-    toolset_plain_tool_def = toolset.tools["toolset_plain_tool"]
-    assert toolset_plain_tool_def.metadata == {"foo": "bar"}
+    toolset_plain_tool_def = toolset.tools['toolset_plain_tool']
+    assert toolset_plain_tool_def.metadata == {'foo': 'bar'}
 
-    @toolset.tool(metadata={"toolset": "function"})
+    @toolset.tool(metadata={'toolset': 'function'})
     def toolset_tool(ctx: RunContext[None], a: str) -> str:
         return a.upper()  # pragma: no cover
 
-    toolset_tool_def = toolset.tools["toolset_tool"]
-    assert toolset_tool_def.metadata == {"foo": "bar", "toolset": "function"}
+    toolset_tool_def = toolset.tools['toolset_tool']
+    assert toolset_tool_def.metadata == {'foo': 'bar', 'toolset': 'function'}
 
     # Test with FunctionToolset.add_function
     def standalone_func(ctx: RunContext[None], b: float) -> float:
         return b / 2  # pragma: no cover
 
-    toolset.add_function(standalone_func, metadata={"method": "add_function"})
-    standalone_tool_def = toolset.tools["standalone_func"]
-    assert standalone_tool_def.metadata == {"foo": "bar", "method": "add_function"}
+    toolset.add_function(standalone_func, metadata={'method': 'add_function'})
+    standalone_tool_def = toolset.tools['standalone_func']
+    assert standalone_tool_def.metadata == {'foo': 'bar', 'method': 'add_function'}
 
 
 def test_retry_tool_until_last_attempt():
@@ -2712,18 +2592,18 @@ def test_retry_tool_until_last_attempt():
     @agent.tool
     def always_fail(ctx: RunContext[None]) -> str:
         if ctx.last_attempt:
-            return "I guess you never learn"
+            return 'I guess you never learn'
         else:
-            raise ModelRetry("Please try again.")
+            raise ModelRetry('Please try again.')
 
-    result = agent.run_sync("Always fail!")
+    result = agent.run_sync('Always fail!')
     assert result.output == snapshot('{"always_fail":"I guess you never learn"}')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content="Always fail!",
+                        content='Always fail!',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -2731,19 +2611,17 @@ def test_retry_tool_until_last_attempt():
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name="always_fail", args={}, tool_call_id=IsStr())
-                ],
+                parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=52, output_tokens=2),
-                model_name="test",
+                model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content="Please try again.",
-                        tool_name="always_fail",
+                        content='Please try again.',
+                        tool_name='always_fail',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
@@ -2752,19 +2630,17 @@ def test_retry_tool_until_last_attempt():
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name="always_fail", args={}, tool_call_id=IsStr())
-                ],
+                parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=62, output_tokens=4),
-                model_name="test",
+                model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content="Please try again.",
-                        tool_name="always_fail",
+                        content='Please try again.',
+                        tool_name='always_fail',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
@@ -2773,19 +2649,17 @@ def test_retry_tool_until_last_attempt():
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name="always_fail", args={}, tool_call_id=IsStr())
-                ],
+                parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=72, output_tokens=6),
-                model_name="test",
+                model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name="always_fail",
-                        content="I guess you never learn",
+                        tool_name='always_fail',
+                        content='I guess you never learn',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
@@ -2796,7 +2670,7 @@ def test_retry_tool_until_last_attempt():
             ModelResponse(
                 parts=[TextPart(content='{"always_fail":"I guess you never learn"}')],
                 usage=RequestUsage(input_tokens=77, output_tokens=14),
-                model_name="test",
+                model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
@@ -2811,29 +2685,23 @@ async def test_tool_timeout_triggers_retry():
 
     call_count = 0
 
-    async def model_logic(
-        messages: list[ModelMessage], info: AgentInfo
-    ) -> ModelResponse:
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal call_count
         call_count += 1
         # First call: try the slow tool
         if call_count == 1:
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name="slow_tool", args={}, tool_call_id="call-1")
-                ]
-            )
+            return ModelResponse(parts=[ToolCallPart(tool_name='slow_tool', args={}, tool_call_id='call-1')])
         # After receiving retry, return text
-        return ModelResponse(parts=[TextPart(content="Tool timed out, giving up")])
+        return ModelResponse(parts=[TextPart(content='Tool timed out, giving up')])
 
     agent = Agent(FunctionModel(model_logic))
 
     @agent.tool_plain(timeout=0.1)
     async def slow_tool() -> str:
         await asyncio.sleep(1.0)  # 1 second, but timeout is 0.1s
-        return "done"  # pragma: no cover
+        return 'done'  # pragma: no cover
 
-    result = await agent.run("call slow_tool")
+    result = await agent.run('call slow_tool')
 
     # Check that retry prompt was sent to the model
     retry_parts = [
@@ -2841,11 +2709,11 @@ async def test_tool_timeout_triggers_retry():
         for msg in result.all_messages()
         if isinstance(msg, ModelRequest)
         for part in msg.parts
-        if isinstance(part, RetryPromptPart) and "Timed out" in str(part.content)
+        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
-    assert "Timed out after 0.1 seconds" in retry_parts[0].content
-    assert retry_parts[0].tool_name == "slow_tool"
+    assert 'Timed out after 0.1 seconds' in retry_parts[0].content
+    assert retry_parts[0].tool_name == 'slow_tool'
 
 
 @pytest.mark.anyio
@@ -2858,9 +2726,7 @@ async def test_tool_with_timeout_completes_successfully():
 
     call_count = 0
 
-    async def model_logic(
-        messages: list[ModelMessage], info: AgentInfo
-    ) -> ModelResponse:
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -2868,23 +2734,23 @@ async def test_tool_with_timeout_completes_successfully():
             return ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name="slow_but_allowed_tool",
+                        tool_name='slow_but_allowed_tool',
                         args={},
-                        tool_call_id="call-1",
+                        tool_call_id='call-1',
                     )
                 ]
             )
         # Second call: tool completed successfully, return final response
-        return ModelResponse(parts=[TextPart(content="Tool completed successfully")])
+        return ModelResponse(parts=[TextPart(content='Tool completed successfully')])
 
     agent = Agent(FunctionModel(model_logic))
 
     @agent.tool_plain(timeout=5.0)  # 5s per-tool timeout
     async def slow_but_allowed_tool() -> str:
         await asyncio.sleep(0.2)  # 200ms - within 5s timeout
-        return "completed successfully"
+        return 'completed successfully'
 
-    result = await agent.run("call slow_but_allowed_tool")
+    result = await agent.run('call slow_but_allowed_tool')
 
     # Should NOT have any retry prompts since tool completed within timeout
     retry_parts = [
@@ -2892,10 +2758,10 @@ async def test_tool_with_timeout_completes_successfully():
         for msg in result.all_messages()
         if isinstance(msg, ModelRequest)
         for part in msg.parts
-        if isinstance(part, RetryPromptPart) and "Timed out" in str(part.content)
+        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 0
-    assert "completed successfully" in result.output
+    assert 'completed successfully' in result.output
 
 
 @pytest.mark.anyio
@@ -2908,12 +2774,12 @@ async def test_no_timeout_by_default():
     @agent.tool_plain
     async def normal_tool() -> str:
         await asyncio.sleep(0.1)
-        return "completed"
+        return 'completed'
 
-    result = await agent.run("call normal_tool")
+    result = await agent.run('call normal_tool')
 
     # Should complete normally without timeout
-    assert "completed" in result.output
+    assert 'completed' in result.output
 
 
 @pytest.mark.anyio
@@ -2931,9 +2797,9 @@ async def test_tool_timeout_retry_counts_as_failed():
         call_count += 1
         if call_count < 3:
             await asyncio.sleep(1.0)  # Will timeout
-        return "finally done"
+        return 'finally done'
 
-    await agent.run("call flaky_tool")
+    await agent.run('call flaky_tool')
 
     # Tool should have been called 3 times (initial + 2 retries)
     assert call_count == 3
@@ -2946,41 +2812,33 @@ async def test_tool_timeout_message_format():
 
     call_count = 0
 
-    async def model_logic(
-        messages: list[ModelMessage], info: AgentInfo
-    ) -> ModelResponse:
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name="my_slow_tool", args={}, tool_call_id="call-1"
-                    )
-                ]
-            )
-        return ModelResponse(parts=[TextPart(content="done")])
+            return ModelResponse(parts=[ToolCallPart(tool_name='my_slow_tool', args={}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart(content='done')])
 
     agent = Agent(FunctionModel(model_logic))
 
     @agent.tool_plain(timeout=0.1)
     async def my_slow_tool() -> str:
         await asyncio.sleep(1.0)
-        return "done"  # pragma: no cover
+        return 'done'  # pragma: no cover
 
-    result = await agent.run("call my_slow_tool")
+    result = await agent.run('call my_slow_tool')
 
     retry_parts = [
         part
         for msg in result.all_messages()
         if isinstance(msg, ModelRequest)
         for part in msg.parts
-        if isinstance(part, RetryPromptPart) and "Timed out" in str(part.content)
+        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
     # Check message contains timeout value (tool_name is in the part, not in content)
-    assert "0.1" in retry_parts[0].content
-    assert retry_parts[0].tool_name == "my_slow_tool"
+    assert '0.1' in retry_parts[0].content
+    assert retry_parts[0].tool_name == 'my_slow_tool'
 
 
 def test_tool_timeout_definition():
@@ -2989,10 +2847,10 @@ def test_tool_timeout_definition():
 
     @agent.tool_plain(timeout=30.0)
     def tool_with_timeout() -> str:
-        return "done"  # pragma: no cover
+        return 'done'  # pragma: no cover
 
     # Get tool definition through the toolset
-    tool = agent._function_toolset.tools["tool_with_timeout"]
+    tool = agent._function_toolset.tools['tool_with_timeout']
     assert tool.timeout == 30.0
     assert tool.tool_def.timeout == 30.0
 
@@ -3003,9 +2861,9 @@ def test_tool_timeout_default_none():
 
     @agent.tool_plain
     def tool_without_timeout() -> str:
-        return "done"  # pragma: no cover
+        return 'done'  # pragma: no cover
 
-    tool = agent._function_toolset.tools["tool_without_timeout"]
+    tool = agent._function_toolset.tools['tool_without_timeout']
     assert tool.timeout is None
     assert tool.tool_def.timeout is None
 
@@ -3019,27 +2877,19 @@ async def test_tool_timeout_exceeds_retry_limit():
     from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-    async def model_logic(
-        messages: list[ModelMessage], info: AgentInfo
-    ) -> ModelResponse:
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         # Always try to call the slow tool
-        return ModelResponse(
-            parts=[
-                ToolCallPart(
-                    tool_name="always_slow_tool", args={}, tool_call_id="call-1"
-                )
-            ]
-        )
+        return ModelResponse(parts=[ToolCallPart(tool_name='always_slow_tool', args={}, tool_call_id='call-1')])
 
     agent = Agent(FunctionModel(model_logic), retries=1)  # Only 1 retry allowed
 
     @agent.tool_plain(timeout=0.05)
     async def always_slow_tool() -> str:
         await asyncio.sleep(1.0)  # Always timeout
-        return "done"  # pragma: no cover
+        return 'done'  # pragma: no cover
 
-    with pytest.raises(UnexpectedModelBehavior, match="exceeded max retries"):
-        await agent.run("call always_slow_tool")
+    with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries'):
+        await agent.run('call always_slow_tool')
 
 
 @pytest.mark.anyio
@@ -3049,18 +2899,12 @@ async def test_agent_level_tool_timeout():
 
     call_count = 0
 
-    async def model_logic(
-        messages: list[ModelMessage], info: AgentInfo
-    ) -> ModelResponse:
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name="slow_tool", args={}, tool_call_id="call-1")
-                ]
-            )
-        return ModelResponse(parts=[TextPart(content="done")])
+            return ModelResponse(parts=[ToolCallPart(tool_name='slow_tool', args={}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart(content='done')])
 
     # Set global tool_timeout on Agent
     agent = Agent(FunctionModel(model_logic), tool_timeout=0.1)
@@ -3068,9 +2912,9 @@ async def test_agent_level_tool_timeout():
     @agent.tool_plain
     async def slow_tool() -> str:
         await asyncio.sleep(1.0)  # 1 second, but agent timeout is 0.1s
-        return "done"  # pragma: no cover
+        return 'done'  # pragma: no cover
 
-    result = await agent.run("call slow_tool")
+    result = await agent.run('call slow_tool')
 
     # Check that retry prompt was sent
     retry_parts = [
@@ -3078,10 +2922,10 @@ async def test_agent_level_tool_timeout():
         for msg in result.all_messages()
         if isinstance(msg, ModelRequest)
         for part in msg.parts
-        if isinstance(part, RetryPromptPart) and "Timed out" in str(part.content)
+        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
-    assert "Timed out after 0.1 seconds" in retry_parts[0].content
+    assert 'Timed out after 0.1 seconds' in retry_parts[0].content
 
 
 @pytest.mark.anyio
@@ -3091,20 +2935,12 @@ async def test_per_tool_timeout_overrides_agent_timeout():
 
     call_count = 0
 
-    async def model_logic(
-        messages: list[ModelMessage], info: AgentInfo
-    ) -> ModelResponse:
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name="fast_timeout_tool", args={}, tool_call_id="call-1"
-                    )
-                ]
-            )
-        return ModelResponse(parts=[TextPart(content="done")])
+            return ModelResponse(parts=[ToolCallPart(tool_name='fast_timeout_tool', args={}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart(content='done')])
 
     # Agent has generous 10s timeout, but per-tool timeout is only 0.1s
     agent = Agent(FunctionModel(model_logic), tool_timeout=10.0)
@@ -3112,9 +2948,9 @@ async def test_per_tool_timeout_overrides_agent_timeout():
     @agent.tool_plain(timeout=0.1)  # Per-tool timeout overrides agent timeout
     async def fast_timeout_tool() -> str:
         await asyncio.sleep(1.0)  # 1 second, per-tool timeout is 0.1s
-        return "done"  # pragma: no cover
+        return 'done'  # pragma: no cover
 
-    result = await agent.run("call fast_timeout_tool")
+    result = await agent.run('call fast_timeout_tool')
 
     # Should timeout because per-tool timeout (0.1s) is applied, not agent timeout (10s)
     retry_parts = [
@@ -3122,10 +2958,10 @@ async def test_per_tool_timeout_overrides_agent_timeout():
         for msg in result.all_messages()
         if isinstance(msg, ModelRequest)
         for part in msg.parts
-        if isinstance(part, RetryPromptPart) and "Timed out" in str(part.content)
+        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
-    assert "Timed out after 0.1 seconds" in retry_parts[0].content
+    assert 'Timed out after 0.1 seconds' in retry_parts[0].content
 
 
 def test_agent_tool_timeout_passed_to_toolset():
@@ -3137,7 +2973,7 @@ def test_agent_tool_timeout_passed_to_toolset():
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("is_stream", [True, False])
+@pytest.mark.parametrize('is_stream', [True, False])
 async def test_tool_cancelled_when_agent_cancelled(is_stream: bool):
     """Test that tools are cancelled when agent is cancelled."""
     import asyncio
@@ -3159,10 +2995,10 @@ async def test_tool_cancelled_when_agent_cancelled(is_stream: bool):
 
     async def run_agent() -> None:
         if not is_stream:
-            await agent.run("call tool")
+            await agent.run('call tool')
 
         else:
-            async for _ in agent.run_stream_events("call tool"):
+            async for _ in agent.run_stream_events('call tool'):
                 pass
 
     task = asyncio.create_task(run_agent())
@@ -3179,13 +3015,13 @@ def test_tool_approved_with_metadata():
         if len(messages) == 1:
             return ModelResponse(
                 parts=[
-                    ToolCallPart("my_tool", {"x": 1}, tool_call_id="my_tool"),
+                    ToolCallPart('my_tool', {'x': 1}, tool_call_id='my_tool'),
                 ]
             )
         else:
             return ModelResponse(
                 parts=[
-                    TextPart("Done!"),
+                    TextPart('Done!'),
                 ]
             )
 
@@ -3196,8 +3032,8 @@ def test_tool_approved_with_metadata():
         if not ctx.tool_call_approved:
             raise ApprovalRequired(
                 metadata={
-                    "reason": "High compute cost",
-                    "estimated_time": "5 minutes",
+                    'reason': 'High compute cost',
+                    'estimated_time': '5 minutes',
                 }
             )
         # Capture the tool_call_metadata from context
@@ -3205,22 +3041,22 @@ def test_tool_approved_with_metadata():
         return x * 42
 
     # First run: get approval request
-    result = agent.run_sync("Hello")
+    result = agent.run_sync('Hello')
     messages = result.all_messages()
     assert isinstance(result.output, DeferredToolRequests)
     assert len(result.output.approvals) == 1
 
     # Second run: provide approval with metadata
-    approval_metadata = {"user_id": "user-123", "approved_at": "2025-01-01T00:00:00Z"}
+    approval_metadata = {'user_id': 'user-123', 'approved_at': '2025-01-01T00:00:00Z'}
     result = agent.run_sync(
         message_history=messages,
         deferred_tool_results=DeferredToolResults(
-            approvals={"my_tool": ToolApproved()},
-            metadata={"my_tool": approval_metadata},
+            approvals={'my_tool': ToolApproved()},
+            metadata={'my_tool': approval_metadata},
         ),
     )
 
-    assert result.output == "Done!"
+    assert result.output == 'Done!'
     # Verify the metadata was passed to the tool
     assert len(received_metadata) == 1
     assert received_metadata[0] == approval_metadata
@@ -3234,13 +3070,13 @@ def test_tool_approved_with_metadata_and_override_args():
         if len(messages) == 1:
             return ModelResponse(
                 parts=[
-                    ToolCallPart("my_tool", {"x": 1}, tool_call_id="my_tool"),
+                    ToolCallPart('my_tool', {'x': 1}, tool_call_id='my_tool'),
                 ]
             )
         else:
             return ModelResponse(
                 parts=[
-                    TextPart("Done!"),
+                    TextPart('Done!'),
                 ]
             )
 
@@ -3255,25 +3091,25 @@ def test_tool_approved_with_metadata_and_override_args():
         return x * 42
 
     # First run: get approval request
-    result = agent.run_sync("Hello")
+    result = agent.run_sync('Hello')
     messages = result.all_messages()
     assert isinstance(result.output, DeferredToolRequests)
 
     # Second run: provide approval with both metadata and override_args
-    approval_metadata = {"approver": "admin", "notes": "LGTM"}
+    approval_metadata = {'approver': 'admin', 'notes': 'LGTM'}
     result = agent.run_sync(
         message_history=messages,
         deferred_tool_results=DeferredToolResults(
             approvals={
-                "my_tool": ToolApproved(
-                    override_args={"x": 100},
+                'my_tool': ToolApproved(
+                    override_args={'x': 100},
                 )
             },
-            metadata={"my_tool": approval_metadata},
+            metadata={'my_tool': approval_metadata},
         ),
     )
 
-    assert result.output == "Done!"
+    assert result.output == 'Done!'
     # Verify both metadata and overridden args were received
     assert len(received_data) == 1
     assert received_data[0] == (approval_metadata, 100)
@@ -3287,13 +3123,13 @@ def test_tool_approved_without_metadata():
         if len(messages) == 1:
             return ModelResponse(
                 parts=[
-                    ToolCallPart("my_tool", {"x": 1}, tool_call_id="my_tool"),
+                    ToolCallPart('my_tool', {'x': 1}, tool_call_id='my_tool'),
                 ]
             )
         else:
             return ModelResponse(
                 parts=[
-                    TextPart("Done!"),
+                    TextPart('Done!'),
                 ]
             )
 
@@ -3308,18 +3144,16 @@ def test_tool_approved_without_metadata():
         return x * 42
 
     # First run: get approval request
-    result = agent.run_sync("Hello")
+    result = agent.run_sync('Hello')
     messages = result.all_messages()
 
     # Second run: provide approval without metadata (using ToolApproved() or True)
     result = agent.run_sync(
         message_history=messages,
-        deferred_tool_results=DeferredToolResults(
-            approvals={"my_tool": ToolApproved()}
-        ),
+        deferred_tool_results=DeferredToolResults(approvals={'my_tool': ToolApproved()}),
     )
 
-    assert result.output == "Done!"
+    assert result.output == 'Done!'
     # Verify the metadata is None
     assert len(received_metadata) == 1
     assert received_metadata[0] is None
@@ -3337,7 +3171,7 @@ def test_tool_call_metadata_not_available_for_unapproved_calls():
         received_metadata.append(ctx.tool_call_metadata)
         return x * 42
 
-    result = agent.run_sync("Hello")
+    result = agent.run_sync('Hello')
     assert result.output == snapshot('{"my_tool":0}')
     # For regular tool calls (not via ToolApproved), metadata should be None
     assert len(received_metadata) == 1
