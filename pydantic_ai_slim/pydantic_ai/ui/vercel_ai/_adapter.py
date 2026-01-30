@@ -36,7 +36,7 @@ from ...messages import (
     VideoUrl,
 )
 from ...output import OutputDataT
-from ...tools import AgentDepsT, DeferredToolApprovalResult, DeferredToolResults
+from ...tools import AgentDepsT, DeferredToolApprovalResult, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter, UIEventStream
 from ._event_stream import VercelAIEventStream
 from ._utils import dump_provider_metadata, load_provider_metadata
@@ -122,7 +122,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     if isinstance(part, ToolUIPart | DynamicToolUIPart) and isinstance(
                         part.approval, ToolApprovalResponded
                     ):
-                        approvals[part.tool_call_id] = part.approval.approved
+                        if part.approval.approved:
+                            approvals[part.tool_call_id] = True
+                        elif part.approval.reason:
+                            approvals[part.tool_call_id] = ToolDenied(message=part.approval.reason)
+                        else:
+                            approvals[part.tool_call_id] = False
         return DeferredToolResults(approvals=approvals) if approvals else None
 
     @cached_property
