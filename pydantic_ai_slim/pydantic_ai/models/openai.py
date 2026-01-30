@@ -1264,7 +1264,7 @@ class OpenAIResponsesModel(Model):
         if not response.output:
             raise UnexpectedModelBehavior('CompactedResponse returned with no output items')
         compaction = response.output[-1]
-        return ModelResponse(parts=[], provider_name='openai', provider_details=dict(compaction))
+        return ModelResponse(parts=[], provider_name='openai', provider_details=compaction.model_dump())
 
     async def request(
         self,
