@@ -1456,7 +1456,9 @@ class OpenAIResponsesModel(Model):
     ) -> responses.CompactedResponse | ModelResponse:
         previous_response_id = model_settings.get('openai_previous_response_id')
         if previous_response_id == 'auto':
-            previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
+            previous_response_id, messages = self._get_previous_response_id_and_new_messages(
+                messages, allow_no_new_messages=True
+            )
 
         instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
 
@@ -1723,7 +1725,7 @@ class OpenAIResponsesModel(Model):
         }
 
     def _get_previous_response_id_and_new_messages(
-        self, messages: list[ModelMessage]
+        self, messages: list[ModelMessage], allow_no_new_messages: bool = False
     ) -> tuple[str | None, list[ModelMessage]]:
         # When `openai_previous_response_id` is set to 'auto', the most recent
         # `provider_response_id` from the message history is selected and all
@@ -1739,7 +1741,7 @@ class OpenAIResponsesModel(Model):
             else:
                 trimmed_messages.append(m)
 
-        if previous_response_id and trimmed_messages:
+        if previous_response_id and (allow_no_new_messages or trimmed_messages):
             return previous_response_id, list(reversed(trimmed_messages))
         else:
             return None, messages
