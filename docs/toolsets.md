@@ -286,7 +286,6 @@ print(test_model.last_model_request_parameters.function_tools)
             'type': 'object',
         },
         description='Get the temperature in degrees Celsius',
-        return_schema={'type': 'number'},
     ),
     ToolDefinition(
         name='temperature_fahrenheit',
@@ -297,7 +296,6 @@ print(test_model.last_model_request_parameters.function_tools)
             'type': 'object',
         },
         description='Get the temperature in degrees Fahrenheit',
-        return_schema={'type': 'number'},
     ),
     ToolDefinition(
         name='weather_conditions',
@@ -308,7 +306,6 @@ print(test_model.last_model_request_parameters.function_tools)
             'type': 'object',
         },
         description='Get the current weather conditions',
-        return_schema={'type': 'string'},
     ),
     ToolDefinition(
         name='current_time',
