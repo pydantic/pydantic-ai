@@ -464,9 +464,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
         with set_current_run_context(run_context):
-            async with ctx.deps.model.request_stream(
-                message_history, model_settings, model_request_parameters, run_context
-            ) as streamed_response:
+            async with (
+                ctx.deps.model.get_concurrency_context(),
+                ctx.deps.model.request_stream(
+                    message_history, model_settings, model_request_parameters, run_context
+                ) as streamed_response,
+            ):
                 self._did_stream = True
                 ctx.state.usage.requests += 1
                 agent_stream = result.AgentStream[DepsT, T](
@@ -498,7 +501,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
         with set_current_run_context(run_context):
-            model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
+            async with ctx.deps.model.get_concurrency_context():
+                model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
         ctx.state.usage.requests += 1
 
         return self._finish_handling(ctx, model_response)
