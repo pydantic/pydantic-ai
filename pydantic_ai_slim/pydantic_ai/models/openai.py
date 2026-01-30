@@ -1261,6 +1261,8 @@ class OpenAIResponsesModel(Model):
         if isinstance(response, ModelResponse):
             return response
 
+        if not response.output:
+            raise UnexpectedModelBehavior('CompactedResponse returned with no output items')
         compaction = response.output[-1]
         return ModelResponse(parts=[], provider_name='openai', provider_details=dict(compaction))
 
