@@ -406,7 +406,7 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     for example if you're using a [history processor](../../message-history.md#processing-message-history).
     In that case, you'll want to disable this.
     """
-    
+
     openai_truncation: Literal['disabled', 'auto']
     """The truncation strategy to use for the model response.
 
