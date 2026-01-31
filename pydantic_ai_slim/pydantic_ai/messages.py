@@ -525,8 +525,6 @@ class BinaryContent:
     def from_path(cls, path: PathLike[str]) -> BinaryContent:
         """Create a `BinaryContent` from a path.
 
-        Defaults to 'application/octet-stream' if the media type cannot be inferred.
-
         Raises:
             FileNotFoundError: if the file does not exist.
             PermissionError: if the file cannot be read.
