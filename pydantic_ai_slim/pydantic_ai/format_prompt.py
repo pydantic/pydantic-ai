@@ -3,8 +3,10 @@ from __future__ import annotations as _annotations
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from datetime import date, time, timedelta
+from decimal import Decimal
 from enum import Enum
 from typing import Any, Literal
+from uuid import UUID
 from xml.etree import ElementTree
 
 from pydantic import BaseModel
@@ -28,8 +30,8 @@ def format_as_xml(
     This is useful since LLMs often find it easier to read semi-structured data (e.g. examples) as XML,
     rather than JSON etc.
 
-    Supports: `str`, `bytes`, `bytearray`, `bool`, `int`, `float`, `date`, `datetime`, `time`, `timedelta`, `Enum`,
-    `Mapping`, `Iterable`, `dataclass`, and `BaseModel`.
+    Supports: `str`, `bytes`, `bytearray`, `bool`, `int`, `float`, `Decimal`, `date`, `datetime`, `time`, `timedelta`,
+    `UUID`, `Enum`, `Mapping`, `Iterable`, `dataclass`, and `BaseModel`.
 
     Args:
         obj: Python Object to serialize to XML.
@@ -143,6 +145,10 @@ class _ToXml:
         elif isinstance(value, date | time):
             element.text = value.isoformat()
         elif isinstance(value, timedelta):
+            element.text = str(value)
+        elif isinstance(value, Decimal):
+            element.text = str(value)
+        elif isinstance(value, UUID):
             element.text = str(value)
         else:
             return False
