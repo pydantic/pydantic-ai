@@ -125,7 +125,6 @@ try:
         BetaToolUnionParam,
         BetaToolUseBlock,
         BetaToolUseBlockParam,
-        BetaToolUseBlockParam,
         BetaWebFetchTool20250910Param,
         BetaWebFetchToolResultBlock,
         BetaWebFetchToolResultBlockParam,
@@ -408,9 +407,7 @@ class AnthropicModel(Model):
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._limit_cache_points(system_prompt, anthropic_messages, tools)
         output_format = self._native_output_format(model_request_parameters)
-        output_config = (
-            cast(BetaOutputConfigParam, {'format': output_format}) if output_format is not None else OMIT
-        )
+        output_config = cast(BetaOutputConfigParam, {'format': output_format}) if output_format is not None else OMIT
         betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
         betas.update(builtin_tool_betas)
         container = self._get_container(messages, model_settings)
@@ -499,9 +496,7 @@ class AnthropicModel(Model):
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._limit_cache_points(system_prompt, anthropic_messages, tools)
         output_format = self._native_output_format(model_request_parameters)
-        output_config = (
-            cast(BetaOutputConfigParam, {'format': output_format}) if output_format is not None else OMIT
-        )
+        output_config = cast(BetaOutputConfigParam, {'format': output_format}) if output_format is not None else OMIT
         betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
         betas.update(builtin_tool_betas)
         try:
