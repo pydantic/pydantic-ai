@@ -420,6 +420,62 @@ The `'exhaustive'` strategy ensures all tools are executed even after a final re
 
 For more information of how `end_strategy` works with both function tools and output tools, see the [Output Tool](output.md#parallel-output-tool-calls) docs.
 
+## Automatic JSON Repair
+
+LLMs sometimes produce malformed JSON when calling tools — missing closing braces, trailing commas, single quotes instead of double quotes, and other syntax errors. Pydantic AI can automatically repair these issues using the [`fast-json-repair`](https://pypi.org/project/fast-json-repair/) library.
+
+To enable automatic JSON repair, install with the `json-repair` extra:
+
+```bash
+pip install 'pydantic-ai-slim[json-repair]'
+```
+
+Or with uv:
+
+```bash
+uv add 'pydantic-ai-slim[json-repair]'
+```
+
+Once installed, JSON repair is applied automatically when:
+
+1. **Validation fails** on the original JSON from the model
+2. **Not in streaming/partial mode** — repair is only attempted on final (complete) tool calls to avoid interfering with streaming behavior
+3. **The repair changes the JSON** — if the repaired JSON is identical to the original, the original validation error is re-raised
+
+This works for both [tool arguments](#tool-retries) and [structured outputs](output.md#tool-output).
+
+!!! note "Python 3.11+ only"
+    The `fast-json-repair` package requires Python 3.11 or later.
+
+### Example
+
+Here's an example showing JSON repair in action:
+
+```python {title="json_repair_example.py" test="skip"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-4o')
+
+
+@agent.tool_plain
+def get_user_info(name: str, age: int) -> str:
+    return f'{name} is {age} years old'
+
+
+# Even if the model returns malformed JSON like:
+#   {"name": "Alice", "age": 30   <-- missing closing brace
+# or:
+#   {"name": "Alice", "age": 30,}  <-- trailing comma
+# or:
+#   {'name': 'Alice', 'age': 30}   <-- single quotes
+#
+# Pydantic AI will automatically repair it before validation
+# (when fast-json-repair is installed)
+
+result = agent.run_sync('Get info for Alice who is 30')
+print(result.output)
+```
+
 ## See Also
 
 - [Function Tools](tools.md) - Basic tool concepts and registration
