@@ -5107,6 +5107,7 @@ def test_tool_return_part_binary_content_serialization():
             'file_name': None,
             '_identifier': None,
             'kind': 'binary',
+            'identifier': '14a01a',
         }
     )
 
