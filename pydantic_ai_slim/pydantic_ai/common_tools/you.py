@@ -132,12 +132,12 @@ class YouSearchTool:
             query=query,
             count=self.count if self.count is not None else count,
             offset=self.offset,
-            freshness=self.freshness or freshness,
-            country=self.country or country,
-            language=self.language or language,
-            safesearch=self.safesearch or safesearch,
-            livecrawl=self.livecrawl or livecrawl,
-            livecrawl_formats=self.livecrawl_formats or livecrawl_formats,
+            freshness=self.freshness if self.freshness is not None else freshness,
+            country=self.country if self.country is not None else country,
+            language=self.language if self.language is not None else language,
+            safesearch=self.safesearch if self.safesearch is not None else safesearch,
+            livecrawl=self.livecrawl if self.livecrawl is not None else livecrawl,
+            livecrawl_formats=self.livecrawl_formats if self.livecrawl_formats is not None else livecrawl_formats,
         )
 
         results: list[YouSearchResult] = []
