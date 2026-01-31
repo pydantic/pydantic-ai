@@ -1,0 +1,67 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Tell me about Paris"}]}], "system": [], "inferenceConfig":
+      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "final_result", "inputSchema": {"json": {"properties": {"city": {"type":
+      "string"}, "summary": {"type": "string"}}, "required": ["city", "summary"], "title": "CityInfo", "type": "object"}},
+      "description": "The final response which ends this conversation"}}], "toolChoice": {"tool": {"name": "final_result"}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MGMxNjVkZDctODVhZi00N2IwLWE4YWMtZDk0OWM5MzZhMzA3
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '472'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1704'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 5796
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                city: Paris
+                summary: |-
+                  Paris is the capital and most populous city of France, located in the north-central part of the country along the Seine River. Known as the "City of Light" (La Ville Lumière), Paris is one of the world's most iconic cities, renowned for its art, culture, fashion, gastronomy, and history.
+
+                  Key highlights include:
+                  - Famous landmarks: The Eiffel Tower, Notre-Dame Cathedral, Arc de Triomphe, and Sacré-Cœur
+                  - World-class museums: The Louvre (home to the Mona Lisa), Musée d'Orsay, and Centre Pompidou
+                  - Culture: A global center for art, fashion, and cuisine, with countless cafés, restaurants, and boutiques
+                  - History: Over 2,000 years old, with rich architectural heritage spanning from Roman times to modern era
+                  - Districts: Divided into 20 arrondissements, each with its own character, including the artistic Montmartre, fashionable Marais, and elegant Champs-Élysées
+                  - Population: Approximately 2.2 million in the city proper, over 12 million in the metropolitan area
+
+                  Paris remains one of the most visited cities in the world, attracting millions of tourists annually who come to experience its romantic atmosphere, exceptional cuisine, and unparalleled cultural offerings.
+              name: final_result
+              toolUseId: tooluse_DfmFByjFR5ykvvsjXzbBnw
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 680
+        outputTokens: 350
+        serverToolUsage: {}
+        totalTokens: 1030
+    status:
+      code: 200
+      message: OK
+version: 1
