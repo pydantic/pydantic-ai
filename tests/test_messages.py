@@ -363,9 +363,11 @@ def test_file_url_format_unknown_media_type():
 def test_binary_content_infer_media_type_error():
     # Test when file_name is provided but has unknown extension
     with pytest.raises(ValueError, match='Could not infer media type from file name: test.unknownext123'):
-        BinaryContent(data=b'test', file_name='test.unknownext123')
+        bc = BinaryContent(data=b'test', file_name='test.unknownext123')
+        bc.media_type
     with pytest.raises(ValueError, match='Media type could not be inferred. Please provide a media type or file name.'):
-        BinaryContent(data=b'test')
+        bc = BinaryContent(data=b'test')
+        bc.media_type
 
 
 @pytest.mark.xdist_group(name='url_formats')
@@ -645,8 +647,12 @@ Let's generate an image
 
 And then, call the 'hello_world' tool\
 """)
-    assert response.files == snapshot([BinaryImage(data=b'fake', media_type='image/jpeg', identifier='c053ec')])
-    assert response.images == snapshot([BinaryImage(data=b'fake', media_type='image/jpeg', identifier='c053ec')])
+    assert response.files == snapshot(
+        [BinaryImage(data=b'fake', _media_type='image/jpeg', media_type='image/jpeg', identifier='c053ec')]
+    )
+    assert response.images == snapshot(
+        [BinaryImage(data=b'fake', _media_type='image/jpeg', media_type='image/jpeg', identifier='c053ec')]
+    )
     assert response.tool_calls == snapshot([ToolCallPart(tool_name='hello_world', args={}, tool_call_id='123')])
     assert response.builtin_tool_calls == snapshot(
         [
@@ -783,6 +789,7 @@ def test_binary_content_from_path(tmp_path: Path):
             data=b'\xff\xd8\xff\xe0' + b'0' * 100,
             media_type='image/jpeg',
             file_name='test.jpg',
+            _media_type='image/jpeg',
             _identifier='bc8d49',
         )
     )

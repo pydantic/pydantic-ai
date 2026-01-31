@@ -4,7 +4,7 @@ import base64
 import hashlib
 import os
 from abc import ABC
-from collections.abc import Callable,Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from mimetypes import MimeTypes, knownfiles
@@ -443,6 +443,7 @@ class DocumentUrl(FileUrl):
     config=pydantic.ConfigDict(
         ser_json_bytes='base64',
         val_json_bytes='base64',
+        validate_by_name=True,
     ),
 )
 class BinaryContent:
@@ -456,7 +457,6 @@ class BinaryContent:
 
     _: KW_ONLY
 
-    media_type: AudioMediaType | ImageMediaType | DocumentMediaType | VideoMediaType | str | None = None
     """The media type of the binary data."""
 
     vendor_metadata: dict[str, Any] | None = None
@@ -474,6 +474,10 @@ class BinaryContent:
     _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
         compare=False, default=None
     )
+    _media_type: Annotated[
+        AudioMediaType | ImageMediaType | DocumentMediaType | VideoMediaType | str | None,
+        pydantic.Field(alias='media_type', default=None, exclude=True),
+    ] = field(compare=False, default=None)
 
     kind: Literal['binary'] = 'binary'
     """Type identifier, this is available on all parts as a discriminator."""
@@ -491,11 +495,8 @@ class BinaryContent:
         kind: Literal['binary'] = 'binary',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _identifier: str | None = None,
+        _media_type: str | None = None,
     ) -> None: ...  # pragma: no cover
-
-    def __post_init__(self):
-        if self.media_type is None:
-            self.media_type = self._infer_media_type()
 
     @staticmethod
     def narrow_type(bc: BinaryContent) -> BinaryContent | BinaryImage:
@@ -553,12 +554,17 @@ class BinaryContent:
         """
         return self._identifier or _multi_modal_content_identifier(self.data)
 
-    def _infer_media_type(self) -> str:
+    @pydantic.computed_field
+    @property
+    def media_type(self) -> str:
+        """Return the media type of the binary content."""
+        return self._media_type or self._infer_media_type()
+
+    def _infer_media_type(self) -> AudioMediaType | ImageMediaType | DocumentMediaType | VideoMediaType | str:
         """Infer the media type of the file name."""
         if self.file_name:
             mime_type, _ = _mime_types.guess_type(self.file_name)
             if mime_type is not None:
-                self._media_type = mime_type
                 return mime_type
             else:
                 raise ValueError(f'Could not infer media type from file name: {self.file_name}')
@@ -624,6 +630,7 @@ class BinaryContent:
     config=pydantic.ConfigDict(
         ser_json_bytes='base64',
         val_json_bytes='base64',
+        validate_by_name=True,
     ),
 )
 class BinaryImage(BinaryContent):
@@ -643,10 +650,10 @@ class BinaryImage(BinaryContent):
         kind: Literal['binary'] = 'binary',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _identifier: str | None = None,
+        _media_type: ImageMediaType | str | None = None,
     ) -> None: ...  # pragma: no cover
 
     def __post_init__(self):
-        super().__post_init__()
         if not self.is_image:
             raise ValueError('`BinaryImage` must have a media type that starts with "image/"')
 
