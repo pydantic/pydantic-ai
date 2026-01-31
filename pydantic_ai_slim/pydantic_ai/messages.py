@@ -11,7 +11,7 @@ from datetime import datetime
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, get_args, overload
 from urllib.parse import urlparse
 
 import pydantic
@@ -819,19 +819,86 @@ class BaseToolReturnPart:
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
 
+    def _split_content(self) -> tuple[list[Any], list[MultiModalContent]]:
+        """Split content into non-file and file parts.
+
+        Returns a tuple of (`non_files`, `files`) to ensure both `files` and
+        `content_excluding_files` stay in sync when content structure changes.
+        """
+        multimodal_types = get_args(MultiModalContent)
+        if isinstance(self.content, multimodal_types):
+            return [], [cast(MultiModalContent, self.content)]
+        elif isinstance(self.content, list):
+            non_files: list[Any] = []
+            files: list[MultiModalContent] = []
+            for p in self.content:  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+                if isinstance(p, multimodal_types):
+                    files.append(p)  # pyright: ignore[reportUnknownArgumentType]
+                else:
+                    non_files.append(p)
+            return non_files, files
+        return [self.content], []
+
+    @property
+    def files(self) -> list[MultiModalContent]:
+        """The multimodal file parts from `content`.
+
+        Returns only `MultiModalContent` objects (`ImageUrl`, `AudioUrl`, `DocumentUrl`,
+        `VideoUrl`, `BinaryContent`), filtering out any text/json parts.
+
+        This allows model implementations to handle files separately from data, sending
+        files natively where supported or as separate user messages when needed.
+        """
+        return self._split_content()[1]
+
+    @property
+    def content_excluding_files(self) -> list[Any]:
+        """The text/json data from `content`, excluding multimodal files.
+
+        Returns the data portion of the content with files filtered out as a list.
+        Model implementations should use this alongside `files` to properly
+        separate data from media content.
+        """
+        return self._split_content()[0]
+
+    @property
+    def content_items(self) -> list[Any]:
+        """Return content as a list for iteration.
+
+        If content is already a list, returns it directly. Otherwise wraps single values in a list.
+        This handles the type narrowing for `ToolReturnContent` in one place.
+        """
+        if isinstance(self.content, list):
+            return self.content  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+        return [self.content]
+
     def model_response_str(self) -> str:
-        """Return a string representation of the content for the model."""
-        if isinstance(self.content, str):
-            return self.content
-        else:
-            return tool_return_ta.dump_json(self.content).decode()
+        """Return a string representation of the data content for the model.
+
+        This excludes multimodal files - use `.files` to get those separately.
+        """
+        data = self.content_excluding_files
+        if not data:
+            return ''
+        value = data[0] if len(data) == 1 else data
+        if isinstance(value, str):
+            return value
+        return tool_return_ta.dump_json(value).decode()
 
     def model_response_object(self) -> dict[str, Any]:
-        """Return a dictionary representation of the content, wrapping non-dict types appropriately."""
-        # gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict
-        json_content = tool_return_ta.dump_python(self.content, mode='json')
+        """Return a dictionary representation of the data content, wrapping non-dict types appropriately.
+
+        This excludes multimodal files - use `files` to get those separately.
+        Gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict.
+        """
+        data = self.content_excluding_files
+        if not data:
+            return {}
+        # Unwrap single-item list for cleaner serialization
+        value = data[0] if len(data) == 1 else data
+        json_content = tool_return_ta.dump_python(value, mode='json')
         if isinstance(json_content, dict):
-            return json_content  # type: ignore[reportUnknownReturn]
+            return cast(dict[str, Any], json_content)
         else:
             return {'return_value': json_content}
 
@@ -1457,6 +1524,8 @@ class ModelResponse:
         return result
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        from .models.instrumented import InstrumentedModel
+
         parts: list[_otel_messages.MessagePart] = []
         for part in self.parts:
             if isinstance(part, TextPart):
@@ -1483,8 +1552,6 @@ class ModelResponse:
                 if isinstance(part, BuiltinToolCallPart):
                     call_part['builtin'] = True
                 if settings.include_content and part.args is not None:
-                    from .models.instrumented import InstrumentedModel
-
                     if isinstance(part.args, str):
                         call_part['arguments'] = part.args
                     else:
@@ -1499,8 +1566,6 @@ class ModelResponse:
                     builtin=True,
                 )
                 if settings.include_content and part.content is not None:  # pragma: no branch
-                    from .models.instrumented import InstrumentedModel
-
                     return_part['result'] = InstrumentedModel.serialize_any(part.content)
 
                 parts.append(return_part)

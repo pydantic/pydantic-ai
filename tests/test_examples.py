@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass, field
 from inspect import FrameInfo
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import httpx
 import pytest
@@ -25,7 +25,9 @@ from pydantic_ai import (
     BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    DocumentUrl,
     FilePart,
+    ImageUrl,
     ModelHTTPError,
     ModelMessage,
     ModelResponse,
@@ -568,16 +570,25 @@ tool_responses: dict[tuple[str, str], str] = {
 }
 
 
+def _has_multimodal_content(part: ToolReturnPart, content_type: type) -> bool:
+    """Check if a ToolReturnPart contains multimodal content of the given type."""
+    if isinstance(part.content, content_type):
+        return True
+    if isinstance(part.content, list):
+        return any(isinstance(item, content_type) for item in part.content)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+    return False  # pragma: no cover
+
+
 async def model_logic(  # noqa: C901
     messages: list[ModelMessage], info: AgentInfo
 ) -> ModelResponse:  # pragma: lax no cover
     m = messages[-1].parts[-1]
-    if isinstance(m, UserPromptPart):
-        if isinstance(m.content, list) and m.content[0] == 'This is file d9a13f:':
-            return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
-        elif isinstance(m.content, list) and m.content[0] == 'This is file c6720d:':
-            return ModelResponse(parts=[TextPart('The document contains just the text "Dummy PDF file."')])
-
+    # Handle multimodal tool returns (content directly in ToolReturnPart)
+    if isinstance(m, ToolReturnPart) and m.tool_name == 'get_company_logo' and _has_multimodal_content(m, ImageUrl):
+        return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_document' and _has_multimodal_content(m, DocumentUrl):
+        return ModelResponse(parts=[TextPart('The document contains just the text "Dummy PDF file."')])
+    elif isinstance(m, UserPromptPart):
         assert isinstance(m.content, str)
         if m.content == 'Tell me a joke.' and any(t.name == 'joke_factory' for t in info.function_tools):
             return ModelResponse(
@@ -765,8 +776,7 @@ async def model_logic(  # noqa: C901
         return ModelResponse(
             parts=[ToolCallPart(tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id')]
         )
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_player_name':
-        m.content = cast(str, m.content)
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_player_name' and isinstance(m.content, str):
         if 'Anne' in m.content:
             return ModelResponse(parts=[TextPart("Congratulations Anne, you guessed correctly! You're a winner!")])
         elif 'Yashar' in m.content:
@@ -826,8 +836,8 @@ async def model_logic(  # noqa: C901
         return ModelResponse(parts=[TextPart('The current time is 10:45 PM on April 17, 2025.')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_user':
         return ModelResponse(parts=[TextPart("The user's name is John.")])
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_weather_forecast':
-        return ModelResponse(parts=[TextPart(cast(str, m.content))])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_weather_forecast' and isinstance(m.content, str):
+        return ModelResponse(parts=[TextPart(m.content)])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_company_logo':
         return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_document':
@@ -927,7 +937,12 @@ async def model_logic(  # noqa: C901
                 )
             ],
         )
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'update_file' and 'README.md.bak' in cast(str, m.content):
+    elif (
+        isinstance(m, ToolReturnPart)
+        and m.tool_name == 'update_file'
+        and isinstance(m.content, str)
+        and 'README.md.bak' in m.content
+    ):
         return ModelResponse(
             parts=[
                 TextPart(
@@ -1075,3 +1090,37 @@ def mock_group_by_temporal(aiter: Any, soft_max_interval: float | None) -> Any:
 @dataclass
 class MockCredentials:
     project_id = 'foobar'
+
+
+def test_has_multimodal_content_with_list():
+    """Test _has_multimodal_content helper with list content containing multimodal items."""
+    from datetime import datetime
+
+    # Test with list containing ImageUrl
+    tool_return_with_list = ToolReturnPart(
+        tool_name='get_data_with_image',
+        content=['Some text data', ImageUrl(url='https://example.com/image.png')],
+        tool_call_id='test1',
+        timestamp=datetime.now(),
+    )
+    assert _has_multimodal_content(tool_return_with_list, ImageUrl) is True
+    assert _has_multimodal_content(tool_return_with_list, DocumentUrl) is False
+
+    # Test with list containing DocumentUrl
+    tool_return_with_doc = ToolReturnPart(
+        tool_name='get_doc',
+        content=[{'data': 'value'}, DocumentUrl(url='https://example.com/doc.pdf')],
+        tool_call_id='test2',
+        timestamp=datetime.now(),
+    )
+    assert _has_multimodal_content(tool_return_with_doc, DocumentUrl) is True
+    assert _has_multimodal_content(tool_return_with_doc, ImageUrl) is False
+
+    # Test with empty list
+    tool_return_empty_list = ToolReturnPart(
+        tool_name='get_empty',
+        content=[],
+        tool_call_id='test3',
+        timestamp=datetime.now(),
+    )
+    assert _has_multimodal_content(tool_return_empty_list, ImageUrl) is False

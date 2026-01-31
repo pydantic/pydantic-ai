@@ -1,0 +1,146 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: Use the get_file tool now to retrieve a image file, then describe
+            what you received.
+        role: ROLE_USER
+      model: grok-4-1-fast-non-reasoning
+      tools:
+      - function:
+          name: get_file
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+    raw: !!binary |
+      CloKVgpUVXNlIHRoZSBnZXRfZmlsZSB0b29sIG5vdyB0byByZXRyaWV2ZSBhIGltYWdlIGZpbGUs
+      IHRoZW4gZGVzY3JpYmUgd2hhdCB5b3UgcmVjZWl2ZWQuEAESG2dyb2stNC0xLWZhc3Qtbm9uLXJl
+      YXNvbmluZ4oBUQpPCghnZXRfZmlsZSJDeyJhZGRpdGlvbmFsUHJvcGVydGllcyI6IGZhbHNlLCAi
+      cHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggB
+  response_sample:
+    json:
+      id: 785747e2-5d64-4bac-4433-54da0bd629c0
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_88952285
+            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: get_file
+              arguments: '{}'
+      created: '2026-01-30T16:37:05.701164547Z'
+      model: grok-4-1-fast-non-reasoning
+      system_fingerprint: fp_9bb3d5b553
+      usage:
+        completion_tokens: 15
+        prompt_tokens: 359
+        total_tokens: 374
+        prompt_text_tokens: 359
+        cached_prompt_text_tokens: 358
+      settings:
+        parallel_tool_calls: true
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - function:
+            name: get_file
+            parameters: '{"additionalProperties": false, "properties": {}, "type":
+              "object"}'
+        top_p: 0.95
+    raw: !!binary |
+      CiQ3ODU3NDdlMi01ZDY0LTRiYWMtNDQzMy01NGRhMGJkNjI5YzASKwgEGicQAhojCg1jYWxsXzg4
+      OTUyMjg1EAEYAVIOCghnZXRfZmlsZRICe30qDAixvPPLBhCD2KvOAjIbZ3Jvay00LTEtZmFzdC1u
+      b24tcmVhc29uaW5nOg1mcF85YmIzZDViNTUzShIIDxDnAhj2AiDnAjjmAliA0A9aYxABLTMzMz86
+      AggBQlEKTwoIZ2V0X2ZpbGUiQ3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3Bl
+      cnRpZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In1NMzNzPw==
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: Use the get_file tool now to retrieve a image file, then describe
+            what you received.
+        role: ROLE_USER
+      - content:
+        - text: ''
+        role: ROLE_ASSISTANT
+        tool_calls:
+        - id: call_88952285
+          type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+          status: TOOL_CALL_STATUS_COMPLETED
+          function:
+            name: get_file
+            arguments: '{}'
+      - content:
+        - image_url:
+            image_url: https://www.gstatic.com/webp/gallery3/1.png
+            detail: DETAIL_AUTO
+        role: ROLE_USER
+      - content:
+        - text: File attached
+        role: ROLE_TOOL
+      model: grok-4-1-fast-non-reasoning
+      tools:
+      - function:
+          name: get_file
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+    raw: !!binary |
+      CloKVgpUVXNlIHRoZSBnZXRfZmlsZSB0b29sIG5vdyB0byByZXRyaWV2ZSBhIGltYWdlIGZpbGUs
+      IHRoZW4gZGVzY3JpYmUgd2hhdCB5b3UgcmVjZWl2ZWQuEAEKKwoCCgAQAiIjCg1jYWxsXzg4OTUy
+      Mjg1EAEYAVIOCghnZXRfZmlsZRICe30KNQoxEi8KK2h0dHBzOi8vd3d3LmdzdGF0aWMuY29tL3dl
+      YnAvZ2FsbGVyeTMvMS5wbmcQARABChMKDwoNRmlsZSBhdHRhY2hlZBAFEhtncm9rLTQtMS1mYXN0
+      LW5vbi1yZWFzb25pbmeKAVEKTwoIZ2V0X2ZpbGUiQ3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBm
+      YWxzZSwgInByb3BlcnRpZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In2SAQIIAQ==
+  response_sample:
+    json:
+      id: 258c57a3-112f-8c2f-d907-90f7c2063d79
+      outputs:
+      - finish_reason: REASON_STOP
+        message:
+          content: The image depicts a close-up of a vibrant orange-yellow rose in
+            full bloom, with water droplets glistening on its petals, giving it a
+            fresh, dewy appearance. The background has a blurred, gradient effect
+            in warm tones (greens, oranges, and browns), creating a soft bokeh that
+            emphasizes the flower. The stem and a few green leaves are visible on
+            the right side.
+          role: ROLE_ASSISTANT
+      created: '2026-01-30T16:37:06.672913097Z'
+      model: grok-4-1-fast-non-reasoning
+      system_fingerprint: fp_9bb3d5b553
+      usage:
+        completion_tokens: 77
+        prompt_tokens: 648
+        total_tokens: 725
+        prompt_text_tokens: 392
+        prompt_image_tokens: 256
+        cached_prompt_text_tokens: 647
+      settings:
+        parallel_tool_calls: true
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - function:
+            name: get_file
+            parameters: '{"additionalProperties": false, "properties": {}, "type":
+              "object"}'
+        top_p: 0.95
+    raw: !!binary |
+      CiQyNThjNTdhMy0xMTJmLThjMmYtZDkwNy05MGY3YzIwNjNkNzkS8wIIAxruAgrpAlRoZSBpbWFn
+      ZSBkZXBpY3RzIGEgY2xvc2UtdXAgb2YgYSB2aWJyYW50IG9yYW5nZS15ZWxsb3cgcm9zZSBpbiBm
+      dWxsIGJsb29tLCB3aXRoIHdhdGVyIGRyb3BsZXRzIGdsaXN0ZW5pbmcgb24gaXRzIHBldGFscywg
+      Z2l2aW5nIGl0IGEgZnJlc2gsIGRld3kgYXBwZWFyYW5jZS4gVGhlIGJhY2tncm91bmQgaGFzIGEg
+      Ymx1cnJlZCwgZ3JhZGllbnQgZWZmZWN0IGluIHdhcm0gdG9uZXMgKGdyZWVucywgb3Jhbmdlcywg
+      YW5kIGJyb3ducyksIGNyZWF0aW5nIGEgc29mdCBib2tlaCB0aGF0IGVtcGhhc2l6ZXMgdGhlIGZs
+      b3dlci4gVGhlIHN0ZW0gYW5kIGEgZmV3IGdyZWVuIGxlYXZlcyBhcmUgdmlzaWJsZSBvbiB0aGUg
+      cmlnaHQgc2lkZS4QAioMCLK888sGEMmt78ACMhtncm9rLTQtMS1mYXN0LW5vbi1yZWFzb25pbmc6
+      DWZwXzliYjNkNWI1NTNKFQhNEIgFGNUFIIgDKIACOIcFWJS/SlpjEAEtMzMzPzoCCAFCUQpPCghn
+      ZXRfZmlsZSJDeyJhZGRpdGlvbmFsUHJvcGVydGllcyI6IGZhbHNlLCAicHJvcGVydGllcyI6IHt9
+      LCAidHlwZSI6ICJvYmplY3QifU0zM3M/

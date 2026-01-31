@@ -1535,12 +1535,10 @@ async def test_run_stream_builtin_tool_call():
             {
                 'type': 'tool-output-available',
                 'toolCallId': 'search_1',
-                'output': [
-                    {
-                        'title': '"Hello, World!" program',
-                        'url': 'https://en.wikipedia.org/wiki/%22Hello,_World!%22_program',
-                    }
-                ],
+                'output': {
+                    'title': '"Hello, World!" program',
+                    'url': 'https://en.wikipedia.org/wiki/%22Hello,_World!%22_program',
+                },
                 'providerExecuted': True,
             },
             {'type': 'text-start', 'id': IsStr()},

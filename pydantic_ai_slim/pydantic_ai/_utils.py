@@ -20,6 +20,7 @@ from typing import (
     TypeAlias,
     TypeGuard,
     TypeVar,
+    cast,
     get_args,
     get_origin,
     overload,
@@ -545,3 +546,10 @@ def get_event_loop():
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
     return event_loop
+
+
+def as_dict(obj: Any) -> dict[str, Any] | None:
+    """Cast Any to dict if is dict."""
+    if isinstance(obj, dict):
+        return cast(dict[str, Any], obj)
+    return None

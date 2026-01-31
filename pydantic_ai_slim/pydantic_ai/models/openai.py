@@ -19,7 +19,12 @@ from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, u
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
-from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
+from .._utils import (
+    as_dict as _as_dict,
+    guard_tool_call_id as _guard_tool_call_id,
+    now_utc as _now_utc,
+    number_to_datetime,
+)
 from ..builtin_tools import (
     AbstractBuiltinTool,
     CodeExecutionTool,
@@ -53,8 +58,10 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
     VideoUrl,
+    tool_return_ta,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
@@ -100,7 +107,10 @@ try:
         WebSearchOptionsUserLocationApproximate,
     )
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
+    from openai.types.responses.response_input_file_content_param import ResponseInputFileContentParam
+    from openai.types.responses.response_input_image_content_param import ResponseInputImageContentParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
+    from openai.types.responses.response_input_text_content_param import ResponseInputTextContentParam
     from openai.types.responses.response_reasoning_item_param import (
         Content as ReasoningContent,
         Summary as ReasoningSummary,
@@ -1099,11 +1109,32 @@ class OpenAIChatModel(Model):
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
+                # OpenAI Chat API only supports string content in tool messages
+                # Iterate content directly to preserve order and add file identifiers
+                tool_content_parts: list[str] = []
+                file_content: list[UserContent] = []
+
+                items = list(part.content) if isinstance(part.content, list) else [part.content]  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
+                for item in items:
+                    if isinstance(item, (BinaryContent, ImageUrl, AudioUrl, DocumentUrl, VideoUrl)):
+                        tool_content_parts.append(f'See file {item.identifier}.')
+                        file_content.append(f'This is file {item.identifier}:')
+                        file_content.append(item)
+                    elif isinstance(item, str):
+                        if item:  # Skip empty strings
+                            tool_content_parts.append(item)
+                    else:
+                        tool_content_parts.append(tool_return_ta.dump_json(item).decode())
+
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
                     tool_call_id=_guard_tool_call_id(t=part),
-                    content=part.model_response_str(),
+                    content='\n'.join(tool_content_parts) if tool_content_parts else '',
                 )
+                # Send files as separate user message with identifiers
+                if file_content:
+                    user_prompt = UserPromptPart(content=file_content)
+                    yield await self._map_user_prompt(user_prompt)
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
                     yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
@@ -1166,6 +1197,8 @@ class OpenAIChatModel(Model):
                                 type='file',
                             )
                         )
+                    elif item.is_video:
+                        raise NotImplementedError('VideoUrl is not supported for OpenAI')
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, AudioUrl):
@@ -1210,7 +1243,7 @@ class OpenAIChatModel(Model):
                                 type='file',
                             )
                         )
-                elif isinstance(item, VideoUrl):  # pragma: no cover
+                elif isinstance(item, VideoUrl):
                     raise NotImplementedError('VideoUrl is not supported for OpenAI')
                 elif isinstance(item, CachePoint):
                     # OpenAI doesn't support prompt caching via CachePoint, so we filter it out
@@ -1822,10 +1855,11 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(part, ToolReturnPart):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
+                        output = await self._map_tool_return_output(part)
                         item = FunctionCallOutput(
                             type='function_call_output',
                             call_id=call_id,
-                            output=part.model_response_str(),
+                            output=output,
                         )
                         openai_messages.append(item)
                     elif isinstance(part, RetryPromptPart):
@@ -1983,8 +2017,7 @@ class OpenAIResponsesModel(Model):
 
                     elif isinstance(item, BuiltinToolReturnPart):
                         if should_send_item_id:  # pragma: no branch
-                            content_is_dict = isinstance(item.content, dict)
-                            status = cast(dict[str, Any], item.content).get('status') if content_is_dict else None
+                            status = content.get('status') if (content := _as_dict(item.content)) else None
                             kind_to_item = {
                                 CodeExecutionTool.kind: code_interpreter_item,
                                 WebSearchTool.kind: web_search_item,
@@ -2107,6 +2140,8 @@ class OpenAIResponsesModel(Model):
                         )
                     elif item.is_audio:
                         raise NotImplementedError('Audio as binary content is not supported for OpenAI Responses API.')
+                    elif item.is_video:
+                        raise NotImplementedError('VideoUrl is not supported for OpenAI.')
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, ImageUrl):
@@ -2150,6 +2185,79 @@ class OpenAIResponsesModel(Model):
                 else:
                     assert_never(item)
         return responses.EasyInputMessageParam(role='user', content=content)
+
+    @staticmethod
+    async def _map_tool_return_output(  # noqa: C901
+        part: ToolReturnPart,
+    ) -> str | list[ResponseInputTextContentParam | ResponseInputImageContentParam | ResponseInputFileContentParam]:
+        """Map a `ToolReturnPart` to OpenAI Responses API output format, supporting multimodal content.
+
+        Iterates content directly to preserve order of mixed file/data content.
+        """
+        if not part.files:
+            return part.model_response_str()
+
+        output: list[
+            ResponseInputTextContentParam | ResponseInputImageContentParam | ResponseInputFileContentParam
+        ] = []
+
+        # Iterate content directly to preserve order of mixed file/data content
+        items: list[Any] = list(part.content) if isinstance(part.content, list) else [part.content]  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
+        for item in items:
+            if isinstance(item, BinaryContent):
+                if item.is_image:
+                    detail: Literal['auto', 'low', 'high'] = 'auto'
+                    if metadata := item.vendor_metadata:
+                        detail = cast(Literal['auto', 'low', 'high'], metadata.get('detail', 'auto'))
+                    output.append(
+                        ResponseInputImageContentParam(type='input_image', image_url=item.data_uri, detail=detail)
+                    )
+                elif item.is_document:
+                    output.append(
+                        ResponseInputFileContentParam(
+                            type='input_file',
+                            file_data=item.data_uri,
+                            filename=f'filename.{item.format}',
+                        )
+                    )
+                elif item.is_video:
+                    raise NotImplementedError('VideoUrl is not supported for OpenAI.')
+                else:
+                    raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
+            elif isinstance(item, ImageUrl):
+                detail: Literal['auto', 'low', 'high'] = 'auto'
+                image_url = item.url
+                if metadata := item.vendor_metadata:
+                    detail = cast(Literal['auto', 'low', 'high'], metadata.get('detail', 'auto'))
+                if item.force_download:
+                    downloaded = await download_item(item, data_format='base64_uri', type_format='extension')
+                    image_url = downloaded['data']
+                output.append(ResponseInputImageContentParam(type='input_image', image_url=image_url, detail=detail))
+            elif isinstance(item, (AudioUrl, DocumentUrl)):
+                if item.force_download:
+                    downloaded = await download_item(item, data_format='base64_uri', type_format='extension')
+                    output.append(
+                        ResponseInputFileContentParam(
+                            type='input_file',
+                            file_data=downloaded['data'],
+                            filename=f'filename.{downloaded["data_type"]}',
+                        )
+                    )
+                else:
+                    output.append(ResponseInputFileContentParam(type='input_file', file_url=item.url))
+            elif isinstance(item, VideoUrl):
+                raise NotImplementedError('VideoUrl is not supported for OpenAI.')
+            else:
+                # Data content (str, dict, etc.) - serialize to text
+                if isinstance(item, str):
+                    if item:  # Skip empty strings
+                        output.append(ResponseInputTextContentParam(type='input_text', text=item))
+                else:
+                    output.append(
+                        ResponseInputTextContentParam(type='input_text', text=tool_return_ta.dump_json(item).decode())
+                    )
+
+        return output
 
 
 @dataclass
