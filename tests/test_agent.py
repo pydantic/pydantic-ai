@@ -7648,3 +7648,104 @@ async def test_central_content_filter_with_partial_content():
     # Should NOT raise ContentFilterError
     result = await agent.run('Trigger filter')
     assert result.output == 'Partially generated content...'
+
+
+def test_tool_failed_keeps_tool_available():
+    """Test that ToolFailed with disable=False keeps the tool available."""
+    from pydantic_ai.exceptions import ToolFailed
+
+    call_count = 0
+
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if len(messages) == 1:
+            # First call - model calls the tool
+            return ModelResponse(parts=[ToolCallPart('get_data', {'value': 'first'})])
+        elif len(messages) == 3:
+            # After first failure, model tries again
+            return ModelResponse(parts=[ToolCallPart('get_data', {'value': 'second'})])
+        else:
+            # Final response
+            return ModelResponse(parts=[TextPart('Got the data')])
+
+    agent = Agent(FunctionModel(call_tool))
+
+    @agent.tool_plain
+    def get_data(value: str) -> str:
+        if value == 'first':
+            raise ToolFailed('First attempt failed', disable=False)
+        return f'Success: {value}'
+
+    result = agent.run_sync('Get data')
+    assert result.output == 'Got the data'
+    assert call_count == 3
+
+
+def test_tool_failed_disables_tool():
+    """Test that ToolFailed with disable=True disables the tool."""
+    from pydantic_ai.exceptions import ToolFailed
+
+    call_count = 0
+    tool_names_on_second_call = None
+
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count, tool_names_on_second_call
+        call_count += 1
+        if len(messages) == 1:
+            # First call - model calls the tool
+            assert any(t.name == 'broken_tool' for t in info.function_tools)
+            return ModelResponse(parts=[ToolCallPart('broken_tool', {})])
+        else:
+            # After tool is disabled, verify it's no longer available
+            tool_names_on_second_call = [t.name for t in info.function_tools]
+            return ModelResponse(parts=[TextPart('Continuing without the tool')])
+
+    agent = Agent(FunctionModel(call_tool))
+
+    @agent.tool_plain
+    def broken_tool() -> str:
+        raise ToolFailed('Tool is broken', disable=True)
+
+    result = agent.run_sync('Try the tool')
+    assert result.output == 'Continuing without the tool'
+    assert call_count == 2
+    # Verify the tool was removed from available tools after being disabled
+    assert tool_names_on_second_call is not None
+    assert 'broken_tool' not in tool_names_on_second_call
+
+
+async def test_tool_failed_parallel_execution():
+    """Test ToolFailed allows partial success in parallel tool execution."""
+    from pydantic_ai.exceptions import ToolFailed
+
+    async def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            # Call multiple tools in parallel
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('tool_one', {}),
+                    ToolCallPart('tool_two', {}),
+                    ToolCallPart('tool_three', {}),
+                ]
+            )
+        else:
+            # Model uses successful results
+            return ModelResponse(parts=[TextPart('Got results from successful tools')])
+
+    agent = Agent(FunctionModel(call_tool))
+
+    @agent.tool_plain
+    async def tool_one() -> str:
+        return 'Success from tool one'
+
+    @agent.tool_plain
+    async def tool_two() -> str:
+        raise ToolFailed('Tool two failed', disable=True)
+
+    @agent.tool_plain
+    async def tool_three() -> str:
+        return 'Success from tool three'
+
+    result = await agent.run('Run all tools')
+    assert result.output == 'Got results from successful tools'
