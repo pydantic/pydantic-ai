@@ -441,13 +441,11 @@ async def test_instructions_passed_to_dispatch(monkeypatch: pytest.MonkeyPatch):
 
 def test_html_injection_contains_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that the HTML response contains the injected config script."""
-    import pydantic_ai.ui._web.app as app_module
-
     monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
 
     # Create a minimal test HTML file
     test_html = b'<!DOCTYPE html><html><head></head><body>Test</body></html>'
-    cache_file = tmp_path / f'{app_module._sanitize_version(app_module.DEFAULT_UI_VERSION)}.html'  # pyright: ignore[reportPrivateUsage]
+    cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
     cache_file.write_bytes(test_html)
 
     agent = Agent('test')
@@ -465,13 +463,11 @@ def test_html_injection_contains_config(monkeypatch: pytest.MonkeyPatch, tmp_pat
 
 def test_explicit_base_path_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that explicit base_path parameter overrides auto-detection."""
-    import pydantic_ai.ui._web.app as app_module
-
     monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
 
     # Create a minimal test HTML file
     test_html = b'<!DOCTYPE html><html><head></head><body>Test</body></html>'
-    cache_file = tmp_path / f'{app_module._sanitize_version(app_module.DEFAULT_UI_VERSION)}.html'  # pyright: ignore[reportPrivateUsage]
+    cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
     cache_file.write_bytes(test_html)
 
     agent = Agent('test')
@@ -488,13 +484,11 @@ def test_explicit_base_path_override(monkeypatch: pytest.MonkeyPatch, tmp_path: 
 
 def test_base_path_trailing_slash_normalized(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that trailing slashes in base_path are removed."""
-    import pydantic_ai.ui._web.app as app_module
-
     monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
 
     # Create a minimal test HTML file
     test_html = b'<!DOCTYPE html><html><head></head><body>Test</body></html>'
-    cache_file = tmp_path / f'{app_module._sanitize_version(app_module.DEFAULT_UI_VERSION)}.html'  # pyright: ignore[reportPrivateUsage]
+    cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
     cache_file.write_bytes(test_html)
 
     agent = Agent('test')
