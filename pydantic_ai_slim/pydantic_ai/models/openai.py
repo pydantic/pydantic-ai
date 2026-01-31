@@ -954,22 +954,11 @@ class OpenAIChatModel(Model):
             Returns:
                 An OpenAI `ChatCompletionAssistantMessageParam` object representing the assistant's response.
             """
-            profile = OpenAIModelProfile.from_profile(self._model.profile)
             message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
             # Note: model responses from this model should only have one text item, so the following
             # shouldn't merge multiple texts into one unless you switch models between runs:
             if self.thinkings:
-                field_contents: dict[str, list[str]] = {}
-                if profile.openai_chat_send_back_thinking_parts == 'auto':
-                    field_contents = self.thinkings
-                elif profile.openai_chat_send_back_thinking_parts == 'field':  # pragma: no branch
-                    assert profile.openai_chat_thinking_field is not None
-                    field_contents = {
-                        profile.openai_chat_thinking_field: [
-                            content for content_list in self.thinkings.values() for content in content_list
-                        ]
-                    }
-                for field_name, contents in field_contents.items():
+                for field_name, contents in self.thinkings.items():
                     message_param[field_name] = '\n\n'.join(contents)
             if self.texts:
                 message_param['content'] = '\n\n'.join(self.texts)
