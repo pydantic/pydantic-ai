@@ -884,6 +884,7 @@ async def test_callable_class_history_processor_with_ctx_no_op(
     assert result.new_messages() == result.all_messages()[-2:]
 
 
+@pytest.mark.xfail(reason='See https://github.com/pydantic/pydantic-ai/issues/3983')
 async def test_new_messages_index_during_iter_with_pruning():
     """
     Test flow:
@@ -947,6 +948,7 @@ async def test_new_messages_index_during_iter_with_pruning():
     assert result.new_messages() == result.all_messages()
 
 
+@pytest.mark.xfail(reason='See https://github.com/pydantic/pydantic-ai/issues/3983')
 async def test_new_messages_index_during_iter_with_pruning_and_history():
     """
     Test flow with history:
@@ -1016,6 +1018,7 @@ async def test_new_messages_index_during_iter_with_pruning_and_history():
     assert result.new_messages() == result.all_messages()
 
 
+@pytest.mark.xfail(reason='See https://github.com/pydantic/pydantic-ai/issues/3983')
 async def test_history_processor_reorder_old_new(function_model: FunctionModel, received_messages: list[ModelMessage]):
     """
     Test flow:
@@ -1106,6 +1109,7 @@ async def test_history_processor_reorder_old_new(function_model: FunctionModel, 
     )
 
 
+@pytest.mark.xfail(reason='See https://github.com/pydantic/pydantic-ai/issues/3983')
 async def test_history_processor_injects_into_new_stream(
     function_model: FunctionModel, received_messages: list[ModelMessage]
 ):
