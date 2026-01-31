@@ -763,10 +763,9 @@ class BedrockConverseModel(Model):
                     if not (isinstance(prev_block, dict) and 'cachePoint' in prev_block):
                         last_user_content.insert(last_multimodal_index, {'cachePoint': {'type': 'default'}})
                 elif last_multimodal_index is None:
-                    # No multi-modal content, append cache point at the end (unless last block is already a cache point)
-                    last_block = last_user_content[-1]
-                    if not (isinstance(last_block, dict) and 'cachePoint' in last_block):
-                        last_user_content.append({'cachePoint': {'type': 'default'}})
+                    # No multi-modal content, append cache point at the end.
+                    # Note: _get_last_user_message_content ensures content doesn't already end with a cachePoint.
+                    last_user_content.append({'cachePoint': {'type': 'default'}})
                 # If last_multimodal_index == 0, we can't insert at start, so skip auto-caching for this message
 
         return system_prompt, processed_messages
