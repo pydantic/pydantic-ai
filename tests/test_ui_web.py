@@ -146,15 +146,17 @@ def test_chat_app_configure_endpoint():
     with TestClient(app) as client:
         response = client.get('/api/configure')
         assert response.status_code == 200
-        assert response.json() == snapshot(
-            {
-                'models': [
-                    {'id': 'test:test', 'name': 'Test', 'builtinTools': ['web_search']},
-                    {'id': 'test', 'name': 'Test', 'builtinTools': ['web_search']},
-                ],
-                'builtinTools': [{'id': 'web_search', 'name': 'Web Search'}],
-            }
+        data = response.json()
+        # Check models and builtin_tools match expected structure
+        assert data['models'] == snapshot(
+            [
+                {'id': 'test:test', 'name': 'Test', 'builtinTools': ['web_search']},
+                {'id': 'test', 'name': 'Test', 'builtinTools': ['web_search']},
+            ]
         )
+        assert data['builtinTools'] == snapshot([{'id': 'web_search', 'name': 'Web Search'}])
+        # basePath is now included in response (auto-detected from scope)
+        assert 'basePath' in data
 
 
 def test_chat_app_configure_endpoint_empty():
@@ -165,9 +167,11 @@ def test_chat_app_configure_endpoint_empty():
     with TestClient(app) as client:
         response = client.get('/api/configure')
         assert response.status_code == 200
-        assert response.json() == snapshot(
-            {'models': [{'id': 'test:test', 'name': 'Test', 'builtinTools': []}], 'builtinTools': []}
-        )
+        data = response.json()
+        assert data['models'] == snapshot([{'id': 'test:test', 'name': 'Test', 'builtinTools': []}])
+        assert data['builtinTools'] == snapshot([])
+        # basePath is now included in response
+        assert 'basePath' in data
 
 
 @pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')
@@ -509,3 +513,135 @@ async def test_instructions_passed_to_dispatch(monkeypatch: pytest.MonkeyPatch):
     mock_dispatch.assert_called_once()
     call_kwargs = mock_dispatch.call_args.kwargs
     assert call_kwargs['instructions'] == 'Always respond in Spanish'
+
+
+def test_html_injection_contains_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Test that the HTML response contains the injected config script."""
+    import pydantic_ai.ui._web.app as app_module
+
+    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+
+    # Create a minimal test HTML file
+    test_html = b'<!DOCTYPE html><html><head></head><body>Test</body></html>'
+    cache_file = tmp_path / f'{app_module._sanitize_version(app_module.DEFAULT_UI_VERSION)}.html'  # pyright: ignore[reportPrivateUsage]
+    cache_file.write_bytes(test_html)
+
+    agent = Agent('test')
+    app = create_web_app(agent)
+
+    with TestClient(app) as client:
+        response = client.get('/')
+        assert response.status_code == 200
+        content = response.text
+
+        # Check that the config script is injected
+        assert 'window.__PYDANTIC_AI_CONFIG__' in content
+        assert '"basePath": ""' in content  # Default empty base path (JSON format with space)
+
+
+def test_explicit_base_path_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Test that explicit base_path parameter overrides auto-detection."""
+    import pydantic_ai.ui._web.app as app_module
+
+    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+
+    # Create a minimal test HTML file
+    test_html = b'<!DOCTYPE html><html><head></head><body>Test</body></html>'
+    cache_file = tmp_path / f'{app_module._sanitize_version(app_module.DEFAULT_UI_VERSION)}.html'  # pyright: ignore[reportPrivateUsage]
+    cache_file.write_bytes(test_html)
+
+    agent = Agent('test')
+    app = create_web_app(agent, base_path='/my-custom-path')
+
+    with TestClient(app) as client:
+        response = client.get('/')
+        assert response.status_code == 200
+        content = response.text
+
+        # Check that the explicit base path is used (JSON format with space)
+        assert '"basePath": "/my-custom-path"' in content
+
+
+def test_base_path_trailing_slash_normalized(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Test that trailing slashes in base_path are removed."""
+    import pydantic_ai.ui._web.app as app_module
+
+    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+
+    # Create a minimal test HTML file
+    test_html = b'<!DOCTYPE html><html><head></head><body>Test</body></html>'
+    cache_file = tmp_path / f'{app_module._sanitize_version(app_module.DEFAULT_UI_VERSION)}.html'  # pyright: ignore[reportPrivateUsage]
+    cache_file.write_bytes(test_html)
+
+    agent = Agent('test')
+    app = create_web_app(agent, base_path='/my-path/')
+
+    with TestClient(app) as client:
+        response = client.get('/')
+        assert response.status_code == 200
+        content = response.text
+
+        # Check that trailing slash is removed (JSON format with space)
+        assert '"basePath": "/my-path"' in content
+        assert '"/my-path/"' not in content
+
+
+def test_configure_returns_base_path():
+    """Test that /api/configure endpoint returns base_path."""
+    agent = Agent('test')
+    app = create_web_app(agent, base_path='/my-agent')
+
+    with TestClient(app) as client:
+        response = client.get('/api/configure')
+        assert response.status_code == 200
+        data = response.json()
+        assert 'basePath' in data
+        assert data['basePath'] == '/my-agent'
+
+
+def test_configure_returns_empty_base_path_with_explicit():
+    """Test that /api/configure returns empty base_path when explicitly set to empty."""
+    agent = Agent('test')
+    # Explicitly set base_path to empty string to override auto-detection
+    app = create_web_app(agent, base_path='')
+
+    with TestClient(app) as client:
+        response = client.get('/api/configure')
+        assert response.status_code == 200
+        data = response.json()
+        assert 'basePath' in data
+        assert data['basePath'] == ''
+
+
+def test_agent_to_web_with_base_path():
+    """Test Agent.to_web() accepts base_path parameter."""
+    agent = Agent('test')
+    app = agent.to_web(base_path='/my-agent')
+
+    assert isinstance(app, Starlette)
+
+
+def test_inject_config_into_html():
+    """Test the _inject_config_into_html helper function."""
+    from pydantic_ai.ui._web.app import _inject_config_into_html  # pyright: ignore[reportPrivateUsage]
+
+    html = b'<!DOCTYPE html><html><head><title>Test</title></head><body>Content</body></html>'
+    result = _inject_config_into_html(html, '/my-path')
+
+    result_str = result.decode('utf-8')
+    # Check the config is injected (JSON format with space after colon)
+    assert 'window.__PYDANTIC_AI_CONFIG__' in result_str
+    assert '"basePath": "/my-path"' in result_str
+    # Verify it's inserted after <head>
+    assert result_str.index('window.__PYDANTIC_AI_CONFIG__') < result_str.index('<title>')
+
+
+def test_inject_config_empty_base_path():
+    """Test that empty base_path is properly injected."""
+    from pydantic_ai.ui._web.app import _inject_config_into_html  # pyright: ignore[reportPrivateUsage]
+
+    html = b'<html><head></head><body></body></html>'
+    result = _inject_config_into_html(html, '')
+
+    result_str = result.decode('utf-8')
+    assert '"basePath": ""' in result_str

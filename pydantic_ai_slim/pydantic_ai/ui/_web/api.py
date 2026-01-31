@@ -43,6 +43,8 @@ class ConfigureFrontend(BaseModel, alias_generator=to_camel, populate_by_name=Tr
 
     models: list[ModelInfo]
     builtin_tools: list[BuiltinToolInfo]
+    base_path: str = ''
+    """Base path for API calls when app is mounted at a subpath."""
 
 
 class ChatRequestExtra(BaseModel, extra='ignore', alias_generator=to_camel):
@@ -83,6 +85,7 @@ def create_api_app(
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,
+    base_path: str | None = None,
 ) -> Starlette:
     """Create API app for the web chat UI.
 
@@ -97,6 +100,7 @@ def create_api_app(
         deps: Optional dependencies to use for all requests.
         model_settings: Optional settings to use for all model requests.
         instructions: Optional extra instructions to pass to each agent run.
+        base_path: Optional base path for API calls when the app is mounted at a subpath.
 
     Returns:
         A Starlette application with the API endpoints.
@@ -140,9 +144,17 @@ def create_api_app(
 
     async def configure_frontend(request: Request) -> Response:
         """Endpoint to configure the frontend with available models and tools."""
+        # Determine effective base path: explicit > auto-detect > empty
+        effective_base_path = base_path
+        if effective_base_path is None:
+            effective_base_path = request.scope.get('root_path', '')
+        # Normalize: remove trailing slash
+        effective_base_path = effective_base_path.rstrip('/') if effective_base_path else ''
+
         config = ConfigureFrontend(
             models=model_infos,
             builtin_tools=[BuiltinToolInfo(id=tool.unique_id, name=tool.label) for tool in ui_builtin_tools],
+            base_path=effective_base_path,
         )
         return JSONResponse(config.model_dump(by_alias=True))
 
