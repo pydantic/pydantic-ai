@@ -68,7 +68,11 @@ async def test_auto_output_json_schema():
                 {'type': 'boolean'},
                 {
                     'properties': {
-                        'a': {'items': {'$ref': '#/$defs/Bar'}, 'title': 'A', 'type': 'array'},
+                        'a': {
+                            'items': {'$ref': '#/$defs/Bar'},
+                            'title': 'A',
+                            'type': 'array',
+                        },
                         'b': {'title': 'B', 'type': 'integer'},
                     },
                     'required': ['a', 'b'],
@@ -108,7 +112,11 @@ async def test_tool_output_json_schema():
                 {'type': 'boolean'},
                 {
                     'properties': {
-                        'a': {'items': {'$ref': '#/$defs/Bar'}, 'title': 'A', 'type': 'array'},
+                        'a': {
+                            'items': {'$ref': '#/$defs/Bar'},
+                            'title': 'A',
+                            'type': 'array',
+                        },
                         'b': {'title': 'B', 'type': 'integer'},
                     },
                     'required': ['a', 'b'],
@@ -152,7 +160,11 @@ async def test_native_output_json_schema():
                 {'type': 'boolean'},
                 {
                     'properties': {
-                        'a': {'items': {'$ref': '#/$defs/Bar'}, 'title': 'A', 'type': 'array'},
+                        'a': {
+                            'items': {'$ref': '#/$defs/Bar'},
+                            'title': 'A',
+                            'type': 'array',
+                        },
                         'b': {'title': 'B', 'type': 'integer'},
                     },
                     'required': ['a', 'b'],
@@ -189,7 +201,11 @@ async def test_prompted_output_json_schema():
                 {'type': 'boolean'},
                 {
                     'properties': {
-                        'a': {'items': {'$ref': '#/$defs/Bar'}, 'title': 'A', 'type': 'array'},
+                        'a': {
+                            'items': {'$ref': '#/$defs/Bar'},
+                            'title': 'A',
+                            'type': 'array',
+                        },
                         'b': {'title': 'B', 'type': 'integer'},
                     },
                     'required': ['a', 'b'],
@@ -242,10 +258,25 @@ async def test_image_output_json_schema():
                 'media_type': {
                     'anyOf': [
                         {
-                            'enum': ['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac'],
+                            'enum': [
+                                'audio/wav',
+                                'audio/mpeg',
+                                'audio/ogg',
+                                'audio/flac',
+                                'audio/aiff',
+                                'audio/aac',
+                            ],
                             'type': 'string',
                         },
-                        {'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], 'type': 'string'},
+                        {
+                            'enum': [
+                                'image/jpeg',
+                                'image/png',
+                                'image/gif',
+                                'image/webp',
+                            ],
+                            'type': 'string',
+                        },
                         {
                             'enum': [
                                 'application/pdf',
@@ -265,11 +296,19 @@ async def test_image_output_json_schema():
                     'title': 'Media Type',
                 },
                 'vendor_metadata': {
-                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                    'anyOf': [
+                        {'additionalProperties': True, 'type': 'object'},
+                        {'type': 'null'},
+                    ],
                     'default': None,
                     'title': 'Vendor Metadata',
                 },
-                'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
+                'kind': {
+                    'const': 'binary',
+                    'default': 'binary',
+                    'title': 'Kind',
+                    'type': 'string',
+                },
                 'identifier': {
                     'description': """\
 Identifier for the binary content, such as a unique ID.
@@ -305,7 +344,11 @@ distinguish multiple files.\
                 {
                     'description': "Binary content that's guaranteed to be an image.",
                     'properties': {
-                        'data': {'format': 'base64url', 'title': 'Data', 'type': 'string'},
+                        'data': {
+                            'format': 'base64url',
+                            'title': 'Data',
+                            'type': 'string',
+                        },
                         'media_type': {
                             'anyOf': [
                                 {
@@ -319,7 +362,15 @@ distinguish multiple files.\
                                     ],
                                     'type': 'string',
                                 },
-                                {'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], 'type': 'string'},
+                                {
+                                    'enum': [
+                                        'image/jpeg',
+                                        'image/png',
+                                        'image/gif',
+                                        'image/webp',
+                                    ],
+                                    'type': 'string',
+                                },
                                 {
                                     'enum': [
                                         'application/pdf',
@@ -339,11 +390,19 @@ distinguish multiple files.\
                             'title': 'Media Type',
                         },
                         'vendor_metadata': {
-                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'anyOf': [
+                                {'additionalProperties': True, 'type': 'object'},
+                                {'type': 'null'},
+                            ],
                             'default': None,
                             'title': 'Vendor Metadata',
                         },
-                        'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
+                        'kind': {
+                            'const': 'binary',
+                            'default': 'binary',
+                            'title': 'Kind',
+                            'type': 'string',
+                        },
                         'identifier': {
                             'description': """\
 Identifier for the binary content, such as a unique ID.
@@ -387,10 +446,21 @@ async def test_deferred_output_json_schema():
                 {'type': 'string'},
                 {
                     'properties': {
-                        'calls': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Calls', 'type': 'array'},
-                        'approvals': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Approvals', 'type': 'array'},
+                        'calls': {
+                            'items': {'$ref': '#/$defs/ToolCallPart'},
+                            'title': 'Calls',
+                            'type': 'array',
+                        },
+                        'approvals': {
+                            'items': {'$ref': '#/$defs/ToolCallPart'},
+                            'title': 'Approvals',
+                            'type': 'array',
+                        },
                         'metadata': {
-                            'additionalProperties': {'additionalProperties': True, 'type': 'object'},
+                            'additionalProperties': {
+                                'additionalProperties': True,
+                                'type': 'object',
+                            },
                             'title': 'Metadata',
                             'type': 'object',
                         },
@@ -414,14 +484,21 @@ async def test_deferred_output_json_schema():
                             'title': 'Args',
                         },
                         'tool_call_id': {'title': 'Tool Call Id', 'type': 'string'},
-                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Id'},
+                        'id': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Id',
+                        },
                         'provider_name': {
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Provider Name',
                         },
                         'provider_details': {
-                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'anyOf': [
+                                {'additionalProperties': True, 'type': 'object'},
+                                {'type': 'null'},
+                            ],
                             'default': None,
                             'title': 'Provider Details',
                         },
@@ -448,7 +525,11 @@ async def test_deferred_output_json_schema():
                 {
                     'description': "Binary content that's guaranteed to be an image.",
                     'properties': {
-                        'data': {'format': 'base64url', 'title': 'Data', 'type': 'string'},
+                        'data': {
+                            'format': 'base64url',
+                            'title': 'Data',
+                            'type': 'string',
+                        },
                         'media_type': {
                             'anyOf': [
                                 {
@@ -462,7 +543,15 @@ async def test_deferred_output_json_schema():
                                     ],
                                     'type': 'string',
                                 },
-                                {'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], 'type': 'string'},
+                                {
+                                    'enum': [
+                                        'image/jpeg',
+                                        'image/png',
+                                        'image/gif',
+                                        'image/webp',
+                                    ],
+                                    'type': 'string',
+                                },
                                 {
                                     'enum': [
                                         'application/pdf',
@@ -482,11 +571,19 @@ async def test_deferred_output_json_schema():
                             'title': 'Media Type',
                         },
                         'vendor_metadata': {
-                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'anyOf': [
+                                {'additionalProperties': True, 'type': 'object'},
+                                {'type': 'null'},
+                            ],
                             'default': None,
                             'title': 'Vendor Metadata',
                         },
-                        'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
+                        'kind': {
+                            'const': 'binary',
+                            'default': 'binary',
+                            'title': 'Kind',
+                            'type': 'string',
+                        },
                         'identifier': {
                             'description': """\
 Identifier for the binary content, such as a unique ID.
@@ -512,10 +609,21 @@ distinguish multiple files.\
                 },
                 {
                     'properties': {
-                        'calls': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Calls', 'type': 'array'},
-                        'approvals': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Approvals', 'type': 'array'},
+                        'calls': {
+                            'items': {'$ref': '#/$defs/ToolCallPart'},
+                            'title': 'Calls',
+                            'type': 'array',
+                        },
+                        'approvals': {
+                            'items': {'$ref': '#/$defs/ToolCallPart'},
+                            'title': 'Approvals',
+                            'type': 'array',
+                        },
                         'metadata': {
-                            'additionalProperties': {'additionalProperties': True, 'type': 'object'},
+                            'additionalProperties': {
+                                'additionalProperties': True,
+                                'type': 'object',
+                            },
                             'title': 'Metadata',
                             'type': 'object',
                         },
@@ -539,14 +647,21 @@ distinguish multiple files.\
                             'title': 'Args',
                         },
                         'tool_call_id': {'title': 'Tool Call Id', 'type': 'string'},
-                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Id'},
+                        'id': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Id',
+                        },
                         'provider_name': {
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Provider Name',
                         },
                         'provider_details': {
-                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'anyOf': [
+                                {'additionalProperties': True, 'type': 'object'},
+                                {'type': 'null'},
+                            ],
                             'default': None,
                             'title': 'Provider Details',
                         },

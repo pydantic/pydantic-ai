@@ -31,11 +31,22 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
 )
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    UnexpectedModelBehavior,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
+from pydantic_ai.tools import (
+    DeferredToolRequests,
+    DeferredToolResults,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+)
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsStr
@@ -388,7 +399,11 @@ def test_only_returns_type():
 <description>The result as a string.</description>
 </returns>\
 """,
-            'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+            'parameters_json_schema': {
+                'additionalProperties': False,
+                'properties': {},
+                'type': 'object',
+            },
             'outer_typed_dict_key': None,
             'strict': None,
             'kind': 'function',
@@ -414,7 +429,11 @@ def test_docstring_unknown():
         {
             'name': 'unknown_docstring',
             'description': 'Unknown style docstring.',
-            'parameters_json_schema': {'additionalProperties': {'type': 'integer'}, 'properties': {}, 'type': 'object'},
+            'parameters_json_schema': {
+                'additionalProperties': {'type': 'integer'},
+                'properties': {},
+                'type': 'object',
+            },
             'outer_typed_dict_key': None,
             'strict': None,
             'kind': 'function',
@@ -584,7 +603,12 @@ def ctx_tool(ctx: RunContext[int], x: int) -> int:
 
 # pyright: reportPrivateUsage=false
 def test_init_tool_ctx():
-    agent = Agent('test', tools=[Tool(ctx_tool, takes_ctx=True, max_retries=3)], deps_type=int, retries=7)
+    agent = Agent(
+        'test',
+        tools=[Tool(ctx_tool, takes_ctx=True, max_retries=3)],
+        deps_type=int,
+        retries=7,
+    )
     result = agent.run_sync('foobar', deps=5)
     assert result.output == snapshot('{"ctx_tool":5}')
     assert agent._function_toolset.tools['ctx_tool'].takes_ctx is True
@@ -659,9 +683,12 @@ def test_tool_return_conflict():
             "The agent defines a tool whose name conflicts with existing tool from the agent's output tools: 'ctx_tool'. Rename the tool or wrap the toolset in a `PrefixedToolset` to avoid name conflicts."
         ),
     ):
-        Agent('test', tools=[ctx_tool], deps_type=int, output_type=ToolOutput(int, name='ctx_tool')).run_sync(
-            '', deps=0
-        )
+        Agent(
+            'test',
+            tools=[ctx_tool],
+            deps_type=int,
+            output_type=ToolOutput(int, name='ctx_tool'),
+        ).run_sync('', deps=0)
 
 
 def test_tool_name_conflict_hint():
@@ -693,7 +720,10 @@ def test_init_ctx_tool_invalid():
 
 
 def test_init_plain_tool_invalid():
-    with pytest.raises(UserError, match='RunContext annotations can only be used with tools that take context'):
+    with pytest.raises(
+        UserError,
+        match='RunContext annotations can only be used with tools that take context',
+    ):
         Tool(ctx_tool, takes_ctx=False)
 
 
@@ -740,7 +770,10 @@ def test_return_bytes_invalid():
     def return_pydantic_model() -> bytes:
         return b'\00 \x81'
 
-    with pytest.raises(PydanticSerializationError, match='invalid utf-8 sequence of 1 bytes from index 2'):
+    with pytest.raises(
+        PydanticSerializationError,
+        match='invalid utf-8 sequence of 1 bytes from index 2',
+    ):
         agent.run_sync('')
 
 
@@ -908,7 +941,11 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'description': "A tool that documents what it returns but doesn't have a return annotation in the docstring.",
             'name': 'tool_without_return_annotation_in_docstring',
             'outer_typed_dict_key': None,
-            'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+            'parameters_json_schema': {
+                'additionalProperties': False,
+                'properties': {},
+                'type': 'object',
+            },
             'strict': None,
             'kind': 'function',
             'sequential': False,
@@ -978,7 +1015,10 @@ def test_json_schema_required_parameters():
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
                     'additionalProperties': False,
-                    'properties': {'a': {'type': 'integer'}, 'b': {'default': 1, 'type': 'integer'}},
+                    'properties': {
+                        'a': {'type': 'integer'},
+                        'b': {'default': 1, 'type': 'integer'},
+                    },
                     'required': ['a'],
                     'type': 'object',
                 },
@@ -994,7 +1034,10 @@ def test_json_schema_required_parameters():
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
                     'additionalProperties': False,
-                    'properties': {'a': {'default': 1, 'type': 'integer'}, 'b': {'type': 'integer'}},
+                    'properties': {
+                        'a': {'default': 1, 'type': 'integer'},
+                        'b': {'type': 'integer'},
+                    },
                     'required': ['b'],
                     'type': 'object',
                 },
@@ -1068,7 +1111,10 @@ def test_schema_generator():
 
     agent = Agent(FunctionModel(get_json_schema))
 
-    def my_tool(x: Annotated[str | None, WithJsonSchema({'type': 'string'})] = None, **kwargs: Any):
+    def my_tool(
+        x: Annotated[str | None, WithJsonSchema({'type': 'string'})] = None,
+        **kwargs: Any,
+    ):
         return x  # pragma: no cover
 
     agent.tool_plain(name='my_tool_1')(my_tool)
@@ -1195,7 +1241,12 @@ def test_function_tool_consistent_with_schema():
         },
         'required': ['one', 'two'],
     }
-    pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
+    pydantic_tool = Tool.from_schema(
+        function,
+        name='foobar',
+        description='does foobar stuff',
+        json_schema=json_schema,
+    )
 
     agent = Agent('test', tools=[pydantic_tool], retries=0)
     result = agent.run_sync('foobar')
@@ -1220,7 +1271,11 @@ def test_function_tool_from_schema_with_ctx():
         'required': ['one', 'two'],
     }
     pydantic_tool = Tool[str].from_schema(
-        function, name='foobar', description='does foobar stuff', json_schema=json_schema, takes_ctx=True
+        function,
+        name='foobar',
+        description='does foobar stuff',
+        json_schema=json_schema,
+        takes_ctx=True,
     )
 
     assert pydantic_tool.takes_ctx is True
@@ -1246,7 +1301,12 @@ def test_function_tool_inconsistent_with_schema():
         },
         'required': ['one', 'two'],
     }
-    pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
+    pydantic_tool = Tool.from_schema(
+        function,
+        name='foobar',
+        description='does foobar stuff',
+        json_schema=json_schema,
+    )
 
     agent = Agent('test', tools=[pydantic_tool], retries=0)
     with pytest.raises(TypeError, match=".* got an unexpected keyword argument 'one'"):
@@ -1271,7 +1331,12 @@ def test_async_function_tool_consistent_with_schema():
         },
         'required': ['one', 'two'],
     }
-    pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
+    pydantic_tool = Tool.from_schema(
+        function,
+        name='foobar',
+        description='does foobar stuff',
+        json_schema=json_schema,
+    )
 
     agent = Agent('test', tools=[pydantic_tool], retries=0)
     result = agent.run_sync('foobar')
@@ -1312,7 +1377,10 @@ def test_tool_retries():
         call_last_attempt.append(ctx.last_attempt)
         raise ModelRetry('Please try again.')
 
-    with pytest.raises(UnexpectedModelBehavior, match="Tool 'infinite_retry_tool' exceeded max retries count of 5"):
+    with pytest.raises(
+        UnexpectedModelBehavior,
+        match="Tool 'infinite_retry_tool' exceeded max retries count of 5",
+    ):
         agent.run_sync('Begin infinite retry loop!')
 
     assert prepare_tools_retries == snapshot([0, 1, 2, 3, 4, 5])
@@ -1480,7 +1548,12 @@ def test_call_deferred_with_metadata():
     assert result.output == snapshot(
         DeferredToolRequests(
             calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
-            metadata={'pyd_ai_tool_call_id__my_tool': {'task_id': 'task-123', 'estimated_cost': 25.5}},
+            metadata={
+                'pyd_ai_tool_call_id__my_tool': {
+                    'task_id': 'task-123',
+                    'estimated_cost': 25.5,
+                }
+            },
         )
     )
 
@@ -1520,7 +1593,13 @@ def test_approval_required_with_metadata():
     assert result.output == snapshot(
         DeferredToolRequests(
             approvals=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id=IsStr())],
-            metadata={'my_tool': {'reason': 'High compute cost', 'estimated_time': '5 minutes', 'cost_usd': 100.0}},
+            metadata={
+                'my_tool': {
+                    'reason': 'High compute cost',
+                    'estimated_time': '5 minutes',
+                    'cost_usd': 100.0,
+                }
+            },
         )
     )
 
@@ -1631,7 +1710,10 @@ def test_mixed_deferred_tools_with_metadata():
 
     # Check metadata
     assert result.output.metadata['call_a'] == {'type': 'external', 'priority': 'high'}
-    assert result.output.metadata['call_b'] == {'reason': 'Needs approval', 'level': 'manager'}
+    assert result.output.metadata['call_b'] == {
+        'reason': 'Needs approval',
+        'level': 'manager',
+    }
     assert result.output.metadata.get('call_c', {}) == {}
 
     # Continue with results for all three tools
@@ -1655,11 +1737,19 @@ def test_deferred_tool_with_output_type():
             ToolDefinition(
                 name='my_tool',
                 description='',
-                parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
+                parameters_json_schema={
+                    'type': 'object',
+                    'properties': {'x': {'type': 'integer'}},
+                    'required': ['x'],
+                },
             ),
         ]
     )
-    agent = Agent(TestModel(call_tools=[]), output_type=[MyModel, DeferredToolRequests], toolsets=[deferred_toolset])
+    agent = Agent(
+        TestModel(call_tools=[]),
+        output_type=[MyModel, DeferredToolRequests],
+        toolsets=[deferred_toolset],
+    )
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot(MyModel(foo='a'))
@@ -1674,7 +1764,11 @@ def test_deferred_tool_with_tool_output_type():
             ToolDefinition(
                 name='my_tool',
                 description='',
-                parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
+                parameters_json_schema={
+                    'type': 'object',
+                    'properties': {'x': {'type': 'integer'}},
+                    'required': ['x'],
+                },
             ),
         ]
     )
@@ -1694,7 +1788,11 @@ async def test_deferred_tool_without_output_type():
             ToolDefinition(
                 name='my_tool',
                 description='',
-                parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
+                parameters_json_schema={
+                    'type': 'object',
+                    'properties': {'x': {'type': 'integer'}},
+                    'required': ['x'],
+                },
             ),
         ]
     )
@@ -1711,7 +1809,10 @@ async def test_deferred_tool_without_output_type():
 
 
 def test_output_type_deferred_tool_requests_by_itself():
-    with pytest.raises(UserError, match='At least one output type must be provided other than `DeferredToolRequests`.'):
+    with pytest.raises(
+        UserError,
+        match='At least one output type must be provided other than `DeferredToolRequests`.',
+    ):
         Agent(TestModel(), output_type=DeferredToolRequests)
 
 
@@ -1728,7 +1829,11 @@ def test_parallel_tool_return_with_deferred():
             return ModelResponse(
                 parts=[
                     ToolCallPart('get_price', {'fruit': 'apple'}, tool_call_id='get_price_apple'),
-                    ToolCallPart('get_price', {'fruit': 'banana'}, tool_call_id='get_price_banana'),
+                    ToolCallPart(
+                        'get_price',
+                        {'fruit': 'banana'},
+                        tool_call_id='get_price_banana',
+                    ),
                     ToolCallPart('get_price', {'fruit': 'pear'}, tool_call_id='get_price_pear'),
                     ToolCallPart('get_price', {'fruit': 'grape'}, tool_call_id='get_price_grape'),
                     ToolCallPart('buy', {'fruit': 'apple'}, tool_call_id='buy_apple'),
@@ -1779,12 +1884,36 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='get_price', args={'fruit': 'apple'}, tool_call_id='get_price_apple'),
-                    ToolCallPart(tool_name='get_price', args={'fruit': 'banana'}, tool_call_id='get_price_banana'),
-                    ToolCallPart(tool_name='get_price', args={'fruit': 'pear'}, tool_call_id='get_price_pear'),
-                    ToolCallPart(tool_name='get_price', args={'fruit': 'grape'}, tool_call_id='get_price_grape'),
-                    ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple'),
-                    ToolCallPart(tool_name='buy', args={'fruit': 'banana'}, tool_call_id='buy_banana'),
+                    ToolCallPart(
+                        tool_name='get_price',
+                        args={'fruit': 'apple'},
+                        tool_call_id='get_price_apple',
+                    ),
+                    ToolCallPart(
+                        tool_name='get_price',
+                        args={'fruit': 'banana'},
+                        tool_call_id='get_price_banana',
+                    ),
+                    ToolCallPart(
+                        tool_name='get_price',
+                        args={'fruit': 'pear'},
+                        tool_call_id='get_price_pear',
+                    ),
+                    ToolCallPart(
+                        tool_name='get_price',
+                        args={'fruit': 'grape'},
+                        tool_call_id='get_price_grape',
+                    ),
+                    ToolCallPart(
+                        tool_name='buy',
+                        args={'fruit': 'apple'},
+                        tool_call_id='buy_apple',
+                    ),
+                    ToolCallPart(
+                        tool_name='buy',
+                        args={'fruit': 'banana'},
+                        tool_call_id='buy_banana',
+                    ),
                     ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
                 ],
                 usage=RequestUsage(input_tokens=68, output_tokens=35),
@@ -1874,12 +2003,36 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='get_price', args={'fruit': 'apple'}, tool_call_id='get_price_apple'),
-                    ToolCallPart(tool_name='get_price', args={'fruit': 'banana'}, tool_call_id='get_price_banana'),
-                    ToolCallPart(tool_name='get_price', args={'fruit': 'pear'}, tool_call_id='get_price_pear'),
-                    ToolCallPart(tool_name='get_price', args={'fruit': 'grape'}, tool_call_id='get_price_grape'),
-                    ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple'),
-                    ToolCallPart(tool_name='buy', args={'fruit': 'banana'}, tool_call_id='buy_banana'),
+                    ToolCallPart(
+                        tool_name='get_price',
+                        args={'fruit': 'apple'},
+                        tool_call_id='get_price_apple',
+                    ),
+                    ToolCallPart(
+                        tool_name='get_price',
+                        args={'fruit': 'banana'},
+                        tool_call_id='get_price_banana',
+                    ),
+                    ToolCallPart(
+                        tool_name='get_price',
+                        args={'fruit': 'pear'},
+                        tool_call_id='get_price_pear',
+                    ),
+                    ToolCallPart(
+                        tool_name='get_price',
+                        args={'fruit': 'grape'},
+                        tool_call_id='get_price_grape',
+                    ),
+                    ToolCallPart(
+                        tool_name='buy',
+                        args={'fruit': 'apple'},
+                        tool_call_id='buy_apple',
+                    ),
+                    ToolCallPart(
+                        tool_name='buy',
+                        args={'fruit': 'banana'},
+                        tool_call_id='buy_banana',
+                    ),
                     ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
                 ],
                 usage=RequestUsage(input_tokens=68, output_tokens=35),
@@ -2021,12 +2174,36 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='get_price', args={'fruit': 'apple'}, tool_call_id='get_price_apple'),
-                    ToolCallPart(tool_name='get_price', args={'fruit': 'banana'}, tool_call_id='get_price_banana'),
-                    ToolCallPart(tool_name='get_price', args={'fruit': 'pear'}, tool_call_id='get_price_pear'),
-                    ToolCallPart(tool_name='get_price', args={'fruit': 'grape'}, tool_call_id='get_price_grape'),
-                    ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple'),
-                    ToolCallPart(tool_name='buy', args={'fruit': 'banana'}, tool_call_id='buy_banana'),
+                    ToolCallPart(
+                        tool_name='get_price',
+                        args={'fruit': 'apple'},
+                        tool_call_id='get_price_apple',
+                    ),
+                    ToolCallPart(
+                        tool_name='get_price',
+                        args={'fruit': 'banana'},
+                        tool_call_id='get_price_banana',
+                    ),
+                    ToolCallPart(
+                        tool_name='get_price',
+                        args={'fruit': 'pear'},
+                        tool_call_id='get_price_pear',
+                    ),
+                    ToolCallPart(
+                        tool_name='get_price',
+                        args={'fruit': 'grape'},
+                        tool_call_id='get_price_grape',
+                    ),
+                    ToolCallPart(
+                        tool_name='buy',
+                        args={'fruit': 'apple'},
+                        tool_call_id='buy_apple',
+                    ),
+                    ToolCallPart(
+                        tool_name='buy',
+                        args={'fruit': 'banana'},
+                        tool_call_id='buy_banana',
+                    ),
                     ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
                 ],
                 usage=RequestUsage(input_tokens=68, output_tokens=35),
@@ -2320,7 +2497,10 @@ def test_deferred_tool_results_serializable():
                     'metadata': {'foo': 'bar'},
                     'kind': 'tool-return',
                 },
-                'model-retry': {'message': 'The tool call was denied.', 'kind': 'model-retry'},
+                'model-retry': {
+                    'message': 'The tool call was denied.',
+                    'kind': 'model-retry',
+                },
                 'retry-prompt-part': {
                     'content': 'The tool call was denied.',
                     'tool_name': 'foo',
@@ -2333,8 +2513,14 @@ def test_deferred_tool_results_serializable():
             'approvals': {
                 'true': True,
                 'false': False,
-                'tool-approved': {'override_args': {'foo': 'bar'}, 'kind': 'tool-approved'},
-                'tool-denied': {'message': 'The tool call was denied.', 'kind': 'tool-denied'},
+                'tool-approved': {
+                    'override_args': {'foo': 'bar'},
+                    'kind': 'tool-approved',
+                },
+                'tool-denied': {
+                    'message': 'The tool call was denied.',
+                    'kind': 'tool-denied',
+                },
             },
             'metadata': {},
         }
@@ -2545,7 +2731,13 @@ async def test_tool_with_timeout_completes_successfully():
         if call_count == 1:
             # First call: ask to run the slow tool
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='slow_but_allowed_tool', args={}, tool_call_id='call-1')]
+                parts=[
+                    ToolCallPart(
+                        tool_name='slow_but_allowed_tool',
+                        args={},
+                        tool_call_id='call-1',
+                    )
+                ]
             )
         # Second call: tool completed successfully, return final response
         return ModelResponse(parts=[TextPart(content='Tool completed successfully')])
