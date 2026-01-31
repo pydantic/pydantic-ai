@@ -76,3 +76,6 @@ class CodeRuntime(ABC):
             CodeRuntimeError: If execution fails.
         """
         ...
+
+    @abstractmethod
+    async def resume(self, checkpoint: bytes, call_tool: ToolCallback) -> Any: ...

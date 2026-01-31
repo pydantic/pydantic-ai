@@ -143,18 +143,22 @@ class MontyRuntime(CodeRuntime):
 
                                 raise
 
-                            except (CallDeferred, ApprovalRequired):
+                            except (CallDeferred, ApprovalRequired) as e:
                                 # This is the tricky bit, once this works most of it shold be fine
                                 # What should I do with the tasks that are currently in flight here
                                 # Do I dump them, take this approval and come back because tasks anyway is not going to be retained across runs(I think)?
                                 # If I finish them can I make it a part of the snapshot before I dump it?
                                 # So I would hope to do everything and then dump it for when it resumes?
 
-                                # I could have waited out the tool calls, saved the snapshot and resumed? Maybe something we should allow in Monty
+                                # Let us wait for all in flight call tools to wrap up before we go any further
 
-                                monty_state.dump()  # I wish I could store my results before I dumped it? :(
+                                # monty_state.dump()  # I wish I could store my results before I dumped it? :(
+                                # Discussed with Douwe and its okay to carry it through a pseudo context param maybe to get it back in for monty to use
 
-                                raise
+                                e.metadata = {**(e.metadata or {}), 'snapshot': monty_state.dump()}
+                                # Users will need to send this back to me through the deferred tool results
+
+                                raise e
                             except Exception as e:
                                 results[cid] = {'exception': e}
                             del tasks[cid]
@@ -162,6 +166,18 @@ class MontyRuntime(CodeRuntime):
                 monty_state = monty_state.resume(results=results)
 
         return monty_state
+
+    @staticmethod
+    async def resume(checkpoint: bytes, call_tool: ToolCallback):
+        try:
+            tasks: dict[int, asyncio.Task[Any]] = {}
+            monty_state = MontyFutureSnapshot.load(checkpoint)
+            monty_state = await MontyRuntime._execution_loop(monty_state, tasks, call_tool)
+
+        except MontyRuntimeError as e:
+            raise CodeRuntimeError(e.display())
+
+        return monty_state.output
 
     @staticmethod
     def dump(monty_state: MontySnapshot | MontyFutureSnapshot) -> bytes:

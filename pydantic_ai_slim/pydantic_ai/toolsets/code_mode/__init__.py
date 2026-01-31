@@ -21,7 +21,7 @@ from pydantic_ai.runtime.monty import MontyRuntime
 
 from ..._run_context import AgentDepsT, RunContext
 from ..._tool_manager import ToolManager
-from ...exceptions import ModelRetry
+from ...exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from ...messages import ToolCallPart
 from ...tools import ToolDefinition
 from ..abstract import SchemaValidatorProt, ToolsetTool
@@ -350,6 +350,16 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         try:
             functions = list(tool.original_tools.keys())
+            # Yo do we have a checkpoint we can continue from?
+            # Some deferred tools did their jobs or what?
+
+            if (metadata := ctx.tool_call_metadata) is not None:
+                # Some type error ugh lemme ignore for now
+                checkpoint = metadata.get('checkpoint')
+
+                # Do I have a way to know if this is a deferred request or not, well otherwise checkpoint would be None but I want to get out of the inf loop chance in case checkpoint is None, will find out later if I can do that or find that out somehow
+                return await self.runtime.resume(checkpoint, callback)
+
             return await self.runtime.run(code, functions, callback, signatures=self._cached_signatures)
         except CodeTypingError as e:
             raise ModelRetry(f'Type error in generated code:\n{e.message}')
@@ -357,3 +367,5 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             raise ModelRetry(f'Syntax error in generated code:\n{e.message}')
         except CodeRuntimeError as e:
             raise ModelRetry(f'Runtime error in generated code:\n{e.message}')
+        except (ApprovalRequired, CallDeferred):
+            raise  # Raise it back the metadata has information that we need to carry through
