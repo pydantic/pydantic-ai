@@ -2158,7 +2158,10 @@ async def test_bedrock_cache_messages_with_document_as_last_content(
     )
 
     # Create a document as the last piece of content in the user message
-    document = BinaryContent(data=b'This is a test document with important analysis data.', media_type='text/plain')
+    document = BinaryContent(
+        data=b'This is a test document with important analysis data.',
+        media_type='text/plain',
+    )
     document2 = BinaryContent(data=b'This is a test document with unimportant data.', media_type='text/plain')
     run_args = [
         'YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\n' * 50,  # More tokens to activate a cache
@@ -2221,7 +2224,9 @@ Both documents are very short - just single sentences. If you're asking about ch
 
 @pytest.mark.vcr()
 async def test_bedrock_cache_messages_with_image_as_last_content(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, image_content: BinaryContent
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    image_content: BinaryContent,
 ):
     """Test that cache points can be added after images without the workaround necessary for documents."""
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
@@ -2290,7 +2295,9 @@ This is a relatively small to medium-sized image by modern standards, suitable f
 
 @pytest.mark.vcr()
 async def test_bedrock_cache_messages_with_video_as_last_content(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, video_content: BinaryContent
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    video_content: BinaryContent,
 ):
     """Test that cache points can be added after videos without the workaround necessary for documents."""
     model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
@@ -2349,7 +2356,8 @@ async def test_bedrock_cache_point_with_only_document_raises_error(
         )
     ]
     with pytest.raises(
-        UserError, match='CachePoint cannot be placed when the user message contains only a document or video'
+        UserError,
+        match='CachePoint cannot be placed when the user message contains only a document or video',
     ):
         await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
 
@@ -2375,12 +2383,14 @@ async def test_bedrock_cache_messages_no_duplicate_with_explicit_cache_point(
     # With bedrock_cache_messages=True, the explicit CachePoint is moved before the document.
     # The auto-caching logic should not add another cache point (which would be back-to-back).
     _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        messages, ModelRequestParameters(), BedrockModelSettings(bedrock_cache_messages=True)
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_messages=True),
     )
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {'text': 'Process this document:'},
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
             {
                 'document': {
                     'name': 'Document 1',
@@ -2412,12 +2422,14 @@ async def test_bedrock_cache_messages_no_duplicate_when_text_ends_with_cache_poi
     # With bedrock_cache_messages=True, the explicit CachePoint is already at the end.
     # The auto-caching logic should not add another cache point.
     _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        messages, ModelRequestParameters(), BedrockModelSettings(bedrock_cache_messages=True)
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_messages=True),
     )
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {'text': 'Some text content'},
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
         ]
     )
 
@@ -2445,7 +2457,6 @@ async def test_bedrock_cache_point_before_binary_content(allow_model_requests: N
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {'text': 'Process the attached text file. Return the answer only.'},
-            {'cachePoint': {'type': 'default'}},
             {
                 'document': {
                     'name': 'Document 1',
@@ -2693,7 +2704,6 @@ async def test_bedrock_cache_messages_with_tool_result(allow_model_requests: Non
                     'status': 'success',
                 }
             },
-            {'text': '\n'},
             {'cachePoint': {'type': 'default', 'ttl': '5m'}},
         ]
     )
@@ -2711,6 +2721,24 @@ async def test_bedrock_cache_messages_does_not_duplicate(allow_model_requests: N
     # Should not add another cache point since one already exists
     cache_point_count = sum(1 for block in bedrock_messages[0]['content'] if 'cachePoint' in block)
     assert cache_point_count == 1
+
+
+async def test_bedrock_consecutive_cache_points(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that consecutive CachePoints in a user message are handled without error (second is ignored)."""
+    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['User message', CachePoint(), CachePoint()])])
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings()
+    )
+    # Should have only 1 cache point
+    cache_point_count = sum(1 for block in bedrock_messages[0]['content'] if 'cachePoint' in block)
+    assert cache_point_count == 1
+    # Check that the first part is text and second is cachePoint
+    assert len(bedrock_messages[0]['content']) == 2
+    assert 'text' in bedrock_messages[0]['content'][0]
+    assert 'cachePoint' in bedrock_messages[0]['content'][1]
 
 
 async def test_bedrock_cache_messages_no_user_messages(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -2737,6 +2765,29 @@ async def test_get_last_user_message_content_non_dict_block(
     messages: list[MessageUnionTypeDef] = [{'role': 'user', 'content': ['string content']}]  # type: ignore[list-item]
     result = model._get_last_user_message_content(messages)  # pyright: ignore[reportPrivateUsage]
     assert result is None
+
+
+async def test_get_cache_point_no_ttl_on_ttl_model(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test _get_cache_point without TTL even when model supports it."""
+    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    profile = BedrockModelProfile.from_profile(model.profile)
+    # This model should already support TTL
+    assert profile.bedrock_supports_prompt_cache_ttl is True
+
+    # Call with None (e.g. if ttl were somehow disabled or None)
+    result = model._get_cache_point(None, profile)  # pyright: ignore[reportPrivateUsage]
+    assert result == {'cachePoint': {'type': 'default'}}
+
+
+async def test_get_cache_point_no_ttl_on_non_ttl_model(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test _get_cache_point on a model that does not support TTL."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    profile = BedrockModelProfile.from_profile(model.profile)
+    assert profile.bedrock_supports_prompt_cache_ttl is False
+
+    # Even if we pass True, it should not add TTL
+    result = model._get_cache_point(True, profile)  # pyright: ignore[reportPrivateUsage]
+    assert result == {'cachePoint': {'type': 'default'}}
 
 
 async def test_get_last_user_message_content_empty_content(

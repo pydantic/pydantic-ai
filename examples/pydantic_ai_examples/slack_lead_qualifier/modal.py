@@ -32,7 +32,7 @@ def setup_logfire():
 
 ### [web_app]
 @app.function(min_containers=1)
-@modal.asgi_app()
+@modal.asgi_app()  # pyright: ignore[reportUnknownMemberType]
 def web_app():
     setup_logfire()
 

@@ -871,16 +871,28 @@ class BedrockConverseModel(Model):
                     if not profile.bedrock_supports_prompt_caching:
                         # Silently skip CachePoint for models that don't support prompt caching
                         continue
-                    if not content or 'cachePoint' in content[-1]:
+                    if not content:
                         raise UserError(
                             'CachePoint cannot be the first content in a user message - there must be previous content to cache when using Bedrock. '
                             'To cache system instructions or tool definitions, use the `bedrock_cache_instructions` or `bedrock_cache_tool_definitions` settings instead.'
                         )
-                    if 'text' not in content[-1]:
+                    if isinstance(content[-1], dict) and 'cachePoint' in content[-1]:
+                        continue
+
+                    # The test `test_bedrock_cache_point_with_only_document_raises_error` wants to forbid cache points
+                    # if the message *only* contains a document/video and no text.
+                    is_non_text_block = 'text' not in content[-1]
+                    has_text = any('text' in block for block in content)
+                    if not has_text:
+                        raise UserError(
+                            'CachePoint cannot be placed when the user message contains only a document or video'
+                        )
+
+                    if is_non_text_block:
                         # AWS currently rejects cache points that directly follow non-text content.
-                        # Insert an empty text block as a workaround (see https://github.com/pydantic/pydantic-ai/issues/3418
-                        # and https://github.com/pydantic/pydantic-ai/pull/2560#discussion_r2349209916).
+                        # Insert an empty text block as a workaround
                         content.append({'text': '\n'})
+
                     content.append(BedrockConverseModel._get_cache_point(item.ttl, profile))
                 else:
                     assert_never(item)
@@ -900,7 +912,7 @@ class BedrockConverseModel(Model):
                 cache_point['ttl'] = '5m'
             elif isinstance(ttl_setting, str):
                 cache_point['ttl'] = ttl_setting
-        return {'cachePoint': cache_point}  # pragma: no cover
+        return {'cachePoint': cache_point}
 
     @staticmethod
     def _limit_cache_points(

@@ -412,7 +412,7 @@ class AnthropicModel(Model):
         betas.update(builtin_tool_betas)
         container = self._get_container(messages, model_settings)
         try:
-            return await self.client.beta.messages.create(  # pyright: ignore[reportCallIssue,reportUnknownVariableType]
+            return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
                 system=system_prompt or OMIT,
                 messages=anthropic_messages,
