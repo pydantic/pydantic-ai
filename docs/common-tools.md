@@ -226,57 +226,16 @@ print(result.output)
 !!! info
     You.com is a paid service, but they have free credits to explore their product.
 
-    You need to [sign up for an account](https://you.com/platform) and get an API key to use the You.com search tool.
+    Sign in or create an account on our platform [here](https://you.com/platform). We'll start you off with $100 in complimentary credits! No credit card necessary.
 
-The You.com search tool allows you to search the web for information. It returns structured results, including news, based on your natural language query. It is built on top of the [You.com API](https://you.com/).
+The You.com search tool allows you to search the web for information. It returns structured results, including news, based on your natural language query. It is built on top of the [You.com API](https://you.com/apis). Read our [API documentation](https://docs.you.com/) for more information.
 
 ### Installation
 
-To use [`you_search_tool`][pydantic_ai.common_tools.you.you_search_tool], you need to install
-[`pydantic-ai-slim`](install.md#slim-install) with the `you` optional group:
+To use `you_search_tool`, you need to install [`pydantic-ai-slim`](install.md#slim-install) with the `you` optional group:
 
 ```bash
 pip/uv-add "pydantic-ai-slim[you]"
-```
-
-### Usage
-
-Here's an example of how you can use the You.com search tool with an agent:
-
-```py {title="you_search.py" test="skip"}
-import asyncio
-import os
-
-from pydantic_ai import Agent
-from pydantic_ai.common_tools.you import you_search_tool
-
-api_key = os.getenv('YOU_API_KEY')
-assert api_key is not None
-
-# You'll need an Anthropic API key
-# export ANTHROPIC_API_KEY="your-api-key"
-agent = Agent(
-    'anthropic:claude-sonnet-4-5',
-    tools=[you_search_tool(api_key, count=5)],
-    system_prompt=(
-        'You must use the you_search tool to search for information. '
-        'Do not use any built-in search capabilities.'
-    ),
-)
-
-
-async def main():
-    result = await agent.run('Tell me 1 thing that happened in the world today')
-    print(result.output)
-
-
-asyncio.run(main())
-"""
-Based on today's news, one significant event is that the U.S. Supreme Court has allowed
-the enforcement of a law requiring TikTok's parent company, ByteDance, to divest its
-U.S. operations or face a ban. This decision marks a major development in the ongoing
-debate over national security concerns related to foreign-owned social media platforms.
-"""
 ```
 
 ### Parameters
@@ -302,18 +261,54 @@ The You.com search tool supports several parameters that can be configured when 
 
 This design gives you full control over search behavior when needed, while still allowing the LLM flexibility for parameters you don't care about.
 
-**Example: Locking specific parameters**
+### Usage
 
-```py {test="skip"}
-# LLM can only control safesearch, livecrawl, and livecrawl_formats
-# All other parameters are locked to these values
-tool = you_search_tool(
-    api_key,
-    count=5,           # Always return 5 results per section
-    freshness='day',   # Always search recent content
-    country=Country.US,  # Always focus on US results
-    language=Language.EN,  # Always return English results
+Here's an example of how you can use the You.com search tool with an agent:
+
+```py {title="you_search.py" test="skip"}
+import asyncio
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.common_tools.you import you_search_tool
+from youdotcom.models import Country, Language
+
+api_key = os.getenv('YOU_API_KEY')
+assert api_key is not None
+
+# You'll need an Anthropic API key
+# export ANTHROPIC_API_KEY="your-api-key"
+
+# All parameters are locked to the values set at tool creation time
+# In this example, the LLM can determine safesearch, livecrawl, and livecrawl_formats
+agent = Agent(
+    'anthropic:claude-sonnet-4-5',
+    tools=[you_search_tool(
+        api_key=api_key,
+        count=5,           # Always return 5 results per section
+        freshness='day',   # Always search recent content
+        country=Country.US,  # Always focus on US results
+        language=Language.EN,  # Always return English results
+    )],
+    system_prompt=(
+        'You must use the you_search tool to search for information. '
+        'Do not use any built-in search capabilities.'
+    ),
 )
+
+
+async def main():
+    result = await agent.run('Tell me 1 thing that happened in the world today')
+    print(result.output)
+
+
+asyncio.run(main())
+"""
+Based on today's news, one significant event is that the U.S. Supreme Court has allowed
+the enforcement of a law requiring TikTok's parent company, ByteDance, to divest its
+U.S. operations or face a ban. This decision marks a major development in the ongoing
+debate over national security concerns related to foreign-owned social media platforms.
+"""
 ```
 
 !!! note
