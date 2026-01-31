@@ -1648,14 +1648,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps: Optional dependencies to use for all requests.
             model_settings: Optional settings to use for all model requests.
             instructions: Optional extra instructions to pass to each agent run.
-            base_path: Optional base path for API calls when the app is mounted at a subpath.
-                If not provided, the base path is auto-detected from the ASGI `root_path` scope.
-                This is useful when mounting the app with `Mount('/my-agent', app=agent.to_web())`.
             html_source: Path or URL for the chat UI HTML. Can be:
                 - None (default): Fetches from CDN and caches locally
                 - A Path instance: Reads from the local file
                 - A URL string (http:// or https://): Fetches from the URL
                 - A file path string: Reads from the local file
+            base_path: Optional base path for API calls when the app is mounted at a subpath.
+                If not provided, the base path is auto-detected from the ASGI `root_path` scope.
+                This is useful when mounting the app with `Mount('/my-agent', app=agent.to_web())`.
 
         Returns:
             A configured Starlette application ready to be served (e.g., with uvicorn)
