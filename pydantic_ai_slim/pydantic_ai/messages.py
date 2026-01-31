@@ -456,7 +456,7 @@ class BinaryContent:
 
     _: KW_ONLY
 
-    media_type: AudioMediaType | ImageMediaType | DocumentMediaType | VideoMediaType | str
+    media_type: AudioMediaType | ImageMediaType | DocumentMediaType | VideoMediaType | str | None = None
     """The media type of the binary data."""
 
     vendor_metadata: dict[str, Any] | None = None
@@ -493,7 +493,7 @@ class BinaryContent:
         _identifier: str | None = None,
     ) -> None: ...  # pragma: no cover
 
-    def __post_init__():
+    def __post_init__(self):
         if self.media_type is None:
             self.media_type = self._infer_media_type()
 

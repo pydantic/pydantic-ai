@@ -5105,7 +5105,6 @@ def test_tool_return_part_binary_content_serialization():
             'media_type': 'image/png',
             'vendor_metadata': None,
             'file_name': None,
-            '_identifier': None,
             'kind': 'binary',
             'identifier': '14a01a',
         }
