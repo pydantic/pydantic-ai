@@ -2,13 +2,12 @@ from __future__ import annotations as _annotations
 
 import base64
 import hashlib
-import mimetypes
 import os
-from abc import ABC, abstractmethod
+from abc import ABC
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
-from mimetypes import MimeTypes
+from mimetypes import MimeTypes, knownfiles
 from os import PathLike
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
@@ -33,7 +32,7 @@ if TYPE_CHECKING:
 _mime_types = MimeTypes()
 # Replicate what is being done in `mimetypes.init()`
 _mime_types.read_windows_registry()
-for file in mimetypes.knownfiles:
+for file in knownfiles:
     if os.path.isfile(file):
         _mime_types.read(file)
 # TODO check for added mimetypes in Python 3.11 when dropping support for Python 3.10:
@@ -47,7 +46,6 @@ _mime_types.add_type('text/x-asciidoc', '.asciidoc')
 
 # Image types
 _mime_types.add_type('image/webp', '.webp')
-
 # Video types
 _mime_types.add_type('video/3gpp', '.three_gp')
 _mime_types.add_type('video/x-matroska', '.mkv')
@@ -60,6 +58,7 @@ _mime_types.add_type('audio/aiff', '.aiff')
 _mime_types.add_type('audio/flac', '.flac')
 _mime_types.add_type('audio/ogg', '.oga')
 _mime_types.add_type('audio/wav', '.wav')
+
 
 # Text/data file types not recognized by default mimetypes
 # YAML: RFC 9512 (https://www.rfc-editor.org/rfc/rfc9512.html)
@@ -106,6 +105,7 @@ FinishReason: TypeAlias = Literal[
     'error',
 ]
 """Reason the model finished generating the response, normalized to OpenTelemetry values."""
+
 
 ProviderDetailsDelta: TypeAlias = dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None
 """Type for provider_details input: can be a static dict, a callback to update existing details, or None."""
@@ -202,6 +202,37 @@ class FileUrl(ABC):
         _identifier: str | None = None,
     ) -> None: ...  # pragma: no cover
 
+    @staticmethod
+    def from_url(
+        url: str,
+        *,
+        media_type: str | None = None,
+        identifier: str | None = None,
+        force_download: bool = False,
+        vendor_metadata: dict[str, Any] | None = None,
+    ) -> FileUrl:
+        mime_type = media_type or _mime_types.guess_type(url)[0]
+        url_cls: type[FileUrl]
+        if mime_type is None:
+            raise ValueError(f'Could not infer media type from URL: {url}. Explicitly provide a `media_type` instead.')
+        elif mime_type.startswith('video/'):
+            url_cls = VideoUrl
+        elif mime_type.startswith('audio/'):
+            url_cls = AudioUrl
+        elif mime_type.startswith('image/'):
+            url_cls = ImageUrl
+        elif mime_type in _document_format_lookup:
+            url_cls = DocumentUrl
+        else:
+            raise ValueError(f'Could not classify file from URL: {url}.')
+        return url_cls(
+            url=url,
+            media_type=media_type,
+            identifier=identifier,
+            force_download=force_download,
+            vendor_metadata=vendor_metadata,
+        )
+
     @pydantic.computed_field
     @property
     def media_type(self) -> str:
@@ -225,16 +256,22 @@ class FileUrl(ABC):
         """
         return self._identifier or _multi_modal_content_identifier(self.url)
 
-    @abstractmethod
     def _infer_media_type(self) -> str:
         """Infer the media type of the file based on the URL."""
-        raise NotImplementedError
+        mime_type, _ = _mime_types.guess_type(self.url)
+        if mime_type is None:
+            raise ValueError(
+                f'Could not infer media type from URL: {self.url}. Explicitly provide a `media_type` instead.'
+            )
+        return mime_type
 
     @property
-    @abstractmethod
     def format(self) -> str:
         """The file format."""
-        raise NotImplementedError
+        ext = _mime_types.guess_extension(self.media_type)
+        if ext is None:
+            raise ValueError(f'Could not infer file format from media type: {self.media_type}')
+        return ext.lstrip('.')  # Strip the leading dot
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -274,28 +311,23 @@ class VideoUrl(FileUrl):
         # type for YouTube URLs.
         if self.is_youtube:
             return 'video/mp4'
-
-        mime_type, _ = _mime_types.guess_type(self.url)
-        if mime_type is None:
-            raise ValueError(
-                f'Could not infer media type from video URL: {self.url}. Explicitly provide a `media_type` instead.'
-            )
-        return mime_type
+        else:
+            return super()._infer_media_type()
 
     @property
     def is_youtube(self) -> bool:
         """True if the URL has a YouTube domain."""
         parsed = urlparse(self.url)
         hostname = parsed.hostname
-        return hostname in ('youtu.be', 'youtube.com', 'www.youtube.com')
+        return hostname in {'youtu.be', 'youtube.com', 'www.youtube.com'}
 
     @property
-    def format(self) -> VideoFormat:
+    def format(self) -> VideoFormat | str:
         """The file format of the video.
 
         The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
         """
-        return _video_format_lookup[self.media_type]
+        return _video_format_lookup.get(self.media_type) or super().format
 
 
 @pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
@@ -326,23 +358,10 @@ class AudioUrl(FileUrl):
         _identifier: str | None = None,
     ) -> None: ...  # pragma: no cover
 
-    def _infer_media_type(self) -> str:
-        """Return the media type of the audio file, based on the url.
-
-        References:
-        - Gemini: https://ai.google.dev/gemini-api/docs/audio#supported-formats
-        """
-        mime_type, _ = _mime_types.guess_type(self.url)
-        if mime_type is None:
-            raise ValueError(
-                f'Could not infer media type from audio URL: {self.url}. Explicitly provide a `media_type` instead.'
-            )
-        return mime_type
-
     @property
-    def format(self) -> AudioFormat:
+    def format(self) -> AudioFormat | str:
         """The file format of the audio file."""
-        return _audio_format_lookup[self.media_type]
+        return _audio_format_lookup.get(self.media_type) or super().format
 
 
 @pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
@@ -373,22 +392,13 @@ class ImageUrl(FileUrl):
         _identifier: str | None = None,
     ) -> None: ...  # pragma: no cover
 
-    def _infer_media_type(self) -> str:
-        """Return the media type of the image, based on the url."""
-        mime_type, _ = _mime_types.guess_type(self.url)
-        if mime_type is None:
-            raise ValueError(
-                f'Could not infer media type from image URL: {self.url}. Explicitly provide a `media_type` instead.'
-            )
-        return mime_type
-
     @property
-    def format(self) -> ImageFormat:
+    def format(self) -> ImageFormat | str:
         """The file format of the image.
 
         The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
         """
-        return _image_format_lookup[self.media_type]
+        return _image_format_lookup.get(self.media_type) or super().format
 
 
 @pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
@@ -419,26 +429,13 @@ class DocumentUrl(FileUrl):
         _identifier: str | None = None,
     ) -> None: ...  # pragma: no cover
 
-    def _infer_media_type(self) -> str:
-        """Return the media type of the document, based on the url."""
-        mime_type, _ = _mime_types.guess_type(self.url)
-        if mime_type is None:
-            raise ValueError(
-                f'Could not infer media type from document URL: {self.url}. Explicitly provide a `media_type` instead.'
-            )
-        return mime_type
-
     @property
-    def format(self) -> DocumentFormat:
+    def format(self) -> DocumentFormat | str:
         """The file format of the document.
 
         The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
         """
-        media_type = self.media_type
-        try:
-            return _document_format_lookup[media_type]
-        except KeyError as e:
-            raise ValueError(f'Unknown document media type: {media_type}') from e
+        return _document_format_lookup.get(self.media_type) or super().format
 
 
 @pydantic_dataclass(
@@ -446,6 +443,7 @@ class DocumentUrl(FileUrl):
     config=pydantic.ConfigDict(
         ser_json_bytes='base64',
         val_json_bytes='base64',
+        validate_by_name=True,
     ),
 )
 class BinaryContent:
@@ -459,7 +457,6 @@ class BinaryContent:
 
     _: KW_ONLY
 
-    media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str
     """The media type of the binary data."""
 
     vendor_metadata: dict[str, Any] | None = None
@@ -471,9 +468,16 @@ class BinaryContent:
     - `XaiModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     """
 
+    file_name: str | None = None
+    """The file name of the binary content, e.g. "image.png"."""
+
     _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
         compare=False, default=None
     )
+    _media_type: Annotated[
+        AudioMediaType | ImageMediaType | DocumentMediaType | VideoMediaType | str | None,
+        pydantic.Field(alias='media_type', default=None, exclude=True),
+    ] = field(compare=False, default=None)
 
     kind: Literal['binary'] = 'binary'
     """Type identifier, this is available on all parts as a discriminator."""
@@ -484,12 +488,14 @@ class BinaryContent:
         self,
         data: bytes,
         *,
-        media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str,
+        media_type: str | None = None,
         identifier: str | None = None,
+        file_name: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
         kind: Literal['binary'] = 'binary',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _identifier: str | None = None,
+        _media_type: str | None = None,
     ) -> None: ...  # pragma: no cover
 
     @staticmethod
@@ -501,6 +507,7 @@ class BinaryContent:
                 media_type=bc.media_type,
                 identifier=bc.identifier,
                 vendor_metadata=bc.vendor_metadata,
+                file_name=bc.file_name,
             )
         else:
             return bc
@@ -518,8 +525,6 @@ class BinaryContent:
     def from_path(cls, path: PathLike[str]) -> BinaryContent:
         """Create a `BinaryContent` from a path.
 
-        Defaults to 'application/octet-stream' if the media type cannot be inferred.
-
         Raises:
             FileNotFoundError: if the file does not exist.
             PermissionError: if the file cannot be read.
@@ -527,11 +532,8 @@ class BinaryContent:
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f'File not found: {path}')
-        media_type, _ = _mime_types.guess_type(path)
-        if media_type is None:
-            media_type = 'application/octet-stream'
 
-        return cls.narrow_type(cls(data=path.read_bytes(), media_type=media_type))
+        return cls.narrow_type(cls(data=path.read_bytes(), file_name=path.name))
 
     @pydantic.computed_field
     @property
@@ -549,6 +551,23 @@ class BinaryContent:
         distinguish multiple files.
         """
         return self._identifier or _multi_modal_content_identifier(self.data)
+
+    @pydantic.computed_field
+    @property
+    def media_type(self) -> str:
+        """Return the media type of the binary content."""
+        return self._media_type or self._infer_media_type()
+
+    def _infer_media_type(self) -> AudioMediaType | ImageMediaType | DocumentMediaType | VideoMediaType | str:
+        """Infer the media type of the file name."""
+        if self.file_name:
+            mime_type, _ = _mime_types.guess_type(self.file_name)
+            if mime_type is not None:
+                return mime_type
+            else:
+                raise ValueError(f'Could not infer media type from file name: {self.file_name}')
+        else:
+            raise ValueError('Media type could not be inferred. Please provide a media type or file name.')
 
     @property
     def data_uri(self) -> str:
@@ -578,22 +597,28 @@ class BinaryContent:
     @property
     def is_document(self) -> bool:
         """Return `True` if the media type is a document type."""
-        return self.media_type in _document_format_lookup
+        return self.media_type in _document_format_lookup or self.is_text
+
+    @property
+    def is_text(self) -> bool:
+        """Return `True` if the media type is a text type."""
+        return self.media_type.startswith('text/')
 
     @property
     def format(self) -> str:
-        """The file format of the binary content."""
-        try:
-            if self.is_audio:
-                return _audio_format_lookup[self.media_type]
-            elif self.is_image:
-                return _image_format_lookup[self.media_type]
-            elif self.is_video:
-                return _video_format_lookup[self.media_type]
-            else:
-                return _document_format_lookup[self.media_type]
-        except KeyError as e:
-            raise ValueError(f'Unknown media type: {self.media_type}') from e
+        """The file format of the binary content.
+
+        Returns the file extension (without leading dot) based on the media type.
+        Uses cached extension from Magika if available, otherwise maps from media_type.
+
+        Raises:
+            ValueError: If file format cannot be inferred from media type.
+        """
+        ext = _all_format_lookup.get(self.media_type) or _mime_types.guess_extension(self.media_type)
+
+        if ext is None:
+            raise ValueError(f'Unknown media type: {self.media_type}')
+        return ext.lstrip('.')
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -603,6 +628,7 @@ class BinaryContent:
     config=pydantic.ConfigDict(
         ser_json_bytes='base64',
         val_json_bytes='base64',
+        validate_by_name=True,
     ),
 )
 class BinaryImage(BinaryContent):
@@ -614,12 +640,15 @@ class BinaryImage(BinaryContent):
         self,
         data: bytes,
         *,
-        media_type: ImageMediaType | str,
+        media_type: ImageMediaType | str | None = None,
         identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
+        file_name: str | None = None,
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         kind: Literal['binary'] = 'binary',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _identifier: str | None = None,
+        _media_type: ImageMediaType | str | None = None,
     ) -> None: ...  # pragma: no cover
 
     def __post_init__(self):
@@ -716,6 +745,8 @@ _video_format_lookup: dict[str, VideoFormat] = {
     'video/x-ms-wmv': 'wmv',
     'video/3gpp': 'three_gp',
 }
+
+_all_format_lookup = _document_format_lookup | _audio_format_lookup | _image_format_lookup | _video_format_lookup
 
 
 @dataclass(repr=False)
@@ -1434,7 +1465,10 @@ class ModelResponse:
             elif isinstance(part, TextPart | ThinkingPart):
                 kind = part.part_kind
                 body.setdefault('content', []).append(
-                    {'kind': kind, **({'text': part.content} if settings.include_content else {})}
+                    {
+                        'kind': kind,
+                        **({'text': part.content} if settings.include_content else {}),
+                    }
                 )
             elif isinstance(part, FilePart):
                 body.setdefault('content', []).append(
