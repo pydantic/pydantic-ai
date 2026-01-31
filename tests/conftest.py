@@ -50,6 +50,8 @@ logging.getLogger('vcr.cassette').setLevel(logging.WARNING)
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
+os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
+
 if TYPE_CHECKING:
     from typing import TypeVar
 
@@ -648,8 +650,8 @@ def model(
 
             return OutlinesModel(
                 from_transformers(
-                    AutoModelForCausalLM.from_pretrained('erwanf/gpt2-mini'),
-                    AutoTokenizer.from_pretrained('erwanf/gpt2-mini'),
+                    AutoModelForCausalLM.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
+                    AutoTokenizer.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
                 )
             )
         else:

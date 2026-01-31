@@ -126,8 +126,27 @@ def test_huggingface_provider_init_without_hf_client(MockAsyncInferenceClient: M
 
 @patch('pydantic_ai.providers.huggingface.AsyncInferenceClient')
 def test_huggingface_provider_init_with_provider_name(MockAsyncInferenceClient: MagicMock):
+    # provider_name is resolved to base_url to skip SDK's provider mapping API call
     HuggingFaceProvider(api_key='key', provider_name='test-provider')
-    MockAsyncInferenceClient.assert_called_once_with(api_key='key', provider='test-provider', base_url=None)
+    MockAsyncInferenceClient.assert_called_once_with(
+        api_key='key', provider=None, base_url='https://router.huggingface.co/test-provider/v1'
+    )
+
+
+@patch('pydantic_ai.providers.huggingface.AsyncInferenceClient')
+def test_huggingface_provider_init_with_provider_name_cohere(MockAsyncInferenceClient: MagicMock):
+    # cohere has a special URL pattern
+    HuggingFaceProvider(api_key='key', provider_name='cohere')
+    MockAsyncInferenceClient.assert_called_once_with(
+        api_key='key', provider=None, base_url='https://router.huggingface.co/cohere/compatibility/v1'
+    )
+
+
+@patch('pydantic_ai.providers.huggingface.AsyncInferenceClient')
+def test_huggingface_provider_init_with_provider_name_hf_inference(MockAsyncInferenceClient: MagicMock):
+    # hf-inference is passed through to SDK (uses model-specific routing)
+    HuggingFaceProvider(api_key='key', provider_name='hf-inference')
+    MockAsyncInferenceClient.assert_called_once_with(api_key='key', provider='hf-inference', base_url=None)
 
 
 @patch('pydantic_ai.providers.huggingface.AsyncInferenceClient')
