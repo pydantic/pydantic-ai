@@ -399,12 +399,12 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """
 
     openai_send_reasoning_ids: bool
-    """
-    Whether to send the unique IDs of reasoning, text, and function call parts.
+    """Whether to send the unique IDs of reasoning, text, and function call parts from the message history to the model. Enabled by default for reasoning models.
 
-    This can result in errors like "Item 'rs_123' was provided without its required 
-    following item" if the message history does not match exactly. In that case, 
-    you'll want to disable this.
+    This can result in errors like `"Item 'rs_123' of type 'reasoning' was provided without its required following item."`
+    if the message history you're sending does not match exactly what was received from the Responses API in a previous response,
+    for example if you're using a [history processor](../../message-history.md#processing-message-history).
+    In that case, you'll want to disable this.
     """
    
 
