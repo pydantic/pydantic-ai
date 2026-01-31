@@ -112,11 +112,11 @@ class ExaSearchTool:
             The search results with text content.
         """
         text_config: bool | dict[str, int] = {'maxCharacters': self.max_characters} if self.max_characters else True
-        response = await self.client.search(
+        response = await self.client.search(  # pyright: ignore[reportUnknownMemberType]
             query,
             num_results=self.num_results,
             type=search_type,
-            contents={'text': text_config},  # pyright: ignore[reportArgumentType]
+            contents={'text': text_config},
         )
 
         return [
@@ -156,7 +156,7 @@ class ExaFindSimilarTool:
         Returns:
             Similar pages with text content.
         """
-        response = await self.client.find_similar(
+        response = await self.client.find_similar(  # pyright: ignore[reportUnknownMemberType]
             url,
             num_results=self.num_results,
             exclude_source_domain=exclude_source_domain,

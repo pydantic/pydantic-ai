@@ -764,7 +764,7 @@ class BedrockConverseModel(Model):
                 elif last_multimodal_index is None:
                     # No multi-modal content, append cache point at the end.
                     # Note: _get_last_user_message_content ensures content doesn't already end with a cachePoint.
-                    last_user_content.append(self._get_cache_point(settings['bedrock_cache_messages'], profile))
+                    last_user_content.append(self._get_cache_point(settings['bedrock_cache_messages'], profile))  # pyright: ignore[reportTypedDictNotRequiredAccess]
                 # If last_multimodal_index == 0, we can't insert at start, so skip auto-caching for this message
 
         return system_prompt, processed_messages

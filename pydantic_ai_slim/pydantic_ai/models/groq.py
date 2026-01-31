@@ -287,7 +287,7 @@ class GroqModel(Model):
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
-            return await self.client.chat.completions.create(  # pyright: ignore[reportCallIssue,reportArgumentType]
+            return await self.client.chat.completions.create(
                 model=self._model_name,
                 messages=groq_messages,
                 n=1,

@@ -94,6 +94,7 @@ try:
         BetaMessageParam,
         BetaMessageTokensCount,
         BetaMetadataParam,
+        BetaOutputConfigParam,
         BetaPlainTextSourceParam,
         BetaRawContentBlockDeltaEvent,
         BetaRawContentBlockStartEvent,
@@ -123,6 +124,7 @@ try:
         BetaToolResultBlockParam,
         BetaToolUnionParam,
         BetaToolUseBlock,
+        BetaToolUseBlockParam,
         BetaToolUseBlockParam,
         BetaWebFetchTool20250910Param,
         BetaWebFetchToolResultBlock,
@@ -406,12 +408,14 @@ class AnthropicModel(Model):
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._limit_cache_points(system_prompt, anthropic_messages, tools)
         output_format = self._native_output_format(model_request_parameters)
-        output_config = {'format': output_format} if output_format is not None else OMIT
+        output_config = (
+            cast(BetaOutputConfigParam, {'format': output_format}) if output_format is not None else OMIT
+        )
         betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
         betas.update(builtin_tool_betas)
         container = self._get_container(messages, model_settings)
         try:
-            return await self.client.beta.messages.create(  # pyright: ignore[reportCallIssue,reportArgumentType]
+            return await self.client.beta.messages.create(  # pyright: ignore[reportCallIssue,reportUnknownVariableType]
                 max_tokens=model_settings.get('max_tokens', 4096),
                 system=system_prompt or OMIT,
                 messages=anthropic_messages,
@@ -495,11 +499,13 @@ class AnthropicModel(Model):
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._limit_cache_points(system_prompt, anthropic_messages, tools)
         output_format = self._native_output_format(model_request_parameters)
-        output_config = {'format': output_format} if output_format is not None else OMIT
+        output_config = (
+            cast(BetaOutputConfigParam, {'format': output_format}) if output_format is not None else OMIT
+        )
         betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
         betas.update(builtin_tool_betas)
         try:
-            return await self.client.beta.messages.count_tokens(  # pyright: ignore[reportCallIssue,reportArgumentType]
+            return await self.client.beta.messages.count_tokens(
                 system=system_prompt or OMIT,
                 messages=anthropic_messages,
                 model=self._model_name,
