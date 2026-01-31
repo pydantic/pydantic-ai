@@ -350,7 +350,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         try:
             functions = list(tool.original_tools.keys())
-            return await self.runtime.run(code, functions, callback, self._cached_signatures)
+            return await self.runtime.run(code, functions, callback, signatures=self._cached_signatures)
         except CodeTypingError as e:
             raise ModelRetry(f'Type error in generated code:\n{e.message}')
         except CodeSyntaxError as e:

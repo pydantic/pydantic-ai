@@ -27,6 +27,22 @@ except ImportError:
     raise ImportError("MontyRuntime requires 'monty'. Install with: pip install 'pydantic-ai-slim[monty]'")
 
 
+def _build_type_check_prefix(signatures: list[str]) -> str:
+    """Build the prefix code used for Monty type checking.
+
+    Combines standard typing imports with tool signatures to create the
+    prefix that Monty uses for type-checking LLM-generated code.
+
+    Args:
+        signatures: List of Python function signatures for available tools.
+
+    Returns:
+        Complete prefix code string with imports and signatures.
+    """
+    imports = 'from typing import Any, TypedDict, NotRequired, Literal\n\n'
+    return imports + '\n\n'.join(signatures)
+
+
 class MontyRuntime(CodeRuntime):
     """CodeRuntime that delegates to the Monty sandboxed interpreter.
 
@@ -56,14 +72,15 @@ class MontyRuntime(CodeRuntime):
             CodeSyntaxError: If Monty cannot parse the code.
             CodeRuntimeError: If execution fails.
         """
-        monty = Monty(code=code, external_functions=functions)
         try:
+            monty = Monty(code=code, external_functions=functions)
             # Well first of all let us type check because Monty allows that
             await self._type_check(code, signatures)
 
         # Consider adding raise from None to keep these errors short and helpful for the LLMs to fix the code?
+
         except MontyTypingError as e:
-            raise CodeTypingError(e.display())
+            raise CodeTypingError(e.display(format='concise'))
         except MontyRuntimeError as e:
             raise CodeRuntimeError(e.display())
         except MontySyntaxError as e:
@@ -84,9 +101,7 @@ class MontyRuntime(CodeRuntime):
         return monty_state.output
 
     async def _type_check(self, code: str, signatures: list[str]):
-        imports = 'from typing import Any, TypedDict, NotRequired, Literal\n\n'
-        prefix_code = imports + '\n\n'.join(signatures)
-
+        prefix_code = _build_type_check_prefix(signatures)
         monty = Monty(code=code)
         monty.type_check(prefix_code=prefix_code)
 

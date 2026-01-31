@@ -9,10 +9,8 @@ from pydantic_monty import Monty
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolsets.code_mode import (
-    CodeModeToolset,
-    _build_type_check_prefix,  # pyright: ignore[reportPrivateUsage]
-)
+from pydantic_ai.runtime.monty import _build_type_check_prefix  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.toolsets.code_mode import CodeModeToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage
 
@@ -56,8 +54,8 @@ async def test_type_error_raises_model_retry():
 
     assert str(exc_info.value) == snapshot("""\
 Type error in generated code:
-main.py:6:5: error[invalid-argument-type] Argument to function `add` is incorrect: Expected `int`, found `Literal["hello"]`
-main.py:6:14: error[invalid-argument-type] Argument to function `add` is incorrect: Expected `int`, found `Literal["world"]`
+main.py:1:5: error[invalid-argument-type] Argument to function `add` is incorrect: Expected `int`, found `Literal["hello"]`
+main.py:1:14: error[invalid-argument-type] Argument to function `add` is incorrect: Expected `int`, found `Literal["world"]`
 """)
 
 
@@ -99,7 +97,28 @@ async def test_valid_code_executes_successfully():
 
     result = await code_mode.call_tool(
         'run_code',
-        {'code': 'add(1, 2)'},
+        {'code': 'await add(x=1, y=2)'},
+        ctx,
+        run_code_tool,
+    )
+
+    assert result == 3
+
+
+async def test_await_on_sync_tool_executes_successfully():
+    """Sync tools can be awaited in code mode — signatures are always async def."""
+    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset.add_function(add, takes_ctx=False)
+
+    code_mode = CodeModeToolset(wrapped=toolset)
+    ctx = build_run_context()
+    tools = await code_mode.get_tools(ctx)
+
+    run_code_tool = tools['run_code']
+
+    result = await code_mode.call_tool(
+        'run_code',
+        {'code': 'await add(x=1, y=2)'},
         ctx,
         run_code_tool,
     )
@@ -125,7 +144,7 @@ async def test_generated_signatures_are_valid_python():
     assert prefix == snapshot('''\
 from typing import Any, TypedDict, NotRequired, Literal
 
-def add(x: int, y: int) -> int:
+async def add(x: int, y: int) -> int:
     """Add two integers."""
     raise NotImplementedError()\
 ''')
@@ -153,39 +172,28 @@ async def test_llm_sees_ellipsis_but_type_check_has_not_implemented():
     assert any('raise NotImplementedError()' in sig for sig in code_mode._cached_signatures)  # pyright: ignore[reportPrivateUsage]
 
     assert description == snapshot('''\
-You should consider writing Python code to accomplish multiple tasks in one go instead of using multiple tools one by one.
+ALWAYS use run_code to solve the ENTIRE task in a single code block. Do not call tools individually - write one comprehensive Python script that fetches all data, processes it, and returns the complete answer.
 
 CRITICAL execution model:
+- Solve the COMPLETE problem in ONE run_code call - not partial solutions
 - Each run_code call is ISOLATED - variables do NOT persist between calls
-- Complete ALL related work in a SINGLE run_code call
-- If you need data from a previous call, you must fetch it again
+- Plan your entire solution before writing code, then implement it all at once
+
+
+CRITICAL Syntax restrictions (the runtime uses a restricted Python subset):
+- No imports - use only the provided functions and builtins (len, sum, str, etc.) or write your own functions.
 
 How to write effective code:
+- ALWAYS use `await` when calling external functions (e.g., `items = await get_items()`)
 - ALWAYS use keyword arguments when calling functions (e.g., `get_user(id=123)` not `get_user(123)`)
 - Use for loops to handle multiple items
 - NEVER return raw tool results - always extract/filter to only what you need
 - The last expression evaluated becomes the return value - make it a processed summary, not raw data
 
-CRITICAL Syntax restrictions (the runtime uses a restricted Python subset):
-- No imports - use only the provided functions and builtins (len, sum, str, etc.)
-- No while loops - use for loops instead
-- No comprehensions (list/dict/set) or generator expressions - use explicit for loops
-- No lambdas - define logic inline
-- No tuple unpacking (e.g., `a, b = 1, 2`) - assign variables separately
-- No list index assignment (e.g., `lst[0] = x`) - use list.append() to build lists
-- No string methods (.join, .split, .upper, etc.) - return data structures, not formatted strings
-
-What DOES work:
-- Dict assignment: `d["key"] = value`
-- Dict methods: `.get()`, `.keys()`, `.values()`, `.items()`
-- List methods: `.append()`
-- F-strings: `f"value is {x}"`
-- Builtins: `len()`, `sum()`, `str()`, `list()`, `range()`
-
 Available functions:
 
 ```python
-def add(x: int, y: int) -> int:
+async def add(x: int, y: int) -> int:
     """Add two integers."""
     ...
 ```
@@ -193,13 +201,13 @@ def add(x: int, y: int) -> int:
 Example - fetching, filtering, and summarizing in one execution:
 ```python
 # Fetch data
-items = get_items(category="electronics")
+items = await get_items(category="electronics")
 
 # Process immediately - extract only needed fields
 results = []
 total = 0
 for item in items:
-    details = get_item_details(id=item["id"])
+    details = await get_item_details(id=item["id"])
     if details["status"] == "active":
         total = total + details["price"]
         results.append({"name": item["name"], "price": details["price"]})

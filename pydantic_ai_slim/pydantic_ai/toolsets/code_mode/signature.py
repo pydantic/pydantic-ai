@@ -10,7 +10,6 @@ from __future__ import annotations
 import ast
 import copy
 import dataclasses
-import inspect
 import json
 import re
 import types
@@ -154,10 +153,10 @@ def signature_from_function(
     else:
         return_type_str = 'Any'
 
-    is_async = _is_async_function(func)
-    prefix = 'async def' if is_async else 'def'
-
-    signature_line = f'{prefix} {name}({", ".join(params)}) -> {return_type_str}'
+    # Always generate `async def` — in code mode all external functions go through
+    # the async callback pipeline and `resume(future=...)`, so the LLM should always
+    # use `await`. Monty's type checker requires `async def` for `await` to be valid.
+    signature_line = f'async def {name}({", ".join(params)}) -> {return_type_str}'
 
     typeddict_defs = _generate_typeddict_defs_from_collected(collected_types, name)
 
@@ -197,14 +196,6 @@ def _generate_typeddict_defs_from_collected(collected_types: dict[str, Any], too
 
     return context.get_typeddict_definitions()
 
-
-def _is_async_function(func: Callable[..., Any]) -> bool:
-    """Check if a function is async."""
-    if inspect.iscoroutinefunction(func):  # -> Changed from asyncio.iscoroutinefunction which got deprecated
-        return True
-    if inspect.ismethod(func):
-        return inspect.iscoroutinefunction(func.__func__)
-    return False
 
 
 def _format_annotation(annotation: Any) -> str:
