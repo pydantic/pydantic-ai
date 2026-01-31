@@ -654,7 +654,18 @@ class CachePoint:
 MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
 UserContent: TypeAlias = str | MultiModalContent | CachePoint
 
-T = TypeVar('T', default=Any)
+if TYPE_CHECKING:
+    # Simpler type for static analysis - recursive TypeAliasType with Any produces spurious Unknown types
+    ToolReturnContent: TypeAlias = MultiModalContent | Sequence[Any] | Mapping[str, Any] | Any
+else:
+    # Recursive type for runtime Pydantic validation - enables automatic reconstruction of
+    # BinaryContent/FileUrl objects nested inside dicts/lists during deserialization
+    ToolReturnContent = TypeAliasType(
+        'ToolReturnContent',
+        MultiModalContent | Sequence['ToolReturnContent'] | Mapping[str, 'ToolReturnContent'] | Any,
+    )
+
+T = TypeVar('T', default=ToolReturnContent)
 
 
 @dataclass(repr=False)
@@ -667,7 +678,7 @@ class ToolReturn(Generic[T]):
     - Optional metadata for application use
     """
 
-    return_value: ToolReturnContent
+    return_value: T
     """The return value to be used in the tool response."""
 
     _: KW_ONLY
@@ -784,17 +795,6 @@ class UserPromptPart:
 tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
     Any, config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )
-
-if TYPE_CHECKING:
-    # Simpler type for static analysis - recursive TypeAliasType with Any produces spurious Unknown types
-    ToolReturnContent: TypeAlias = MultiModalContent | Sequence[Any] | Mapping[str, Any] | Any
-else:
-    # Recursive type for runtime Pydantic validation - enables automatic reconstruction of
-    # BinaryContent/FileUrl objects nested inside dicts/lists during deserialization
-    ToolReturnContent = TypeAliasType(
-        'ToolReturnContent',
-        MultiModalContent | Sequence['ToolReturnContent'] | Mapping[str, 'ToolReturnContent'] | Any,
-    )
 
 
 @dataclass(repr=False)

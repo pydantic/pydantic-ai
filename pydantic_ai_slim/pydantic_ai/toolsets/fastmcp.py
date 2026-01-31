@@ -74,6 +74,14 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
     max_retries: int
     """The maximum number of retries to attempt if a tool call fails."""
 
+    include_return_schema: bool | None
+    """Whether to include return schemas in tool definitions sent to the model.
+
+    When True, MCP tools that define an `outputSchema` will include the return schema.
+    When None (default), the agent-level default is used.
+    When False, return schemas are explicitly excluded.
+    """
+
     _id: str | None
 
     def __init__(
@@ -90,6 +98,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         *,
         max_retries: int = 1,
         tool_error_behavior: Literal['model_retry', 'error'] = 'model_retry',
+        include_return_schema: bool | None = None,
         id: str | None = None,
     ) -> None:
         if isinstance(client, Client):
@@ -100,6 +109,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         self._id = id
         self.max_retries = max_retries
         self.tool_error_behavior = tool_error_behavior
+        self.include_return_schema = include_return_schema
 
         self._enter_lock: Lock = Lock()
         self._running_count: int = 0
@@ -142,6 +152,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
                             'output_schema': mcp_tool.outputSchema or None,
                         },
                         return_schema=mcp_tool.outputSchema or None,
+                        include_return_schema=self.include_return_schema,
                     )
                 )
                 for mcp_tool in await self.client.list_tools()

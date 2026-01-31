@@ -286,7 +286,7 @@ class Tool(Generic[ToolAgentDepsT]):
 
     This schema may be modified by the `prepare` function or by the Model class prior to including it in an API request.
     """
-    include_return_schema: bool
+    include_return_schema: bool | None
 
     def __init__(
         self,
@@ -306,7 +306,7 @@ class Tool(Generic[ToolAgentDepsT]):
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
-        include_return_schema: bool = False,
+        include_return_schema: bool | None = None,
     ):
         """Create a new tool instance.
 
@@ -365,7 +365,7 @@ class Tool(Generic[ToolAgentDepsT]):
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
-            include_return_schema: Whether to include the return schema in the tool definition. Defaults to False.
+            include_return_schema: Whether to include the return schema in the tool definition sent to the model. Defaults to None.
         """
         self.function = function
         self.function_schema = function_schema or _function_schema.function_schema(
@@ -449,6 +449,7 @@ class Tool(Generic[ToolAgentDepsT]):
             timeout=self.timeout,
             kind='unapproved' if self.requires_approval else 'function',
             return_schema=self.function_schema.return_schema,
+            include_return_schema=self.include_return_schema,
         )
 
     async def prepare_tool_def(self, ctx: RunContext[ToolAgentDepsT]) -> ToolDefinition | None:
@@ -543,6 +544,14 @@ class ToolDefinition:
 
     return_schema: ObjectJsonSchema | None = None
     """The JSON schema for the tool's return value."""
+
+    include_return_schema: bool | None = None
+    """Whether to include the return schema in the tool definition sent to the model.
+
+    When True, the return_schema will be preserved.
+    When False, the return_schema will be cleared.
+    When None (default), the agent-level default is used.
+    """
 
     @property
     def defer(self) -> bool:

@@ -29,7 +29,7 @@ class ModelProfile:
     """Whether the model natively supports tool return schemas.
 
     When True, the model's API accepts a structured return schema alongside each tool definition
-    (e.g., Google's ``response_json_schema`` in ``FunctionDeclarationDict``). The return_schema will be
+    (e.g., Google's `response_json_schema` in `FunctionDeclarationDict`). The return_schema will be
     passed through to the model serializer as-is.
     When False, return schemas are injected as JSON text into tool descriptions as a fallback.
     """

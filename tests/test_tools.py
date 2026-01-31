@@ -162,6 +162,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'metadata': None,
             'timeout': None,
             'return_schema': None,
+            'include_return_schema': False,
         }
     )
 
@@ -198,6 +199,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'metadata': None,
             'timeout': None,
             'return_schema': None,
+            'include_return_schema': False,
         }
     )
 
@@ -242,6 +244,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'metadata': None,
             'timeout': None,
             'return_schema': None,
+            'include_return_schema': False,
         }
     )
 
@@ -286,6 +289,7 @@ def test_google_style_with_returns():
             'metadata': None,
             'timeout': None,
             'return_schema': None,
+            'include_return_schema': False,
         }
     )
 
@@ -328,6 +332,7 @@ def test_sphinx_style_with_returns():
             'metadata': None,
             'timeout': None,
             'return_schema': None,
+            'include_return_schema': False,
         }
     )
 
@@ -376,6 +381,7 @@ def test_numpy_style_with_returns():
             'metadata': None,
             'timeout': None,
             'return_schema': None,
+            'include_return_schema': False,
         }
     )
 
@@ -412,6 +418,7 @@ def test_only_returns_type():
             'metadata': None,
             'timeout': None,
             'return_schema': None,
+            'include_return_schema': False,
         }
     )
 
@@ -439,6 +446,7 @@ def test_docstring_unknown():
             'metadata': None,
             'timeout': None,
             'return_schema': None,
+            'include_return_schema': False,
         }
     )
 
@@ -484,6 +492,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'metadata': None,
             'timeout': None,
             'return_schema': None,
+            'include_return_schema': False,
         }
     )
 
@@ -522,6 +531,7 @@ def test_takes_just_model():
             'metadata': None,
             'timeout': None,
             'return_schema': None,
+            'include_return_schema': False,
         }
     )
 
@@ -569,6 +579,7 @@ def test_takes_model_and_int():
             'metadata': None,
             'timeout': None,
             'return_schema': None,
+            'include_return_schema': False,
         }
     )
 
@@ -936,6 +947,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'metadata': None,
             'timeout': None,
             'return_schema': None,
+            'include_return_schema': False,
         }
     )
 
@@ -1010,6 +1022,7 @@ def test_json_schema_required_parameters():
                 'metadata': None,
                 'timeout': None,
                 'return_schema': None,
+                'include_return_schema': False,
             },
             {
                 'description': None,
@@ -1027,6 +1040,7 @@ def test_json_schema_required_parameters():
                 'metadata': None,
                 'timeout': None,
                 'return_schema': None,
+                'include_return_schema': False,
             },
         ]
     )
@@ -1117,6 +1131,7 @@ def test_schema_generator():
                 'metadata': None,
                 'timeout': None,
                 'return_schema': None,
+                'include_return_schema': False,
             },
             {
                 'description': None,
@@ -1132,6 +1147,7 @@ def test_schema_generator():
                 'metadata': None,
                 'timeout': None,
                 'return_schema': None,
+                'include_return_schema': False,
             },
         ]
     )
@@ -1171,6 +1187,7 @@ def test_tool_parameters_with_attribute_docstrings():
             'metadata': None,
             'timeout': None,
             'return_schema': None,
+            'include_return_schema': False,
         }
     )
 
@@ -2888,6 +2905,7 @@ def test_tool_return_schema():
                 'metadata': None,
                 'timeout': None,
                 'return_schema': {'format': 'uri', 'minLength': 1, 'type': 'string'},
+                'include_return_schema': True,
             },
             {
                 'name': 'tool_with_return_schema_binary_content',
@@ -2961,6 +2979,7 @@ distinguish multiple files.\
                     'title': 'BinaryContent',
                     'type': 'object',
                 },
+                'include_return_schema': True,
             },
             {
                 'name': 'tool_with_return_schema_base_model',
@@ -2978,6 +2997,7 @@ distinguish multiple files.\
                     'title': 'MyBaseModel',
                     'type': 'object',
                 },
+                'include_return_schema': True,
             },
             {
                 'name': 'tool_with_return_schema_dataclass',
@@ -2995,6 +3015,7 @@ distinguish multiple files.\
                     'title': 'MyDataclass',
                     'type': 'object',
                 },
+                'include_return_schema': True,
             },
             {
                 'name': 'tool_with_return_binary_image',
@@ -3068,6 +3089,7 @@ distinguish multiple files.\
                     'title': 'BinaryImage',
                     'type': 'object',
                 },
+                'include_return_schema': True,
             },
             {
                 'name': 'tool_with_return_document_url',
@@ -3116,6 +3138,7 @@ distinguish multiple files.\
                     'title': 'DocumentUrl',
                     'type': 'object',
                 },
+                'include_return_schema': True,
             },
             {
                 'name': 'tool_with_return_video_url',
@@ -3164,6 +3187,7 @@ distinguish multiple files.\
                     'title': 'VideoUrl',
                     'type': 'object',
                 },
+                'include_return_schema': True,
             },
             {
                 'name': 'tool_with_return_audio_url',
@@ -3212,6 +3236,7 @@ distinguish multiple files.\
                     'title': 'AudioUrl',
                     'type': 'object',
                 },
+                'include_return_schema': True,
             },
             {
                 'name': 'tool_with_return_image_url',
@@ -3260,6 +3285,7 @@ distinguish multiple files.\
                     'title': 'ImageUrl',
                     'type': 'object',
                 },
+                'include_return_schema': True,
             },
             {
                 'name': 'tool_with_return_tool_return',
@@ -3271,7 +3297,8 @@ distinguish multiple files.\
                 'kind': 'function',
                 'metadata': None,
                 'timeout': None,
-                'return_schema': {},
+                'return_schema': None,
+                'include_return_schema': True,
             },
             {
                 'name': 'tool_with_deferred_return',
@@ -3649,6 +3676,7 @@ distinguish multiple files.\
                         },
                     ],
                 },
+                'include_return_schema': True,
             },
         ]
     )

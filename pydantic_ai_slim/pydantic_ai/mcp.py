@@ -354,6 +354,14 @@ class MCPServer(AbstractToolset[Any], ABC):
     Set to `False` for servers that change resources dynamically without sending notifications.
     """
 
+    include_return_schema: bool | None
+    """Whether to include return schemas in tool definitions sent to the model.
+
+    When True, MCP tools that define an `outputSchema` will include the return schema.
+    When None (default), the agent-level default is used.
+    When False, return schemas are explicitly excluded.
+    """
+
     _id: str | None
 
     _enter_lock: Lock = field(compare=False)
@@ -385,6 +393,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         elicitation_callback: ElicitationFnT | None = None,
         cache_tools: bool = True,
         cache_resources: bool = True,
+        include_return_schema: bool | None = None,
         *,
         id: str | None = None,
         client_info: mcp_types.Implementation | None = None,
@@ -401,6 +410,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         self.elicitation_callback = elicitation_callback
         self.cache_tools = cache_tools
         self.cache_resources = cache_resources
+        self.include_return_schema = include_return_schema
         self.client_info = client_info
 
         self._id = id or tool_prefix
@@ -582,6 +592,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                         'output_schema': mcp_tool.outputSchema or None,
                     },
                     return_schema=mcp_tool.outputSchema or None,
+                    include_return_schema=self.include_return_schema,
                 ),
             )
             for mcp_tool in await self.list_tools()
@@ -594,7 +605,6 @@ class MCPServer(AbstractToolset[Any], ABC):
             tool_def=tool_def,
             max_retries=self.max_retries,
             args_validator=TOOL_SCHEMA_VALIDATOR,
-            include_return_schema=True,  # Setting it to True for MCP tools by default because it is a part of the MCP spec.
         )
 
     async def list_resources(self) -> list[Resource]:
