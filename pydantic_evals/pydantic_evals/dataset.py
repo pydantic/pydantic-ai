@@ -16,7 +16,7 @@ import time
 import traceback
 import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from contextlib import AsyncExitStack, nullcontext
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from inspect import iscoroutinefunction
@@ -268,6 +268,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         *,
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
+        case_context_manager: Callable[[Case[InputsT, OutputT, MetadataT]], AbstractAsyncContextManager[Any]]
+        | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -287,6 +289,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             task_name: Optional override to the name of the task being executed, otherwise the name of the task
                 function will be used.
             metadata: Optional dict of experiment metadata.
+            case_context_manager: Optional callback that returns an async context manager for each case.
+                The context manager wraps both task execution and evaluator execution, useful for
+                setup/teardown logic that must span both phases.
 
         Returns:
             A report containing the results of the evaluation.
@@ -316,9 +321,11 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
             async def _handle_case(case: Case[InputsT, OutputT, MetadataT], report_case_name: str):
                 async with limiter:
-                    result = await _run_task_and_evaluators(
-                        task, case, report_case_name, self.evaluators, retry_task, retry_evaluators
-                    )
+                    ctx_mgr = case_context_manager(case) if case_context_manager else nullcontext()
+                    async with ctx_mgr:
+                        result = await _run_task_and_evaluators(
+                            task, case, report_case_name, self.evaluators, retry_task, retry_evaluators
+                        )
                     if progress_bar and task_id is not None:  # pragma: no branch
                         progress_bar.update(task_id, advance=1)
                     return result
@@ -371,6 +378,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         *,
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
+        case_context_manager: Callable[[Case[InputsT, OutputT, MetadataT]], AbstractAsyncContextManager[Any]]
+        | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -389,6 +398,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             task_name: Optional override to the name of the task being executed, otherwise the name of the task
                 function will be used.
             metadata: Optional dict of experiment metadata.
+            case_context_manager: Optional callback that returns an async context manager for each case.
+                The context manager wraps both task execution and evaluator execution, useful for
+                setup/teardown logic that must span both phases.
 
         Returns:
             A report containing the results of the evaluation.
@@ -403,6 +415,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 retry_evaluators=retry_evaluators,
                 task_name=task_name,
                 metadata=metadata,
+                case_context_manager=case_context_manager,
             )
         )
 
