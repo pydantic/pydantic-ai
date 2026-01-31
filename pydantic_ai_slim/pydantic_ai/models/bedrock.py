@@ -897,8 +897,9 @@ class BedrockConverseModel(Model):
                     else:
                         # last_multimodal_index == 0, can't insert at start
                         raise UserError(
-                            'CachePoint cannot be placed when the user message starts with multi-modal content (document, image, video). '
-                            'Place text content before or after your multi-modal content to enable caching.'
+                            'CachePoint cannot be placed when the user message contains only a document or video, '
+                            'due to Bedrock API restrictions. '
+                            'Add text content before or after your document or video to enable caching.'
                         )
                 else:
                     assert_never(item)

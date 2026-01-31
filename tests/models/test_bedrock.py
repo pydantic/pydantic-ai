@@ -2130,10 +2130,10 @@ async def test_bedrock_cache_point_as_first_content_raises_error(
         await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_bedrock_cache_point_after_leading_multimodal_raises_error(
+async def test_bedrock_cache_point_with_only_document_raises_error(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """CachePoint should raise a UserError if placed after multi-modal content that starts at the beginning."""
+    """CachePoint should raise a UserError if the message contains only a document/video with no text."""
     model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -2148,7 +2148,7 @@ async def test_bedrock_cache_point_after_leading_multimodal_raises_error(
         )
     ]
     with pytest.raises(
-        UserError, match='CachePoint cannot be placed when the user message starts with multi-modal content'
+        UserError, match='CachePoint cannot be placed when the user message contains only a document or video'
     ):
         await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
 
@@ -2187,6 +2187,36 @@ async def test_bedrock_cache_messages_no_duplicate_with_explicit_cache_point(
                     'source': {'bytes': b'Document content'},
                 }
             },
+        ]
+    )
+
+
+async def test_bedrock_cache_messages_no_duplicate_when_text_ends_with_cache_point(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """bedrock_cache_messages should not add a duplicate cache point when text content already ends with one."""
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Some text content',
+                        CachePoint(),
+                    ]
+                )
+            ]
+        )
+    ]
+    # With bedrock_cache_messages=True, the explicit CachePoint is already at the end.
+    # The auto-caching logic should not add another cache point.
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings(bedrock_cache_messages=True)
+    )
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {'text': 'Some text content'},
+            {'cachePoint': {'type': 'default'}},
         ]
     )
 
