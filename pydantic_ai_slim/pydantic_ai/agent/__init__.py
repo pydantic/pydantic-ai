@@ -1621,6 +1621,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: ModelSettings | None = None,
         instructions: str | None = None,
         html_source: str | Path | None = None,
+        base_path: str | None = None,
     ) -> Starlette:
         """Create a Starlette app that serves a web chat UI for this agent.
 
@@ -1652,6 +1653,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 - A Path instance: Reads from the local file
                 - A URL string (http:// or https://): Fetches from the URL
                 - A file path string: Reads from the local file
+            base_path: Optional base path for API calls when the app is mounted at a subpath.
+                If not provided, the base path is auto-detected from the ASGI `root_path` scope.
+                This is useful when mounting the app with `Mount('/my-agent', app=agent.to_web())`.
 
         Returns:
             A configured Starlette application ready to be served (e.g., with uvicorn)
@@ -1669,6 +1673,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # Or provide additional models for UI selection
             app = agent.to_web(models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5'])
 
+            # Mount at a subpath for multiple agents
+            from starlette.applications import Starlette
+            from starlette.routing import Mount
+
+            app = Starlette(routes=[
+                Mount('/agent1', app=agent.to_web()),
+                Mount('/agent2', app=other_agent.to_web()),
+            ])
+
             # Then run with: uvicorn app:app --reload
             ```
         """
@@ -1682,6 +1695,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_settings=model_settings,
             instructions=instructions,
             html_source=html_source,
+            base_path=base_path,
         )
 
     @asynccontextmanager

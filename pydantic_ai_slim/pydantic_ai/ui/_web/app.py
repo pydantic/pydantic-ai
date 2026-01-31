@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import hashlib
 import os
 from collections.abc import Sequence
@@ -107,6 +108,21 @@ async def _get_ui_html(html_source: str | Path | None = None) -> bytes:
     raise FileNotFoundError(f'Local UI file not found: {html_source}')
 
 
+def _inject_config_into_html(html: bytes, base_path: str) -> bytes:
+    """Inject frontend configuration into HTML head.
+
+    Args:
+        html: The original HTML content.
+        base_path: The base path for API calls (e.g., '/my-agent').
+
+    Returns:
+        The modified HTML with the configuration script injected.
+    """
+    # Insert the configuration script after the <head> tag
+    script = f'<script>window.__PYDANTIC_AI_CONFIG__ = {json.dumps({"basePath": base_path})};</script>'
+    return html.decode('utf-8').replace('<head>', f'<head>{script}', 1).encode('utf-8')
+
+
 def create_web_app(
     agent: Agent[AgentDepsT, OutputDataT],
     models: ModelsParam = None,
@@ -115,6 +131,7 @@ def create_web_app(
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,
     html_source: str | Path | None = None,
+    base_path: str | None = None,
 ) -> Starlette:
     """Create a Starlette app that serves a web chat UI for the given agent.
 
@@ -139,6 +156,9 @@ def create_web_app(
             - A Path instance: Reads from the local file
             - A URL string (http:// or https://): Fetches from the URL
             - A file path string: Reads from the local file
+        base_path: Optional base path for API calls when the app is mounted at a subpath.
+            If not provided, the base path is auto-detected from the ASGI `root_path` scope.
+            This is useful when mounting the app with `Mount('/my-agent', app=agent.to_web())`.
 
     Returns:
         A configured Starlette application ready to be served
@@ -150,6 +170,7 @@ def create_web_app(
         deps=deps,
         model_settings=model_settings,
         instructions=instructions,
+        base_path=base_path,
     )
 
     routes = [Mount('/api', app=api_app)]
@@ -158,6 +179,16 @@ def create_web_app(
     async def index(request: Request) -> Response:
         """Serve the chat UI from filesystem cache or CDN."""
         content = await _get_ui_html(html_source)
+
+        # Determine base path: explicit > auto-detect > empty
+        effective_base_path = base_path
+        if effective_base_path is None:
+            effective_base_path = request.scope.get('root_path', '')
+
+        # Normalize: remove trailing slash
+        effective_base_path = effective_base_path.rstrip('/') if effective_base_path else ''
+
+        content = _inject_config_into_html(content, effective_base_path)
 
         return HTMLResponse(
             content=content,
