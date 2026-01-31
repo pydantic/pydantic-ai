@@ -403,8 +403,9 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
 
     This can result in errors like `"Item 'rs_123' of type 'reasoning' was provided without its required following item."`
     if the message history you're sending does not match exactly what was received from the Responses API in a previous response,
-    for example if you're using a [history processor](../../message-history.md#processing-message-history). 
-    In that case, you'll want to disable this."""
+    for example if you're using a [history processor](../../message-history.md#processing-message-history). In that case, 
+    you'll want to disable this.
+    """
 
     openai_truncation: Literal['disabled', 'auto']
     """The truncation strategy to use for the model response.
