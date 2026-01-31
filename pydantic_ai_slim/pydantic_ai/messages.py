@@ -58,7 +58,7 @@ _mime_types.add_type('audio/aiff', '.aiff')
 _mime_types.add_type('audio/flac', '.flac')
 _mime_types.add_type('audio/ogg', '.oga')
 _mime_types.add_type('audio/wav', '.wav')
-_mime_types.add_type('audio/aac', '.aac')
+
 
 # Text/data file types not recognized by default mimetypes
 # YAML: RFC 9512 (https://www.rfc-editor.org/rfc/rfc9512.html)
