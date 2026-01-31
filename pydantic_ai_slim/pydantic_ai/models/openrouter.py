@@ -549,12 +549,20 @@ class OpenRouterModel(OpenAIChatModel):
 
     @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _OpenRouterChatCompletion:
-        response = _OpenRouterChatCompletion.model_validate(response.model_dump())
+        response_dict = response.model_dump()
 
-        if error := response.error:
-            raise ModelHTTPError(status_code=error.code, model_name=response.model, body=error.message)
+        if error := response_dict.get('error'):
+            if isinstance(error, dict):
+                error_dict = cast(dict[str, Any], error)
+                raise ModelHTTPError(
+                    status_code=cast(int, error_dict.get('code', 500)),
+                    model_name=response_dict.get('model', self.model_name),
+                    body=cast(str, error_dict.get('message', 'Unknown OpenRouter Error')),
+                )
 
-        return response
+        response_dict = self._normalize_openrouter_response(response_dict, 'chat.completion')
+
+        return _OpenRouterChatCompletion.model_validate(response_dict)
 
     @override
     def _process_thinking(self, message: chat.ChatCompletionMessage) -> list[ThinkingPart] | None:
@@ -572,6 +580,39 @@ class OpenRouterModel(OpenAIChatModel):
         provider_details = super()._process_provider_details(response) or {}
         provider_details.update(_map_openrouter_provider_details(response))
         return provider_details or None
+
+    def _normalize_openrouter_response(
+        self, response_dict: dict[str, Any], fallback_object_type: str
+    ) -> dict[str, Any]:
+        """Normalize OpenRouter response.
+
+        Actions:
+        1. Extracting nested provider data
+        2. Sanitizing None metadata fields
+
+        Works for both regular and streaming responses.
+        """
+        # 1. Handle nested provider
+        provider_data = response_dict.get('provider')
+        if response_dict.get('choices') is None and isinstance(provider_data, dict):
+            if 'choices' in provider_data:
+                # cast to dict to satisfy type checker
+                provider_data_dict = cast(dict[str, Any], provider_data)
+                nested_provider_name = provider_data_dict.pop('provider', 'unknown')
+                response_dict.update(provider_data_dict)
+                response_dict['provider'] = nested_provider_name
+
+        # 2. Sanitize metadata
+        if response_dict.get('id') is None:
+            response_dict['id'] = 'openrouter-fallback-id'
+        if response_dict.get('model') is None:
+            response_dict['model'] = self.model_name
+        if response_dict.get('object') is None:
+            response_dict['object'] = fallback_object_type
+        if not isinstance(response_dict.get('provider'), str):
+            response_dict['provider'] = 'unknown'
+
+        return response_dict
 
     @dataclass
     class _MapModelResponseContext(OpenAIChatModel._MapModelResponseContext):  # type: ignore[reportPrivateUsage]
@@ -620,10 +661,10 @@ class _OpenRouterChoiceDelta(chat_completion_chunk.ChoiceDelta):
 class _OpenRouterChunkChoice(chat_completion_chunk.Choice):
     """Wraps OpenAI chat completion chunk choice with OpenRouter specific attributes."""
 
-    native_finish_reason: str | None
+    native_finish_reason: str | None = None
     """The provided finish reason by the downstream provider from OpenRouter."""
 
-    finish_reason: Literal['stop', 'length', 'tool_calls', 'content_filter', 'error'] | None  # type: ignore[reportIncompatibleVariableOverride]
+    finish_reason: Literal['stop', 'length', 'tool_calls', 'content_filter', 'error'] | None = None  # type: ignore[reportIncompatibleVariableOverride]
     """OpenRouter specific finish reasons for streaming chunks.
 
     Notably, removes 'function_call' and adds 'error' finish reasons.
@@ -650,11 +691,65 @@ class _OpenRouterChatCompletionChunk(chat.ChatCompletionChunk):
 class OpenRouterStreamedResponse(OpenAIStreamedResponse):
     """Implementation of `StreamedResponse` for OpenRouter models."""
 
+    def _normalize_openrouter_response(
+        self, response_dict: dict[str, Any], fallback_object_type: str
+    ) -> dict[str, Any]:
+        """Normalize OpenRouter response.
+
+        Actions:
+        1. Extracting nested provider data
+        2. Sanitizing None metadata fields
+
+        Works for both regular and streaming responses.
+        """
+        # 1. Handle nested provider
+        provider_data = response_dict.get('provider')
+        if response_dict.get('choices') is None and isinstance(provider_data, dict):
+            if 'choices' in provider_data:
+                # cast to dict to satisfy type checker
+                provider_data_dict = cast(dict[str, Any], provider_data)
+                nested_provider_name = provider_data_dict.pop('provider', 'unknown')
+                response_dict.update(provider_data_dict)
+                response_dict['provider'] = nested_provider_name
+
+        # 2. Sanitize metadata
+        if response_dict.get('id') is None:
+            response_dict['id'] = 'openrouter-fallback-id'
+        if response_dict.get('model') is None:
+            response_dict['model'] = self.model_name
+        if response_dict.get('object') is None:
+            response_dict['object'] = fallback_object_type
+        if not isinstance(response_dict.get('provider'), str):
+            response_dict['provider'] = 'unknown'
+
+        choices = response_dict.get('choices')
+        if isinstance(choices, list):
+            valid_choices: list[dict[str, Any]] = []
+            for choice in cast(list[Any], choices):
+                if isinstance(choice, dict):
+                    choice_dict: dict[str, Any] = cast(dict[str, Any], choice)
+                    finish_reason = choice_dict.get('finish_reason')
+                    if finish_reason is not None and choice_dict.get('native_finish_reason') is None:
+                        choice_dict['native_finish_reason'] = finish_reason
+                    valid_choices.append(choice_dict)
+            response_dict['choices'] = valid_choices
+        return response_dict
+
     @override
     async def _validate_response(self):
         try:
             async for chunk in self._response:
-                yield _OpenRouterChatCompletionChunk.model_validate(chunk.model_dump())
+                chunk_dict = chunk.model_dump()
+                if error := chunk_dict.get('error'):
+                    if isinstance(error, dict):
+                        error_dict = cast(dict[str, Any], error)
+                        raise ModelHTTPError(
+                            status_code=cast(int, error_dict.get('code', 500)),
+                            model_name=self._model_name,
+                            body=cast(str, error_dict.get('message', 'Unknown OpenRouter Error')),
+                        )
+                chunk_dict = self._normalize_openrouter_response(chunk_dict, 'chat.completion.chunk')
+                yield _OpenRouterChatCompletionChunk.model_validate(chunk_dict)
         except APIError as e:
             error = _OpenRouterError.model_validate(e.body)
             raise ModelHTTPError(status_code=error.code, model_name=self._model_name, body=error.message)
