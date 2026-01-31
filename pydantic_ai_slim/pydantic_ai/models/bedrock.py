@@ -742,15 +742,30 @@ class BedrockConverseModel(Model):
             if profile.bedrock_supports_prompt_caching:
                 system_prompt.append(self._get_cache_point(cache_instructions, profile))
 
-        if processed_messages and (cache_messages := settings.get('bedrock_cache_messages')):
-            if profile.bedrock_supports_prompt_caching:
-                last_user_content = self._get_last_user_message_content(processed_messages)
-                if last_user_content is not None:
-                    # AWS currently rejects cache points that directly follow non-text content.
-                    # Insert a newline text block as a workaround.
-                    if 'text' not in last_user_content[-1]:
-                        last_user_content.append({'text': '\n'})
-                    last_user_content.append(self._get_cache_point(cache_messages, profile))
+        if processed_messages and settings.get('bedrock_cache_messages') and profile.bedrock_supports_prompt_caching:
+            last_user_content = self._get_last_user_message_content(processed_messages)
+            if last_user_content is not None:
+                # AWS currently rejects cache points that directly follow documents and videos (but not images).
+                # So we insert the cache point before the trailing multi-modal content instead.
+                multimodal_keys = ['document', 'video']
+                last_multimodal_index = next(
+                    (
+                        i
+                        for i, block in reversed(list(enumerate(last_user_content)))
+                        if any(key in block for key in multimodal_keys)
+                    ),
+                    None,
+                )
+                if last_multimodal_index is not None and last_multimodal_index > 0:
+                    # Insert cache point before the last multi-modal content, unless it would be back-to-back
+                    prev_block = last_user_content[last_multimodal_index - 1]
+                    if not (isinstance(prev_block, dict) and 'cachePoint' in prev_block):
+                        last_user_content.insert(last_multimodal_index, {'cachePoint': {'type': 'default'}})
+                elif last_multimodal_index is None:
+                    # No multi-modal content, append cache point at the end.
+                    # Note: _get_last_user_message_content ensures content doesn't already end with a cachePoint.
+                    last_user_content.append(self._get_cache_point(settings['bedrock_cache_messages'], profile))
+                # If last_multimodal_index == 0, we can't insert at start, so skip auto-caching for this message
 
         return system_prompt, processed_messages
 
