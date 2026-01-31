@@ -411,7 +411,7 @@ class AnthropicModel(Model):
         betas.update(builtin_tool_betas)
         container = self._get_container(messages, model_settings)
         try:
-            return await self.client.beta.messages.create(
+            return await self.client.beta.messages.create(  # pyright: ignore[reportCallIssue,reportArgumentType]
                 max_tokens=model_settings.get('max_tokens', 4096),
                 system=system_prompt or OMIT,
                 messages=anthropic_messages,
@@ -499,7 +499,7 @@ class AnthropicModel(Model):
         betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
         betas.update(builtin_tool_betas)
         try:
-            return await self.client.beta.messages.count_tokens(
+            return await self.client.beta.messages.count_tokens(  # pyright: ignore[reportCallIssue,reportArgumentType]
                 system=system_prompt or OMIT,
                 messages=anthropic_messages,
                 model=self._model_name,

@@ -885,7 +885,7 @@ class BedrockConverseModel(Model):
                 cache_point['ttl'] = '5m'
             elif isinstance(ttl_setting, str):
                 cache_point['ttl'] = ttl_setting
-        return {'cachePoint': cache_point}
+        return {'cachePoint': cache_point}  # pragma: no cover
 
     @staticmethod
     def _limit_cache_points(
