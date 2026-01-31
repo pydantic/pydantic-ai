@@ -626,6 +626,10 @@ def test_custom_null():
 
 
 def test_non_primitive_types():
+    assert format_as_xml(Decimal('123.45')) == snapshot('<item>123.45</item>')
+    assert format_as_xml(UUID('123e4567-e89b-12d3-a456-426614174000')) == snapshot('<item>123e4567-e89b-12d3-a456-426614174000</item>')
+
+def test_model_with_non_primitive_types():
     class ExamplePydanticModelWithNonPrimitiveTypes(BaseModel):
         name: str
         age: Decimal
