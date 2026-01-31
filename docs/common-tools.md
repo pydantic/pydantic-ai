@@ -271,7 +271,10 @@ import os
 
 from pydantic_ai import Agent
 from pydantic_ai.common_tools.you import you_search_tool
-from youdotcom.models import Country, Language
+from youdotcom.models import (
+    Country,
+    Language,
+)
 
 api_key = os.getenv('YOU_API_KEY')
 assert api_key is not None
