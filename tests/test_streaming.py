@@ -2412,6 +2412,7 @@ def test_agent_stream_metadata_falls_back_to_run_context() -> None:
         text_processor=TextOutputProcessor(),
         allows_deferred_tools=False,
         allows_image=False,
+        allows_none=False,
     )
     stream = AgentStream(
         _raw_stream_response=stream_response,

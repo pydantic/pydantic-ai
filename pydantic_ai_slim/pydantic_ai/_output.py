@@ -404,7 +404,7 @@ class AutoOutputSchema(OutputSchema[OutputDataT]):
         toolset: OutputToolset[Any] | None,
         allows_deferred_tools: bool,
         allows_image: bool,
-        allows_none: bool = False,
+        allows_none: bool,
     ):
         # We set a toolset here as they're checked for name conflicts with other toolsets in the Agent constructor.
         # At that point we may not know yet what output mode we're going to use if no model was provided or it was deferred until agent.run time,
@@ -432,7 +432,7 @@ class TextOutputSchema(OutputSchema[OutputDataT]):
         text_processor: TextOutputProcessor[OutputDataT],
         allows_deferred_tools: bool,
         allows_image: bool,
-        allows_none: bool = False,
+        allows_none: bool,
     ):
         super().__init__(
             text_processor=text_processor,
@@ -447,7 +447,7 @@ class TextOutputSchema(OutputSchema[OutputDataT]):
 
 
 class ImageOutputSchema(OutputSchema[OutputDataT]):
-    def __init__(self, *, allows_deferred_tools: bool, allows_none: bool = False):
+    def __init__(self, *, allows_deferred_tools: bool, allows_none: bool):
         super().__init__(allows_deferred_tools=allows_deferred_tools, allows_image=True, allows_none=allows_none)
 
     @property
@@ -467,7 +467,7 @@ class StructuredTextOutputSchema(OutputSchema[OutputDataT], ABC):
         processor: BaseObjectOutputProcessor[OutputDataT],
         allows_deferred_tools: bool,
         allows_image: bool,
-        allows_none: bool = False,
+        allows_none: bool,
     ):
         super().__init__(
             text_processor=processor,
@@ -516,7 +516,7 @@ class ToolOutputSchema(OutputSchema[OutputDataT]):
         text_processor: BaseOutputProcessor[OutputDataT] | None = None,
         allows_deferred_tools: bool,
         allows_image: bool,
-        allows_none: bool = False,
+        allows_none: bool,
     ):
         super().__init__(
             toolset=toolset,
