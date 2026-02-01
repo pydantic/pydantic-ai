@@ -139,6 +139,36 @@ Feel free to click on the links to dive deeper into each story!
 """
 ```
 
+### Domain Filtering
+
+You can filter search results to include or exclude specific domains using the `include_domains` and `exclude_domains` parameters:
+
+```py {title="tavily_domain_filtering.py" test="skip"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.common_tools.tavily import tavily_search_tool
+
+api_key = os.getenv('TAVILY_API_KEY')
+assert api_key is not None
+
+# Only search within specific domains
+agent = Agent(
+    'openai:o3-mini',
+    tools=[
+        tavily_search_tool(
+            api_key,
+            include_domains=['arxiv.org', 'github.com'],
+            exclude_domains=['medium.com'],
+        )
+    ],
+    instructions='Search for information and return the results.',
+)
+
+result = agent.run_sync('Find recent papers about transformer architectures')
+print(result.output)
+```
+
 ## Exa Search Tool
 
 !!! info
