@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '339'
+      - '367'
       content-type:
       - application/json
       host:
@@ -42,15 +42,15 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1059'
+      - '772'
       content-type:
       - application/json
       openai-organization:
-      - pydantic-28gund
+      - coplane
       openai-processing-ms:
-      - '180'
+      - '322'
       openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - proj_YfS9sAfj8A8K75ACS1Go41sF
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -71,14 +71,14 @@ interactions:
           - function:
               arguments: '{}'
               name: get_image
-            id: call_1FnV4RIOyM7T9BxPHbSuUexJ
+            id: call_K1tAbEGn3b9K1jbadNdYuVXY
             type: function
-      created: 1766496295
-      id: chatcmpl-Cpwffm3QIHBYzhoYYZSF7Et1tiiqI
+      created: 1769975657
+      id: chatcmpl-D4XoPUyi7k5HqaGz9MhVoZ39k0ZhP
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_deacdd5f6f
+      system_fingerprint: fp_fa7f5b168b
       usage:
         completion_tokens: 10
         completion_tokens_details:
@@ -103,12 +103,12 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '132160'
+      - '132220'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=VVwFDVjCOdp4m3DjUVYAWsjqa3tLYTttmzYS8khXB4Q-1766496295-1.0.1.1-zaLbrKk4YciQiyFZCybYRdGIzXoy4lmsP8fRPA_ZwVwtstNXWX2COQwn_dZSzYQ.P04JvROu1opGLjKXZrOET8ye5QTJQF5jGvXj_3loi6Q;
-        _cfuvid=5eSAwOvuisCIqjOBBioSmFrogdVD16mBH9KKv5Fgbew-1766496295608-0.0.1.1-604800000
+      - __cf_bm=rzJ0HYHUEvDTaPUzDiwNMjLUnMF0369K6fLzmg4TbWA-1769975657-1.0.1.1-wdFq0HKdx7ijQpmOVjXwTCtD05HHhfI6LFh3sTDgo861NAMdLuwwSIKr453dqEpBo2Y1qjNi2w5GflhT7E8kYHeur1aHsZ5cWhvUJfZVmeQ;
+        _cfuvid=6gfbA5v5qiGOzRLh.IBaKTYv9pDOv19vrPRXS7x.YwQ-1769975657885-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -124,11 +124,11 @@ interactions:
         - function:
             arguments: '{}'
             name: get_image
-          id: call_1FnV4RIOyM7T9BxPHbSuUexJ
+          id: call_K1tAbEGn3b9K1jbadNdYuVXY
           type: function
       - content: See file 241a70
         role: tool
-        tool_call_id: call_1FnV4RIOyM7T9BxPHbSuUexJ
+        tool_call_id: call_K1tAbEGn3b9K1jbadNdYuVXY
       - content:
         - text: 'This is file 241a70:'
           type: text
@@ -158,15 +158,15 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '837'
+      - '668'
       content-type:
       - application/json
       openai-organization:
-      - pydantic-28gund
+      - coplane
       openai-processing-ms:
-      - '1616'
+      - '1193'
       openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - proj_YfS9sAfj8A8K75ACS1Go41sF
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -183,12 +183,12 @@ interactions:
           content: The fruit in the image is a kiwi.
           refusal: null
           role: assistant
-      created: 1766496297
-      id: chatcmpl-CpwfhFC1iUmDKeoxOTSN7KP8D11aq
+      created: 1769975659
+      id: chatcmpl-D4XoRQikO6Pm66UV5KIzk3lt9RcVy
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_deacdd5f6f
+      system_fingerprint: fp_fa7f5b168b
       usage:
         completion_tokens: 10
         completion_tokens_details:

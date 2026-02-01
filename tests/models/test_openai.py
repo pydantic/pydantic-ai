@@ -1316,7 +1316,7 @@ async def test_image_as_binary_content_tool_response(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_1FnV4RIOyM7T9BxPHbSuUexJ')],
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_K1tAbEGn3b9K1jbadNdYuVXY')],
                 usage=RequestUsage(
                     input_tokens=46,
                     output_tokens=10,
@@ -1332,7 +1332,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
-                provider_response_id='chatcmpl-Cpwffm3QIHBYzhoYYZSF7Et1tiiqI',
+                provider_response_id='chatcmpl-D4XoPUyi7k5HqaGz9MhVoZ39k0ZhP',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -1341,7 +1341,7 @@ async def test_image_as_binary_content_tool_response(
                     ToolReturnPart(
                         tool_name='get_image',
                         content='See file 241a70',
-                        tool_call_id='call_1FnV4RIOyM7T9BxPHbSuUexJ',
+                        tool_call_id='call_K1tAbEGn3b9K1jbadNdYuVXY',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
@@ -1366,7 +1366,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
-                provider_response_id='chatcmpl-CpwfhFC1iUmDKeoxOTSN7KP8D11aq',
+                provider_response_id='chatcmpl-D4XoRQikO6Pm66UV5KIzk3lt9RcVy',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1461,6 +1461,418 @@ async def test_document_as_binary_content_input_with_tool(
     )
 
     assert result.output == snapshot('The main content of the document is "DUMMY PDF FILE" in uppercase.')
+
+
+async def test_chat_model_tool_return_with_list_containing_binary_content(image_content: BinaryContent) -> None:
+    """Test that _map_user_message handles lists containing BinaryContent in ToolReturnPart.content."""
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    request = ModelRequest(
+        parts=[
+            ToolReturnPart(
+                tool_name='get_images',
+                content=['Here are the images:', image_content],
+                tool_call_id='call_456',
+            )
+        ]
+    )
+
+    mapped_messages = [msg async for msg in model._map_user_message(request)]  # pyright: ignore[reportPrivateUsage]
+
+    assert mapped_messages == snapshot(
+        [
+            {
+                'role': 'tool',
+                'tool_call_id': 'call_456',
+                'content': IsStr(regex=r'Here are the images:\n\[File: [a-f0-9]+\]'),
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'File 1 from tool get_images:', 'type': 'text'},
+                    {'image_url': {'url': IsStr(regex=r'data:image/jpeg;base64,.+')}, 'type': 'image_url'},
+                ],
+            },
+        ]
+    )
+
+
+async def test_chat_model_tool_return_with_image_url() -> None:
+    """Test that _map_user_message handles ImageUrl directly in ToolReturnPart.content."""
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    request = ModelRequest(
+        parts=[
+            ToolReturnPart(
+                tool_name='get_image',
+                content=ImageUrl(url='https://example.com/image.jpg'),
+                tool_call_id='call_789',
+            )
+        ]
+    )
+
+    mapped_messages = [msg async for msg in model._map_user_message(request)]  # pyright: ignore[reportPrivateUsage]
+
+    assert mapped_messages == snapshot(
+        [
+            {'role': 'tool', 'tool_call_id': 'call_789', 'content': IsStr(regex=r'\[File: [a-f0-9]+\]')},
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'File 1 from tool get_image:', 'type': 'text'},
+                    {'image_url': {'url': 'https://example.com/image.jpg'}, 'type': 'image_url'},
+                ],
+            },
+        ]
+    )
+
+
+async def test_responses_model_tool_return_with_binary_content(
+    allow_model_requests: None, image_content: BinaryContent, openai_api_key: str
+) -> None:
+    """Test that a tool returning BinaryContent image works end-to-end in Responses API."""
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent: Agent[None, str] = Agent(model)
+
+    @agent.tool_plain
+    async def get_image() -> BinaryContent:
+        """Get an image of a fruit."""
+        return image_content
+
+    result = await agent.run('Use the get_image tool to get an image, then tell me what fruit is shown.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Use the get_image tool to get an image, then tell me what fruit is shown.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_image',
+                        args='{}',
+                        tool_call_id='call_IU3xB39QyiuwqRkzKQO35gIe',
+                        id='fc_088c8d326bcd5f4000697fb2437c2081918c3990a956bd4dfd',
+                        provider_name='openai',
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=50,
+                    output_tokens=11,
+                    details={'reasoning_tokens': 0},
+                ),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id='resp_088c8d326bcd5f4000697fb24328d48191926744d756303284',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_image',
+                        content='See file 241a70',
+                        tool_call_id='call_IU3xB39QyiuwqRkzKQO35gIe',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='The fruit shown in the image is a kiwi.',
+                        id='msg_01097d7a79045d4d00697fb245c3e881a2baa4fe6ab23e30cd',
+                        provider_name='openai',
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=849,
+                    output_tokens=12,
+                    details={'reasoning_tokens': 0},
+                ),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_responses_model_tool_return_with_image_url() -> None:
+    """Test that _map_messages handles ImageUrl directly in ToolReturnPart.content."""
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='What is in this image?')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_123')],
+            model_name='gpt-4o',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_image',
+                    content=ImageUrl(url='https://example.com/image.jpg'),
+                    tool_call_id='call_123',
+                )
+            ]
+        ),
+    ]
+
+    _, openai_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    assert openai_messages == snapshot(
+        [
+            {'role': 'user', 'content': 'What is in this image?'},
+            {'name': 'get_image', 'arguments': '{}', 'call_id': 'call_123', 'type': 'function_call'},
+            {
+                'type': 'function_call_output',
+                'call_id': 'call_123',
+                'output': [
+                    {'type': 'input_text', 'text': IsStr(regex=r'\[File: [a-f0-9]+\]')},
+                    {'type': 'input_image', 'image_url': 'https://example.com/image.jpg'},
+                ],
+            },
+        ]
+    )
+
+
+async def test_responses_model_tool_return_with_document_url() -> None:
+    """Test that _map_messages handles DocumentUrl directly in ToolReturnPart.content."""
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='What is in this document?')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='get_doc', args='{}', tool_call_id='call_doc')],
+            model_name='gpt-4o',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_doc',
+                    content=DocumentUrl(url='https://example.com/doc.pdf'),
+                    tool_call_id='call_doc',
+                )
+            ]
+        ),
+    ]
+
+    _, openai_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    assert openai_messages == snapshot(
+        [
+            {'role': 'user', 'content': 'What is in this document?'},
+            {'name': 'get_doc', 'arguments': '{}', 'call_id': 'call_doc', 'type': 'function_call'},
+            {
+                'type': 'function_call_output',
+                'call_id': 'call_doc',
+                'output': [
+                    {'type': 'input_text', 'text': IsStr(regex=r'\[File: [a-f0-9]+\]')},
+                    {'type': 'input_file', 'file_url': 'https://example.com/doc.pdf'},
+                ],
+            },
+        ]
+    )
+
+
+async def test_chat_model_multiple_tool_returns_with_multimodal(image_content: BinaryContent) -> None:
+    """Test that _map_user_message handles multiple tool returns with mixed content."""
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    request = ModelRequest(
+        parts=[
+            ToolReturnPart(
+                tool_name='get_text',
+                content='Plain text result',
+                tool_call_id='call_text',
+            ),
+            ToolReturnPart(
+                tool_name='get_image',
+                content=image_content,
+                tool_call_id='call_image',
+            ),
+        ]
+    )
+
+    mapped_messages = [msg async for msg in model._map_user_message(request)]  # pyright: ignore[reportPrivateUsage]
+
+    assert mapped_messages == snapshot(
+        [
+            {'role': 'tool', 'tool_call_id': 'call_text', 'content': 'Plain text result'},
+            {'role': 'tool', 'tool_call_id': 'call_image', 'content': IsStr(regex=r'\[File: [a-f0-9]+\]')},
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'File 1 from tool get_image:', 'type': 'text'},
+                    {'image_url': {'url': IsStr(regex=r'data:image/jpeg;base64,.+')}, 'type': 'image_url'},
+                ],
+            },
+        ]
+    )
+
+
+async def test_responses_model_tool_return_with_audio_url() -> None:
+    """Test that _map_messages handles AudioUrl directly in ToolReturnPart.content."""
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='What is in this audio?')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='get_audio', args='{}', tool_call_id='call_audio')],
+            model_name='gpt-4o',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_audio',
+                    content=AudioUrl(url='https://example.com/audio.mp3'),
+                    tool_call_id='call_audio',
+                )
+            ]
+        ),
+    ]
+
+    _, openai_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    assert openai_messages == snapshot(
+        [
+            {'role': 'user', 'content': 'What is in this audio?'},
+            {'name': 'get_audio', 'arguments': '{}', 'call_id': 'call_audio', 'type': 'function_call'},
+            {
+                'type': 'function_call_output',
+                'call_id': 'call_audio',
+                'output': [
+                    {'type': 'input_text', 'text': IsStr(regex=r'\[File: [a-f0-9]+\]')},
+                    {'type': 'input_file', 'file_url': 'https://example.com/audio.mp3'},
+                ],
+            },
+        ]
+    )
+
+
+async def test_responses_model_tool_return_with_list_containing_multiple_images(
+    image_content: BinaryContent,
+) -> None:
+    """Test that _map_messages handles lists with multiple BinaryContent items."""
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    # Create a second image for testing
+    second_image = BinaryContent(data=image_content.data, media_type='image/jpeg')
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='What are in these images?')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='get_images', args='{}', tool_call_id='call_imgs')],
+            model_name='gpt-4o',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_images',
+                    content=['Here are the images:', image_content, second_image],
+                    tool_call_id='call_imgs',
+                )
+            ]
+        ),
+    ]
+
+    _, openai_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    assert openai_messages == snapshot(
+        [
+            {'role': 'user', 'content': 'What are in these images?'},
+            {'name': 'get_images', 'arguments': '{}', 'call_id': 'call_imgs', 'type': 'function_call'},
+            {
+                'type': 'function_call_output',
+                'call_id': 'call_imgs',
+                'output': [
+                    {
+                        'type': 'input_text',
+                        'text': IsStr(regex=r'Here are the images:\n\[File: [a-f0-9]+\]\n\[File: [a-f0-9]+\]'),
+                    },
+                    {'type': 'input_image', 'image_url': IsStr(regex=r'data:image/jpeg;base64,.+')},
+                    {'type': 'input_image', 'image_url': IsStr(regex=r'data:image/jpeg;base64,.+')},
+                ],
+            },
+        ]
+    )
+
+
+async def test_responses_model_tool_return_with_binary_document(document_content: BinaryContent) -> None:
+    """Test that _map_messages handles BinaryContent document (non-image) in ToolReturnPart.content."""
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='What is in this document?')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='get_doc', args='{}', tool_call_id='call_doc')],
+            model_name='gpt-4o',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_doc',
+                    content=document_content,
+                    tool_call_id='call_doc',
+                )
+            ]
+        ),
+    ]
+
+    _, openai_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    function_output = next(
+        (msg for msg in openai_messages if isinstance(msg, dict) and msg.get('type') == 'function_call_output'),
+        None,
+    )
+    assert function_output is not None
+
+    output = function_output.get('output')
+    assert isinstance(output, list)
+    assert len(output) == 2  # type: ignore[arg-type]
+    assert output[0]['type'] == 'input_text'  # type: ignore[index]
+    assert output[0]['text'].startswith('[File: ')  # type: ignore[index]
+    # BinaryContent document goes to input_file, not input_image
+    assert output[1]['type'] == 'input_file'  # type: ignore[index]
+    assert 'data:application/pdf;base64,' in output[1]['file_data']  # type: ignore[index,operator]
 
 
 def test_model_status_error(allow_model_requests: None) -> None:

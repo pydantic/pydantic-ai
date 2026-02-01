@@ -46,13 +46,16 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    MultiModalContent,
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    ToolReturnContent,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
     VideoUrl,
 )
@@ -100,7 +103,13 @@ try:
         WebSearchOptionsUserLocationApproximate,
     )
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
+    from openai.types.responses.response_function_call_output_item_list_param import (
+        ResponseFunctionCallOutputItemListParam,
+    )
+    from openai.types.responses.response_input_file_content_param import ResponseInputFileContentParam
+    from openai.types.responses.response_input_image_content_param import ResponseInputImageContentParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
+    from openai.types.responses.response_input_text_content_param import ResponseInputTextContentParam
     from openai.types.responses.response_reasoning_item_param import (
         Content as ReasoningContent,
         Summary as ReasoningSummary,
@@ -261,6 +270,38 @@ def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str)
         except ValidationError:
             pass
     return None
+
+
+def _extract_multimodal_from_tool_return(content: ToolReturnContent) -> list[MultiModalContent]:
+    """Extract multimodal content items from a tool return value."""
+    multimodal_items: list[MultiModalContent] = []
+    if isinstance(content, MultiModalContent):
+        multimodal_items.append(content)
+    elif isinstance(content, Sequence) and not isinstance(content, str):
+        for item in cast(Sequence[Any], content):
+            if isinstance(item, MultiModalContent):
+                multimodal_items.append(item)
+    return multimodal_items
+
+
+def _extract_text_from_tool_return(content: ToolReturnContent) -> str:
+    """Extract text content from a tool return value, excluding multimodal items."""
+    if isinstance(content, str):
+        return content
+    elif isinstance(content, MultiModalContent):
+        return f'[File: {content.identifier}]'
+    elif isinstance(content, Sequence):
+        text_parts: list[str] = []
+        for item in cast(Sequence[Any], content):
+            if isinstance(item, str):
+                text_parts.append(item)
+            elif isinstance(item, MultiModalContent):
+                text_parts.append(f'[File: {item.identifier}]')
+            else:
+                text_parts.append(str(item))
+        return '\n'.join(text_parts)
+    else:
+        return str(content)
 
 
 def _drop_sampling_params_for_reasoning(profile: OpenAIModelProfile, model_settings: OpenAIChatModelSettings) -> None:
@@ -1087,6 +1128,7 @@ class OpenAIChatModel(Model):
         return tool_param
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
+        deferred_multimodal_content: list[UserContent] = []
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 system_prompt_role = OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role
@@ -1099,11 +1141,23 @@ class OpenAIChatModel(Model):
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                yield chat.ChatCompletionToolMessageParam(
-                    role='tool',
-                    tool_call_id=_guard_tool_call_id(t=part),
-                    content=part.model_response_str(),
-                )
+                multimodal_items = _extract_multimodal_from_tool_return(part.content)
+                if multimodal_items:
+                    text_content = _extract_text_from_tool_return(part.content)
+                    yield chat.ChatCompletionToolMessageParam(
+                        role='tool',
+                        tool_call_id=_guard_tool_call_id(t=part),
+                        content=text_content or 'See attached file(s)',
+                    )
+                    for idx, item in enumerate(multimodal_items):
+                        deferred_multimodal_content.append(f'File {idx + 1} from tool {part.tool_name}:')
+                        deferred_multimodal_content.append(item)
+                else:
+                    yield chat.ChatCompletionToolMessageParam(
+                        role='tool',
+                        tool_call_id=_guard_tool_call_id(t=part),
+                        content=part.model_response_str(),
+                    )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
                     yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
@@ -1115,6 +1169,8 @@ class OpenAIChatModel(Model):
                     )
             else:
                 assert_never(part)
+        if deferred_multimodal_content:
+            yield await self._map_user_prompt(UserPromptPart(content=deferred_multimodal_content))
 
     async def _map_user_prompt(self, part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:  # noqa: C901
         profile = OpenAIModelProfile.from_profile(self.profile)
@@ -1822,11 +1878,56 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(part, ToolReturnPart):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
-                        item = FunctionCallOutput(
-                            type='function_call_output',
-                            call_id=call_id,
-                            output=part.model_response_str(),
-                        )
+                        multimodal_items = _extract_multimodal_from_tool_return(part.content)
+                        if multimodal_items:
+                            output_content: ResponseFunctionCallOutputItemListParam = []
+                            text_content = _extract_text_from_tool_return(part.content)
+                            if text_content:
+                                output_content.append(
+                                    ResponseInputTextContentParam(type='input_text', text=text_content)
+                                )
+                            for mm_item in multimodal_items:
+                                if isinstance(mm_item, BinaryContent):
+                                    if mm_item.is_image:
+                                        output_content.append(
+                                            ResponseInputImageContentParam(
+                                                type='input_image',
+                                                image_url=mm_item.data_uri,
+                                            )
+                                        )
+                                    else:
+                                        output_content.append(
+                                            ResponseInputFileContentParam(
+                                                type='input_file',
+                                                file_data=mm_item.data_uri,
+                                                filename=f'file.{mm_item.format}',
+                                            )
+                                        )
+                                elif isinstance(mm_item, ImageUrl):
+                                    output_content.append(
+                                        ResponseInputImageContentParam(
+                                            type='input_image',
+                                            image_url=mm_item.url,
+                                        )
+                                    )
+                                elif isinstance(mm_item, (DocumentUrl, AudioUrl)):
+                                    output_content.append(
+                                        ResponseInputFileContentParam(
+                                            type='input_file',
+                                            file_url=mm_item.url,
+                                        )
+                                    )
+                            item = FunctionCallOutput(
+                                type='function_call_output',
+                                call_id=call_id,
+                                output=output_content,
+                            )
+                        else:
+                            item = FunctionCallOutput(
+                                type='function_call_output',
+                                call_id=call_id,
+                                output=part.model_response_str(),
+                            )
                         openai_messages.append(item)
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
