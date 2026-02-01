@@ -1186,13 +1186,7 @@ async def _call_tool(
             # Get metadata from the tool_call_metadata dict by tool_call_id
             metadata = tool_call_metadata.get(tool_call.tool_call_id) if tool_call_metadata else None
             if tool_call_result.override_args is not None:
-                # If _approval_call present, override_args are for the inner tool, not the outer
-                if metadata and '_approval_call' in metadata:
-                    # Store in metadata for wrapper to apply to inner tool
-                    metadata = {**metadata, '_override_args': tool_call_result.override_args}
-                else:
-                    # Normal case: replace args directly
-                    tool_call = dataclasses.replace(tool_call, args=tool_call_result.override_args)
+                tool_call = dataclasses.replace(tool_call, args=tool_call_result.override_args)
             tool_result = await tool_manager.handle_call(tool_call, approved=True, metadata=metadata)
         elif isinstance(tool_call_result, ToolDenied):
             return _messages.ToolReturnPart(
