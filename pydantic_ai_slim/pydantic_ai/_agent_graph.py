@@ -789,6 +789,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         text_processor: _output.BaseOutputProcessor[NodeRunEndT],
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
         run_context = build_run_context(ctx)
+        run_context = replace(
+            run_context,
+            retry=ctx.state.retries,
+            max_retries=ctx.deps.max_result_retries,
+        )
 
         result_data = await text_processor.process(text, run_context=run_context)
 
@@ -850,8 +855,6 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         if ctx.deps.instrumentation_settings
         else DEFAULT_INSTRUMENTATION_VERSION,
         run_step=ctx.state.run_step,
-        retry=ctx.state.retries,
-        max_retries=ctx.deps.max_result_retries,
         run_id=ctx.state.run_id,
         metadata=ctx.state.metadata,
     )
