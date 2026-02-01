@@ -5103,8 +5103,8 @@ def test_tool_return_part_binary_content_serialization():
             'data': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzgAAAAASUVORK5CYII=',
             'media_type': 'image/png',
             'vendor_metadata': None,
-            '_identifier': None,
             'kind': 'binary',
+            'identifier': '14a01a',
         }
     )
 
@@ -6323,7 +6323,7 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
     user_prompt = 'call a lot of tools'
 
     if mode == 'contextmanager':
-        with agent.sequential_tool_calls():
+        with agent.parallel_tool_call_execution_mode('sequential'):
             result = agent.run_sync(user_prompt)
     else:
         result = agent.run_sync(user_prompt)
