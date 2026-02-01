@@ -43,6 +43,10 @@ class TavilySearchTool:
 
     client: AsyncTavilyClient
     """The Tavily search client."""
+    include_domains: list[str] | None = None
+    """Default list of domains to specifically include in search results."""
+    exclude_domains: list[str] | None = None
+    """Default list of domains to specifically exclude from search results."""
 
     async def __call__(
         self,
@@ -50,6 +54,8 @@ class TavilySearchTool:
         search_deep: Literal['basic', 'advanced'] = 'basic',
         topic: Literal['general', 'news'] = 'general',
         time_range: Literal['day', 'week', 'month', 'year', 'd', 'w', 'm', 'y'] | None = None,
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
     ) -> list[TavilySearchResult]:
         """Searches Tavily for the given query and returns the results.
 
@@ -58,24 +64,52 @@ class TavilySearchTool:
             search_deep: The depth of the search.
             topic: The category of the search.
             time_range: The time range back from the current date to filter results.
+            include_domains: List of domains to specifically include in the search results.
+                Overrides the default include_domains if provided.
+            exclude_domains: List of domains to specifically exclude from the search results.
+                Overrides the default exclude_domains if provided.
 
         Returns:
             A list of search results from Tavily.
         """
-        results = await self.client.search(query, search_depth=search_deep, topic=topic, time_range=time_range)  # type: ignore[reportUnknownMemberType]
+        # Use call-time values if provided, otherwise fall back to instance defaults
+        effective_include = include_domains if include_domains is not None else self.include_domains
+        effective_exclude = exclude_domains if exclude_domains is not None else self.exclude_domains
+
+        results = await self.client.search(
+            query,
+            search_depth=search_deep,
+            topic=topic,
+            time_range=time_range,
+            include_domains=effective_include,
+            exclude_domains=effective_exclude,
+        )  # type: ignore[reportUnknownMemberType]
         return tavily_search_ta.validate_python(results['results'])
 
 
-def tavily_search_tool(api_key: str):
+def tavily_search_tool(
+    api_key: str,
+    *,
+    include_domains: list[str] | None = None,
+    exclude_domains: list[str] | None = None,
+):
     """Creates a Tavily search tool.
 
     Args:
         api_key: The Tavily API key.
 
             You can get one by signing up at [https://app.tavily.com/home](https://app.tavily.com/home).
+        include_domains: Default list of domains to specifically include in search results.
+            For example, `['arxiv.org', 'github.com']` will only return results from these domains.
+        exclude_domains: Default list of domains to specifically exclude from search results.
+            For example, `['medium.com']` will filter out results from these domains.
     """
     return Tool[Any](
-        TavilySearchTool(client=AsyncTavilyClient(api_key)).__call__,
+        TavilySearchTool(
+            client=AsyncTavilyClient(api_key),
+            include_domains=include_domains,
+            exclude_domains=exclude_domains,
+        ).__call__,
         name='tavily_search',
         description='Searches Tavily for the given query and returns the results.',
     )
