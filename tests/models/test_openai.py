@@ -42,7 +42,7 @@ from pydantic_ai import (
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.exceptions import ContentFilterError
-from pydantic_ai.messages import SystemPromptPart
+from pydantic_ai.messages import SystemPromptPart, ToolReturnContent
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
@@ -84,6 +84,7 @@ with try_import() as imports_successful:
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
         OpenAISystemPromptRole,
+        _extract_text_from_tool_return,  # pyright: ignore[reportPrivateUsage]
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
@@ -1903,6 +1904,75 @@ async def test_responses_model_tool_return_with_binary_document(document_content
     # BinaryContent document goes to input_file, not input_image
     assert output[1]['type'] == 'input_file'  # type: ignore[index]
     assert 'data:application/pdf;base64,' in output[1]['file_data']  # type: ignore[index,operator]
+
+
+def test_extract_text_from_tool_return_with_string() -> None:
+    """Test _extract_text_from_tool_return when content is a plain string."""
+    content: ToolReturnContent = 'hello world'
+    result = _extract_text_from_tool_return(content)
+    assert result == 'hello world'
+
+
+def test_extract_text_from_tool_return_with_non_standard_type() -> None:
+    """Test _extract_text_from_tool_return when content is not str or MultiModalContent."""
+    content: ToolReturnContent = 12345
+    result = _extract_text_from_tool_return(content)
+    assert result == '12345'
+
+
+def test_extract_text_from_tool_return_with_sequence_containing_other_types(image_content: BinaryContent) -> None:
+    """Test _extract_text_from_tool_return when sequence contains non-str/non-MultiModalContent items."""
+    content: ToolReturnContent = ['text', image_content, 42, {'key': 'value'}]
+    result = _extract_text_from_tool_return(content)
+    assert result == snapshot("""\
+text
+[File: 241a70]
+42
+{'key': 'value'}\
+""")
+
+
+async def test_responses_model_tool_return_with_only_multimodal_content(image_content: BinaryContent) -> None:
+    """Test _map_messages when tool return contains only multimodal content."""
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='What is in this image?')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_img')],
+            model_name='gpt-4o',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_image',
+                    content=[image_content],
+                    tool_call_id='call_img',
+                )
+            ]
+        ),
+    ]
+
+    _, openai_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    assert openai_messages == snapshot(
+        [
+            {'role': 'user', 'content': 'What is in this image?'},
+            {'name': 'get_image', 'arguments': '{}', 'call_id': 'call_img', 'type': 'function_call'},
+            {
+                'type': 'function_call_output',
+                'call_id': 'call_img',
+                'output': [
+                    {'type': 'input_text', 'text': IsStr(regex=r'\[File: [a-f0-9]+\]')},
+                    {'type': 'input_image', 'image_url': IsStr(regex=r'data:image/jpeg;base64,.+')},
+                ],
+            },
+        ]
+    )
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
