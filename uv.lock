@@ -6267,6 +6267,7 @@ dev = [
     { name = "pytest-recording" },
     { name = "pytest-xdist" },
     { name = "strict-no-cover" },
+    { name = "tavily-python" },
 ]
 docs = [
     { name = "black" },
@@ -6330,6 +6331,7 @@ dev = [
     { name = "pytest-recording", specifier = ">=0.13.2" },
     { name = "pytest-xdist", specifier = ">=3.6.1" },
     { name = "strict-no-cover", git = "https://github.com/pydantic/strict-no-cover.git?rev=7fc59da2c4dff919db2095a0f0e47101b657131d" },
+    { name = "tavily-python", specifier = ">=0.5.0" },
 ]
 docs = [
     { name = "black", specifier = ">=24.10.0" },
