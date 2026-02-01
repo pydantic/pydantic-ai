@@ -37,6 +37,7 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
     UserError,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
@@ -1778,6 +1779,35 @@ async def test_responses_model_tool_return_with_audio_url() -> None:
             },
         ]
     )
+
+
+async def test_responses_model_tool_return_with_video_url_raises_error() -> None:
+    """Test that _map_messages raises NotImplementedError for VideoUrl in tool return."""
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='What is in this video?')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='get_video', args='{}', tool_call_id='call_video')],
+            model_name='gpt-4o',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_video',
+                    content=VideoUrl(url='https://example.com/video.mp4'),
+                    tool_call_id='call_video',
+                )
+            ]
+        ),
+    ]
+
+    with pytest.raises(NotImplementedError, match='VideoUrl is not supported for OpenAI.'):
+        await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+            messages,
+            model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
+            model_request_parameters=ModelRequestParameters(),
+        )
 
 
 async def test_responses_model_tool_return_with_list_containing_multiple_images(
