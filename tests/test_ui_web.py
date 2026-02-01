@@ -563,6 +563,8 @@ def test_inject_config_empty_base_path():
 
     result_str = result.decode('utf-8')
     assert '"basePath": ""' in result_str
+
+
 @pytest.mark.anyio
 async def test_get_ui_html_custom_url(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that _get_ui_html fetches from custom URL when provided."""
