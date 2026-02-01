@@ -217,4 +217,4 @@ class TestTavilySearchToolIntegration:
             )
 
             # Verify the tool is properly registered
-            assert 'tavily_search' in agent._function_toolset.tools
+            assert 'tavily_search' in agent._function_toolset.tools  # pyright: ignore[reportPrivateUsage]

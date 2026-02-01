@@ -76,14 +76,9 @@ class TavilySearchTool:
         effective_include = include_domains if include_domains is not None else self.include_domains
         effective_exclude = exclude_domains if exclude_domains is not None else self.exclude_domains
 
-        results = await self.client.search(
-            query,
-            search_depth=search_deep,
-            topic=topic,
-            time_range=time_range,
-            include_domains=effective_include,
-            exclude_domains=effective_exclude,
-        )  # type: ignore[reportUnknownMemberType]
+        # fmt: off
+        results = await self.client.search(query, search_depth=search_deep, topic=topic, time_range=time_range, include_domains=effective_include, exclude_domains=effective_exclude)  # type: ignore[reportUnknownMemberType]
+        # fmt: on
         return tavily_search_ta.validate_python(results['results'])
 
 
