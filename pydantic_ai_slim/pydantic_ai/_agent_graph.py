@@ -1167,6 +1167,7 @@ def _populate_deferred_calls(
     """Populate deferred calls and metadata from indexed mappings."""
     for k in sorted(deferred_calls_by_index):
         call = tool_calls[k]
+        output_deferred_calls[deferred_calls_by_index[k]].append(call)
         metadata = deferred_metadata_by_index[k]
 
         if metadata is not None:
@@ -1183,10 +1184,10 @@ async def _call_tool(
         if tool_call_result is None:
             tool_result = await tool_manager.handle_call(tool_call)
         elif isinstance(tool_call_result, ToolApproved):
-            # Get metadata from the tool_call_metadata dict by tool_call_id
-            metadata = tool_call_metadata.get(tool_call.tool_call_id) if tool_call_metadata else None
             if tool_call_result.override_args is not None:
                 tool_call = dataclasses.replace(tool_call, args=tool_call_result.override_args)
+            # Get metadata from the tool_call_metadata dict by tool_call_id
+            metadata = tool_call_metadata.get(tool_call.tool_call_id) if tool_call_metadata else None
             tool_result = await tool_manager.handle_call(tool_call, approved=True, metadata=metadata)
         elif isinstance(tool_call_result, ToolDenied):
             return _messages.ToolReturnPart(
