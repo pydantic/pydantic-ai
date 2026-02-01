@@ -640,6 +640,14 @@ class OpenAIChatModel(Model):
         for setting in unsupported_model_settings:
             model_settings.pop(setting, None)
 
+        extra_body: dict[str, Any] | None = model_settings.get('extra_body')
+        if self.system == 'ollama' and response_format is not None and isinstance(response_format, dict):
+            if response_format.get('type') == 'json_schema' and 'json_schema' in response_format:
+                js = response_format['json_schema']
+                if isinstance(js, dict) and 'schema' in js:
+                    extra_body = dict(extra_body or {})
+                    extra_body['format'] = js['schema']
+
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
@@ -671,7 +679,7 @@ class OpenAIChatModel(Model):
                 prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
                 prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
                 extra_headers=extra_headers,
-                extra_body=model_settings.get('extra_body'),
+                extra_body=extra_body,
             )
         except APIStatusError as e:
             if model_response := _check_azure_content_filter(e, self.system, self.model_name):
