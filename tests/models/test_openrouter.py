@@ -61,7 +61,7 @@ Because it felt like their relationship was going nowhere.\
 
 async def test_openrouter_with_native_options(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+    model = OpenRouterModel('google/gemini-2.5-flash:free', provider=provider)
     # These specific settings will force OpenRouter to use the fallback model, since Gemini is not available via the xAI provider.
     settings = OpenRouterModelSettings(
         openrouter_models=['x-ai/grok-4'],
@@ -84,7 +84,7 @@ What can I help you with today?\
 
 async def test_openrouter_stream_with_native_options(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+    model = OpenRouterModel('google/gemini-2.5-flash:free', provider=provider)
     # These specific settings will force OpenRouter to use the fallback model, since Gemini is not available via the xAI provider.
     settings = OpenRouterModelSettings(
         openrouter_models=['x-ai/grok-4'],
@@ -271,12 +271,12 @@ async def test_openrouter_preserve_reasoning_block(allow_model_requests: None, o
 
 async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+    model = OpenRouterModel('google/gemini-2.5-flash:free', provider=provider)
     agent = Agent(model, instructions='Be helpful.', retries=1)
     with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('Tell me a joke.')
     assert str(exc_info.value) == snapshot(
-        "status_code: 429, model_name: google/gemini-2.0-flash-exp:free, body: {'code': 429, 'message': 'Provider returned error', 'metadata': {'provider_name': 'Google', 'raw': 'google/gemini-2.0-flash-exp:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations'}}"
+        "status_code: 429, model_name: google/gemini-2.5-flash:free, body: {'code': 429, 'message': 'Provider returned error', 'metadata': {'provider_name': 'Google', 'raw': 'google/gemini-2.0-flash-exp:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations'}}"
     )
 
 
@@ -298,8 +298,8 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
     assert result.usage() == snapshot(
         RunUsage(
             input_tokens=17,
-            output_tokens=2177,
-            details={'is_byok': 0, 'reasoning_tokens': 960, 'image_tokens': 0},
+            output_tokens=1515,
+            details={'reasoning_tokens': 704},
             requests=1,
         )
     )
@@ -314,7 +314,7 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
 
 async def test_openrouter_validate_non_json_response(openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+    model = OpenRouterModel('google/gemini-2.5-flash:free', provider=provider)
 
     with pytest.raises(UnexpectedModelBehavior) as exc_info:
         model._process_response('This is not JSON!')  # type: ignore[reportPrivateUsage]
@@ -326,7 +326,7 @@ async def test_openrouter_validate_non_json_response(openrouter_api_key: str) ->
 
 async def test_openrouter_validate_error_response(openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+    model = OpenRouterModel('google/gemini-2.5-flash:free', provider=provider)
 
     choice = Choice.model_construct(
         index=0, message={'role': 'assistant'}, finish_reason='error', native_finish_reason='stop'
@@ -359,7 +359,7 @@ async def test_openrouter_with_provider_details_but_no_parent_details(openrouter
             return openrouter_details or None
 
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = TestOpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+    model = TestOpenRouterModel('google/gemini-2.5-flash:free', provider=provider)
 
     choice = Choice.model_construct(
         index=0, message={'role': 'assistant', 'content': 'test'}, finish_reason='stop', native_finish_reason='stop'
@@ -489,7 +489,7 @@ async def test_openrouter_no_openrouter_details(openrouter_api_key: str) -> None
     from unittest.mock import patch
 
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+    model = OpenRouterModel('google/gemini-2.5-flash:free', provider=provider)
 
     choice = Choice.model_construct(
         index=0, message={'role': 'assistant', 'content': 'test'}, finish_reason='stop', native_finish_reason='stop'

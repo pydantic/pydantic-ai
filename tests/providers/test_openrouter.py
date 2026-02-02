@@ -83,7 +83,7 @@ def test_openrouter_pass_openai_client() -> None:
 
 async def test_openrouter_with_google_model(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+    model = OpenRouterModel('google/gemini-2.5-flash:free', provider=provider)
     agent = Agent(model, instructions='Be helpful.')
     response = await agent.run('Tell me a joke.')
     assert response.output == snapshot("""\
@@ -109,8 +109,8 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     meta_model_profile_mock = mocker.patch(f'{ns}.meta_model_profile', wraps=meta_model_profile)
     moonshotai_model_profile_mock = mocker.patch(f'{ns}.moonshotai_model_profile', wraps=moonshotai_model_profile)
 
-    google_profile = provider.model_profile('google/gemini-2.5-pro-preview')
-    google_model_profile_mock.assert_called_with('gemini-2.5-pro-preview')
+    google_profile = provider.model_profile('google/gemini-2.5-pro')
+    google_model_profile_mock.assert_called_with('gemini-2.5-pro')
     assert google_profile is not None
     assert google_profile.json_schema_transformer == _OpenRouterGoogleJsonSchemaTransformer
 
@@ -119,8 +119,8 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     assert google_profile is not None
     assert google_profile.json_schema_transformer == _OpenRouterGoogleJsonSchemaTransformer
 
-    openai_profile = provider.model_profile('openai/o1-mini')
-    openai_model_profile_mock.assert_called_with('o1-mini')
+    openai_profile = provider.model_profile('openai/o4-mini-2025-04-16')
+    openai_model_profile_mock.assert_called_with('o4-mini-2025-04-16')
     assert openai_profile is not None
     assert openai_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 

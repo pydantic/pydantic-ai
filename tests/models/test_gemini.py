@@ -72,9 +72,9 @@ pytestmark = [
 
 
 async def test_model_simple(allow_model_requests: None):
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     assert isinstance(m.client, httpx.AsyncClient)
-    assert m.model_name == 'gemini-1.5-flash'
+    assert m.model_name == 'gemini-2.5-flash'
     assert 'x-goog-api-key' in m.client.headers
 
     mrp = ModelRequestParameters(
@@ -88,7 +88,7 @@ async def test_model_simple(allow_model_requests: None):
 
 
 async def test_model_tools(allow_model_requests: None):
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     tools = [
         ToolDefinition(
             name='foo',
@@ -163,7 +163,7 @@ async def test_model_tools(allow_model_requests: None):
 
 
 async def test_require_response_tool(allow_model_requests: None):
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     output_tool = ToolDefinition(
         name='result',
         description='This is the tool for the final Result',
@@ -253,7 +253,7 @@ async def test_json_def_replaced(allow_model_requests: None):
         }
     )
 
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     output_tool = ToolDefinition(
         name='result',
         description='This is the tool for the final Result',
@@ -336,7 +336,7 @@ async def test_json_def_enum(allow_model_requests: None):
             'type': 'object',
         }
     )
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     output_tool = ToolDefinition(
         name='result',
         description='This is the tool for the final Result',
@@ -387,7 +387,7 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
 
     json_schema = Locations.model_json_schema()
 
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     output_tool = ToolDefinition(
         name='result',
         description='This is the tool for the final Result',
@@ -448,7 +448,7 @@ async def test_json_def_date(allow_model_requests: None):
         }
     )
 
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     output_tool = ToolDefinition(
         name='result',
         description='This is the tool for the final Result',
@@ -541,7 +541,7 @@ def gemini_response(content: _GeminiContent, finish_reason: Literal['STOP'] | No
     candidate = _GeminiCandidates(content=content, index=0, safety_ratings=[])
     if finish_reason:  # pragma: no branch
         candidate['finish_reason'] = finish_reason
-    return _GeminiResponse(candidates=[candidate], usage_metadata=example_usage(), model_version='gemini-1.5-flash-123')
+    return _GeminiResponse(candidates=[candidate], usage_metadata=example_usage(), model_version='gemini-2.5-flash')
 
 
 def example_usage() -> _GeminiUsageMetaData:
@@ -551,7 +551,7 @@ def example_usage() -> _GeminiUsageMetaData:
 async def test_text_success(get_gemini_client: GetGeminiClient):
     response = gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Hello world')])))
     gemini_client = get_gemini_client(response)
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m)
 
     result = await agent.run('Hello')
@@ -566,7 +566,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
             ModelResponse(
                 parts=[TextPart(content='Hello world')],
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
-                model_name='gemini-1.5-flash-123',
+                model_name='gemini-2.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
@@ -589,7 +589,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
             ModelResponse(
                 parts=[TextPart(content='Hello world')],
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
-                model_name='gemini-1.5-flash-123',
+                model_name='gemini-2.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
@@ -604,7 +604,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
             ModelResponse(
                 parts=[TextPart(content='Hello world')],
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
-                model_name='gemini-1.5-flash-123',
+                model_name='gemini-2.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
@@ -620,7 +620,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
         _content_model_response(ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2, 123]})]))
     )
     gemini_client = get_gemini_client(response)
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m, output_type=list[int])
 
     result = await agent.run('Hello')
@@ -635,7 +635,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'response': [1, 2, 123]}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
-                model_name='gemini-1.5-flash-123',
+                model_name='gemini-2.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
@@ -676,7 +676,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
         gemini_response(_content_model_response(ModelResponse(parts=[TextPart('final response')]))),
     ]
     gemini_client = get_gemini_client(responses)
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m, instructions='this is the system prompt')
 
     @agent.tool_plain
@@ -705,7 +705,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                     ToolCallPart(tool_name='get_location', args={'loc_name': 'San Fransisco'}, tool_call_id=IsStr())
                 ],
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
-                model_name='gemini-1.5-flash-123',
+                model_name='gemini-2.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
@@ -731,7 +731,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                     ToolCallPart(tool_name='get_location', args={'loc_name': 'New York'}, tool_call_id=IsStr()),
                 ],
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
-                model_name='gemini-1.5-flash-123',
+                model_name='gemini-2.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
@@ -760,7 +760,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
             ModelResponse(
                 parts=[TextPart(content='final response')],
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
-                model_name='gemini-1.5-flash-123',
+                model_name='gemini-2.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
@@ -779,13 +779,13 @@ async def test_unexpected_response(client_with_handler: ClientWithHandler, env: 
         return httpx.Response(401, content='invalid request')
 
     gemini_client = client_with_handler(handler)
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m, instructions='this is the system prompt')
 
     with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('Hello')
 
-    assert str(exc_info.value) == snapshot('status_code: 401, model_name: gemini-1.5-flash, body: invalid request')
+    assert str(exc_info.value) == snapshot('status_code: 401, model_name: gemini-2.5-flash, body: invalid request')
 
 
 async def test_stream_text(get_gemini_client: GetGeminiClient):
@@ -796,7 +796,7 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
     stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
     gemini_client = get_gemini_client(stream)
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m)
 
     async with agent.run_stream('Hello') as result:
@@ -833,7 +833,7 @@ async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
 
     stream = AsyncByteStreamList(parts)
     gemini_client = get_gemini_client(stream)
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m)
 
     async with agent.run_stream('Hello') as result:
@@ -847,7 +847,7 @@ async def test_stream_text_no_data(get_gemini_client: GetGeminiClient):
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
     stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
     gemini_client = get_gemini_client(stream)
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m)
     with pytest.raises(UnexpectedModelBehavior, match='Streamed response ended without con'):
         async with agent.run_stream('Hello'):
@@ -863,7 +863,7 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
     stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
     gemini_client = get_gemini_client(stream)
-    model = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
+    model = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(model, output_type=tuple[int, int])
 
     async with agent.run_stream('Hello') as result:
@@ -893,7 +893,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
     second_stream = AsyncByteStreamList([d2[:100], d2[100:]])
 
     gemini_client = get_gemini_client([first_stream, second_stream])
-    model = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
+    model = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(model, output_type=tuple[int, int])
     tool_calls: list[str] = []
 
@@ -924,7 +924,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                     ToolCallPart(tool_name='bar', args={'y': 'b'}, tool_call_id=IsStr()),
                 ],
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
-                model_name='gemini-1.5-flash',
+                model_name='gemini-2.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
@@ -945,7 +945,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'response': [1, 2]}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
-                model_name='gemini-1.5-flash',
+                model_name='gemini-2.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
@@ -987,7 +987,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
     stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
     gemini_client = get_gemini_client(stream)
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m)
 
     @agent.tool_plain()
@@ -1020,7 +1020,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
                     ),
                 ],
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
-                model_name='gemini-1.5-flash',
+                model_name='gemini-2.5-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
@@ -1097,7 +1097,7 @@ async def test_model_settings(client_with_handler: ClientWithHandler, env: TestE
         )
 
     gemini_client = client_with_handler(handler)
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client, api_key='mock'))
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(http_client=gemini_client, api_key='mock'))
     agent = Agent(m)
 
     result = await agent.run(
@@ -1150,7 +1150,7 @@ async def test_safety_settings_unsafe(
 
         gemini_client = client_with_handler(handler)
 
-        m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client, api_key='mock'))
+        m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(http_client=gemini_client, api_key='mock'))
         agent = Agent(m)
 
         await agent.run(
@@ -1186,7 +1186,7 @@ async def test_safety_settings_safe(
         )
 
     gemini_client = client_with_handler(handler)
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client, api_key='mock'))
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(http_client=gemini_client, api_key='mock'))
     agent = Agent(m)
 
     result = await agent.run(
@@ -1351,12 +1351,12 @@ async def test_image_as_binary_content_input(
     agent = Agent(m)
 
     result = await agent.run(['What is the name of this fruit?', image_content])
-    assert result.output == snapshot('The fruit in the image is a kiwi.')
+    assert result.output == snapshot('That is a kiwi fruit.\n')
 
 
 @pytest.mark.vcr()
 async def test_image_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
-    m = GeminiModel('gemini-2.0-flash-exp', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
     agent = Agent(m)
 
     image_url = ImageUrl(url='https://goo.gle/instrument-img')
@@ -1417,7 +1417,7 @@ It strongly evokes places like Mykonos or Santorini in Greece, known for their i
 
 @pytest.mark.vcr()
 async def test_document_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
-    m = GeminiModel('gemini-2.0-flash-thinking-exp-01-21', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
     agent = Agent(m)
 
     document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
@@ -1444,7 +1444,7 @@ async def test_gemini_drop_exclusive_maximum(allow_model_requests: None, gemini_
 
 @pytest.mark.vcr()
 async def test_gemini_model_instructions(allow_model_requests: None, gemini_api_key: str):
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
     agent = Agent(m, instructions='You are a helpful assistant.')
 
     result = await agent.run('What is the capital of France?')
@@ -1457,15 +1457,16 @@ async def test_gemini_model_instructions(allow_model_requests: None, gemini_api_
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='The capital of France is Paris.\n')],
+                parts=[TextPart(content='The capital of France is Paris.')],
                 usage=RequestUsage(
-                    input_tokens=13, output_tokens=8, details={'text_prompt_tokens': 13, 'text_candidates_tokens': 8}
+                    input_tokens=15, output_tokens=29, details={'thoughts_tokens': 22, 'text_prompt_tokens': 15}
                 ),
-                model_name='gemini-1.5-flash',
+                model_name='gemini-2.5-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id='bzZ8aZvANc-zmtkPltOn-Ag',
                 run_id=IsStr(),
             ),
         ]
@@ -1488,7 +1489,7 @@ async def test_gemini_additional_properties_is_false(allow_model_requests: None,
 
     result = await agent.run('What is the temperature in Tokyo?')
     assert result.output == snapshot(
-        'I need the country to find the temperature in Tokyo. Could you please tell me which country Tokyo is in?\n'
+        'I need to know the country to find the temperature in Tokyo. Could you please tell me the country?\n'
     )
 
 
@@ -1610,7 +1611,7 @@ async def test_gemini_no_finish_reason(get_gemini_client: GetGeminiClient):
         _content_model_response(ModelResponse(parts=[TextPart('Hello world')])), finish_reason=None
     )
     gemini_client = get_gemini_client(response)
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m)
 
     result = await agent.run('Hello World')
@@ -1631,7 +1632,7 @@ async def test_response_with_thought_part(get_gemini_client: GetGeminiClient):
     )
     response = gemini_response(content_with_thought)
     gemini_client = get_gemini_client(response)
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m)
 
     result = await agent.run('Test with thought')
@@ -1668,7 +1669,7 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
             ModelResponse(
                 parts=[ToolCallPart(tool_name='bar', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(
-                    input_tokens=21, output_tokens=1, details={'text_prompt_tokens': 21, 'text_candidates_tokens': 1}
+                    input_tokens=16, output_tokens=1, details={'text_prompt_tokens': 16, 'text_candidates_tokens': 1}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -1699,7 +1700,7 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=27, output_tokens=5, details={'text_prompt_tokens': 27, 'text_candidates_tokens': 5}
+                    input_tokens=22, output_tokens=5, details={'text_prompt_tokens': 22, 'text_candidates_tokens': 5}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -1757,7 +1758,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(
-                    input_tokens=32, output_tokens=5, details={'text_prompt_tokens': 32, 'text_candidates_tokens': 5}
+                    input_tokens=25, output_tokens=5, details={'text_prompt_tokens': 25, 'text_candidates_tokens': 5}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -1788,7 +1789,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=46, output_tokens=8, details={'text_prompt_tokens': 46, 'text_candidates_tokens': 8}
+                    input_tokens=39, output_tokens=8, details={'text_prompt_tokens': 39, 'text_candidates_tokens': 8}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -1816,7 +1817,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
 
 @pytest.mark.vcr()
 async def test_gemini_text_output_function(allow_model_requests: None, gemini_api_key: str):
-    m = GeminiModel('gemini-2.5-pro-preview-05-06', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    m = GeminiModel('gemini-2.5-pro', provider=GoogleGLAProvider(api_key=gemini_api_key))
 
     def upcase(text: str) -> str:
         return text.upper()
@@ -1855,7 +1856,7 @@ It's the capital of Mexico and one of the largest metropolitan areas in the worl
                 usage=RequestUsage(
                     input_tokens=9, output_tokens=589, details={'thoughts_tokens': 545, 'text_prompt_tokens': 9}
                 ),
-                model_name='models/gemini-2.5-pro-preview-05-06',
+                model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
@@ -1978,18 +1979,18 @@ async def test_gemini_native_output_multiple(allow_model_requests: None, gemini_
                         content="""\
 {
   "result": {
+    "kind": "CountryLanguage",
     "data": {
       "country": "Mexico",
       "language": "Spanish"
-    },
-    "kind": "CountryLanguage"
+    }
   }
 }\
 """
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=46, output_tokens=46, details={'text_prompt_tokens': 46, 'text_candidates_tokens': 46}
+                    input_tokens=9, output_tokens=46, details={'text_prompt_tokens': 9, 'text_candidates_tokens': 46}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2029,13 +2030,9 @@ async def test_gemini_prompted_output(allow_model_requests: None, gemini_api_key
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[
-                    TextPart(
-                        content='{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object", "city": "Mexico City", "country": "Mexico"}'
-                    )
-                ],
+                parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
                 usage=RequestUsage(
-                    input_tokens=80, output_tokens=56, details={'text_prompt_tokens': 80, 'text_candidates_tokens': 56}
+                    input_tokens=83, output_tokens=13, details={'text_prompt_tokens': 83, 'text_candidates_tokens': 13}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2051,7 +2048,7 @@ async def test_gemini_prompted_output(allow_model_requests: None, gemini_api_key
 
 @pytest.mark.vcr()
 async def test_gemini_prompted_output_with_tools(allow_model_requests: None, gemini_api_key: str):
-    m = GeminiModel('gemini-2.5-pro-preview-05-06', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    m = GeminiModel('gemini-2.5-pro', provider=GoogleGLAProvider(api_key=gemini_api_key))
 
     class CityLocation(BaseModel):
         city: str
@@ -2083,9 +2080,9 @@ async def test_gemini_prompted_output_with_tools(allow_model_requests: None, gem
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(
-                    input_tokens=123, output_tokens=330, details={'thoughts_tokens': 318, 'text_prompt_tokens': 123}
+                    input_tokens=125, output_tokens=218, details={'thoughts_tokens': 206, 'text_prompt_tokens': 125}
                 ),
-                model_name='models/gemini-2.5-pro-preview-05-06',
+                model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
@@ -2108,9 +2105,9 @@ async def test_gemini_prompted_output_with_tools(allow_model_requests: None, gem
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
                 usage=RequestUsage(
-                    input_tokens=154, output_tokens=107, details={'thoughts_tokens': 94, 'text_prompt_tokens': 154}
+                    input_tokens=156, output_tokens=181, details={'thoughts_tokens': 168, 'text_prompt_tokens': 156}
                 ),
-                model_name='models/gemini-2.5-pro-preview-05-06',
+                model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
@@ -2158,9 +2155,9 @@ async def test_gemini_prompted_output_multiple(allow_model_requests: None, gemin
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=253,
+                    input_tokens=230,
                     output_tokens=27,
-                    details={'text_prompt_tokens': 253, 'text_candidates_tokens': 27},
+                    details={'text_prompt_tokens': 230, 'text_candidates_tokens': 27},
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),

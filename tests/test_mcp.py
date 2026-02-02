@@ -847,7 +847,7 @@ async def test_tool_returning_image_resource_link(
 async def test_tool_returning_audio_resource(
     allow_model_requests: None, agent: Agent, audio_content: BinaryContent, gemini_api_key: str
 ):
-    model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=GoogleProvider(api_key=gemini_api_key))
+    model = GoogleModel('gemini-2.5-pro', provider=GoogleProvider(api_key=gemini_api_key))
     async with agent:
         result = await agent.run("What's the content of the audio resource?", model=model)
         assert result.output == snapshot('The audio resource contains a voice saying "Hello, my name is Marcelo."')
@@ -863,7 +863,7 @@ async def test_tool_returning_audio_resource(
                     usage=RequestUsage(
                         input_tokens=383, output_tokens=137, details={'thoughts_tokens': 125, 'text_prompt_tokens': 383}
                     ),
-                    model_name='models/gemini-2.5-pro-preview-05-06',
+                    model_name='models/gemini-2.5-pro',
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
                     provider_url='https://generativelanguage.googleapis.com/',
@@ -893,7 +893,7 @@ async def test_tool_returning_audio_resource(
                         input_audio_tokens=144,
                         details={'text_prompt_tokens': 431, 'audio_prompt_tokens': 144},
                     ),
-                    model_name='models/gemini-2.5-pro-preview-05-06',
+                    model_name='models/gemini-2.5-pro',
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
                     provider_url='https://generativelanguage.googleapis.com/',
