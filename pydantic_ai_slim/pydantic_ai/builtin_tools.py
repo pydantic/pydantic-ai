@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 from abc import ABC
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Annotated, Any, Literal, Union
 
 import pydantic
@@ -13,6 +14,7 @@ __all__ = (
     'AbstractBuiltinTool',
     'WebSearchTool',
     'WebSearchUserLocation',
+    'XSearchTool',
     'CodeExecutionTool',
     'WebFetchTool',
     'UrlContextTool',
@@ -173,6 +175,49 @@ class WebSearchUserLocation(TypedDict, total=False):
 
     timezone: str
     """The timezone of the user's location."""
+
+
+@dataclass(kw_only=True)
+class XSearchTool(AbstractBuiltinTool):
+    """A builtin tool that allows your agent to search X/Twitter for information.
+
+    This tool provides real-time access to X/Twitter posts, user profiles, and threads.
+
+    This tool is exclusive to xAI models.
+
+    Supported by:
+
+    * xAI
+    """
+
+    allowed_x_handles: list[str] | None = None
+    """If provided, only posts from these X handles will be included (max 10)."""
+
+    excluded_x_handles: list[str] | None = None
+    """If provided, posts from these X handles will be excluded (max 10)."""
+
+    from_date: datetime | str | None = None
+    """Date filter for start date. Accepts datetime object or ISO8601 string (e.g., '2024-01-01')."""
+
+    to_date: datetime | str | None = None
+    """Date filter for end date. Accepts datetime object or ISO8601 string (e.g., '2024-12-31')."""
+
+    enable_image_understanding: bool = False
+    """Enable image analysis from X posts."""
+
+    enable_video_understanding: bool = False
+    """Enable video analysis from X content."""
+
+    kind: str = 'x_search'
+    """The kind of tool."""
+
+    def __post_init__(self) -> None:
+        if self.allowed_x_handles and self.excluded_x_handles:
+            raise ValueError('Cannot specify both allowed_x_handles and excluded_x_handles')
+        if self.allowed_x_handles and len(self.allowed_x_handles) > 10:
+            raise ValueError('allowed_x_handles cannot contain more than 10 handles')
+        if self.excluded_x_handles and len(self.excluded_x_handles) > 10:
+            raise ValueError('excluded_x_handles cannot contain more than 10 handles')
 
 
 @dataclass(kw_only=True)

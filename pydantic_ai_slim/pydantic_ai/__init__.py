@@ -19,6 +19,7 @@ from .builtin_tools import (
     WebFetchTool,
     WebSearchTool,
     WebSearchUserLocation,
+    XSearchTool,
 )
 from .embeddings import (
     Embedder,
@@ -236,6 +237,7 @@ __all__ = (
     'WebFetchTool',
     'WebSearchTool',
     'WebSearchUserLocation',
+    'XSearchTool',
     # output
     'ToolOutput',
     'NativeOutput',

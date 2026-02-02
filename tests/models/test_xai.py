@@ -57,6 +57,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
     WebSearchTool,
+    XSearchTool,
 )
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
@@ -86,6 +87,7 @@ from .mock_xai import (
     create_tool_call,
     create_usage,
     create_web_search_response,
+    create_x_search_response,
     get_grok_reasoning_text_chunk,
     get_grok_text_chunk,
     get_grok_tool_chunk,
@@ -1988,9 +1990,122 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
 
 async def test_xai_builtin_x_search_tool(allow_model_requests: None):
     """Test xAI's built-in x_search tool (X/Twitter search)."""
-    # Note: XSearchTool is not yet implemented in pydantic-ai
-    # This test documents the expected behavior when it is implemented
-    pytest.skip('XSearchTool not yet implemented in pydantic-ai')
+    response = create_x_search_response(
+        query='@pydantic latest AI news',
+        content={'results': [{'text': 'PydanticAI 0.1 released!', 'author': '@pydantic'}]},
+        assistant_text='Found posts about PydanticAI.',
+    )
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(
+        m,
+        builtin_tools=[XSearchTool()],
+        model_settings=XaiModelSettings(xai_include_x_search_output=True),
+    )
+
+    result = await agent.run('What are people saying about PydanticAI on X?')
+    assert result.output == 'Found posts about PydanticAI.'
+
+    # Verify the builtin tool call and result appear in message history
+    messages = result.all_messages()
+    assert len(messages) == 2
+    assert isinstance(messages[0], ModelRequest)
+    assert isinstance(messages[1], ModelResponse)
+
+    # Verify the response contains the x_search tool call and result
+    response_parts = messages[1].parts
+    assert any(isinstance(part, BuiltinToolCallPart) and part.tool_name == 'x_search' for part in response_parts)
+    assert any(isinstance(part, BuiltinToolReturnPart) and part.tool_name == 'x_search' for part in response_parts)
+
+
+async def test_xai_builtin_x_search_tool_with_handles(allow_model_requests: None):
+    """Test xAI's built-in x_search tool with handle filtering."""
+    response = create_x_search_response(
+        query='AI updates',
+        content={'results': [{'text': 'AI news from @OpenAI'}]},
+        assistant_text='Found filtered posts.',
+    )
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(
+        m,
+        builtin_tools=[XSearchTool(allowed_x_handles=['OpenAI', 'AnthropicAI'])],
+    )
+
+    result = await agent.run('What are OpenAI and Anthropic tweeting about?')
+    assert result.output == 'Found filtered posts.'
+
+    # Verify tools were registered with allowed_x_handles
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert len(kwargs) == 1
+    assert 'tools' in kwargs[0]
+    tools = kwargs[0]['tools']
+    assert len(tools) == 1
+    # Verify the x_search tool configuration
+    assert tools[0]['x_search'] is not None
+    assert tools[0]['x_search'].get('allowed_x_handles') == ['OpenAI', 'AnthropicAI']
+
+
+async def test_xai_builtin_x_search_tool_with_date_range(allow_model_requests: None):
+    """Test xAI's built-in x_search tool with date filtering."""
+    from datetime import datetime
+
+    response = create_x_search_response(
+        query='PydanticAI release',
+        content={'results': []},
+        assistant_text='No posts found in date range.',
+    )
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(
+        m,
+        builtin_tools=[
+            XSearchTool(
+                from_date=datetime(2024, 1, 1),
+                to_date='2024-12-31',  # Test string parsing
+            )
+        ],
+    )
+
+    result = await agent.run('Any PydanticAI posts in 2024?')
+    assert result.output == 'No posts found in date range.'
+
+    # Verify tools were registered with date range
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert len(kwargs) == 1
+    tools = kwargs[0]['tools']
+    assert len(tools) == 1
+    # The x_search tool should have from_date and to_date configured
+    x_search_config = tools[0].get('x_search', {})
+    assert x_search_config is not None
+
+
+def test_x_search_tool_validation():
+    """Test XSearchTool validation rules."""
+    # Cannot specify both allowed_x_handles and excluded_x_handles
+    with pytest.raises(ValueError, match='Cannot specify both allowed_x_handles and excluded_x_handles'):
+        XSearchTool(allowed_x_handles=['foo'], excluded_x_handles=['bar'])
+
+    # allowed_x_handles cannot exceed 10
+    with pytest.raises(ValueError, match='allowed_x_handles cannot contain more than 10 handles'):
+        XSearchTool(allowed_x_handles=['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'h7', 'h8', 'h9', 'h10', 'h11'])
+
+    # excluded_x_handles cannot exceed 10
+    with pytest.raises(ValueError, match='excluded_x_handles cannot contain more than 10 handles'):
+        XSearchTool(excluded_x_handles=['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'h7', 'h8', 'h9', 'h10', 'h11'])
+
+    # Valid configurations should work
+    tool = XSearchTool(allowed_x_handles=['handle1', 'handle2'])
+    assert tool.allowed_x_handles == ['handle1', 'handle2']
+    assert tool.excluded_x_handles is None
+
+    tool = XSearchTool(excluded_x_handles=['spam1', 'spam2'])
+    assert tool.excluded_x_handles == ['spam1', 'spam2']
+    assert tool.allowed_x_handles is None
+
+    tool = XSearchTool()  # No filters
+    assert tool.allowed_x_handles is None
+    assert tool.excluded_x_handles is None
 
 
 async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_provider: XaiProvider):
@@ -4623,12 +4738,12 @@ async def test_xai_user_prompt_cache_point_only_skipped(allow_model_requests: No
     )
 
 
-async def test_xai_unknown_tool_type_in_response(allow_model_requests: None):
-    """Test handling of unknown tool types like x_search or collections_search."""
-    # Create a server-side tool call with an unknown/other type
-    unknown_tool_call = chat_pb2.ToolCall(
-        id='unknown_001',
-        type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_X_SEARCH_TOOL,  # x_search is not directly mapped
+async def test_xai_x_search_tool_type_in_response(allow_model_requests: None):
+    """Test handling of x_search tool type in responses (without agent-side XSearchTool)."""
+    # Create a server-side x_search tool call (simulating a response that uses x_search)
+    x_search_tool_call = chat_pb2.ToolCall(
+        id='x_search_001',
+        type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_X_SEARCH_TOOL,
         status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
         function=chat_pb2.FunctionCall(
             name='x_search',
@@ -4636,8 +4751,8 @@ async def test_xai_unknown_tool_type_in_response(allow_model_requests: None):
         ),
     )
 
-    # Create response with unknown tool
-    response = create_mixed_tools_response([unknown_tool_call], text_content='Search results here')
+    # Create response with x_search tool
+    response = create_mixed_tools_response([x_search_tool_call], text_content='Search results here')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
