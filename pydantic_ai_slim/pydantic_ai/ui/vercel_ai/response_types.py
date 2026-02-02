@@ -24,7 +24,7 @@ class BaseChunk(CamelBaseModel, ABC):
     """Abstract base class for response SSE events."""
 
     def encode(self, sdk_version: int = 6) -> str:
-        return self.model_dump_json(by_alias=True, exclude_none=True, context={'sdk_version': sdk_version})
+        return self.model_dump_json(by_alias=True, exclude_none=True)
 
 
 class TextStartChunk(BaseChunk):
