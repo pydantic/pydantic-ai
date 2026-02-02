@@ -1,10 +1,15 @@
 """Cross-provider matrix tests for multimodal tool return functionality.
 
 This module tests multimodal tool returns across all providers using a cartesian
-product of test dimensions: provider, file_type, return_style.
+product of test dimensions:
+- provider: anthropic, bedrock, google, openai_chat, openai_responses, groq, xai
+- file_type: image, document, audio, video
+- content_source: binary, url, url_force_download
+- return_style: direct (return file), tool_return_content (via ToolReturn.content)
 
 The test harness uses a SUPPORT_MATRIX to determine expected behavior (native,
-fallback, or error) for each provider/file_type combination.
+fallback, or error) for each provider/file_type combination. Content source errors
+are tracked separately in ERROR_DETAILS since they can vary by source type.
 """
 
 from __future__ import annotations
@@ -26,6 +31,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
+    is_multi_modal_content,
 )
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
@@ -63,17 +69,20 @@ pytestmark = [
 ]
 
 Expectation = Literal['native', 'fallback', 'error']
+"""Expected behavior: 'native' = in tool_result, 'fallback' = separate user msg, 'error' = raises."""
+
 ReturnStyle = Literal['direct', 'tool_return_content']
+"""Return style: 'direct' = returns file directly, 'tool_return_content' = via ToolReturn.content."""
 
 SUPPORT_MATRIX: dict[tuple[str, str], Expectation] = {
     ('bedrock', 'image'): 'native',
     ('bedrock', 'document'): 'native',
-    ('bedrock', 'audio'): 'fallback',
+    ('bedrock', 'audio'): 'error',
     ('bedrock', 'video'): 'native',
     ('anthropic', 'image'): 'native',
     ('anthropic', 'document'): 'native',
-    ('anthropic', 'audio'): 'fallback',
-    ('anthropic', 'video'): 'fallback',
+    ('anthropic', 'audio'): 'error',
+    ('anthropic', 'video'): 'error',
     ('google', 'image'): 'native',
     ('google', 'document'): 'native',
     ('google', 'audio'): 'native',
@@ -110,6 +119,150 @@ class ExpectError:
 
 
 ERROR_DETAILS: list[ExpectError] = [
+    ExpectError(
+        'anthropic',
+        'audio',
+        content_source='binary',
+        return_style='direct',
+        error_type=NotImplementedError,
+        match='Unsupported binary content type for Anthropic tool returns: audio/mpeg',
+    ),
+    ExpectError(
+        'anthropic',
+        'audio',
+        content_source='binary',
+        return_style='tool_return_content',
+        error_type=NotImplementedError,
+        match='Unsupported binary content type for Anthropic: audio/mpeg',
+    ),
+    ExpectError(
+        'anthropic',
+        'audio',
+        content_source='url',
+        return_style='direct',
+        error_type=NotImplementedError,
+        match='AudioUrl is not supported for Anthropic tool returns',
+    ),
+    ExpectError(
+        'anthropic',
+        'audio',
+        content_source='url',
+        return_style='tool_return_content',
+        error_type=NotImplementedError,
+        match='AudioUrl is not supported by Anthropic',
+    ),
+    ExpectError(
+        'anthropic',
+        'audio',
+        content_source='url_force_download',
+        return_style='direct',
+        error_type=NotImplementedError,
+        match='AudioUrl is not supported for Anthropic tool returns',
+    ),
+    ExpectError(
+        'anthropic',
+        'audio',
+        content_source='url_force_download',
+        return_style='tool_return_content',
+        error_type=NotImplementedError,
+        match='AudioUrl is not supported by Anthropic',
+    ),
+    ExpectError(
+        'anthropic',
+        'video',
+        content_source='binary',
+        return_style='direct',
+        error_type=NotImplementedError,
+        match='Unsupported binary content type for Anthropic tool returns: video/mp4',
+    ),
+    ExpectError(
+        'anthropic',
+        'video',
+        content_source='binary',
+        return_style='tool_return_content',
+        error_type=NotImplementedError,
+        match='Unsupported binary content type for Anthropic: video/mp4',
+    ),
+    ExpectError(
+        'anthropic',
+        'video',
+        content_source='url',
+        return_style='direct',
+        error_type=NotImplementedError,
+        match='VideoUrl is not supported for Anthropic tool returns',
+    ),
+    ExpectError(
+        'anthropic',
+        'video',
+        content_source='url',
+        return_style='tool_return_content',
+        error_type=NotImplementedError,
+        match='VideoUrl is not supported by Anthropic',
+    ),
+    ExpectError(
+        'anthropic',
+        'video',
+        content_source='url_force_download',
+        return_style='direct',
+        error_type=NotImplementedError,
+        match='VideoUrl is not supported for Anthropic tool returns',
+    ),
+    ExpectError(
+        'anthropic',
+        'video',
+        content_source='url_force_download',
+        return_style='tool_return_content',
+        error_type=NotImplementedError,
+        match='VideoUrl is not supported by Anthropic',
+    ),
+    ExpectError(
+        'bedrock',
+        'audio',
+        content_source='binary',
+        return_style='direct',
+        error_type=NotImplementedError,
+        match='Unsupported binary content type for Bedrock tool returns: audio/mpeg',
+    ),
+    ExpectError(
+        'bedrock',
+        'audio',
+        content_source='url',
+        return_style='direct',
+        error_type=NotImplementedError,
+        match='AudioUrl is not supported for Bedrock tool returns',
+    ),
+    ExpectError(
+        'bedrock',
+        'audio',
+        content_source='url_force_download',
+        return_style='direct',
+        error_type=NotImplementedError,
+        match='AudioUrl is not supported for Bedrock tool returns',
+    ),
+    ExpectError(
+        'bedrock',
+        'audio',
+        content_source='binary',
+        return_style='tool_return_content',
+        error_type=NotImplementedError,
+        match='Binary content is not supported yet',
+    ),
+    ExpectError(
+        'bedrock',
+        'audio',
+        content_source='url',
+        return_style='tool_return_content',
+        error_type=NotImplementedError,
+        match='Audio is not supported yet',
+    ),
+    ExpectError(
+        'bedrock',
+        'audio',
+        content_source='url_force_download',
+        return_style='tool_return_content',
+        error_type=NotImplementedError,
+        match='Audio is not supported yet',
+    ),
     ExpectError(
         'openai_chat',
         'audio',
@@ -172,30 +325,6 @@ ERROR_DETAILS: list[ExpectError] = [
         return_style='tool_return_content',
         error_type=ModelHTTPError,
         match='text block must be included',
-    ),
-    ExpectError(
-        'bedrock',
-        'audio',
-        content_source='binary',
-        return_style='tool_return_content',
-        error_type=NotImplementedError,
-        match='Binary content is not supported yet',
-    ),
-    ExpectError(
-        'bedrock',
-        'audio',
-        content_source='url',
-        return_style='tool_return_content',
-        error_type=NotImplementedError,
-        match='Audio is not supported yet',
-    ),
-    ExpectError(
-        'bedrock',
-        'audio',
-        content_source='url_force_download',
-        return_style='tool_return_content',
-        error_type=NotImplementedError,
-        match='Audio is not supported yet',
     ),
     ExpectError(
         'groq',
@@ -297,7 +426,34 @@ def is_provider_available(provider: str) -> bool:
     return bool(available() if callable(available) else available)
 
 
+def verify_cassette_contains(request: pytest.FixtureRequest, *patterns: str | tuple[str, ...]) -> None:
+    """Verify that all patterns appear in the VCR cassette request body.
+
+    This ensures content (text, files, json) is actually sent to the API, catching
+    bugs where tool return values might be silently dropped.
+
+    Args:
+        request: The pytest fixture request.
+        patterns: Patterns to search for. Each pattern can be a string or a tuple of strings
+            (where any one of the tuple elements matching is sufficient).
+    """
+    cassette_dir = Path(__file__).parent / 'cassettes' / 'test_multimodal_tool_returns'
+    test_name: str = request.node.name  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+    cassette_path = cassette_dir / f'{test_name}.yaml'
+    if not cassette_path.exists():
+        cassette_path = cassette_dir / f'{test_name}.xai.yaml'
+    if not cassette_path.exists():
+        return
+    content = cassette_path.read_text()
+    for pattern in patterns:
+        if isinstance(pattern, tuple):
+            assert any(p in content for p in pattern), f'Expected one of {pattern} in cassette but none found'
+        else:
+            assert pattern in content, f'Expected "{pattern}" in cassette but not found'
+
+
 def make_image_binary(assets_path: Path) -> BinaryImage:
+    """Create a binary image from the kiwi.jpg test asset."""
     return BinaryImage(data=assets_path.joinpath('kiwi.jpg').read_bytes(), media_type='image/jpeg')
 
 
@@ -347,7 +503,7 @@ def make_video_url_force_download(_: Path) -> VideoUrl:
     )
 
 
-CONTENT_FACTORIES = {
+CONTENT_FACTORIES: dict[tuple[str, str], Any] = {
     ('image', 'binary'): make_image_binary,
     ('image', 'url'): make_image_url,
     ('image', 'url_force_download'): make_image_url_force_download,
@@ -379,25 +535,22 @@ def assert_file_in_tool_return(messages: list[Any], file_type: str) -> None:
     raise AssertionError(f'No {file_type} found in any ToolReturnPart')
 
 
-def assert_file_in_messages(messages: list[Any], file_type: str) -> None:
-    """Assert that file content is present somewhere in messages.
+def assert_file_in_user_prompt(messages: list[Any], file_type: str) -> None:
+    """Assert that file content is present in a UserPromptPart.
 
-    For tool_return_content style, files are in UserPromptPart (by design of ToolReturn.content).
-    This checks that files are sent to the model, regardless of location.
+    For tool_return_content style, files are moved to a separate UserPromptPart
+    by design of ToolReturn.content. This verifies files ended up in user messages.
     """
     for msg in messages:
         if isinstance(msg, ModelRequest):
             for part in msg.parts:
-                if isinstance(part, ToolReturnPart):
-                    if part.files:
-                        return
-                elif isinstance(part, UserPromptPart):
-                    content = getattr(part, 'content', None)
+                if isinstance(part, UserPromptPart):
+                    content = part.content
                     if isinstance(content, list):
-                        for item in content:  # pyright: ignore[reportUnknownVariableType]
-                            if hasattr(item, 'media_type') or hasattr(item, 'url'):  # pyright: ignore[reportUnknownArgumentType]
+                        for item in content:
+                            if is_multi_modal_content(item):
                                 return
-    raise AssertionError(f'No {file_type} found in any message part')
+    raise AssertionError(f'No {file_type} found in any UserPromptPart')
 
 
 def assert_multimodal_result(
@@ -409,12 +562,12 @@ def assert_multimodal_result(
     """Assert that multimodal content was handled correctly based on expectation.
 
     For both 'native' and 'fallback' expectations:
-    - The ToolReturnPart should contain the file content
+    - The `ToolReturn.content` should contain the file content
     - The model implementation handles sending it appropriately (native or separated)
     - We verify files are in the message history, not the API-specific format
 
     For 'tool_return_content' style:
-    - Files go to a separate UserPromptPart by design of ToolReturn.content
+    - Files go to a separate `UserPromptPart` by design of `ToolReturn.content`
     """
     match expectation:
         case 'error':
@@ -424,7 +577,7 @@ def assert_multimodal_result(
             # The difference is how the model implementation sends it to the API
             if return_style == 'tool_return_content':
                 # For tool_return_content, files are in UserPromptPart by design
-                assert_file_in_messages(messages, file_type)
+                assert_file_in_user_prompt(messages, file_type)
             else:
                 # For direct return, files should be in ToolReturnPart
                 assert_file_in_tool_return(messages, file_type)
@@ -447,15 +600,7 @@ def api_keys(
     }
 
 
-PROVIDERS = [
-    pytest.param('anthropic', id='anthropic'),
-    pytest.param('bedrock', id='bedrock'),
-    pytest.param('google', id='google'),
-    pytest.param('openai_chat', id='openai_chat'),
-    pytest.param('openai_responses', id='openai_responses'),
-    pytest.param('groq', id='groq'),
-    pytest.param('xai', id='xai'),
-]
+PROVIDERS = [pytest.param(name, id=name) for name in MODEL_CONFIGS]
 
 FILE_TYPES = [
     pytest.param('image', id='image'),
@@ -531,8 +676,13 @@ async def test_mixed_content_ordering(
     xai_provider: Any,
     assets_path: Path,
     allow_model_requests: None,
+    request: pytest.FixtureRequest,
 ):
-    """Test that [text, image, dict] preserves order in tool returns."""
+    """Test that [text, image, dict] are all sent to the API in tool returns.
+
+    Uses recognizable strings to verify cassette contains all content parts,
+    catching bugs where values might be silently dropped.
+    """
     if not is_provider_available(provider):
         pytest.skip(f'{provider} dependencies not installed')
 
@@ -554,6 +704,7 @@ async def test_mixed_content_ordering(
         usage_limits=UsageLimits(output_tokens_limit=100000),
     )
     assert result.output, 'Expected non-empty response from model'
+    verify_cassette_contains(request, 'Here is the image:', 'metadata', ('/9j/', '_9j_'))
 
 
 @pytest.mark.parametrize('provider', PROVIDERS)
@@ -564,8 +715,12 @@ async def test_multiple_files(
     xai_provider: Any,
     assets_path: Path,
     allow_model_requests: None,
+    request: pytest.FixtureRequest,
 ):
-    """Test returning multiple files in a single tool return."""
+    """Test returning multiple files in a single tool return.
+
+    Verifies both binary image (base64) and URL image are sent to the API.
+    """
     if not is_provider_available(provider):
         pytest.skip(f'{provider} dependencies not installed')
 
@@ -588,6 +743,7 @@ async def test_multiple_files(
         usage_limits=UsageLimits(output_tokens_limit=100000),
     )
     assert result.output, 'Expected non-empty response from model'
+    verify_cassette_contains(request, '/9j/', 'gstatic.com/webp/gallery3/1.png')
 
 
 @pytest.mark.parametrize('provider', PROVIDERS)
@@ -737,12 +893,12 @@ async def test_s3_document_url_bedrock():
     from pydantic_ai.models.bedrock import BedrockConverseModel
 
     document = DocumentUrl(url='s3://my-bucket/path/to/document.pdf?bucketOwner=123456789012')
-    result = await BedrockConverseModel._map_file_to_content_block(document, count(1))
+    result = await BedrockConverseModel._map_file_to_content_block(document, count(1))  # pyright: ignore[reportPrivateUsage]
 
     assert result is not None
     assert 'document' in result
-    assert result['document']['source']['s3Location']['uri'] == 's3://my-bucket/path/to/document.pdf'
-    assert result['document']['source']['s3Location']['bucketOwner'] == '123456789012'
+    assert result['document']['source']['s3Location']['uri'] == 's3://my-bucket/path/to/document.pdf'  # pyright: ignore[reportTypedDictNotRequiredAccess]
+    assert result['document']['source']['s3Location']['bucketOwner'] == '123456789012'  # pyright: ignore[reportTypedDictNotRequiredAccess]
 
 
 @pytest.mark.skipif(not bedrock_available(), reason='bedrock dependencies not installed')
@@ -753,12 +909,12 @@ async def test_s3_image_url_bedrock():
     from pydantic_ai.models.bedrock import BedrockConverseModel
 
     image = ImageUrl(url='s3://my-bucket/images/photo.png', media_type='image/png')
-    result = await BedrockConverseModel._map_file_to_content_block(image, count(1))
+    result = await BedrockConverseModel._map_file_to_content_block(image, count(1))  # pyright: ignore[reportPrivateUsage]
 
     assert result is not None
     assert 'image' in result
     assert result['image']['format'] == 'png'
-    assert result['image']['source']['s3Location']['uri'] == 's3://my-bucket/images/photo.png'
+    assert result['image']['source']['s3Location']['uri'] == 's3://my-bucket/images/photo.png'  # pyright: ignore[reportTypedDictNotRequiredAccess]
 
 
 @pytest.mark.skipif(not bedrock_available(), reason='bedrock dependencies not installed')
@@ -769,9 +925,9 @@ async def test_s3_video_url_bedrock():
     from pydantic_ai.models.bedrock import BedrockConverseModel
 
     video = VideoUrl(url='s3://my-bucket/videos/clip.mp4', media_type='video/mp4')
-    result = await BedrockConverseModel._map_file_to_content_block(video, count(1))
+    result = await BedrockConverseModel._map_file_to_content_block(video, count(1))  # pyright: ignore[reportPrivateUsage]
 
     assert result is not None
     assert 'video' in result
     assert result['video']['format'] == 'mp4'
-    assert result['video']['source']['s3Location']['uri'] == 's3://my-bucket/videos/clip.mp4'
+    assert result['video']['source']['s3Location']['uri'] == 's3://my-bucket/videos/clip.mp4'  # pyright: ignore[reportTypedDictNotRequiredAccess]

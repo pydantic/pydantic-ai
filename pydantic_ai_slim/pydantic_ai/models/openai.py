@@ -20,8 +20,8 @@ from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import (
-    as_dict as _as_dict,
     guard_tool_call_id as _guard_tool_call_id,
+    is_str_dict as _is_str_dict,
     now_utc as _now_utc,
     number_to_datetime,
 )
@@ -2017,7 +2017,7 @@ class OpenAIResponsesModel(Model):
 
                     elif isinstance(item, BuiltinToolReturnPart):
                         if should_send_item_id:  # pragma: no branch
-                            status = content.get('status') if (content := _as_dict(item.content)) else None
+                            status = item.content.get('status') if _is_str_dict(item.content) else None
                             kind_to_item = {
                                 CodeExecutionTool.kind: code_interpreter_item,
                                 WebSearchTool.kind: web_search_item,

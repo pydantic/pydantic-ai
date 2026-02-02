@@ -11,7 +11,7 @@ from datetime import datetime
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, get_args, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, TypeGuard, cast, get_args, overload
 from urllib.parse import urlparse
 
 import pydantic
@@ -652,6 +652,14 @@ class CachePoint:
 
 
 MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
+MULTI_MODAL_CONTENT_TYPES: tuple[type, ...] = get_args(MultiModalContent)
+
+
+def is_multi_modal_content(obj: Any) -> TypeGuard[MultiModalContent]:
+    """Check if obj is a MultiModalContent type, enabling type narrowing."""
+    return isinstance(obj, MULTI_MODAL_CONTENT_TYPES)
+
+
 UserContent: TypeAlias = str | MultiModalContent | CachePoint
 
 
@@ -825,15 +833,14 @@ class BaseToolReturnPart:
         Returns a tuple of (`non_files`, `files`) to ensure both `files` and
         `content_excluding_files` stay in sync when content structure changes.
         """
-        multimodal_types = get_args(MultiModalContent)
-        if isinstance(self.content, multimodal_types):
-            return [], [cast(MultiModalContent, self.content)]
+        if is_multi_modal_content(self.content):
+            return [], [self.content]
         elif isinstance(self.content, list):
             non_files: list[Any] = []
             files: list[MultiModalContent] = []
             for p in self.content:  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
-                if isinstance(p, multimodal_types):
-                    files.append(p)  # pyright: ignore[reportUnknownArgumentType]
+                if is_multi_modal_content(p):
+                    files.append(p)
                 else:
                     non_files.append(p)
             return non_files, files
@@ -853,20 +860,21 @@ class BaseToolReturnPart:
 
     @property
     def content_excluding_files(self) -> list[Any]:
-        """The text/json data from `content`, excluding multimodal files.
+        """Non-file content items from `content`, preserving original structure.
 
-        Returns the data portion of the content with files filtered out as a list.
-        Model implementations should use this alongside `files` to properly
-        separate data from media content.
+        Filters out `MultiModalContent` objects (images, audio, documents, videos) and
+        returns remaining items (strings, dicts, etc.) as a list. Used by `model_response_str()`
+        and `model_response_object()` to serialize the data portion separately from files.
         """
         return self._split_content()[0]
 
     @property
-    def content_items(self) -> list[Any]:
-        """Return content as a list for iteration.
+    def content_items(self) -> list[ToolReturnContent]:
+        """Return content as a flat list for iteration.
 
         If content is already a list, returns it directly. Otherwise wraps single values in a list.
-        This handles the type narrowing for `ToolReturnContent` in one place.
+        This provides a consistent iteration interface regardless of whether `content` is a single
+        value or a list.
         """
         if isinstance(self.content, list):
             return self.content  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
@@ -897,8 +905,8 @@ class BaseToolReturnPart:
         # Unwrap single-item list for cleaner serialization
         value = data[0] if len(data) == 1 else data
         json_content = tool_return_ta.dump_python(value, mode='json')
-        if isinstance(json_content, dict):
-            return cast(dict[str, Any], json_content)
+        if _utils.is_str_dict(json_content):
+            return json_content
         else:
             return {'return_value': json_content}
 

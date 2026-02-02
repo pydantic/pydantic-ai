@@ -40,7 +40,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1186
+      - gfet4t7; dur=989
       transfer-encoding:
       - chunked
       vary:
@@ -54,13 +54,13 @@ interactions:
           - functionCall:
               args: {}
               name: get_mixed_content
-            thoughtSignature: CsUBAXLI2nwkm8s7YvMGjnUaqCYq8LZkU7Vc8NtwwTIAYVzXiPW3UxufSaZw3eWJv0qoiIufXC7BmC9FmnEUnrWXvQW9MM9nOq4jpdYsbqyUAYpXWskXD3r7cIxXgkapV9kXfQWWbmnfM4loYe5YwVuw3ZXngl66jluEElczvw8N4gi/u0iLxw+WD7z/73D478HI0VW0sperOU86jjhfEAWYpkS5XQ055x7nDb4j6ur165g5vvoFQNu09uSfk6c9sCpCWaGC6cc=
+            thoughtSignature: CsUBAXLI2nz+P5joYH3q2npTA/VzV6VC4sdLsqU0FSCrRTlwfAcddxDoO7+IRUodxhZqv+jKPrJKu6UyyYAjOpmLfhLbyiY7kb4EX0W4d+23W5/YaRpcRwddAsQ48DQP4OUBdh08V7UOjb5JsBWqWLMMAo7RRpwl1qP66Hh6+katMSv0mloIaszQslc6C4gWJTy8uVvuSWf8CjtLcZlV3OWTJhWZ1525Zs2eXaGxe/3fAfoL6D0mfy4D02n4mtfwRUlf5BLnoZQ=
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: DlZ8ae74Hb67mtkP1bHf0Ag
+      responseId: JAGBaf7CBqWwqtsP85unyQc
       usageMetadata:
         candidatesTokenCount: 12
         promptTokenCount: 38
@@ -95,13 +95,13 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_188ea24dd5894ffda8c17130c30286d8
+            id: pyd_ai_7224816b767b4122a48d65bb42fdbaa2
             name: get_mixed_content
-          thoughtSignature: CsUBAXLI2nwkm8s7YvMGjnUaqCYq8LZkU7Vc8NtwwTIAYVzXiPW3UxufSaZw3eWJv0qoiIufXC7BmC9FmnEUnrWXvQW9MM9nOq4jpdYsbqyUAYpXWskXD3r7cIxXgkapV9kXfQWWbmnfM4loYe5YwVuw3ZXngl66jluEElczvw8N4gi_u0iLxw-WD7z_73D478HI0VW0sperOU86jjhfEAWYpkS5XQ055x7nDb4j6ur165g5vvoFQNu09uSfk6c9sCpCWaGC6cc=
+          thoughtSignature: CsUBAXLI2nz-P5joYH3q2npTA_VzV6VC4sdLsqU0FSCrRTlwfAcddxDoO7-IRUodxhZqv-jKPrJKu6UyyYAjOpmLfhLbyiY7kb4EX0W4d-23W5_YaRpcRwddAsQ48DQP4OUBdh08V7UOjb5JsBWqWLMMAo7RRpwl1qP66Hh6-katMSv0mloIaszQslc6C4gWJTy8uVvuSWf8CjtLcZlV3OWTJhWZ1525Zs2eXaGxe_3fAfoL6D0mfy4D02n4mtfwRUlf5BLnoZQ=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_188ea24dd5894ffda8c17130c30286d8
+            id: pyd_ai_7224816b767b4122a48d65bb42fdbaa2
             name: get_mixed_content
             response:
               return_value:
@@ -130,11 +130,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '2534'
+      - '1957'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=3081
+      - gfet4t7; dur=2725
       transfer-encoding:
       - chunked
       vary:
@@ -145,26 +145,24 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: |-
-              The `get_mixed_content` tool returned a list containing the string "Here is the image:" and a dictionary `{"metadata": "test"}`. It did not return any image data itself.
-
-              However, you have provided an image of a kiwi, sliced in half, showing its green flesh, white core, and black seeds, along with several cropped versions of the same image.
-            thoughtSignature: CpkKAXLI2ny4gEgZ0aKnZiLsfHVLGKEphksEKudMSIAsV2Sn5tyw0J/vWknbm1+F7xdY1OuU/s2ODO3QrD9E3CWyOSHYJo48f/bF+T7/KNJpCsffqkJrxKhyoOdXRcC0KmaUBwJO//dWSxGBn4ZrD6fQnbkmx1jFk+swy+ftHIQQoKl3fDVMCE+TRvxa1h/EWno1/laOnZAuX7ugjYgwanaGiuaIwvF5Ij36Bfh/6y/xGLUNMeuRwUikn/knwqXnzUy7hEBZVRI83IkSDQYhN5j10ZsP4Pc/c0jriACE7wyaKQdFBR8oan7pRAVaGLHVivkx2P2c9auQhuLF3dRUdacPEhfimYZYVncJSB9BML4AAa4w4d+UhSe76HRxM+Un6mBgoJg9lFaKnGGWL5bLgQ9T2lYcKv3jGAiDBlufAasXFvSwV6FUpBLiz8JKBnDUpFA9DT/Y42/qYDB/edpw1bLd6PJjjT5paHdKJXZX3zb+43noFG+1+zurGwrd8jXdNsGb8SDHFkWB5n6QT2JhMSRld1f1M46yltbxzCrAwEnbz07DRf9KgCQz02nVyq5BryJ0bKa5xVLnvh/h5uE5PgkJuKi0xJbd7y7eb6sQ2NKwCWvyGq3iwXwowincv0S99wqlIYaGsAw7+OLq/BBPIakVhumklO7RjNIptP/rLLkJ4OaaIc+EvvWpvxUmb9dmIFxLUOUdf8FkHR69L4Fao2v5C3pCxu6fsSq4Nv63krJBZH7TBgo1dBpmZfFneceompwKexR6ZYEtuiZGI60ThkUBqbnblXWi8dXakjC8UyH5t6c3o4yK1e3BM2DCq+w8Lj4LHS+8DuMU9WuyOwObQbbg3x53p+fH3PuIbPDoHtEELyGttnnBtWVwVlkd0b0tfdrgtc+SG6ksmZ54WNfmcc5A2nKI+370pVEiHKBRovpisdq81q61QkJcjX0QiAj9zmokN3lDtEmayCZojuCzxSweqt9A870246/UVdZTFtuN6IOUY82XUqweKBfMWma4eu57GxWblCVD9hq9vCVZBZAu3ypCNialky4bADwCCWKGtR8lGc66ZvDBYrLjW7dJJk+f6/loRcWapO8fnC1nOn1ALNDPCrwTafWYHaV0ODCHFMLZmSWX04JzN79wPYFhA3A+eh05OezIMsJWIk2pccepgngNenVmWw11aBg5GRsQPJqM+ixf52KRaHcoKHtezHEtTThskxiJ2QJkR62x14objEhPBcHD2fHNeYjvkFibN0vlL6RK8pEADjqg0WCQYsNoMpVTkNTo8+XOXx+zEh4kZNK5Ej8yKrfbrsLhlG3PL6BiUkOTUut6NJ99YLd2eWFtyl3dujoJOeRWyNgo3cDsScGSyFwSnf8d1xdOk2aGif4Ne0xODFgP9PFrwoQccIhYpCKp9NnU8ApGmCQZfNNMSretWPrmSK2efgsf7BjKB+1Aw51SGtLtWhxATEV2RtMX/z9w06mcF0ATAKCgugxa5l40iu9nl1VCSFWRRvTytC9bLQ7hfn3BtHpm4gtscHofAQyj2Pwf4Nh7qgnlRxGPyBwDLZs0oqmCbDkNcAY28sLqUShdkH2LEoUBwBzhMXQpsiAq53j71IBQAJM1Iu0WlIpSGuid/971gFt0faTNihdpsTiNNoJ6LG3SESVDyiT2Iw/+Zpa/O6o4WnjjWAxkf6BD+nIKw8KEfO7Y5mNaHN1wZHNDQoqmnjWLaATuw7NfUXyzKknEPwoo
+          - text: I received a list containing the string "Here is the image:" and a dictionary with the key "metadata" and
+              the value "test".
+            thoughtSignature: Co0IAXLI2nypF2pn2UmiUPm3XgQDd+t37+nJxIMKRePV/80OlZGplZCdpk5MSmWtfyP5D3sFfACevA1UqVRZA2rZK42BSmTEjen8qi0WuWIkoauaRagSP5FbOy2yPFsmA6tnazAN5j9xQj88bBYZbdZYC7jc5CLWDQuZ4RzHKIPpGqHXByVr9ddV5uscJrSg2PFe8AVAUHM/1w8uVBEg27eHuURUeK0+k/J2oraJTH3xkAFKjgdP2WSU8wLBTUzXSu2+/T7KhGOGakkckhunSaXJYWiGNsRJBAzWensV0Ri0gJikpudfxy9/M6OsqrBe9JKJ7cevmvbiREZgAWKNt4tiRFYPNK8FdwCWrs+6io8/ccka6I0YGE2KnlZHYeBrK6cxH8tKteg3cmoYyzSHguZp04EcT9pXuUyXz4Y/zYgtbu3y6B0PIFy7+ObhKRO6MnVkDWP7fMVoBAZfq/P7eVoEyhhrObQO5l6XkcJV8DxEO81Q1GRGvCI34RyHs4ZIQFpzFUOvm/mqiSpEsG2ez86/mggiQMzOv+HZb/igwOYXHC/eywTlvHwZAh9cehLdAkx5EuNVvwxBrpXeDvwDJMA1d4Vt0+o7gT6ltNAuv3zK6o3GYw2DRfKKRHMgRSfsZK5R7D/e6uVGqzGNK5gfcLpg8oU8uqxHKRksC9MOrpniXNS8pMiEc1lmOkKbczqDIfApSY0g1z50kuyyQ+4sqH5RzhirP+2wUVXfCjAOMz9FEsGRrGEZwddvEC6pJ/hvAg0l18Cmm367QcLGLLdWltH0PO6X1AF6Pywpt10WhBKsj91o8omq4YiJXfvqVedBhoBJuSOk2NZecYkLK8Jn0itefcodPXigVcEhXgfWK9I05EKx1Fy/1ml4dSOznbyUdqGs5ct/awGej+q+lW8Kr03PjXQ7QFUS4YrkHUY5ujjx3Sj9c9Q2FDWc5g6kGj5RcjcxqhNsbwyDSiwYNpgp6FhS8DcIpEQromHKli8RG5+CcaqfdzZ15n0Hm8FPME8bbmE7KULaiIpa6hGOy5fS10SYa4zbDvWi21uz+26rp9gb3+VgyHtF+EX3ZXqLkmm7o6ioVJj0jS+5oESj4ozY3c5m8uNvKOoYGizk6De3ZoraHravW/olgb2D6z+gjveKf7lPEFPqgYWBHvS6epmxPtZ7iDSjFQStshjYio/kJaDn5sDbDgi8m7hv0AK/2kqeOv6i0MKSkqPahTbYAwCZB6pHEIIHolh7tFzWJRgIBqdevw/LpJpYl8r8jxJ9KSDhLCRlluwioZjVq5bTdcj3YgeLnvO58TnAJQAp58gShLhNmrDGDUxEMKmGJ77JQRp7AINlSsJVMiIgkb5gGrLZfpqjXKrUlR+9We4saRhIgcs=
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: EVZ8aYzJKPOsmtkPh9TSgQk
+      responseId: JgGBaf-pOaqmmtkPhLvW4Qg
       usageMetadata:
-        candidatesTokenCount: 80
+        candidatesTokenCount: 28
         promptTokenCount: 339
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 81
         - modality: IMAGE
           tokenCount: 258
-        thoughtsTokenCount: 293
-        totalTokenCount: 712
+        thoughtsTokenCount: 231
+        totalTokenCount: 598
     status:
       code: 200
       message: OK

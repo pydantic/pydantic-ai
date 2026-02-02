@@ -664,10 +664,8 @@ class BedrockConverseModel(Model):
                                     else:
                                         assert_never(file_block)
                                 else:
-                                    # Audio binary - Bedrock doesn't support audio, use identifier pattern
-                                    tool_result_content.append({'text': f'See file {item.identifier}.'})
-                                    sibling_content.append(
-                                        {'text': f'This is file {item.identifier}: [Audio not supported by Bedrock]'}
+                                    raise NotImplementedError(
+                                        f'Unsupported binary content type for Bedrock tool returns: {item.media_type}'
                                     )
                             elif isinstance(item, (ImageUrl, DocumentUrl, VideoUrl)):
                                 file_block = await self._map_file_to_content_block(item, document_count)
@@ -681,11 +679,7 @@ class BedrockConverseModel(Model):
                                     else:
                                         assert_never(file_block)
                             elif isinstance(item, AudioUrl):
-                                # Audio URLs - Bedrock doesn't support audio, use identifier pattern
-                                tool_result_content.append({'text': f'See file {item.identifier}.'})
-                                sibling_content.append(
-                                    {'text': f'This is file {item.identifier}: [Audio not supported by Bedrock]'}
-                                )
+                                raise NotImplementedError('AudioUrl is not supported for Bedrock tool returns')
                             else:
                                 # Data content (str, dict, etc.) - serialize based on profile
                                 if isinstance(item, str):
@@ -777,9 +771,9 @@ class BedrockConverseModel(Model):
                     elif isinstance(item, BuiltinToolReturnPart):
                         if item.provider_name == self.system:
                             if item.tool_name == CodeExecutionTool.kind:
-                                result_content: list[ToolResultContentBlockOutputTypeDef] = (
-                                    [{'json': cast(dict[str, Any], item.content)}] if item.content else []
-                                )
+                                result_content: list[ToolResultContentBlockOutputTypeDef] = [
+                                    {'json': cast(dict[str, Any], item.content)}
+                                ] or []
                                 tool_result: ToolResultBlockOutputTypeDef = {
                                     'toolUseId': _utils.guard_tool_call_id(t=item),
                                     'content': result_content,
