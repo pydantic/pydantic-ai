@@ -5509,4 +5509,116 @@ async def test_xai_file_part_in_history_skipped(allow_model_requests: None):
     )
 
 
+async def test_xai_x_search_builtin_tool_call_in_history(allow_model_requests: None):
+    """Test that XSearchTool BuiltinToolCallPart in history is properly mapped back to xAI."""
+    # First response with x_search
+    response1 = create_x_search_response(query='pydantic updates', assistant_text='Found posts about PydanticAI.')
+    # Second response
+    response2 = create_response(content='The posts were about PydanticAI releases.')
+
+    mock_client = MockXai.create_mock([response1, response2])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, builtin_tools=[XSearchTool()])
+
+    # Run once, then continue with history
+    result1 = await agent.run('Search for pydantic updates')
+    result2 = await agent.run('What were the posts about?', message_history=result1.new_messages())
+
+    # Verify kwargs - second call should have builtin x_search tool call in history
+    assert get_mock_chat_create_kwargs(mock_client) == snapshot(
+        [
+            {
+                'model': XAI_NON_REASONING_MODEL,
+                'messages': [{'content': [{'text': 'Search for pydantic updates'}], 'role': 'ROLE_USER'}],
+                'tools': [{'x_search': {'enable_image_understanding': False, 'enable_video_understanding': False}}],
+                'tool_choice': 'auto',
+                'response_format': None,
+                'use_encrypted_content': False,
+                'include': [],
+            },
+            {
+                'model': XAI_NON_REASONING_MODEL,
+                'messages': [
+                    {'content': [{'text': 'Search for pydantic updates'}], 'role': 'ROLE_USER'},
+                    {
+                        'content': [{'text': ''}],
+                        'role': 'ROLE_ASSISTANT',
+                        'tool_calls': [
+                            {
+                                'id': 'x_search_001',
+                                'type': 'TOOL_CALL_TYPE_X_SEARCH_TOOL',
+                                'status': 'TOOL_CALL_STATUS_COMPLETED',
+                                'function': {'name': 'x_search', 'arguments': '{"query":"pydantic updates"}'},
+                            }
+                        ],
+                    },
+                    {
+                        'content': [{'text': 'Found posts about PydanticAI.'}],
+                        'role': 'ROLE_ASSISTANT',
+                    },
+                    {'content': [{'text': 'What were the posts about?'}], 'role': 'ROLE_USER'},
+                ],
+                'tools': [{'x_search': {'enable_image_understanding': False, 'enable_video_understanding': False}}],
+                'tool_choice': 'auto',
+                'response_format': None,
+                'use_encrypted_content': False,
+                'include': [],
+            },
+        ]
+    )
+
+    assert result2.output == 'The posts were about PydanticAI releases.'
+
+
+async def test_xai_unknown_tool_type_uses_function_name(allow_model_requests: None):
+    """Test handling of unknown tool types (like collections_search) uses the function name."""
+    # Create a server-side tool call with collections_search type (not handled explicitly)
+    collections_search_tool_call = chat_pb2.ToolCall(
+        id='collections_001',
+        type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_COLLECTIONS_SEARCH_TOOL,
+        status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
+        function=chat_pb2.FunctionCall(
+            name='collections_search',
+            arguments='{"query": "my documents"}',
+        ),
+    )
+
+    # Create response with collections_search tool
+    response = create_mixed_tools_response([collections_search_tool_call], text_content='Found your documents.')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('Search my collections')
+
+    # Verify the unknown tool type is handled using the function name
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Search my collections', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='collections_search',
+                        args={'query': 'my documents'},
+                        tool_call_id=IsStr(),
+                        provider_name='xai',
+                    ),
+                    TextPart(content='Found your documents.'),
+                ],
+                model_name=XAI_NON_REASONING_MODEL,
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_url='https://api.x.ai/v1',
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 # End of tests
