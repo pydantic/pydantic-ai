@@ -2774,7 +2774,7 @@ def _map_usage(
     if isinstance(response_usage, responses.ResponseUsage):
         api_flavor = 'responses'
 
-        if getattr(response_usage, 'output_tokens_details', None) is not None:
+        if getattr(response_usage, 'output_tokens_details', None) is not None and isinstance(getattr(response_usage.output_tokens_details, 'reasoning_tokens', None), int):
             details['reasoning_tokens'] = response_usage.output_tokens_details.reasoning_tokens
         else:
             details['reasoning_tokens'] = 0
