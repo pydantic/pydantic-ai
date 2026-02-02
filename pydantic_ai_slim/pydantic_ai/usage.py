@@ -236,7 +236,8 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
     slf.output_tokens += incr_usage.output_tokens
 
     for key, value in incr_usage.details.items():
-        if value is not None and isinstance(value, (int, float)):
+        # Note: value can be None at runtime from model responses despite the type annotation
+        if value is not None and isinstance(value, (int, float)):  # pyright: ignore[reportUnnecessaryComparison]
             slf.details[key] = slf.details.get(key, 0) + value
 
 
