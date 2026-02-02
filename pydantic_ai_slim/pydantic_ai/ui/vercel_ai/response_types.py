@@ -23,7 +23,7 @@ FinishReason = Literal['stop', 'length', 'content-filter', 'tool-calls', 'error'
 class BaseChunk(CamelBaseModel, ABC):
     """Abstract base class for response SSE events."""
 
-    def encode(self, sdk_version: int = 6) -> str:
+    def encode(self, sdk_version: int) -> str:
         return self.model_dump_json(by_alias=True, exclude_none=True)
 
 
@@ -94,7 +94,7 @@ class ToolInputStartChunk(BaseChunk):
     provider_metadata: ProviderMetadata | None = None
     dynamic: bool | None = None
 
-    def encode(self, sdk_version: int = 6) -> str:
+    def encode(self, sdk_version: int) -> str:
         exclude = {'provider_metadata'} if sdk_version < 6 else None
         return self.model_dump_json(by_alias=True, exclude_none=True, exclude=exclude)
 
@@ -253,5 +253,5 @@ class DoneChunk(BaseChunk):
 
     type: Literal['done'] = 'done'
 
-    def encode(self, sdk_version: int = 6) -> str:
+    def encode(self, sdk_version: int) -> str:
         return '[DONE]'
