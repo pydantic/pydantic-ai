@@ -320,6 +320,12 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     openai_top_logprobs: int
     """Include log probabilities of the top n tokens in the response."""
 
+    openai_store: bool | None
+    """Whether or not to store the output of this request in OpenAI's systems.
+
+    If `False`, OpenAI will not store the request for its own internal review or training.
+    See [OpenAI API reference](https://platform.openai.com/docs/api-reference/chat/create#chat-create-store)."""
+
     openai_user: str
     """A unique identifier representing the end-user, which can help OpenAI monitor and detect abuse.
 
@@ -722,6 +728,7 @@ class OpenAIChatModel(Model):
                 logit_bias=model_settings.get('logit_bias', OMIT),
                 logprobs=model_settings.get('openai_logprobs', OMIT),
                 top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
+                store=model_settings.get('openai_store', OMIT),
                 prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
                 prompt_cache_retention=prompt_cache_retention,
                 extra_headers=extra_headers,
@@ -1636,6 +1643,7 @@ class OpenAIResponsesModel(Model):
                 service_tier=model_settings.get('openai_service_tier', OMIT),
                 previous_response_id=previous_response_id or OMIT,
                 top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
+                store=model_settings.get('openai_store', OMIT),
                 reasoning=reasoning,
                 user=model_settings.get('openai_user', OMIT),
                 text=text or OMIT,
