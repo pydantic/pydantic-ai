@@ -4,7 +4,7 @@ import functools
 import typing
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from itertools import count
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
@@ -49,10 +49,10 @@ from pydantic_ai.models import (
     StreamedResponse,
     download_item,
 )
-from pydantic_ai.models._tool_choice import resolve_tool_choice
+from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
@@ -316,6 +316,23 @@ class BedrockConverseModel(Model):
 
         return {'toolSpec': tool_spec}
 
+    def prepare_request(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        settings = merge_model_settings(self.settings, model_settings)
+        if model_request_parameters.output_tools and _is_thinking_enabled(settings):
+            if model_request_parameters.output_mode == 'auto':
+                output_mode = 'native' if self.profile.supports_json_schema_output else 'prompted'
+                model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
+            elif (
+                model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output
+            ):  # pragma: no branch
+                suggested_output_type = 'NativeOutput' if self.profile.supports_json_schema_output else 'PromptedOutput'
+                raise UserError(
+                    f'Bedrock does not support thinking and output tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
+                )
+        return super().prepare_request(model_settings, model_request_parameters)
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -572,7 +589,7 @@ class BedrockConverseModel(Model):
         tool_defs = model_request_parameters.tool_defs
 
         profile = BedrockModelProfile.from_profile(self.profile)
-        supports = _support_tool_forcing(self.model_name, profile, model_settings)
+        supports = _support_tool_forcing(self.model_name, profile, model_settings, resolved_tool_choice)
 
         tool_choice: ToolChoiceTypeDef
         if resolved_tool_choice == 'auto':
@@ -1185,12 +1202,25 @@ class _AsyncIteratorWrapper(Generic[T]):
                 raise e  # pragma: lax no cover
 
 
+def _is_thinking_enabled(model_settings: ModelSettings | None) -> bool:
+    return bool(
+        model_settings
+        and (additional_fields := model_settings.get('bedrock_additional_model_requests_fields'))
+        and (thinking := additional_fields.get('thinking'))
+        and thinking.get('type') == 'enabled'
+    )
+
+
 def _support_tool_forcing(
     model_name: str,
     profile: BedrockModelProfile,
     model_settings: BedrockModelSettings | None,
+    effective_tool_choice: ResolvedToolChoice,
 ) -> bool:
-    """Check if model supports tool forcing, raising UserError if explicitly requested but unsupported."""
+    """Check if model supports tool forcing, raising UserError if explicitly requested but unsupported.
+
+    Also checks for thinking mode compatibility - Bedrock/Anthropic don't support tool forcing with thinking enabled.
+    """
     if not profile.bedrock_supports_tool_choice:
         explicit_choice = (model_settings or {}).get('tool_choice')
         if explicit_choice == 'required' or isinstance(explicit_choice, list):
@@ -1199,4 +1229,14 @@ def _support_tool_forcing(
                 f'This model does not support forcing tool use.'
             )
         return False
+
+    if _is_thinking_enabled(model_settings):
+        explicit_choice = (model_settings or {}).get('tool_choice')
+        if explicit_choice == 'required' or isinstance(explicit_choice, list):
+            raise UserError(
+                "Bedrock does not support forcing specific tools with thinking mode. Disable thinking or use `tool_choice='auto'`."
+            )
+        if effective_tool_choice == 'required' or isinstance(effective_tool_choice, tuple):
+            return False
+
     return True

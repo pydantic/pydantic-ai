@@ -6,8 +6,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
 
-_AutoOrRequired = Literal['auto', 'required']
-ResolvedToolChoice = Literal['none', 'auto', 'required'] | tuple[_AutoOrRequired, list[str]]
+ResolvedToolChoice = Literal['none', 'auto', 'required'] | tuple[Literal['auto', 'required'], list[str]]
 
 
 def resolve_tool_choice(  # noqa: C901
@@ -25,27 +24,27 @@ def resolve_tool_choice(  # noqa: C901
         model_settings: Optional settings containing the tool_choice value.
         model_request_parameters: Parameters describing available tools and output configuration.
 
+    Input behavior:
+
+        - `None` / `'auto'`: Returns `'auto'` if direct output allowed, else `'required'`.
+        - `'none'` / `[]`: Disables function tools. If output tools exist, returns them with
+            appropriate mode. Otherwise returns `'none'`.
+        - `'required'`: Requires function tool use. Raises if no function tools are defined.
+        - `list[str]`: Restricts to specified tools with `'required'` mode. Validates tool names.
+        - `ToolOrOutput`: Combines specified function tools with all output tools.
+            Returns `'auto'` mode if direct output is allowed, otherwise `'required'`.
+
+    Raises:
+        UserError: If tool_choice is incompatible with the available tools or output configuration.
+
     Returns:
         A canonical tool_choice value for providers:
 
         - `'none'`: No tools should be called. Only valid when direct output (text/image) is allowed.
         - `'auto'`: Model chooses whether to use tools. Direct output is allowed.
         - `'required'`: Model must use a tool. Direct output is not allowed.
-        - `(tool_names, 'auto')`: Only these tools are available, direct output is allowed.
-        - `(tool_names, 'required')`: Only these tools are available, must use one.
-
-    Raises:
-        UserError: If tool_choice is incompatible with the available tools or output configuration.
-
-    Input behavior:
-
-        - `None` / `'auto'`: Returns `'auto'` if direct output allowed, else `'required'`.
-        - `'none'` / `[]`: Disables function tools. If output tools exist, returns them with
-          appropriate mode. Otherwise returns `'none'`.
-        - `'required'`: Requires function tool use. Raises if no function tools are defined.
-        - `list[str]`: Restricts to specified tools with `'required'` mode. Validates tool names.
-        - `ToolOrOutput`: Combines specified function tools with all output tools.
-          Returns `'auto'` mode if direct output is allowed, otherwise `'required'`.
+        - `('auto', tool_names)`: Only these tools are available, direct output is allowed.
+        - `('required', tool_names)`: Only these tools are available, must use one.
     """
     function_tool_choice = (model_settings or {}).get('tool_choice')
 
@@ -66,17 +65,17 @@ def resolve_tool_choice(  # noqa: C901
 
     # none / []: disable function tools, but output tools may still exist
     elif function_tool_choice in ('none', []):
-        output_tool_names = [t.name for t in model_request_parameters.output_tools]
+        output_tool_names = {t.name for t in model_request_parameters.output_tools}
 
         if output_tool_names:
             if allow_direct_output:
-                mode: _AutoOrRequired = 'auto'
+                mode: Literal['auto', 'required'] = 'auto'
             elif model_request_parameters.function_tools:
                 mode = 'required'
             else:
                 return 'required'  # only output tools exist and direct output isn't allowed
 
-            return (mode, output_tool_names)
+            return (mode, list(output_tool_names))
 
         if allow_direct_output:
             return 'none'
@@ -95,7 +94,6 @@ def resolve_tool_choice(  # noqa: C901
 
     # list[str]: required, restricted to these tools
     elif isinstance(function_tool_choice, list):
-        # unique names; doesn't retain order, but that's ok https://github.com/pydantic/pydantic-ai/pull/3611#discussion_r2677595474
         chosen_set = set(function_tool_choice)
         # we'll only raise here if none of the chosen tools are valid https://github.com/pydantic/pydantic-ai/pull/3611#discussion_r2677602549
         if chosen_set - available_tools == chosen_set:
@@ -104,14 +102,12 @@ def resolve_tool_choice(  # noqa: C901
         if chosen_set == available_tools:
             return 'required'
 
-        # tests require a deterministic order
-        return ('required', sorted(chosen_set))
+        return ('required', list(chosen_set))
 
     # ToolOrOutput: specific function tools + all output tools or direct text/image output
     elif isinstance(function_tool_choice, ToolOrOutput):
-        output_tool_names = [t.name for t in model_request_parameters.output_tools]
+        output_tool_names = {t.name for t in model_request_parameters.output_tools}
 
-        # stable order, unique
         if not function_tool_choice.function_tools:
             if output_tool_names:
                 return 'auto' if allow_direct_output else 'required'
@@ -120,20 +116,18 @@ def resolve_tool_choice(  # noqa: C901
         chosen_function_set = set(function_tool_choice.function_tools)
         all_function_tool_names = {t.name for t in model_request_parameters.function_tools}
         # same as above - only raise if none are valid
-        if not chosen_function_set - all_function_tool_names == chosen_function_set:
+        if chosen_function_set - all_function_tool_names == chosen_function_set:
             _invalid_tools(
                 chosen_function_set,
                 all_function_tool_names,
                 available_label='Available function tools',
             )
 
-        # tests require a deterministic order
-        allowed_tools = sorted([*chosen_function_set, *output_tool_names])
-        if set(allowed_tools) == available_tools:
-            return 'required'
+        allowed_tools = chosen_function_set | output_tool_names
+        mode: Literal['auto', 'required'] = 'auto' if allow_direct_output else 'required'
+        if allowed_tools == available_tools:
+            return mode
 
-        # If direct output is allowed, use 'auto' mode to permit text/image responses
-        mode: _AutoOrRequired = 'auto' if allow_direct_output else 'required'
-        return (mode, allowed_tools)
+        return (mode, list(allowed_tools))
     else:
         assert_never(function_tool_choice)

@@ -83,7 +83,7 @@ def test_none_with_output_tools_and_direct_output():
         allow_text_output=True,
     )
     result = resolve_tool_choice({'tool_choice': 'none'}, params)
-    assert result == ('auto', ['final_result'])
+    assert result[0] == 'auto' and set(result[1]) == {'final_result'}
 
 
 def test_none_with_output_tools_no_direct_output_with_function_tools():
@@ -94,7 +94,7 @@ def test_none_with_output_tools_no_direct_output_with_function_tools():
         allow_text_output=False,
     )
     result = resolve_tool_choice({'tool_choice': 'none'}, params)
-    assert result == ('required', ['final_result'])
+    assert result[0] == 'required' and set(result[1]) == {'final_result'}
 
 
 def test_none_with_only_output_tools_no_direct_output():
@@ -139,14 +139,14 @@ def test_list_subset_returns_tuple():
         function_tools=[make_tool('a'), make_tool('b'), make_tool('c')], allow_text_output=True
     )
     result = resolve_tool_choice({'tool_choice': ['a', 'c']}, params)
-    assert result == ('required', ['a', 'c'])
+    assert result[0] == 'required' and set(result[1]) == {'a', 'c'}
 
 
 def test_list_partial_invalid_filters_silently():
     """Partial invalid tools are filtered, not errored."""
     params = ModelRequestParameters(function_tools=[make_tool('a'), make_tool('b')], allow_text_output=True)
     result = resolve_tool_choice({'tool_choice': ['a', 'invalid']}, params)
-    assert result == ('required', ['a', 'invalid'])
+    assert result[0] == 'required' and set(result[1]) == {'a', 'invalid'}
 
 
 def test_tool_or_output_empty_function_tools_with_output_tools_direct_output():
@@ -176,30 +176,30 @@ def test_tool_or_output_empty_function_tools_no_output_tools():
     assert result == 'none'
 
 
-def test_tool_or_output_all_invalid_function_tools_silently_passed():
-    """All invalid function tools in ToolOrOutput are silently passed through."""
-    params = ModelRequestParameters(
-        function_tools=[make_tool('a'), make_tool('b')],
-        output_tools=[make_tool('final_result')],
-        allow_text_output=True,
-    )
-    result = resolve_tool_choice({'tool_choice': ToolOrOutput(function_tools=['x', 'y'])}, params)
-    assert result == ('auto', ['final_result', 'x', 'y'])
-
-
-def test_tool_or_output_partial_invalid_function_tools_raises():
-    """Mixing valid and invalid function tools in ToolOrOutput raises UserError."""
+def test_tool_or_output_all_invalid_function_tools_raises():
+    """All invalid function tools in ToolOrOutput raises UserError."""
     params = ModelRequestParameters(
         function_tools=[make_tool('a'), make_tool('b')],
         output_tools=[make_tool('final_result')],
         allow_text_output=True,
     )
     with pytest.raises(UserError, match='Invalid tool names'):
-        resolve_tool_choice({'tool_choice': ToolOrOutput(function_tools=['a', 'invalid'])}, params)
+        resolve_tool_choice({'tool_choice': ToolOrOutput(function_tools=['x', 'y'])}, params)
 
 
-def test_tool_or_output_exact_match_returns_required():
-    """ToolOrOutput matching all available tools returns simple required mode."""
+def test_tool_or_output_partial_invalid_function_tools_passes():
+    """Mixing valid and invalid function tools passes silently (at least one valid)."""
+    params = ModelRequestParameters(
+        function_tools=[make_tool('a'), make_tool('b')],
+        output_tools=[make_tool('final_result')],
+        allow_text_output=True,
+    )
+    result = resolve_tool_choice({'tool_choice': ToolOrOutput(function_tools=['a', 'invalid'])}, params)
+    assert result[0] == 'auto' and set(result[1]) == {'a', 'final_result', 'invalid'}
+
+
+def test_tool_or_output_exact_match_no_direct_output_returns_required():
+    """ToolOrOutput matching all available tools without direct output returns required."""
     params = ModelRequestParameters(
         function_tools=[make_tool('a')],
         output_tools=[make_tool('final_result')],
@@ -207,6 +207,17 @@ def test_tool_or_output_exact_match_returns_required():
     )
     result = resolve_tool_choice({'tool_choice': ToolOrOutput(function_tools=['a'])}, params)
     assert result == 'required'
+
+
+def test_tool_or_output_exact_match_with_direct_output_returns_auto():
+    """ToolOrOutput matching all available tools with direct output returns auto."""
+    params = ModelRequestParameters(
+        function_tools=[make_tool('a')],
+        output_tools=[make_tool('final_result')],
+        allow_text_output=True,
+    )
+    result = resolve_tool_choice({'tool_choice': ToolOrOutput(function_tools=['a'])}, params)
+    assert result == 'auto'
 
 
 def test_tool_or_output_subset_with_direct_output_returns_auto_tuple():
@@ -217,7 +228,7 @@ def test_tool_or_output_subset_with_direct_output_returns_auto_tuple():
         allow_text_output=True,
     )
     result = resolve_tool_choice({'tool_choice': ToolOrOutput(function_tools=['a'])}, params)
-    assert result == ('auto', ['a', 'final_result'])
+    assert result[0] == 'auto' and set(result[1]) == {'a', 'final_result'}
 
 
 def test_tool_or_output_subset_without_direct_output_returns_required_tuple():
@@ -228,7 +239,7 @@ def test_tool_or_output_subset_without_direct_output_returns_required_tuple():
         allow_text_output=False,
     )
     result = resolve_tool_choice({'tool_choice': ToolOrOutput(function_tools=['a'])}, params)
-    assert result == ('required', ['a', 'final_result'])
+    assert result[0] == 'required' and set(result[1]) == {'a', 'final_result'}
 
 
 # =============================================================================

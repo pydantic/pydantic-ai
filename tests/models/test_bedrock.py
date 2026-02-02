@@ -45,6 +45,7 @@ from pydantic_ai.messages import (
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.providers import Provider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -1526,6 +1527,58 @@ Based on your location in Mexico, the largest city is Mexico City (Ciudad de Mé
 Mexico City is an important cultural, financial, and political center for the country and has a rich history dating back to the Aztec empire when it was known as Tenochtitlán.\
 """
     )
+
+
+async def test_bedrock_output_tool_with_thinking_raises(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Bedrock does not support output tools (tool_choice=required) with thinking enabled.
+
+    When using thinking with output_type=ToolOutput, it should raise UserError.
+    This fixes https://github.com/pydantic/pydantic-ai/issues/3092.
+    """
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(
+            bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', 'budget_tokens': 1024}}
+        ),
+    )
+
+    agent = Agent(m, output_type=ToolOutput(int))
+
+    with pytest.raises(
+        UserError,
+        match='Bedrock does not support thinking and output tools at the same time',
+    ):
+        await agent.run('What is 3 + 3?')
+
+
+async def test_bedrock_tool_choice_required_with_thinking(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Bedrock does not support forcing tool use (tool_choice=required) with thinking enabled.
+
+    When explicitly setting tool_choice='required' with thinking, it should raise UserError.
+    """
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(
+            bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', 'budget_tokens': 1024}},
+            tool_choice='required',
+        ),
+    )
+
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        return f'Weather in {city}: sunny'
+
+    with pytest.raises(
+        UserError,
+        match='Bedrock does not support forcing specific tools with thinking mode',
+    ):
+        await agent.run('What is the weather in Paris?')
 
 
 async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: BedrockProvider):
