@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
-from typing import Any, overload
+from typing import Any, Literal, cast, overload
 
 from dbos import DBOS, DBOSConfiguredInstance
 from typing_extensions import Never
@@ -15,7 +15,14 @@ from pydantic_ai import (
     models,
     usage as _usage,
 )
-from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
+from pydantic_ai.agent import (
+    AbstractAgent,
+    AgentRun,
+    AgentRunResult,
+    EventStreamHandler,
+    ParallelExecutionMode,
+    WrapperAgent,
+)
 from pydantic_ai.agent.abstract import AgentMetadata, Instructions, RunOutputDataT
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.exceptions import UserError
@@ -35,9 +42,15 @@ from pydantic_ai.tools import (
 from ._model import DBOSModel
 from ._utils import StepConfig
 
+DBOSParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
+"""The mode for executing tool calls in DBOS durable workflows. This is a subset of the ParallelExecutionMode because 'parallel' cannot guarantee deterministic ordering.
+"""
+
 
 @DBOS.dbos_class()
 class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
+    _parallel_execution_mode: ParallelExecutionMode
+
     def __init__(
         self,
         wrapped: AbstractAgent[AgentDepsT, OutputDataT],
@@ -46,6 +59,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         mcp_step_config: StepConfig | None = None,
         model_step_config: StepConfig | None = None,
+        parallel_execution_mode: DBOSParallelExecutionMode = 'parallel_ordered_events',
     ):
         """Wrap an agent to enable it with DBOS durable workflows, by automatically offloading model requests, tool calls, and MCP server communication to DBOS steps.
 
@@ -57,11 +71,15 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             event_stream_handler: Optional event stream handler to use instead of the one set on the wrapped agent.
             mcp_step_config: The base DBOS step config to use for MCP server steps. If no config is provided, use the default settings of DBOS.
             model_step_config: The DBOS step config to use for model request steps. If no config is provided, use the default settings of DBOS.
+            parallel_execution_mode: The mode for executing tool calls:
+                - 'parallel_ordered_events' (default): Run tool calls in parallel, but events are emitted in order, after all calls complete.
+                - 'sequential': Run tool calls one at a time in order.
         """
         super().__init__(wrapped)
 
         self._name = name or wrapped.name
         self._event_stream_handler = event_stream_handler
+        self._parallel_execution_mode = cast(ParallelExecutionMode, parallel_execution_mode)
         if self._name is None:
             raise UserError(
                 "An agent needs to have a unique `name` in order to be used with DBOS. The name will be used to identify the agent's workflows and steps."
@@ -254,9 +272,10 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
     @contextmanager
     def _dbos_overrides(self) -> Iterator[None]:
         # Override with DBOSModel and DBOSMCPServer in the toolsets.
+        # Use the configured parallel execution mode for deterministic event ordering during DBOS replay.
         with (
             super().override(model=self._model, toolsets=self._toolsets, tools=[]),
-            self.sequential_tool_calls(),
+            self.parallel_tool_call_execution_mode(self._parallel_execution_mode),
         ):
             yield
 
