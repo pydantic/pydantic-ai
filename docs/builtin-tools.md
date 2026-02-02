@@ -206,7 +206,9 @@ agent = Agent(
 
 result = agent.run_sync('What have AI companies been posting about?')
 print(result.output)
-#> OpenAI announced their latest model updates, while Anthropic shared research on AI safety...
+"""
+OpenAI announced their latest model updates, while Anthropic shared research on AI safety...
+"""
 ```
 
 _(This example is complete, it can be run "as is")_

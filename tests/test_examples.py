@@ -558,7 +558,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         args={'name': 'test', 'value': 42},
         tool_call_id='pyd_ai_tool_call_id',
     ),
-    "What are people saying about AI on X today?": "There's a lot of excitement about new AI models being released...",
+    'What are people saying about AI on X today?': "There's a lot of excitement about new AI models being released...",
     'What have AI companies been posting about?': 'OpenAI announced their latest model updates, while Anthropic shared research on AI safety...',
 }
 
