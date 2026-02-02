@@ -179,6 +179,10 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
         help="System instructions. When `--agent` is specified, these are additional to the agent's existing instructions "
         'and will be passed as extra instructions to each run.',
     )
+    parser.add_argument(
+        '--html-source',
+        help='URL or file path for the chat UI HTML. If not specified, the UI is downloaded from a CDN.',
+    )
     parser.add_argument('--host', default='127.0.0.1', help='Host to bind server (default: 127.0.0.1)')
     parser.add_argument('--port', type=int, default=7932, help='Port to bind server (default: 7932)')
     argcomplete.autocomplete(parser)
@@ -194,6 +198,7 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
         tools=args.tools or [],
         instructions=args.instructions,
         default_model=default_model,
+        html_source=args.html_source,
     )
 
 
