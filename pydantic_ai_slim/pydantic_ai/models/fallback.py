@@ -131,7 +131,7 @@ class FallbackModel(Model):
                     'All exceptions will propagate and all responses will be accepted. '
                     'Consider using fallback_on=(ModelAPIError,) for default behavior.',
                     UserWarning,
-                    stacklevel=4,
+                    stacklevel=3,
                 )
         else:
             assert_never(fallback_on)  # type: ignore[arg-type]  # pyright can't narrow str/bytes exclusion
