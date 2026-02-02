@@ -189,6 +189,56 @@ ERROR_DETAILS: list[ExpectError] = [
         error_type=NotImplementedError,
         match='Audio is not supported yet',
     ),
+    ExpectError(
+        'bedrock',
+        'audio',
+        content_source='url_force_download',
+        return_style='tool_return_content',
+        error_type=NotImplementedError,
+        match='Audio is not supported yet',
+    ),
+    ExpectError(
+        'groq',
+        'document',
+        content_source='url_force_download',
+        return_style='direct',
+        match='Only images are supported for multimodal content',
+    ),
+    ExpectError(
+        'groq',
+        'audio',
+        content_source='url_force_download',
+        return_style='direct',
+        match='Only images are supported for multimodal content',
+    ),
+    ExpectError(
+        'groq',
+        'video',
+        content_source='url_force_download',
+        return_style='direct',
+        match='Only images are supported for multimodal content',
+    ),
+    ExpectError(
+        'groq',
+        'document',
+        content_source='url_force_download',
+        return_style='tool_return_content',
+        match='DocumentUrl is not supported in Groq',
+    ),
+    ExpectError(
+        'groq',
+        'audio',
+        content_source='url_force_download',
+        return_style='tool_return_content',
+        match='AudioUrl is not supported in Groq',
+    ),
+    ExpectError(
+        'groq',
+        'video',
+        content_source='url_force_download',
+        return_style='tool_return_content',
+        match='VideoUrl is not supported in Groq',
+    ),
 ]
 
 
@@ -279,15 +329,37 @@ def make_video_url(_: Path) -> VideoUrl:
     return VideoUrl(url='https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4')
 
 
+def make_image_url_force_download(_: Path) -> ImageUrl:
+    return ImageUrl(url='https://www.gstatic.com/webp/gallery3/1.png', force_download=True)
+
+
+def make_document_url_force_download(_: Path) -> DocumentUrl:
+    return DocumentUrl(url='https://pdfobject.com/pdf/sample.pdf', force_download=True)
+
+
+def make_audio_url_force_download(_: Path) -> AudioUrl:
+    return AudioUrl(url='https://download.samplelib.com/mp3/sample-3s.mp3', force_download=True)
+
+
+def make_video_url_force_download(_: Path) -> VideoUrl:
+    return VideoUrl(
+        url='https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4', force_download=True
+    )
+
+
 CONTENT_FACTORIES = {
     ('image', 'binary'): make_image_binary,
     ('image', 'url'): make_image_url,
+    ('image', 'url_force_download'): make_image_url_force_download,
     ('document', 'binary'): make_document_binary,
     ('document', 'url'): make_document_url,
+    ('document', 'url_force_download'): make_document_url_force_download,
     ('audio', 'binary'): make_audio_binary,
     ('audio', 'url'): make_audio_url,
+    ('audio', 'url_force_download'): make_audio_url_force_download,
     ('video', 'binary'): make_video_binary,
     ('video', 'url'): make_video_url,
+    ('video', 'url_force_download'): make_video_url_force_download,
 }
 
 
@@ -395,6 +467,7 @@ FILE_TYPES = [
 CONTENT_SOURCES = [
     pytest.param('binary', id='binary'),
     pytest.param('url', id='url'),
+    pytest.param('url_force_download', id='url_force_download'),
 ]
 
 RETURN_STYLES = [
@@ -548,3 +621,157 @@ async def test_model_sees_image_content(
         usage_limits=UsageLimits(output_tokens_limit=100000),
     )
     assert 'kiwi' in result.output.lower(), f'Model should identify kiwi fruit, got: {result.output}'
+
+
+EMPTY_STRING_PROVIDERS = [
+    pytest.param('anthropic', id='anthropic'),
+    pytest.param('bedrock', id='bedrock'),
+    pytest.param('google', id='google'),
+    pytest.param('openai_responses', id='openai_responses'),
+    pytest.param('groq', id='groq'),
+]
+
+
+@pytest.mark.parametrize('provider', EMPTY_STRING_PROVIDERS)
+async def test_empty_string_in_mixed_content(
+    provider: str,
+    api_keys: dict[str, str],
+    bedrock_provider: Any,
+    xai_provider: Any,
+    assets_path: Path,
+    allow_model_requests: None,
+):
+    """Test that empty strings in tool returns are skipped correctly."""
+    if not is_provider_available(provider):
+        pytest.skip(f'{provider} dependencies not installed')
+
+    model = create_model(provider, api_keys, bedrock_provider, xai_provider)
+    image = make_image_binary(assets_path)
+
+    agent: Agent[None, str] = Agent(model)
+
+    @agent.tool_plain
+    def get_content_with_empty_strings() -> list[Any]:
+        return ['', image, '', 'Some text', '']
+
+    result = await agent.run(
+        'Call the get_content_with_empty_strings tool and describe what you received.',
+        usage_limits=UsageLimits(output_tokens_limit=100000),
+    )
+    assert result.output, 'Expected non-empty response from model'
+
+
+OPENAI_PROVIDERS = [
+    pytest.param('openai_responses', id='openai_responses'),
+]
+
+
+@pytest.mark.parametrize('provider', OPENAI_PROVIDERS)
+async def test_vendor_metadata_detail(
+    provider: str,
+    api_keys: dict[str, str],
+    bedrock_provider: Any,
+    xai_provider: Any,
+    assets_path: Path,
+    allow_model_requests: None,
+):
+    """Test that vendor_metadata with detail setting is handled correctly."""
+    if not is_provider_available(provider):
+        pytest.skip(f'{provider} dependencies not installed')
+
+    model = create_model(provider, api_keys, bedrock_provider, xai_provider)
+    image_binary = BinaryImage(
+        data=assets_path.joinpath('kiwi.jpg').read_bytes(),
+        media_type='image/jpeg',
+        vendor_metadata={'detail': 'high'},
+    )
+    image_url = ImageUrl(
+        url='https://www.gstatic.com/webp/gallery3/1.png',
+        vendor_metadata={'detail': 'low'},
+    )
+
+    agent: Agent[None, str] = Agent(model)
+
+    @agent.tool_plain
+    def get_images_with_metadata() -> list[Any]:
+        return [image_binary, image_url]
+
+    result = await agent.run(
+        'Call the get_images_with_metadata tool and describe what you see.',
+        usage_limits=UsageLimits(output_tokens_limit=100000),
+    )
+    assert result.output, 'Expected non-empty response from model'
+
+
+async def test_text_plain_document_anthropic(
+    anthropic_api_key: str,
+    assets_path: Path,
+    allow_model_requests: None,
+):
+    """Test that text/plain documents are handled correctly by Anthropic."""
+    if not anthropic_available():
+        pytest.skip('anthropic dependencies not installed')
+
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    text_content = assets_path.joinpath('dummy.txt').read_bytes()
+    document = BinaryContent(data=text_content, media_type='text/plain')
+
+    agent: Agent[None, str] = Agent(model)
+
+    @agent.tool_plain
+    def get_text_document() -> BinaryContent:
+        return document
+
+    result = await agent.run(
+        'Call the get_text_document tool and describe the document content.',
+        usage_limits=UsageLimits(output_tokens_limit=100000),
+    )
+    assert result.output, 'Expected non-empty response from model'
+
+
+@pytest.mark.skipif(not bedrock_available(), reason='bedrock dependencies not installed')
+async def test_s3_document_url_bedrock():
+    """Test that S3 URLs are correctly parsed for Bedrock documents."""
+    from itertools import count
+
+    from pydantic_ai.models.bedrock import BedrockConverseModel
+
+    document = DocumentUrl(url='s3://my-bucket/path/to/document.pdf?bucketOwner=123456789012')
+    result = await BedrockConverseModel._map_file_to_content_block(document, count(1))
+
+    assert result is not None
+    assert 'document' in result
+    assert result['document']['source']['s3Location']['uri'] == 's3://my-bucket/path/to/document.pdf'
+    assert result['document']['source']['s3Location']['bucketOwner'] == '123456789012'
+
+
+@pytest.mark.skipif(not bedrock_available(), reason='bedrock dependencies not installed')
+async def test_s3_image_url_bedrock():
+    """Test that S3 URLs are correctly parsed for Bedrock images."""
+    from itertools import count
+
+    from pydantic_ai.models.bedrock import BedrockConverseModel
+
+    image = ImageUrl(url='s3://my-bucket/images/photo.png', media_type='image/png')
+    result = await BedrockConverseModel._map_file_to_content_block(image, count(1))
+
+    assert result is not None
+    assert 'image' in result
+    assert result['image']['format'] == 'png'
+    assert result['image']['source']['s3Location']['uri'] == 's3://my-bucket/images/photo.png'
+
+
+@pytest.mark.skipif(not bedrock_available(), reason='bedrock dependencies not installed')
+async def test_s3_video_url_bedrock():
+    """Test that S3 URLs are correctly parsed for Bedrock videos."""
+    from itertools import count
+
+    from pydantic_ai.models.bedrock import BedrockConverseModel
+
+    video = VideoUrl(url='s3://my-bucket/videos/clip.mp4', media_type='video/mp4')
+    result = await BedrockConverseModel._map_file_to_content_block(video, count(1))
+
+    assert result is not None
+    assert 'video' in result
+    assert result['video']['format'] == 'mp4'
+    assert result['video']['source']['s3Location']['uri'] == 's3://my-bucket/videos/clip.mp4'

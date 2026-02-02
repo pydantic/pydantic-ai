@@ -1,0 +1,169 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '396'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Use the get_file tool now to retrieve a video file, then describe what you received.
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_file
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '569'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: I'll retrieve the file for you now.
+        type: text
+      - id: toolu_01B4QXLMoYCsa9CUiAmcRe1z
+        input: {}
+        name: get_file
+        type: tool_use
+      id: msg_01QbmCy518mWf6zMbJWTrrwN
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 558
+        output_tokens: 46
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '917'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Use the get_file tool now to retrieve a video file, then describe what you received.
+          type: text
+        role: user
+      - content:
+        - text: I'll retrieve the file for you now.
+          type: text
+        - id: toolu_01B4QXLMoYCsa9CUiAmcRe1z
+          input: {}
+          name: get_file
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: File attached
+            type: text
+          is_error: false
+          tool_use_id: toolu_01B4QXLMoYCsa9CUiAmcRe1z
+          type: tool_result
+        - text: '[Video URL not supported by Anthropic: https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4]'
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_file
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1190'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: |-
+          I received a video file titled "ForBiggerBlazes.mp4" from a Google storage bucket. This appears to be a sample video file.
+
+          Based on the file I received, this is an MP4 video file. The filename "ForBiggerBlazes" suggests it might be related to demonstration or sample content, possibly from Google's collection of test/sample videos that are commonly used for testing video playback functionality.
+
+          However, I should note that I cannot actually view or play video files - I can only see that a video file was provided and read its metadata/filename. To know the actual content of the video (what scenes it shows, its duration, resolution, etc.), I would need someone to watch it or have access to detailed metadata about the video's contents.
+        type: text
+      id: msg_01EtBPinCVqYw3RDHKMTxEH5
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 661
+        output_tokens: 169
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

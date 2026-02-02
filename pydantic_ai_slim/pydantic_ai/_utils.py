@@ -552,4 +552,4 @@ def as_dict(obj: Any) -> dict[str, Any] | None:
     """Cast Any to dict if is dict."""
     if isinstance(obj, dict):
         return cast(dict[str, Any], obj)
-    return None
+    return None  # pragma: no cover
