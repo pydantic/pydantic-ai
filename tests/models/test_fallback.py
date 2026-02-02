@@ -1474,6 +1474,22 @@ def test_empty_fallback_on_list_warning() -> None:
         assert 'empty fallback_on list' in str(w[0].message)
 
 
+def test_empty_fallback_on_tuple_warning() -> None:
+    """Test that empty fallback_on tuple produces a warning."""
+    import warnings
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter('always')
+        FallbackModel(
+            primary_model,
+            fallback_model_impl,
+            fallback_on=(),
+        )
+        assert len(w) == 1
+        assert issubclass(w[0].category, UserWarning)
+        assert 'empty fallback_on tuple' in str(w[0].message)
+
+
 async def test_response_rejection_error_includes_model_name() -> None:
     """Test that error message includes rejected model names."""
 

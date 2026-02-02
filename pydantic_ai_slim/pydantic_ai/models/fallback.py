@@ -106,8 +106,18 @@ class FallbackModel(Model):
     def _parse_fallback_on(self, fallback_on: FallbackOn) -> None:
         """Parse the fallback_on parameter into exception and response handlers."""
         if isinstance(fallback_on, tuple):
-            # Tuple of exception types (typing guarantees tuple contents are exception types)
-            self._exception_handlers.append(_exception_types_to_handler(fallback_on))  # type: ignore[arg-type]
+            if not fallback_on:
+                # Empty tuple - warn about disabled fallback
+                warnings.warn(
+                    'FallbackModel created with empty fallback_on tuple. '
+                    'All exceptions will propagate. '
+                    'Consider using fallback_on=(ModelAPIError,) for default behavior.',
+                    UserWarning,
+                    stacklevel=3,
+                )
+            else:
+                # Tuple of exception types (typing guarantees tuple contents are exception types)
+                self._exception_handlers.append(_exception_types_to_handler(fallback_on))  # type: ignore[arg-type]
         elif _is_exception_type(fallback_on):
             # Single exception type
             self._exception_handlers.append(_exception_types_to_handler((fallback_on,)))
