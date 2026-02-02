@@ -1704,13 +1704,16 @@ async def test_responses_model_tool_return_with_document_url() -> None:
 
 
 @pytest.mark.parametrize(
-    ('media_type', 'error_message'),
+    ('media_type', 'error', 'error_message'),
     [
-        ('audio/wav', r'Audio as binary content is not supported for OpenAI Responses API\.'),
-        ('video/mp4', r'Video as binary content is not supported for OpenAI\.'),
+        ('audio/wav', NotImplementedError, r'Audio as binary content is not supported for OpenAI Responses API\.'),
+        ('video/mp4', NotImplementedError, r'Video as binary content is not supported for OpenAI\.'),
+        ('unknown/type', RuntimeError, r'Unsupported binary content type: unknown/type'),
     ],
 )
-async def test_responses_model_tool_return_with_unsupported_binary_content(media_type: str, error_message: str) -> None:
+async def test_responses_model_tool_return_with_unsupported_binary_content(
+    media_type: str, error: type[RuntimeError | NotImplementedError], error_message: str
+) -> None:
     """Test that tool-return BinaryContent audio/video is rejected in Responses API mapping."""
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
 
@@ -1731,7 +1734,7 @@ async def test_responses_model_tool_return_with_unsupported_binary_content(media
         ),
     ]
 
-    with pytest.raises(NotImplementedError, match=error_message):
+    with pytest.raises(error, match=error_message):
         await model._map_messages(  # pyright: ignore[reportPrivateUsage]
             messages,
             model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
