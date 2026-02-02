@@ -1703,6 +1703,42 @@ async def test_responses_model_tool_return_with_document_url() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ('media_type', 'error_message'),
+    [
+        ('audio/wav', r'Audio as binary content is not supported for OpenAI Responses API\.'),
+        ('video/mp4', r'Video as binary content is not supported for OpenAI\.'),
+    ],
+)
+async def test_responses_model_tool_return_with_unsupported_binary_content(media_type: str, error_message: str) -> None:
+    """Test that tool-return BinaryContent audio/video is rejected in Responses API mapping."""
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Handle this file.')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='get_media', args='{}', tool_call_id='call_media')],
+            model_name='gpt-4o',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_media',
+                    content=BinaryContent(b'fake', media_type=media_type),
+                    tool_call_id='call_media',
+                )
+            ]
+        ),
+    ]
+
+    with pytest.raises(NotImplementedError, match=error_message):
+        await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+            messages,
+            model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
+            model_request_parameters=ModelRequestParameters(),
+        )
+
+
 async def test_chat_model_multiple_tool_returns_with_multimodal(image_content: BinaryContent) -> None:
     """Test that _map_user_message handles multiple tool returns with mixed content."""
     model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))

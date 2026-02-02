@@ -1882,10 +1882,7 @@ class OpenAIResponsesModel(Model):
                         if multimodal_items:
                             output_content: ResponseFunctionCallOutputItemListParam = []
                             text_content = _extract_text_from_tool_return(part.content)
-                            if text_content:
-                                output_content.append(
-                                    ResponseInputTextContentParam(type='input_text', text=text_content)
-                                )
+                            output_content.append(ResponseInputTextContentParam(type='input_text', text=text_content))
                             for mm_item in multimodal_items:
                                 if isinstance(mm_item, BinaryContent):
                                     if mm_item.is_image:
@@ -1895,7 +1892,7 @@ class OpenAIResponsesModel(Model):
                                                 image_url=mm_item.data_uri,
                                             )
                                         )
-                                    else:
+                                    elif mm_item.is_document:
                                         output_content.append(
                                             ResponseInputFileContentParam(
                                                 type='input_file',
@@ -1903,6 +1900,16 @@ class OpenAIResponsesModel(Model):
                                                 filename=f'file.{mm_item.format}',
                                             )
                                         )
+                                    elif mm_item.is_audio:
+                                        raise NotImplementedError(
+                                            'Audio as binary content is not supported for OpenAI Responses API.'
+                                        )
+                                    elif mm_item.is_video:
+                                        raise NotImplementedError(
+                                            'Video as binary content is not supported for OpenAI.'
+                                        )
+                                    else:
+                                        raise RuntimeError(f'Unsupported binary content type: {mm_item.media_type}')
                                 elif isinstance(mm_item, ImageUrl):
                                     output_content.append(
                                         ResponseInputImageContentParam(
