@@ -1660,6 +1660,55 @@ async def test_responses_model_tool_return_with_image_url() -> None:
     )
 
 
+async def test_responses_model_tool_return_with_text_like_binary_content() -> None:
+    """Test that _map_messages inlines text-like BinaryContent in tool returns."""
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+    json_content = BinaryContent(b'{"a": 1}', media_type='application/json', identifier='json-1')
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Handle this file.')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='get_json', args='{}', tool_call_id='call_json')],
+            model_name='gpt-4o',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_json',
+                    content=json_content,
+                    tool_call_id='call_json',
+                )
+            ]
+        ),
+    ]
+
+    _, openai_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    assert openai_messages == snapshot(
+        [
+            {'role': 'user', 'content': 'Handle this file.'},
+            {'name': 'get_json', 'arguments': '{}', 'call_id': 'call_json', 'type': 'function_call'},
+            {
+                'type': 'function_call_output',
+                'call_id': 'call_json',
+                'output': [
+                    {'type': 'input_text', 'text': '[File: json-1]'},
+                    {
+                        'type': 'input_text',
+                        'text': '-----BEGIN FILE id="json-1" type="application/json"-----\n'
+                        '{"a": 1}\n'
+                        '-----END FILE id="json-1"-----',
+                    },
+                ],
+            },
+        ]
+    )
+
+
 async def test_responses_model_tool_return_with_document_url() -> None:
     """Test that _map_messages handles DocumentUrl directly in ToolReturnPart.content."""
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))

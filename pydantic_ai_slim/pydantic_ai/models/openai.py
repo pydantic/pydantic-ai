@@ -1191,7 +1191,7 @@ class OpenAIChatModel(Model):
                         image_url['url'] = image_content['data']
                     content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                 elif isinstance(item, BinaryContent):
-                    if self._is_text_like_media_type(item.media_type):
+                    if _is_text_like_media_type(item.media_type):
                         # Inline text-like binary content as a text block
                         content.append(
                             self._inline_text_file_part(
@@ -1246,7 +1246,7 @@ class OpenAIChatModel(Model):
                                 type='file',
                             )
                         )
-                    elif self._is_text_like_media_type(item.media_type):
+                    elif _is_text_like_media_type(item.media_type):
                         downloaded_text = await download_item(item, data_format='text')
                         content.append(
                             self._inline_text_file_part(
@@ -1276,26 +1276,15 @@ class OpenAIChatModel(Model):
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
 
     @staticmethod
-    def _is_text_like_media_type(media_type: str) -> bool:
-        return (
-            media_type.startswith('text/')
-            or media_type == 'application/json'
-            or media_type.endswith('+json')
-            or media_type == 'application/xml'
-            or media_type.endswith('+xml')
-            or media_type in ('application/x-yaml', 'application/yaml')
-        )
-
-    @staticmethod
     def _inline_text_file_part(text: str, *, media_type: str, identifier: str) -> ChatCompletionContentPartTextParam:
-        text = '\n'.join(
-            [
-                f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----',
+        return ChatCompletionContentPartTextParam(
+            text=_inline_text_file_text(
                 text,
-                f'-----END FILE id="{identifier}"-----',
-            ]
+                media_type=media_type,
+                identifier=identifier,
+            ),
+            type='text',
         )
-        return ChatCompletionContentPartTextParam(text=text, type='text')
 
 
 @deprecated(
@@ -1309,6 +1298,27 @@ class OpenAIModel(OpenAIChatModel):
 
 
 responses_output_text_annotations_ta = TypeAdapter(list[responses.response_output_text.Annotation])
+
+
+def _inline_text_file_text(text: str, *, media_type: str, identifier: str) -> str:
+    return '\n'.join(
+        [
+            f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----',
+            text,
+            f'-----END FILE id="{identifier}"-----',
+        ]
+    )
+
+
+def _is_text_like_media_type(media_type: str) -> bool:
+    return (
+        media_type.startswith('text/')
+        or media_type == 'application/json'
+        or media_type.endswith('+json')
+        or media_type == 'application/xml'
+        or media_type.endswith('+xml')
+        or media_type in ('application/x-yaml', 'application/yaml')
+    )
 
 
 @dataclass(init=False)
@@ -1885,7 +1895,16 @@ class OpenAIResponsesModel(Model):
                             output_content.append(ResponseInputTextContentParam(type='input_text', text=text_content))
                             for mm_item in multimodal_items:
                                 if isinstance(mm_item, BinaryContent):
-                                    if mm_item.is_image:
+                                    if _is_text_like_media_type(mm_item.media_type):
+                                        text = _inline_text_file_text(
+                                            mm_item.data.decode('utf-8'),
+                                            media_type=mm_item.media_type,
+                                            identifier=mm_item.identifier,
+                                        )
+                                        output_content.append(
+                                            ResponseInputTextContentParam(type='input_text', text=text)
+                                        )
+                                    elif mm_item.is_image:
                                         output_content.append(
                                             ResponseInputImageContentParam(
                                                 type='input_image',
