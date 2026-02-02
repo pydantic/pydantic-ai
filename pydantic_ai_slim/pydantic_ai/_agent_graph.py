@@ -513,6 +513,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
+        # Add model_settings and model_request_parameters to run_context
+        model_settings = ctx.deps.model_settings
+        model_request_parameters = await _prepare_request_parameters(ctx)
+        run_context = replace(
+            run_context, model_settings=model_settings, model_request_parameters=model_request_parameters
+        )
+
         original_history = ctx.state.message_history[:]
         message_history = await _process_message_history(original_history, ctx.deps.history_processors, run_context)
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
@@ -525,9 +532,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary
         message_history = _clean_message_history(message_history)
 
-        model_request_parameters = await _prepare_request_parameters(ctx)
-
-        model_settings = ctx.deps.model_settings
         usage = ctx.state.usage
         if ctx.deps.usage_limits.count_tokens_before_request:
             # Copy to avoid modifying the original usage object with the counted usage
