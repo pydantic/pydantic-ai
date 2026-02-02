@@ -883,7 +883,7 @@ class AnthropicModel(Model):
                                     BetaMCPToolResultBlock(
                                         tool_use_id=tool_use_id,
                                         type='mcp_tool_result',
-                                        **cast(dict[str, Any], response_part.content),  # pyright: ignore[reportUnknownMemberType]
+                                        **response_part.content,  # pyright: ignore[reportUnknownMemberType]
                                     )
                                 )
                     elif isinstance(response_part, FilePart):  # pragma: no cover
