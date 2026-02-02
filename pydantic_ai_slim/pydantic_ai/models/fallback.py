@@ -53,7 +53,7 @@ def _is_response_handler(handler: Callable[..., Any]) -> bool:
 
 def _is_exception_type(value: Any) -> TypeGuard[type[Exception]]:
     """Check if value is a single exception type."""
-    return isinstance(value, type) and issubclass(value, BaseException)
+    return isinstance(value, type) and issubclass(value, Exception)
 
 
 @dataclass(init=False)
