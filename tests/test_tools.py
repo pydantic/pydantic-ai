@@ -2839,7 +2839,7 @@ def test_agent_tool_decorators_examples():
 
 
 def test_tool_output_examples():
-    examples = [{'x': 1}]
+    examples = [1, 2]
     tool_output = ToolOutput(int, name='foo', examples=examples)
     assert tool_output.examples == examples
 
@@ -2847,7 +2847,9 @@ def test_tool_output_examples():
     # Access the output toolset to verify definition
     assert agent._output_toolset is not None
     tool_def = agent._output_toolset._tool_defs[0]
-    assert tool_def.examples == examples
+
+    # Verify examples are wrapped in the outer_typed_dict_key
+    assert tool_def.examples == [{'response': 1}, {'response': 2}]
 
 
 def test_tool_examples_flattening():
@@ -2857,14 +2859,16 @@ def test_tool_examples_flattening():
     def my_tool(arg: MyModel) -> int:
         return arg.x
 
-    # User provides examples matching the python signature (wrapped in the argument name)
+    # User provides examples matching the python signature
     examples = [{'arg': {'x': 1}}, {'arg': {'x': 2}}]
 
     # The Tool logic should flatten this to match the JSON schema sent to the LLM
     tool = Tool(my_tool, examples=examples)
 
-    # Expect flattened examples
-    assert tool.examples == [{'x': 1}, {'x': 2}]
+    # Expect original examples to remain on the Tool object
+    assert tool.examples == examples
+
+    # Expect flattened examples ONLY on the tool definition
     assert tool.tool_def.examples == [{'x': 1}, {'x': 2}]
 
 
@@ -2880,16 +2884,18 @@ def test_tool_docstring_examples():
         return x
 
     tool = Tool(my_tool)
+
     assert tool.description == snapshot(
         """\
 My tool description.
 
 Examples:
-DocstringSectionKind.examples
->>> my_tool(1)
-1\
+    >>> my_tool(1)
+    1\
 """
     )
+
+
 @pytest.mark.anyio
 @pytest.mark.parametrize('is_stream', [True, False])
 async def test_tool_cancelled_when_agent_cancelled(is_stream: bool):

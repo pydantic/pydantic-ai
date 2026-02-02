@@ -127,7 +127,7 @@ class ToolOutput(Generic[OutputDataT]):
         description: str | None = None,
         max_retries: int | None = None,
         strict: bool | None = None,
-        examples: list[dict[str, Any]] | None = None,
+        examples: list[Any] | None = None,
     ):
         self.output = type_
         self.name = name

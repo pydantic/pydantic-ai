@@ -8305,9 +8305,6 @@ async def test_anthropic_bedrock_beta_headers_with_examples(allow_model_requests
 
     m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(anthropic_client=mock_client))
 
-    from pydantic_ai.models import ModelRequestParameters
-    from pydantic_ai.models.anthropic import AnthropicModelSettings
-
     tools = [{'name': 'foo', 'input_examples': [{'x': 1}]}]
     params = ModelRequestParameters()
     settings = AnthropicModelSettings()
@@ -8321,9 +8318,6 @@ async def test_anthropic_bedrock_beta_headers_with_examples(allow_model_requests
 async def test_anthropic_vertex_beta_headers_with_examples(allow_model_requests: None):
     mock_client = MagicMock(spec=AsyncAnthropicVertex)
     m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(anthropic_client=mock_client))
-
-    from pydantic_ai.models import ModelRequestParameters
-    from pydantic_ai.models.anthropic import AnthropicModelSettings
 
     tools = [{'name': 'foo', 'input_examples': [{'x': 1}]}]
     params = ModelRequestParameters()

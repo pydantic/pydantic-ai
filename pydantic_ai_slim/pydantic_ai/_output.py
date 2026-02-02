@@ -534,6 +534,12 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     validator: SchemaValidator
     _function_schema: _function_schema.FunctionSchema | None = None
 
+    @property
+    def single_arg_name(self) -> str | None:
+        if self._function_schema:
+            return self._function_schema.single_arg_name
+        return None
+
     def __init__(
         self,
         output: OutputTypeOrFunction[OutputDataT],
@@ -905,11 +911,35 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             if strict is None:
                 strict = default_strict
 
-            processor = ObjectOutputProcessor(output=output, description=description, strict=strict)  # pyright: ignore[reportUnknownArgumentType]
-            # Flatten examples if the output function has a single argument that gets flattened in the schema
-            if examples and processor._function_schema and processor._function_schema.single_arg_name:  # pyright: ignore[reportPrivateUsage]
-                arg_name = processor._function_schema.single_arg_name  # pyright: ignore[reportPrivateUsage]
-                examples = [ex[arg_name] if isinstance(ex, dict) and arg_name in ex else ex for ex in examples]
+            processor = ObjectOutputProcessor(
+                output=cast('OutputTypeOrFunction[OutputDataT]', output),
+                description=description,
+                strict=strict,
+            )
+
+            if examples:
+                # Flatten examples if the output function has a single argument that gets flattened in the schema
+                if processor.single_arg_name:
+                    arg_name = processor.single_arg_name
+                    examples = [ex[arg_name] if isinstance(ex, dict) and arg_name in ex else ex for ex in examples]
+
+                # Serialize examples to JSON-compatible dicts
+                examples = [
+                    TypeAdapter(Any).dump_python(ex, mode='json')  # pyright: ignore[reportUnknownMemberType]
+                    for ex in examples
+                ]
+
+                # Wrap examples if the output type is wrapped in a TypedDict
+                if processor.outer_typed_dict_key:
+                    examples = [{processor.outer_typed_dict_key: ex} for ex in examples]
+
+                # Append examples to description so they are visible to models that don't support input_examples
+                examples_str = json.dumps(examples, indent=2)
+                if description:
+                    description = f'{description}\n\nExamples:\n{examples_str}'
+                else:
+                    description = f'Examples:\n{examples_str}'
+
             object_def = processor.object_def
 
             if name is None:

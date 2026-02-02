@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import logging
 import re
+import textwrap
 from collections.abc import Callable
 from contextlib import contextmanager
 from inspect import Signature
@@ -69,13 +70,19 @@ def doc_descriptions(
     if examples := next((p for p in sections if p.kind == DocstringSectionKind.examples), None):
         examples_content: list[str] = []
         for source, output in examples.value:
-            if output:
+            # In some cases (e.g. Google style), griffe puts the SectionKind enum in the source.
+            # We must detect this and only use the output in that case.
+            if source is DocstringSectionKind.examples:
+                examples_content.append(output)
+            elif output:
                 examples_content.append(f'{source}\n{output}')
             else:
-                examples_content.append(source)
+                examples_content.append(str(source))
 
         if examples_content:
             formatted_examples = '\n\n'.join(examples_content)
+            formatted_examples = textwrap.indent(formatted_examples, '    ')
+
             if main_desc:
                 main_desc = f'{main_desc}\n\nExamples:\n{formatted_examples}'
             else:

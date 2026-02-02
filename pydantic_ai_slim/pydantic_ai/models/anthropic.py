@@ -67,7 +67,6 @@ try:
         APIConnectionError,
         APIStatusError,
         AsyncAnthropicBedrock,
-        AsyncAnthropicVertex,
         AsyncStream,
         omit as OMIT,
     )
@@ -462,11 +461,8 @@ class AnthropicModel(Model):
 
         # Check if any tools use input_examples (tool use examples feature)
         has_input_examples = any('input_examples' in tool for tool in tools)
-        if has_input_examples:
-            if isinstance(self.client, AsyncAnthropicBedrock | AsyncAnthropicVertex):
-                betas.add('tool-examples-2025-10-29')
-            else:
-                betas.add('advanced-tool-use-2025-11-20')
+        if has_input_examples and self.profile.tool_examples_beta_header:
+            betas.add(self.profile.tool_examples_beta_header)
 
         if beta_header := extra_headers.pop('anthropic-beta', None):
             betas.update({stripped_beta for beta in beta_header.split(',') if (stripped_beta := beta.strip())})
@@ -1060,7 +1056,7 @@ class AnthropicModel(Model):
         # Anthropic SDK accepts file-like objects (IO[bytes]) and handles base64 encoding internally
         if media_type.startswith('image/'):
             return BetaImageBlockParam(
-                source={'data': io.BytesIO(data), 'media_type': media_type, 'type': 'base64'},  # type: ignore
+                source={'data': io.BytesIO(data), 'media_type': media_type, 'type': 'base64'},  # type: ignore # pyright: ignore[reportArgumentType]
                 type='image',
             )
         elif media_type == 'application/pdf':
@@ -1133,7 +1129,9 @@ class AnthropicModel(Model):
         }
         if f.strict and self.profile.supports_json_schema_output:
             tool_param['strict'] = f.strict
-        if f.examples:
+
+        # Only add input_examples if the profile supports it (indicated by the presence of the beta header)
+        if f.examples and self.profile.tool_examples_beta_header:
             tool_param['input_examples'] = f.examples
         return tool_param
 

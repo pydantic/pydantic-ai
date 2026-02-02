@@ -1,10 +1,11 @@
 from __future__ import annotations as _annotations
 
+import json
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cast
 
-from pydantic import Discriminator, Tag
+from pydantic import Discriminator, Tag, TypeAdapter
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import ParamSpec, Self, TypeVar
@@ -278,7 +279,7 @@ class Tool(Generic[ToolAgentDepsT]):
     strict: bool | None
     sequential: bool
     requires_approval: bool
-    examples: list[dict[str, Any]] | None
+    examples: list[Any] | None
     metadata: dict[str, Any] | None
     timeout: float | None
     function_schema: _function_schema.FunctionSchema
@@ -303,7 +304,7 @@ class Tool(Generic[ToolAgentDepsT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
-        examples: list[dict[str, Any]] | None = None,
+        examples: list[Any] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
@@ -387,10 +388,6 @@ class Tool(Generic[ToolAgentDepsT]):
         self.sequential = sequential
         self.requires_approval = requires_approval
         self.examples = examples
-        # Flatten examples if the tool has a single argument that gets flattened in the schema
-        if self.examples and self.function_schema.single_arg_name:
-            arg_name = self.function_schema.single_arg_name
-            self.examples = [ex[arg_name] if isinstance(ex, dict) and arg_name in ex else ex for ex in self.examples]
         self.metadata = metadata
         self.timeout = timeout
 
@@ -403,7 +400,7 @@ class Tool(Generic[ToolAgentDepsT]):
         json_schema: JsonSchemaValue,
         takes_ctx: bool = False,
         sequential: bool = False,
-        examples: list[dict[str, Any]] | None = None,
+        examples: list[Any] | None = None,
     ) -> Self:
         """Creates a Pydantic tool from a function and a JSON schema.
 
@@ -445,15 +442,37 @@ class Tool(Generic[ToolAgentDepsT]):
 
     @property
     def tool_def(self):
+        examples = self.examples
+        description = self.description
+        if examples:
+            if self.function_schema.single_arg_name:
+                arg_name = self.function_schema.single_arg_name
+                examples = [  # pyright: ignore[reportUnknownVariableType]
+                    ex[arg_name] if isinstance(ex, dict) and arg_name in ex else ex for ex in examples
+                ]
+
+            # Serialize examples to JSON-compatible dicts
+            examples = [
+                TypeAdapter(Any).dump_python(ex, mode='json')  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+                for ex in examples  # pyright: ignore[reportUnknownVariableType]
+            ]
+
+            # Append examples to description so they are visible to models that don't support input_examples
+            examples_str = json.dumps(examples, indent=2)
+            if description:
+                description = f'{description}\n\nExamples:\n{examples_str}'
+            else:
+                description = f'Examples:\n{examples_str}'
+
         return ToolDefinition(
             name=self.name,
-            description=self.description,
+            description=description,
             parameters_json_schema=self.function_schema.json_schema,
             strict=self.strict,
             sequential=self.sequential,
             metadata=self.metadata,
             timeout=self.timeout,
-            examples=self.examples,
+            examples=examples,
             kind='unapproved' if self.requires_approval else 'function',
         )
 
@@ -544,6 +563,8 @@ class ToolDefinition:
     Supported by:
 
     * [Anthropic](https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#providing-tool-use-examples)
+
+    If provided, these examples are also appended to the tool description for other models that don't support structured examples directly.
     """
 
     metadata: dict[str, Any] | None = None
