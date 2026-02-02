@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, get_origin, overload
+from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, overload
 
 from opentelemetry.trace import get_current_span
 from typing_extensions import assert_never
@@ -48,7 +48,7 @@ def _is_response_handler(handler: Callable[..., Any]) -> bool:
     if first_param_type is None:
         return False
     # Only support exact ModelResponse type (no Optional, no subclasses)
-    return first_param_type is ModelResponse or get_origin(first_param_type) is ModelResponse
+    return first_param_type is ModelResponse
 
 
 def _is_exception_type(value: Any) -> TypeGuard[type[Exception]]:
