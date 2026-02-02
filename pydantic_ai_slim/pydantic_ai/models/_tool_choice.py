@@ -6,7 +6,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
 
-ResolvedToolChoice = Literal['none', 'auto', 'required'] | tuple[Literal['auto', 'required'], list[str]]
+ResolvedToolChoice = Literal['none', 'auto', 'required'] | tuple[Literal['auto', 'required'], set[str]]
 
 
 def resolve_tool_choice(  # noqa: C901
@@ -75,7 +75,7 @@ def resolve_tool_choice(  # noqa: C901
             else:
                 return 'required'  # only output tools exist and direct output isn't allowed
 
-            return (mode, list(output_tool_names))
+            return (mode, output_tool_names)
 
         if allow_direct_output:
             return 'none'
@@ -102,7 +102,7 @@ def resolve_tool_choice(  # noqa: C901
         if chosen_set == available_tools:
             return 'required'
 
-        return ('required', list(chosen_set))
+        return ('required', chosen_set)
 
     # ToolOrOutput: specific function tools + all output tools or direct text/image output
     elif isinstance(function_tool_choice, ToolOrOutput):
@@ -110,7 +110,8 @@ def resolve_tool_choice(  # noqa: C901
 
         if not function_tool_choice.function_tools:
             if output_tool_names:
-                return 'auto' if allow_direct_output else 'required'
+                mode: Literal['auto', 'required'] = 'auto' if allow_direct_output else 'required'
+                return (mode, output_tool_names)
             return 'none'
 
         chosen_function_set = set(function_tool_choice.function_tools)
@@ -128,6 +129,6 @@ def resolve_tool_choice(  # noqa: C901
         if allowed_tools == available_tools:
             return mode
 
-        return (mode, list(allowed_tools))
+        return (mode, allowed_tools)
     else:
         assert_never(function_tool_choice)

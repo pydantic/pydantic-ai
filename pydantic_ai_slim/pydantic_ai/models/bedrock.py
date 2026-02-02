@@ -604,7 +604,7 @@ class BedrockConverseModel(Model):
             tool_choice_mode, tool_names = resolved_tool_choice
             tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
             if tool_choice_mode == 'required' and len(tool_names) == 1:
-                tool_choice = {'tool': {'name': tool_names[0]}} if supports else {'auto': {}}
+                tool_choice = {'tool': {'name': next(iter(tool_names))}} if supports else {'auto': {}}
             else:
                 tool_choice = {'auto': {}} if tool_choice_mode == 'auto' or not supports else {'any': {}}
         else:

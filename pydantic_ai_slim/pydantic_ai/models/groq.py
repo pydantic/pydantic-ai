@@ -392,7 +392,7 @@ class GroqModel(Model):
             if tool_choice_mode == 'required' and len(tool_names) == 1:
                 tool_choice = ChatCompletionNamedToolChoiceParam(
                     type='function',
-                    function={'name': tool_names[0]},
+                    function={'name': next(iter(tool_names))},
                 )
             else:
                 # Breaks caching, but Groq doesn't support limiting tools via API arg

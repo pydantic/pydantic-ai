@@ -339,7 +339,7 @@ class HuggingFaceModel(Model):
             tool_choice_mode, tool_names = resolved_tool_choice
             if tool_choice_mode == 'required' and len(tool_names) == 1:
                 tool_choice = ChatCompletionInputToolChoiceClass(
-                    function=ChatCompletionInputFunctionName(name=tool_names[0])  # pyright: ignore[reportCallIssue]
+                    function=ChatCompletionInputFunctionName(name=next(iter(tool_names)))  # pyright: ignore[reportCallIssue]
                 )
             else:
                 # Breaks caching, but HuggingFace doesn't support limiting tools via API arg

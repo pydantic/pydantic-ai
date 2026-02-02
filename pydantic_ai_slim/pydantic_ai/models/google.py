@@ -462,7 +462,7 @@ class GoogleModel(Model):
             'required': FunctionCallingConfigMode.ANY,
         }
 
-        allowed_function_names: list[str] | None = None
+        allowed_function_names: list[str] = []
         if isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             if tool_choice_mode == 'auto':
@@ -470,12 +470,12 @@ class GoogleModel(Model):
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
             else:
                 # Use ANY mode with allowed_function_names to force one of the specified tools
-                allowed_function_names = tool_names
+                allowed_function_names = list(tool_names)
         else:
             tool_choice_mode = resolved_tool_choice
 
         function_calling_config: FunctionCallingConfigDict = {'mode': function_calling_config_modes[tool_choice_mode]}
-        if allowed_function_names is not None:
+        if allowed_function_names:
             function_calling_config['allowed_function_names'] = allowed_function_names
         tool_config = ToolConfigDict(function_calling_config=function_calling_config)
 

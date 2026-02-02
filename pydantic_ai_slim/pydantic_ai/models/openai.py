@@ -915,7 +915,7 @@ class OpenAIChatModel(Model):
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             if len(tool_names) == 1:
-                tool_choice = {'type': 'function', 'function': {'name': tool_names[0]}}
+                tool_choice = {'type': 'function', 'function': {'name': next(iter(tool_names))}}
             else:
                 tool_choice = tool_choice_mode
         else:
@@ -1758,7 +1758,7 @@ class OpenAIResponsesModel(Model):
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             if len(tool_names) == 1:
-                tool_choice = ToolChoiceFunctionParam(type='function', name=tool_names[0])
+                tool_choice = ToolChoiceFunctionParam(type='function', name=next(iter(tool_names)))
             else:
                 tool_choice = ToolChoiceAllowedParam(
                     type='allowed_tools',

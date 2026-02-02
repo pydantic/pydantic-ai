@@ -507,7 +507,7 @@ class XaiModel(Model):
             tool_choice_mode, tool_names = resolved_tool_choice
             if tool_choice_mode == 'required' and len(tool_names) == 1:
                 if profile.grok_supports_tool_choice_required:
-                    tool_choice = required_tool(tool_names[0])
+                    tool_choice = required_tool(next(iter(tool_names)))
                 else:
                     tool_choice = 'auto'
             else:

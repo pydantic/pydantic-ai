@@ -689,7 +689,7 @@ class AnthropicModel(Model):
             tool_choice_mode, tool_names = resolved_tool_choice
             supports = _support_tool_forcing(model_settings, resolved_tool_choice)
             if tool_choice_mode == 'required' and len(tool_names) == 1:
-                tool_choice = {'type': 'tool', 'name': tool_names[0]} if supports else {'type': 'auto'}
+                tool_choice = {'type': 'tool', 'name': next(iter(tool_names))} if supports else {'type': 'auto'}
             else:
                 # Breaks caching, but Anthropic doesn't support limiting tools via API arg
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
