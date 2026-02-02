@@ -51,6 +51,7 @@ from ..tools import (
     GenerateToolJsonSchema,
     RunContext,
     Tool,
+    ToolDefinition,
     ToolFuncContext,
     ToolFuncEither,
     ToolFuncPlain,
@@ -92,6 +93,7 @@ __all__ = (
     'WrapperAgent',
     'AbstractAgent',
     'EventStreamHandler',
+    'ToolDefinition',
 )
 
 
@@ -163,6 +165,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _max_result_retries: int = dataclasses.field(repr=False)
     _max_tool_retries: int = dataclasses.field(repr=False)
     _tool_timeout: float | None = dataclasses.field(repr=False)
+    _include_tool_return_schema: bool = dataclasses.field(repr=False)
     _validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = dataclasses.field(repr=False)
 
     _event_stream_handler: EventStreamHandler[AgentDepsT] | None = dataclasses.field(repr=False)
@@ -197,6 +200,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
+        include_tool_return_schema: bool = False,
     ) -> None: ...
 
     @overload
@@ -226,6 +230,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
+        include_tool_return_schema: bool = False,
     ) -> None: ...
 
     def __init__(
@@ -253,6 +258,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
+        include_tool_return_schema: bool = False,
         **_deprecated_kwargs: Any,
     ):
         """Create an agent.
@@ -320,6 +326,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tool_timeout: Default timeout in seconds for tool execution. If a tool takes longer than this,
                 the tool is considered to have failed and a retry prompt is returned to the model (counting towards the retry limit).
                 Individual tools can override this with their own timeout. Defaults to None (no timeout).
+            include_tool_return_schema: Whether to include the return schema in tool descriptions. When True, all tools
+                will have their return schemas appended to their descriptions. Individual tools can also opt-in
+                via their own `include_return_schema` flag. Defaults to False.
         """
         if model is None or defer_model_check:
             self._model = model
@@ -355,6 +364,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._max_result_retries = output_retries if output_retries is not None else retries
         self._max_tool_retries = retries
         self._tool_timeout = tool_timeout
+        self._include_tool_return_schema = include_tool_return_schema
 
         self._validation_context = validation_context
 
@@ -618,7 +628,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 output_toolset.max_retries = self._max_result_retries
                 output_toolset.output_validators = output_validators
         toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
-        tool_manager = ToolManager[AgentDepsT](toolset, default_max_retries=self._max_tool_retries)
+        tool_manager = ToolManager[AgentDepsT](
+            toolset,
+            default_max_retries=self._max_tool_retries,
+        )
 
         # Build the graph
         graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
@@ -1516,6 +1529,27 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)
+
+        # Resolve include_return_schema: apply agent-level default where tool doesn't specify,
+        # and clear return_schema when not opted in.
+        agent_include_return_schema = self._include_tool_return_schema
+
+        async def _resolve_return_schema(
+            ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
+        ) -> list[ToolDefinition]:
+            resolved: list[ToolDefinition] = []
+            for td in tool_defs:
+                include = (
+                    td.include_return_schema if td.include_return_schema is not None else agent_include_return_schema
+                )
+                if not include and td.return_schema is not None:
+                    td = dataclasses.replace(td, return_schema=None, include_return_schema=False)
+                else:
+                    td = dataclasses.replace(td, include_return_schema=bool(include))
+                resolved.append(td)
+            return resolved
+
+        toolset = PreparedToolset(toolset, _resolve_return_schema)
 
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
         if output_toolset is not None:
