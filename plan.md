@@ -2,7 +2,7 @@
 
 ## Summary
 
-Provider-agnostic `SearchableToolset` for all models. Anthropic uses native BM25 (default) or regex; others use custom `pai_tool_search_tool` with regex. CodeModeToolset-aware.
+Provider-agnostic `SearchableToolset` for all models. Anthropic uses native search; others use custom `search_tools` tool with regex. CodeModeToolset-aware.
 
 ## Key Design Decisions
 
@@ -10,42 +10,34 @@ Provider-agnostic `SearchableToolset` for all models. Anthropic uses native BM25
 |----------|-----------|
 | Single `SearchableToolset`, auto-injected by Agent | Only one search tool allowed; avoids user confusion |
 | Wrapper order: `CodeModeToolset(SearchableToolset(UserToolsets))` | CodeMode sees discovered tools from SearchableToolset |
-| `tool_search_options: ToolSearchOptions` on Agent | Centralized config; dataclass is expandable |
 | No nesting | Simplicity; algorithm applies to all deferred tools |
-| `defer_loading` param on MCPServer | Consistency; avoid multiple ways to do same thing |
-| Tool name: `pai_tool_search_tool` | Namespaced to avoid collisions; error if user defines same |
+| `defer_loading` param on all toolsets | Consistency across FunctionToolset, MCPServer, FastMCPToolset |
+| Tool name: `search_tools` | Clear name; error if user defines same |
 | No matches returns empty list | `{message: "No tools found for '{term}'", tools: []}` |
-| BM25 fallback -> regex + warning | TODO: native BM25 via sqlite + optional dep |
 | Parse discovered tools from `ToolReturnPart.content` | Stateless; no extra fields on `ModelRequest` |
 | Follow builtin fallback pattern (#3212) | Anthropic native when supported, custom search tool otherwise |
-| `tool_renderer` callable allowed | For durable exec contexts too, if they support it |
+| Config via `ToolSearchTool` builtin | No `tool_search_options` on Agent; explicit config when needed |
 
-## `ToolSearchOptions` Dataclass
+## ToolSearchTool Builtin
 
 ```python
-@dataclass
-class ToolSearchOptions:
-    algorithm: Literal['regex', 'bm25'] | None = None  # None = bm25 for Anthropic, regex otherwise
+class ToolSearchTool(BuiltinTool):
     max_results: int = 5
-    tool_renderer: Callable[[ToolDefinition], DiscoveredToolInfo] | None = None
 ```
 
-## Search Result Schema
+User can pass `ToolSearchTool(max_results=10)` explicitly for config. Otherwise, implicit `SearchableToolset` auto-created with defaults when any tool has `defer_loading=True`.
 
-```python
-class DiscoveredToolInfo(TypedDict, total=False):
-    name: Required[str]
-    description: str | None  # from ToolDefinition.description
-    # extensible for future fields
-```
+## Search Result Format
 
-Return format: `{message: str, tools: list[DiscoveredToolInfo]}`
+Return format: `{message: str, tools: list[dict]}`
+
+Each tool dict: `{'name': str, 'description': str | None}`
 
 ## Discovery Logic (Stateless)
 
 In `SearchableToolset.get_tools(ctx)`:
 1. Get all tool defs from wrapped toolset
-2. Scan `ctx.messages` for `ToolReturnPart` where `tool_name == 'pai_tool_search_tool'`
+2. Scan `ctx.messages` for `ToolReturnPart` where `tool_name == 'search_tools'`
 3. Parse `content['tools']` -> set of discovered tool names
 4. Return `[search_tool] + [tool_def for tool_def in all_tools if tool_def.name in discovered]`
 
@@ -58,7 +50,7 @@ No per-`run_id` state tracking needed. Just parse message history on each `get_t
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5-mini')
 
 @agent.tool(defer_loading=True)
 def get_weather(city: str) -> str:
@@ -78,43 +70,21 @@ def get_time() -> str:
 result = agent.run_sync('What is the weather in Paris?')
 ```
 
-### With Custom Options
+### With Explicit ToolSearchTool Config
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.toolsets import ToolSearchOptions
+from pydantic_ai.builtin_tools import ToolSearchTool
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-20250514',
-    tool_search_options=ToolSearchOptions(
-        algorithm='bm25',  # or 'regex', or None for provider default
-        max_results=10,
-    ),
+    'anthropic:claude-4-5-sonnet',
+    builtin_tools=[ToolSearchTool(max_results=10)],
 )
 
 @agent.tool(defer_loading=True)
 def fetch_user_data(user_id: int) -> dict:
     '''Fetch user data from database.'''
     return {'id': user_id, 'name': 'John'}
-```
-
-### With Custom Tool Renderer
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.toolsets import ToolSearchOptions, DiscoveredToolInfo
-from pydantic_ai.tools import ToolDefinition
-
-def custom_renderer(tool: ToolDefinition) -> DiscoveredToolInfo:
-    return {
-        'name': tool.name,
-        'description': f'[TOOL] {tool.description}' if tool.description else None,
-    }
-
-agent = Agent(
-    'openai:gpt-4o',
-    tool_search_options=ToolSearchOptions(tool_renderer=custom_renderer),
-)
 ```
 
 ### With FunctionToolset
@@ -161,16 +131,26 @@ mcp_partial = MCPServer(
 agent = Agent('openai:gpt-4o', toolsets=[mcp])
 ```
 
+### With FastMCPToolset
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.toolsets import FastMCPToolset
+
+toolset = FastMCPToolset(
+    my_fastmcp_server,
+    defer_loading=True,
+)
+
+agent = Agent('openai:gpt-4o', toolsets=[toolset])
+```
+
 ### With CodeModeToolset (Future)
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.toolsets import ToolSearchOptions
 
-agent = Agent(
-    'anthropic:claude-sonnet-4-20250514',
-    tool_search_options=ToolSearchOptions(algorithm='bm25'),
-)
+agent = Agent('anthropic:claude-4-5-sonnet')
 
 @agent.tool(defer_loading=True, allowed_callers='code')
 def complex_calculation(x: float, y: float, z: float) -> float:
@@ -208,7 +188,7 @@ result1 = agent1.run_sync('Find and use tool_a')
 history = result1.all_messages()
 
 # Create agent2 with same tools
-agent2 = Agent('anthropic:claude-sonnet-4-20250514')
+agent2 = Agent('anthropic:claude-4-5-sonnet')
 
 @agent2.tool(defer_loading=True)
 def tool_a() -> str:
@@ -227,35 +207,31 @@ result2 = agent2.run_sync('Use tool_a again', message_history=history)
 
 1. **`pydantic_ai/toolsets/_searchable.py`** (new, private)
    - `SearchableToolset(WrapperToolset)` - stateless, parses history for discovered tools
-   - `ToolSearchOptions` dataclass
-   - `DiscoveredToolInfo` TypedDict
 
-2. **`pydantic_ai/toolsets/__init__.py`**
-   - Export `ToolSearchOptions`, `DiscoveredToolInfo`
+2. **`pydantic_ai/builtin_tools.py`**
+   - Add `ToolSearchTool` builtin tool
 
 3. **`pydantic_ai/tools.py`** - add `defer_loading: bool = False` to `ToolDefinition`
 
 4. **`pydantic_ai/agent/__init__.py`**
-   - Add `tool_search_options: ToolSearchOptions | None`
-   - Auto-inject `SearchableToolset` for `defer_loading=True` tools
+   - Auto-inject `SearchableToolset` for `defer_loading=True` tools (no config param)
 
 5. **`pydantic_ai/toolsets/function.py`** - `defer_loading` on decorator + toolset
 
-6. **`pydantic_ai/_mcp.py`** - `defer_loading: bool | list[str] = False` on MCPServer
+6. **`pydantic_ai/toolsets/fastmcp.py`** - `defer_loading: bool | list[str] = False`
 
-7. **`pydantic_ai/models/__init__.py`** - `prepare_request` filters native vs custom search
+7. **`pydantic_ai/_mcp.py`** - `defer_loading: bool | list[str] = False` on MCPServer
 
-8. **`pydantic_ai/models/anthropic.py`** - handle native responses, pass `defer_loading` tools + beta header
+8. **`pydantic_ai/models/__init__.py`** - `prepare_request` filters native vs custom search
 
-9. **`pydantic_ai/profiles/anthropic.py`** - add `supports_bm25_search: bool` (model-specific)
+9. **`pydantic_ai/models/anthropic.py`** - handle native responses, pass `defer_loading` tools
 
 ## Key Behaviors
 
-- Tool name: `pai_tool_search_tool` (error on collision)
+- Tool name: `search_tools` (error on collision)
 - No matches: `{message: "No tools found for '{term}'", tools: []}`
-- Anthropic default: BM25 (better than regex), fallback to regex + warning if BM25 unsupported
+- Anthropic: native search when supported, fallback to regex
 - Discovered tools parsed from `ToolReturnPart.content` in message history
-- `tool_renderer` callable allowed
 
 ## CodeModeToolset Integration (Future)
 
@@ -272,7 +248,7 @@ result2 = agent2.run_sync('Use tool_a again', message_history=history)
 
 ## Tests
 
-- VCR: Anthropic native (BM25 + regex)
+- VCR: Anthropic native search
 - VCR: OpenAI custom search tool
 - Unit: `@agent.tool(defer_loading=True)`, history parsing, name collision
 
