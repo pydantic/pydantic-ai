@@ -1109,9 +1109,6 @@ async def _call_tools(  # noqa: C901
             except exceptions.ApprovalRequired as e:
                 deferred_calls_by_index[index] = 'unapproved'
                 deferred_metadata_by_index[index] = e.metadata
-            except CodeInterruptedError as e:
-                # Handle something here?
-                # It will have inner exceptions should I expand them, how do I give them index?
             else:
                 tool_parts_by_index[index] = tool_part
                 if tool_user_content:
@@ -1254,7 +1251,6 @@ async def _call_tool(
             f'The `return_value` of tool {tool_call.tool_name!r} contains invalid nested `MultiModalContent` objects. '
             f'Please use `content` instead.'
         )
-
     return_part = _messages.ToolReturnPart(
         tool_name=tool_call.tool_name,
         tool_call_id=tool_call.tool_call_id,

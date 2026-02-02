@@ -149,29 +149,12 @@ class MontyRuntime(CodeRuntime):
                                 raise
 
                             except (CallDeferred, ApprovalRequired) as e:
-                                # This is the tricky bit, once this works most of it shold be fine
-                                # What should I do with the tasks that are currently in flight here
-                                # Do I dump them, take this approval and come back because tasks anyway is not going to be retained across runs(I think)?
-                                # If I finish them can I make it a part of the snapshot before I dump it?
-                                # So I would hope to do everything and then dump it for when it resumes?
-
-                                # Let us wait for all in flight call tools to wrap up before we go any further
-
-                                # Discussed with Douwe and its okay to carry it through a pseudo context param maybe to get it back in for monty to use
-
-                                # Users will need to send this back to me through the deferred tool results
-
-                                # If I batch these exceptions then can I request the user to approve all of them together?
-                                # Maybe I can club them and raise inside of another exception, this does warrant a new exception unlike before
                                 inner_exceptions.append(e)
-
-                                # raise e
                                 # Do not raise here, club them together we will fire them all off in one go
                             except Exception as e:
                                 # This is some other exception raised within Monty so I send it back to monty not sure what it can do with that though?
                                 results[cid] = {'exception': e}
                                 # I am really unsure if this is the right thing to do here with this, should there be no Model Retry here?
-                                # What are we going to do with this exception anyway?
                             del tasks[cid]
                             break
 

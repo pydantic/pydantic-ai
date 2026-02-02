@@ -331,7 +331,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         assert isinstance(tool, _CodeModeTool)
         assert isinstance(code, str)
 
-        # Re-key tools by original name for the wrapped toolset
         original_name_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         sanitized_to_original: dict[str, str] = {}
         for sanitized, t in tool.original_tools.items():
@@ -339,8 +338,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             original_name_tools[orig] = t
             sanitized_to_original[sanitized] = orig
 
-        # ToolManager scoped to inner tools — uses full handle_call flow
-        # (validation, context enrichment, OTel tracing, usage counting)
         code_mode_tool_manager = ToolManager(
             toolset=self.wrapped,
             ctx=ctx,
