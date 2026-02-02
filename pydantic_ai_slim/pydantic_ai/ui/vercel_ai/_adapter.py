@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -75,7 +75,8 @@ request_data_ta: TypeAdapter[RequestData] = TypeAdapter(RequestData)
 class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, OutputDataT]):
     """UI adapter for the Vercel AI protocol."""
 
-    sdk_version: Literal[5, 6] = field(default=5, kw_only=True)
+    _: KW_ONLY
+    sdk_version: Literal[5, 6] = 5
     """Vercel AI SDK version to target. Default is 5 for backwards compatibility."""
 
     @classmethod

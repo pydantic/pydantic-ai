@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from typing import Any, Literal
 
 from pydantic_core import to_json
@@ -76,6 +76,7 @@ def _json_dumps(obj: Any) -> str:
 class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]):
     """UI event stream transformer for the Vercel AI protocol."""
 
+    _: KW_ONLY
     sdk_version: Literal[5, 6] = 5
     """Vercel AI SDK version to target."""
 
