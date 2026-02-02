@@ -173,7 +173,7 @@ The [`XSearchTool`][pydantic_ai.builtin_tools.XSearchTool] allows your agent to 
 ```py {title="x_search_xai.py"}
 from pydantic_ai import Agent, XSearchTool
 
-agent = Agent('xai:grok-3-fast', builtin_tools=[XSearchTool()])
+agent = Agent('xai:grok-4-1-fast', builtin_tools=[XSearchTool()])
 
 result = agent.run_sync('What are people saying about AI on X today?')
 print(result.output)
@@ -192,7 +192,7 @@ from datetime import datetime
 from pydantic_ai import Agent, XSearchTool
 
 agent = Agent(
-    'xai:grok-3-fast',
+    'xai:grok-4-1-fast',
     builtin_tools=[
         XSearchTool(
             allowed_x_handles=['OpenAI', 'AnthropicAI', 'xaboratory'],  # Only search posts from these handles (max 10)
