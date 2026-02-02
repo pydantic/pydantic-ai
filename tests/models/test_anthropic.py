@@ -90,6 +90,7 @@ with try_import() as imports_successful:
         BetaServerToolUseBlock,
         BetaTextBlock,
         BetaTextDelta,
+        BetaThinkingBlock,
         BetaToolUseBlock,
         BetaUsage,
         BetaWebSearchResultBlock,
@@ -832,6 +833,110 @@ async def test_model_settings_reusable_with_beta_headers(allow_model_requests: N
         betas = completion_kwargs['betas']
         assert 'custom-feature-1' in betas
         assert 'custom-feature-2' in betas
+
+
+async def test_anthropic_interleaved_thinking_adds_beta(allow_model_requests: None):
+    """Verify interleaved-thinking-2025-05-14 beta is added when thinking + tools + interleaved_thinking are enabled."""
+    first_response = completion_message(
+        [
+            BetaThinkingBlock(
+                thinking='Let me use the tool first.',
+                signature='sig123',
+                type='thinking',
+            ),
+            BetaTextBlock(text='I will call the tool.', type='text'),
+            BetaToolUseBlock(id='tool_1', name='get_weather', input={'location': 'Paris'}, type='tool_use'),
+        ],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    second_response = completion_message(
+        [BetaTextBlock(text='The weather in Paris is sunny.', type='text')],
+        BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock([first_response, second_response])
+
+    model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(
+            anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024},
+            anthropic_interleaved_thinking=True,
+        ),
+    )
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_weather(location: str) -> str:
+        return f'Weather in {location}: sunny'
+
+    result = await agent.run('What is the weather in Paris?')
+    assert 'sunny' in result.output
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    betas = completion_kwargs['betas']
+    assert 'interleaved-thinking-2025-05-14' in betas
+
+
+async def test_anthropic_interleaved_thinking_not_added_without_tools(allow_model_requests: None):
+    """Verify interleaved-thinking beta is NOT added when no tools are present."""
+    c = completion_message(
+        [BetaTextBlock(text='Hello!', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+
+    model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(
+            anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024},
+            anthropic_interleaved_thinking=True,
+        ),
+    )
+    agent = Agent(model)
+
+    await agent.run('Hello')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    betas = completion_kwargs.get('betas') or []
+    assert 'interleaved-thinking-2025-05-14' not in betas
+
+
+async def test_anthropic_interleaved_thinking_not_added_when_disabled(allow_model_requests: None):
+    """Verify interleaved-thinking beta is NOT added when anthropic_interleaved_thinking is False."""
+    c = completion_message(
+        [
+            BetaThinkingBlock(thinking='Thinking...', signature='sig', type='thinking'),
+            BetaTextBlock(text='Hi', type='text'),
+            BetaToolUseBlock(id='t1', name='get_weather', input={}, type='tool_use'),
+        ],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    second = completion_message(
+        [BetaTextBlock(text='Done.', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock([c, second])
+
+    model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(
+            anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024},
+            anthropic_interleaved_thinking=False,
+        ),
+    )
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_weather(location: str) -> str:
+        return 'sunny'
+
+    await agent.run('Weather in Paris?')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    betas = completion_kwargs.get('betas') or []
+    assert 'interleaved-thinking-2025-05-14' not in betas
 
 
 async def test_anthropic_mixed_strict_tool_run(allow_model_requests: None, anthropic_api_key: str):

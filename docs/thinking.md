@@ -57,6 +57,21 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
+To enable **interleaved thinking** when using tools, set [`AnthropicModelSettings.anthropic_interleaved_thinking`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_interleaved_thinking] to `True`. This allows Claude to reason between tool calls and make more sophisticated decisions based on intermediate results. Supported for Claude 4 models (e.g. claude-sonnet-4-5, claude-opus-4-5).
+
+```python {title="anthropic_interleaved_thinking_part.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+
+model = AnthropicModel('claude-sonnet-4-5')
+settings = AnthropicModelSettings(
+    anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024},
+    anthropic_interleaved_thinking=True,
+)
+agent = Agent(model, model_settings=settings)
+...
+```
+
 ## Google
 
 To enable thinking, use the [`GoogleModelSettings.google_thinking_config`][pydantic_ai.models.google.GoogleModelSettings.google_thinking_config] [model setting](agents.md#model-run-settings).

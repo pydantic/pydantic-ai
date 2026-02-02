@@ -174,6 +174,15 @@ class AnthropicModelSettings(ModelSettings, total=False):
     See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking) for more information.
     """
 
+    anthropic_interleaved_thinking: bool
+    """Enable interleaved thinking when using extended thinking with tools.
+
+    When enabled, Claude can think between tool calls and reason about tool results
+    before deciding the next action. Requires both `anthropic_thinking` and tools to be enabled.
+    Supported for Claude 4 models (e.g. claude-sonnet-4-5, claude-opus-4-5).
+    See [the Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/extended-thinking#interleaved-thinking) for more information.
+    """
+
     anthropic_cache_tool_definitions: bool | Literal['5m', '1h']
     """Whether to add `cache_control` to the last tool definition.
 
@@ -458,6 +467,15 @@ class AnthropicModel(Model):
 
         if has_strict_tools or model_request_parameters.output_mode == 'native':
             betas.add('structured-outputs-2025-11-13')
+
+        thinking = model_settings.get('anthropic_thinking')
+        if (
+            model_settings.get('anthropic_interleaved_thinking')
+            and thinking
+            and thinking.get('type') == 'enabled'
+            and tools
+        ):
+            betas.add('interleaved-thinking-2025-05-14')
 
         if beta_header := extra_headers.pop('anthropic-beta', None):
             betas.update({stripped_beta for beta in beta_header.split(',') if (stripped_beta := beta.strip())})
