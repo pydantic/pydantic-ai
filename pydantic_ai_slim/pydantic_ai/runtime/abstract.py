@@ -12,6 +12,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, TypeAlias
 
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
+
 
 @dataclass(frozen=True)
 class FunctionCall:
@@ -48,6 +50,12 @@ class CodeRuntimeError(CodeExecutionError):
     pass
 
 
+@dataclass
+class CodeInterruptedError(Exception):
+    exceptions: list[ApprovalRequired | CallDeferred]  # These will be the exceptions within which we need to send back
+    checkpoint: bytes
+
+
 # TODO: Consider whether this should be Coroutine[Any, Any, Any] instead of Awaitable[Any].
 # Awaitable is broader (covers Coroutine, Task, Future, __await__ objects), but
 # Coroutine would allow asyncio.create_task() directly without ensure_future().
@@ -59,7 +67,7 @@ class CodeRuntime(ABC):
     """Abstract base for code execution runtimes. Subclass per runtime provider."""
 
     @abstractmethod
-    async def run(self, code: str, functions: list[str], call_tool: ToolCallback, signatures: list[str]) -> Any:
+    async def run(self, code: str, functions: list[str], call_tool: ToolCallback, *, signatures: list[str]) -> Any:
         """Execute code, invoking call_tool for each external function call.
 
         Args:

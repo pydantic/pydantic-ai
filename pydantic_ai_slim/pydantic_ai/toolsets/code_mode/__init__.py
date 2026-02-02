@@ -10,6 +10,7 @@ from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_ai.runtime.abstract import (
+    CodeInterruptedError,
     CodeRuntime,
     CodeRuntimeError,
     CodeSyntaxError,
@@ -367,5 +368,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             raise ModelRetry(f'Syntax error in generated code:\n{e.message}')
         except CodeRuntimeError as e:
             raise ModelRetry(f'Runtime error in generated code:\n{e.message}')
-        except (ApprovalRequired, CallDeferred):
-            raise  # Raise it back the metadata has information that we need to carry through
+        except CodeInterruptedError:
+            # I like this much better
+            # Although this will need specific handling within deferred flow to ensure all of the requests for call deferred and approvals go in one go and we don't dilly dally for each one
+            raise

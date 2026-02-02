@@ -5,6 +5,7 @@ from typing import Any
 
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from pydantic_ai.runtime.abstract import (
+    CodeInterruptedError,
     CodeRuntime,
     CodeRuntimeError,
     CodeSyntaxError,
@@ -126,8 +127,9 @@ class MontyRuntime(CodeRuntime):
                 monty_state = monty_state.resume(future=...)
             elif isinstance(monty_state, MontyFutureSnapshot):
                 pending = [tasks[cid] for cid in monty_state.pending_call_ids if cid in tasks]
-                done, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                done, _ = await asyncio.wait(pending, return_when=asyncio.ALL_COMPLETED)
                 results: dict[int, Any] = {}
+                inner_exceptions: list[ApprovalRequired | CallDeferred] = []
                 for task in done:
                     for cid, t in list(tasks.items()):
                         if t is task:
@@ -141,6 +143,9 @@ class MontyRuntime(CodeRuntime):
                                 for remaining in tasks.values():
                                     remaining.cancel()
 
+                                # No point in doing anything if ModelRetry is raised by a tool because code is going to be rewritten
+                                # Maybe we can do something clever using func prog concepts suggested by Douwe but I have no idea what that might look like rn
+
                                 raise
 
                             except (CallDeferred, ApprovalRequired) as e:
@@ -152,23 +157,39 @@ class MontyRuntime(CodeRuntime):
 
                                 # Let us wait for all in flight call tools to wrap up before we go any further
 
-                                # monty_state.dump()  # I wish I could store my results before I dumped it? :(
                                 # Discussed with Douwe and its okay to carry it through a pseudo context param maybe to get it back in for monty to use
 
-                                e.metadata = {**(e.metadata or {}), 'snapshot': monty_state.dump()}
                                 # Users will need to send this back to me through the deferred tool results
 
-                                raise e
+                                # If I batch these exceptions then can I request the user to approve all of them together?
+                                # Maybe I can club them and raise inside of another exception, this does warrant a new exception unlike before
+                                inner_exceptions.append(e)
+
+                                # raise e
+                                # Do not raise here, club them together we will fire them all off in one go
                             except Exception as e:
+                                # This is some other exception raised within Monty so I send it back to monty not sure what it can do with that though?
                                 results[cid] = {'exception': e}
+                                # I am really unsure if this is the right thing to do here with this, should there be no Model Retry here?
+                                # What are we going to do with this exception anyway?
                             del tasks[cid]
                             break
+
                 monty_state = monty_state.resume(results=results)
+
+                if isinstance(monty_state, MontyComplete):
+                    # Well we don't need to do anything because we got the result without having to get approvals for the tools or execution whatever
+                    # Must not have been needed?
+                    break
+
+                if len(inner_exceptions) > 0:
+                    # We have inner exceptions
+                    # Let us just raise CodeInterruptedError with these bunched together and we will handle it outside
+                    raise CodeInterruptedError(exceptions=inner_exceptions, checkpoint=monty_state.dump())
 
         return monty_state
 
-    @staticmethod
-    async def resume(checkpoint: bytes, call_tool: ToolCallback):
+    async def resume(self, checkpoint: bytes, call_tool: ToolCallback):
         try:
             tasks: dict[int, asyncio.Task[Any]] = {}
             monty_state = MontyFutureSnapshot.load(checkpoint)
