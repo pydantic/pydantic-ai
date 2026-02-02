@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, get_origin
+from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, get_origin, overload
 
 from opentelemetry.trace import get_current_span
 from typing_extensions import assert_never
@@ -143,26 +143,32 @@ class FallbackModel(Model):
         else:
             self._exception_handlers.append(handler)
 
-    async def _should_fallback_on_exception(self, exc: Exception) -> bool:
-        """Check if any exception handler wants to trigger fallback."""
-        for handler in self._exception_handlers:
-            if is_async_callable(handler):
-                result = await handler(exc)
-            else:
-                result = handler(exc)
-            if result:
-                return True
-        return False
+    @overload
+    async def _should_fallback(self, value: Exception) -> bool: ...
 
-    async def _should_fallback_on_response(self, response: ModelResponse) -> bool:
-        """Check if any response handler wants to trigger fallback."""
-        for handler in self._response_handlers:
-            if is_async_callable(handler):
-                result = await handler(response)
-            else:
-                result = handler(response)
-            if result:
-                return True
+    @overload
+    async def _should_fallback(self, value: ModelResponse) -> bool: ...
+
+    async def _should_fallback(self, value: Exception | ModelResponse) -> bool:
+        """Check if any handler wants to trigger fallback."""
+        if isinstance(value, Exception):
+            handlers = self._exception_handlers
+            for handler in handlers:
+                if is_async_callable(handler):
+                    result = await handler(value)
+                else:
+                    result = handler(value)
+                if result:
+                    return True
+        else:
+            handlers = self._response_handlers
+            for handler in handlers:
+                if is_async_callable(handler):
+                    result = await handler(value)
+                else:
+                    result = handler(value)
+                if result:
+                    return True
         return False
 
     @property
@@ -196,12 +202,12 @@ class FallbackModel(Model):
                 _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                 response = await model.request(messages, model_settings, model_request_parameters)
             except Exception as exc:
-                if await self._should_fallback_on_exception(exc):
+                if await self._should_fallback(exc):
                     exceptions.append(exc)
                     continue
                 raise exc
 
-            if await self._should_fallback_on_response(response):
+            if await self._should_fallback(response):
                 rejected_responses.append(response)
                 continue
 
@@ -235,7 +241,7 @@ class FallbackModel(Model):
                         model.request_stream(messages, model_settings, model_request_parameters, run_context)
                     )
                 except Exception as exc:
-                    if await self._should_fallback_on_exception(exc):
+                    if await self._should_fallback(exc):
                         exceptions.append(exc)
                         continue
                     raise exc  # pragma: no cover

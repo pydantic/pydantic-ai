@@ -285,6 +285,13 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
+!!! note "Why check finish reasons explicitly?"
+    By default, Pydantic AI only rejects responses with **0 parts** (no content) and finish reasons `'length'` or `'content_filter'` — these raise exceptions immediately. Empty responses with other finish reasons (including `'error'`) trigger a retry instead.
+
+    For non-empty responses, **all finish reasons are accepted** — even `'error'` — because the response may contain partial results or useful information. This is why explicit checking via `fallback_on` is useful: it allows you to inspect the response content and make semantic decisions about whether to accept it or fallback to another model.
+
+    See the [agent graph implementation](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/_agent_graph.py#L619-L673) for details on default finish reason handling.
+
 #### Built-in Tool Failure Example
 
 A more complex use case is when using built-in tools like web search or URL fetching. For example, Google's [`WebFetchTool`][pydantic_ai.builtin_tools.WebFetchTool] may return a successful response with a status indicating the URL fetch failed:
