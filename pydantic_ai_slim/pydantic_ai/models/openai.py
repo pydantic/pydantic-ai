@@ -1943,7 +1943,7 @@ class OpenAIResponsesModel(Model):
                                             file_url=mm_item.url,
                                         )
                                     )
-                                elif isinstance(mm_item, VideoUrl):  # pragma: no cover
+                                elif isinstance(mm_item, VideoUrl):
                                     raise NotImplementedError('VideoUrl is not supported for OpenAI.')
                             item = FunctionCallOutput(
                                 type='function_call_output',
