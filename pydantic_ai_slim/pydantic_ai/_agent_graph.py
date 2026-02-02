@@ -14,6 +14,7 @@ from dataclasses import field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
 from opentelemetry.trace import Tracer
+from pydantic_ai.runtime.abstract import CodeInterruptedError
 from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
@@ -1108,6 +1109,9 @@ async def _call_tools(  # noqa: C901
             except exceptions.ApprovalRequired as e:
                 deferred_calls_by_index[index] = 'unapproved'
                 deferred_metadata_by_index[index] = e.metadata
+            except CodeInterruptedError as e:
+                # Handle something here?
+                # It will have inner exceptions should I expand them, how do I give them index?
             else:
                 tool_parts_by_index[index] = tool_part
                 if tool_user_content:

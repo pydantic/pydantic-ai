@@ -351,11 +351,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         try:
             functions = list(tool.original_tools.keys())
-            # Yo do we have a checkpoint we can continue from?
-            # Some deferred tools did their jobs or what?
 
             if (metadata := ctx.tool_call_metadata) is not None:
-                # Some type error ugh lemme ignore for now
                 checkpoint = metadata.get('checkpoint')
 
                 # Do I have a way to know if this is a deferred request or not, well otherwise checkpoint would be None but I want to get out of the inf loop chance in case checkpoint is None, will find out later if I can do that or find that out somehow
@@ -371,4 +368,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         except CodeInterruptedError:
             # I like this much better
             # Although this will need specific handling within deferred flow to ensure all of the requests for call deferred and approvals go in one go and we don't dilly dally for each one
+            # One tricky bit is, where will we store this information?
+            # I need to route it back to load and resume, how do I do that?
             raise
