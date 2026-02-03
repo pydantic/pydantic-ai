@@ -453,7 +453,7 @@ class Tool(Generic[ToolAgentDepsT]):
 
             # Serialize examples to JSON-compatible dicts
             examples = [
-                TypeAdapter(Any).dump_python(ex, mode='json')  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+                TypeAdapter(Any).dump_python(ex, mode='json')  # pyright: ignore[reportUnknownMemberType]
                 for ex in examples  # pyright: ignore[reportUnknownVariableType]
             ]
 

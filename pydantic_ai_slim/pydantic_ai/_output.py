@@ -933,13 +933,6 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 if processor.outer_typed_dict_key:
                     examples = [{processor.outer_typed_dict_key: ex} for ex in examples]
 
-                # Append examples to description so they are visible to models that don't support input_examples
-                examples_str = json.dumps(examples, indent=2)
-                if description:
-                    description = f'{description}\n\nExamples:\n{examples_str}'
-                else:
-                    description = f'Examples:\n{examples_str}'
-
             object_def = processor.object_def
 
             if name is None:
@@ -960,6 +953,14 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 description = DEFAULT_OUTPUT_TOOL_DESCRIPTION
                 if multiple:
                     description = f'{object_def.name}: {description}'
+
+            # Append examples to description so they are visible to models that don't support input_examples
+            if examples:
+                examples_str = json.dumps(examples, indent=2)
+                if description:
+                    description = f'{description}\n\nExamples:\n{examples_str}'
+                else:
+                    description = f'Examples:\n{examples_str}'
 
             tool_def = ToolDefinition(
                 name=name,
