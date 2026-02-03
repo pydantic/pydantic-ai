@@ -6,6 +6,9 @@ Pydantic AI includes a built-in web chat interface that you can use to interact 
 
 For CLI usage with `clai web`, see the [CLI - Web Chat UI documentation](cli.md#web-chat-ui).
 
+!!! note
+    The web UI is meant for local development and debugging. In production, you can use one of the [UI Event Stream integrations](ui/overview.md) to connect your agent to a custom frontend.
+
 ## Installation
 
 Install the `web` extra (installs Starlette and Uvicorn):
