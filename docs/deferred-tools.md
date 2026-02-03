@@ -11,9 +11,10 @@ To support these use cases, Pydantic AI provides the concept of deferred tools, 
 - tools that [require approval](#human-in-the-loop-tool-approval)
 - tools that are [executed externally](#external-tool-execution)
 
-When the model calls a deferred tool, the agent run will end with a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output object containing information about the deferred tool calls. Once the approvals and/or results are ready, a new agent run can then be started with the original run's [message history](message-history.md) plus a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object holding results for each tool call in `DeferredToolRequests`, which will continue the original run where it left off.
+When the model calls a deferred tool, the agent run will end with a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output object containing information about the deferred tool calls. There are two ways to handle these requests:
 
-Note that handling deferred tool calls requires `DeferredToolRequests` to be in the `Agent`'s [`output_type`](output.md#structured-output) so that the possible types of the agent run output are correctly inferred. If your agent can also be used in a context where no deferred tools are available and you don't want to deal with that type everywhere you use the agent, you can instead pass the `output_type` argument when you run the agent using [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], or [`agent.iter()`][pydantic_ai.agent.Agent.iter]. Note that the run-time `output_type` overrides the one specified at construction time (for type inference reasons), so you'll need to include the original output type explicitly.
+1. **Inline handler** — For interactive scenarios (CLI, IDE), provide a `deferred_tool_handler` callback that resolves requests within a single agent run
+2. **Two-run pattern** — For async workflows, start a new agent run with the original [message history](message-history.md) plus a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object
 
 ## Human-in-the-Loop Tool Approval
 
@@ -25,9 +26,60 @@ To require approval for calls to tools provided by a [toolset](toolsets.md) (lik
 
 When the model calls a tool that requires approval, the agent run will end with a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output object with an `approvals` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, validated arguments, and a unique tool call ID.
 
-Once you've gathered the user's approvals or denials, you can build a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with an `approvals` dictionary that maps each tool call ID to a boolean, a [`ToolApproved`][pydantic_ai.tools.ToolApproved] object (with optional `override_args`), or a [`ToolDenied`][pydantic_ai.tools.ToolDenied] object (with an optional custom `message` to provide to the model). You can also provide a `metadata` dictionary on `DeferredToolResults` that maps each tool call ID to a dictionary of metadata that will be available in the tool's [`RunContext.tool_call_metadata`][pydantic_ai.tools.RunContext.tool_call_metadata] attribute. This `DeferredToolResults` object can then be provided to one of the agent run methods as `deferred_tool_results`, alongside the original run's [message history](message-history.md).
+### Inline Handler
 
-Here's an example that shows how to require approval for all file deletions, and for updates of specific protected files:
+For CLI agents, IDE extensions, and other interactive scenarios, you can provide a `deferred_tool_handler` callback that resolves approvals within a single agent run—no external loop or message history management required.
+
+The handler receives all deferred tool calls from a single model response as a batch, enabling batch decisions ("approve all reads, deny all writes"). It can be sync or async, and can be set at agent construction or per-run.
+
+```python {title="inline_approval.py"}
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
+
+agent = Agent('openai:gpt-4o')
+
+
+@agent.tool_plain(requires_approval=True)
+def delete_file(path: str) -> str:
+    """Delete a file at the given path."""
+    return f'Deleted {path}'
+
+
+def cli_approval_handler(
+    ctx: RunContext[None], requests: DeferredToolRequests
+) -> DeferredToolResults:
+    """Prompt user for approval via CLI."""
+    results = DeferredToolResults()
+    for call in requests.approvals:
+        print(f'\nTool: {call.tool_name}')
+        print(f'Args: {call.args}')
+        approved = input('Approve? [y/n] ').strip().lower() == 'y'
+        if approved:
+            results.approvals[call.tool_call_id] = True
+        else:
+            results.approvals[call.tool_call_id] = ToolDenied('User denied this action')
+    return results
+
+
+# Single run handles entire conversation with inline approvals
+result = agent.run_sync(
+    'Delete old.txt',
+    deferred_tool_handler=cli_approval_handler,
+)
+print(result.output)
+```
+
+The handler **must** return results for **all** deferred tool calls in the response; missing results raise [`UserError`][pydantic_ai.exceptions.UserError].
+
+### Two-Run Pattern
+
+For async workflows where approvals happen out-of-band (e.g., via email, Slack, or a review queue), use the two-run pattern: gather approvals externally, then resume with a new agent run.
+
+Note that this pattern requires `DeferredToolRequests` to be in the agent's [`output_type`](output.md#structured-output) so the output type is correctly inferred.
+
+Once you've gathered the user's approvals or denials, build a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with an `approvals` dictionary that maps each tool call ID to a boolean, a [`ToolApproved`][pydantic_ai.tools.ToolApproved] object (with optional `override_args`), or a [`ToolDenied`][pydantic_ai.tools.ToolDenied] object (with an optional custom `message` to provide to the model). You can also provide a `metadata` dictionary that maps each tool call ID to metadata available in the tool's [`RunContext.tool_call_metadata`][pydantic_ai.tools.RunContext.tool_call_metadata]. This object is then provided to a new agent run as `deferred_tool_results`, alongside the original run's [message history](message-history.md).
+
+Here's an example showing conditional approval for protected files:
 
 ```python {title="tool_requires_approval.py"}
 from pydantic_ai import (
@@ -234,7 +286,9 @@ If a tool is always executed externally and its definition is provided to your c
 
 When the model calls an external tool, the agent run will end with a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output object with a `calls` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, validated arguments, and a unique tool call ID.
 
-Once the tool call results are ready, you can build a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with a `calls` dictionary that maps each tool call ID to an arbitrary value to be returned to the model, a [`ToolReturn`](tools-advanced.md#advanced-tool-returns) object, or a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception in case the tool call failed and the model should [try again](tools-advanced.md#tool-retries). This `DeferredToolResults` object can then be provided to one of the agent run methods as `deferred_tool_results`, alongside the original run's [message history](message-history.md).
+Like with approvals, external tool results can be handled via an [inline `deferred_tool_handler`](#inline-handler) (if the handler can fetch results synchronously) or via the two-run pattern shown below.
+
+Once the tool call results are ready, build a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with a `calls` dictionary that maps each tool call ID to an arbitrary value to be returned to the model, a [`ToolReturn`](tools-advanced.md#advanced-tool-returns) object, or a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception in case the tool call failed and the model should [try again](tools-advanced.md#tool-retries). This object is then provided to a new agent run as `deferred_tool_results`, alongside the original run's [message history](message-history.md).
 
 Here's an example that shows how to move a task that takes a while to complete to the background and return the result to the model once the task is complete:
 
@@ -381,7 +435,8 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 ## See Also
 
-- [Function Tools](tools.md) - Basic tool concepts and registration
-- [Advanced Tool Features](tools-advanced.md) - Custom schemas, dynamic tools, and execution details
-- [Toolsets](toolsets.md) - Managing collections of tools, including `ExternalToolset` for external tools
-- [Message History](message-history.md) - Understanding how to work with message history for deferred tools
+- [Function Tools](tools.md) — Tool concepts and registration
+- [Advanced Tool Features](tools-advanced.md) — Custom schemas, dynamic tools, execution details
+- [Toolsets](toolsets.md) — Managing tool collections, including `ExternalToolset`
+- [Message History](message-history.md) — Working with message history for deferred tools
+- [ADR 0001: Deferred Tool Handler](adr/0001-deferred-tool-handler-v1.md) — Design decisions for inline handler

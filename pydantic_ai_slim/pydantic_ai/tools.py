@@ -237,7 +237,18 @@ DeferredToolHandler: TypeAlias = Callable[
     [RunContext[AgentDepsT], DeferredToolRequests],
     DeferredToolResults | Awaitable[DeferredToolResults],
 ]
-"""Handler for deferred tool calls to resolve approvals and external calls inline."""
+"""Handler for deferred tool calls to resolve approvals and external calls inline.
+
+The handler receives all deferred tool calls from a single model response as a batch,
+enabling batch decisions and parallel execution of approved tools. Can be sync or async.
+
+The handler **must** return results for **all** deferred tool calls in the response.
+Missing results raise [`UserError`][pydantic_ai.exceptions.UserError].
+
+See [Inline Deferred Tool Handling](../deferred-tools.md#inline-deferred-tool-handling) for usage examples.
+
+Usage: `DeferredToolHandler[AgentDepsT]`.
+"""
 
 
 A = TypeVar('A')

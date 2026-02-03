@@ -1,23 +1,23 @@
-# ADR 0001: Deferred Tool Handler v1 (No Partial Handling)
+# ADR 0001: Deferred Tool Handler v1
 
 Date: 2026-02-03
 Status: Proposed
 
 ## Context
 
-PydanticAI's deferred tools pattern currently requires callers to manage an external loop: call [`Agent.run()`][pydantic_ai.agent.Agent.run], check for [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests], gather approvals, then call [`Agent.run()`][pydantic_ai.agent.Agent.run] again with [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults]. This works well for asynchronous review workflows, but creates friction for interactive scenarios where blocking inline approval is natural.
+PydanticAI's deferred tools pattern requires callers to manage an external loop: call [`Agent.run()`][pydantic_ai.agent.Agent.run], check for [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests], gather approvals, then call [`Agent.run()`][pydantic_ai.agent.Agent.run] again with [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults]. This works well for asynchronous review workflows but creates friction for interactive scenarios where inline blocking approval is natural.
 
 ## Decision Drivers
 
-- CLI agents need blocking approval with stdin prompts.
-- IDE extensions need blocking approval with UI dialogs.
-- Multi-agent orchestration systems need nested approval handling.
-- The two-run pattern requires re-implementing the agent loop externally.
-- Message history management across runs is error-prone.
+- CLI agents need blocking approval via stdin prompts
+- IDE extensions need blocking approval via UI dialogs
+- Multi-agent orchestration needs nested approval handling
+- The two-run pattern forces callers to re-implement the agent loop
+- Message history management across runs is error-prone
 
 ## Considered Alternatives
 
-### 1) Subclass [`Agent`][pydantic_ai.agent.Agent] and override a handler method
+### 1) Subclass Agent and override a handler method
 
 ```python
 class MyAgent(Agent):
@@ -25,11 +25,7 @@ class MyAgent(Agent):
         return my_approval_logic(requests)
 ```
 
-Rejected because:
-
-- Per-run overrides are awkward (would need a subclass per use case).
-- Composition is harder; runtime swapping of handlers is clumsy.
-- This does not align with PydanticAI's functional/compositional style.
+**Rejected:** Per-run overrides require a subclass per use case. Composition and runtime swapping are clumsy. Does not align with PydanticAI's functional/compositional style.
 
 ### 2) Handler object with a `handle()` method
 
@@ -40,11 +36,7 @@ class ApprovalHandler(Protocol):
 agent = Agent('openai:gpt-5', deferred_tool_handler=MyHandler())
 ```
 
-Rejected because:
-
-- Adds ceremony without clear benefit over plain callables.
-- Python's callable protocol already supports stateful handlers via classes with `__call__`.
-- Plain functions are simpler for most use cases.
+**Rejected:** Adds ceremony without benefit—Python's callable protocol already supports stateful handlers via `__call__`. Plain functions are simpler for most cases.
 
 ### 3) Hybrid method that delegates to a handler
 
@@ -56,11 +48,7 @@ class Agent:
         raise NotImplementedError
 ```
 
-Rejected because:
-
-- Mixes OO override patterns with delegation.
-- Creates ambiguity about which extension point to use.
-- No compelling advantage over pure delegation.
+**Rejected:** Mixes OO override patterns with delegation, creating ambiguity about which extension point to use.
 
 ### 4) External loop helper function
 
@@ -76,13 +64,7 @@ async def run_with_approval(agent, prompt, handler):
     return result
 ```
 
-Rejected because:
-
-- Each iteration is a separate [`Agent.run()`][pydantic_ai.agent.Agent.run] call with overhead.
-- Message history management is caller's responsibility.
-- Streaming behavior differs across iterations.
-- It does not compose well with other run options (usage tracking, metadata).
-- Users would have to copy-paste this pattern.
+**Rejected:** Each iteration incurs separate [`Agent.run()`][pydantic_ai.agent.Agent.run] overhead. Callers must manage message history. Streaming behavior differs across iterations. Does not compose well with other run options. Users would copy-paste this pattern.
 
 ### 5) Per-tool handler callback
 
@@ -92,85 +74,73 @@ approval_handler: Callable[[ToolCallPart], ToolApproved | ToolDenied]
 agent = Agent('openai:gpt-5', approval_handler=per_tool_handler)
 ```
 
-Rejected because:
-
-- Loses batch context ("model wants A, B, and C").
-- Cannot make batch decisions ("approve all reads, deny all writes").
-- Forces approval UI to be sequential.
-- Discourages parallel execution of approved tools.
-- Does not handle the external tools pattern.
+**Rejected:** Loses batch context ("model wants A, B, and C"). Cannot make batch decisions ("approve all reads, deny all writes"). Forces sequential approval UI. Discourages parallel execution. Does not handle external tools.
 
 ## Decision
 
-Adopt a **per-model-response callable handler** passed as the `deferred_tool_handler` parameter on [`Agent`][pydantic_ai.agent.Agent] and all run variants: [`Agent.run()`][pydantic_ai.agent.Agent.run] / [`Agent.run_sync()`][pydantic_ai.agent.Agent.run_sync] / [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream] / [`Agent.run_stream_sync()`][pydantic_ai.agent.Agent.run_stream_sync] / [`Agent.iter()`][pydantic_ai.agent.AbstractAgent.iter].
+Adopt a **per-model-response callable handler** passed as `deferred_tool_handler` on [`Agent`][pydantic_ai.agent.Agent] and all run methods ([`run()`][pydantic_ai.agent.Agent.run], [`run_sync()`][pydantic_ai.agent.Agent.run_sync], [`run_stream()`][pydantic_ai.agent.Agent.run_stream], [`run_stream_sync()`][pydantic_ai.agent.Agent.run_stream_sync], [`iter()`][pydantic_ai.agent.AbstractAgent.iter]).
 
-The handler receives all deferred tool calls from a single model response as a batch, enabling full context, batch decisions, and parallel execution. Handlers can be plain functions or objects implementing `__call__`.
+The handler receives all deferred tool calls from a single model response as a batch, enabling:
 
-### v1 constraint: no partial handling
+- Full context for approval decisions
+- Batch decisions ("approve all reads, deny all writes")
+- Parallel execution of approved tools
 
-For v1, **partial handling is not supported**.
+Handlers can be plain functions or objects implementing `__call__`.
 
-When a handler is provided and the model response contains deferred tool calls:
+### v1 Constraint: No Partial Handling
 
-- The handler **must** return results for **all** deferred tool calls in that response.
-- If any deferred tool call is missing from the returned [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults], the run raises [`UserError`][pydantic_ai.exceptions.UserError].
-- The results are applied through the existing tool-call execution pipeline without modification.
+For v1, **partial handling is not supported**. When a handler is provided:
 
-This keeps the behavior and validation rules identical to the existing "resume with [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults]" flow: tool-call results must be complete and match all deferred calls.
+- The handler **must** return results for **all** deferred tool calls in the response
+- Missing results raise [`UserError`][pydantic_ai.exceptions.UserError]
+- Results flow through the existing tool-call execution pipeline unchanged
+
+This keeps validation identical to the existing "resume with [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults]" flow.
 
 ## Consequences
 
-Benefits:
+### Benefits
 
-- A single [`Agent.run()`][pydantic_ai.agent.Agent.run] call can handle an entire conversation with approvals.
-- No external loop or message history management is needed.
-- Natural fit for CLI, IDE, and interactive scenarios.
-- Backward compatible; default `None` preserves existing behavior.
+- A single [`Agent.run()`][pydantic_ai.agent.Agent.run] call handles an entire conversation with approvals
+- No external loop or message history management needed
+- Natural fit for CLI, IDE, and interactive scenarios
+- Backward compatible—default `None` preserves existing behavior
 
-Trade-offs:
+### Trade-offs
 
-- [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream] and [`Agent.run_stream_sync()`][pydantic_ai.agent.Agent.run_stream_sync] keep current semantics: they do not pause/resume mid-stream. The handler is invoked only when the run proceeds to tool execution (before any final output has been streamed), so deferred tools in a response that already produced a final output are not handled inline.
-- Handler errors during the agent loop require clear error propagation.
-- Hybrid flows (inline approvals + external review in the same run) are not supported in v1.
-- No automatic metadata pass-through. Tool execution only receives `DeferredToolResults.metadata` (same as the current resume flow). If a handler wants request metadata available during execution, it must explicitly copy it into `DeferredToolResults.metadata`.
-- Wrapper agents and durable-exec adapters should forward the handler parameter to keep the public API consistent across environments.
+- **Streaming semantics unchanged:** [`run_stream()`][pydantic_ai.agent.Agent.run_stream] / [`run_stream_sync()`][pydantic_ai.agent.Agent.run_stream_sync] do not pause/resume mid-stream. The handler is invoked only when the run proceeds to tool execution (before final output is streamed). Users needing streaming with guaranteed tool execution can use [`run()`][pydantic_ai.agent.Agent.run] with event streaming or [`iter()`][pydantic_ai.agent.AbstractAgent.iter].
 
-Rationale for metadata handling:
+- **No hybrid flows:** Inline approvals and external review cannot be mixed in the same run (v1 limitation).
 
-- Capability checks can be enforced entirely in the handler; the tool can rely on `tool_call_approved=True` to avoid re-deferring on the second execution.
-- If a tool needs additional execution-time context (e.g., `granted_capabilities`, audit tags), the handler can attach that explicitly in `DeferredToolResults.metadata`.
-- This keeps behavior consistent with the existing resume flow and avoids implicit propagation of request metadata into execution.
+- **No automatic metadata pass-through:** Tool execution receives only `DeferredToolResults.metadata`. Handlers must explicitly copy request metadata if tools need it. This keeps behavior consistent with the existing resume flow.
 
-Motivation for streaming semantics:
+- **Handler errors** during the agent loop require clear error propagation.
 
-- Preserves the existing [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream] / [`Agent.run_stream_sync()`][pydantic_ai.agent.Agent.run_stream_sync] contract (stop after first final output) and avoids surprising pauses/resumes mid-stream.
-- Keeps streaming behavior consistent with current expectations while still allowing inline approvals when the run continues to tool execution.
-- Users who need streaming plus guaranteed tool execution can use [`Agent.run()`][pydantic_ai.agent.Agent.run] with event streaming or [`Agent.iter()`][pydantic_ai.agent.AbstractAgent.iter].
+- **Wrapper agents and durable-exec adapters** should forward the handler parameter to maintain API consistency.
 
-Motivation for deferral discovery:
+### Deferral Discovery
 
-- Some deferrals are only discovered at tool execution time (via [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or [`CallDeferred`][pydantic_ai.exceptions.CallDeferred]) rather than being pre-marked.
-- Preserving this behavior avoids changing tool contracts or forcing tools to predeclare all deferrals.
-- Inline handling therefore needs to accommodate deferrals discovered during execution, even if this adds an extra phase internally.
-- In practice this implies a two-pass process within a single model response: execute tools, collect deferrals, then invoke the handler and execute approved deferred calls.
+Some deferrals are discovered at execution time (via [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or [`CallDeferred`][pydantic_ai.exceptions.CallDeferred]) rather than being pre-marked. Inline handling accommodates this with a two-pass process per model response: execute tools, collect deferrals, invoke handler, execute approved deferred calls.
 
-## Execution Semantics and Conditional Approval
+## Execution Semantics
 
-- Parallel vs sequential execution is unchanged; keep using existing tool settings such as the `Tool` `sequential` flag (see [`Tool`][pydantic_ai.tools.Tool]).
-- There is no separate "async mode" for tool execution. Async tools run on the event loop, while sync tools are executed in a thread; the handler sees a single batch of deferred calls per model response.
-- Conditional approvals should be expressed by raising [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] at runtime when a tool decides approval is necessary.
-- Unconditional approvals should use `requires_approval=True` so calls are pre-marked as deferred.
-- If a tool decides approval does not make sense for given arguments (e.g., invalid or unsafe), prefer raising [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] or returning a normal tool result rather than prompting for approval.
+- **Parallel vs sequential:** Unchanged. Use existing tool settings like [`Tool.sequential`][pydantic_ai.tools.Tool].
+- **Async execution:** No separate "async mode". Async tools run on the event loop; sync tools run in a thread. The handler sees a single batch per model response.
+- **Conditional approval:** Raise [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] at runtime when a tool decides approval is necessary.
+- **Unconditional approval:** Use `requires_approval=True` to pre-mark calls as deferred.
+- **Invalid arguments:** Prefer raising [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] or returning a normal result over prompting for approval.
 
 ## Related Issues
 
-- [#3959](https://github.com/pydantic/pydantic-ai/issues/3959) — This feature
-- [#3274](https://github.com/pydantic/pydantic-ai/issues/3274) — Human in the Loop Approval for Multi Agent Systems
+- [#3959](https://github.com/pydantic/pydantic-ai/issues/3959) — Deferred tool handler
+- [#3274](https://github.com/pydantic/pydantic-ai/issues/3274) — Human-in-the-loop approval for multi-agent systems
 - [#3488](https://github.com/pydantic/pydantic-ai/issues/3488) — Allow `user_prompt` with deferred tool approval
 
 ## See Also
 
-- [Function Tools](../tools.md) — Basic tool concepts and registration
-- [Advanced Tool Features](../tools-advanced.md) — Custom schemas, dynamic tools, and execution details
-- [Toolsets](../toolsets.md) — Managing collections of tools, including `ExternalToolset` for external tools
+- [Deferred Tools](../deferred-tools.md) — User documentation with usage examples
+- [Function Tools](../tools.md) — Tool concepts and registration
+- [Advanced Tool Features](../tools-advanced.md) — Custom schemas, dynamic tools, execution details
+- [Toolsets](../toolsets.md) — Managing tool collections, including `ExternalToolset`
 - [Message History](../message-history.md) — Working with message history for deferred tools
