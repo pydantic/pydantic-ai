@@ -1,6 +1,7 @@
 from __future__ import annotations, annotations as _annotations
 
-import uuid, base64
+import base64
+import uuid
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
