@@ -10,18 +10,18 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 import yaml
 
-SKILLS_DIR = Path('skills/pydantic-ai')
-SKILL_MD = SKILLS_DIR / 'SKILL.md'
+SKILLS_ROOT = Path('skills')
 SKILL_MD_MAX_LINES = 500
 
 # Allowed frontmatter properties (from official spec)
 ALLOWED_PROPERTIES = {'name', 'description', 'license', 'allowed-tools', 'metadata', 'compatibility'}
 
 
-def validate_name(name: str) -> list[str]:
+def validate_name(name: str, expected_dir_name: str) -> list[str]:
     """Validate skill name per spec."""
     errors: list[str] = []
     if not isinstance(name, str):
@@ -39,6 +39,11 @@ def validate_name(name: str) -> list[str]:
         errors.append(f"Name '{name}' cannot start or end with hyphen")
     if '--' in name:
         errors.append(f"Name '{name}' cannot contain consecutive hyphens")
+
+    # Check name matches directory name
+    if name != expected_dir_name:
+        errors.append(f"Name '{name}' must match directory name '{expected_dir_name}'")
+
     return errors
 
 
@@ -54,12 +59,13 @@ def validate_description(desc: str) -> list[str]:
         return errors
     if len(desc) > 1024:
         errors.append(f'Description is too long ({len(desc)} chars). Maximum is 1024.')
-    if '<' in desc or '>' in desc:
-        errors.append('Description cannot contain angle brackets (< or >)')
+    # Check for XML tags (not just any angle brackets)
+    if re.search(r'<[a-zA-Z/][^>]*>', desc):
+        errors.append('Description cannot contain XML tags')
     return errors
 
 
-def validate_frontmatter(content: str) -> list[str]:
+def validate_frontmatter(content: str, skill_dir_name: str) -> list[str]:
     """Validate SKILL.md YAML frontmatter."""
     errors: list[str] = []
 
@@ -75,7 +81,7 @@ def validate_frontmatter(content: str) -> list[str]:
     frontmatter_text = match.group(1)
 
     try:
-        frontmatter = yaml.safe_load(frontmatter_text)
+        frontmatter: dict[str, Any] = yaml.safe_load(frontmatter_text)
         if not isinstance(frontmatter, dict):
             errors.append('Frontmatter must be a YAML dictionary')
             return errors
@@ -84,60 +90,91 @@ def validate_frontmatter(content: str) -> list[str]:
         return errors
 
     # Check for unexpected properties
-    unexpected = set(frontmatter.keys()) - ALLOWED_PROPERTIES
+    unexpected: set[str] = set(frontmatter.keys()) - ALLOWED_PROPERTIES
     if unexpected:
-        errors.append(f"Unexpected frontmatter keys: {', '.join(sorted(unexpected))}")
+        errors.append(f'Unexpected frontmatter keys: {", ".join(sorted(unexpected))}')
 
     # Check required fields and validate their values
     if 'name' not in frontmatter:
         errors.append('Missing required field: name')
     else:
-        errors.extend(validate_name(frontmatter['name']))
+        name: str = frontmatter['name']
+        errors.extend(validate_name(name, skill_dir_name))
 
     if 'description' not in frontmatter:
         errors.append('Missing required field: description')
     else:
-        errors.extend(validate_description(frontmatter['description']))
-
-    # Check name matches directory name
-    if 'name' in frontmatter:
-        expected_name = SKILL_MD.parent.name
-        if frontmatter['name'] != expected_name:
-            errors.append(
-                f"Name '{frontmatter['name']}' must match directory name '{expected_name}'"
-            )
+        desc: str = frontmatter['description']
+        errors.extend(validate_description(desc))
 
     return errors
 
 
-def main() -> int:
-    verbose = '--verbose' in sys.argv or '-v' in sys.argv
+def validate_skill(skill_md: Path, verbose: bool = False) -> list[str]:
+    """Validate a single SKILL.md file."""
     errors: list[str] = []
+    skill_dir_name = skill_md.parent.name
 
-    # 1. Check SKILL.md exists
-    if not SKILL_MD.exists():
-        errors.append(f'{SKILL_MD} does not exist')
-    else:
-        content = SKILL_MD.read_text()
+    if not skill_md.exists():
+        errors.append(f'{skill_md} does not exist')
+        return errors
 
-        # 2. Check line limit
-        line_count = len(content.splitlines())
-        if line_count > SKILL_MD_MAX_LINES:
-            errors.append(f'{SKILL_MD} is {line_count} lines (max {SKILL_MD_MAX_LINES})')
-        elif verbose:
-            print(f'OK: {SKILL_MD} is {line_count} lines (max {SKILL_MD_MAX_LINES})')
+    content = skill_md.read_text(encoding='utf-8')
 
-        # 3. Validate frontmatter
-        errors.extend(validate_frontmatter(content))
+    # Check line limit
+    line_count = len(content.splitlines())
+    if line_count > SKILL_MD_MAX_LINES:
+        errors.append(f'{skill_md} is {line_count} lines (max {SKILL_MD_MAX_LINES})')
+    elif verbose:
+        print(f'OK: {skill_md} is {line_count} lines (max {SKILL_MD_MAX_LINES})')
 
-    # Report results
-    if errors:
-        print(f'Skills check FAILED with {len(errors)} error(s):')
-        for error in errors:
-            print(f'  - {error}')
+    # Validate frontmatter
+    errors.extend(validate_frontmatter(content, skill_dir_name))
+
+    return errors
+
+
+def discover_skills() -> list[Path]:
+    """Discover all skills in the skills directory."""
+    if not SKILLS_ROOT.exists():
+        return []
+    return sorted(SKILLS_ROOT.glob('*/SKILL.md'))
+
+
+def main() -> int:
+    """Validate all skills and report results."""
+    verbose = '--verbose' in sys.argv or '-v' in sys.argv
+    all_errors: list[tuple[Path, list[str]]] = []
+
+    # Discover all skills
+    skill_files = discover_skills()
+
+    if not skill_files:
+        print(f'No skills found in {SKILLS_ROOT}/')
         return 1
 
-    print('Skills check passed!')
+    if verbose:
+        print(f'Found {len(skill_files)} skill(s) in {SKILLS_ROOT}/')
+
+    # Validate each skill
+    for skill_md in skill_files:
+        if verbose:
+            print(f'\nValidating {skill_md}...')
+        errors = validate_skill(skill_md, verbose)
+        if errors:
+            all_errors.append((skill_md, errors))
+
+    # Report results
+    if all_errors:
+        total_errors = sum(len(errors) for _, errors in all_errors)
+        print(f'\nSkills check FAILED with {total_errors} error(s) in {len(all_errors)} skill(s):')
+        for skill_md, errors in all_errors:
+            print(f'\n  {skill_md}:')
+            for error in errors:
+                print(f'    - {error}')
+        return 1
+
+    print(f'Skills check passed! ({len(skill_files)} skill(s) validated)')
     return 0
 
 

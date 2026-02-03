@@ -1,6 +1,8 @@
-# Claude Code Integration
+# Agent Skills
 
 PydanticAI includes official skills for AI-assisted development with Claude Code and other AI coding agents.
+
+Agent skills follow the open [Agent Skills specification](https://agentskills.io), enabling interoperability across different AI coding assistants.
 
 ## Installation
 
