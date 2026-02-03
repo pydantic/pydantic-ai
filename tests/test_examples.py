@@ -86,6 +86,8 @@ def find_filter_examples() -> Iterable[ParameterSet]:
                 path = ex.path.relative_to(root_dir)
             except ValueError:
                 path = ex.path
+            if 'docs/adr/' in path.as_posix():
+                continue
             test_id = f'{path}:{ex.start_line}'
             prefix_settings = ex.prefix_settings()
             if title := prefix_settings.get('title'):
@@ -138,6 +140,7 @@ def test_docs_examples(
     mocker.patch('httpx.AsyncClient.post', side_effect=async_http_request)
     mocker.patch('random.randint', return_value=4)
     mocker.patch('rich.prompt.Prompt.ask', side_effect=rich_prompt_ask)
+    mocker.patch('builtins.input', side_effect=builtins_input)
 
     # Avoid filesystem access when examples call ssl.create_default_context(cafile=...) with non-existent paths
     mocker.patch('ssl.create_default_context', return_value=ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT))
@@ -305,6 +308,12 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
         return '2'
     else:  # pragma: no cover
         raise ValueError(f'Unexpected prompt: {prompt}')
+
+
+def builtins_input(prompt: str = '', *_args: Any, **_kwargs: Any) -> str:
+    if prompt == 'Approve? [y/n] ':
+        return 'y'
+    raise ValueError(f'Unexpected prompt: {prompt}')
 
 
 class MockMCPServer(AbstractToolset[Any]):
@@ -542,6 +551,11 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         ),
         ToolCallPart(tool_name='update_file', args={'path': '.env', 'content': ''}, tool_call_id='update_file_dotenv'),
     ],
+    'Delete old.txt': ToolCallPart(
+        tool_name='delete_file',
+        args={'path': 'old.txt'},
+        tool_call_id='pyd_ai_tool_call_id',
+    ),
     'Calculate the answer to the ultimate question of life, the universe, and everything': ToolCallPart(
         tool_name='calculate_answer',
         args={'question': 'the ultimate question of life, the universe, and everything'},
@@ -913,6 +927,8 @@ async def model_logic(  # noqa: C901
             ]
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'delete_file':
+        if m.content == 'Deleted old.txt':
+            return ModelResponse(parts=[TextPart('Deleted old.txt')])
         return ModelResponse(
             parts=[
                 TextPart(

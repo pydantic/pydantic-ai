@@ -52,7 +52,11 @@ def cli_approval_handler(
     results = DeferredToolResults()
     for call in requests.approvals:
         print(f'\nTool: {call.tool_name}')
+        """
+        Tool: delete_file
+        """
         print(f'Args: {call.args}')
+        #> Args: {'path': 'old.txt'}
         approved = input('Approve? [y/n] ').strip().lower() == 'y'
         if approved:
             results.approvals[call.tool_call_id] = True
@@ -67,6 +71,7 @@ result = agent.run_sync(
     deferred_tool_handler=cli_approval_handler,
 )
 print(result.output)
+#> Deleted old.txt
 ```
 
 The handler **must** return results for **all** deferred tool calls in the response; missing results raise [`UserError`][pydantic_ai.exceptions.UserError].
