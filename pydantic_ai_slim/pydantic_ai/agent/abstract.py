@@ -1388,7 +1388,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```bash
         uvicorn app:app --host 0.0.0.0 --port 8000
         ```
-        
+
         Args:
             deps: Optional dependencies to use for agent runs.
             storage: Storage backend for tasks and context.
@@ -1404,7 +1404,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             middleware: Starlette middleware.
             exception_handlers: Exception handlers.
             lifespan: Lifespan context manager.
-            
+
         Returns:
             A FastA2A application.
         """
