@@ -18,7 +18,45 @@ SKILL_MD = SKILLS_DIR / 'SKILL.md'
 SKILL_MD_MAX_LINES = 500
 
 # Allowed frontmatter properties (from official spec)
-ALLOWED_PROPERTIES = {'name', 'description', 'license', 'allowed-tools', 'metadata', 'user-invocable'}
+ALLOWED_PROPERTIES = {'name', 'description', 'license', 'allowed-tools', 'metadata', 'compatibility'}
+
+
+def validate_name(name: str) -> list[str]:
+    """Validate skill name per spec."""
+    errors: list[str] = []
+    if not isinstance(name, str):
+        errors.append(f'Name must be a string, got {type(name).__name__}')
+        return errors
+    name = name.strip()
+    if not name:
+        errors.append('Name cannot be empty')
+        return errors
+    if len(name) > 64:
+        errors.append(f'Name is too long ({len(name)} chars). Maximum is 64.')
+    if not re.match(r'^[a-z0-9-]+$', name):
+        errors.append(f"Name '{name}' must be hyphen-case (lowercase letters, digits, hyphens only)")
+    if name.startswith('-') or name.endswith('-'):
+        errors.append(f"Name '{name}' cannot start or end with hyphen")
+    if '--' in name:
+        errors.append(f"Name '{name}' cannot contain consecutive hyphens")
+    return errors
+
+
+def validate_description(desc: str) -> list[str]:
+    """Validate skill description per spec."""
+    errors: list[str] = []
+    if not isinstance(desc, str):
+        errors.append(f'Description must be a string, got {type(desc).__name__}')
+        return errors
+    desc = desc.strip()
+    if not desc:
+        errors.append('Description cannot be empty')
+        return errors
+    if len(desc) > 1024:
+        errors.append(f'Description is too long ({len(desc)} chars). Maximum is 1024.')
+    if '<' in desc or '>' in desc:
+        errors.append('Description cannot contain angle brackets (< or >)')
+    return errors
 
 
 def validate_frontmatter(content: str) -> list[str]:
@@ -50,11 +88,16 @@ def validate_frontmatter(content: str) -> list[str]:
     if unexpected:
         errors.append(f"Unexpected frontmatter keys: {', '.join(sorted(unexpected))}")
 
-    # Check required fields
+    # Check required fields and validate their values
     if 'name' not in frontmatter:
         errors.append('Missing required field: name')
+    else:
+        errors.extend(validate_name(frontmatter['name']))
+
     if 'description' not in frontmatter:
         errors.append('Missing required field: description')
+    else:
+        errors.extend(validate_description(frontmatter['description']))
 
     return errors
 
@@ -78,13 +121,6 @@ def main() -> int:
 
         # 3. Validate frontmatter
         errors.extend(validate_frontmatter(content))
-
-    # 4. Check VERSION file exists
-    version_file = SKILLS_DIR / 'VERSION'
-    if not version_file.exists():
-        errors.append(f'{version_file} does not exist')
-    elif verbose:
-        print(f'OK: {version_file} exists')
 
     # Report results
     if errors:

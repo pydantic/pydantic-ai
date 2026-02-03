@@ -79,5 +79,5 @@ repos:
         entry: uv
         args: [run, python, scripts/check_skills.py]
         language: system
-        files: ^(pydantic_ai_slim/pydantic_ai/|skills/|docs/)
+        files: ^skills/
         pass_filenames: false

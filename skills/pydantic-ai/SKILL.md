@@ -1,7 +1,8 @@
 ---
 name: pydantic-ai
-description: Official Claude Code skill for the PydanticAI agent framework
-user-invocable: true
+description: Build Python AI agents using the PydanticAI framework with type-safe tools, structured outputs, and dependency injection. Use when creating LLM agents, adding tools to agents, configuring model providers, implementing structured output with Pydantic models, testing with TestModel, or building multi-agent systems. Provides patterns for Agent creation, tool registration (@agent.tool, @agent.tool_plain), RunContext usage, streaming, message history, and observability with Logfire.
+license: MIT
+compatibility: Requires Python 3.10+
 ---
 
 # PydanticAI Skill

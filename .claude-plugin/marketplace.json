@@ -12,8 +12,11 @@
   "plugins": [
     {
       "name": "pydantic-ai",
-      "source": "./plugins/pydantic-ai",
-      "description": "Agent framework patterns, tools, models, and best practices"
+      "source": "./",
+      "description": "Agent framework patterns, tools, models, and best practices",
+      "skills": [
+        "../skills/pydantic-ai"
+      ]
     }
   ]
 }
