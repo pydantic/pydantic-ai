@@ -176,6 +176,7 @@ async def test_my_agent():
 | Search with DuckDuckGo/Tavily/Exa | [common-tools.md](references/common-tools.md) |
 | Get structured output | [output.md](references/output.md) |
 | Inject dependencies | [dependencies.md](references/dependencies.md) |
+| Understand RunContext fields | [run-context.md](references/run-context.md) |
 | Choose or configure models | [models.md](references/models.md) |
 | Use FallbackModel for resilience | [models.md](references/models.md) |
 | Stream responses | [streaming.md](references/streaming.md) |
@@ -346,6 +347,7 @@ Need deterministic, fast tests?
 | [common-tools.md](references/common-tools.md) | DuckDuckGo, Tavily, Exa search integrations |
 | [output.md](references/output.md) | Output types, validators, union outputs, StructuredDict |
 | [dependencies.md](references/dependencies.md) | Dependency injection, RunContext, testing with override |
+| [run-context.md](references/run-context.md) | Complete RunContext field reference (deps, retry, tracing, etc.) |
 | [models.md](references/models.md) | Model strings, providers, ModelSettings, TestModel, FallbackModel |
 | [streaming.md](references/streaming.md) | run_stream(), StreamedRunResult, run_stream_events(), iter() |
 | [messages.md](references/messages.md) | ModelRequest/Response, parts, multimedia types, message history |

@@ -40,33 +40,18 @@ print(result.output)
 
 ## RunContext Fields
 
-The `RunContext` dataclass is defined in `pydantic_ai_slim/pydantic_ai/_run_context.py`:
+The most commonly used fields in `RunContext`:
 
 ```python
-@dataclasses.dataclass(repr=False, kw_only=True)
-class RunContext(Generic[RunContextAgentDepsT]):
-    deps: RunContextAgentDepsT           # Your dependencies object
-    model: Model                          # The model being used
-    usage: RunUsage                       # Token usage so far
-    prompt: str | Sequence[UserContent] | None  # Original user prompt
-    messages: list[ModelMessage]          # Conversation messages so far
-    validation_context: Any               # Pydantic validation context
-    retries: dict[str, int]              # Retry counts by tool name
-    tool_call_id: str | None             # Current tool call ID
-    tool_name: str | None                # Current tool name
-    retry: int                           # Current retry count
-    max_retries: int                     # Max retries configured
-    run_step: int                        # Current step number
-    run_id: str | None                   # Unique run identifier
-    metadata: dict[str, Any] | None      # Run metadata
-    partial_output: bool                 # Whether output is partial (streaming)
-    tool_call_approved: bool             # Whether tool was approved (deferred)
-    tool_call_metadata: Any              # Metadata from deferred tool approval
-
-    @property
-    def last_attempt(self) -> bool:
-        """True if this is the last retry before error."""
+ctx.deps              # Your dependencies object (AgentDepsT)
+ctx.model             # The Model instance being used
+ctx.usage             # RunUsage — token counts so far
+ctx.messages          # Conversation messages so far
+ctx.retry             # Current retry count
+ctx.last_attempt      # True if this is the final retry
 ```
+
+For complete documentation of all 20+ RunContext fields including tool-specific, validation, and tracing fields, see [run-context.md](run-context.md).
 
 ## Using Dependencies in System Prompts
 
@@ -274,6 +259,7 @@ This helps reproduce issues by showing exactly what context the agent had when s
 
 ## See Also
 
+- [run-context.md](run-context.md) — Complete RunContext field reference
 - [agents.md](agents.md) — Agent configuration
 - [tools.md](tools.md) — Using RunContext in tools
 - [testing.md](testing.md) — Testing with dependency override

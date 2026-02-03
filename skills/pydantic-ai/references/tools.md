@@ -98,20 +98,20 @@ Tool(
 
 ## RunContext Fields
 
+Most common fields for tools:
+
 ```python
 ctx.deps              # The dependencies object (AgentDepsT)
 ctx.model             # The Model instance being used
 ctx.usage             # RunUsage — token counts so far
-ctx.prompt            # Original user prompt
-ctx.messages          # Messages exchanged so far
 ctx.retry             # Current retry count for this tool
 ctx.max_retries       # Maximum retries configured
 ctx.last_attempt      # bool — True if this is the final attempt
 ctx.tool_name         # Name of the current tool
 ctx.tool_call_id      # ID of the current tool call
-ctx.run_step          # Current step in the agent run
-ctx.run_id            # Unique run identifier
 ```
+
+For complete documentation of all RunContext fields (including validation, tracing, and deferred tool fields), see [run-context.md](run-context.md).
 
 ## ModelRetry — Tool Retry
 
@@ -313,6 +313,7 @@ async def prepare_tool(
 
 ## See Also
 
+- [run-context.md](run-context.md) — Complete RunContext field reference
 - [toolsets.md](toolsets.md) — Toolset composition and filtering
 - [tools-advanced.md](tools-advanced.md) — Advanced tool features
 - [agents.md](agents.md) — Agent configuration

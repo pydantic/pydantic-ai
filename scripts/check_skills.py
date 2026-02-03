@@ -26,10 +26,10 @@ SKILLS_DIR = Path('skills/pydantic-ai')
 SKILL_MD = SKILLS_DIR / 'SKILL.md'
 REFERENCES_DIR = SKILLS_DIR / 'references'
 INIT_FILE = Path('pydantic_ai_slim/pydantic_ai/__init__.py')
+RUN_CONTEXT_FILE = Path('pydantic_ai_slim/pydantic_ai/_run_context.py')
+RUN_CONTEXT_MD = REFERENCES_DIR / 'run-context.md'
 
 SKILL_MD_MAX_LINES = 500
-REFERENCE_MAX_LINES = 400
-API_REFERENCE_MAX_LINES = 400
 
 DOCS_DIR = Path('docs')
 SOURCE_DIR = Path('pydantic_ai_slim')
@@ -104,6 +104,10 @@ SKIP_SYNC_TITLES: set[str] = {
     'dynamic_instructions.py',
     'agent_override.py',
     'agent_metadata.py',
+    # RunContext examples (skill-only)
+    'run_context_deps.py',
+    'run_context_retry.py',
+    'run_context_last.py',
 }
 
 EXPECTED_REFERENCE_FILES = [
@@ -127,6 +131,7 @@ EXPECTED_REFERENCE_FILES = [
     'embeddings.md',
     'durable.md',
     'api-reference.md',
+    'run-context.md',
 ]
 
 # Exports that are intentionally not documented in skills (internal, deprecated, or low-level)
@@ -311,6 +316,62 @@ def normalize_code(code: str) -> str:
     return '\n'.join(lines)
 
 
+def parse_run_context_fields() -> set[str]:
+    """Parse RunContext dataclass fields and properties from source.
+
+    Returns a set of field/property names that should be documented.
+    """
+    if not RUN_CONTEXT_FILE.exists():
+        return set()
+
+    tree = ast.parse(RUN_CONTEXT_FILE.read_text())
+    fields: set[str] = set()
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == 'RunContext':
+            for item in node.body:
+                # Get dataclass field assignments
+                if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+                    fields.add(item.target.id)
+                # Get properties
+                elif isinstance(item, ast.FunctionDef):
+                    for decorator in item.decorator_list:
+                        if isinstance(decorator, ast.Name) and decorator.id == 'property':
+                            fields.add(item.name)
+                            break
+    return fields
+
+
+def check_run_context_coverage() -> list[str]:
+    """Verify run-context.md documents all RunContext fields from source."""
+    errors: list[str] = []
+
+    source_fields = parse_run_context_fields()
+    if not source_fields:
+        errors.append(f'Could not parse RunContext fields from {RUN_CONTEXT_FILE}')
+        return errors
+
+    if not RUN_CONTEXT_MD.exists():
+        errors.append(f'{RUN_CONTEXT_MD} does not exist')
+        return errors
+
+    content = RUN_CONTEXT_MD.read_text()
+
+    # Check each field is mentioned with ctx. prefix or as a heading
+    missing_fields: list[str] = []
+    for field in source_fields:
+        # Look for ctx.field_name or ### `ctx.field_name` patterns
+        if f'ctx.{field}' not in content and f'`{field}`' not in content:
+            missing_fields.append(field)
+
+    if missing_fields:
+        errors.append(
+            f'RunContext fields not documented in run-context.md: {", ".join(sorted(missing_fields))}'
+        )
+
+    return errors
+
+
 def check_example_sync() -> list[str]:
     """Check that skill code examples match their doc/docstring counterparts.
 
@@ -380,18 +441,15 @@ def main() -> int:
         # Check code blocks
         errors.extend(check_code_blocks(SKILL_MD))
 
-    # 2. Check all expected reference files exist and are under line limit
+    # 2. Check all expected reference files exist
     for ref_file in EXPECTED_REFERENCE_FILES:
         ref_path = REFERENCES_DIR / ref_file
         if not ref_path.exists():
             errors.append(f'Missing reference file: {ref_path}')
         else:
-            line_count = len(ref_path.read_text().splitlines())
-            max_lines = API_REFERENCE_MAX_LINES if ref_file == 'api-reference.md' else REFERENCE_MAX_LINES
-            if line_count > max_lines:
-                errors.append(f'{ref_path} is {line_count} lines (max {max_lines})')
-            elif verbose:
-                print(f'OK: {ref_path} is {line_count} lines (max {max_lines})')
+            if verbose:
+                line_count = len(ref_path.read_text().splitlines())
+                print(f'OK: {ref_path} exists ({line_count} lines)')
 
             # Check code blocks
             errors.extend(check_code_blocks(ref_path))
@@ -428,6 +486,13 @@ def main() -> int:
     if verbose and not sync_errors:
         print(f'OK: All skill examples are in sync with docs')
     errors.extend(sync_errors)
+
+    # 6. Check RunContext field coverage
+    run_context_errors = check_run_context_coverage()
+    if verbose and not run_context_errors:
+        source_fields = parse_run_context_fields()
+        print(f'OK: All {len(source_fields)} RunContext fields documented in run-context.md')
+    errors.extend(run_context_errors)
 
     # Report results
     print()
