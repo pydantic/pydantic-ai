@@ -11,7 +11,7 @@ from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
 from typing import Final
 
-from _pytest.compat import assert_never
+from typing_extensions import assert_never
 
 from ..._utils import now_utc
 from ...messages import (
