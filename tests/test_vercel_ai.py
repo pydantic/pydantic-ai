@@ -58,7 +58,7 @@ from pydantic_ai.ui.vercel_ai.request_types import (
     ToolOutputErrorPart,
     UIMessage,
 )
-from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, DataChunk
+from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, DataChunk, ToolInputStartChunk
 
 from .conftest import IsDatetime, IsSameStr, IsStr, try_import
 
@@ -172,7 +172,7 @@ async def test_run(allow_model_requests: None, openai_api_key: str):
         ],
     )
 
-    adapter = VercelAIAdapter(agent, run_input=data)
+    adapter = VercelAIAdapter(agent, run_input=data, sdk_version=6)
     assert adapter.messages == snapshot(
         [
             ModelRequest(
@@ -1505,7 +1505,7 @@ async def test_run_stream_builtin_tool_call():
             ),
         ],
     )
-    adapter = VercelAIAdapter(agent, request)
+    adapter = VercelAIAdapter(agent, request, sdk_version=6)
     events = [
         '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
         async for event in adapter.encode_stream(adapter.run_stream())
@@ -4052,8 +4052,8 @@ async def test_event_stream_text_with_provider_metadata():
     )
 
 
-async def test_event_stream_tool_call_end_with_provider_metadata():
-    """Test that tool-input-available events include provider_metadata with provider_name."""
+async def test_event_stream_tool_call_end_with_provider_metadata_v5():
+    """Test that tool-input-start events exclude provider_metadata for SDK v5."""
 
     async def event_generator():
         part = ToolCallPart(
@@ -4077,7 +4077,64 @@ async def test_event_stream_tool_call_end_with_provider_metadata():
             ),
         ],
     )
-    event_stream = VercelAIEventStream(run_input=request)
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=5)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'tc_meta', 'toolName': 'my_tool'},
+            {'type': 'tool-input-delta', 'toolCallId': 'tc_meta', 'inputTextDelta': '{"key":"value"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'tc_meta',
+                'toolName': 'my_tool',
+                'input': {'key': 'value'},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'tool_call_id_123',
+                        'provider_name': 'anthropic',
+                        'provider_details': {'tool_index': 0},
+                    }
+                },
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_event_stream_tool_call_end_with_provider_metadata_v6():
+    """Test that tool-input-available events include provider_metadata with provider_name for SDK v6."""
+
+    async def event_generator():
+        part = ToolCallPart(
+            tool_name='my_tool',
+            tool_call_id='tc_meta',
+            args={'key': 'value'},
+            id='tool_call_id_123',
+            provider_name='anthropic',
+            provider_details={'tool_index': 0},
+        )
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Test')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
     events = [
         '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
         async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
@@ -4120,8 +4177,8 @@ async def test_event_stream_tool_call_end_with_provider_metadata():
     )
 
 
-async def test_event_stream_builtin_tool_call_end_with_provider_metadata():
-    """Test that builtin tool-input-available events include provider_name in provider_metadata."""
+async def test_event_stream_builtin_tool_call_end_with_provider_metadata_v5():
+    """Test that builtin tool-input-start events exclude provider_metadata for SDK v5."""
 
     async def event_generator():
         part = BuiltinToolCallPart(
@@ -4145,7 +4202,65 @@ async def test_event_stream_builtin_tool_call_end_with_provider_metadata():
             ),
         ],
     )
-    event_stream = VercelAIEventStream(run_input=request)
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=5)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'btc_meta', 'toolName': 'web_search', 'providerExecuted': True},
+            {'type': 'tool-input-delta', 'toolCallId': 'btc_meta', 'inputTextDelta': '{"query":"test"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'btc_meta',
+                'toolName': 'web_search',
+                'input': {'query': 'test'},
+                'providerExecuted': True,
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'provider_details': {'tool_type': 'web_search_preview'},
+                        'provider_name': 'openai',
+                        'id': 'builtin_call_id_456',
+                    }
+                },
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_event_stream_builtin_tool_call_end_with_provider_metadata_v6():
+    """Test that builtin tool-input-available events include provider_name in provider_metadata for SDK v6."""
+
+    async def event_generator():
+        part = BuiltinToolCallPart(
+            tool_name='web_search',
+            tool_call_id='btc_meta',
+            args={'query': 'test'},
+            id='builtin_call_id_456',
+            provider_name='openai',
+            provider_details={'tool_type': 'web_search_preview'},
+        )
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Search')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
     events = [
         '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
         async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
@@ -4351,3 +4466,64 @@ class TestLoadProviderMetadata:
         provider_metadata = {'test': {'id': 'test_id'}}
         result = load_provider_metadata(provider_metadata)
         assert result == {}
+
+
+class TestSdkVersion:
+    async def test_tool_input_start_chunk_excludes_provider_metadata_for_v5(self):
+        chunk = ToolInputStartChunk(
+            tool_call_id='tc_1',
+            tool_name='my_tool',
+            provider_metadata={'pydantic_ai': {'id': 'test_id', 'provider_name': 'openai'}},
+        )
+        encoded_v5 = json.loads(chunk.encode(sdk_version=5))
+        encoded_v6 = json.loads(chunk.encode(sdk_version=6))
+
+        assert 'providerMetadata' not in encoded_v5
+        assert encoded_v5 == snapshot({'type': 'tool-input-start', 'toolCallId': 'tc_1', 'toolName': 'my_tool'})
+
+        assert 'providerMetadata' in encoded_v6
+        assert encoded_v6 == snapshot(
+            {
+                'type': 'tool-input-start',
+                'toolCallId': 'tc_1',
+                'toolName': 'my_tool',
+                'providerMetadata': {'pydantic_ai': {'id': 'test_id', 'provider_name': 'openai'}},
+            }
+        )
+
+    async def test_event_stream_uses_sdk_version(self):
+        async def event_generator():
+            part = ToolCallPart(
+                tool_name='my_tool',
+                tool_call_id='tc_ver',
+                args={'key': 'value'},
+                id='tool_call_id_ver',
+                provider_name='anthropic',
+            )
+            yield PartStartEvent(index=0, part=part)
+            yield PartEndEvent(index=0, part=part)
+
+        request = SubmitMessage(
+            id='foo',
+            messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')])],
+        )
+
+        event_stream_v5 = VercelAIEventStream(run_input=request, sdk_version=5)
+        events_v5: list[str | dict[str, Any]] = [
+            '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+            async for event in event_stream_v5.encode_stream(event_stream_v5.transform_stream(event_generator()))
+        ]
+        tool_input_start_v5: dict[str, Any] = next(
+            e for e in events_v5 if isinstance(e, dict) and e.get('type') == 'tool-input-start'
+        )
+        assert 'providerMetadata' not in tool_input_start_v5
+
+        event_stream_v6 = VercelAIEventStream(run_input=request, sdk_version=6)
+        events_v6: list[str | dict[str, Any]] = [
+            '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+            async for event in event_stream_v6.encode_stream(event_stream_v6.transform_stream(event_generator()))
+        ]
+        tool_input_start_v6: dict[str, Any] = next(
+            e for e in events_v6 if isinstance(e, dict) and e.get('type') == 'tool-input-start'
+        )
+        assert 'providerMetadata' in tool_input_start_v6
