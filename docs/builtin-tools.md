@@ -624,20 +624,17 @@ agent = Agent(
 @agent.tool_plain
 def str_replace_based_edit_tool(**command: Any) -> str:
     cmd = _COMMAND_ADAPTER.validate_python(command)
-    if isinstance(cmd, View):
-        return '1: print("Hello, world!")'
-    if isinstance(cmd, StrReplace):
-        return 'File updated.'
-    if isinstance(cmd, Create):
-        return 'File created.'
-    if isinstance(cmd, Insert):
-        return 'Text inserted.'
-    raise ValueError(f'Unknown command: {command}')
+    print(cmd.model_dump())
 
 
-result = agent.run_sync('Create hello.py file that prints "Hello, world!"')
+result = agent.run_sync('Use the text editor tool to create hello.py with a single line: print("Hello, world!")')
 print(result.output)
-#> 'File created.'
+result = agent.run_sync('Use the text editor tool to change hello.py so it prints: Hello, Pydantic AI!')
+print(result.output)
+result = agent.run_sync('Use the text editor tool to insert a new string in hello.py: # Demo file')
+print(result.output)
+result = agent.run_sync('Use the text editor tool to view hello.py')
+print(result.output)
 ```
 
 _(This example is complete, it can be run "as is")_
