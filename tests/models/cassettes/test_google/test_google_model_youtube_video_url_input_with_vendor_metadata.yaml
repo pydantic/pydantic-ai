@@ -17,7 +17,7 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: Explain me this video
+        - text: Explain me this video in a few sentences
         - fileData:
             fileUri: https://youtu.be/lCdaVNyHtjU
             mimeType: video/mp4
@@ -96,7 +96,7 @@ interactions:
         - modality: VIDEO
           tokenCount: 3096
         - modality: TEXT
-          tokenCount: 10
+          tokenCount: 14
         - modality: AUDIO
           tokenCount: 1500
         totalTokenCount: 4992
