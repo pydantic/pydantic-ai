@@ -136,7 +136,10 @@ pytestmark = [
 http_client = cached_async_http_client(provider='temporal')
 
 
-@pytest.fixture(autouse=True, scope='module')
+# we use a session fixture here because the http_client would otherwise be closed twice when you run
+# two tests of this module with another test in between
+# pytest <temporal_test1> <other_test> <temporal_test2>
+@pytest.fixture(autouse=True, scope='session')
 async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
     try:
         yield
