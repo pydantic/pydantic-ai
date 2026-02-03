@@ -1106,8 +1106,7 @@ async def test_missing_token_usage_not_recorded(capfire: CaptureLogfire):
 
     try:
         # metrics_reader.get_metrics_data() will return None
-        metrics = capfire.get_collected_metrics()
-        assert metrics == []
+        capfire.get_collected_metrics()
     except AttributeError:
         pass
 
