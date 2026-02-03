@@ -8,6 +8,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.messages import (
     AudioUrl,
@@ -1740,6 +1741,107 @@ async def test_run_stream_tool_return_with_files():
             {'type': 'finish'},
             '[DONE]',
         ]
+    )
+
+
+async def test_run_stream_tool_return_files_only():
+    """Test that tool returns with only files return file descriptions."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {
+                0: DeltaToolCall(
+                    name='get_file',
+                    json_args='{}',
+                    tool_call_id='file_1',
+                )
+            }
+        else:
+            yield 'Got file'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    async def get_file() -> BinaryContent:
+        return BinaryContent(data=b'audio', media_type='audio/wav')
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Get file')],
+            ),
+        ],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    tool_output = next(e for e in events if is_str_dict(e) and e.get('type') == 'tool-output-available')
+    # When content is a single BinaryContent, model_response_object returns {} (empty dict),
+    # so _tool_return_output goes through the dict branch, returning {'files': [...]}
+    assert tool_output == snapshot(
+        {
+            'type': 'tool-output-available',
+            'toolCallId': 'file_1',
+            'output': {'files': ['[File: audio/wav]']},
+        }
+    )
+
+
+async def test_run_stream_tool_return_with_file_url():
+    """Test that tool returns with FileUrl (ImageUrl) include URL in description."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {
+                0: DeltaToolCall(
+                    name='get_image_url',
+                    json_args='{}',
+                    tool_call_id='url_1',
+                )
+            }
+        else:
+            yield 'Got image URL'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    async def get_image_url() -> ImageUrl:
+        return ImageUrl(url='https://example.com/image.png')
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Get image URL')],
+            ),
+        ],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    tool_output = next(e for e in events if is_str_dict(e) and e.get('type') == 'tool-output-available')
+    # FileUrl goes through _describe_file's FileUrl branch, returning the URL
+    assert tool_output == snapshot(
+        {
+            'type': 'tool-output-available',
+            'toolCallId': 'url_1',
+            'output': {'files': ['[File: https://example.com/image.png]']},
+        }
     )
 
 
