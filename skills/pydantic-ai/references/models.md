@@ -15,6 +15,18 @@ agent = Agent('mistral:mistral-large-latest')
 agent = Agent('cohere:command-r-plus')
 ```
 
+## Model, Provider, and Profile
+
+Three key concepts for model configuration:
+
+| Concept | Description | Example |
+|---------|-------------|---------|
+| **Model** | How to call a model API | `OpenAIChatModel`, `AnthropicModel` |
+| **Provider** | Authentication and endpoint config | `AzureProvider`, `OpenRouterProvider` |
+| **Profile** | Model-specific schema/behavior tweaks | JSON schema transformations |
+
+When you use `'openai:gpt-5'`, PydanticAI auto-selects the model class, provider, and profile.
+
 ## Providers
 
 | Provider | Prefix | Install Extra | Example |
@@ -29,6 +41,47 @@ agent = Agent('cohere:command-r-plus')
 | HuggingFace | `huggingface:` | `pydantic-ai-slim[huggingface]` | `huggingface:meta-llama/...` |
 
 Additional providers using OpenAI-compatible APIs: `azure:`, `openrouter:`, `grok:`, `deepseek:`, `fireworks:`, `together:`, `ollama:`, `github:`, `cerebras:`, `sambanova:`, `nebius:`, `ovhcloud:`, `alibaba:`.
+
+## ModelProfile — OpenAI-Compatible APIs
+
+When using OpenAI-compatible APIs (via `OpenRouterProvider`, custom endpoints, etc.), use `ModelProfile` to configure model-specific behavior:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.profiles import ModelProfile
+
+# Using OpenRouter to access Gemini via OpenAI-compatible API
+model = OpenAIChatModel(
+    'google/gemini-2.5-pro-preview',
+    provider='openrouter',
+    profile=ModelProfile.from_profile('google-gla'),  # Use Gemini's profile
+)
+
+agent = Agent(model)
+```
+
+### Why Profiles Matter
+
+Different models have different:
+- JSON schema restrictions for tools
+- System prompt handling
+- Token counting rules
+- Feature support (streaming, function calling, etc.)
+
+The profile tells PydanticAI how to format requests correctly, regardless of which API endpoint you're using.
+
+### Custom Profile
+
+```python
+from pydantic_ai.profiles import ModelProfile
+
+custom_profile = ModelProfile(
+    supports_json_schema_mode=True,
+    supports_strict_tool_mode=True,
+    default_max_tokens=4096,
+)
+```
 
 ## ModelSettings
 

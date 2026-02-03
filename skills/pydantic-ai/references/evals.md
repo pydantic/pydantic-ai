@@ -172,6 +172,48 @@ evaluator = LLMJudge(
 dataset.add_evaluator(evaluator)
 ```
 
+### Advanced LLM Judge Patterns
+
+**Rubric with criteria:**
+
+```python
+evaluator = LLMJudge(
+    agent=judge_agent,
+    rubric='''
+    Rate the response on these criteria (0-1 each):
+    - Accuracy: Does it correctly answer the question?
+    - Completeness: Does it cover all aspects?
+    - Clarity: Is it easy to understand?
+
+    Return the average score.
+    ''',
+)
+```
+
+**Binary classification:**
+
+```python
+evaluator = LLMJudge(
+    agent=judge_agent,
+    rubric='Is this response helpful and on-topic? Return 1.0 for yes, 0.0 for no.',
+)
+```
+
+**With expected output comparison:**
+
+```python
+evaluator = LLMJudge(
+    agent=judge_agent,
+    rubric='''
+    Compare the output to the expected output.
+    - 1.0: Semantically equivalent
+    - 0.5: Partially correct
+    - 0.0: Incorrect or unrelated
+    ''',
+    include_expected=True,  # Pass expected_output to the judge
+)
+```
+
 ## Running Experiments
 
 ```python
@@ -200,6 +242,44 @@ ctx.metadata         # Case metadata dict
 ctx.duration         # Task execution time
 ```
 
+## Span-Based Evaluation
+
+Evaluate internal agent behavior using OpenTelemetry spans:
+
+```python
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import SpanContains, SpanCount
+
+# Check that a specific tool was called
+tool_called = SpanContains(
+    span_name='tool:fetch_data',
+    attribute='tool.name',
+    expected_value='fetch_data',
+)
+
+# Count number of model requests
+request_count = SpanCount(
+    span_name='model_request',
+    min_count=1,
+    max_count=5,
+)
+
+dataset = Dataset(
+    cases=[Case(name='test', inputs='prompt')],
+    evaluators=[tool_called, request_count],
+)
+```
+
+### Why Span-Based Evaluation?
+
+- Evaluate **internal behavior**, not just final output
+- Check that specific tools were called
+- Verify retry behavior
+- Monitor token usage and latency
+- Debug complex multi-step agent workflows
+
+Requires Logfire or OpenTelemetry instrumentation enabled.
+
 ## Logfire Integration
 
 View results in Logfire web UI:
@@ -225,4 +305,8 @@ report = dataset.evaluate_sync(my_function)
 | `EvaluatorContext` | `pydantic_evals.evaluators.EvaluatorContext` | Context passed to evaluators |
 | `EvaluationReport` | `pydantic_evals.reporting.EvaluationReport` | Experiment results |
 | `IsInstance` | `pydantic_evals.evaluators.IsInstance` | Type check evaluator |
+| `Equals` | `pydantic_evals.evaluators.Equals` | Exact match evaluator |
+| `Contains` | `pydantic_evals.evaluators.Contains` | Substring evaluator |
 | `LLMJudge` | `pydantic_evals.evaluators.LLMJudge` | LLM-based evaluator |
+| `SpanContains` | `pydantic_evals.evaluators.SpanContains` | Span attribute evaluator |
+| `SpanCount` | `pydantic_evals.evaluators.SpanCount` | Span count evaluator |

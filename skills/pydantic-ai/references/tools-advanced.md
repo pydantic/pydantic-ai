@@ -72,9 +72,21 @@ def screenshot_and_click(x: int, y: int) -> ToolReturn:
     )
 ```
 
-- `return_value` — the actual tool result
-- `content` — extra context (text, images, etc.) sent as user message
-- `metadata` — app-only data, not sent to LLM
+### ToolReturn Fields
+
+| Field | Sent to Model | Description |
+|-------|---------------|-------------|
+| `return_value` | Yes (as tool result) | The main tool return value |
+| `content` | Yes (as user message) | Additional context (text, images) |
+| `metadata` | No | App-only data for logging, analytics |
+
+### When to Use ToolReturn
+
+- **Simple returns**: Just return the value directly (string, dict, Pydantic model)
+- **Use ToolReturn when**:
+  - You need to send images or rich content alongside the result
+  - You want to attach metadata for debugging without sending to the model
+  - The "return value" and "context for model" should be different
 
 ## Tool.from_schema — Custom JSON Schema
 
@@ -174,6 +186,62 @@ async def make_all_strict_for_openai(
 agent = Agent('openai:gpt-4o', prepare_tools=make_all_strict_for_openai)
 ```
 
+## Tool Strict Mode (OpenAI)
+
+OpenAI's strict mode enforces exact schema compliance. Enable it for guaranteed valid arguments:
+
+```python
+from pydantic_ai import Agent, Tool
+
+
+def my_tool(x: int, y: int) -> int:
+    return x + y
+
+
+# Enable strict mode for a specific tool
+tool = Tool(my_tool, strict=True)
+agent = Agent('openai:gpt-4o', tools=[tool])
+
+# Or enable via prepare_tools for all tools
+from dataclasses import replace
+
+
+async def enable_strict(ctx, tool_defs):
+    if ctx.model.system == 'openai':
+        return [replace(td, strict=True) for td in tool_defs]
+    return tool_defs
+
+
+agent = Agent('openai:gpt-4o', prepare_tools=enable_strict)
+```
+
+**When to use strict mode:**
+- When you need guaranteed schema compliance
+- For production systems where invalid arguments would cause errors
+- OpenAI-specific feature; other providers ignore this setting
+
+## Tool Metadata
+
+Attach application metadata to tools (not sent to the model):
+
+```python
+from pydantic_ai import Agent, Tool
+
+
+def database_query(query: str) -> str:
+    return 'results'
+
+
+tool = Tool(
+    database_query,
+    metadata={'category': 'database', 'requires_auth': True, 'cost': 0.01},
+)
+
+agent = Agent('openai:gpt-4o', tools=[tool])
+```
+
+Access metadata in `prepare_tools` for filtering or logging.
+
 ## Tool Timeout
 
 Prevent tools from running indefinitely:
@@ -198,6 +266,31 @@ async def fast_tool() -> str:
 ```
 
 Timeout triggers a retry prompt: `"Timed out after {timeout} seconds."`
+
+### Timeout Hierarchy
+
+```
+Tool-specific timeout > Agent tool_timeout > No timeout (unlimited)
+```
+
+```python
+agent = Agent('openai:gpt-4o', tool_timeout=60)  # Default 60s
+
+
+@agent.tool_plain(timeout=10)  # Override: 10s
+async def quick_lookup(query: str) -> str:
+    ...
+
+
+@agent.tool_plain  # Uses default: 60s
+async def slow_analysis(data: str) -> str:
+    ...
+
+
+@agent.tool_plain(timeout=None)  # No timeout
+async def long_running_task() -> str:
+    ...
+```
 
 ## Parallel vs Sequential Execution
 

@@ -80,6 +80,46 @@ async with agent.run_stream_events('prompt') as events:
 - `ThinkingPartDelta` — thinking/reasoning delta
 - `ToolCallPartDelta` — tool call argument delta
 
+### Practical Event Handling Example
+
+```python
+from pydantic_ai import (
+    Agent,
+    FinalResultEvent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPartDelta,
+    ThinkingPartDelta,
+    ToolCallPartDelta,
+)
+
+agent = Agent('openai:gpt-5')
+
+
+async def handle_event(event):
+    if isinstance(event, PartStartEvent):
+        print(f'[Start] Part {event.index}: {type(event.part).__name__}')
+
+    elif isinstance(event, PartDeltaEvent):
+        if isinstance(event.delta, TextPartDelta):
+            print(f'[Text] {event.delta.content_delta}', end='')
+        elif isinstance(event.delta, ThinkingPartDelta):
+            print(f'[Thinking] {event.delta.content_delta}')
+        elif isinstance(event.delta, ToolCallPartDelta):
+            print(f'[Tool Args] {event.delta.args_delta}')
+
+    elif isinstance(event, FunctionToolCallEvent):
+        print(f'[Tool Call] {event.part.tool_name}({event.part.args})')
+
+    elif isinstance(event, FunctionToolResultEvent):
+        print(f'[Tool Result] {event.result.content}')
+
+    elif isinstance(event, FinalResultEvent):
+        print(f'[Final] Output type: {event.tool_name or "text"}')
+```
+
 ## iter() — Step-by-Step Control
 
 For maximum control, iterate over graph nodes:
@@ -98,6 +138,47 @@ async with agent.iter('prompt', deps=my_deps) as agent_run:
 - `agent_run.result` — `AgentRunResult` (available after iteration completes)
 - `agent_run.next_node` — the next node to be processed
 - `agent_run.ctx` — the `GraphRunContext`
+- `agent_run.usage()` — current token usage mid-run
+
+### Accessing Usage During Iteration
+
+```python
+async with agent.iter('prompt') as agent_run:
+    async for node in agent_run:
+        # Check token usage at each step
+        usage = agent_run.usage()
+        print(f'Tokens so far: {usage.total_tokens}')
+
+        if usage.total_tokens > 10000:
+            # Could implement early stopping
+            break
+```
+
+## Partial Output Flag (ctx.partial_output)
+
+During streaming, distinguish between partial and final outputs:
+
+```python
+from pydantic_ai import Agent, RunContext
+
+agent = Agent('openai:gpt-5', output_type=MyModel)
+
+
+@agent.output_validator
+async def validate_output(ctx: RunContext[None], output: MyModel) -> MyModel:
+    if ctx.partial_output:
+        # This is a partial/streaming output - skip heavy validation
+        return output
+
+    # This is the final output - run full validation
+    await full_validation(output)
+    return output
+```
+
+Use `ctx.partial_output` to:
+- Skip expensive validation during streaming
+- Avoid side effects until the output is complete
+- Distinguish intermediate state from final state
 
 ## Debounce
 
@@ -126,9 +207,20 @@ This helps diagnose issues like slow initial responses or truncated streams that
 |------|--------|-------------|
 | `AgentRun` | `pydantic_ai.AgentRun` | Stateful run from `iter()` |
 | `AgentRunResult` | `pydantic_ai.AgentRunResult` | Final result |
-| `AgentRunResultEvent` | `pydantic_ai.AgentRunResultEvent` | Result event |
+| `StreamedRunResult` | `pydantic_ai.StreamedRunResult` | Streaming result |
+| `AgentStreamEvent` | `pydantic_ai.AgentStreamEvent` | Base event type |
 | `PartStartEvent` | `pydantic_ai.PartStartEvent` | Stream event |
 | `PartDeltaEvent` | `pydantic_ai.PartDeltaEvent` | Stream event |
 | `PartEndEvent` | `pydantic_ai.PartEndEvent` | Stream event |
 | `FinalResultEvent` | `pydantic_ai.FinalResultEvent` | Stream event |
+| `FunctionToolCallEvent` | `pydantic_ai.FunctionToolCallEvent` | Tool call event |
+| `FunctionToolResultEvent` | `pydantic_ai.FunctionToolResultEvent` | Tool result event |
 | `TextPartDelta` | `pydantic_ai.TextPartDelta` | Text delta |
+| `ThinkingPartDelta` | `pydantic_ai.ThinkingPartDelta` | Thinking delta |
+| `ToolCallPartDelta` | `pydantic_ai.ToolCallPartDelta` | Tool call args delta |
+
+## See Also
+
+- [agents.md](agents.md) — Event stream handler on Agent
+- [output.md](output.md) — Streaming structured output
+- [graph.md](graph.md) — Graph nodes for iter()

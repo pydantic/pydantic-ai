@@ -188,6 +188,73 @@ async def my_tool(ctx: RunContext[None]) -> str:
     return 'result'
 ```
 
+## Async vs Sync Dependencies
+
+Dependencies often include async clients. Handle the lifecycle properly:
+
+### Pattern 1: Async Context Manager (Recommended)
+
+```python
+from dataclasses import dataclass
+
+import httpx
+
+from pydantic_ai import Agent, RunContext
+
+
+@dataclass
+class Deps:
+    client: httpx.AsyncClient
+
+
+agent = Agent('openai:gpt-5', deps_type=Deps)
+
+
+@agent.tool
+async def fetch_data(ctx: RunContext[Deps], url: str) -> str:
+    response = await ctx.deps.client.get(url)
+    return response.text
+
+
+async def main():
+    # Create client with proper lifecycle
+    async with httpx.AsyncClient() as client:
+        deps = Deps(client=client)
+        result = await agent.run('Fetch example.com', deps=deps)
+```
+
+### Pattern 2: Sync Entry Point with run_sync()
+
+```python
+def main():
+    # For run_sync(), you need a sync-compatible approach
+    # Option A: Create a fresh client per run (simpler, less efficient)
+    import httpx
+    with httpx.Client() as sync_client:
+        # ... use sync client
+
+    # Option B: Use asyncio.run() with async pattern
+    import asyncio
+    asyncio.run(async_main())
+```
+
+### Common Pitfall: Using Closed Clients
+
+```python
+# WRONG - client closed before agent runs
+async def broken():
+    async with httpx.AsyncClient() as client:
+        deps = Deps(client=client)
+    # client is closed here!
+    result = await agent.run('prompt', deps=deps)  # Error!
+
+# CORRECT - agent runs inside context
+async def correct():
+    async with httpx.AsyncClient() as client:
+        deps = Deps(client=client)
+        result = await agent.run('prompt', deps=deps)  # Works!
+```
+
 ## Debugging with Dependencies
 
 When debugging production issues, Logfire instrumentation captures the full `RunContext` state, including:

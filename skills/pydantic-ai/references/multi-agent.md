@@ -178,7 +178,7 @@ agent = Agent(
 
 ## Deep Agents
 
-Combine patterns for autonomous agents:
+Autonomous agents that can plan, execute, and verify complex tasks:
 
 | Capability | Implementation |
 |------------|----------------|
@@ -189,6 +189,54 @@ Combine patterns for autonomous agents:
 | Context management | Message history summarization |
 | Human-in-the-loop | Tool approval workflows |
 | Durable execution | Temporal, DBOS, Prefect |
+
+### Building a Deep Agent
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.toolsets import ApprovalRequiredToolset, FilteredToolset
+
+# 1. Core agent with basic capabilities
+agent = Agent(
+    'openai:gpt-5',
+    instructions='''
+    You are an autonomous assistant that can:
+    - Read and write files
+    - Execute code in a sandbox
+    - Search the web
+    - Delegate to specialist agents
+
+    Always verify your work before reporting completion.
+    ''',
+)
+
+# 2. Add file operations (with approval for writes)
+file_toolset = FileOperationsToolset()
+safe_file_toolset = file_toolset.approval_required(
+    lambda ctx, td, args: td.name.startswith('write_')
+)
+
+# 3. Add code execution (sandboxed)
+code_toolset = SandboxedCodeExecutionToolset()
+
+# 4. Combine with history processing for long conversations
+from pydantic_ai.history_processors import SummarizingHistoryProcessor
+
+agent = Agent(
+    'openai:gpt-5',
+    toolsets=[safe_file_toolset, code_toolset],
+    history_processors=[SummarizingHistoryProcessor(max_tokens=8000)],
+)
+```
+
+### Deep Agent Checklist
+
+- [ ] **Planning**: Agent can break tasks into steps
+- [ ] **Verification**: Agent validates its own output
+- [ ] **Recovery**: Agent handles errors gracefully
+- [ ] **Safety**: Dangerous operations require approval
+- [ ] **Context**: Long conversations are summarized
+- [ ] **Observability**: Full tracing enabled
 
 Community package: [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents)
 

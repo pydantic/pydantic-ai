@@ -73,6 +73,64 @@ async with agent.run_stream('user prompt', deps=my_deps) as result:
 
 Returns `StreamedRunResult`. See [streaming.md](streaming.md).
 
+### `agent.run_stream_sync()` — Synchronous Streaming
+
+Synchronous version of `run_stream()`:
+
+```python
+with agent.run_stream_sync('user prompt', deps=my_deps) as result:
+    for text in result.stream_text():
+        print(text)
+```
+
+### Event Stream Handler
+
+Observe events during streaming (tool calls, deltas, etc.):
+
+```python
+from collections.abc import AsyncIterable
+
+from pydantic_ai import (
+    Agent,
+    AgentStreamEvent,
+    FinalResultEvent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    RunContext,
+    TextPartDelta,
+)
+
+agent = Agent('openai:gpt-5')
+
+
+async def event_stream_handler(
+    ctx: RunContext,
+    event_stream: AsyncIterable[AgentStreamEvent],
+):
+    async for event in event_stream:
+        if isinstance(event, PartStartEvent):
+            print(f'Starting part {event.index}: {event.part!r}')
+        elif isinstance(event, PartDeltaEvent):
+            if isinstance(event.delta, TextPartDelta):
+                print(f'Text delta: {event.delta.content_delta!r}')
+        elif isinstance(event, FunctionToolCallEvent):
+            print(f'Tool call: {event.part.tool_name}({event.part.args})')
+        elif isinstance(event, FunctionToolResultEvent):
+            print(f'Tool result: {event.result.content}')
+        elif isinstance(event, FinalResultEvent):
+            print(f'Final result starting (tool_name={event.tool_name})')
+
+
+async def main():
+    async with agent.run_stream('prompt', event_stream_handler=event_stream_handler) as run:
+        async for output in run.stream_text():
+            print(output)
+```
+
+Also works with `agent.run()` for non-streaming runs.
+
 ### `agent.iter()` — Step-by-Step Iteration
 
 ```python
@@ -215,6 +273,119 @@ def simple_tool(arg: str) -> str:
 
 See [tools.md](tools.md) for complete tool documentation.
 
+## Run Metadata
+
+Tag agent runs with contextual data for monitoring and filtering:
+
+```python
+from dataclasses import dataclass
+
+from pydantic_ai import Agent
+
+
+@dataclass
+class Deps:
+    tenant: str
+
+
+agent = Agent[Deps](
+    'openai:gpt-5',
+    deps_type=Deps,
+    metadata=lambda ctx: {'tenant': ctx.deps.tenant},  # Agent-level metadata
+)
+
+result = agent.run_sync(
+    'What is the capital of France?',
+    deps=Deps(tenant='tenant-123'),
+    metadata=lambda ctx: {'num_requests': ctx.usage.requests},  # Per-run metadata
+)
+print(result.metadata)
+#> {'tenant': 'tenant-123', 'num_requests': 1}
+```
+
+Metadata is:
+- Computed when run starts and again after successful completion
+- Merged (per-run overrides agent-level)
+- Attached to `RunContext` during the run
+- Added to span attributes when instrumentation is enabled
+
+Access via `result.metadata`, `agent_run.metadata`, or `streamed_result.metadata`.
+
+## capture_run_messages() — Debug Failed Runs
+
+Capture messages from a failed run for debugging:
+
+```python
+from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, capture_run_messages
+
+agent = Agent('openai:gpt-5')
+
+
+@agent.tool_plain
+def flaky_tool(size: int) -> int:
+    if size != 42:
+        raise ModelRetry('Please try again.')
+    return size**3
+
+
+with capture_run_messages() as messages:
+    try:
+        result = agent.run_sync('Get volume of box with size 6.')
+    except UnexpectedModelBehavior as e:
+        print('Error:', e)
+        print('Messages exchanged:')
+        for msg in messages:
+            print(f'  {type(msg).__name__}: {msg}')
+```
+
+The `messages` list contains all `ModelRequest` and `ModelResponse` objects exchanged during the run, useful for understanding why retries failed.
+
+Note: If multiple runs occur in one context, only the first run's messages are captured.
+
+## Runs vs. Conversations
+
+A **run** can be a complete conversation or just one turn. A **conversation** can span multiple runs using `message_history`:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5')
+
+# First run
+result1 = agent.run_sync('Who was Albert Einstein?')
+
+# Second run, continuing the conversation
+result2 = agent.run_sync(
+    'What was his most famous equation?',
+    message_history=result1.new_messages(),  # Continue conversation
+)
+```
+
+Without `message_history`, the model wouldn't know who "his" refers to.
+
+## Model Settings Precedence
+
+Settings merge with later values overriding earlier:
+
+```
+Model settings < Agent settings < Run settings
+```
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+
+# Model-level settings
+model = OpenAIChatModel('gpt-5', settings={'max_tokens': 500})
+
+# Agent-level settings (override model)
+agent = Agent(model, model_settings={'temperature': 0.7})
+
+# Run-level settings (override agent and model)
+result = agent.run_sync('prompt', model_settings={'temperature': 0.0})
+# Final: max_tokens=500 (model), temperature=0.0 (run)
+```
+
 ## Debugging Agent Runs
 
 When an agent behaves unexpectedly, enable instrumentation to trace the full execution:
@@ -239,3 +410,13 @@ This captures every model request and response, making it easy to understand wha
 | `EndStrategy` | `pydantic_ai.EndStrategy` | `'early'` or `'exhaustive'` |
 | `RunContext` | `pydantic_ai.RunContext` | Dependency injection context |
 | `InstrumentationSettings` | `pydantic_ai.InstrumentationSettings` | Tracing config |
+| `capture_run_messages` | `pydantic_ai.capture_run_messages` | Debug context manager |
+| `AgentStreamEvent` | `pydantic_ai.AgentStreamEvent` | Base event type for streaming |
+
+## See Also
+
+- [streaming.md](streaming.md) — Streaming responses and events
+- [output.md](output.md) — Structured output configuration
+- [dependencies.md](dependencies.md) — Dependency injection
+- [tools.md](tools.md) — Tool registration
+- [multi-agent.md](multi-agent.md) — Multi-agent patterns
