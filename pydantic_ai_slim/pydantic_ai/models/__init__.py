@@ -7,6 +7,7 @@ specific LLM being used.
 from __future__ import annotations as _annotations
 
 import base64
+import json
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
@@ -1370,7 +1371,6 @@ def _inject_return_schema_in_description(tool_def: ToolDefinition) -> ToolDefini
     """
     if tool_def.return_schema is None:
         return tool_def
-    import json
 
     parts: list[str] = []
     if tool_def.description:
