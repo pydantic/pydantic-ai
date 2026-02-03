@@ -252,9 +252,9 @@ def get_tool_choice_from_cassette(cassette: Any, provider: str, xai_provider: An
             return 'auto'
         elif 'any' in tool_choice:
             return 'any'
-        elif 'tool' in tool_choice:  # pragma: no cover
+        elif 'tool' in tool_choice:
             return tool_choice['tool'].get('name')
-        return None  # pragma: no cover
+        return None
     else:
         return body.get('tool_choice')
 
