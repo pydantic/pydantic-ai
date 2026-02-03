@@ -1,0 +1,628 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '595'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: |
+          You are a helpful math assistant.
+
+
+          Always respond with a JSON object that's compatible with this schema:
+
+          {"properties": {"number": {"type": "integer"}}, "required": ["number"], "type": "object", "additionalProperties": false, "title": "Number", "description": "Return a number."}
+
+          Don't include any text or Markdown fencing before or after.
+        role: system
+      - content: 'In this conversation, you are tasked ONLY with summing. Let''s start: 3, 3?'
+        role: user
+      model: gpt-4o
+      stream: false
+      text:
+        format:
+          type: json_object
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1546'
+      content-type:
+      - application/json
+      openai-organization:
+      - inria-20
+      openai-processing-ms:
+      - '1065'
+      openai-project:
+      - proj_RUdP6pJASnVjBKlxwK4Mb9dS
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1770132689
+      created_at: 1770132688
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0c01fba299b95ed200698214d00bd081929fa840d7a48ecbd8
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: '{"number": 6}'
+          type: output_text
+        id: msg_0c01fba299b95ed200698214d0e9c481929fb3bf0ef8e52475
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: json_object
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 108
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 7
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 115
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '683'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=fyxIR.8AFCaF7fj8Q2u8aNWqTJnYB3EN6SGSMmPFcLQ-1770132689-1.0.1.1-ZSG9l_M60HnRgreDf.LExUf4oEhzoE9sPobGYRS6v4NFbUKpO4KjeXJ4g2wVyCMILLclozKW11qb0VxEiDRQ3H5OKiho0Wkb._9oFsjIQkw;
+        _cfuvid=uhFzqmnQL2pNJut4zG0L7TrmWir5ESvTTkavrmRawOs-1770132689145-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: |
+          You are a helpful math assistant.
+
+
+          Always respond with a JSON object that's compatible with this schema:
+
+          {"properties": {"number": {"type": "integer"}}, "required": ["number"], "type": "object", "additionalProperties": false, "title": "Number", "description": "Return a number."}
+
+          Don't include any text or Markdown fencing before or after.
+        role: system
+      - content: 'In this conversation, you are tasked ONLY with summing. Let''s start: 3, 3?'
+        role: user
+      - content: '{"number": 6}'
+        role: assistant
+      - content: 'and: 4, 4?'
+        role: user
+      model: gpt-4o
+      stream: false
+      text:
+        format:
+          type: json_object
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1882'
+      content-type:
+      - application/json
+      openai-organization:
+      - inria-20
+      openai-processing-ms:
+      - '1276'
+      openai-project:
+      - proj_RUdP6pJASnVjBKlxwK4Mb9dS
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1770132690
+      created_at: 1770132689
+      error: null
+      frequency_penalty: 0.0
+      id: resp_05b9a3ff03fa46f300698214d1c4588193888f060e92ac1b68
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: '{"number": 8}'
+          type: output_text
+        id: msg_05b9a3ff03fa46f300698214d27f648193a0a8d6ef39ccf9bb
+        role: assistant
+        status: completed
+        type: message
+      - content:
+        - annotations: []
+          logprobs: []
+          text: '{"number": 8}'
+          type: output_text
+        id: msg_05b9a3ff03fa46f300698214d2d9b0819387ac68aaad10ca6e
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: json_object
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 133
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 14
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 147
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '712'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=fyxIR.8AFCaF7fj8Q2u8aNWqTJnYB3EN6SGSMmPFcLQ-1770132689-1.0.1.1-ZSG9l_M60HnRgreDf.LExUf4oEhzoE9sPobGYRS6v4NFbUKpO4KjeXJ4g2wVyCMILLclozKW11qb0VxEiDRQ3H5OKiho0Wkb._9oFsjIQkw;
+        _cfuvid=uhFzqmnQL2pNJut4zG0L7TrmWir5ESvTTkavrmRawOs-1770132689145-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: 'In this conversation, you are tasked ONLY with summing. Let''s start: 3, 3?'
+        role: user
+      - content: '{"number": 6}'
+        role: assistant
+      - content: 'and: 4, 4?'
+        role: user
+      - content: '{"number": 8}'
+        role: assistant
+      - content: '{"number": 8}'
+        role: assistant
+      instructions: |
+        You are a helpful math assistant.
+
+
+        Always respond with a JSON object that's compatible with this schema:
+
+        {"properties": {"number": {"type": "integer"}}, "required": ["number"], "type": "object", "additionalProperties": false, "title": "Number", "description": "Return a number."}
+
+        Don't include any text or Markdown fencing before or after.
+      model: gpt-4o
+    uri: https://api.openai.com/v1/responses/compact
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3538'
+      content-type:
+      - application/json
+      openai-organization:
+      - inria-20
+      openai-processing-ms:
+      - '3848'
+      openai-project:
+      - proj_RUdP6pJASnVjBKlxwK4Mb9dS
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      created_at: 1770132695
+      id: resp_0fa9669751a6aa3001698214d34dc881a19f27f080ec193230
+      object: response.compaction
+      output:
+      - content:
+        - text: 'In this conversation, you are tasked ONLY with summing. Let''s start: 3, 3?'
+          type: input_text
+        id: msg_0fa9669751a6aa3001698214d351a481a1b63174e9106b4da6
+        role: user
+        status: completed
+        type: message
+      - content:
+        - text: 'and: 4, 4?'
+          type: input_text
+        id: msg_0fa9669751a6aa3001698214d351bc81a18bb9881ccf6aa43c
+        role: user
+        status: completed
+        type: message
+      - encrypted_content: gAAAAABpghTXQkzrhcLMG3agNJ5pG_Y6tXkAwkQ08ryk3-O99YR0IPD_tpfHV0_yhwiRdmaFc0DSJMpe6OfkX088T3zUdN4jJz7jk94RabzFgzb7IrfPeadRYn4BR_A2nrK7YqA_DpusOknym3n1tOvOXrZ_M_dr6-Av400R53ILuxNRaXQwRNLL7oGV4qZyCcUb2r43cqjvUFVA4A2VpEjoEgC8WC3jrlrQsatIp2DsWPq0YhiLH7B_3bcn8DOaANE9jJntiTWpVMwH8y3fhTO6E5H9YehHzkSkcMfkGYOjblX-wfKeLfPhaR_xA34snbP87eJH0K6V6DhP_kLv9Fxtj38gdd4BxHq0A8JuQDgh_UjoKC2rFdDYPv5YQ50QK8BdfuzFYUvdhWkdTqo1RGU0I33ZvIlyqVTO9NliQa8nxCHr8caKColOxS5c8jhemss-x_iREgi9tFI6Qib34euUf0JZcfD5WLxew9G9rFcwOwNpnVccQYkm8RmzcwAfnfQCTcgKLTkdk6k4tvAkYANrd3BS9rbbWU3beXNWehea-afwWItA3giHlTY-EbN4jPfMDWI6pUmtjtoxGlgFsSNYCG9HKilZiHte8i9Sa8HTRJc-chEG954DKeIHTfZC5_wkh0s5YTJVvOVaZLjLZdZXlF-ERSLQ5gVzoMpdNq6_H4Pp2iTS-tzX3Df8s-pDwGgNQ9XrhIsv0tIftscCSM8z0o0a6t313oqCLOBwxncS9XreRgjslWmjUrWfZeVQoCOcAM8UqDKmSqn59WctQGIeiNWV7EAfA44e00YfsMGk1xQgjtGz8dbnnqJGfneQcpbGg-x2Y7nsXyBTsOYuz0G_ytwPqaxkb2mjcQnzwnUeKVPVBP-QuggKzFJdgOBNzfu8Iv8g0PqcbQxSz7vQ9FGJY07VBx3QZmB1FUSUl7ABbS9bfqaI84AmyPlZfXPt9ezbcl5cdieyeXKslnVMwh37XwIpzYjZ6eK7iAQS90BbfCM-IKVwdo78gJTKnjVFMCCT6mF47EoseEQ3f3YQicxtn3LZTOu80aiwrlS7HiV6BnGJenEztYNh0vWNdLaIDwzRq7b_0mE4rJTeaQ-t05KkGhsoDCkxM3O8K0XkG4ffkgXi42mw-mg90-SWpul5rqauNk2he_dxH4F4xfv_gilNO3__zS3X8o_7sFpG1vVhOF56Y9fK9YlowavAOuaPbXOG_YGvjRl7SbR5pLJsNrO9yjBmh0L3tCHro9wUn7ww5oxZWkQK23UdWkLZyno0fF4pzBJyw4ODWHHacOV4AYigPVJCUU_QMfGCvccQzpfHRAAhQEKMrHR94OVAtq0NahWsag6kv6DRaDaRvS_a7_9N3TOP3lALGZxSe9xAPpVTIpyEoXOpYCFz_yKwCsWN8-xHn1lF4Dg0Dkbh9Rg8NRQq8qqYBM3VMlIJ73zddYKqPJdsbdCYFB7krA38uolowlePB13F0A4HZuEPELzhfUeFHuRmccSUVK4NAYaUzqeafg-ejZaQmuoJWJX_KarTZIz7FCHQPJeNTCVGm8W90LSmKfC1ZiUcPk36ivlu2OcNJeIVIMEdbn9XIYczIFEL8e_BotqmxFQOwQvE5lUJn5IRQwSajmCvTm03AbeIAmGdSiGsvmIPrAW3MFq8b8tjT-vHYhFosw4LeyFXggtBe6GsfENUxjkBu1mW_SbxL8GVQVrt7BgKkbaqd7BQh5Wh1_b5wWUueeXgDcJD1Slfxr-tCvdv-swC5rzvCGX2iaWhYRQs0FYxOmz7KxYzndvDjRsIPVdTzcApsOcF3EiOiwTTtFu4kHV_rTukggX9wpfu3O60RBDKMdmKj-LyF5sF-7-eaVyCsC9AlAlmwEZXJbUs9-Ls4m4-IZQMX9EWw70qNDWuqvGa5QQVjYJWJ6Gxnr8yNBuTCzyXoXQq5QYvniY5XcuiRdLTILnDm33_7t80PPzS4Zhh4p0dejYGA2Fn5n5pGR1MARlO7SIJhBjlEUDPL82lqHhYi8CWNZFwZo1P2fKH9NVJ6CCFbNIFevKLQ1hDltlfCyn31HamVo-32mvuxAVJO8dNJPeAFsA9EN46ooWVUNd5bEL-KvYbUzeaPabebr6t5Su43AS5A2iKocu9ibGUfHBTz4Iv-OZkzjT9RJ6ucxZb76DwmOGLRhvYXH4NQYd8GBaYYav_xhx2RBW3V4y2vWFFkhzubKsG6LtOWXjfDGLb2z81OeCddf0QjnMNvFvHAnjFx99HVgbRgqjzPTFRrSWkvxXPih9-QJyZgsF_SqPfn1I3c8Lm1Hyu9j81ikrZ2mpz1Ybr3PWNzJLlCzokfhXdoCaaxCTV2Jg85iCsDie1On5dSszRm5z69Fz3Sv-y6wVoB5hLPMls8_HV-ZxmZUYybJD9OqXDsfetxQZspj4d_Ik=
+        id: cmp_0fa9669751a6aa3001698214d3e9dc81a1978379bdeaf4c82d
+        type: compaction
+      usage:
+        input_tokens: 243
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 169
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 412
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '3348'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=N3bspD_9ZRbZKE7vOFKxD35bEE1v55wm3vA9iRMc12c-1770132695-1.0.1.1-i6_0R9vIbXOp6DhnPc3nrwg1y5n7AKx2hczAQvROw.spVjHA2i2E0DfPBBW.KcuaD0FRaQknQJj2RAigC2.4qvwD7HHLvScfCbhpITyAUVQ;
+        _cfuvid=RdGK1qgs11nrvYAnhmlusyn.lANZx74ZnoFtq.UziHw-1770132695173-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: |
+          You are a helpful math assistant.
+
+
+          Always respond with a JSON object that's compatible with this schema:
+
+          {"properties": {"number": {"type": "integer"}}, "required": ["number"], "type": "object", "additionalProperties": false, "title": "Number", "description": "Return a number."}
+
+          Don't include any text or Markdown fencing before or after.
+        role: system
+      - encrypted_content: gAAAAABpghTXQkzrhcLMG3agNJ5pG_Y6tXkAwkQ08ryk3-O99YR0IPD_tpfHV0_yhwiRdmaFc0DSJMpe6OfkX088T3zUdN4jJz7jk94RabzFgzb7IrfPeadRYn4BR_A2nrK7YqA_DpusOknym3n1tOvOXrZ_M_dr6-Av400R53ILuxNRaXQwRNLL7oGV4qZyCcUb2r43cqjvUFVA4A2VpEjoEgC8WC3jrlrQsatIp2DsWPq0YhiLH7B_3bcn8DOaANE9jJntiTWpVMwH8y3fhTO6E5H9YehHzkSkcMfkGYOjblX-wfKeLfPhaR_xA34snbP87eJH0K6V6DhP_kLv9Fxtj38gdd4BxHq0A8JuQDgh_UjoKC2rFdDYPv5YQ50QK8BdfuzFYUvdhWkdTqo1RGU0I33ZvIlyqVTO9NliQa8nxCHr8caKColOxS5c8jhemss-x_iREgi9tFI6Qib34euUf0JZcfD5WLxew9G9rFcwOwNpnVccQYkm8RmzcwAfnfQCTcgKLTkdk6k4tvAkYANrd3BS9rbbWU3beXNWehea-afwWItA3giHlTY-EbN4jPfMDWI6pUmtjtoxGlgFsSNYCG9HKilZiHte8i9Sa8HTRJc-chEG954DKeIHTfZC5_wkh0s5YTJVvOVaZLjLZdZXlF-ERSLQ5gVzoMpdNq6_H4Pp2iTS-tzX3Df8s-pDwGgNQ9XrhIsv0tIftscCSM8z0o0a6t313oqCLOBwxncS9XreRgjslWmjUrWfZeVQoCOcAM8UqDKmSqn59WctQGIeiNWV7EAfA44e00YfsMGk1xQgjtGz8dbnnqJGfneQcpbGg-x2Y7nsXyBTsOYuz0G_ytwPqaxkb2mjcQnzwnUeKVPVBP-QuggKzFJdgOBNzfu8Iv8g0PqcbQxSz7vQ9FGJY07VBx3QZmB1FUSUl7ABbS9bfqaI84AmyPlZfXPt9ezbcl5cdieyeXKslnVMwh37XwIpzYjZ6eK7iAQS90BbfCM-IKVwdo78gJTKnjVFMCCT6mF47EoseEQ3f3YQicxtn3LZTOu80aiwrlS7HiV6BnGJenEztYNh0vWNdLaIDwzRq7b_0mE4rJTeaQ-t05KkGhsoDCkxM3O8K0XkG4ffkgXi42mw-mg90-SWpul5rqauNk2he_dxH4F4xfv_gilNO3__zS3X8o_7sFpG1vVhOF56Y9fK9YlowavAOuaPbXOG_YGvjRl7SbR5pLJsNrO9yjBmh0L3tCHro9wUn7ww5oxZWkQK23UdWkLZyno0fF4pzBJyw4ODWHHacOV4AYigPVJCUU_QMfGCvccQzpfHRAAhQEKMrHR94OVAtq0NahWsag6kv6DRaDaRvS_a7_9N3TOP3lALGZxSe9xAPpVTIpyEoXOpYCFz_yKwCsWN8-xHn1lF4Dg0Dkbh9Rg8NRQq8qqYBM3VMlIJ73zddYKqPJdsbdCYFB7krA38uolowlePB13F0A4HZuEPELzhfUeFHuRmccSUVK4NAYaUzqeafg-ejZaQmuoJWJX_KarTZIz7FCHQPJeNTCVGm8W90LSmKfC1ZiUcPk36ivlu2OcNJeIVIMEdbn9XIYczIFEL8e_BotqmxFQOwQvE5lUJn5IRQwSajmCvTm03AbeIAmGdSiGsvmIPrAW3MFq8b8tjT-vHYhFosw4LeyFXggtBe6GsfENUxjkBu1mW_SbxL8GVQVrt7BgKkbaqd7BQh5Wh1_b5wWUueeXgDcJD1Slfxr-tCvdv-swC5rzvCGX2iaWhYRQs0FYxOmz7KxYzndvDjRsIPVdTzcApsOcF3EiOiwTTtFu4kHV_rTukggX9wpfu3O60RBDKMdmKj-LyF5sF-7-eaVyCsC9AlAlmwEZXJbUs9-Ls4m4-IZQMX9EWw70qNDWuqvGa5QQVjYJWJ6Gxnr8yNBuTCzyXoXQq5QYvniY5XcuiRdLTILnDm33_7t80PPzS4Zhh4p0dejYGA2Fn5n5pGR1MARlO7SIJhBjlEUDPL82lqHhYi8CWNZFwZo1P2fKH9NVJ6CCFbNIFevKLQ1hDltlfCyn31HamVo-32mvuxAVJO8dNJPeAFsA9EN46ooWVUNd5bEL-KvYbUzeaPabebr6t5Su43AS5A2iKocu9ibGUfHBTz4Iv-OZkzjT9RJ6ucxZb76DwmOGLRhvYXH4NQYd8GBaYYav_xhx2RBW3V4y2vWFFkhzubKsG6LtOWXjfDGLb2z81OeCddf0QjnMNvFvHAnjFx99HVgbRgqjzPTFRrSWkvxXPih9-QJyZgsF_SqPfn1I3c8Lm1Hyu9j81ikrZ2mpz1Ybr3PWNzJLlCzokfhXdoCaaxCTV2Jg85iCsDie1On5dSszRm5z69Fz3Sv-y6wVoB5hLPMls8_HV-ZxmZUYybJD9OqXDsfetxQZspj4d_Ik=
+        id: cmp_0fa9669751a6aa3001698214d3e9dc81a1978379bdeaf4c82d
+        type: compaction
+      - content:
+        - text: |-
+            1 validation error:
+            ```json
+            [
+              {
+                "type": "json_invalid",
+                "loc": [],
+                "msg": "Invalid JSON: trailing characters at line 1 column 14",
+                "input": "{\"number\": 8}{\"number\": 8}"
+              }
+            ]
+            ```
+
+            Fix the errors and try again.
+          type: input_text
+        role: user
+      model: gpt-4o
+      stream: false
+      text:
+        format:
+          type: json_object
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1545'
+      content-type:
+      - application/json
+      openai-organization:
+      - inria-20
+      openai-processing-ms:
+      - '659'
+      openai-project:
+      - proj_RUdP6pJASnVjBKlxwK4Mb9dS
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1770132695
+      created_at: 1770132695
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0fa9669751a6aa3000698214d7683881a189ac47ab643f93e3
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: '{"number":8}'
+          type: output_text
+        id: msg_0fa9669751a6aa3000698214d7c62081a1949d935e816be475
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: json_object
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 405
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 6
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 411
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '3435'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=RteV7zs81jOMVHPTcJh.oRKJ2hi8d0jbZ7q3bLxdfq4-1770132696-1.0.1.1-w.q31Cn5tQIwEPWyatLX4kurN5wCgXABxFJn.WCceg3fGeaqf7Z9eWWhipXJ2w3s9G_g3_y05ltR50wV4FXwhP0OHVXW4RZ3W5sfIyEUsPE;
+        _cfuvid=3.D1g0aCaetDJ7y0N8K.UHStxZFs6hDxaJg77G8HvVE-1770132696113-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: |
+          You are a helpful math assistant.
+
+
+          Always respond with a JSON object that's compatible with this schema:
+
+          {"properties": {"number": {"type": "integer"}}, "required": ["number"], "type": "object", "additionalProperties": false, "title": "Number", "description": "Return a number."}
+
+          Don't include any text or Markdown fencing before or after.
+        role: system
+      - encrypted_content: gAAAAABpghTXQkzrhcLMG3agNJ5pG_Y6tXkAwkQ08ryk3-O99YR0IPD_tpfHV0_yhwiRdmaFc0DSJMpe6OfkX088T3zUdN4jJz7jk94RabzFgzb7IrfPeadRYn4BR_A2nrK7YqA_DpusOknym3n1tOvOXrZ_M_dr6-Av400R53ILuxNRaXQwRNLL7oGV4qZyCcUb2r43cqjvUFVA4A2VpEjoEgC8WC3jrlrQsatIp2DsWPq0YhiLH7B_3bcn8DOaANE9jJntiTWpVMwH8y3fhTO6E5H9YehHzkSkcMfkGYOjblX-wfKeLfPhaR_xA34snbP87eJH0K6V6DhP_kLv9Fxtj38gdd4BxHq0A8JuQDgh_UjoKC2rFdDYPv5YQ50QK8BdfuzFYUvdhWkdTqo1RGU0I33ZvIlyqVTO9NliQa8nxCHr8caKColOxS5c8jhemss-x_iREgi9tFI6Qib34euUf0JZcfD5WLxew9G9rFcwOwNpnVccQYkm8RmzcwAfnfQCTcgKLTkdk6k4tvAkYANrd3BS9rbbWU3beXNWehea-afwWItA3giHlTY-EbN4jPfMDWI6pUmtjtoxGlgFsSNYCG9HKilZiHte8i9Sa8HTRJc-chEG954DKeIHTfZC5_wkh0s5YTJVvOVaZLjLZdZXlF-ERSLQ5gVzoMpdNq6_H4Pp2iTS-tzX3Df8s-pDwGgNQ9XrhIsv0tIftscCSM8z0o0a6t313oqCLOBwxncS9XreRgjslWmjUrWfZeVQoCOcAM8UqDKmSqn59WctQGIeiNWV7EAfA44e00YfsMGk1xQgjtGz8dbnnqJGfneQcpbGg-x2Y7nsXyBTsOYuz0G_ytwPqaxkb2mjcQnzwnUeKVPVBP-QuggKzFJdgOBNzfu8Iv8g0PqcbQxSz7vQ9FGJY07VBx3QZmB1FUSUl7ABbS9bfqaI84AmyPlZfXPt9ezbcl5cdieyeXKslnVMwh37XwIpzYjZ6eK7iAQS90BbfCM-IKVwdo78gJTKnjVFMCCT6mF47EoseEQ3f3YQicxtn3LZTOu80aiwrlS7HiV6BnGJenEztYNh0vWNdLaIDwzRq7b_0mE4rJTeaQ-t05KkGhsoDCkxM3O8K0XkG4ffkgXi42mw-mg90-SWpul5rqauNk2he_dxH4F4xfv_gilNO3__zS3X8o_7sFpG1vVhOF56Y9fK9YlowavAOuaPbXOG_YGvjRl7SbR5pLJsNrO9yjBmh0L3tCHro9wUn7ww5oxZWkQK23UdWkLZyno0fF4pzBJyw4ODWHHacOV4AYigPVJCUU_QMfGCvccQzpfHRAAhQEKMrHR94OVAtq0NahWsag6kv6DRaDaRvS_a7_9N3TOP3lALGZxSe9xAPpVTIpyEoXOpYCFz_yKwCsWN8-xHn1lF4Dg0Dkbh9Rg8NRQq8qqYBM3VMlIJ73zddYKqPJdsbdCYFB7krA38uolowlePB13F0A4HZuEPELzhfUeFHuRmccSUVK4NAYaUzqeafg-ejZaQmuoJWJX_KarTZIz7FCHQPJeNTCVGm8W90LSmKfC1ZiUcPk36ivlu2OcNJeIVIMEdbn9XIYczIFEL8e_BotqmxFQOwQvE5lUJn5IRQwSajmCvTm03AbeIAmGdSiGsvmIPrAW3MFq8b8tjT-vHYhFosw4LeyFXggtBe6GsfENUxjkBu1mW_SbxL8GVQVrt7BgKkbaqd7BQh5Wh1_b5wWUueeXgDcJD1Slfxr-tCvdv-swC5rzvCGX2iaWhYRQs0FYxOmz7KxYzndvDjRsIPVdTzcApsOcF3EiOiwTTtFu4kHV_rTukggX9wpfu3O60RBDKMdmKj-LyF5sF-7-eaVyCsC9AlAlmwEZXJbUs9-Ls4m4-IZQMX9EWw70qNDWuqvGa5QQVjYJWJ6Gxnr8yNBuTCzyXoXQq5QYvniY5XcuiRdLTILnDm33_7t80PPzS4Zhh4p0dejYGA2Fn5n5pGR1MARlO7SIJhBjlEUDPL82lqHhYi8CWNZFwZo1P2fKH9NVJ6CCFbNIFevKLQ1hDltlfCyn31HamVo-32mvuxAVJO8dNJPeAFsA9EN46ooWVUNd5bEL-KvYbUzeaPabebr6t5Su43AS5A2iKocu9ibGUfHBTz4Iv-OZkzjT9RJ6ucxZb76DwmOGLRhvYXH4NQYd8GBaYYav_xhx2RBW3V4y2vWFFkhzubKsG6LtOWXjfDGLb2z81OeCddf0QjnMNvFvHAnjFx99HVgbRgqjzPTFRrSWkvxXPih9-QJyZgsF_SqPfn1I3c8Lm1Hyu9j81ikrZ2mpz1Ybr3PWNzJLlCzokfhXdoCaaxCTV2Jg85iCsDie1On5dSszRm5z69Fz3Sv-y6wVoB5hLPMls8_HV-ZxmZUYybJD9OqXDsfetxQZspj4d_Ik=
+        id: cmp_0fa9669751a6aa3001698214d3e9dc81a1978379bdeaf4c82d
+        type: compaction
+      - content:
+        - text: |-
+            1 validation error:
+            ```json
+            [
+              {
+                "type": "json_invalid",
+                "loc": [],
+                "msg": "Invalid JSON: trailing characters at line 1 column 14",
+                "input": "{\"number\": 8}{\"number\": 8}"
+              }
+            ]
+            ```
+
+            Fix the errors and try again.
+          type: input_text
+        role: user
+      - content: '{"number":8}'
+        role: assistant
+      - content: 'and: 5, 5?'
+        role: user
+      model: gpt-4o
+      stream: false
+      text:
+        format:
+          type: json_object
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1546'
+      content-type:
+      - application/json
+      openai-organization:
+      - inria-20
+      openai-processing-ms:
+      - '1203'
+      openai-project:
+      - proj_RUdP6pJASnVjBKlxwK4Mb9dS
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1770132697
+      created_at: 1770132696
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0fa9669751a6aa3000698214d8471881a1929caba2ad6df376
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: '{"number":10}'
+          type: output_text
+        id: msg_0fa9669751a6aa3000698214d9181881a1a3c2f7d229dc4592
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: json_object
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 426
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 6
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 432
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

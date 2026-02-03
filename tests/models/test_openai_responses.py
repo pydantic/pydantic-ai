@@ -20,12 +20,14 @@ from pydantic_ai import (
     FinalResultEvent,
     ImageGenerationTool,
     ImageUrl,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
+    RunContext,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
@@ -49,6 +51,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import openai_model_profile
+from pydantic_ai.settings import merge_model_settings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -285,6 +288,244 @@ async def test_openai_responses_system_prompt(allow_model_requests: None, openai
     agent = Agent(model=model, system_prompt='You are a helpful assistant.')
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.')
+
+
+async def test_openai_responses_compact_messages(allow_model_requests: None, openai_api_key: str):
+    async def context_aware_processor(ctx: RunContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
+        if len(messages) > 4:
+            assert isinstance(ctx.model, OpenAIResponsesModel)
+            assert isinstance(ctx.model_request_parameters, ModelRequestParameters)
+            compacted_messages = await ctx.model.compact_messages(
+                messages[:-1], model_settings=ctx.model_settings, model_request_parameters=ctx.model_request_parameters
+            )
+            return [compacted_messages, messages[-1]]
+
+        return messages
+
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model=model, instructions='You are a helpful math assistant.', history_processors=[context_aware_processor]
+    )
+
+    result = await agent.run("In this conversation, you are tasked ONLY with summing. Let's start: 3, 3?")
+    result = await agent.run('and: 4, 4?', message_history=result.all_messages())
+    result = await agent.run('and: 5, 5?', message_history=result.all_messages())
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[],
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={
+                    'id': 'cmp_0489e67fc8c649fb01698210489600819099f5f5839c2d6a41',
+                    'encrypted_content': 'gAAAAABpghBLYasHUPQCFImk_uESkKSPB7xHJYPUJVWxmew4IT_xlXfXcnelcEgdrrSssJZO9Ak-fXrx3AEOC_vPvb2r52W0CpK4WdL5zbCdrFNSud2zB05054RFHCeApc_SmqJD76CZGYnfDopX_iHgjWRtIv2wG_b7duc_xEmIdGcKNHDH8jT9RIavTqR226Z01zT0s6MJlaMA8eRbM2FWyjx15byUTXS3dNlVFTbTfsBeD1RobfNmeZICSKScieRMnYkystYOMbqKQrfX6Yaw0ONEq9oqdNYJhZ2xiNcxKkqVPxfDEBJRwXWvUZT7DAA_xhrF6Ht2IagdX9zr3x6CxX9Ob7hU6a-3JK3m01658dQKw7j9_mRy2jUu6bXQJFiQOgFMNsb4Oc6A-t5dRUu628DoiZ4rwSI8bNJ5v7mtHDu2MJyittkFNj6UXEIVrxnJrOdhwOFbDmc8WtzGAJORI6HVd6k-hGMqqawPDdfjOF2aGFGEu1HQ1n_hM6wsNrypqYJn3uFWpOcuVGg8uF0viucA-POHIqaAo1SaRlMfmo76ORObskta7hB2TuFJm8I5t3T4G_mS_OZ5zJerG-n9NRyka3gdVFax3I12vXMz4K-raPFooOcv60jfgdLq3YEOYqi6x_SD7Fx0NaeaPzAoHg6CH_k883huh-3BudXotEjWNkBSOXOxJJbQ9T0wVei4KJndA8ks8iTJOeLpyAT_NkhWe_iZc6_zWMou0sY957UBQ4bA-e9pGdzazUUC43djKWYjjF5yi14KyPMAMkR5O0VzUIzbB8Ujs9NOxootsz_-W-bj0ENmsbeHqu7QSxQo8XjkAwzcIGdF1lp3kEtAcFDGAJ0QFY7sQ1zoIcqtHvqokD7mkT5d-55ihRkHBiRZ_89LW0Ui7NHro9hDNO6dCWqkP3QlouZYU7mqSY2ZtqJRjU6VYD_puUquC55IrJcDKr-wxa6U97_q2zuGKO8VLkVkvmZ1yCYq-SEueKbl-jvYcE4FWd3P3cmUbgkS1FytDJrnhyuRP2Go9mY7YWhZjxixhBReDmkHB7bW3YIyzEfX9WRwdgmOZcajFVP_fhKRM4bNvDVmaaDB2AVcCKh9cKPDzoYh3fCNzB8Hbu4ltoMsC4IflR3fez6n_QRQCx_AOp5AnerZ7I1Vg3gMi_-fGww515bbYNHGzP7A7BupbGvVI1fpAlZ_xD9eDAn1CZT3GpYXRvL1oceEYA726LAfeMoKptMEdliNh2vekFsjp2SpVQ29gI2V9eSgwD4-5MttqZ-GTfdsfpUEBdpKBjIiSCSieNlwxBhcWWurgi3GEiMdXD3m0WP5Vh2wNwz8raWWZaSOr3SsjUxNsR25d-LVRvryuFH5lydyor5MIcgtipUHgMZX5MLsCp6HnvIegkapR6eRa9Q2baRlKTqN4DcFNReSNJoDe_g3XoCRP3YdOJKy-IsxtpM7QSeYJaBgYSWMPpFvsJCoEus5IMz-m3LNpe9T5eQr4GDGocWucIjAwjAM5hQ0KaU00E6N6ae1EU_u8vkYV4R0QP2tN6knHlMlGUsMxT0CiNU7QdHRLxQ1uInlcuUbgtc0vEh0yWX20ikKAGDd3cAm_dbkkboszGwQJczsCwYmtZU8ZhfIwwmHRJZl-Go0gXvr-bA_oqcpbsxP6kA9SOuAfVz8pMcWPmf4Syg0MnK0o3_0pxIsJFw_ObBku9XCoj0Br7D40RZOiVuo9-YMOw6DgjMrkKGdhV2fWYa9zFWlil_cr3fHmsRe77jDqvmV2vyiGT2MEAwkFUCPWjZQ86YfOwGfmaGDEbKrdmxRHpC2IsPiIgQiemby4uXDSC7ZRQ4CP4j6StSwHgNhQsr4nB0PqqS1Zeo9UShl4VlgqhX4rTGQ_BiKC7odCQdd_bzADXgYYSvvUVhU8Xc_8jOODXJKQzMwEO-89NNBYEUhHbaDOuXSUGnY98ucIexl70i6HuT8rsEnFqFKb7KRVDie3rRmzF3GjuW1_kqtOTwbJS740WmUbgxLOMBl03Hqq64yoQxrV8KwVTAI5o2R-y7_oxjOEfnsxgRlwmUfJsar3QIP-ZKBr38uwJZ0SX1oZ5O_YAdGDJqI9iIOyBixxUrF5eEDhU44dpZhTyzNh0nSNFRASmIVp-8VE80parrBjdm4U8JNVNwW2l8XAsUm-8E8poapxXEBD1sZpgfSnuymDIbqeSb8pLt5LISXQd-F2TusCN8fqsl6TYnad1QfF-zJNZtiePYF89WsIWecy08g4BsnwXpI-8XcPRWcURILYes8SaVG6qkXqeUswizKRw5toLYIq-vPdbGzm3A7vhTd7kVLEYbMCIAPkCqp543fb4XFtDsN7dig7gemwEhZSsELCj1ScVFXAo4M0QLYz68dyPF2P42fHZQe8sdNzMZ0Gpb0y-LmQ9hgR-zMwRt3JhLyYFEUI6Je-Snc6weM887ZPMCyGF9sD1IGaqg-H1-8mGSZFbZtbwS1Bq3fND0s5eSeiMcDDad3xfrgsgVmLawX40e_oQ==',
+                    'type': 'compaction',
+                    'created_by': None,
+                },
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='and: 5, 5?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions='You are a helpful math assistant.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='10',
+                        id='msg_0489e67fc8c649fb006982104ca99881908d61b483040cab01',
+                        provider_name='openai',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=272, output_tokens=2, details={'reasoning_tokens': 0}),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id='resp_0489e67fc8c649fb006982104c58dc81909b4bd64319ad5b63',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_compact_messages_with_previous_response_id(
+    allow_model_requests: None, openai_api_key: str
+):
+    async def context_aware_processor(ctx: RunContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
+        if len(messages) > 4:
+            assert isinstance(ctx.model, OpenAIResponsesModel)
+            assert isinstance(ctx.model_request_parameters, ModelRequestParameters)
+            model_settings = merge_model_settings(
+                ctx.model_settings,
+                OpenAIResponsesModelSettings(openai_send_reasoning_ids=True, openai_previous_response_id='auto'),
+            )
+            compacted_messages = await ctx.model.compact_messages(
+                messages[:-1], model_settings=model_settings, model_request_parameters=ctx.model_request_parameters
+            )
+            return [compacted_messages, messages[-1]]
+
+        return messages
+
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model=model, instructions='You are a helpful math assistant.', history_processors=[context_aware_processor]
+    )
+
+    result = await agent.run("In this conversation, you are tasked ONLY with summing. Let's start: 3, 3?")
+    result = await agent.run('and: 4, 4?', message_history=result.all_messages())
+    result = await agent.run('and: 5, 5?', message_history=result.all_messages())
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[],
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={
+                    'id': 'cmp_0743347399ca97970169821aadf5fc81a3bc0492d78b8fa8cd',
+                    'encrypted_content': 'gAAAAABpghqyPKNRublAaHAATaWpE09Niflae0kR65_kNtkV64P6uLz8RnPx04240xJCXIIqjmeMzkf2bimA9eTsge5mIaSiJ79si5O8hnN5VymCXYfb_v4NfIgjUAK2UBfGmUjkBJYQWftjZGaN6W0OSRcNE4mSpeai1zyZDjtK1I3iTTCSLB6LFkdpP7o-G65K23buHnDoAPOHyQWR3Gt3exLC5DiwJdHPfF-daqD6kxwZzVev_emL505AP_wzzpKTnuf14KuzOz2_tBCC7csisi1qimMGZd1rtZ28BK-9fvLCrbfh-RQSBdG90IIbP1ZrVI1HHL9oCfkfh5ZcgERrG_Yz7BhvSr7qaUhwMMn3FvfKEg66UgtdEEWv6LNbtJeBNtUlXNMfhl1TYQDmLBkiIWO0iqLOvmOW4Ugolkm5AWXaQOwW9EZJ71kW_dPR4uttPqKSNCdBn7lyhjmnCw7mc6PKXGTJbH8Hx5bgeefJ-XXmVQ1afssW6jC5GwDcyL5llf6CqLVnz5An33l4Mm_498dUhdeoCoFnELd-JNXfqxMjwqXNaQShDs2qO9_Du-uWFRQ58NgAH1SE84hC2M5Rj-ONO4u--_4sQFJeT_NRKTS39CIny_3jNt9XAcXgQCROcKEU4yDFKVs09HGdL6MlotwJBsLRCkow58FZv-uaphkrbZZ3XZnVlOUXDcMb9-gEIaGGE3GmGKlWmMBKYl5oEZN-ptRwOhiOgJF1wnfa2ZlwpU77_M9hA8alqnP7HG-E-rmSpdyREPbUQIZXH6kDZJuhYm21A-6RgtZ7r6G3a_1nZRypk-htX5bmjRTUVlzuhhXluvQMR9vaviXd4FNZX1z10Vn0P1eetZUZ1ZZhNLDTV1NUvuiQDZLDf2iyuE9Egh7nPlF1xtqSWmjYX-1P6u6Gwr-eO1Ia4eFM-vDSTfy5Zhhoz9kDNQ8YMVtE7JAB5uxjGZ2u144ERr9AFa5eWn0Af10cdUT6hgBrHq9OXfq4KB06dnKKQ0vktfEQy-RHycGi78La_7kbitjDU4VwWci3WnxQW61KMwfIj2nSD6DawRBfOQgqFCQ6UsDS7H8skwRSazR0vqBMsUHBJHUfXvcDNx1RWvdgdwXQM7j7LMylry08DDUwM0n-RqQocHHk8jEstFDoLQImKk3pOev3DKMarN34HEYCmbsek-ZBEoFJDUZWH2GamdnVCw7FwOB9ZkNjrYS4FMN6MbvKnOqD8zS8aLnlw09q19hYTy6DdP2SSsqp3py5E22e5bmks1JfveMIz_FmEP3g0GMe8jvoD82Oj-TrmAMfAVLiK0aQguLBuXtG_hQFALCxdZpojCAB86vYmf4Bsy3k3gYvf4KdrNd6CBOVox5PeSI-PPftbcaC7cky0GFrXxUZVnDTwp3vxU9kZlIFaMtSwrOTGeEf2pfea13tlEwwe2yQW_RYKSQMV2b_GVTQIvPubGII8PbZvI1jo9WwIs3ZyfKzPCv-HFADAAPBRPkQM4vekJ53vkMBlGQ9S-2LqfGAUXXYs6pDo_SrI8L1l2MBR3zoPJ-Fo1mUKKSStl5hy8QJzPwXMo6Xj2Wh_Ww6FHswwkYqp1eS5n9ZGevjIS96WrCgvaLvWhhVwYVTSW0H9NqcItYYYbXzNBJ3sfNMuvH5XbJXwq3UsbPjXiA-O44lQmyvz0nC6cDpPpr9G8vtzkuLq_d73ue30G2_lVvgJpAuLxJoZvtiDuh0n5minX2n4rwARDkWdbkecgh3kiAZRWD9DoiKWWXNssjoOA9A193WA2wc3QuMcxopiLXyp6ovorqn862RsD1fBMGbDkzDesiPK0OpVQfXOoRBNVskcKb-c-4MNQ3OvMEGZe5q-vR-1HL4gLXR14BW4RVU2j239Tn--1WGsv8z49SiJhauDcyAhtUvnIxh5om9VUzcTjwVkc7c-ldhIxr6NLGfsdpfwhuZ1XbFum0Zi_4Jdd-o4-in35bYv8fXvvz99kS7Yi-vMmWoFMWj1XzoeGlqQ0kzo-WXHeYng2ms04CxZzQ4c9IBQjoIGvubuL3tJQ58EiyUoQRoLpW8ulT1ztgYCFPjy5J6zoFgLm9psq1MQVZr5lwh5pm-XOKo74pf5Y5jK1C9BKr5gzWX8bXhg6fP3_XK_rDR9MfRhKrWhBt7PReIy5zhE1zzCiyDDdWS748sRwp09LTyKXMPu1lHc69vkC2cBjidGClaouTowir45TwbxLHZ-muXn1O68_CnDFObWds9bPRCZsxKVi689Uy_qgmoAKhexphTme3BiJk9Sde289SwJR8SFYB0dxYx5mejnekSl_TO-GAOMyJzy6vSbIKtaWoXipTtXK9-LJUtbB9RqC7sCVvMWp4_5kurMcCzyCEQZKl4dgANyQiOm5V8h6BhgP8xmoDbCSA-5OKVetzdDoqv3NapgW6diGi-_Wj7RU7HmbmoFyAIYPh3FXN9Cddk_qEMGtlpean7uMEgoKT-OuIYvUQew9yOCes700-8XOKRR008QJa43RwrdRbf5Q==',
+                    'type': 'compaction',
+                    'created_by': None,
+                },
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='and: 5, 5?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions='You are a helpful math assistant.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='5 + 5 = 10',
+                        id='msg_0743347399ca97970069821ab34c3881a3a7731d3a0a0662c1',
+                        provider_name='openai',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=273, output_tokens=8, details={'reasoning_tokens': 0}),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id='resp_0743347399ca97970069821ab2dc9c81a3a437cebfe1fe80d4',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_compact_messages_output_type(allow_model_requests: None, openai_api_key: str):
+    async def context_aware_processor(ctx: RunContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
+        if len(messages) > 4:
+            assert isinstance(ctx.model, OpenAIResponsesModel)
+            assert isinstance(ctx.model_request_parameters, ModelRequestParameters)
+            compacted_messages = await ctx.model.compact_messages(
+                messages[:-1], model_settings=ctx.model_settings, model_request_parameters=ctx.model_request_parameters
+            )
+            return [compacted_messages, messages[-1]]
+
+        return messages
+
+    class Number(BaseModel):
+        number: int
+
+    output_type = PromptedOutput(Number, name='Number', description='Return a number.')
+
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model=model,
+        instructions='You are a helpful math assistant.',
+        history_processors=[context_aware_processor],
+        output_type=output_type,
+    )
+
+    result = await agent.run("In this conversation, you are tasked ONLY with summing. Let's start: 3, 3?")
+    result = await agent.run('and: 4, 4?', message_history=result.all_messages())
+    result = await agent.run('and: 5, 5?', message_history=result.all_messages())
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[],
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={
+                    'id': 'cmp_0fa9669751a6aa3001698214d3e9dc81a1978379bdeaf4c82d',
+                    'encrypted_content': 'gAAAAABpghTXQkzrhcLMG3agNJ5pG_Y6tXkAwkQ08ryk3-O99YR0IPD_tpfHV0_yhwiRdmaFc0DSJMpe6OfkX088T3zUdN4jJz7jk94RabzFgzb7IrfPeadRYn4BR_A2nrK7YqA_DpusOknym3n1tOvOXrZ_M_dr6-Av400R53ILuxNRaXQwRNLL7oGV4qZyCcUb2r43cqjvUFVA4A2VpEjoEgC8WC3jrlrQsatIp2DsWPq0YhiLH7B_3bcn8DOaANE9jJntiTWpVMwH8y3fhTO6E5H9YehHzkSkcMfkGYOjblX-wfKeLfPhaR_xA34snbP87eJH0K6V6DhP_kLv9Fxtj38gdd4BxHq0A8JuQDgh_UjoKC2rFdDYPv5YQ50QK8BdfuzFYUvdhWkdTqo1RGU0I33ZvIlyqVTO9NliQa8nxCHr8caKColOxS5c8jhemss-x_iREgi9tFI6Qib34euUf0JZcfD5WLxew9G9rFcwOwNpnVccQYkm8RmzcwAfnfQCTcgKLTkdk6k4tvAkYANrd3BS9rbbWU3beXNWehea-afwWItA3giHlTY-EbN4jPfMDWI6pUmtjtoxGlgFsSNYCG9HKilZiHte8i9Sa8HTRJc-chEG954DKeIHTfZC5_wkh0s5YTJVvOVaZLjLZdZXlF-ERSLQ5gVzoMpdNq6_H4Pp2iTS-tzX3Df8s-pDwGgNQ9XrhIsv0tIftscCSM8z0o0a6t313oqCLOBwxncS9XreRgjslWmjUrWfZeVQoCOcAM8UqDKmSqn59WctQGIeiNWV7EAfA44e00YfsMGk1xQgjtGz8dbnnqJGfneQcpbGg-x2Y7nsXyBTsOYuz0G_ytwPqaxkb2mjcQnzwnUeKVPVBP-QuggKzFJdgOBNzfu8Iv8g0PqcbQxSz7vQ9FGJY07VBx3QZmB1FUSUl7ABbS9bfqaI84AmyPlZfXPt9ezbcl5cdieyeXKslnVMwh37XwIpzYjZ6eK7iAQS90BbfCM-IKVwdo78gJTKnjVFMCCT6mF47EoseEQ3f3YQicxtn3LZTOu80aiwrlS7HiV6BnGJenEztYNh0vWNdLaIDwzRq7b_0mE4rJTeaQ-t05KkGhsoDCkxM3O8K0XkG4ffkgXi42mw-mg90-SWpul5rqauNk2he_dxH4F4xfv_gilNO3__zS3X8o_7sFpG1vVhOF56Y9fK9YlowavAOuaPbXOG_YGvjRl7SbR5pLJsNrO9yjBmh0L3tCHro9wUn7ww5oxZWkQK23UdWkLZyno0fF4pzBJyw4ODWHHacOV4AYigPVJCUU_QMfGCvccQzpfHRAAhQEKMrHR94OVAtq0NahWsag6kv6DRaDaRvS_a7_9N3TOP3lALGZxSe9xAPpVTIpyEoXOpYCFz_yKwCsWN8-xHn1lF4Dg0Dkbh9Rg8NRQq8qqYBM3VMlIJ73zddYKqPJdsbdCYFB7krA38uolowlePB13F0A4HZuEPELzhfUeFHuRmccSUVK4NAYaUzqeafg-ejZaQmuoJWJX_KarTZIz7FCHQPJeNTCVGm8W90LSmKfC1ZiUcPk36ivlu2OcNJeIVIMEdbn9XIYczIFEL8e_BotqmxFQOwQvE5lUJn5IRQwSajmCvTm03AbeIAmGdSiGsvmIPrAW3MFq8b8tjT-vHYhFosw4LeyFXggtBe6GsfENUxjkBu1mW_SbxL8GVQVrt7BgKkbaqd7BQh5Wh1_b5wWUueeXgDcJD1Slfxr-tCvdv-swC5rzvCGX2iaWhYRQs0FYxOmz7KxYzndvDjRsIPVdTzcApsOcF3EiOiwTTtFu4kHV_rTukggX9wpfu3O60RBDKMdmKj-LyF5sF-7-eaVyCsC9AlAlmwEZXJbUs9-Ls4m4-IZQMX9EWw70qNDWuqvGa5QQVjYJWJ6Gxnr8yNBuTCzyXoXQq5QYvniY5XcuiRdLTILnDm33_7t80PPzS4Zhh4p0dejYGA2Fn5n5pGR1MARlO7SIJhBjlEUDPL82lqHhYi8CWNZFwZo1P2fKH9NVJ6CCFbNIFevKLQ1hDltlfCyn31HamVo-32mvuxAVJO8dNJPeAFsA9EN46ooWVUNd5bEL-KvYbUzeaPabebr6t5Su43AS5A2iKocu9ibGUfHBTz4Iv-OZkzjT9RJ6ucxZb76DwmOGLRhvYXH4NQYd8GBaYYav_xhx2RBW3V4y2vWFFkhzubKsG6LtOWXjfDGLb2z81OeCddf0QjnMNvFvHAnjFx99HVgbRgqjzPTFRrSWkvxXPih9-QJyZgsF_SqPfn1I3c8Lm1Hyu9j81ikrZ2mpz1Ybr3PWNzJLlCzokfhXdoCaaxCTV2Jg85iCsDie1On5dSszRm5z69Fz3Sv-y6wVoB5hLPMls8_HV-ZxmZUYybJD9OqXDsfetxQZspj4d_Ik=',
+                    'type': 'compaction',
+                    'created_by': None,
+                },
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content=[
+                            {
+                                'type': 'json_invalid',
+                                'loc': (),
+                                'msg': 'Invalid JSON: trailing characters at line 1 column 14',
+                                'input': '{"number": 8}{"number": 8}',
+                                'ctx': {'error': 'trailing characters at line 1 column 14'},
+                            }
+                        ],
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='You are a helpful math assistant.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='{"number":8}',
+                        id='msg_0fa9669751a6aa3000698214d7c62081a1949d935e816be475',
+                        provider_name='openai',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=405, output_tokens=6, details={'reasoning_tokens': 0}),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id='resp_0fa9669751a6aa3000698214d7683881a189ac47ab643f93e3',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='and: 5, 5?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions='You are a helpful math assistant.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='{"number":10}',
+                        id='msg_0fa9669751a6aa3000698214d9181881a1a3c2f7d229dc4592',
+                        provider_name='openai',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=426, output_tokens=6, details={'reasoning_tokens': 0}),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id='resp_0fa9669751a6aa3000698214d8471881a1929caba2ad6df376',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_openai_responses_model_retry(allow_model_requests: None, openai_api_key: str):
