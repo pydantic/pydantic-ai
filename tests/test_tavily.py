@@ -218,3 +218,24 @@ class TestTavilySearchToolIntegration:
 
             # Verify the tool is properly registered
             assert 'tavily_search' in agent._function_toolset.tools  # pyright: ignore[reportPrivateUsage]
+
+    async def test_factory_domains_pass_through(self, mock_async_tavily_client: AsyncMock):
+        """Test that domain parameters from the factory are used when the tool is called."""
+        with patch('pydantic_ai.common_tools.tavily.AsyncTavilyClient', return_value=mock_async_tavily_client):
+            tool = tavily_search_tool(
+                'test-api-key',
+                include_domains=['arxiv.org'],
+                exclude_domains=['spam.com'],
+            )
+
+            # Call the tool's underlying function directly to verify domains pass through
+            await tool.function('test query')  # pyright: ignore[reportArgumentType]
+
+            mock_async_tavily_client.search.assert_called_once_with(
+                'test query',
+                search_depth='basic',
+                topic='general',
+                time_range=None,
+                include_domains=['arxiv.org'],
+                exclude_domains=['spam.com'],
+            )
