@@ -1120,9 +1120,7 @@ async def test_aggregated_usage_attribute_names(capfire: CaptureLogfire) -> None
     """Test that use_aggregated_usage_attribute_names changes attribute names on agent run spans."""
     from pydantic_ai.usage import RequestUsage
 
-    def model_function(
-        messages: list[ModelRequest | ModelResponse], info: AgentInfo
-    ) -> ModelResponse:
+    def model_function(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
         # Return a response with usage that includes extra details (cache tokens)
         # to test that non-input/output attributes are preserved
         return ModelResponse(
