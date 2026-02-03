@@ -133,6 +133,14 @@ Instead, you can implement streaming by setting an [`event_stream_handler`][pyda
 The event stream handler function will receive the agent [run context][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools. For examples, see the [streaming docs](../agents.md#streaming-all-events).
 
 
+### Parallel Tool Execution
+
+When using `DBOSAgent`, tools are executed in parallel by default to minimize latency. To guarantee deterministic replay and reliable recovery, DBOS waits for all parallel tool calls to complete before emitting events **in order**.
+It's equivalent to the behavior of [`with agent.parallel_tool_call_execution_mode('parallel_ordered_events')`][pydantic_ai.agent.AbstractAgent.parallel_tool_call_execution_mode].
+
+If you prefer strict ordering, you can configure the agent to run tools sequentially by setting [`parallel_execution_mode='sequential'`][pydantic_ai.durable_exec.dbos.DBOSAgent] when initializing the `DBOSAgent`.
+
+
 ## Step Configuration
 
 You can customize DBOS step behavior, such as retries, by passing [`StepConfig`][pydantic_ai.durable_exec.dbos.StepConfig] objects to the `DBOSAgent` constructor:

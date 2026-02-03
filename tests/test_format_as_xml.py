@@ -2,8 +2,10 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
+from decimal import Decimal
 from enum import Enum
 from typing import Any
+from uuid import UUID
 
 import pytest
 from inline_snapshot import snapshot
@@ -621,3 +623,27 @@ def test_set():
 
 def test_custom_null():
     assert format_as_xml(None, none_str='nil') == snapshot('<item>nil</item>')
+
+
+def test_non_primitive_types():
+    assert format_as_xml(Decimal('123.45')) == snapshot('<item>123.45</item>')
+    assert format_as_xml(UUID('123e4567-e89b-12d3-a456-426614174000')) == snapshot(
+        '<item>123e4567-e89b-12d3-a456-426614174000</item>'
+    )
+
+
+def test_model_with_non_primitive_types():
+    class ExamplePydanticModelWithNonPrimitiveTypes(BaseModel):
+        name: str
+        age: Decimal
+        uuid: UUID
+
+    assert format_as_xml(
+        ExamplePydanticModelWithNonPrimitiveTypes(
+            name='John', age=Decimal('123.45'), uuid=UUID('123e4567-e89b-12d3-a456-426614174000')
+        )
+    ) == snapshot("""\
+<name>John</name>
+<age>123.45</age>
+<uuid>123e4567-e89b-12d3-a456-426614174000</uuid>\
+""")

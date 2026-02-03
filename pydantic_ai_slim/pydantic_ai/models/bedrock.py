@@ -45,7 +45,7 @@ from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.providers import Provider, infer_provider
-from pydantic_ai.providers.bedrock import BEDROCK_GEO_PREFIXES, BedrockModelProfile
+from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
@@ -342,7 +342,7 @@ class BedrockConverseModel(Model):
         settings = cast(BedrockModelSettings, model_settings or {})
         system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters, settings)
         params: CountTokensRequestTypeDef = {
-            'modelId': self._remove_inference_geo_prefix(self.model_name),
+            'modelId': remove_bedrock_geo_prefix(self.model_name),
             'input': {
                 'converse': {
                     'messages': bedrock_messages,
@@ -704,7 +704,7 @@ class BedrockConverseModel(Model):
                             if item.tool_name == CodeExecutionTool.kind:
                                 tool_result: ToolResultBlockOutputTypeDef = {
                                     'toolUseId': _utils.guard_tool_call_id(t=item),
-                                    'content': [{'json': item.content}] if item.content else [],
+                                    'content': [{'json': cast(Any, item.content)}] if item.content else [],
                                     'type': 'nova_code_interpreter_result',
                                 }
                                 if item.provider_details and 'status' in item.provider_details:
@@ -746,11 +746,27 @@ class BedrockConverseModel(Model):
         if processed_messages and settings.get('bedrock_cache_messages') and profile.bedrock_supports_prompt_caching:
             last_user_content = self._get_last_user_message_content(processed_messages)
             if last_user_content is not None:
-                # AWS currently rejects cache points that directly follow non-text content.
-                # Insert a newline text block as a workaround.
-                if 'text' not in last_user_content[-1]:
-                    last_user_content.append({'text': '\n'})
-                last_user_content.append({'cachePoint': {'type': 'default'}})
+                # AWS currently rejects cache points that directly follow documents and videos (but not images).
+                # So we insert the cache point before the trailing multi-modal content instead.
+                multimodal_keys = ['document', 'video']
+                last_multimodal_index = next(
+                    (
+                        i
+                        for i, block in reversed(list(enumerate(last_user_content)))
+                        if any(key in block for key in multimodal_keys)
+                    ),
+                    None,
+                )
+                if last_multimodal_index is not None and last_multimodal_index > 0:
+                    # Insert cache point before the last multi-modal content, unless it would be back-to-back
+                    prev_block = last_user_content[last_multimodal_index - 1]
+                    if not (isinstance(prev_block, dict) and 'cachePoint' in prev_block):
+                        last_user_content.insert(last_multimodal_index, {'cachePoint': {'type': 'default'}})
+                elif last_multimodal_index is None:
+                    # No multi-modal content, append cache point at the end.
+                    # Note: _get_last_user_message_content ensures content doesn't already end with a cachePoint.
+                    last_user_content.append({'cachePoint': {'type': 'default'}})
+                # If last_multimodal_index == 0, we can't insert at start, so skip auto-caching for this message
 
         return system_prompt, processed_messages
 
@@ -860,12 +876,30 @@ class BedrockConverseModel(Model):
                             'CachePoint cannot be the first content in a user message - there must be previous content to cache when using Bedrock. '
                             'To cache system instructions or tool definitions, use the `bedrock_cache_instructions` or `bedrock_cache_tool_definitions` settings instead.'
                         )
-                    if 'text' not in content[-1]:
-                        # AWS currently rejects cache points that directly follow non-text content.
-                        # Insert an empty text block as a workaround (see https://github.com/pydantic/pydantic-ai/issues/3418
-                        # and https://github.com/pydantic/pydantic-ai/pull/2560#discussion_r2349209916).
-                        content.append({'text': '\n'})
-                    content.append({'cachePoint': {'type': 'default'}})
+                    # AWS currently rejects cache points that directly follow documents and videos (but not images).
+                    # So we insert the cache point before the trailing multi-modal content instead.
+                    multimodal_keys = ['document', 'video']
+                    last_multimodal_index = next(
+                        (
+                            i
+                            for i, block in reversed(list(enumerate(content)))
+                            if any(key in block for key in multimodal_keys)
+                        ),
+                        None,
+                    )
+                    if last_multimodal_index is not None and last_multimodal_index > 0:
+                        # Insert cache point before the last multi-modal content
+                        content.insert(last_multimodal_index, {'cachePoint': {'type': 'default'}})
+                    elif last_multimodal_index is None:
+                        # No multi-modal content, append cache point at the end
+                        content.append({'cachePoint': {'type': 'default'}})
+                    else:
+                        # last_multimodal_index == 0, can't insert at start
+                        raise UserError(
+                            'CachePoint cannot be placed when the user message contains only a document or video, '
+                            'due to Bedrock API restrictions. '
+                            'Add text content before or after your document or video to enable caching.'
+                        )
                 else:
                     assert_never(item)
         return [{'role': 'user', 'content': content}]
@@ -941,14 +975,6 @@ class BedrockConverseModel(Model):
                 else:
                     new_content.append(block)
             message['content'] = list(reversed(new_content))  # Restore original order
-
-    @staticmethod
-    def _remove_inference_geo_prefix(model_name: BedrockModelName) -> BedrockModelName:
-        """Remove inference geographic prefix from model ID if present."""
-        for prefix in BEDROCK_GEO_PREFIXES:
-            if model_name.startswith(f'{prefix}.'):
-                return model_name.removeprefix(f'{prefix}.')
-        return model_name
 
 
 @dataclass

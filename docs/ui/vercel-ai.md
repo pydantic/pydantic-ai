@@ -2,6 +2,9 @@
 
 Pydantic AI natively supports the [Vercel AI Data Stream Protocol](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol) to receive agent run input from, and stream events to, a [Vercel AI Elements](https://ai-sdk.dev/elements) frontend.
 
+!!! note
+    By default, the adapter targets AI SDK v5 for backwards compatibility. To use features introduced in AI SDK v6, set `sdk_version=6` on the adapter.
+
 ## Usage
 
 The [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] class is responsible for transforming agent run input received from the frontend into arguments for [`Agent.run_stream_events()`](../agents.md#running-agents), running the agent, and then transforming Pydantic AI events into Vercel AI events. The event stream transformation is handled by the [`VercelAIEventStream`][pydantic_ai.ui.vercel_ai.VercelAIEventStream] class, but you typically won't use this directly.

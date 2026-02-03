@@ -104,7 +104,7 @@ nav:
       - Agent2Agent (A2A): a2a.md
 
   - Related Packages:
-      - Clai: cli.md
+      - clai: cli.md
 
   - Examples:
       - Setup: examples/setup.md
