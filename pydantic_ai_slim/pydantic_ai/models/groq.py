@@ -486,7 +486,7 @@ class GroqModel(Model):
                 for item in part.content_items:
                     if isinstance(item, (BinaryContent, ImageUrl)):
                         if isinstance(item, BinaryContent) and not item.is_image:
-                            raise RuntimeError('Only images are supported for binary content in Groq.')
+                            raise NotImplementedError('Only images are supported for binary content in Groq.')
                         tool_content_parts.append(f'See file {item.identifier}.')
                         file_content.append(f'This is file {item.identifier}:')
                         if isinstance(item, ImageUrl) and item.force_download:
@@ -497,7 +497,9 @@ class GroqModel(Model):
                         else:
                             file_content.append(item)
                     elif isinstance(item, (AudioUrl, VideoUrl, DocumentUrl)):
-                        raise RuntimeError('Only images are supported for multimodal content in Groq tool returns.')
+                        raise NotImplementedError(
+                            'Only images are supported for multimodal content in Groq tool returns.'
+                        )
                     elif isinstance(item, str):
                         if item:
                             tool_content_parts.append(item)

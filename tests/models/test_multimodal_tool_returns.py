@@ -15,6 +15,7 @@ are tracked separately in ERROR_DETAILS since they can vary by source type.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from itertools import count
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -468,52 +469,67 @@ def get_cassette_pattern(provider: str, file_type: str, content_source: str) -> 
     return CASSETTE_PATTERNS.get((file_type, content_source))
 
 
+@lru_cache
 def make_image_binary(assets_path: Path) -> BinaryImage:
     """Create a binary image from the kiwi.jpg test asset."""
     return BinaryImage(data=assets_path.joinpath('kiwi.jpg').read_bytes(), media_type='image/jpeg')
 
 
 def make_image_url(_: Path) -> ImageUrl:
+    """Create an ImageUrl pointing to a public test image."""
     return ImageUrl(url='https://www.gstatic.com/webp/gallery3/1.png')
 
 
+@lru_cache
 def make_document_binary(assets_path: Path) -> BinaryContent:
+    """Create a binary PDF from the dummy.pdf test asset."""
     return BinaryContent(data=assets_path.joinpath('dummy.pdf').read_bytes(), media_type='application/pdf')
 
 
 def make_document_url(_: Path) -> DocumentUrl:
+    """Create a DocumentUrl pointing to a public test PDF."""
     return DocumentUrl(url='https://pdfobject.com/pdf/sample.pdf')
 
 
+@lru_cache
 def make_audio_binary(assets_path: Path) -> BinaryContent:
+    """Create a binary audio from the marcelo.mp3 test asset."""
     return BinaryContent(data=assets_path.joinpath('marcelo.mp3').read_bytes(), media_type='audio/mpeg')
 
 
 def make_audio_url(_: Path) -> AudioUrl:
+    """Create an AudioUrl pointing to a public test MP3."""
     return AudioUrl(url='https://download.samplelib.com/mp3/sample-3s.mp3')
 
 
+@lru_cache
 def make_video_binary(assets_path: Path) -> BinaryContent:
+    """Create a binary video from the small_video.mp4 test asset."""
     return BinaryContent(data=assets_path.joinpath('small_video.mp4').read_bytes(), media_type='video/mp4')
 
 
 def make_video_url(_: Path) -> VideoUrl:
+    """Create a VideoUrl pointing to a public test video."""
     return VideoUrl(url='https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4')
 
 
 def make_image_url_force_download(_: Path) -> ImageUrl:
+    """Create an ImageUrl with force_download=True."""
     return ImageUrl(url='https://www.gstatic.com/webp/gallery3/1.png', force_download=True)
 
 
 def make_document_url_force_download(_: Path) -> DocumentUrl:
+    """Create a DocumentUrl with force_download=True."""
     return DocumentUrl(url='https://pdfobject.com/pdf/sample.pdf', force_download=True)
 
 
 def make_audio_url_force_download(_: Path) -> AudioUrl:
+    """Create an AudioUrl with force_download=True."""
     return AudioUrl(url='https://download.samplelib.com/mp3/sample-3s.mp3', force_download=True)
 
 
 def make_video_url_force_download(_: Path) -> VideoUrl:
+    """Create a VideoUrl with force_download=True."""
     return VideoUrl(
         url='https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4', force_download=True
     )
@@ -553,11 +569,12 @@ def _is_file_type(item: Any, file_type: str) -> bool:
     if isinstance(item, expected_classes):
         if isinstance(item, BinaryContent) and not isinstance(item, BinaryImage):
             media = item.media_type
-            if file_type == 'document':
-                return media.startswith('application/') or media.startswith('text/')
-            elif file_type == 'audio':
+            # Audio/video binary content errors for all models before reaching assertions
+            if file_type == 'document':  # pragma: no branch
+                return media.startswith('application/')
+            elif file_type == 'audio':  # pragma: no cover
                 return media.startswith('audio/')
-            elif file_type == 'video':  # pragma: no branch
+            elif file_type == 'video':  # pragma: no cover
                 return media.startswith('video/')
         return True
     return False  # pragma: no cover
@@ -569,8 +586,8 @@ def assert_file_in_tool_return(messages: list[Any], file_type: str) -> None:
         if isinstance(msg, ModelRequest):
             for part in msg.parts:
                 if isinstance(part, ToolReturnPart):
-                    for f in part.files:
-                        if _is_file_type(f, file_type):
+                    for f in part.files:  # pragma: no branch
+                        if _is_file_type(f, file_type):  # pragma: no branch
                             return
     raise AssertionError(f'No {file_type} found in any ToolReturnPart')  # pragma: no cover
 

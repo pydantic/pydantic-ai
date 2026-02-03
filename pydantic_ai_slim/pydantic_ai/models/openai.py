@@ -1141,8 +1141,7 @@ class OpenAIChatModel(Model):
                 tool_content_parts: list[str] = []
                 file_content: list[UserContent] = []
 
-                items = list(part.content) if isinstance(part.content, list) else [part.content]  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
-                for item in items:
+                for item in part.content_items:
                     if isinstance(item, (BinaryContent, ImageUrl, AudioUrl, DocumentUrl, VideoUrl)):
                         tool_content_parts.append(f'See file {item.identifier}.')
                         file_content.append(f'This is file {item.identifier}:')
@@ -2230,8 +2229,7 @@ class OpenAIResponsesModel(Model):
         ] = []
 
         # Iterate content directly to preserve order of mixed file/data content
-        items: list[Any] = list(part.content) if isinstance(part.content, list) else [part.content]  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
-        for item in items:
+        for item in part.content_items:
             if isinstance(item, BinaryContent):
                 if item.is_image:
                     detail: Literal['auto', 'low', 'high'] = 'auto'
@@ -2251,7 +2249,7 @@ class OpenAIResponsesModel(Model):
                 elif item.is_video:
                     raise NotImplementedError('VideoUrl is not supported for OpenAI.')
                 else:
-                    raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
+                    raise NotImplementedError(f'Unsupported binary content type: {item.media_type}')
             elif isinstance(item, ImageUrl):
                 detail: Literal['auto', 'low', 'high'] = 'auto'
                 image_url = item.url
