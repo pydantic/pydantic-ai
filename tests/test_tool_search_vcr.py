@@ -25,32 +25,35 @@ class Case:
 
 
 def _create_model(case: Case) -> Model:
-    if case.model_name.startswith('openai:'):
-        from pydantic_ai.models.openai import OpenAIChatModel
-        from pydantic_ai.providers.openai import OpenAIProvider
+    try:
+        if case.model_name.startswith('openai:'):
+            from pydantic_ai.models.openai import OpenAIChatModel
+            from pydantic_ai.providers.openai import OpenAIProvider
 
-        return OpenAIChatModel(
-            case.model_name.split(':', 1)[1],
-            provider=OpenAIProvider(api_key=os.getenv('OPENAI_API_KEY', 'mock-api-key')),
-        )
-    elif case.model_name.startswith('anthropic:'):
-        from pydantic_ai.models.anthropic import AnthropicModel
-        from pydantic_ai.providers.anthropic import AnthropicProvider
+            return OpenAIChatModel(
+                case.model_name.split(':', 1)[1],
+                provider=OpenAIProvider(api_key=os.getenv('OPENAI_API_KEY', 'mock-api-key')),
+            )
+        elif case.model_name.startswith('anthropic:'):
+            from pydantic_ai.models.anthropic import AnthropicModel
+            from pydantic_ai.providers.anthropic import AnthropicProvider
 
-        return AnthropicModel(
-            case.model_name.split(':', 1)[1],
-            provider=AnthropicProvider(api_key=os.getenv('ANTHROPIC_API_KEY', 'mock-api-key')),
-        )
-    elif case.model_name.startswith('google:'):
-        from pydantic_ai.models.google import GoogleModel
-        from pydantic_ai.providers.google import GoogleProvider
+            return AnthropicModel(
+                case.model_name.split(':', 1)[1],
+                provider=AnthropicProvider(api_key=os.getenv('ANTHROPIC_API_KEY', 'mock-api-key')),
+            )
+        elif case.model_name.startswith('google:'):
+            from pydantic_ai.models.google import GoogleModel
+            from pydantic_ai.providers.google import GoogleProvider
 
-        return GoogleModel(
-            case.model_name.split(':', 1)[1],
-            provider=GoogleProvider(api_key=os.getenv('GOOGLE_API_KEY', 'mock-api-key')),
-        )
-    else:
-        raise ValueError(f'Unknown model: {case.model_name}')  # pragma: no cover
+            return GoogleModel(
+                case.model_name.split(':', 1)[1],
+                provider=GoogleProvider(api_key=os.getenv('GOOGLE_API_KEY', 'mock-api-key')),
+            )
+        else:
+            raise ValueError(f'Unknown model: {case.model_name}')  # pragma: no cover
+    except ImportError:
+        pytest.skip(f'{case.model_name.split(":")[0]} is not installed')
 
 
 @pytest.mark.parametrize(
