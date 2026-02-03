@@ -2077,9 +2077,9 @@ async def test_google_instructions_only_with_tool_calls(allow_model_requests: No
     result = await agent.run()
     assert result.output == snapshot(
         [
-            'What kind of car does a sheep drive? A Lamborghini!',
-            "Why don't you see penguins in Great Britain? Because they're afraid of Wales!",
-            'What happened when the wheel was invented? It caused a revolution!',
+            'What kind of car does an egg drive? A Yolk-swagen!',
+            'Why do golfers always carry an extra pair of trousers? In case they get a hole in one!',
+            "Why do penguins carry fish in their beaks? Because they don't have any pockets!",
         ]
     )
 
