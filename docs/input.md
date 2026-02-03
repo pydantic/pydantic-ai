@@ -163,7 +163,7 @@ If you want to introduce portability into your agent logic to allow the same pro
 
 ### Media Type Inference
 
-The `media_type` parameter is optional for [`UploadedFile`][pydantic_ai.messages.UploadedFile]. If not specified, PydanticAI will attempt to infer it from the `file_id`:
+The `media_type` parameter is optional for [`UploadedFile`][pydantic_ai.messages.UploadedFile]. If not specified, Pydantic AI will attempt to infer it from the `file_id`:
 
 1. If `file_id` is a URL or path with a recognizable file extension (e.g., `.pdf`, `.png`), the media type is inferred automatically
 2. For opaque file IDs (e.g., `'file-abc123'`), the media type defaults to `'application/octet-stream'`

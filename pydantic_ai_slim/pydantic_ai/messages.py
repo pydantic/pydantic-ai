@@ -154,16 +154,6 @@ def _multi_modal_content_identifier(identifier: str | bytes) -> str:
     return hashlib.sha1(identifier).hexdigest()[:6]
 
 
-def _get_media_type_category(media_type: str) -> str:
-    """Return the category part of the media type (e.g., 'image' from 'image/png')."""
-    return media_type.split('/')[0]
-
-
-def _get_media_type_subtype(media_type: str) -> str:
-    """Return the subtype part of the media type (e.g., 'png' from 'image/png')."""
-    return media_type.split('/', 1)[1]
-
-
 class _MediaTypeMixin:
     """Mixin providing media_type_category and media_type_subtype properties.
 
@@ -173,12 +163,14 @@ class _MediaTypeMixin:
     @property
     def media_type_category(self) -> str:
         """Return the category part of the media type (e.g., 'image' from 'image/png')."""
-        return _get_media_type_category(self.media_type)  # type: ignore[attr-defined]
+        media_type = self.media_type  # type: ignore[attr-defined]
+        return media_type.split('/', 1)[0]  # type: ignore[arg-type]
 
     @property
     def media_type_subtype(self) -> str:
         """Return the subtype part of the media type (e.g., 'png' from 'image/png')."""
-        return _get_media_type_subtype(self.media_type)  # type: ignore[attr-defined]
+        media_type = self.media_type  # type: ignore[attr-defined]
+        return media_type.split('/', 1)[1]  # type: ignore[arg-type]
 
 
 @pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
@@ -682,7 +674,7 @@ UploadedFileProviderName: TypeAlias = Literal['anthropic', 'openai', 'google-gla
 """Provider names supported by [`UploadedFile`][pydantic_ai.messages.UploadedFile]."""
 
 
-@dataclass(init=False, repr=False)
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
 class UploadedFile(_MediaTypeMixin):
     """A reference to a file uploaded to a provider's file storage by ID.
 
@@ -732,6 +724,8 @@ class UploadedFile(_MediaTypeMixin):
     kind: Literal['uploaded-file'] = 'uploaded-file'
     """Type identifier, this is available on all parts as a discriminator."""
 
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the `media_type` and `identifier` aliases.
     def __init__(
         self,
         file_id: str,
@@ -744,13 +738,7 @@ class UploadedFile(_MediaTypeMixin):
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
         _identifier: str | None = None,
-    ) -> None:
-        self.file_id = file_id
-        self.provider_name = provider_name
-        self._media_type = media_type or _media_type
-        self.vendor_metadata = vendor_metadata
-        self._identifier = identifier or _identifier
-        self.kind = kind
+    ) -> None: ...  # pragma: no cover
 
     @pydantic.computed_field
     @property
@@ -765,7 +753,7 @@ class UploadedFile(_MediaTypeMixin):
         if self._media_type:
             return self._media_type
         parsed = urlparse(self.file_id)
-        mime_type, _ = mimetypes.guess_type(parsed.path)
+        mime_type, _ = _mime_types.guess_type(parsed.path)
         return mime_type or 'application/octet-stream'
 
     @pydantic.computed_field
