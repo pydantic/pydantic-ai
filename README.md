@@ -66,7 +66,7 @@ Provides the ability to [stream](https://ai.pydantic.dev/output#streamed-results
 Provides a powerful way to define [graphs](https://ai.pydantic.dev/graph) using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
 
 11. **AI Coding Agent Skills**:
-Includes official [skills](https://ai.pydantic.dev/claude-code) for AI-assisted development with Claude Code and other AI coding agents.
+Includes official [skills](https://ai.pydantic.dev/agent-skills) for AI-assisted development with Claude Code and other AI coding agents.
 
 Realistically though, no list is going to be as convincing as [giving it a try](#next-steps) and seeing how it makes you feel!
 

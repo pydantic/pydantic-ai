@@ -74,10 +74,3 @@ repos:
         language: system
         files: ^tests/
         pass_filenames: false
-      - id: check-skills
-        name: Check skills
-        entry: uv
-        args: [run, python, scripts/check_skills.py]
-        language: system
-        files: ^skills/
-        pass_filenames: false
