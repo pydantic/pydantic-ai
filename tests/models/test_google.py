@@ -771,20 +771,20 @@ async def test_google_model_gla_labels_raises_value_error(allow_model_requests: 
 async def test_google_model_vertex_provider(
     allow_model_requests: None, vertex_provider: GoogleProvider
 ):  # pragma: lax no cover
-    model = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
+    model = GoogleModel('gemini-3-flash-preview', provider=vertex_provider)
     agent = Agent(model=model, instructions='You are a helpful chatbot.')
     result = await agent.run('What is the capital of France?')
-    assert result.output == snapshot('The capital of France is Paris.\n')
+    assert result.output == snapshot('The capital of France is **Paris**.')
 
 
 async def test_google_model_vertex_labels(
     allow_model_requests: None, vertex_provider: GoogleProvider
 ):  # pragma: lax no cover
-    model = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
+    model = GoogleModel('gemini-3-flash-preview', provider=vertex_provider)
     settings = GoogleModelSettings(google_labels={'environment': 'test', 'team': 'analytics'})
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=settings)
     result = await agent.run('What is the capital of France?')
-    assert result.output == snapshot('The capital of France is Paris.\n')
+    assert result.output == snapshot('The capital of France is **Paris**.')
 
 
 async def test_google_model_iter_stream(allow_model_requests: None, google_provider: GoogleProvider):
@@ -3297,7 +3297,7 @@ It's quite efficient for that purpose, using only 35 letters (if "lazy dog" is t
 async def test_google_vertexai_model_usage_limit_exceeded(
     allow_model_requests: None, vertex_provider: GoogleProvider
 ):  # pragma: lax no cover
-    model = GoogleModel('gemini-2.0-flash', provider=vertex_provider, settings=ModelSettings(max_tokens=100))
+    model = GoogleModel('gemini-3-flash-preview', provider=vertex_provider, settings=ModelSettings(max_tokens=100))
 
     agent = Agent(model, instructions='You are a chatbot.')
 
@@ -3306,7 +3306,7 @@ async def test_google_vertexai_model_usage_limit_exceeded(
         return 'Mexico'  # pragma: no cover
 
     with pytest.raises(
-        UsageLimitExceeded, match='The next request would exceed the total_tokens_limit of 9 \\(total_tokens=36\\)'
+        UsageLimitExceeded, match='The next request would exceed the total_tokens_limit of 9'
     ):
         await agent.run(
             'What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',

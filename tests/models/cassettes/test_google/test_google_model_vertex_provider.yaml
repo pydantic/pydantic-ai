@@ -1,11 +1,11 @@
 interactions:
 - request:
-    body: grant_type=%5B%27refresh_token%27%5D&client_id=%5B%27764086051850-6qr4p6gpi6hn506pt8ejuq83di341hur.apps.googleusercontent.com%27%5D&client_secret=%5B%27scrubbed%27%5D&refresh_token=%5B%27scrubbed%27%5D
+    body: grant_type=%5B%27refresh_token%27%5D&client_id=%5B%27scrubbed%27%5D&client_secret=%5B%27scrubbed%27%5D&refresh_token=%5B%27scrubbed%27%5D
     headers:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
@@ -21,7 +21,7 @@ interactions:
       cache-control:
       - no-cache, no-store, max-age=0, must-revalidate
       content-length:
-      - '1417'
+      - '258'
       content-type:
       - application/json; charset=utf-8
       expires:
@@ -37,7 +37,7 @@ interactions:
     parsed_body:
       access_token: scrubbed
       expires_in: 3599
-      id_token: eyJhbGciOiJSUzI1NiIsImtpZCI6IjFiYjc3NGJkODcyOWVhMzhlOWMyZmUwYzY0ZDJjYTk0OGJmNjZmMGYiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20iLCJhenAiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJhdWQiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJzdWIiOiIxMDY1Njg0NzQzMTU3NzkyMTI1NTkiLCJoZCI6InB5ZGFudGljLmRldiIsImVtYWlsIjoibWFyY2Vsb0BweWRhbnRpYy5kZXYiLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwiYXRfaGFzaCI6ImRfTUx5Q0FVTVZHTm9Jc1NJN1p3eEEiLCJpYXQiOjE3NTEwMTQxMDAsImV4cCI6MTc1MTAxNzcwMH0.nwwz42JSGkTFEnY8KqlRQgVbkTtpehQ-teeg1VpTNMkwy3okoviKurx4KWm8K5Whne6auPrQKuyfiMXka5LxiupwUuPDgRQIO8Hl1QwVhHCXjNuFfLOHD7DzfIo8vaovLb65FFGAfwV9xdXReRngxH7t4WCA1XDzvQV7cl33g-x1qe1ZnqnxcNQ6BcIBM-7ksVCvEmjjNDOPi0NPBQDN540_LbFDF1KKGcnTh0tEQyzssM78XgBhY8CfmKuOgLE9BTnzg9k--LAuP3dcLqjPyxOchfwNGNLPiHOegdxFIY3deTKKu6GJvsFqj6eGn5R2kA_dWYMGFHJ9xpsnkGssCw
+      id_token: scrubbed
       scope: https://www.googleapis.com/auth/sqlservice.login https://www.googleapis.com/auth/userinfo.email openid https://www.googleapis.com/auth/cloud-platform
       token_type: Bearer
     status:
@@ -48,11 +48,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '201'
+      - '231'
       content-type:
       - application/json
       host:
@@ -63,36 +63,39 @@ interactions:
       - parts:
         - text: What is the capital of France?
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       systemInstruction:
         parts:
         - text: You are a helpful chatbot.
         role: user
-    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-2.0-flash:generateContent
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/publishers/google/models/gemini-3-flash-preview:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '759'
+      - '768'
       content-type:
       - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
       vary:
       - Origin
       - X-Origin
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.0005532301729544997
-        content:
+      - content:
           parts:
-          - text: |
-              The capital of France is Paris.
+          - text: The capital of France is **Paris**.
+            thoughtSignature: CpYBAY89a1+OOQilSe8NtP7Fa+SDc8NmjumhzUDi2DE7Vtkc4OkxUjygLAhYB82yS2MbOYLRkNt/m+vD+bKxCgKa9ef+DnLiP2uSgMgEsYq+XCrnn9DDXbHWUoNXcW0L7lNXOa6kv+ZhfuMt0aJjTvNzhJFcXfxDoj6LX/VBno1OfZ6KUMEuC6Vn9NisFEe7OhOv9p12F7xt
           role: model
         finishReason: STOP
-      createTime: '2025-06-27T08:48:21.154666Z'
-      modelVersion: gemini-2.0-flash
-      responseId: 1VpeaKq4CfH_2PgPh_z--AY
+      createTime: '2026-02-03T16:43:33.521758Z'
+      modelVersion: gemini-3-flash-preview
+      responseId: tSWCaZ7sH9P0jNsP-uKxyQE
       usageMetadata:
         candidatesTokenCount: 8
         candidatesTokensDetails:
@@ -102,7 +105,8 @@ interactions:
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 13
-        totalTokenCount: 21
+        thoughtsTokenCount: 26
+        totalTokenCount: 47
         trafficType: ON_DEMAND
     status:
       code: 200

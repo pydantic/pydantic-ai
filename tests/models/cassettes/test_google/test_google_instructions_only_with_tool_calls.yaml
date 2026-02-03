@@ -57,11 +57,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1533'
+      - '1136'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2299
+      - gfet4t7; dur=2026
       transfer-encoding:
       - chunked
       vary:
@@ -75,7 +75,7 @@ interactions:
           - functionCall:
               args: {}
               name: generate_topic
-            thoughtSignature: EqwFCqkFAXLI2ny9/J30ns51qNYlYM+Z7nlzqR/DUxxTnPUwFaSmHng2ci9OFOkrFP3LFG6IMVt7nrU8LV9rmkde7XIR0jP4VY9p0LgFOS+DmSZ7wgT6843EvhtYEbicMLuiZMgtFf8EKb6RUB3aKJkCvUJdEYSuD6K7O1jKdqQ8fhSrPIVNXkM6G0gYVif6gKliZdabgQO1zPwLlYA17I1ki2195U4VZtjBWFUcP2mYKcLb7QUfptBozGU1DeZPGwKliaFU0ENdzTaoMb0BSDsHAnodCeCFOHtz4urE+hTUyPAPs3OSgIshnAxOzTHCotVXfWjSs3M45ECehHLgpOtzWnt9OdsnsKQI2shAKLhuzvvbvaWEnPN2awH9cQG2zICV99HowU2R2Jwel/wrOnAUNS/aqQIgvqUDIU7uQDZWodMnLiRG9zGRZ7XxuqJTPo/cEOX0lbSjcE5ajvYZes+l10cBILM3ZxHM+lTzcrw4ggzNaMtKlqvZ5X2702GTPAEpDhNc+bLtTv2wD5dt9tCs+O/kZYdQzP0IwMmCPBUjB+qOCOfFrT7UkTggsswZ2Pcp9joS0FGQJradKQDQfz+RCY8wCIBQmMocVo1JiyKP/UPml0Wg4siI3WfMzdmCGuj2Nj5xDiBeMvywAvj0HDmQ5f0ddv2Ih/i7vXoN6IjmNqTOgwu/kwILIS8Z5Gs4E24kzPESf4AlAVYl7IwzPw0VF5p6zFMZlfeEBs0G+cRMy4ra+NPUttWtM6YHjN5XFDIgGpqusX4pRbXxLskhJnHDTBS/Ss4kOgaBFaimH9mMzoRAWHdOw09tm5UdABDNwqAhfGo/6dYfY40NUB+cTGK7kuIdOuhO9pznf8DUW4FSxyBgbThr0QSj+6ImJd2xylyMuPc5MUnY3rgiMSVj
+            thoughtSignature: EoMDCoADAXLI2nwPsh7qdrwVfy8oyoZyeNkjk5wO6I5mp93YznxIQTiFgoLdRMPmyLAH5ECYwP3fhS68kfneYO0epPeU0uDxfIlYwKveNgSbMxTahqQ5f+VauLiaeNaXRshq1gORLbCzccXJSGPzMYa8q6dsF7JmYF3xCRS+5R9lES8kyGQtHuJqfMBeprbRYcBF/JqRDeAZjhbz6Av6oL/Xq6xODvQJhONdKSvk1nHICTxi23pPWGFBdQLFOT+YaNic5WCO0CktdT07LJFSadlWZZNpp0vVBTpsKFI038L22KNFsV7c7CHrZuTt+iwDPrLDERB4ID+AFrj87vS+zxKyqkzrBHbNwASAiC9WhzWdgX+9x+ch7hB15PjrneVT2s8wiO5yFRfFbmVnI708Zo7LWvfCpn2w+pXTbdpXJwQuZgODJCXYcK32RnWT1SAy5mWE5XymTAIzW6v70LBOAK4J+qqbaSKSM8drHSXfWOn4GaGkO5rjPeU5+kpjJbVxNMR2fAbY
           - functionCall:
               args: {}
               name: generate_topic
@@ -87,15 +87,15 @@ interactions:
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: pxOCafH0MK6nqtsPp6qgiAQ
+      responseId: hRuCaeDhAdq2qtsP4Zru2AM
       usageMetadata:
-        candidatesTokenCount: 30
+        candidatesTokenCount: 33
         promptTokenCount: 83
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 83
-        thoughtsTokenCount: 167
-        totalTokenCount: 280
+        thoughtsTokenCount: 90
+        totalTokenCount: 206
     status:
       code: 200
       message: OK
@@ -108,7 +108,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2508'
+      - '2116'
       content-type:
       - application/json
       host:
@@ -122,171 +122,31 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_260706d85a314c69b63965777d92c75f
+            id: pyd_ai_9ee64d7bc08f42e1b73e6fb7c762f454
             name: generate_topic
-          thoughtSignature: EqwFCqkFAXLI2ny9_J30ns51qNYlYM-Z7nlzqR_DUxxTnPUwFaSmHng2ci9OFOkrFP3LFG6IMVt7nrU8LV9rmkde7XIR0jP4VY9p0LgFOS-DmSZ7wgT6843EvhtYEbicMLuiZMgtFf8EKb6RUB3aKJkCvUJdEYSuD6K7O1jKdqQ8fhSrPIVNXkM6G0gYVif6gKliZdabgQO1zPwLlYA17I1ki2195U4VZtjBWFUcP2mYKcLb7QUfptBozGU1DeZPGwKliaFU0ENdzTaoMb0BSDsHAnodCeCFOHtz4urE-hTUyPAPs3OSgIshnAxOzTHCotVXfWjSs3M45ECehHLgpOtzWnt9OdsnsKQI2shAKLhuzvvbvaWEnPN2awH9cQG2zICV99HowU2R2Jwel_wrOnAUNS_aqQIgvqUDIU7uQDZWodMnLiRG9zGRZ7XxuqJTPo_cEOX0lbSjcE5ajvYZes-l10cBILM3ZxHM-lTzcrw4ggzNaMtKlqvZ5X2702GTPAEpDhNc-bLtTv2wD5dt9tCs-O_kZYdQzP0IwMmCPBUjB-qOCOfFrT7UkTggsswZ2Pcp9joS0FGQJradKQDQfz-RCY8wCIBQmMocVo1JiyKP_UPml0Wg4siI3WfMzdmCGuj2Nj5xDiBeMvywAvj0HDmQ5f0ddv2Ih_i7vXoN6IjmNqTOgwu_kwILIS8Z5Gs4E24kzPESf4AlAVYl7IwzPw0VF5p6zFMZlfeEBs0G-cRMy4ra-NPUttWtM6YHjN5XFDIgGpqusX4pRbXxLskhJnHDTBS_Ss4kOgaBFaimH9mMzoRAWHdOw09tm5UdABDNwqAhfGo_6dYfY40NUB-cTGK7kuIdOuhO9pznf8DUW4FSxyBgbThr0QSj-6ImJd2xylyMuPc5MUnY3rgiMSVj
+          thoughtSignature: EoMDCoADAXLI2nwPsh7qdrwVfy8oyoZyeNkjk5wO6I5mp93YznxIQTiFgoLdRMPmyLAH5ECYwP3fhS68kfneYO0epPeU0uDxfIlYwKveNgSbMxTahqQ5f-VauLiaeNaXRshq1gORLbCzccXJSGPzMYa8q6dsF7JmYF3xCRS-5R9lES8kyGQtHuJqfMBeprbRYcBF_JqRDeAZjhbz6Av6oL_Xq6xODvQJhONdKSvk1nHICTxi23pPWGFBdQLFOT-YaNic5WCO0CktdT07LJFSadlWZZNpp0vVBTpsKFI038L22KNFsV7c7CHrZuTt-iwDPrLDERB4ID-AFrj87vS-zxKyqkzrBHbNwASAiC9WhzWdgX-9x-ch7hB15PjrneVT2s8wiO5yFRfFbmVnI708Zo7LWvfCpn2w-pXTbdpXJwQuZgODJCXYcK32RnWT1SAy5mWE5XymTAIzW6v70LBOAK4J-qqbaSKSM8drHSXfWOn4GaGkO5rjPeU5-kpjJbVxNMR2fAbY
         - functionCall:
             args: {}
-            id: pyd_ai_9eef72b90e5741158501b339e092c0cd
+            id: pyd_ai_7ef33e5f89204f9cac9646eaf7476bc6
             name: generate_topic
         - functionCall:
             args: {}
-            id: pyd_ai_2608d97b763b464d80b46d3afe00dc28
+            id: pyd_ai_d209371b85ff42c3be5e672167210d5e
             name: generate_topic
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_260706d85a314c69b63965777d92c75f
+            id: pyd_ai_9ee64d7bc08f42e1b73e6fb7c762f454
             name: generate_topic
             response:
               return_value: cars
         - functionResponse:
-            id: pyd_ai_9eef72b90e5741158501b339e092c0cd
-            name: generate_topic
-            response:
-              return_value: golf
-        - functionResponse:
-            id: pyd_ai_2608d97b763b464d80b46d3afe00dc28
-            name: generate_topic
-            response:
-              return_value: cars
-        role: user
-      generationConfig:
-        responseModalities:
-        - TEXT
-      systemInstruction:
-        parts:
-        - text: Tell three jokes. Generate topics with the generate_topic tool.
-        role: user
-      toolConfig:
-        functionCallingConfig:
-          allowedFunctionNames:
-          - generate_topic
-          - final_result
-          mode: ANY
-      tools:
-      - functionDeclarations:
-        - description: ''
-          name: generate_topic
-          parameters_json_schema:
-            additionalProperties: false
-            properties: {}
-            type: object
-        - description: The final response which ends this conversation
-          name: final_result
-          parameters_json_schema:
-            properties:
-              response:
-                items:
-                  type: string
-                type: array
-            required:
-            - response
-            type: object
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
-  response:
-    headers:
-      alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-      content-length:
-      - '1094'
-      content-type:
-      - application/json; charset=UTF-8
-      server-timing:
-      - gfet4t7; dur=1687
-      transfer-encoding:
-      - chunked
-      vary:
-      - Origin
-      - X-Origin
-      - Referer
-    parsed_body:
-      candidates:
-      - content:
-          parts:
-          - functionCall:
-              args: {}
-              name: generate_topic
-            thoughtSignature: ErkDCrYDAXLI2nzPJ0DjjCNf0JMCQceBS3og4AlycTz829GHUBM0Tw8dOu8QefzSjnx0AOTGsbJRKso3FJ+9KcWppgDMDmGr/2GOXj9Eq7H2pxyd4w4ip1lj8vpbnmi3PNyPLLNkCmqkMXfJvVlz9/y9x9dqVuHQaLRVi5CFbSBgd+tMVDl3ciHMeCLFOlBBsNa2gfz2oXGDxnxOCALnbfFs4B1dAJRmdHjkR0Occ0/T+L/jRay/BahlLsGB9CfSPE3E4a//qCeQRwffR38zvCLGPP8OsTvWekDSGYWCksT82iK4+aHPJ1L6VNLHBJzWSNLFRnhdrqVTfPtxf4wVFHcgwZ7IrLJ28F3Q8pXm4Y4Zu57eMS3pSX8okvw1KZIgwUF0A7qNhrvMFI9GjRzAZLdBXmzL0y2rfpUxMihjTpFAHsf788ItVtLFv05zw/aYccDFZxmVKmHoK855aG2hCPq88KJuGV/DhTCRcfPZK0w5pomWEthsR6kVnKfJA1sAAkz5rCHg88cyw30ZIkRnu2ww3/M/aCBYNjQlQwmWH6hgJm+oRdvuxFhnFq+ZmdVooVuXr7TVga7yeSp6
-          role: model
-        finishMessage: Model generated function call(s).
-        finishReason: STOP
-        index: 0
-      modelVersion: gemini-3-flash-preview
-      responseId: qROCaanvIo2fqtsPpojn2AM
-      usageMetadata:
-        candidatesTokenCount: 10
-        promptTokenCount: 324
-        promptTokensDetails:
-        - modality: TEXT
-          tokenCount: 324
-        thoughtsTokenCount: 89
-        totalTokenCount: 423
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - '*/*'
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '3431'
-      content-type:
-      - application/json
-      host:
-      - generativelanguage.googleapis.com
-    method: POST
-    parsed_body:
-      contents:
-      - parts:
-        - text: ''
-        role: user
-      - parts:
-        - functionCall:
-            args: {}
-            id: pyd_ai_260706d85a314c69b63965777d92c75f
-            name: generate_topic
-          thoughtSignature: EqwFCqkFAXLI2ny9_J30ns51qNYlYM-Z7nlzqR_DUxxTnPUwFaSmHng2ci9OFOkrFP3LFG6IMVt7nrU8LV9rmkde7XIR0jP4VY9p0LgFOS-DmSZ7wgT6843EvhtYEbicMLuiZMgtFf8EKb6RUB3aKJkCvUJdEYSuD6K7O1jKdqQ8fhSrPIVNXkM6G0gYVif6gKliZdabgQO1zPwLlYA17I1ki2195U4VZtjBWFUcP2mYKcLb7QUfptBozGU1DeZPGwKliaFU0ENdzTaoMb0BSDsHAnodCeCFOHtz4urE-hTUyPAPs3OSgIshnAxOzTHCotVXfWjSs3M45ECehHLgpOtzWnt9OdsnsKQI2shAKLhuzvvbvaWEnPN2awH9cQG2zICV99HowU2R2Jwel_wrOnAUNS_aqQIgvqUDIU7uQDZWodMnLiRG9zGRZ7XxuqJTPo_cEOX0lbSjcE5ajvYZes-l10cBILM3ZxHM-lTzcrw4ggzNaMtKlqvZ5X2702GTPAEpDhNc-bLtTv2wD5dt9tCs-O_kZYdQzP0IwMmCPBUjB-qOCOfFrT7UkTggsswZ2Pcp9joS0FGQJradKQDQfz-RCY8wCIBQmMocVo1JiyKP_UPml0Wg4siI3WfMzdmCGuj2Nj5xDiBeMvywAvj0HDmQ5f0ddv2Ih_i7vXoN6IjmNqTOgwu_kwILIS8Z5Gs4E24kzPESf4AlAVYl7IwzPw0VF5p6zFMZlfeEBs0G-cRMy4ra-NPUttWtM6YHjN5XFDIgGpqusX4pRbXxLskhJnHDTBS_Ss4kOgaBFaimH9mMzoRAWHdOw09tm5UdABDNwqAhfGo_6dYfY40NUB-cTGK7kuIdOuhO9pznf8DUW4FSxyBgbThr0QSj-6ImJd2xylyMuPc5MUnY3rgiMSVj
-        - functionCall:
-            args: {}
-            id: pyd_ai_9eef72b90e5741158501b339e092c0cd
-            name: generate_topic
-        - functionCall:
-            args: {}
-            id: pyd_ai_2608d97b763b464d80b46d3afe00dc28
-            name: generate_topic
-        role: model
-      - parts:
-        - functionResponse:
-            id: pyd_ai_260706d85a314c69b63965777d92c75f
+            id: pyd_ai_7ef33e5f89204f9cac9646eaf7476bc6
             name: generate_topic
             response:
               return_value: cars
         - functionResponse:
-            id: pyd_ai_9eef72b90e5741158501b339e092c0cd
-            name: generate_topic
-            response:
-              return_value: golf
-        - functionResponse:
-            id: pyd_ai_2608d97b763b464d80b46d3afe00dc28
-            name: generate_topic
-            response:
-              return_value: cars
-        role: user
-      - parts:
-        - functionCall:
-            args: {}
-            id: pyd_ai_d0a27a17a3854064b92845bf1165f968
-            name: generate_topic
-          thoughtSignature: ErkDCrYDAXLI2nzPJ0DjjCNf0JMCQceBS3og4AlycTz829GHUBM0Tw8dOu8QefzSjnx0AOTGsbJRKso3FJ-9KcWppgDMDmGr_2GOXj9Eq7H2pxyd4w4ip1lj8vpbnmi3PNyPLLNkCmqkMXfJvVlz9_y9x9dqVuHQaLRVi5CFbSBgd-tMVDl3ciHMeCLFOlBBsNa2gfz2oXGDxnxOCALnbfFs4B1dAJRmdHjkR0Occ0_T-L_jRay_BahlLsGB9CfSPE3E4a__qCeQRwffR38zvCLGPP8OsTvWekDSGYWCksT82iK4-aHPJ1L6VNLHBJzWSNLFRnhdrqVTfPtxf4wVFHcgwZ7IrLJ28F3Q8pXm4Y4Zu57eMS3pSX8okvw1KZIgwUF0A7qNhrvMFI9GjRzAZLdBXmzL0y2rfpUxMihjTpFAHsf788ItVtLFv05zw_aYccDFZxmVKmHoK855aG2hCPq88KJuGV_DhTCRcfPZK0w5pomWEthsR6kVnKfJA1sAAkz5rCHg88cyw30ZIkRnu2ww3_M_aCBYNjQlQwmWH6hgJm-oRdvuxFhnFq-ZmdVooVuXr7TVga7yeSp6
-        role: model
-      - parts:
-        - functionResponse:
-            id: pyd_ai_d0a27a17a3854064b92845bf1165f968
+            id: pyd_ai_d209371b85ff42c3be5e672167210d5e
             name: generate_topic
             response:
               return_value: penguins
@@ -329,11 +189,151 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1984'
+      - '1359'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=3709
+      - gfet4t7; dur=2753
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args: {}
+              name: generate_topic
+            thoughtSignature: Ev0ECvoEAXLI2nwPSlBsZyIDp8EPngBiFpczVke187GqyMEpALeU9HRu0NFgV0CWVcOiPAjp9YkpWHQLWIdo5CL/pLax45D9b7gDIeHvqUWmPmr0ocLzqGbTPzy2sAzTLdGNmj3/YiRcxdVIXGOo7de972KDnBLMKli24oeT57oaXFxnK7dOTHH5X6UHOCW25JnKtawsXtwaiY88qh+RzSGidE5G2HClWt8JYuaiHu+Q0in3vI4p5LN6hI4WKXYIZPqdl0ZFx+K+e8+dh1iUdmlCrbBqCZv5J9UQbvNILHQj5rH4MFl0mdCJ/1vyj1GnJ3+D8FegnYgX93jcv8GZkzYlBJ9DsYDVMIuONtTtx/mwS6hTHz5HxW/5vNS/NTt26a8TkaEbm92VrFbPi3D5Z4H6PsA66eNqTzGHEVdpu5la62VOlItzhW5KtKGipyufzLIGRl5PIMSFQrIavKtPUJjRJT/d/CUiqVXO5XqysNO8vVoEYykvfHdmghr4iYOgxeOatVZAyL1KfSv8dMiLhoi5AKPT0hQcT1nIZxNbygnLBaO5E/9Gooai6Yss8lqlw1WEN/LwX4UeY4PmrQBpMWp0jJDnEA4uThaxfj8NKkJoycDu98pyBQC9SPyI/Hvy+WXGd8aPldpvhnD+REr7xtTe97POwfIw0EBK/AEyYqAixhEYR6KnctoFKWZirE1Doip3nWUWeAREun1Gqf9pUFA9bN+ibe9Z7sGS63SvPDzi6Z79lIbF89DRjn+gZPxvl0oZXbOqPC7j9emEEUIV1Ef+IpwuNTM/mlAkWeFHRDBfMKtz9ODarBGKN4n/9ELmtkAER4OIWYnzO7mKoTButA==
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: hxuCaZmcNqCaqtsPxsKMwQc
+      usageMetadata:
+        candidatesTokenCount: 10
+        promptTokenCount: 248
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 248
+        thoughtsTokenCount: 137
+        totalTokenCount: 395
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '3299'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: ''
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: pyd_ai_9ee64d7bc08f42e1b73e6fb7c762f454
+            name: generate_topic
+          thoughtSignature: EoMDCoADAXLI2nwPsh7qdrwVfy8oyoZyeNkjk5wO6I5mp93YznxIQTiFgoLdRMPmyLAH5ECYwP3fhS68kfneYO0epPeU0uDxfIlYwKveNgSbMxTahqQ5f-VauLiaeNaXRshq1gORLbCzccXJSGPzMYa8q6dsF7JmYF3xCRS-5R9lES8kyGQtHuJqfMBeprbRYcBF_JqRDeAZjhbz6Av6oL_Xq6xODvQJhONdKSvk1nHICTxi23pPWGFBdQLFOT-YaNic5WCO0CktdT07LJFSadlWZZNpp0vVBTpsKFI038L22KNFsV7c7CHrZuTt-iwDPrLDERB4ID-AFrj87vS-zxKyqkzrBHbNwASAiC9WhzWdgX-9x-ch7hB15PjrneVT2s8wiO5yFRfFbmVnI708Zo7LWvfCpn2w-pXTbdpXJwQuZgODJCXYcK32RnWT1SAy5mWE5XymTAIzW6v70LBOAK4J-qqbaSKSM8drHSXfWOn4GaGkO5rjPeU5-kpjJbVxNMR2fAbY
+        - functionCall:
+            args: {}
+            id: pyd_ai_7ef33e5f89204f9cac9646eaf7476bc6
+            name: generate_topic
+        - functionCall:
+            args: {}
+            id: pyd_ai_d209371b85ff42c3be5e672167210d5e
+            name: generate_topic
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_9ee64d7bc08f42e1b73e6fb7c762f454
+            name: generate_topic
+            response:
+              return_value: cars
+        - functionResponse:
+            id: pyd_ai_7ef33e5f89204f9cac9646eaf7476bc6
+            name: generate_topic
+            response:
+              return_value: cars
+        - functionResponse:
+            id: pyd_ai_d209371b85ff42c3be5e672167210d5e
+            name: generate_topic
+            response:
+              return_value: penguins
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: pyd_ai_480f43f478fc496b85fb4ecff35a2a69
+            name: generate_topic
+          thoughtSignature: Ev0ECvoEAXLI2nwPSlBsZyIDp8EPngBiFpczVke187GqyMEpALeU9HRu0NFgV0CWVcOiPAjp9YkpWHQLWIdo5CL_pLax45D9b7gDIeHvqUWmPmr0ocLzqGbTPzy2sAzTLdGNmj3_YiRcxdVIXGOo7de972KDnBLMKli24oeT57oaXFxnK7dOTHH5X6UHOCW25JnKtawsXtwaiY88qh-RzSGidE5G2HClWt8JYuaiHu-Q0in3vI4p5LN6hI4WKXYIZPqdl0ZFx-K-e8-dh1iUdmlCrbBqCZv5J9UQbvNILHQj5rH4MFl0mdCJ_1vyj1GnJ3-D8FegnYgX93jcv8GZkzYlBJ9DsYDVMIuONtTtx_mwS6hTHz5HxW_5vNS_NTt26a8TkaEbm92VrFbPi3D5Z4H6PsA66eNqTzGHEVdpu5la62VOlItzhW5KtKGipyufzLIGRl5PIMSFQrIavKtPUJjRJT_d_CUiqVXO5XqysNO8vVoEYykvfHdmghr4iYOgxeOatVZAyL1KfSv8dMiLhoi5AKPT0hQcT1nIZxNbygnLBaO5E_9Gooai6Yss8lqlw1WEN_LwX4UeY4PmrQBpMWp0jJDnEA4uThaxfj8NKkJoycDu98pyBQC9SPyI_Hvy-WXGd8aPldpvhnD-REr7xtTe97POwfIw0EBK_AEyYqAixhEYR6KnctoFKWZirE1Doip3nWUWeAREun1Gqf9pUFA9bN-ibe9Z7sGS63SvPDzi6Z79lIbF89DRjn-gZPxvl0oZXbOqPC7j9emEEUIV1Ef-IpwuNTM_mlAkWeFHRDBfMKtz9ODarBGKN4n_9ELmtkAER4OIWYnzO7mKoTButA==
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_480f43f478fc496b85fb4ecff35a2a69
+            name: generate_topic
+            response:
+              return_value: golf
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: Tell three jokes. Generate topics with the generate_topic tool.
+        role: user
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - generate_topic
+          - final_result
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: generate_topic
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+        - description: The final response which ends this conversation
+          name: final_result
+          parameters_json_schema:
+            properties:
+              response:
+                items:
+                  type: string
+                type: array
+            required:
+            - response
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '922'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1857
       transfer-encoding:
       - chunked
       vary:
@@ -347,25 +347,25 @@ interactions:
           - functionCall:
               args:
                 response:
-                - What kind of car does an egg drive? A Yolk-swagen!
+                - Why did the car get a flat tire? Because there was a fork in the road!
+                - What do you call a cold penguin? A brrr-d!
                 - Why do golfers always carry an extra pair of trousers? In case they get a hole in one!
-                - Why do penguins carry fish in their beaks? Because they don't have any pockets!
               name: final_result
-            thoughtSignature: EqIHCp8HAXLI2nwhwzWdSQQiW7EbxgftFm/aRtlqlKDSOWGTfT5Yru5B9KwbhPtfhnmnse6RFpsdOZrXBUYKtWE/A4t6P+DrC7UOpvuoqh+fPbtq8Xgs/VkCb4z4wnF0RZQqi0TBWdC343kbmV40IeggL0oeq9NbTDl3nlcXLlBZJrf10a/7PsmDQYV7fsIKrnfMPRL+xgmZFxpTmx0KPj9DM0DB3uKX6FS4258e6+Z6IKFC55tmy13C7cJqRQ3dw4IXOQPvXSLMiQUVABiEtDbTizda2C/0RTGEBsj3aqiSdYwmEMKf2t3uFxfc0WLBs+S9neaEq93Fv5feZHX/kbxrgoMPcxi8l5ACsNVgPxpJn2HeJtDf68hAGLkvvjQGyPBs11xklnIRTg/933SkNg9qpNVb3zbTS8H9w+CgWilFWdTvwjcTyjqSiCMtPQQkpvJh8wjTEKeHrNdJrLaSr/ehpF0ecztYFyuHCiLFALR829kSMqJksdGsy0axf75LvzZ83LVBvHV9h+V7EWysjRGp7yCWZcn+tq1IGJp/HHCvHq1zmvz1Q03Uvu3Dk/08Rj6cj5NYQs2lG6KlmeuiZxT75zoNN5uIkHD70Mou+gk//9fPILDMH6cb36dZ98+I+GncY5SsNOpDAGXo9/DeU9GefRwuLHX94ORj0H5js2rBToGgECPl+APPDPKsTLfRlSvfdtezhVDcisQD5p0eVOEbBGApZub8/xcdsCxg0YSw2j8krjkw+OLbLRhoIUQaxnYhzI3EfwKVwk/a69aK2UtrdVcV1gR10QqBetFyPy5bLWn0R5ycggACvkalByEgjJsTBkTTNd+M1wfxteISoHKlAuJqdqp4Td8P/JYbjAvmfLoPlR6hezRYV26YP13eKRTcwQ5mvGqwGVakaO67niR62V48+bfUPjvOXBRNqqVM0CQe/1Y7iw3YsBiSypERmhdw0F1H8Y2ED7I/QqL1g5QmqwAoHmtiLEF3U7642+l82HJ4HRSbH3+AsgovqTbLtM8AGIsruikF4YE7SuVktBXNqXCqWLBX7/RdwAuUR700CR8gTGKltK50EJw22Trn8GGcBGHFEDeC5ZRUREOS6LYXtSaoGWyx36xBrZ4XORszpDkjID1dreYDa0FlyftjuDgSEUYiXGoR1/TDcmpCGlCzHaGNw9sUWlLJfIMFt18hTGLdceNzBmpyVHL6dkWdWuVLP5zKK/rK/RjG1flUPfufdkBF
+            thoughtSignature: EpIBCo8BAXLI2nzrB97EjGBfxZBRFCVNg+99QiCznkEuWz7Fntcul8wZN4/IrEZtXJ5cqEqMzwFbJIC/54gsuw0hVjuLmbDrU4kTh1UYlOtOSE/WLbXGTrNqkk0zgl/8cW+FpAfvaZmIRsMRgbH7QX+8pfdHy79ANOUFRkPZH2+E5Z9kLWu19kYFg7Gi/slz7ePAsAM=
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: rROCaafPFfiK6dkPpom74Ac
+      responseId: iRuCac7sM5OqqtsPnqvasAk
       usageMetadata:
-        candidatesTokenCount: 75
-        promptTokenCount: 440
+        candidatesTokenCount: 73
+        promptTokenCount: 411
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 440
-        thoughtsTokenCount: 266
-        totalTokenCount: 781
+          tokenCount: 411
+        thoughtsTokenCount: 29
+        totalTokenCount: 513
     status:
       code: 200
       message: OK
