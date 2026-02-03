@@ -189,3 +189,12 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         from .approval_required import ApprovalRequiredToolset
 
         return ApprovalRequiredToolset(self, approval_required_func)
+
+    def has_deferred_tools(self) -> bool:
+        """Returns True if this toolset has any tools with `defer_loading=True`.
+
+        This is a conservative estimate that doesn't require a RunContext. Toolsets should
+        override this method if they can determine the answer without calling `get_tools()`.
+        The default implementation returns False.
+        """
+        return False

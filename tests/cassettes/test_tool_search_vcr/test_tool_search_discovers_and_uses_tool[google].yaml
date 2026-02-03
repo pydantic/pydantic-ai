@@ -1,0 +1,351 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '862'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use search_tools to search for "mortgage", then use the mortgage_calculator tool to calculate the monthly
+            payment for a $400,000 loan at 6.5% interest for 30 years.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: Search for available tools by keyword. Returns matching tool names and descriptions.
+          name: search_tools
+          parameters_json_schema:
+            properties:
+              query:
+                description: The search query to match against tool names and descriptions.
+                type: string
+            required:
+            - query
+            type: object
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '2392'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=3297
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                query: mortgage
+              name: search_tools
+            thoughtSignature: EvcKCvQKAXLI2nxFHET50n44QdIawvCwOR3eYTVdGd2/nRmatP5xjONXyIC9flOUbtOYTwuoTop5ckixDDSql+SALU1Vc8Acj02DhECMU2q9dZuK0D1ejZtEAtNQDtQCXF3O9gUctqE9c84pCSTk+OQOhJmJcODHdfsXRqRpdocgrBWQrRDl3Ug5Wjm8gtf41sVbFwx62TAX2gPceOx+0DMrawUhcxHVNXrJGXwui6UgYTF3w4g41N0GCdvFvvl2I1DRIA0aDvrbhcTaxsM/A8PoTkueroamjSQPlfpSrdkqQqW3zAUmRs3HEctRxFhPRBu7V21diFOBRraG82e2+whpxD3ZYzL2tKx0z7QiMlolf0U0mGRWTcz4na+HuU7uO5qFGu25v10I1r6hmJ7qiz/+oEdDpTuj9Z1qZuFhPAOZ3QWMWj1FeuFS8d5rKK3ISUPNRap+r0Eu/q7hJ6yy616MNwCSY62lm9IbUWUjNyxuXvZ0jEJPp8Fe9yUudwMw4khoAjReWINTpti5qPoFoD5THW6Sku5o8r7dOLrHEDtVQxQhOfYR3H9UAgj36FsP/n9pBBcNQcFDkf8PCZ5R/uMUIAI4ea2bI7RWB98ths7uwHCc6SSWbtS5BsjrlKQXF1NMwpqrND3+MpIrZ+DpEurBFMAd9n+FEecrYtLtffx2TzhodTIghVAEJ6HuTqXsX+mlAkiP7Oy16axGRPoiGM1R2vzTX4ah6DELt/2MvM5XNqOjtLkInlFEAedqMf7LZcd1S3Jt9lE+Io3M/xc6S6Yq83BR9HwwcloHx2hqMG9pDpZL8u5vZlbt2zqNxQUhIXvALvcNmQfT22+L3RH83Ln8yoJlzI6SA9AoC7R2bB1DrWyhhmr4iX6sebjmiBXCFh2LefcZ/Yfr5BZ9u4e+F66pNeO/f1DzD5ZXBCRSrngLChGJEcGQij72nrybKkONiExzZ9u+XUJaUJko31x7PNJd9SaS4SeMLjwnfKIbwpTX/KCqTc+EiS8tgOJkRMT41vJKFYehlbbL0CSvF97pQOBbfLyulO3GOUrGKP29bAZPaoedQadPSuwbkx1IylzyOZXNjH3uh59xaDb2oNLuyJagUUIJYXm/WRO1lNvyJaN+vZrVJ2h3zb0uDJR8iHhy+6WBAquvWo06rhRHl3249zZJsBHMnBATE2VuO2CUTQmGgUHTKDEhdDkoliGZrL2npGDFDsbJYPKCMXPFImIia09UiteFOtO9v/YuvRreVvAlPpVdYKluQz4dp5tnHHUPnCetksO7BR5riD4KWgd288V3efgdO8qRc5CYTetmPNfrXe0IqMX0sbJT3FqvQaJnS4OSZ1p7fpPJ2bUL2s9WNY6+z+K/n08E/gP1hgPxmlm+AzPT2gRkqou5oDCfInLfUhcAGGWNwjUR9udeNJcfNa/l6RL8NFxqkO1OydRyhQFthVj7pd5H3Hy7PbnmGUJ/LpfTejfzUw+ipKWG/8TTzb1BdZU3dZsmmQSIsSK8SIBB4COP1OOAH8ZkFdcA23UTHda5G+cFdTDh4Z0ysPp+NFG0JZzMI0UiNnLfHX6WVO1vKQSkeZdNx8/sGexqg5DdHAPnWyJCfaNc/vY5yKOL+4VoG2a0K/732Yyo1+UjtoZZPeTPnuTH0hcEzh9/ndBK6XPABIbkzFoL67GQHtHNE+xj3XbP+9tV9lPukhlMx7DjRQMq9kuayw0gdYnzXA6TyOwMFI85NU8RUgiOLQnrKLuMpUseRoRijp+h7vq/J2NGAbInw2TZ4WbHbIaBj8g6auE+v3lsherOMncVj2OFA0Mp5ppv0oa86d69rQc4Ipg8flPVGz6rpDsb16LTLRoZg0TbHDf3kGKPqA==
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: iGiCadCqK6avqtsP0OaT0Qk
+      usageMetadata:
+        candidatesTokenCount: 17
+        promptTokenCount: 160
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 160
+        thoughtsTokenCount: 365
+        totalTokenCount: 542
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '3591'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use search_tools to search for "mortgage", then use the mortgage_calculator tool to calculate the monthly
+            payment for a $400,000 loan at 6.5% interest for 30 years.
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              query: mortgage
+            id: pyd_ai_0e21026d84674baabbf2689c85a6b108
+            name: search_tools
+          thoughtSignature: EvcKCvQKAXLI2nxFHET50n44QdIawvCwOR3eYTVdGd2_nRmatP5xjONXyIC9flOUbtOYTwuoTop5ckixDDSql-SALU1Vc8Acj02DhECMU2q9dZuK0D1ejZtEAtNQDtQCXF3O9gUctqE9c84pCSTk-OQOhJmJcODHdfsXRqRpdocgrBWQrRDl3Ug5Wjm8gtf41sVbFwx62TAX2gPceOx-0DMrawUhcxHVNXrJGXwui6UgYTF3w4g41N0GCdvFvvl2I1DRIA0aDvrbhcTaxsM_A8PoTkueroamjSQPlfpSrdkqQqW3zAUmRs3HEctRxFhPRBu7V21diFOBRraG82e2-whpxD3ZYzL2tKx0z7QiMlolf0U0mGRWTcz4na-HuU7uO5qFGu25v10I1r6hmJ7qiz_-oEdDpTuj9Z1qZuFhPAOZ3QWMWj1FeuFS8d5rKK3ISUPNRap-r0Eu_q7hJ6yy616MNwCSY62lm9IbUWUjNyxuXvZ0jEJPp8Fe9yUudwMw4khoAjReWINTpti5qPoFoD5THW6Sku5o8r7dOLrHEDtVQxQhOfYR3H9UAgj36FsP_n9pBBcNQcFDkf8PCZ5R_uMUIAI4ea2bI7RWB98ths7uwHCc6SSWbtS5BsjrlKQXF1NMwpqrND3-MpIrZ-DpEurBFMAd9n-FEecrYtLtffx2TzhodTIghVAEJ6HuTqXsX-mlAkiP7Oy16axGRPoiGM1R2vzTX4ah6DELt_2MvM5XNqOjtLkInlFEAedqMf7LZcd1S3Jt9lE-Io3M_xc6S6Yq83BR9HwwcloHx2hqMG9pDpZL8u5vZlbt2zqNxQUhIXvALvcNmQfT22-L3RH83Ln8yoJlzI6SA9AoC7R2bB1DrWyhhmr4iX6sebjmiBXCFh2LefcZ_Yfr5BZ9u4e-F66pNeO_f1DzD5ZXBCRSrngLChGJEcGQij72nrybKkONiExzZ9u-XUJaUJko31x7PNJd9SaS4SeMLjwnfKIbwpTX_KCqTc-EiS8tgOJkRMT41vJKFYehlbbL0CSvF97pQOBbfLyulO3GOUrGKP29bAZPaoedQadPSuwbkx1IylzyOZXNjH3uh59xaDb2oNLuyJagUUIJYXm_WRO1lNvyJaN-vZrVJ2h3zb0uDJR8iHhy-6WBAquvWo06rhRHl3249zZJsBHMnBATE2VuO2CUTQmGgUHTKDEhdDkoliGZrL2npGDFDsbJYPKCMXPFImIia09UiteFOtO9v_YuvRreVvAlPpVdYKluQz4dp5tnHHUPnCetksO7BR5riD4KWgd288V3efgdO8qRc5CYTetmPNfrXe0IqMX0sbJT3FqvQaJnS4OSZ1p7fpPJ2bUL2s9WNY6-z-K_n08E_gP1hgPxmlm-AzPT2gRkqou5oDCfInLfUhcAGGWNwjUR9udeNJcfNa_l6RL8NFxqkO1OydRyhQFthVj7pd5H3Hy7PbnmGUJ_LpfTejfzUw-ipKWG_8TTzb1BdZU3dZsmmQSIsSK8SIBB4COP1OOAH8ZkFdcA23UTHda5G-cFdTDh4Z0ysPp-NFG0JZzMI0UiNnLfHX6WVO1vKQSkeZdNx8_sGexqg5DdHAPnWyJCfaNc_vY5yKOL-4VoG2a0K_732Yyo1-UjtoZZPeTPnuTH0hcEzh9_ndBK6XPABIbkzFoL67GQHtHNE-xj3XbP-9tV9lPukhlMx7DjRQMq9kuayw0gdYnzXA6TyOwMFI85NU8RUgiOLQnrKLuMpUseRoRijp-h7vq_J2NGAbInw2TZ4WbHbIaBj8g6auE-v3lsherOMncVj2OFA0Mp5ppv0oa86d69rQc4Ipg8flPVGz6rpDsb16LTLRoZg0TbHDf3kGKPqA==
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_0e21026d84674baabbf2689c85a6b108
+            name: search_tools
+            response:
+              message: Found 1 tool(s) matching 'mortgage'
+              tools:
+              - description: Mortgage calculator - calculate monthly mortgage payment for a home loan.
+                name: mortgage_calculator
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: Search for available tools by keyword. Returns matching tool names and descriptions.
+          name: search_tools
+          parameters_json_schema:
+            properties:
+              query:
+                description: The search query to match against tool names and descriptions.
+                type: string
+            required:
+            - query
+            type: object
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Mortgage calculator - calculate monthly mortgage payment for a home loan.
+          name: mortgage_calculator
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              principal:
+                type: number
+              rate:
+                type: number
+              years:
+                type: integer
+            required:
+            - principal
+            - rate
+            - years
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '856'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1538
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                principal: 400000
+                rate: 6.5
+                years: 30
+              name: mortgage_calculator
+            thoughtSignature: EuABCt0BAXLI2nyOxwOJx1ebD4j9ghPG1s7ptlQ617ewAcuQRC3tqfIr/Jah/5f3QuIn7lx1bw33dmMoIn8jZ0P6ItQaIBD4xS+NiHO/EJJVe001jDT9OQO5BWCq4so2V+6X9d5kzZ/cpZsvgfb3p8SlxQUT1C8GeTUGufIuCiKU0eETzZB6q1krCVtKUY+3yQKs3CqS5ZI6hG3IaDW2kR+O1QPGhAA8b8HZP3/rKgzI7e9w6dufSc8CtBz6Z5TJTp0e3Dufz3y5Q+LLTitT5hZ3l8SwGEQwezYf++iEQkQDs2U=
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: imiCacrUFNqLqtsP0abpsQk
+      usageMetadata:
+        candidatesTokenCount: 31
+        promptTokenCount: 672
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 672
+        thoughtsTokenCount: 57
+        totalTokenCount: 760
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '4298'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use search_tools to search for "mortgage", then use the mortgage_calculator tool to calculate the monthly
+            payment for a $400,000 loan at 6.5% interest for 30 years.
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              query: mortgage
+            id: pyd_ai_0e21026d84674baabbf2689c85a6b108
+            name: search_tools
+          thoughtSignature: EvcKCvQKAXLI2nxFHET50n44QdIawvCwOR3eYTVdGd2_nRmatP5xjONXyIC9flOUbtOYTwuoTop5ckixDDSql-SALU1Vc8Acj02DhECMU2q9dZuK0D1ejZtEAtNQDtQCXF3O9gUctqE9c84pCSTk-OQOhJmJcODHdfsXRqRpdocgrBWQrRDl3Ug5Wjm8gtf41sVbFwx62TAX2gPceOx-0DMrawUhcxHVNXrJGXwui6UgYTF3w4g41N0GCdvFvvl2I1DRIA0aDvrbhcTaxsM_A8PoTkueroamjSQPlfpSrdkqQqW3zAUmRs3HEctRxFhPRBu7V21diFOBRraG82e2-whpxD3ZYzL2tKx0z7QiMlolf0U0mGRWTcz4na-HuU7uO5qFGu25v10I1r6hmJ7qiz_-oEdDpTuj9Z1qZuFhPAOZ3QWMWj1FeuFS8d5rKK3ISUPNRap-r0Eu_q7hJ6yy616MNwCSY62lm9IbUWUjNyxuXvZ0jEJPp8Fe9yUudwMw4khoAjReWINTpti5qPoFoD5THW6Sku5o8r7dOLrHEDtVQxQhOfYR3H9UAgj36FsP_n9pBBcNQcFDkf8PCZ5R_uMUIAI4ea2bI7RWB98ths7uwHCc6SSWbtS5BsjrlKQXF1NMwpqrND3-MpIrZ-DpEurBFMAd9n-FEecrYtLtffx2TzhodTIghVAEJ6HuTqXsX-mlAkiP7Oy16axGRPoiGM1R2vzTX4ah6DELt_2MvM5XNqOjtLkInlFEAedqMf7LZcd1S3Jt9lE-Io3M_xc6S6Yq83BR9HwwcloHx2hqMG9pDpZL8u5vZlbt2zqNxQUhIXvALvcNmQfT22-L3RH83Ln8yoJlzI6SA9AoC7R2bB1DrWyhhmr4iX6sebjmiBXCFh2LefcZ_Yfr5BZ9u4e-F66pNeO_f1DzD5ZXBCRSrngLChGJEcGQij72nrybKkONiExzZ9u-XUJaUJko31x7PNJd9SaS4SeMLjwnfKIbwpTX_KCqTc-EiS8tgOJkRMT41vJKFYehlbbL0CSvF97pQOBbfLyulO3GOUrGKP29bAZPaoedQadPSuwbkx1IylzyOZXNjH3uh59xaDb2oNLuyJagUUIJYXm_WRO1lNvyJaN-vZrVJ2h3zb0uDJR8iHhy-6WBAquvWo06rhRHl3249zZJsBHMnBATE2VuO2CUTQmGgUHTKDEhdDkoliGZrL2npGDFDsbJYPKCMXPFImIia09UiteFOtO9v_YuvRreVvAlPpVdYKluQz4dp5tnHHUPnCetksO7BR5riD4KWgd288V3efgdO8qRc5CYTetmPNfrXe0IqMX0sbJT3FqvQaJnS4OSZ1p7fpPJ2bUL2s9WNY6-z-K_n08E_gP1hgPxmlm-AzPT2gRkqou5oDCfInLfUhcAGGWNwjUR9udeNJcfNa_l6RL8NFxqkO1OydRyhQFthVj7pd5H3Hy7PbnmGUJ_LpfTejfzUw-ipKWG_8TTzb1BdZU3dZsmmQSIsSK8SIBB4COP1OOAH8ZkFdcA23UTHda5G-cFdTDh4Z0ysPp-NFG0JZzMI0UiNnLfHX6WVO1vKQSkeZdNx8_sGexqg5DdHAPnWyJCfaNc_vY5yKOL-4VoG2a0K_732Yyo1-UjtoZZPeTPnuTH0hcEzh9_ndBK6XPABIbkzFoL67GQHtHNE-xj3XbP-9tV9lPukhlMx7DjRQMq9kuayw0gdYnzXA6TyOwMFI85NU8RUgiOLQnrKLuMpUseRoRijp-h7vq_J2NGAbInw2TZ4WbHbIaBj8g6auE-v3lsherOMncVj2OFA0Mp5ppv0oa86d69rQc4Ipg8flPVGz6rpDsb16LTLRoZg0TbHDf3kGKPqA==
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_0e21026d84674baabbf2689c85a6b108
+            name: search_tools
+            response:
+              message: Found 1 tool(s) matching 'mortgage'
+              tools:
+              - description: Mortgage calculator - calculate monthly mortgage payment for a home loan.
+                name: mortgage_calculator
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              principal: 400000
+              rate: 6.5
+              years: 30
+            id: pyd_ai_e828a9cbfb044a459bd01724a1a27d0e
+            name: mortgage_calculator
+          thoughtSignature: EuABCt0BAXLI2nyOxwOJx1ebD4j9ghPG1s7ptlQ617ewAcuQRC3tqfIr_Jah_5f3QuIn7lx1bw33dmMoIn8jZ0P6ItQaIBD4xS-NiHO_EJJVe001jDT9OQO5BWCq4so2V-6X9d5kzZ_cpZsvgfb3p8SlxQUT1C8GeTUGufIuCiKU0eETzZB6q1krCVtKUY-3yQKs3CqS5ZI6hG3IaDW2kR-O1QPGhAA8b8HZP3_rKgzI7e9w6dufSc8CtBz6Z5TJTp0e3Dufz3y5Q-LLTitT5hZ3l8SwGEQwezYf--iEQkQDs2U=
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_e828a9cbfb044a459bd01724a1a27d0e
+            name: mortgage_calculator
+            response:
+              return_value: 'Monthly payment: $2528.27'
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: Search for available tools by keyword. Returns matching tool names and descriptions.
+          name: search_tools
+          parameters_json_schema:
+            properties:
+              query:
+                description: The search query to match against tool names and descriptions.
+                type: string
+            required:
+            - query
+            type: object
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Mortgage calculator - calculate monthly mortgage payment for a home loan.
+          name: mortgage_calculator
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              principal:
+                type: number
+              rate:
+                type: number
+              years:
+                type: integer
+            required:
+            - principal
+            - rate
+            - years
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '540'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1428
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: OK. I searched for "mortgage" and found the `mortgage_calculator` tool. Using that tool for a $400,000 loan
+              at 6.5% interest over 30 years, the calculated monthly payment is $2,528.27.
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: i2iCaY_gM9SkmtkP-7SzyQc
+      usageMetadata:
+        candidatesTokenCount: 62
+        promptTokenCount: 787
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 787
+        totalTokenCount: 849
+    status:
+      code: 200
+      message: OK
+version: 1
