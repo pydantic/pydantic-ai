@@ -342,10 +342,16 @@ async def test_a2a_file_message_with_file_content():
         async with httpx.AsyncClient(transport=transport) as http_client:
             a2a_client = A2AClient(http_client=http_client)
 
+            # Test with base64-encoded data (this is a 1x1 pixel PNG)
+            base64_image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+            
             message = Message(
                 role='user',
                 parts=[
-                    FilePart(file={'bytes': 'foo', 'mime_type': 'text/plain'}, kind='file'),
+                    FilePart(
+                        file={'bytes': base64_image, 'mime_type': 'image/png'},
+                        kind='file'
+                    ),
                 ],
                 kind='message',
                 message_id=str(uuid.uuid4()),
