@@ -39,6 +39,7 @@ from pydantic_ai import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
+    UserError,
     UserPromptPart,
 )
 from pydantic_ai.builtin_tools import WebSearchTool
@@ -5834,3 +5835,25 @@ def test_groq_prepare_request_auto_mode_non_native_profile():
 
     _, result_params = m.prepare_request(None, params)
     assert result_params.output_mode == 'tool'
+
+
+def test_groq_explicit_native_with_tools_raises_error():
+    """Test that explicit native mode with function tools raises UserError.
+
+    When output_mode is explicitly set to 'native' but function tools are present,
+    Groq should raise an error since it doesn't support JSON mode with function tools.
+    """
+    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key='test-key'))
+
+    dummy_tool = ToolDefinition(
+        name='dummy',
+        description='A dummy tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    params = ModelRequestParameters(
+        function_tools=[dummy_tool],
+        output_mode='native',
+    )
+
+    with pytest.raises(UserError, match='Groq does not support native structured output'):
+        m.prepare_request(None, params)

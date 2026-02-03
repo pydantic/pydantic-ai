@@ -4,7 +4,7 @@ from . import ModelProfile
 from .openai import OpenAIModelProfile, openai_model_profile
 
 
-def harmony_model_profile(model_name: str) -> ModelProfile | None:
+def harmony_model_profile(model_name: str) -> ModelProfile:
     """The model profile for the OpenAI Harmony Response format.
 
     See <https://cookbook.openai.com/articles/openai-harmony> for more details.

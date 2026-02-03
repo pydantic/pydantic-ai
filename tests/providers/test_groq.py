@@ -144,14 +144,14 @@ def test_groq_provider_model_profile(mocker: MockerFixture):
     assert moonshotai_profile.ignore_streamed_leading_whitespace is True
 
     gpt_oss_profile = provider.model_profile('openai/gpt-oss-20b')
-    groq_gpt_oss_model_profile_mock.assert_called_with('openai/gpt-oss-20b')
+    groq_gpt_oss_model_profile_mock.assert_called_with('gpt-oss-20b')
     assert gpt_oss_profile is not None
     assert gpt_oss_profile.supports_json_object_output is True
     assert gpt_oss_profile.supports_json_schema_output is True
     assert gpt_oss_profile.default_structured_output_mode == 'native'
 
     gpt_oss_profile = provider.model_profile('openai/gpt-oss-120b')
-    groq_gpt_oss_model_profile_mock.assert_called_with('openai/gpt-oss-120b')
+    groq_gpt_oss_model_profile_mock.assert_called_with('gpt-oss-120b')
     assert gpt_oss_profile is not None
     assert gpt_oss_profile.supports_json_object_output is True
     assert gpt_oss_profile.supports_json_schema_output is True

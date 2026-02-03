@@ -11,6 +11,7 @@ from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.groq import GroqModelProfile, groq_model_profile
+from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
@@ -59,7 +60,8 @@ def groq_gpt_oss_model_profile(model_name: str) -> ModelProfile:
     GPT-OSS models (gpt-oss-20b, gpt-oss-120b) support strict native structured output
     with 100% schema adherence.
     """
-    return GroqModelProfile.from_profile(_GROQ_NATIVE_OUTPUT_PROFILE)
+    base = harmony_model_profile(model_name)
+    return GroqModelProfile.from_profile(base.update(_GROQ_NATIVE_OUTPUT_PROFILE))
 
 
 class GroqProvider(Provider[AsyncGroq]):
@@ -92,11 +94,14 @@ class GroqProvider(Provider[AsyncGroq]):
         }
 
         for prefix, profile_func in prefix_to_profile.items():
-            model_name = model_name.lower()
-            if model_name.startswith(prefix):
-                if prefix.endswith('/'):
-                    model_name = model_name[len(prefix) :]
-                return profile_func(model_name)
+            model_name_lower = model_name.lower()
+            if model_name_lower.startswith(prefix):
+                # Strip provider prefix (e.g., 'openai/gpt-oss-120b' -> 'gpt-oss-120b')
+                if '/' in model_name_lower:
+                    model_name_for_profile = model_name_lower.split('/', 1)[-1]
+                else:
+                    model_name_for_profile = model_name_lower
+                return profile_func(model_name_for_profile)
 
         return None
 
