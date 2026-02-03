@@ -598,21 +598,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        # Validate tool_choice - 'required' and list[str] would prevent the agent from ever completing
-        # because they exclude output tools. These settings are only valid for direct model requests.
-        # TODO(prepare_model_settings): This validation remains correct for static model_settings.
-        # The hook CAN return 'required' or list[str] for per-step control (e.g., force tool on
-        # step 1, then allow completion on step 2+). The hook bypasses this validation because
-        # it applies dynamically per-request, not statically for the entire run.
-        if model_settings:
-            tool_choice = model_settings.get('tool_choice')
-            if tool_choice == 'required' or isinstance(tool_choice, list):
-                raise exceptions.UserError(
-                    f'tool_choice={tool_choice!r} is not supported in agent.run() because it prevents '
-                    f'the agent from producing a final response. Use ToolOrOutput to combine specific '
-                    f'tools with output capability, or use model.request() for direct model calls.'
-                )
-
         model_used = self._get_model(model)
         del model
 

@@ -1555,9 +1555,10 @@ async def test_bedrock_output_tool_with_thinking_raises(allow_model_requests: No
 async def test_bedrock_tool_choice_required_with_thinking(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """Bedrock does not support forcing tool use (tool_choice=required) with thinking enabled.
+    """Agent.run() blocks tool_choice='required' since it prevents final response.
 
-    When explicitly setting tool_choice='required' with thinking, it should raise UserError.
+    When explicitly setting tool_choice='required', agent.run() raises UserError
+    before it reaches Bedrock's thinking mode validation.
     """
     m = BedrockConverseModel(
         'us.anthropic.claude-sonnet-4-20250514-v1:0',
@@ -1576,7 +1577,7 @@ async def test_bedrock_tool_choice_required_with_thinking(
 
     with pytest.raises(
         UserError,
-        match='Bedrock does not support forcing specific tools with thinking mode',
+        match='prevents the agent from producing a final response',
     ):
         await agent.run('What is the weather in Paris?')
 

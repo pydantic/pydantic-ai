@@ -150,23 +150,23 @@ def test_list_partial_invalid_filters_silently():
 
 
 def test_tool_or_output_empty_function_tools_with_output_tools_direct_output():
-    """Empty function tools with output tools and direct output returns auto."""
+    """Empty function tools with output tools and direct output returns auto mode with output tools."""
     params = ModelRequestParameters(
         output_tools=[make_tool('final_result')],
         allow_text_output=True,
     )
     result = resolve_tool_choice({'tool_choice': ToolOrOutput(function_tools=[])}, params)
-    assert result == 'auto'
+    assert result[0] == 'auto' and set(result[1]) == {'final_result'}
 
 
 def test_tool_or_output_empty_function_tools_with_output_tools_no_direct_output():
-    """Empty function tools with output tools but no direct output returns required."""
+    """Empty function tools with output tools but no direct output returns required mode with output tools."""
     params = ModelRequestParameters(
         output_tools=[make_tool('final_result')],
         allow_text_output=False,
     )
     result = resolve_tool_choice({'tool_choice': ToolOrOutput(function_tools=[])}, params)
-    assert result == 'required'
+    assert result[0] == 'required' and set(result[1]) == {'final_result'}
 
 
 def test_tool_or_output_empty_function_tools_no_output_tools():

@@ -4336,7 +4336,7 @@ async def test_openai_tool_choice_required_unsupported_raises_error(allow_model_
     with pytest.raises(
         UserError,
         match=re.escape(
-            "tool_choice='required' is not supported in agent.run() because it prevents the agent from producing a final response. Use ToolOrOutput to combine specific tools with output capability, or use model.request() for direct model calls."
+            "`tool_choice='required'` prevents the agent from producing a final response because output tools are excluded. Use `ToolOrOutput` to combine specific tools with output capability, or use `model.request()` for direct model calls."
         ),
     ):
         await agent.run('What is the weather?', model_settings=settings)

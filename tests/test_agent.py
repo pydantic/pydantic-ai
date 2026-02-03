@@ -7715,7 +7715,7 @@ async def test_tool_choice_required_or_list_rejected_in_agent_run(tool_choice: A
     agent = Agent(model)
 
     settings: ModelSettings = {'tool_choice': tool_choice}
-    with pytest.raises(UserError, match='is not supported in agent.run\\(\\)'):
+    with pytest.raises(UserError, match='prevents the agent from producing a final response'):
         await agent.run('Hello', model_settings=settings)
 
 
