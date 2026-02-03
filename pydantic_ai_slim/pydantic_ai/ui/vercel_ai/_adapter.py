@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
@@ -76,8 +76,12 @@ request_data_ta: TypeAdapter[RequestData] = TypeAdapter(RequestData)
 class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, OutputDataT]):
     """UI adapter for the Vercel AI protocol."""
 
-    enable_tool_approval: bool = False
-    """Whether to enable tool approval streaming for human-in-the-loop workflows."""
+    _: KW_ONLY
+    sdk_version: Literal[5, 6] = 5
+    """Vercel AI SDK version to target. Default is 5 for backwards compatibility.
+
+    Setting `sdk_version=6` enables tool approval streaming for human-in-the-loop workflows.
+    """
 
     @classmethod
     def build_run_input(cls, body: bytes) -> RequestData:
@@ -90,30 +94,30 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         request: Request,
         *,
         agent: AbstractAgent[AgentDepsT, OutputDataT],
-        enable_tool_approval: bool = False,
+        sdk_version: Literal[5, 6] = 5,
     ) -> VercelAIAdapter[AgentDepsT, OutputDataT]:
         """Create a Vercel AI adapter from a request.
 
         Args:
             request: The incoming Starlette/FastAPI request.
             agent: The Pydantic AI agent to run.
-            enable_tool_approval: Whether to enable tool approval streaming for human-in-the-loop workflows.
+            sdk_version: Vercel AI SDK version. Set to 6 to enable tool approval streaming.
         """
         return cls(
             agent=agent,
             run_input=cls.build_run_input(await request.body()),
             accept=request.headers.get('accept'),
-            enable_tool_approval=enable_tool_approval,
+            sdk_version=sdk_version,
         )
 
     def build_event_stream(self) -> UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
         """Build a Vercel AI event stream transformer."""
-        return VercelAIEventStream(self.run_input, accept=self.accept, enable_tool_approval=self.enable_tool_approval)
+        return VercelAIEventStream(self.run_input, accept=self.accept, sdk_version=self.sdk_version)
 
     @cached_property
     def deferred_tool_results(self) -> DeferredToolResults | None:
         """Extract deferred tool results from Vercel AI messages with approval responses."""
-        if not self.enable_tool_approval:
+        if self.sdk_version < 6:
             return None
         approvals: dict[str, bool | DeferredToolApprovalResult] = {}
         for msg in self.run_input.messages:

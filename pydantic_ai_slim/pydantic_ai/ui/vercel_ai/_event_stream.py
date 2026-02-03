@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic_core import to_json
@@ -85,8 +85,9 @@ def _json_dumps(obj: Any) -> str:
 class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]):
     """UI event stream transformer for the Vercel AI protocol."""
 
-    enable_tool_approval: bool = False
-    """Whether tool approval streaming is enabled for human-in-the-loop workflows."""
+    _: KW_ONLY
+    sdk_version: Literal[5, 6] = 5
+    """Vercel AI SDK version to target. Setting to 6 enables tool approval streaming."""
 
     _step_started: bool = False
     _finish_reason: FinishReason = None
@@ -111,7 +112,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         return VERCEL_AI_DSP_HEADERS
 
     def encode_event(self, event: BaseChunk) -> str:
-        return f'data: {event.encode()}\n\n'
+        return f'data: {event.encode(self.sdk_version)}\n\n'
 
     async def before_stream(self) -> AsyncIterator[BaseChunk]:
         yield StartChunk()
@@ -134,9 +135,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if pydantic_reason:
             self._finish_reason = _FINISH_REASON_MAP.get(pydantic_reason, 'other')
 
-        # Emit tool approval requests for deferred approvals (only when enable_tool_approval is enabled)
+        # Emit tool approval requests for deferred approvals (only when sdk_version >= 6)
         output = event.result.output
-        if self.enable_tool_approval and isinstance(output, DeferredToolRequests):
+        if self.sdk_version >= 6 and isinstance(output, DeferredToolRequests):
             for tool_call in output.approvals:
                 yield ToolApprovalRequestChunk(
                     approval_id=str(uuid4()),
@@ -281,8 +282,8 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         part = event.result
         tool_call_id = part.tool_call_id
 
-        # Check if this tool was denied by the user (only when enable_tool_approval is enabled)
-        if self.enable_tool_approval and tool_call_id in self._denied_tool_ids:
+        # Check if this tool was denied by the user (only when sdk_version >= 6)
+        if self.sdk_version >= 6 and tool_call_id in self._denied_tool_ids:
             yield ToolOutputDeniedChunk(tool_call_id=tool_call_id)
         elif isinstance(part, RetryPromptPart):
             yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response())
