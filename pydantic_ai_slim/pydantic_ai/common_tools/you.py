@@ -210,7 +210,7 @@ def you_search_tool(
 
     Args:
         api_key: The You.com API key.
-            You can get one by signing up at [https://api.you.com](https://api.you.com).
+            You can get one by signing up at [https://you.com/platform](https://you.com/platform).
         count: Default maximum number of results per section (1-100). Default: 10.
         offset: Pagination offset (0-9). Not controllable by LLM.
         freshness: Default result freshness: 'day', 'week', 'month', 'year', or 'YYYY-MM-DDtoYYYY-MM-DD'.
