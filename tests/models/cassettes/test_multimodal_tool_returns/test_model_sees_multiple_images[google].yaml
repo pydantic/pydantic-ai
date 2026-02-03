@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '347'
+      - '378'
       content-type:
       - application/json
       host:
@@ -17,7 +17,7 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: Call the get_two_images tool and describe what you see.
+        - text: Call the get_images tool. One image shows a fruit - what fruit is it? Just name the fruit.
         role: user
       generationConfig:
         responseModalities:
@@ -25,7 +25,7 @@ interactions:
       tools:
       - functionDeclarations:
         - description: ''
-          name: get_two_images
+          name: get_images
           parameters_json_schema:
             additionalProperties: false
             properties: {}
@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1038'
+      - '886'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1460
+      - gfet4t7; dur=916
       transfer-encoding:
       - chunked
       vary:
@@ -53,22 +53,22 @@ interactions:
           parts:
           - functionCall:
               args: {}
-              name: get_two_images
-            thoughtSignature: CpUDAXLI2nyR+hs6917KlpAtcv7Z/YADzbwO3K0k/nBuhGcUfXqZT8p36LVf0eieicS2O4C2VEwBRp6mhanMpisl+mqyj0HGGs1AJpdhRJTRDyzyaTIX2Z2AOtTQaWISs2GMtKORcp5fy55LCLX+on0QDTzxeeUpnOzya/cHgu73fyjPBfhCM0st80LBJiZ8NK7TJk51KCEkIS3hDECLcPnbK/v1uxn7OGGvP4VaTemFz55s/VBoHL5dedHW25lk+iVzW/U5Ws7aK9qfh4RM/FlGDLj0LHRC3YRFqVYEeHrwxUTHq2JXJsWIEeKb1PiBIVPVlA6DKpsCQR7m2EV3FXrtDV/d3b6QGdcqR9GLhiLiuoXl3hbxaXpldluKa/6Xlk4MoO6fvlSI7x1chF0dGpPEpkI3ywSWsdiEmZneAnw/ULEL3u6DBVf+ZFnfYUBqWW2YOkG93l9zBCoYRn2vMicKCZ5AKY56JLhf0VxrPrjvU/N5p6dCbHXUYiUeW88CH8omz69zbSW1qMPSLPnDiQ82zSWjg+27
+              name: get_images
+            thoughtSignature: CqYCAXLI2nykpsEk5NtpkKo7Yq5YpmdHeyk9lkDEi6Fj6leh0qp8Gmz+FaDqjw83SYCy6OZJik9qd2BGcPYEa0xw7S2eZiOlYpcr/qTjvjms7te1Fbsnpd+1hb7cFyYlYrC7zkRrTPGkOG3mAPyLxspD0CdeFSrHNNZnHVLqSA6wzTPYnxtSeI1JsctlYZrKVD5LJG0gZ2geY/ETtaex03joCspxx9FTkSB4SrCTGevVO/CDwgbkuXdU3vkGyQrXVQZ5ejssTj5OLDdyKz5OqncJsm2Q9AFNfUmpGGSdnP+ZJCD/pJjCCZvX14J6f2YbGOoxxfS0AgAfQrFXoFq8qSM/ZKggr2ELz7NJpM1TCcv2aVLr5TnagVLZCZqo0rG5aMo1uR8p66mA
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: H1Z8acelOresz7IP-I6r-AM
+      responseId: hjOBafeFOMXgz7IP5_iAuAQ
       usageMetadata:
-        candidatesTokenCount: 12
-        promptTokenCount: 38
+        candidatesTokenCount: 10
+        promptTokenCount: 45
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 38
-        thoughtsTokenCount: 91
-        totalTokenCount: 141
+          tokenCount: 45
+        thoughtsTokenCount: 62
+        totalTokenCount: 117
     status:
       code: 200
       message: OK
@@ -2081,7 +2081,7 @@ interactions:
       accept-ranges:
       - bytes
       age:
-      - '50486'
+      - '106538'
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       cache-control:
@@ -2097,7 +2097,7 @@ interactions:
       cross-origin-resource-policy:
       - cross-origin
       expires:
-      - Fri, 29 Jan 2027 16:55:06 GMT
+      - Mon, 01 Feb 2027 17:54:37 GMT
       last-modified:
       - Fri, 23 Apr 2021 09:38:00 GMT
       report-to:
@@ -2116,7 +2116,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '283888'
+      - '283763'
       content-type:
       - application/json
       host:
@@ -2125,19 +2125,19 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: Call the get_two_images tool and describe what you see.
+        - text: Call the get_images tool. One image shows a fruit - what fruit is it? Just name the fruit.
         role: user
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_b432a2881719423e8275a08ae1d01113
-            name: get_two_images
-          thoughtSignature: CpUDAXLI2nyR-hs6917KlpAtcv7Z_YADzbwO3K0k_nBuhGcUfXqZT8p36LVf0eieicS2O4C2VEwBRp6mhanMpisl-mqyj0HGGs1AJpdhRJTRDyzyaTIX2Z2AOtTQaWISs2GMtKORcp5fy55LCLX-on0QDTzxeeUpnOzya_cHgu73fyjPBfhCM0st80LBJiZ8NK7TJk51KCEkIS3hDECLcPnbK_v1uxn7OGGvP4VaTemFz55s_VBoHL5dedHW25lk-iVzW_U5Ws7aK9qfh4RM_FlGDLj0LHRC3YRFqVYEeHrwxUTHq2JXJsWIEeKb1PiBIVPVlA6DKpsCQR7m2EV3FXrtDV_d3b6QGdcqR9GLhiLiuoXl3hbxaXpldluKa_6Xlk4MoO6fvlSI7x1chF0dGpPEpkI3ywSWsdiEmZneAnw_ULEL3u6DBVf-ZFnfYUBqWW2YOkG93l9zBCoYRn2vMicKCZ5AKY56JLhf0VxrPrjvU_N5p6dCbHXUYiUeW88CH8omz69zbSW1qMPSLPnDiQ82zSWjg-27
+            id: pyd_ai_63358d68bc704e8aa4b732fe92b968d2
+            name: get_images
+          thoughtSignature: CqYCAXLI2nykpsEk5NtpkKo7Yq5YpmdHeyk9lkDEi6Fj6leh0qp8Gmz-FaDqjw83SYCy6OZJik9qd2BGcPYEa0xw7S2eZiOlYpcr_qTjvjms7te1Fbsnpd-1hb7cFyYlYrC7zkRrTPGkOG3mAPyLxspD0CdeFSrHNNZnHVLqSA6wzTPYnxtSeI1JsctlYZrKVD5LJG0gZ2geY_ETtaex03joCspxx9FTkSB4SrCTGevVO_CDwgbkuXdU3vkGyQrXVQZ5ejssTj5OLDdyKz5OqncJsm2Q9AFNfUmpGGSdnP-ZJCD_pJjCCZvX14J6f2YbGOoxxfS0AgAfQrFXoFq8qSM_ZKggr2ELz7NJpM1TCcv2aVLr5TnagVLZCZqo0rG5aMo1uR8p66mA
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_b432a2881719423e8275a08ae1d01113
-            name: get_two_images
+            id: pyd_ai_63358d68bc704e8aa4b732fe92b968d2
+            name: get_images
             response: {}
         role: user
       - parts:
@@ -2154,7 +2154,7 @@ interactions:
       tools:
       - functionDeclarations:
         - description: ''
-          name: get_two_images
+          name: get_images
           parameters_json_schema:
             additionalProperties: false
             properties: {}
@@ -2165,11 +2165,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '2020'
+      - '1279'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2427
+      - gfet4t7; dur=2252
       transfer-encoding:
       - chunked
       vary:
@@ -2180,25 +2180,23 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: I see two images. The first image is a cross-section of a kiwi fruit, showing its green flesh, black seeds,
-              and white core. The second image is a close-up of a vibrant orange and yellow rose with water droplets on its
-              petals, set against a horizontally striped background.
-            thoughtSignature: CtAHAXLI2nyegGoBPGgqPsyH7F2AJ21sbIOX+tMmS9oTYVRucHdxaVsEGH0NtwayEyMb3H7bxkpD2FDcOVgqaUUhJf8A0PlgQ79OZIz78ksiwmymHjv82hY6glxAzJT9nVx0A0V5HsxXwkarmXS/vGOEc0p6SYuVB+/ypxCTNATfujGbKs1Mp/mHMTCT4ZHHvqQzj7+1+5l6ZfUabkeKQEidFUiLrBkn1ecXRqwSBzDTrjCF+MY37zml5tNho8kUAMuUmlyGWReMOfrpYj3hAvJa0eDnLZ1MgBPjGJnJYMt47ybRzgrPfWf+uiT92y0AM92359gZFWHhMtzB4FIaQfAoCIQY4ih2k5f2H3jlJjkv6/1NauHjzq8S4vPbWKwRvFS/ED7Pm5SbCWHd6Vkd1nUgWqmLqU4xc2VT7n6rmdfWfmXev8EwOxakNZjI5msVdP6raHUDnlpOe6zmRpI4B9obJtq/1UgLa8HRP3KcLn27289Q2z/g7dPIaiJdY6o4rZcH4VdWf6ydwDnXbHHsJJykdL4A5eZ7ObbOeP5plTxbYzjYd+8/AS2W4EvR/EQiSBwYmmHu6N5ubKcUEu1FtR8gT4GQWDNFaqwQ1J7QumWMpltt31t+dbHujazfPQlhtw8wU/eyxoL20X3ysTrVnlfpKV6WB89rpvFU65xEpAH1Dp2vqi5g50BuisQnRTz37egm2jkAnko57n7x007Qq2BLEicj89sL19GpKB+q3Cs+ruNhYnWoyuXTQgNkC0n5H6f0z58rsN94iVG2WITr8Zeqe7yk7VPsEmIqoT5tqZ9gsxi8pWTYFCmCO1RDQvtIXm2D3ojRiPydnOpz3KlahHsyXr6lgQTOun96SIywBgCqnWuVx/LZqIB13Y2KWrVfJobfRTDZdopYplMfm4uSDCeK/4cZp15hM3lMDjCIOu4Vh/K1pprhDTt7cPR4uJQzujDA+GlsYkzUHmws2nYS8oi1vhCtPlm9cGdZEoaA2Cp63NKX+zqQqbvliCV5qVk+hBW6mD6tEzc7ZB8gWN+YKhq+Kc9fn6p26i45ld8mVnkfLetVrHoZPQaFuHnPIamTUsRAytcVp+6aHRF/AHz1XJLfy5vcpAFWGu/nj16jMjGsmvn3DhoS7o9pQQN1+o6CfCRxvZ+wyJ85aINqJbyCqWDRYOx00gjCBBu46llpxAdleg6QD55hDS9qZZ6m1gB1iVTybbNJWuElCsOJdZcG843tZWHlCP/l6sIzE+e5Cazq8fdi0jIFyflobu7LRmdbQl6krbtz5TrbDyGdyx0nG87s3Q==
+          - text: Kiwi
+            thoughtSignature: Cu4EAXLI2nzX8deCDytnFmACf+vYKQ/cJgfDASQeStJF8gCVIj+x+6SR6RClZGuFXOiebROHJ9D+YisuOG/gA7TfhyvXmDLx+9X02ovYVqgreJo2MGrmQy3qzr15NrNjWTNvU8atOttZwaXCCMVeXkeM5QHMxjdaXZI4M71bHxDcf8Fh5rOifANgAZyoUgH24aF+wnTdUAY/V90f9sln5t3OhyvtLFv4lOtn4q2e+BoxQ2TwfHFf+uTl9VCqTdtdwB+FNF1vmVUH3Jwd+9g+JgdCQ5F8LPnMJKNA5VaYrpGL4S/1J9zOELrKvNTwqqO8iFGRTQjghVicFqP/l31pjKA8T1jScxGqwOL/n7hH1Yga3XyaAleVUWu6udTdQb4qx85PAY9sE9gtvCn6CFaU+O2M5P+H0BYGe6xAAyZWo5ME9o1je55ehMfNOYOSk3Xa9gSBjE6DN0tQQL5i8lK9ByYFjU0UFNqeXfiDPOPxk48foubL96nqt2YA7E2w/4Lh2d8l9/gzroHamFEU7SoQf6aEP4ILz5wlLeXFru5eNAgfolhWjdqj/n1KNe0YP8LFGts7Pq8KvAbrTSMexpVwpmaFm27RsDF8ZxJjGylkKAszpQwO/8xXABQ3rvYGsjNvJZbtDG+sOIYBQoBneNjTgpPmP7HeJcUNyl54x1k2XfZ4To9D4fV48z/IvlUIGxs/ZfJziH5aTvqwj+fAdjnkl/F6XFLVft2KmcbQnCeKOxTv09VplbaBicpALPSFoGt9DFxuhHxsayVdYbh1YEfO2nLybRReVZS5gKOSDdC8VZP8sIEnSnEssTpYkxS1gfBQsA==
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: IlZ8acffJMbUz7IPnZaZmQQ
+      responseId: iTOBae6FGbnoz7IPgO2y4Ac
       usageMetadata:
-        candidatesTokenCount: 59
-        promptTokenCount: 580
+        candidatesTokenCount: 2
+        promptTokenCount: 583
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 64
+          tokenCount: 67
         - modality: IMAGE
           tokenCount: 516
-        thoughtsTokenCount: 202
-        totalTokenCount: 841
+        thoughtsTokenCount: 134
+        totalTokenCount: 719
     status:
       code: 200
       message: OK

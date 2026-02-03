@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '383'
+      - '414'
       content-type:
       - application/json
       host:
@@ -16,7 +16,7 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: Call the get_two_images tool and describe what you see.
+      - content: Call the get_images tool. One image shows a fruit - what fruit is it? Just name the fruit.
         role: user
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       n: 1
@@ -25,7 +25,7 @@ interactions:
       tools:
       - function:
           description: ''
-          name: get_two_images
+          name: get_images
           parameters:
             additionalProperties: false
             properties: {}
@@ -41,7 +41,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '748'
+      - '744'
       content-type:
       - application/json
       strict-transport-security:
@@ -60,27 +60,27 @@ interactions:
           tool_calls:
           - function:
               arguments: '{}'
-              name: get_two_images
-            id: v2jr0xvxs
+              name: get_images
+            id: fw7m8at55
             type: function
-      created: 1769756206
-      id: chatcmpl-50107463-8be8-4618-97d4-8ddcd84fc97f
+      created: 1770075029
+      id: chatcmpl-be08425a-8a77-4d87-8257-558059602df9
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       object: chat.completion
       service_tier: on_demand
-      system_fingerprint: fp_992318f10a
+      system_fingerprint: fp_217b6e6136
       usage:
-        completion_time: 0.046379034
-        completion_tokens: 26
-        prompt_time: 0.015095141
-        prompt_tokens: 706
-        queue_time: 0.099650871
-        total_time: 0.061474175
-        total_tokens: 732
+        completion_time: 0.103555558
+        completion_tokens: 47
+        prompt_time: 1.162661823
+        prompt_tokens: 715
+        queue_time: 0.437218186
+        total_time: 1.266217381
+        total_tokens: 762
       usage_breakdown: null
       x_groq:
-        id: req_01kg6v19ayf7ktp56rv7mvyveh
-        seed: 368126138
+        id: req_01kggb2y85fxwr721548fj178j
+        seed: 401199282
     status:
       code: 200
       message: OK
@@ -93,30 +93,30 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '132345'
+      - '132372'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=_mn_S0uujk4fCrWyMRV7Gcr5JbLk3LT.4pi4zKMKqqo-1769756206.2747557-1.0.1.1-_P.XFGttgYb.24A94eiH8cTWThnIryrda.P.JvPfHVsJm3TBnWSZAnkFEBk6M4JRNMlR.4.tyCWf8pzBdCZLcItXjeFemUFLS2CL2v4xS5nRkQjKN80uLj.TbbvFWUsK
+      - __cf_bm=ABniebONpdIFyPbsAt1HUAxIYHBITlVP4f08uOC5e6E-1770075027.6429076-1.0.1.1-x0yYM.Tin6jJEwNIBYGA.m2ApKQ9S.y__l14VlspU7GlHLEY4cz2t.t8o3xl9PeOjbXijiMsYYLdCYThoFaLfNbIdXSqq8PemGjxuiakIMBhovCsREy92Cj18T3dKOfY
       host:
       - api.groq.com
     method: POST
     parsed_body:
       messages:
-      - content: Call the get_two_images tool and describe what you see.
+      - content: Call the get_images tool. One image shows a fruit - what fruit is it? Just name the fruit.
         role: user
       - role: assistant
         tool_calls:
         - function:
             arguments: '{}'
-            name: get_two_images
-          id: v2jr0xvxs
+            name: get_images
+          id: fw7m8at55
           type: function
       - content: |-
           See file 241a70.
           See file 6a18c6.
         role: tool
-        tool_call_id: v2jr0xvxs
+        tool_call_id: fw7m8at55
       - content:
         - text: 'This is file 241a70:'
           type: text
@@ -136,7 +136,7 @@ interactions:
       tools:
       - function:
           description: ''
-          name: get_two_images
+          name: get_images
           parameters:
             additionalProperties: false
             properties: {}
@@ -152,7 +152,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '889'
+      - '645'
       content-type:
       - application/json
       strict-transport-security:
@@ -167,28 +167,26 @@ interactions:
         index: 0
         logprobs: null
         message:
-          content: The first image is a cross-section of a kiwi fruit, showcasing its vibrant green flesh and black seeds
-            arranged around a central white core. The second image features a wilting yellow rose with a pink leaf on top,
-            set against a white background.
+          content: kiwi
           role: assistant
-      created: 1769756209
-      id: chatcmpl-9c2b5637-9900-4268-b210-6dfdee51fd03
+      created: 1770075033
+      id: chatcmpl-0ae5bc7f-948c-4cc3-9dbf-f79f39bc8562
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       object: chat.completion
       service_tier: on_demand
       system_fingerprint: fp_217b6e6136
       usage:
-        completion_time: 0.206422737
-        completion_tokens: 51
-        prompt_time: 0.052377224
-        prompt_tokens: 1953
-        queue_time: 2.085877959
-        total_time: 0.258799961
-        total_tokens: 2004
+        completion_time: 0.012273829
+        completion_tokens: 3
+        prompt_time: 0.722276842
+        prompt_tokens: 1961
+        queue_time: 2.64678003
+        total_time: 0.734550671
+        total_tokens: 1964
       usage_breakdown: null
       x_groq:
-        id: req_01kg6v19zff7kt1rthxf8m6v97
-        seed: 1204217619
+        id: req_01kggb30ape3dta4pnxn6bva88
+        seed: 803996963
     status:
       code: 200
       message: OK

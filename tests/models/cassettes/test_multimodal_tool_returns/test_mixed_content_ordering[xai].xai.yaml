@@ -20,19 +20,19 @@ interactions:
       IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggB
   response_sample:
     json:
-      id: e6495b3c-dd5b-3882-0a07-b8df5f7df6be
+      id: 28c5d9b5-b6eb-ae50-5101-9840028c5dae
       outputs:
       - finish_reason: REASON_TOOL_CALLS
         message:
           role: ROLE_ASSISTANT
           tool_calls:
-          - id: call_26033597
+          - id: call_63372758
             type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
             status: TOOL_CALL_STATUS_COMPLETED
             function:
               name: get_mixed_content
               arguments: '{}'
-      created: '2026-01-30T16:37:09.600821985Z'
+      created: '2026-02-02T23:29:59.534886012Z'
       model: grok-4-1-fast-non-reasoning
       system_fingerprint: fp_9bb3d5b553
       usage:
@@ -40,7 +40,7 @@ interactions:
         prompt_tokens: 356
         total_tokens: 373
         prompt_text_tokens: 356
-        cached_prompt_text_tokens: 314
+        cached_prompt_text_tokens: 158
       settings:
         parallel_tool_calls: true
         temperature: 0.7
@@ -53,9 +53,9 @@ interactions:
               "object"}'
         top_p: 0.95
     raw: !!binary |
-      CiRlNjQ5NWIzYy1kZDViLTM4ODItMGEwNy1iOGRmNWY3ZGY2YmUSNAgEGjAQAhosCg1jYWxsXzI2
-      MDMzNTk3EAEYAVIXChFnZXRfbWl4ZWRfY29udGVudBICe30qDAi1vPPLBhDhob+eAjIbZ3Jvay00
-      LTEtZmFzdC1ub24tcmVhc29uaW5nOg1mcF85YmIzZDViNTUzShIIERDkAhj1AiDkAji6Aljw8hNa
+      CiQyOGM1ZDliNS1iNmViLWFlNTAtNTEwMS05ODQwMDI4YzVkYWUSNAgEGjAQAhosCg1jYWxsXzYz
+      MzcyNzU4EAEYAVIXChFnZXRfbWl4ZWRfY29udGVudBICe30qDAj35oTMBhD87Ib/ATIbZ3Jvay00
+      LTEtZmFzdC1ub24tcmVhc29uaW5nOg1mcF85YmIzZDViNTUzShIIERDkAhj1AiDkAjieAViAlyJa
       bBABLTMzMz86AggBQloKWAoRZ2V0X21peGVkX2NvbnRlbnQiQ3siYWRkaXRpb25hbFByb3BlcnRp
       ZXMiOiBmYWxzZSwgInByb3BlcnRpZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In1NMzNzPw==
 - request_sample:
@@ -68,7 +68,7 @@ interactions:
         - text: ''
         role: ROLE_ASSISTANT
         tool_calls:
-        - id: call_26033597
+        - id: call_63372758
           type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
           status: TOOL_CALL_STATUS_COMPLETED
           function:
@@ -96,7 +96,7 @@ interactions:
         mode: TOOL_MODE_AUTO
     raw: !!binary |
       CkUKQQo/Q2FsbCB0aGUgZ2V0X21peGVkX2NvbnRlbnQgdG9vbCBhbmQgZGVzY3JpYmUgd2hhdCB5
-      b3UgcmVjZWl2ZWQuEAEKNAoCCgAQAiIsCg1jYWxsXzI2MDMzNTk3EAEYAVIXChFnZXRfbWl4ZWRf
+      b3UgcmVjZWl2ZWQuEAEKNAoCCgAQAiIsCg1jYWxsXzYzMzcyNzU4EAEYAVIXChFnZXRfbWl4ZWRf
       Y29udGVudBICe30KPQo5CjdIZXJlIGlzIHRoZSBpbWFnZToKU2VlIGZpbGUgMjQxYTcwLgp7Im1l
       dGFkYXRhIjoidGVzdCJ9EAUKp4MIChYKFFRoaXMgaXMgZmlsZSAyNDFhNzA6ComDCBKFgwgK/4II
       ZGF0YTppbWFnZS9qcGVnO2Jhc2U2NCwvOWovNEFBUVNrWkpSZ0FCQVFBQUFRQUJBQUQvMndCREFB
@@ -2410,25 +2410,24 @@ interactions:
       cyI6IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggB
   response_sample:
     json:
-      id: 13b3c056-d35c-ef75-318c-70856312df67
+      id: 26c19263-08a6-df27-086f-d54f152b4ea7
       outputs:
       - finish_reason: REASON_STOP
         message:
-          content: 'I received mixed content from the `get_mixed_content` tool: an
-            image file (241a70) showing a close-up of a halved kiwifruit with vibrant
-            green flesh, black seeds, and white core on a white background, accompanied
-            by JSON metadata `{"metadata":"test"}`.'
+          content: 'I received an image of a halved kiwi fruit (file 241a70), showing
+            its vibrant green flesh, black seeds, and white core on a white background,
+            along with JSON metadata: `{"metadata":"test"}`.'
           role: ROLE_ASSISTANT
-      created: '2026-01-30T16:37:10.781883750Z'
+      created: '2026-02-02T23:30:01.045331045Z'
       model: grok-4-1-fast-non-reasoning
       system_fingerprint: fp_9bb3d5b553
       usage:
-        completion_tokens: 59
+        completion_tokens: 45
         prompt_tokens: 670
-        total_tokens: 729
+        total_tokens: 715
         prompt_text_tokens: 414
         prompt_image_tokens: 256
-        cached_prompt_text_tokens: 158
+        cached_prompt_text_tokens: 356
       settings:
         parallel_tool_calls: true
         temperature: 0.7
@@ -2441,12 +2440,11 @@ interactions:
               "object"}'
         top_p: 0.95
     raw: !!binary |
-      CiQxM2IzYzA1Ni1kMzVjLWVmNzUtMzE4Yy03MDg1NjMxMmRmNjcShgIIAxqBAgr8AUkgcmVjZWl2
-      ZWQgbWl4ZWQgY29udGVudCBmcm9tIHRoZSBgZ2V0X21peGVkX2NvbnRlbnRgIHRvb2w6IGFuIGlt
-      YWdlIGZpbGUgKDI0MWE3MCkgc2hvd2luZyBhIGNsb3NlLXVwIG9mIGEgaGFsdmVkIGtpd2lmcnVp
-      dCB3aXRoIHZpYnJhbnQgZ3JlZW4gZmxlc2gsIGJsYWNrIHNlZWRzLCBhbmQgd2hpdGUgY29yZSBv
-      biBhIHdoaXRlIGJhY2tncm91bmQsIGFjY29tcGFuaWVkIGJ5IEpTT04gbWV0YWRhdGEgYHsibWV0
-      YWRhdGEiOiJ0ZXN0In1gLhACKgwItrzzywYQ5rLq9AIyG2dyb2stNC0xLWZhc3Qtbm9uLXJlYXNv
-      bmluZzoNZnBfOWJiM2Q1YjU1M0oVCDsQngUY2QUgngMogAI4ngFY8KlVWmwQAS0zMzM/OgIIAUJa
-      ClgKEWdldF9taXhlZF9jb250ZW50IkN7ImFkZGl0aW9uYWxQcm9wZXJ0aWVzIjogZmFsc2UsICJw
-      cm9wZXJ0aWVzIjoge30sICJ0eXBlIjogIm9iamVjdCJ9TTMzcz8=
+      CiQyNmMxOTI2My0wOGE2LWRmMjctMDg2Zi1kNTRmMTUyYjRlYTcSyAEIAxrDAQq+AUkgcmVjZWl2
+      ZWQgYW4gaW1hZ2Ugb2YgYSBoYWx2ZWQga2l3aSBmcnVpdCAoZmlsZSAyNDFhNzApLCBzaG93aW5n
+      IGl0cyB2aWJyYW50IGdyZWVuIGZsZXNoLCBibGFjayBzZWVkcywgYW5kIHdoaXRlIGNvcmUgb24g
+      YSB3aGl0ZSBiYWNrZ3JvdW5kLCBhbG9uZyB3aXRoIEpTT04gbWV0YWRhdGE6IGB7Im1ldGFkYXRh
+      IjoidGVzdCJ9YC4QAioLCPnmhMwGEOXkzhUyG2dyb2stNC0xLWZhc3Qtbm9uLXJlYXNvbmluZzoN
+      ZnBfOWJiM2Q1YjU1M0oVCC0QngUYywUgngMogAI45AJY2PY+WmwQAS0zMzM/OgIIAUJaClgKEWdl
+      dF9taXhlZF9jb250ZW50IkN7ImFkZGl0aW9uYWxQcm9wZXJ0aWVzIjogZmFsc2UsICJwcm9wZXJ0
+      aWVzIjoge30sICJ0eXBlIjogIm9iamVjdCJ9TTMzcz8=

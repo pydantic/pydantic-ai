@@ -40,13 +40,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2755'
+      - '2884'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '1478'
+      - '1784'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -59,11 +59,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1769756197
-      created_at: 1769756196
+      completed_at: 1770079426
+      created_at: 1770079424
       error: null
       frequency_penalty: 0.0
-      id: resp_0a5a312323c2db9600697c56247368819592bbbebe2f944707
+      id: resp_0d013ea85d54d46300698144c08774819693f5e4816e30997e
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -72,13 +72,13 @@ interactions:
       model: gpt-5-mini-2025-08-07
       object: response
       output:
-      - encrypted_content: gAAAAABpfFYlDq4zX_BUCssgLE8t3ds-vnnUTAp8D7IYrdbmgOra51R6bqkQ8an2kMXfsw6uA6Rkdq2cFsR_YEevtW_GaDj3nX7DA9mAHSEaccH0l03ZoDElMx3H_E3kXgiGzYot_pbl_78njEwms9qtXYXADcuOgffw1JV2qDbLHoIfeqg0z8UMvqTwE6ppoyhJO7m6jlNNQpXjsaCz4or5kVLe5_-REmqwEjXidCyeyEYeLxCoN07-9iVhJU72zwtYvd7A49UOSNepBAGY4esoZCRXLTcxHPn5Y65y6utaOhcVJhzic2noS8tg0n31Nl-nBSXBm1kn0BlsZRcYAHqZ-XzTkcgHZrjk0SonO9IJEdbIL-PK49EeUx8DgoecSb9va19ttVAY-_loSmFxGsp0T4t4qUeT88OOSd5GPFNcfkBtYHcpOa0msgyMd8kdR4YmELb8h-_4Hz1W2gb5L2o6-z2OWpxHapQjLaX2rK1VVsiADxPnFMPLLRKk_DbgqegDR0Kh0U_6px56zS5LkgFa4Q0mrVDL39E6KwWYj-VOQ7ggh5GCE9BIJ-8ZjMwNOrMGZWLovDfK-aTjzorlghkDq2gZWqlmxAJ48nTYoU-CqoXnfyGjv-_ogpj2_FibNR9_zqYTMFCp2v7Wb4Km7aZdOQnWkStGSB0Cao-4uDDK_zl5__LsM50Xhk2Y1tgtodfjkW0N642XaBwaELWJj2atvZJ_ttdT5ybzfNqCVFBassPDNr0foLDSUgV1tnRKjS52xhI5qmsTmXxm_aWaOqnV1KgtVQFdmph-vNrRxnwtaqUBo2f6XCfMwA1yeud_hlL4p0EVU4h5MTFiQSXzd2wWgHwj3AsE8zOlcGfc427Lzb3GRw90nlkHV8zDO86jsA4Mo-eHMGHzmU21oOVV1ZwtP-59NXoroIVwzLNM414RAaeHf-VsmpR4-ZEPzykUWU3qd1eaJCivTR2bn-X2HMF3luIi_lqNnGWU4h0MKsjd3JDA9HWtmPaNh91JNFQCkgMqSL6FntTqlAA2Ciud7qyqYKBn2z3mGrAMwP5Jr8N-fC1z0u7TtcxLSL3hCj3AUYFl6UPMm4lIPlJgPKH2PWwqpgFxCroMriFZuide_AyeeSs-AoPodGdpTE5z_SU8slCE7OIj5Z-8edX20e8YDqJ8FhkN62v2ZLwA7SLALbqiWVAakDJe2Gc=
-        id: rs_0a5a312323c2db9600697c5624badc81959749cf8d41c46351
+      - encrypted_content: gAAAAABpgUTCFc9AkMLa64Vvr1HTEBr_ju-hGms2MDL0gZZAoQDFtRPSB4t3n0snZN0gZPLXHCC7ngxj77DaOY586sgrpXSPAdGu5k_hzRn0zIVdrBh1Bcg_VFrkj-loreFC1CUtwxUnPmUlZv-K98tocaMn9aFD5qU2pGhdduHm3CXf-EQwpxCCWxpzx-GDzpsxOz6OtfKvTTpjyS3BNZBnFfqk4u6InOU6nVEUrT1og94veIlFPiJIxFmluMQ1380A__YoIR4N0twQ93IOTzbgAECmLCf5h-lFf8O1YHBS8M787nz5S6DMq7RDnKz7GsjbfAiLlg_T22QdbP_1nFs0vbazb1J6czVC2z1IGuChlmaZMW8vAZd3iAnBPIKcIimY99pW-qhAdXFWgxlJ9yOmFTTf07RkgNRsRu6DULoeu4ZERVFNFZ4BLseviP6_dV43EslwBxz4ujLNYIlvVcuiE6J9DgccYfN9oGnA-iY9qMOtWSvnTJS7ZG7M_JI9I22Ddu0r4i0G3AHT0Sj7EH0dmniM0_CkR4xnsU-7r9I-YV_Fa7UGw2yGNB4I7eQL0RN3exMu01m87bVtvZ2olIxsHvysJaxWtyxbhNVHGm3n-9LdVieAP4lUuKPVhrLIz5x9vzrtAhWWLaxRxdBzSGGLotwHZL_iYl5zBmDnX5ynkKlMlj6phsJVTQu-jeOOphJ5mUs2mWM3rqD-woZ-UEvlJvOnDgJhww8zeWZbDzkg_7JN6KEAjhM4VxK0iCxlGP7lL3qdGrNWpXjUwoIWasXTUzQfQ7il-hyoyePjFf6YJZfXAT2Dt6wm03vvlZvPpwjgxZiGPwYBlRGU_X8w_ukB-hoAzbsiShboPjvFLmCAPf1PpFbGceeVQy3upR0WV75SMyQTKIKyIrasnYZL-yMHZZCX9VSHzqn2DPuko54U_FkVX9MVKxPqFSN41NkUFdAWYTI1BjLkvkJp3Owp_F59c9S-JQUkEriA0Fl0r9piRPppdYaKs3yYbzpfgXux4b0CGox2LoyLvK5qyXRkRJEPRP0CaOphEycd26xv3nHNg5JLkeIEbFCL_ttzPO0nZ7ePa0-87DWhJGK-NCieQJt-Ut1eFiORmGSuGCsFUzr1itTdo4a7wZq5SEuKF1YtLnDSBQ6MNsBR2ZPC8voBkjB03QimbZAuYdEtb04GcwCymgoevHrdkxLPSS_MOhk7iX3qgXUK1TnvKMSEtsd7fhAGL2zSutDP6WxKvqstrYHTaCUFV55Uj5hNXvFWunDPxQIEDoBd_fhSLZ52gU1d9IOIbpW-jqn5hJMyWBI8kz83MVf4b4d8JEw=
+        id: rs_0d013ea85d54d46300698144c10294819682ed633cc236bce8
         summary: []
         type: reasoning
       - arguments: '{}'
-        call_id: call_horCoWXbGniQetFnmnIW8AA8
-        id: fc_0a5a312323c2db9600697c562587ac8195974740a51b2b48ea
+        call_id: call_p4LcaAqrflpDn0fgjtt2hS1l
+        id: fc_0d013ea85d54d46300698144c202bc8196b4eecdc41c5091e7
         name: get_mixed_content
         status: completed
         type: function_call
@@ -116,10 +116,10 @@ interactions:
         input_tokens: 44
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 72
+        output_tokens: 89
         output_tokens_details:
-          reasoning_tokens: 0
-        total_tokens: 116
+          reasoning_tokens: 64
+        total_tokens: 133
       user: null
     status:
       code: 200
@@ -133,12 +133,12 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '133631'
+      - '133759'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=tv8d_ZqG64SuidRWp2.LrySixeSizO0QpR4aDXW6LpA-1769756197-1.0.1.1-KwgIsEaGa8H8QrXE8U5z3LJxKm9w_0ZPK1BIyrdr6P3EPBriYpTadEpFut.L6DHv8mzMEaAsDRyzqGn_Eb57Gzb4064g0GWRyargU87eH_U;
-        _cfuvid=qKB0wpiicatK7lpxrApUruX3L6Z_CtwGf52vsFWean4-1769756197983-0.0.1.1-604800000
+      - __cf_bm=fogVaw_LV3KXX5iMkQM2I0Q7pkP6kl9hg9SUsggGRlQ-1770079426-1.0.1.1-j3AigGE8hmP0gRVdHRE3wCPmrKYRd1ag5tligeG8wDjLCNtIQVGrq_XIckVjCAc6.dwjWs4YoI2zWmiDhL_ENJ8ZlDLMILC6nQ3VFAjaBTM;
+        _cfuvid=z.3kmFsbX_3zu4VSsmrlGUWoX0GxQ8V6GezM3XnXJHM-1770079426354-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -148,16 +148,16 @@ interactions:
       input:
       - content: Call the get_mixed_content tool and describe what you received.
         role: user
-      - encrypted_content: gAAAAABpfFYlDq4zX_BUCssgLE8t3ds-vnnUTAp8D7IYrdbmgOra51R6bqkQ8an2kMXfsw6uA6Rkdq2cFsR_YEevtW_GaDj3nX7DA9mAHSEaccH0l03ZoDElMx3H_E3kXgiGzYot_pbl_78njEwms9qtXYXADcuOgffw1JV2qDbLHoIfeqg0z8UMvqTwE6ppoyhJO7m6jlNNQpXjsaCz4or5kVLe5_-REmqwEjXidCyeyEYeLxCoN07-9iVhJU72zwtYvd7A49UOSNepBAGY4esoZCRXLTcxHPn5Y65y6utaOhcVJhzic2noS8tg0n31Nl-nBSXBm1kn0BlsZRcYAHqZ-XzTkcgHZrjk0SonO9IJEdbIL-PK49EeUx8DgoecSb9va19ttVAY-_loSmFxGsp0T4t4qUeT88OOSd5GPFNcfkBtYHcpOa0msgyMd8kdR4YmELb8h-_4Hz1W2gb5L2o6-z2OWpxHapQjLaX2rK1VVsiADxPnFMPLLRKk_DbgqegDR0Kh0U_6px56zS5LkgFa4Q0mrVDL39E6KwWYj-VOQ7ggh5GCE9BIJ-8ZjMwNOrMGZWLovDfK-aTjzorlghkDq2gZWqlmxAJ48nTYoU-CqoXnfyGjv-_ogpj2_FibNR9_zqYTMFCp2v7Wb4Km7aZdOQnWkStGSB0Cao-4uDDK_zl5__LsM50Xhk2Y1tgtodfjkW0N642XaBwaELWJj2atvZJ_ttdT5ybzfNqCVFBassPDNr0foLDSUgV1tnRKjS52xhI5qmsTmXxm_aWaOqnV1KgtVQFdmph-vNrRxnwtaqUBo2f6XCfMwA1yeud_hlL4p0EVU4h5MTFiQSXzd2wWgHwj3AsE8zOlcGfc427Lzb3GRw90nlkHV8zDO86jsA4Mo-eHMGHzmU21oOVV1ZwtP-59NXoroIVwzLNM414RAaeHf-VsmpR4-ZEPzykUWU3qd1eaJCivTR2bn-X2HMF3luIi_lqNnGWU4h0MKsjd3JDA9HWtmPaNh91JNFQCkgMqSL6FntTqlAA2Ciud7qyqYKBn2z3mGrAMwP5Jr8N-fC1z0u7TtcxLSL3hCj3AUYFl6UPMm4lIPlJgPKH2PWwqpgFxCroMriFZuide_AyeeSs-AoPodGdpTE5z_SU8slCE7OIj5Z-8edX20e8YDqJ8FhkN62v2ZLwA7SLALbqiWVAakDJe2Gc=
-        id: rs_0a5a312323c2db9600697c5624badc81959749cf8d41c46351
+      - encrypted_content: gAAAAABpgUTCFc9AkMLa64Vvr1HTEBr_ju-hGms2MDL0gZZAoQDFtRPSB4t3n0snZN0gZPLXHCC7ngxj77DaOY586sgrpXSPAdGu5k_hzRn0zIVdrBh1Bcg_VFrkj-loreFC1CUtwxUnPmUlZv-K98tocaMn9aFD5qU2pGhdduHm3CXf-EQwpxCCWxpzx-GDzpsxOz6OtfKvTTpjyS3BNZBnFfqk4u6InOU6nVEUrT1og94veIlFPiJIxFmluMQ1380A__YoIR4N0twQ93IOTzbgAECmLCf5h-lFf8O1YHBS8M787nz5S6DMq7RDnKz7GsjbfAiLlg_T22QdbP_1nFs0vbazb1J6czVC2z1IGuChlmaZMW8vAZd3iAnBPIKcIimY99pW-qhAdXFWgxlJ9yOmFTTf07RkgNRsRu6DULoeu4ZERVFNFZ4BLseviP6_dV43EslwBxz4ujLNYIlvVcuiE6J9DgccYfN9oGnA-iY9qMOtWSvnTJS7ZG7M_JI9I22Ddu0r4i0G3AHT0Sj7EH0dmniM0_CkR4xnsU-7r9I-YV_Fa7UGw2yGNB4I7eQL0RN3exMu01m87bVtvZ2olIxsHvysJaxWtyxbhNVHGm3n-9LdVieAP4lUuKPVhrLIz5x9vzrtAhWWLaxRxdBzSGGLotwHZL_iYl5zBmDnX5ynkKlMlj6phsJVTQu-jeOOphJ5mUs2mWM3rqD-woZ-UEvlJvOnDgJhww8zeWZbDzkg_7JN6KEAjhM4VxK0iCxlGP7lL3qdGrNWpXjUwoIWasXTUzQfQ7il-hyoyePjFf6YJZfXAT2Dt6wm03vvlZvPpwjgxZiGPwYBlRGU_X8w_ukB-hoAzbsiShboPjvFLmCAPf1PpFbGceeVQy3upR0WV75SMyQTKIKyIrasnYZL-yMHZZCX9VSHzqn2DPuko54U_FkVX9MVKxPqFSN41NkUFdAWYTI1BjLkvkJp3Owp_F59c9S-JQUkEriA0Fl0r9piRPppdYaKs3yYbzpfgXux4b0CGox2LoyLvK5qyXRkRJEPRP0CaOphEycd26xv3nHNg5JLkeIEbFCL_ttzPO0nZ7ePa0-87DWhJGK-NCieQJt-Ut1eFiORmGSuGCsFUzr1itTdo4a7wZq5SEuKF1YtLnDSBQ6MNsBR2ZPC8voBkjB03QimbZAuYdEtb04GcwCymgoevHrdkxLPSS_MOhk7iX3qgXUK1TnvKMSEtsd7fhAGL2zSutDP6WxKvqstrYHTaCUFV55Uj5hNXvFWunDPxQIEDoBd_fhSLZ52gU1d9IOIbpW-jqn5hJMyWBI8kz83MVf4b4d8JEw=
+        id: rs_0d013ea85d54d46300698144c10294819682ed633cc236bce8
         summary: []
         type: reasoning
       - arguments: '{}'
-        call_id: call_horCoWXbGniQetFnmnIW8AA8
-        id: fc_0a5a312323c2db9600697c562587ac8195974740a51b2b48ea
+        call_id: call_p4LcaAqrflpDn0fgjtt2hS1l
+        id: fc_0d013ea85d54d46300698144c202bc8196b4eecdc41c5091e7
         name: get_mixed_content
         type: function_call
-      - call_id: call_horCoWXbGniQetFnmnIW8AA8
+      - call_id: call_p4LcaAqrflpDn0fgjtt2hS1l
         output:
         - text: 'Here is the image:'
           type: input_text
@@ -187,13 +187,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '3972'
+      - '3977'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '5504'
+      - '5084'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -206,11 +206,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1769756203
-      created_at: 1769756198
+      completed_at: 1770079432
+      created_at: 1770079427
       error: null
       frequency_penalty: 0.0
-      id: resp_0a5a312323c2db9600697c5626920481958305b9f007976d69
+      id: resp_0d013ea85d54d46300698144c35ff881968a264c5584e85917
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -219,22 +219,23 @@ interactions:
       model: gpt-5-mini-2025-08-07
       object: response
       output:
-      - encrypted_content: gAAAAABpfFYrBxHuy4g3NV2cI0yS2YMc5L9kqdu1mNy_yLs77nzSIxt_Q6qy9qBLgHWxeqfFHTSp-5m9DLM-f_Spqt0TCT5XwRuLl3_2hXIe2RJVNL06jlinEU0ll-ghslyALX8fgEDN1ImBgn0LxHfHjalexzorH3M3lHgXQuSSgqpYdTZffKsgjoBRobq8mUobzQTG2PjVMxSno5ehC4KFGMoYWHGwpJwQt1wgn9VJBz7jPrlzXqm0OF0zFnsqP4S0bPyJSSO51oYe54MJGIrjEdW0vmzPJe8_OhG7-4CS98G7fClwUnf87mvuv4xLEBMRy8LkefTOoJvI3fpxxgze-TrMCnpV38SVRsf7Cn1lRJjLV3I16LWwE9zWVJ9Zs30NOrk9Xf2v0jPUvhOR0SXtPX1Q7mjbu7GP8UZC0jPkH_VY_I1X7fsWDt6TacZFiO8DZ3wBGrWMVBNNDEwJcKDx3vnDksUth6qWfB6_OYc9U1NEUj_S_kdsY36yNbHDMH5_Ax19dts0VGn180BBgVwgor7DHpHbfL5qut6fLLyGnjDj67oQCuLY5eJzMD07OXfPi7QwEWOSAvup45oBE1nsV650cKhkXfQiGFupT6lDXlcMFZczytsrim6fmwdFo1HmqBNyeozULr1dbukj4Nt9ZN3XGkzDL1VkVG-J1g5CIEOgbsXRmva2u12DNcDlafhvi9yoInU7CEdoNEb8SaoF_nyM-CjDtaJv2jkHFgCZJ6MH-GUsf4J6GM-bCgzMAkeObNRL7Ck0zPh7_4bsVhPmG_qxOTkONYwkv5U86tZGDWR45TcA0gbAE_gO8DycNwKI5xyJrPs3IUJ6YcgrTGh075qgwLnS-IsAD5CyFdNed06pJow0DSKSwiPYrYx8JXCZqmacpuJE9oW8dYW-pI41K1wIC6dn9uij4NA1bLa4G8Dggai6u18Ya3rGwnH2Kv3vTEV6CrTf-gqdL25sKi9K9Iw5C1aJoKe72mx5DEqUZjViVDV6QlpFYwf_TZTQMegIVPDoIoyHN56MgQ76QqWBgDAvQ_5gtmLQy7CBu8JvAcZfpDxkLyomvr1XXTRnU6-Lf4NvwDlC8xj73XUS7y0MZ-0QnDpxkHgBw-uWcFiirI2Iqb6yqHRQG4EbTtEGN_saFlw7TNF80waVdW0wJZwRCDZdi7JtUENw_g0pAwtfYU5456S2tVAHvzRJgpXA-ow8W30m847MoMVW1Rly8zaYt7yc20VH_mJofje-0JLfI6Ro3K23UltUcwqdDE4T4YESlFMqtwG4M4Zji-UGiBl1Jw0aTsI6ilxGXTSxjOgeaQ_XWGq-IE9HzpPLZY5LfWeblxwapj_sHep9WXI2nzrN8bsaokD4VNFfUTcWwNZbikoFnl-gWIW4YfapZxIlPgh7zUDFDctd6SsMYJar1armhgJE8mI_jFxTF2MaVn382zB2LFqYKC_voR8gO4N20C1w25jsfJq_917M-LpsOpGzQ00XzYnlsQg5YYeny8V5O_v1KJv3Nuo1lb3cE6JE6H6747DXcOUv-CvWEunAPtNF-KjOA2xeNYPuSC-_5GiUUopEJSE_GqIxtiqc25LQzRuI_auYUIVpDdQ9m5FOJGorYaAMrtrrnjl75NDJaRktBpUUphGx02FapQBxenCNXkz_X0naVSfUQF4v4BQ3UhVxKLgXsi_C5BfuEjzSm1mbT_0ie-zx2hCjYikvkU23J5UyHzS7m0uBjL9KuGrMBAn0WTjFtrvdF1-8y7eJ27U2zOawlhg9ZdnVRIkUefndBzWqhnULKBWx7yhRQUH-k4oBJJ4kdVzPycZunH7JFgALDp3Qj3WUdk_19va4HF_aMkdlEYl3PUZ4hqBSrHT_0xrhH7DB4JGndYsjYiPy427BizBYQNWVh6c3E8227nQ5G1Mu5ln7SdZ5feg59cdnI62oustavStCBA==
-        id: rs_0a5a312323c2db9600697c5626fec48195bf97242d74316497
+      - encrypted_content: gAAAAABpgUTI72wy17KZj2XXRz5CqEcueJAGp4VgkB56wptl9vGdKzMAdwHXl8uaJPtYgMVb_gGsLXolM3IvbnG7taAD-mXsNX-k3MiqFumL37vLWLFo_frzBnUirAYWWl3KMDlKVk7xb89vl7BC0LUW_-XQ3wgjAU2g1aN8HFBG0Q5bw8npcm1-hisRUONK4wNqX-Zv3POPQ-lmsNZBJDfmlf3L-0YLRhPZEerZSwq28sD43CYIL0lDGBCX-y9OkeilCk_amJNiwdJwnzZ0-UAoc9cPbmr3PFa2m5E56LE6bwa3mowLwtB_x3kZhKlPgI8UiraO6JF42eat6fI8biREEGg2i3FdwhAVne2Ror5KZ0cR01zShGKbRTbd13pNsS8jk_33OrTCFBGwWu82-vkuCiatnINvpm7WNOPaDC915H-RyovdtsgMdjiUL_Mew5qiWg7S0PEMM_xeNfI3Gd8IbYw5XRIgJHU2rfeBsGTjn0nFKe0yVKhTI4RjEyCRIBs5_lxFq59eKpupqGocgm5FAcJwkOvgZ8nSdTd-UcFxFFsKjRL-x2iqhzZ6N0sg5LuxE8jsNDzH9puDIljUm12IWYjfH1HtpSKUqIoIFCgg1soM_S5zRqIJ29aULORYzDcUiSJ83mI55rf8W93igIAH6nd0J4PbJ6yKlgMMiYsUmvcz1cs4qT_Sv-X-3QxwwLZLDh9im7PjpKuGPnXLw3VQplPhE0JxKlQ2mnHCAxI2u2Kb3kCoo0w29Y0psGRFGVL3m4wHZkFp7-PsYXvnrPhNu3KuGXZ84cH0kFEkOJSg5UUFjg0FrB4BBAWe0__CJe_AL7LCXT1Tzb2B7r6HvuPvHlpi9WkhW_q176qU53LE_o8wI2I0r1tHFgYtfxhjLDg92wuroIzMt7q9fzifRqts4A9zDeNoclAMElmMdDEOY_xPP61ec85Lx7vRYsZGLAI7UKrPh_xA5FeoWRA82vTFJXwT_WCSVv7Tpj3ZcnfgG_e0LjHmazUToai4ccAUlQJhqopVnjobtCqAeeZyaejVY8vHmHFSQLsEsi8K4HV-qZT-TffgYVGPq8bv4zCg-b2UlyYDeYSPckIcKz2klMYvx7gWuD7TbVAbFEZJXvZV4L4u15-lE5ZoSB-OQY7kX68s2hUB5N_sL9HgFhUaICG0xsY9junedt3vTqGw5JpxuM_rIwmKx0-4LgykW181oJkauxM6ARkhNqpd-QR1A0KoHIrJP7ujnlrGyFT2HhGdq4r2EbJqufFCu-qABlwaO1kw9Rwwzb3rve32rYkP98DFmer4iopygB1zAzHF1C4BArGNVnA6ejEU8awZ3qIYhGxUn5DLEZWGsZF3KkyVxYfl_qgPLDEZJFEaYee0fXehuhPvFBQt-CvwGi9tcmKTnjaCOFmKhbuw3ReJxmcdT-6iZlyvwKYudfd005in2YshhTeJSjlm5g-osr9RJxgBm3cJQUU6ITPBA1PB6mlzWjr9tIxPIV9BFm-pe41SXB8IOncDaSfKXfVudXgL2xNtltc_-wj4RyskOUpEutJm0nTUtDOA6s1Tw_Gpguej1U76po0CA_rCEhZdFsQ6voewNfnwaUoejdT1yR15QfII8baMGyJtiwsEquhkGsfTbXp_ob3jejcKLqN5p_lbHYzl2vHRoc1II1YH6mMsUzf2Vr5H-sf_4h2OeHXHAacyUw7HLH5R_92qG8gWWUN4ZXQGVdfrSa1SiWHC9Sm8VQyrkfY6qt8hLpyX-IQCkFNFpl3zxbANH-mQqNvoeTIWUTeIXb_lj_04g61P1DXYuyB6X6oSXGXQFhqx2ahECz5g7UB0si-s6-citRjpZD8Sdd7XHB4-a35XA-lMsuBpWBVGlv21Aeqen36tZg==
+        id: rs_0d013ea85d54d46300698144c4442481969a6e7b0304a5fb0b
         summary: []
         type: reasoning
       - content:
         - annotations: []
           logprobs: []
           text: |-
-            I called the tool and it returned an image (with a small metadata string). The image shows a cross-section of a kiwi fruit on a white background. Details:
-            - Bright green flesh with radial striations leading toward the center.
-            - A pale, cream-colored core at the center.
-            - A ring of small black seeds arranged evenly around the core.
-            - Thin, fuzzy brown skin visible around the outer edge.
-            - The returned metadata attached was: {"metadata":"test"}.
+            I called get_mixed_content and received an image plus small metadata. Description:
+
+            - Image: a close-up cross-section of a kiwi fruit.
+            - Visual details: bright green flesh with radial darker-green striations, a white/creamy central core, and a ring of small black seeds arranged around the core. The outer edge shows the brown, slightly fuzzy skin. The background appears plain white.
+            - Metadata returned: {"metadata":"test"}.
+
+            If you want, I can crop, zoom, remove the background, or extract colors from the image.
           type: output_text
-        id: msg_0a5a312323c2db9600697c562964a4819589c97ef542274e60
+        id: msg_0d013ea85d54d46300698144c64c848196aaf2bf17c5deeebe
         role: assistant
         status: completed
         type: message
@@ -269,13 +270,13 @@ interactions:
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 553
+        input_tokens: 570
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 261
+        output_tokens: 274
         output_tokens_details:
           reasoning_tokens: 128
-        total_tokens: 814
+        total_tokens: 844
       user: null
     status:
       code: 200

@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '373'
+      - '404'
       content-type:
       - application/json
       host:
@@ -18,7 +18,7 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: Call the get_two_images tool and describe what you see.
+        - text: Call the get_images tool. One image shows a fruit - what fruit is it? Just name the fruit.
           type: text
         role: user
       model: claude-sonnet-4-5
@@ -31,14 +31,14 @@ interactions:
           additionalProperties: false
           properties: {}
           type: object
-        name: get_two_images
+        name: get_images
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '610'
+      - '506'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -49,13 +49,11 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - text: I'll call the get_two_images tool to retrieve and describe the images.
-        type: text
-      - id: toolu_012tbQJXMB8qxgMdPWNBzmsD
+      - id: toolu_01ACvjpVGSMEkFvB2MSC4Tec
         input: {}
-        name: get_two_images
+        name: get_images
         type: tool_use
-      id: msg_0112EAUaE7AfFzYvUSxBUhhY
+      id: msg_017HbnfLGmAMzzkpjmMkbcKE
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -67,8 +65,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 555
-        output_tokens: 56
+        input_tokens: 562
+        output_tokens: 36
         service_tier: standard
     status:
       code: 200
@@ -82,7 +80,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '132368'
+      - '132295'
       content-type:
       - application/json
       host:
@@ -92,15 +90,13 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: Call the get_two_images tool and describe what you see.
+        - text: Call the get_images tool. One image shows a fruit - what fruit is it? Just name the fruit.
           type: text
         role: user
       - content:
-        - text: I'll call the get_two_images tool to retrieve and describe the images.
-          type: text
-        - id: toolu_012tbQJXMB8qxgMdPWNBzmsD
+        - id: toolu_01ACvjpVGSMEkFvB2MSC4Tec
           input: {}
-          name: get_two_images
+          name: get_images
           type: tool_use
         role: assistant
       - content:
@@ -115,7 +111,7 @@ interactions:
               url: https://www.gstatic.com/webp/gallery3/1.png
             type: image
           is_error: false
-          tool_use_id: toolu_012tbQJXMB8qxgMdPWNBzmsD
+          tool_use_id: toolu_01ACvjpVGSMEkFvB2MSC4Tec
           type: tool_result
         role: user
       model: claude-sonnet-4-5
@@ -128,14 +124,14 @@ interactions:
           additionalProperties: false
           properties: {}
           type: object
-        name: get_two_images
+        name: get_images
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '1668'
+      - '443'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -146,29 +142,9 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - text: |-
-          Based on the two images returned, here's what I see:
-
-          **Image 1: Kiwi Fruit Cross-Section**
-          This is a beautiful close-up photograph of a kiwi fruit that has been sliced in half. The image shows the distinctive internal structure of the kiwi with:
-          - Bright green flesh surrounding the center
-          - A pale, creamy white/light green core in the middle
-          - Small black seeds arranged in a radial pattern around the center, creating a starburst effect
-          - Fine, fuzzy brown skin visible around the edges
-          - The texture and moisture of the fruit is clearly visible, giving it a fresh appearance
-
-          **Image 2: Orange/Peach Colored Rose**
-          This is an elegant photograph of a rose flower with:
-          - Soft peachy-orange petals with hints of yellow
-          - The petals have a delicate, layered appearance typical of roses
-          - A pink/coral colored rosebud visible at the top of the stem
-          - A brown/woody stem with what appears to be a small green leaf
-          - The image has a clean white background, giving it an artistic, isolated quality
-          - The rose appears to have water droplets or dew on some petals, adding to its fresh appearance
-
-          Both images are high-quality, well-lit photographs that highlight the natural beauty and details of their subjects.
+      - text: Kiwi
         type: text
-      id: msg_01JRQfnvHa7RwDwF2iLQ4T5J
+      id: msg_01TDu3z8Sfh1mSTkaqp8S14c
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
@@ -180,8 +156,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 1277
-        output_tokens: 297
+        input_tokens: 1265
+        output_tokens: 7
         service_tier: standard
     status:
       code: 200

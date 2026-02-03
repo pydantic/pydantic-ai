@@ -41,7 +41,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '752'
+      - '750'
       content-type:
       - application/json
       strict-transport-security:
@@ -61,26 +61,26 @@ interactions:
           - function:
               arguments: '{}'
               name: get_mixed_content
-            id: xx4tg70z2
+            id: xjs9shmes
             type: function
-      created: 1769756204
-      id: chatcmpl-37c34ccd-50a4-44af-bc66-c2f5aadb5079
+      created: 1770074993
+      id: chatcmpl-949ad45e-95a1-430d-8f56-843fe3bb4d89
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       object: chat.completion
       service_tier: on_demand
-      system_fingerprint: fp_d2c1f7e199
+      system_fingerprint: fp_217b6e6136
       usage:
-        completion_time: 0.024689669
-        completion_tokens: 22
-        prompt_time: 0.084129588
+        completion_time: 0.086605744
+        completion_tokens: 49
+        prompt_time: 0.528786886
         prompt_tokens: 708
-        queue_time: 0.769950414
-        total_time: 0.108819257
-        total_tokens: 730
+        queue_time: 0.361229915
+        total_time: 0.61539263
+        total_tokens: 757
       usage_breakdown: null
       x_groq:
-        id: req_01kg6v16zjf2n80wx0hsq7r7dz
-        seed: 1933893633
+        id: req_01kggb1wbqfx4v8pb69rep7pjj
+        seed: 314979383
     status:
       code: 200
       message: OK
@@ -97,7 +97,7 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=fqdYSjC9lvsVsz2KFZeW2NlIW1v4ia7O6ksTPFe5WRg-1769756203.970062-1.0.1.1-ohtQCTNWQ6G1LGUzs6VyF4kOzYUWspaPlUB_OHDsv.7zuxYftV6lg2qyUdbMyBGw_fncgZg_1msd_X74ZBxSDEYjV5p7qXUEBi5qg7GSgcjVZfIWjZTswaK4WxR.znmo
+      - __cf_bm=CO4R0.FpiN95AqZcknV9TksXu4VoIeNJWeNFkM0WG_4-1770074992.945464-1.0.1.1-oc_SzOO35oT4jkhxXaQzC2zVo7yJi7V92soqAui9fQwz.rUToZlnihLwlpJ4jSl3JCP2JJGPFg3EwYMsaGrYGJS8F49pooSxHr31zUFeLJdGUHZ0iNh9ZIe4SbNdAZ8T
       host:
       - api.groq.com
     method: POST
@@ -110,14 +110,14 @@ interactions:
         - function:
             arguments: '{}'
             name: get_mixed_content
-          id: xx4tg70z2
+          id: xjs9shmes
           type: function
       - content: |-
           Here is the image:
           See file 241a70.
           {"metadata":"test"}
         role: tool
-        tool_call_id: xx4tg70z2
+        tool_call_id: xjs9shmes
       - content:
         - text: 'This is file 241a70:'
           type: text
@@ -148,7 +148,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '867'
+      - '794'
       content-type:
       - application/json
       strict-transport-security:
@@ -163,28 +163,27 @@ interactions:
         index: 0
         logprobs: null
         message:
-          content: The response from the get_mixed_content tool included an image of a kiwi fruit cut in half, showcasing
-            its vibrant green flesh and black seeds, along with a JSON object containing the key "metadata" with the value
-            "test".
+          content: The image is a cross-section of a kiwi fruit, showcasing its vibrant green flesh and black seeds arranged
+            in a circular pattern around a white center.
           role: assistant
-      created: 1769756205
-      id: chatcmpl-81b5e8be-2b5e-446e-afe8-0174fc38b4ce
+      created: 1770074998
+      id: chatcmpl-b2ec61ef-f58b-49ab-82be-c38f31f72243
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       object: chat.completion
       service_tier: on_demand
-      system_fingerprint: fp_992318f10a
+      system_fingerprint: fp_217b6e6136
       usage:
-        completion_time: 0.141457742
-        completion_tokens: 48
-        prompt_time: 0.04076051
+        completion_time: 0.088983836
+        completion_tokens: 31
+        prompt_time: 1.023051956
         prompt_tokens: 1509
-        queue_time: 0.141712485
-        total_time: 0.182218252
-        total_tokens: 1557
+        queue_time: 2.860546092
+        total_time: 1.112035792
+        total_tokens: 1540
       usage_breakdown: null
       x_groq:
-        id: req_01kg6v18c7f2n88gqwmn6ksvt6
-        seed: 963564628
+        id: req_01kggb1xwxf13b7atjc0pa56h6
+        seed: 1548200147
     status:
       code: 200
       message: OK

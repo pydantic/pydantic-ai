@@ -38,7 +38,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '513'
+      - '588'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -49,11 +49,13 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - id: toolu_01UMjZ6Fi9fELMqJBZoYtWpk
+      - text: I'll call the get_mixed_content tool for you.
+        type: text
+      - id: toolu_01HJC2je2fWyWjMvfkuddkuS
         input: {}
         name: get_mixed_content
         type: tool_use
-      id: msg_01XQ4Sg4pET7GmVQ9expGPid
+      id: msg_01QLbH4xcbcgcUPXn5X4jkif
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -66,7 +68,7 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         input_tokens: 555
-        output_tokens: 38
+        output_tokens: 52
         service_tier: standard
     status:
       code: 200
@@ -80,7 +82,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '132283'
+      - '132358'
       content-type:
       - application/json
       host:
@@ -94,7 +96,9 @@ interactions:
           type: text
         role: user
       - content:
-        - id: toolu_01UMjZ6Fi9fELMqJBZoYtWpk
+        - text: I'll call the get_mixed_content tool for you.
+          type: text
+        - id: toolu_01HJC2je2fWyWjMvfkuddkuS
           input: {}
           name: get_mixed_content
           type: tool_use
@@ -111,7 +115,7 @@ interactions:
           - text: '{"metadata":"test"}'
             type: text
           is_error: false
-          tool_use_id: toolu_01UMjZ6Fi9fELMqJBZoYtWpk
+          tool_use_id: toolu_01HJC2je2fWyWjMvfkuddkuS
           type: tool_result
         role: user
       model: claude-sonnet-4-5
@@ -131,7 +135,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1193'
+      - '1235'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -143,22 +147,22 @@ interactions:
     parsed_body:
       content:
       - text: |-
-          I received mixed content from the tool with three components:
+          The get_mixed_content tool returned a combination of different content types:
 
-          1. **Text output**: "Here is the image:"
+          1. **Text output**: A simple text string saying "Here is the image:"
 
-          2. **An image**: A beautiful cross-section of a kiwi fruit showing:
-             - Vibrant green flesh (the outer fruit layer)
-             - A pale yellow-white center
-             - Black seeds arranged in a radiating sunburst pattern around the center
-             - Fine brown fuzzy skin visible around the edges
-             - The image is photographed against a white background
+          2. **An image**: A beautiful cross-section photograph of a kiwi fruit. The image shows the distinctive internal structure of the kiwi with:
+             - Bright green flesh on the outer portion
+             - A lighter, pale green/white center
+             - A ring of small black seeds arranged in a radial pattern around the center
+             - The characteristic fuzzy brown skin visible around the edges
+             - The entire slice photographed against a white background
 
-          3. **JSON data**: `{"metadata":"test"}` - a simple JSON object containing a metadata field with the value "test"
+          3. **JSON data**: A simple metadata object containing `{"metadata":"test"}`
 
-          The function returned a nice variety of content types - plain text, an image, and structured data - demonstrating its ability to deliver "mixed content" as its name suggests!
+          So the function returned mixed content types including text, an image, and structured data - living up to its name!
         type: text
-      id: msg_01VqC1WyBTS4KNsUizvExrj9
+      id: msg_016txGUcHnx1559QRjGxCLaP
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
@@ -170,8 +174,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 1105
-        output_tokens: 176
+        input_tokens: 1118
+        output_tokens: 178
         service_tier: standard
     status:
       code: 200

@@ -21,19 +21,19 @@ interactions:
       cHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggB
   response_sample:
     json:
-      id: fba435c5-fa96-0d7b-9a2b-bd676c431a9b
+      id: e6729f6e-f8c6-551e-6890-42ea58643458
       outputs:
       - finish_reason: REASON_TOOL_CALLS
         message:
           role: ROLE_ASSISTANT
           tool_calls:
-          - id: call_12305710
+          - id: call_57374864
             type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
             status: TOOL_CALL_STATUS_COMPLETED
             function:
               name: get_file
               arguments: '{}'
-      created: '2026-01-30T16:36:48.362422033Z'
+      created: '2026-02-03T01:30:59.577745996Z'
       model: grok-4-1-fast-non-reasoning
       system_fingerprint: fp_9bb3d5b553
       usage:
@@ -41,7 +41,7 @@ interactions:
         prompt_tokens: 359
         total_tokens: 374
         prompt_text_tokens: 359
-        cached_prompt_text_tokens: 358
+        cached_prompt_text_tokens: 314
       settings:
         parallel_tool_calls: true
         temperature: 0.7
@@ -54,9 +54,9 @@ interactions:
               "object"}'
         top_p: 0.95
     raw: !!binary |
-      CiRmYmE0MzVjNS1mYTk2LTBkN2ItOWEyYi1iZDY3NmM0MzFhOWISKwgEGicQAhojCg1jYWxsXzEy
-      MzA1NzEwEAEYAVIOCghnZXRfZmlsZRICe30qDAigvPPLBhCRvuisATIbZ3Jvay00LTEtZmFzdC1u
-      b24tcmVhc29uaW5nOg1mcF85YmIzZDViNTUzShIIDxDnAhj2AiDnAjjmAliA0A9aYxABLTMzMz86
+      CiRlNjcyOWY2ZS1mOGM2LTU1MWUtNjg5MC00MmVhNTg2NDM0NTgSKwgEGicQAhojCg1jYWxsXzU3
+      Mzc0ODY0EAEYAVIOCghnZXRfZmlsZRICe30qDAjTn4XMBhDM6L6TAjIbZ3Jvay00LTEtZmFzdC1u
+      b24tcmVhc29uaW5nOg1mcF85YmIzZDViNTUzShIIDxDnAhj2AiDnAji6AljQ0xNaYxABLTMzMz86
       AggBQlEKTwoIZ2V0X2ZpbGUiQ3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3Bl
       cnRpZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In1NMzNzPw==
 - request_sample:
@@ -70,7 +70,7 @@ interactions:
         - text: ''
         role: ROLE_ASSISTANT
         tool_calls:
-        - id: call_12305710
+        - id: call_57374864
           type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
           status: TOOL_CALL_STATUS_COMPLETED
           function:
@@ -94,8 +94,8 @@ interactions:
         mode: TOOL_MODE_AUTO
     raw: !!binary |
       CloKVgpUVXNlIHRoZSBnZXRfZmlsZSB0b29sIG5vdyB0byByZXRyaWV2ZSBhIGltYWdlIGZpbGUs
-      IHRoZW4gZGVzY3JpYmUgd2hhdCB5b3UgcmVjZWl2ZWQuEAEKKwoCCgAQAiIjCg1jYWxsXzEyMzA1
-      NzEwEAEYAVIOCghnZXRfZmlsZRICe30KFgoSChBTZWUgZmlsZSAyNDFhNzAuEAUKp4MIChYKFFRo
+      IHRoZW4gZGVzY3JpYmUgd2hhdCB5b3UgcmVjZWl2ZWQuEAEKKwoCCgAQAiIjCg1jYWxsXzU3Mzc0
+      ODY0EAEYAVIOCghnZXRfZmlsZRICe30KFgoSChBTZWUgZmlsZSAyNDFhNzAuEAUKp4MIChYKFFRo
       aXMgaXMgZmlsZSAyNDFhNzA6ComDCBKFgwgK/4IIZGF0YTppbWFnZS9qcGVnO2Jhc2U2NCwvOWov
       NEFBUVNrWkpSZ0FCQVFBQUFRQUJBQUQvMndCREFBTUNBZ0lDQWdNQ0FnSURBd01EQkFZRUJBUUVC
       QWdHQmdVR0NRZ0tDZ2tJQ1FrS0RBOE1DZ3NPQ3drSkRSRU5EZzhRRUJFUUNnd1NFeElRRXc4UUVC
@@ -2407,28 +2407,28 @@ interactions:
       cyI6IGZhbHNlLCAicHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggB
   response_sample:
     json:
-      id: d45dbcff-fa08-a279-2db8-68ee94c30906
+      id: 208a0d5e-71ca-24dd-f796-0e62d41983a8
       outputs:
       - finish_reason: REASON_STOP
         message:
-          content: This is a high-resolution close-up photograph of a single kiwi
-            fruit sliced in half horizontally, presented on a plain white background.
-            The cut exposes the vibrant green flesh radiating outward from a central
-            white core dotted with clusters of small, dark brown to black edible seeds
-            arranged in a starburst pattern. The outer edge shows the fruit's characteristic
-            fuzzy brown skin, slightly curled at the edges. The image is well-lit
-            with sharp focus on the juicy texture and natural colors, evoking freshness.
+          content: This is a close-up photograph of a kiwi fruit that has been sliced
+            in half horizontally, revealing its vibrant green flesh arranged in a
+            radial pattern around a central white core. The fruit's outer edge shows
+            the characteristic brown, fuzzy skin. The image is isolated on a plain
+            white background, with high detail and bright lighting that emphasizes
+            the juicy texture and tiny black edible seeds embedded throughout the
+            flesh.
           role: ROLE_ASSISTANT
-      created: '2026-01-30T16:36:49.457755360Z'
+      created: '2026-02-03T01:31:00.689681444Z'
       model: grok-4-1-fast-non-reasoning
       system_fingerprint: fp_9bb3d5b553
       usage:
-        completion_tokens: 96
+        completion_tokens: 78
         prompt_tokens: 661
-        total_tokens: 757
+        total_tokens: 739
         prompt_text_tokens: 405
         prompt_image_tokens: 256
-        cached_prompt_text_tokens: 660
+        cached_prompt_text_tokens: 359
       settings:
         parallel_tool_calls: true
         temperature: 0.7
@@ -2441,17 +2441,15 @@ interactions:
               "object"}'
         top_p: 0.95
     raw: !!binary |
-      CiRkNDVkYmNmZi1mYTA4LWEyNzktMmRiOC02OGVlOTRjMzA5MDYSigQIAxqFBAqABFRoaXMgaXMg
-      YSBoaWdoLXJlc29sdXRpb24gY2xvc2UtdXAgcGhvdG9ncmFwaCBvZiBhIHNpbmdsZSBraXdpIGZy
-      dWl0IHNsaWNlZCBpbiBoYWxmIGhvcml6b250YWxseSwgcHJlc2VudGVkIG9uIGEgcGxhaW4gd2hp
-      dGUgYmFja2dyb3VuZC4gVGhlIGN1dCBleHBvc2VzIHRoZSB2aWJyYW50IGdyZWVuIGZsZXNoIHJh
-      ZGlhdGluZyBvdXR3YXJkIGZyb20gYSBjZW50cmFsIHdoaXRlIGNvcmUgZG90dGVkIHdpdGggY2x1
-      c3RlcnMgb2Ygc21hbGwsIGRhcmsgYnJvd24gdG8gYmxhY2sgZWRpYmxlIHNlZWRzIGFycmFuZ2Vk
-      IGluIGEgc3RhcmJ1cnN0IHBhdHRlcm4uIFRoZSBvdXRlciBlZGdlIHNob3dzIHRoZSBmcnVpdCdz
-      IGNoYXJhY3RlcmlzdGljIGZ1enp5IGJyb3duIHNraW4sIHNsaWdodGx5IGN1cmxlZCBhdCB0aGUg
-      ZWRnZXMuIFRoZSBpbWFnZSBpcyB3ZWxsLWxpdCB3aXRoIHNoYXJwIGZvY3VzIG9uIHRoZSBqdWlj
-      eSB0ZXh0dXJlIGFuZCBuYXR1cmFsIGNvbG9ycywgZXZva2luZyBmcmVzaG5lc3MuEAIqDAihvPPL
-      BhDglaPaATIbZ3Jvay00LTEtZmFzdC1ub24tcmVhc29uaW5nOg1mcF85YmIzZDViNTUzShUIYBCV
-      BRj1BSCVAyiAAjiUBViQ2FBaYxABLTMzMz86AggBQlEKTwoIZ2V0X2ZpbGUiQ3siYWRkaXRpb25h
-      bFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3BlcnRpZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In1N
-      MzNzPw==
+      CiQyMDhhMGQ1ZS03MWNhLTI0ZGQtZjc5Ni0wZTYyZDQxOTgzYTgStgMIAxqxAwqsA1RoaXMgaXMg
+      YSBjbG9zZS11cCBwaG90b2dyYXBoIG9mIGEga2l3aSBmcnVpdCB0aGF0IGhhcyBiZWVuIHNsaWNl
+      ZCBpbiBoYWxmIGhvcml6b250YWxseSwgcmV2ZWFsaW5nIGl0cyB2aWJyYW50IGdyZWVuIGZsZXNo
+      IGFycmFuZ2VkIGluIGEgcmFkaWFsIHBhdHRlcm4gYXJvdW5kIGEgY2VudHJhbCB3aGl0ZSBjb3Jl
+      LiBUaGUgZnJ1aXQncyBvdXRlciBlZGdlIHNob3dzIHRoZSBjaGFyYWN0ZXJpc3RpYyBicm93biwg
+      ZnV6enkgc2tpbi4gVGhlIGltYWdlIGlzIGlzb2xhdGVkIG9uIGEgcGxhaW4gd2hpdGUgYmFja2dy
+      b3VuZCwgd2l0aCBoaWdoIGRldGFpbCBhbmQgYnJpZ2h0IGxpZ2h0aW5nIHRoYXQgZW1waGFzaXpl
+      cyB0aGUganVpY3kgdGV4dHVyZSBhbmQgdGlueSBibGFjayBlZGlibGUgc2VlZHMgZW1iZWRkZWQg
+      dGhyb3VnaG91dCB0aGUgZmxlc2guEAIqDAjUn4XMBhCk6O7IAjIbZ3Jvay00LTEtZmFzdC1ub24t
+      cmVhc29uaW5nOg1mcF85YmIzZDViNTUzShUIThCVBRjjBSCVAyiAAjjnAlj8z0daYxABLTMzMz86
+      AggBQlEKTwoIZ2V0X2ZpbGUiQ3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3Bl
+      cnRpZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In1NMzNzPw==

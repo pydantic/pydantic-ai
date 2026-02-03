@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '764'
+      - '712'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=989
+      - gfet4t7; dur=1155
       transfer-encoding:
       - chunked
       vary:
@@ -54,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_mixed_content
-            thoughtSignature: CsUBAXLI2nz+P5joYH3q2npTA/VzV6VC4sdLsqU0FSCrRTlwfAcddxDoO7+IRUodxhZqv+jKPrJKu6UyyYAjOpmLfhLbyiY7kb4EX0W4d+23W5/YaRpcRwddAsQ48DQP4OUBdh08V7UOjb5JsBWqWLMMAo7RRpwl1qP66Hh6+katMSv0mloIaszQslc6C4gWJTy8uVvuSWf8CjtLcZlV3OWTJhWZ1525Zs2eXaGxe/3fAfoL6D0mfy4D02n4mtfwRUlf5BLnoZQ=
+            thoughtSignature: Cp4BAXLI2nxJvJ8M9WrsSKKJjpas5LzWCG9LPKmSAvs759XpaKrhZSRJEKgoOjhiGBCAe+EY+TS+ISV4PYpnX3Ntx0ynzw4Mly0DyLOgbZfJ4G35toizCb+t+jPjRNNx/aOWMfSrceSfc4gcx5dMeOotuGk87r+dNHOSV7o0T/fMMWK9RrIdje7dVns2sgU8L2rnHW+rOwPY0F4MmfTxbSE=
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: JAGBaf7CBqWwqtsP85unyQc
+      responseId: YjOBaY2PHKyGz7IPn-rs0Qc
       usageMetadata:
         candidatesTokenCount: 12
         promptTokenCount: 38
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 38
-        thoughtsTokenCount: 37
-        totalTokenCount: 87
+        thoughtsTokenCount: 29
+        totalTokenCount: 79
     status:
       code: 200
       message: OK
@@ -81,7 +81,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '132514'
+      - '132462'
       content-type:
       - application/json
       host:
@@ -95,13 +95,13 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_7224816b767b4122a48d65bb42fdbaa2
+            id: pyd_ai_7ba9619018504a1d91a78088c43749d3
             name: get_mixed_content
-          thoughtSignature: CsUBAXLI2nz-P5joYH3q2npTA_VzV6VC4sdLsqU0FSCrRTlwfAcddxDoO7-IRUodxhZqv-jKPrJKu6UyyYAjOpmLfhLbyiY7kb4EX0W4d-23W5_YaRpcRwddAsQ48DQP4OUBdh08V7UOjb5JsBWqWLMMAo7RRpwl1qP66Hh6-katMSv0mloIaszQslc6C4gWJTy8uVvuSWf8CjtLcZlV3OWTJhWZ1525Zs2eXaGxe_3fAfoL6D0mfy4D02n4mtfwRUlf5BLnoZQ=
+          thoughtSignature: Cp4BAXLI2nxJvJ8M9WrsSKKJjpas5LzWCG9LPKmSAvs759XpaKrhZSRJEKgoOjhiGBCAe-EY-TS-ISV4PYpnX3Ntx0ynzw4Mly0DyLOgbZfJ4G35toizCb-t-jPjRNNx_aOWMfSrceSfc4gcx5dMeOotuGk87r-dNHOSV7o0T_fMMWK9RrIdje7dVns2sgU8L2rnHW-rOwPY0F4MmfTxbSE=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_7224816b767b4122a48d65bb42fdbaa2
+            id: pyd_ai_7ba9619018504a1d91a78088c43749d3
             name: get_mixed_content
             response:
               return_value:
@@ -130,11 +130,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1957'
+      - '1871'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2725
+      - gfet4t7; dur=2239
       transfer-encoding:
       - chunked
       vary:
@@ -147,13 +147,19 @@ interactions:
           parts:
           - text: I received a list containing the string "Here is the image:" and a dictionary with the key "metadata" and
               the value "test".
-            thoughtSignature: Co0IAXLI2nypF2pn2UmiUPm3XgQDd+t37+nJxIMKRePV/80OlZGplZCdpk5MSmWtfyP5D3sFfACevA1UqVRZA2rZK42BSmTEjen8qi0WuWIkoauaRagSP5FbOy2yPFsmA6tnazAN5j9xQj88bBYZbdZYC7jc5CLWDQuZ4RzHKIPpGqHXByVr9ddV5uscJrSg2PFe8AVAUHM/1w8uVBEg27eHuURUeK0+k/J2oraJTH3xkAFKjgdP2WSU8wLBTUzXSu2+/T7KhGOGakkckhunSaXJYWiGNsRJBAzWensV0Ri0gJikpudfxy9/M6OsqrBe9JKJ7cevmvbiREZgAWKNt4tiRFYPNK8FdwCWrs+6io8/ccka6I0YGE2KnlZHYeBrK6cxH8tKteg3cmoYyzSHguZp04EcT9pXuUyXz4Y/zYgtbu3y6B0PIFy7+ObhKRO6MnVkDWP7fMVoBAZfq/P7eVoEyhhrObQO5l6XkcJV8DxEO81Q1GRGvCI34RyHs4ZIQFpzFUOvm/mqiSpEsG2ez86/mggiQMzOv+HZb/igwOYXHC/eywTlvHwZAh9cehLdAkx5EuNVvwxBrpXeDvwDJMA1d4Vt0+o7gT6ltNAuv3zK6o3GYw2DRfKKRHMgRSfsZK5R7D/e6uVGqzGNK5gfcLpg8oU8uqxHKRksC9MOrpniXNS8pMiEc1lmOkKbczqDIfApSY0g1z50kuyyQ+4sqH5RzhirP+2wUVXfCjAOMz9FEsGRrGEZwddvEC6pJ/hvAg0l18Cmm367QcLGLLdWltH0PO6X1AF6Pywpt10WhBKsj91o8omq4YiJXfvqVedBhoBJuSOk2NZecYkLK8Jn0itefcodPXigVcEhXgfWK9I05EKx1Fy/1ml4dSOznbyUdqGs5ct/awGej+q+lW8Kr03PjXQ7QFUS4YrkHUY5ujjx3Sj9c9Q2FDWc5g6kGj5RcjcxqhNsbwyDSiwYNpgp6FhS8DcIpEQromHKli8RG5+CcaqfdzZ15n0Hm8FPME8bbmE7KULaiIpa6hGOy5fS10SYa4zbDvWi21uz+26rp9gb3+VgyHtF+EX3ZXqLkmm7o6ioVJj0jS+5oESj4ozY3c5m8uNvKOoYGizk6De3ZoraHravW/olgb2D6z+gjveKf7lPEFPqgYWBHvS6epmxPtZ7iDSjFQStshjYio/kJaDn5sDbDgi8m7hv0AK/2kqeOv6i0MKSkqPahTbYAwCZB6pHEIIHolh7tFzWJRgIBqdevw/LpJpYl8r8jxJ9KSDhLCRlluwioZjVq5bTdcj3YgeLnvO58TnAJQAp58gShLhNmrDGDUxEMKmGJ77JQRp7AINlSsJVMiIgkb5gGrLZfpqjXKrUlR+9We4saRhIgcs=
+            thoughtSignature: CuYGAXLI2nzAc9Y7lJrPlRW2ZBmjxzGDkoHfDMvcpLl9Hxn5RQeT/NzMhH60hFRwh1njyFvR1pq/ksqQzhWm6jn4gPuyWQmOrn2ewQtdeINT7U6BZpFRH8TqO7ZwGG3Y6KJ4o2Rg/0dpSjukyB8gK9Q81u5wtHIKzC3/f+y4b3TCz+lMdXajO1II6H9Z7SXkCojM6HDkTnX6gNEyWaug/Uk6QXHgs7wxJiRiu42FfOT9prRpyHKC0ENubsXC0zgFHxyOl8iJwfECCAiVKN+dXgGJatg76/7mnN7XwBbW9I6ToCQrcfIDk8qUCEIzgBfIxjZnXtHWICiyZuPqGCjI+R5e3NjEHp84Vj85jndN0rBsGfm7n3l1xNOmVskW/b2yxGsbrnE6ieWX0CAQLNyr82LitVIg2+1ipKgJyGF5gfeGCxp0v32Lh6jPANnHRxqhRzJpe+zCyS2H96pSi58iVRTdtS+TKZHKoyic54TQCy8GkhnHQmt8ZnRb8q+Oey+/EstO5IN+YsuA0tFMd5Z7Czt6xrErAetL6Zku9vTXu03NacgfJhqc8ESkBv/W3LFxFMQveaill6pRLC1g0dMRcFe75ROIzDMog51dercvfkYVxWaFlvqKGrGGucHzpl9ybO93aAAV4OaLTr/nql/wyB7+bpgLwC4quaX+KesQ6Mtt3MNhpQi8sAqtFnpyCJ5A/sRIjhGV27r+zzbvJuw+oVdwdWKfduT9JZ6/8sS150CydwIl2NnO7/jwoN9rBOlaiDABklmATiHnGxNyp8FcQKztnB6Q1nL0Sgoc9LkGRVBlRIt+7jMPS+iSF04+ZDjM0clkON5/mdImqYNqOweurKJcan6u+V6xDqUk1fegi8JhDrzz7BmtIKX9k8MLqChI3rwy8bFxPojMjKMI3UgBpVNhHMX3kFG6r1kLnpuFcUzTeB8RaIWXRNTdw9Dm+RLMFcI62dAIJbwf3XOEenz4iqLAHWslFLSkJJc6IL+L2QFLi+DFLH+Cq8HswGoizNMDFxD7sqwO6kJH5nEVFMvvbO/oW+2O9mtLyU3bquPCoBl7240s+t5knfEe6pb0j8yZOzx/oZxaShWfk9XlGzuS3ZlTIxolEwRzNCxd2F2B9JqlOPzdAKpcYB5eG5xApCzn+uaZ/ntGLy41
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: JgGBaf-pOaqmmtkPhLvW4Qg
+      responseId: ZDOBaeOgMKThz7IPo7vvmQw
       usageMetadata:
+        cacheTokensDetails:
+        - modality: IMAGE
+          tokenCount: 143
+        - modality: TEXT
+          tokenCount: 45
+        cachedContentTokenCount: 188
         candidatesTokenCount: 28
         promptTokenCount: 339
         promptTokensDetails:
@@ -161,8 +167,8 @@ interactions:
           tokenCount: 81
         - modality: IMAGE
           tokenCount: 258
-        thoughtsTokenCount: 231
-        totalTokenCount: 598
+        thoughtsTokenCount: 205
+        totalTokenCount: 572
     status:
       code: 200
       message: OK

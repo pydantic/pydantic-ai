@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterable, AsyncIterator, Iterable
+from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -53,6 +53,7 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     check_allow_model_requests,
+    download_item,
     get_user_agent,
 )
 
@@ -275,7 +276,7 @@ class GroqModel(Model):
         else:
             tool_choice = 'auto'
 
-        groq_messages = self._map_messages(messages, model_request_parameters)
+        groq_messages = await self._map_messages(messages, model_request_parameters)
 
         response_format: chat.completion_create_params.ResponseFormat | None = None
         if model_request_parameters.output_mode == 'native':
@@ -395,14 +396,15 @@ class GroqModel(Model):
                 )
         return tools
 
-    def _map_messages(
+    async def _map_messages(
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
         groq_messages: list[chat.ChatCompletionMessageParam] = []
         for message in messages:
             if isinstance(message, ModelRequest):
-                groq_messages.extend(self._map_user_message(message))
+                async for item in self._map_user_message(message):
+                    groq_messages.append(item)
             elif isinstance(message, ModelResponse):
                 texts: list[str] = []
                 tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
@@ -471,13 +473,12 @@ class GroqModel(Model):
             response_format_param['json_schema']['description'] = o.description
         return response_format_param
 
-    @classmethod
-    def _map_user_message(cls, message: ModelRequest) -> Iterable[chat.ChatCompletionMessageParam]:
+    async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
-                yield cls._map_user_prompt(part)
+                yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
                 tool_content_parts: list[str] = []
                 file_content: list[UserContent] = []
@@ -488,7 +489,13 @@ class GroqModel(Model):
                             raise RuntimeError('Only images are supported for binary content in Groq.')
                         tool_content_parts.append(f'See file {item.identifier}.')
                         file_content.append(f'This is file {item.identifier}:')
-                        file_content.append(item)
+                        if isinstance(item, ImageUrl) and item.force_download:
+                            downloaded = await download_item(item, data_format='bytes')
+                            file_content.append(
+                                BinaryContent(data=downloaded['data'], media_type=downloaded['data_type'])
+                            )
+                        else:
+                            file_content.append(item)
                     elif isinstance(item, (AudioUrl, VideoUrl, DocumentUrl)):
                         raise RuntimeError('Only images are supported for multimodal content in Groq tool returns.')
                     elif isinstance(item, str):
@@ -503,7 +510,7 @@ class GroqModel(Model):
                     content='\n'.join(tool_content_parts) if tool_content_parts else '',
                 )
                 if file_content:
-                    yield cls._map_user_prompt(UserPromptPart(content=file_content))
+                    yield await self._map_user_prompt(UserPromptPart(content=file_content))
             elif isinstance(part, RetryPromptPart):  # pragma: no branch
                 if part.tool_name is None:
                     yield chat.ChatCompletionUserMessageParam(  # pragma: no cover
@@ -516,8 +523,7 @@ class GroqModel(Model):
                         content=part.model_response(),
                     )
 
-    @staticmethod
-    def _map_user_prompt(part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:
+    async def _map_user_prompt(self, part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:
         content: str | list[chat.ChatCompletionContentPartParam]
         if isinstance(part.content, str):
             content = part.content
@@ -527,7 +533,11 @@ class GroqModel(Model):
                 if isinstance(item, str):
                     content.append(chat.ChatCompletionContentPartTextParam(text=item, type='text'))
                 elif isinstance(item, ImageUrl):
-                    image_url = ImageURL(url=item.url)
+                    image_url_str = item.url
+                    if item.force_download:
+                        downloaded = await download_item(item, data_format='base64_uri')
+                        image_url_str = downloaded['data']
+                    image_url = ImageURL(url=image_url_str)
                     content.append(chat.ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                 elif isinstance(item, BinaryContent):
                     if item.is_image:

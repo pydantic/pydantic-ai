@@ -16,9 +16,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import pytest
+
+if TYPE_CHECKING:
+    from vcr.cassette import Cassette
 
 from pydantic_ai import Agent, BinaryContent, BinaryImage
 from pydantic_ai.exceptions import ModelHTTPError
@@ -31,7 +34,6 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
-    is_multi_modal_content,
 )
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
@@ -426,30 +428,99 @@ def is_provider_available(provider: str) -> bool:
     return bool(available() if callable(available) else available)
 
 
-def verify_cassette_contains(request: pytest.FixtureRequest, *patterns: str | tuple[str, ...]) -> None:
-    """Verify that all patterns appear in the VCR cassette request body.
+def get_cassette_request_bodies(cassette: Cassette) -> list[str]:
+    """Get all request bodies from the cassette as strings."""
+    import json
+
+    bodies: list[str] = []
+    for request in cassette.requests:  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+        raw_body = request.body  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        if raw_body:
+            body = raw_body.decode('utf-8', errors='ignore') if isinstance(raw_body, bytes) else raw_body  # pyright: ignore[reportUnknownVariableType]
+            bodies.append(body)  # pyright: ignore[reportUnknownArgumentType]
+        elif hasattr(request, 'parsed_body') and request.parsed_body:  # pyright: ignore[reportUnknownMemberType]
+            bodies.append(json.dumps(request.parsed_body))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    return bodies
+
+
+def pattern_in_bodies(pattern: str, bodies: list[str]) -> bool:
+    """Check if pattern exists in any of the request bodies."""
+    return any(pattern in body for body in bodies)
+
+
+def verify_cassette_contains(cassette: Cassette | None, *patterns: str | tuple[str, ...]) -> None:
+    """Verify that all patterns appear in the VCR cassette request bodies.
 
     This ensures content (text, files, json) is actually sent to the API, catching
     bugs where tool return values might be silently dropped.
 
     Args:
-        request: The pytest fixture request.
+        cassette: The VCR cassette from the vcr fixture.
         patterns: Patterns to search for. Each pattern can be a string or a tuple of strings
             (where any one of the tuple elements matching is sufficient).
     """
-    cassette_dir = Path(__file__).parent / 'cassettes' / 'test_multimodal_tool_returns'
-    test_name: str = request.node.name  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-    cassette_path = cassette_dir / f'{test_name}.yaml'
-    if not cassette_path.exists():
-        cassette_path = cassette_dir / f'{test_name}.xai.yaml'
-    if not cassette_path.exists():
-        return
-    content = cassette_path.read_text()
+    assert cassette is not None, 'Cassette is required for verification'
+    bodies = get_cassette_request_bodies(cassette)
+    assert bodies, 'No request bodies found in cassette'
     for pattern in patterns:
         if isinstance(pattern, tuple):
-            assert any(p in content for p in pattern), f'Expected one of {pattern} in cassette but none found'
+            assert any(pattern_in_bodies(p, bodies) for p in pattern), (
+                f'Expected one of {pattern} in cassette but none found'
+            )
         else:
-            assert pattern in content, f'Expected "{pattern}" in cassette but not found'
+            assert pattern_in_bodies(pattern, bodies), f'Expected "{pattern}" in cassette but not found'
+
+
+def verify_cassette_ordering(cassette: Cassette | None, *patterns: str | tuple[str, ...]) -> None:
+    """Verify that patterns appear in the VCR cassette request bodies in the given order.
+
+    Checks ordering within the concatenated request bodies.
+
+    Args:
+        cassette: The VCR cassette from the vcr fixture.
+        patterns: Patterns that must appear in order. Each pattern can be a string or a tuple
+            of strings (where any one of the tuple elements is used for position checking).
+    """
+    assert cassette is not None, 'Cassette is required for verification'
+    bodies = get_cassette_request_bodies(cassette)
+    assert bodies, 'No request bodies found in cassette'
+    content = ''.join(bodies)
+    last_index = -1
+    for pattern in patterns:
+        if isinstance(pattern, tuple):
+            indices = [content.find(p) for p in pattern]
+            valid_indices = [i for i in indices if i != -1]
+            assert valid_indices, f'Expected one of {pattern} in cassette but none found'
+            current_index = min(valid_indices)
+        else:
+            current_index = content.find(pattern)
+            assert current_index != -1, f'Expected "{pattern}" in cassette but not found'
+        assert current_index > last_index, (
+            f'Pattern "{pattern}" found at index {current_index}, '
+            f'but expected after index {last_index} (ordering violation)'
+        )
+        last_index = current_index
+
+
+CASSETTE_PATTERNS: dict[tuple[str, str], str | tuple[str, ...]] = {
+    ('image', 'binary'): ('/9j/', '_9j_'),
+    ('image', 'url'): ('gstatic.com/webp/gallery3/1.png', '/9j/', '_9j_', 'UklGR', 'iVBOR'),
+    ('image', 'url_force_download'): ('/9j/', '_9j_', 'UklGR'),
+    ('document', 'binary'): ('%PDF', 'JVBER'),
+    ('document', 'url'): ('pdfobject.com/pdf/sample.pdf', '%PDF', 'JVBER'),
+    ('document', 'url_force_download'): ('%PDF', 'JVBER'),
+    ('audio', 'binary'): ('//t', '__t'),
+    ('audio', 'url'): ('download.samplelib.com/mp3/sample-3s.mp3', '//t', '__t'),
+    ('audio', 'url_force_download'): ('//t', '__t'),
+    ('video', 'binary'): ('ftyp', 'ZnR5cA', 'Z0eXB'),
+    ('video', 'url'): (
+        'storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+        'ftyp',
+        'ZnR5cA',
+        'Z0eXB',
+    ),
+    ('video', 'url_force_download'): ('ftyp', 'ZnR5cA', 'Z0eXB'),
+}
 
 
 def make_image_binary(assets_path: Path) -> BinaryImage:
@@ -523,20 +594,44 @@ def get_expectation(provider: str, file_type: str) -> Expectation:
     return SUPPORT_MATRIX[(provider, file_type)]
 
 
+FILE_TYPE_CLASSES: dict[str, tuple[type, ...]] = {
+    'image': (BinaryImage, ImageUrl),
+    'document': (DocumentUrl, BinaryContent),
+    'audio': (AudioUrl, BinaryContent),
+    'video': (VideoUrl, BinaryContent),
+}
+
+
+def _is_file_type(item: Any, file_type: str) -> bool:
+    """Check if item matches the expected file type."""
+    expected_classes = FILE_TYPE_CLASSES[file_type]
+    if isinstance(item, expected_classes):
+        if isinstance(item, BinaryContent) and not isinstance(item, BinaryImage):
+            media = item.media_type
+            if file_type == 'document':
+                return media.startswith('application/') or media.startswith('text/')
+            elif file_type == 'audio':
+                return media.startswith('audio/')
+            elif file_type == 'video':
+                return media.startswith('video/')
+        return True
+    return False
+
+
 def assert_file_in_tool_return(messages: list[Any], file_type: str) -> None:
-    """Assert that file content is present in a ToolReturnPart."""
+    """Assert that file content of the expected type is present in a ToolReturnPart."""
     for msg in messages:
         if isinstance(msg, ModelRequest):
             for part in msg.parts:
                 if isinstance(part, ToolReturnPart):
-                    files = part.files
-                    if files:
-                        return
+                    for f in part.files:
+                        if _is_file_type(f, file_type):
+                            return
     raise AssertionError(f'No {file_type} found in any ToolReturnPart')
 
 
 def assert_file_in_user_prompt(messages: list[Any], file_type: str) -> None:
-    """Assert that file content is present in a UserPromptPart.
+    """Assert that file content of the expected type is present in a UserPromptPart.
 
     For tool_return_content style, files are moved to a separate UserPromptPart
     by design of ToolReturn.content. This verifies files ended up in user messages.
@@ -548,7 +643,7 @@ def assert_file_in_user_prompt(messages: list[Any], file_type: str) -> None:
                     content = part.content
                     if isinstance(content, list):
                         for item in content:
-                            if is_multi_modal_content(item):
+                            if _is_file_type(item, file_type):
                                 return
     raise AssertionError(f'No {file_type} found in any UserPromptPart')
 
@@ -635,6 +730,7 @@ async def test_multimodal_tool_return_matrix(
     xai_provider: Any,
     assets_path: Path,
     allow_model_requests: None,
+    vcr: Cassette | None,
 ):
     if not is_provider_available(provider):
         pytest.skip(f'{provider} dependencies not installed')
@@ -666,6 +762,9 @@ async def test_multimodal_tool_return_matrix(
         result = await agent.run(prompt, usage_limits=UsageLimits(output_tokens_limit=100000))
         assert result.output, 'Expected non-empty response from model'
         assert_multimodal_result(result.all_messages(), expectation, file_type, return_style)
+        if provider != 'xai':
+            pattern = CASSETTE_PATTERNS[(file_type, content_source)]
+            verify_cassette_contains(vcr, pattern)
 
 
 @pytest.mark.parametrize('provider', PROVIDERS)
@@ -676,12 +775,16 @@ async def test_mixed_content_ordering(
     xai_provider: Any,
     assets_path: Path,
     allow_model_requests: None,
-    request: pytest.FixtureRequest,
+    vcr: Cassette | None,
 ):
-    """Test that [text, image, dict] are all sent to the API in tool returns.
+    """Test that [text, image, dict] are sent to the API in the correct order.
 
-    Uses recognizable strings to verify cassette contains all content parts,
-    catching bugs where values might be silently dropped.
+    Returns mixed content types and verifies the cassette preserves ordering,
+    catching bugs where content might be reordered or silently dropped.
+
+    For native providers, strict ordering is verified within the tool_result.
+    For fallback providers, the image is separated into a user message, so we
+    only verify all content is present (ordering across messages may differ).
     """
     if not is_provider_available(provider):
         pytest.skip(f'{provider} dependencies not installed')
@@ -704,58 +807,34 @@ async def test_mixed_content_ordering(
         usage_limits=UsageLimits(output_tokens_limit=100000),
     )
     assert result.output, 'Expected non-empty response from model'
-    verify_cassette_contains(request, 'Here is the image:', 'metadata', ('/9j/', '_9j_'))
+    if provider != 'xai':
+        if expectation == 'native':
+            if provider == 'google':
+                # Google puts function_response (containing text + metadata) first, then files
+                verify_cassette_ordering(vcr, 'Here is the image:', 'metadata', ('/9j/', '_9j_'))
+            else:
+                verify_cassette_ordering(vcr, 'Here is the image:', ('/9j/', '_9j_'), 'metadata')
+        else:
+            verify_cassette_ordering(vcr, 'Here is the image:', 'metadata')
+            verify_cassette_contains(vcr, ('/9j/', '_9j_'))
 
 
 @pytest.mark.parametrize('provider', PROVIDERS)
-async def test_multiple_files(
+async def test_model_sees_multiple_images(
     provider: str,
     api_keys: dict[str, str],
     bedrock_provider: Any,
     xai_provider: Any,
     assets_path: Path,
     allow_model_requests: None,
-    request: pytest.FixtureRequest,
+    vcr: Cassette | None,
 ):
-    """Test returning multiple files in a single tool return.
+    """Verify the model processes multiple images by identifying both.
 
-    Verifies both binary image (base64) and URL image are sent to the API.
+    Returns a kiwi image (binary) and a second image (URL), then verifies:
+    1. Both images are sent to the API (cassette verification)
+    2. The model identifies the kiwi fruit (semantic verification)
     """
-    if not is_provider_available(provider):
-        pytest.skip(f'{provider} dependencies not installed')
-
-    expectation = get_expectation(provider, 'image')
-    if expectation == 'error':
-        pytest.skip(f'{provider} does not support images')
-
-    model = create_model(provider, api_keys, bedrock_provider, xai_provider)
-    image1 = make_image_binary(assets_path)
-    image2 = make_image_url(assets_path)
-
-    agent: Agent[None, str] = Agent(model)
-
-    @agent.tool_plain
-    def get_two_images() -> list[Any]:
-        return [image1, image2]
-
-    result = await agent.run(
-        'Call the get_two_images tool and describe what you see.',
-        usage_limits=UsageLimits(output_tokens_limit=100000),
-    )
-    assert result.output, 'Expected non-empty response from model'
-    verify_cassette_contains(request, '/9j/', 'gstatic.com/webp/gallery3/1.png')
-
-
-@pytest.mark.parametrize('provider', PROVIDERS)
-async def test_model_sees_image_content(
-    provider: str,
-    api_keys: dict[str, str],
-    bedrock_provider: Any,
-    xai_provider: Any,
-    assets_path: Path,
-    allow_model_requests: None,
-):
-    """Verify the model actually processes image content by identifying a kiwi fruit."""
     if not is_provider_available(provider):
         pytest.skip(f'{provider} dependencies not installed')
 
@@ -764,19 +843,23 @@ async def test_model_sees_image_content(
         pytest.skip(f'{provider} does not support images in tool returns')
 
     model = create_model(provider, api_keys, bedrock_provider, xai_provider)
-    image = make_image_binary(assets_path)
+    kiwi_image = make_image_binary(assets_path)
+    url_image = make_image_url(assets_path)
 
     agent: Agent[None, str] = Agent(model)
 
     @agent.tool_plain
-    def get_fruit_image() -> BinaryImage:
-        return image
+    def get_images() -> list[Any]:
+        return [kiwi_image, url_image]
 
     result = await agent.run(
-        'Call the get_fruit_image tool. What fruit is shown in the image? Just name the fruit.',
+        'Call the get_images tool. One image shows a fruit - what fruit is it? Just name the fruit.',
         usage_limits=UsageLimits(output_tokens_limit=100000),
     )
     assert 'kiwi' in result.output.lower(), f'Model should identify kiwi fruit, got: {result.output}'
+    if provider != 'xai':
+        verify_cassette_contains(vcr, ('/9j/', '_9j_'))
+        verify_cassette_contains(vcr, ('UklGR', 'iVBOR', 'gstatic.com/webp/gallery3/1.png'))
 
 
 EMPTY_STRING_PROVIDERS = [
@@ -796,6 +879,7 @@ async def test_empty_string_in_mixed_content(
     xai_provider: Any,
     assets_path: Path,
     allow_model_requests: None,
+    vcr: Cassette | None,
 ):
     """Test that empty strings in tool returns are skipped correctly."""
     if not is_provider_available(provider):
@@ -815,6 +899,7 @@ async def test_empty_string_in_mixed_content(
         usage_limits=UsageLimits(output_tokens_limit=100000),
     )
     assert result.output, 'Expected non-empty response from model'
+    verify_cassette_contains(vcr, ('/9j/', '_9j_'), 'Some text')
 
 
 OPENAI_PROVIDERS = [
@@ -830,6 +915,7 @@ async def test_vendor_metadata_detail(
     xai_provider: Any,
     assets_path: Path,
     allow_model_requests: None,
+    vcr: Cassette | None,
 ):
     """Test that vendor_metadata with detail setting is handled correctly."""
     if not is_provider_available(provider):
@@ -857,12 +943,14 @@ async def test_vendor_metadata_detail(
         usage_limits=UsageLimits(output_tokens_limit=100000),
     )
     assert result.output, 'Expected non-empty response from model'
+    verify_cassette_contains(vcr, '"detail": "high"', '"detail": "low"')
 
 
 async def test_text_plain_document_anthropic(
     anthropic_api_key: str,
     assets_path: Path,
     allow_model_requests: None,
+    vcr: Cassette | None,
 ):
     """Test that text/plain documents are handled correctly by Anthropic."""
     if not anthropic_available():
@@ -883,6 +971,7 @@ async def test_text_plain_document_anthropic(
         usage_limits=UsageLimits(output_tokens_limit=100000),
     )
     assert result.output, 'Expected non-empty response from model'
+    verify_cassette_contains(vcr, 'Dummy TXT file')
 
 
 @pytest.mark.skipif(not bedrock_available(), reason='bedrock dependencies not installed')

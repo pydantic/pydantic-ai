@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '340'
+      - '371'
       content-type:
       - application/json
       host:
@@ -16,7 +16,7 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: Call the get_two_images tool and describe what you see.
+      - content: Call the get_images tool. One image shows a fruit - what fruit is it? Just name the fruit.
         role: user
       model: gpt-5-mini
       stream: false
@@ -24,7 +24,7 @@ interactions:
       tools:
       - function:
           description: ''
-          name: get_two_images
+          name: get_images
           parameters:
             additionalProperties: false
             properties: {}
@@ -40,13 +40,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '755'
+      - '753'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '2055'
+      - '2992'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -67,27 +67,27 @@ interactions:
           tool_calls:
           - function:
               arguments: '{}'
-              name: get_two_images
-            id: call_SdY9HTB7HyW85QeCRVQc3mQA
+              name: get_images
+            id: call_KjpHfQhagRuugsEaGC0SLgBp
             type: function
-      created: 1769756194
-      id: chatcmpl-D3cigHDtEXKZ96J5ub3T1iOIX6OOA
+      created: 1770079433
+      id: chatcmpl-D4yoDgV1PAL8glwRxomzhscsuvQTF
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 84
+        completion_tokens: 147
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 64
+          reasoning_tokens: 128
           rejected_prediction_tokens: 0
-        prompt_tokens: 124
+        prompt_tokens: 133
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 208
+        total_tokens: 280
     status:
       code: 200
       message: OK
@@ -100,32 +100,32 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '132359'
+      - '132386'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=iBQNSD_juSPCQaZN7EXqwRDNwZpTcVsmimQJlg9SzyY-1769756196-1.0.1.1-__bDKsFa5pu2JJ.2Ts9rhuHHhu6LQa75SWNwID4NuWu8aO3krMcl4BieF3PqQ1P.iYDPtOVCWZwSN5K_kBjrmhQT8apD.o2JDXueecIQ1GA;
-        _cfuvid=hyOmRYGlbGFFTzQmCwkuWCRqqTdyhxqp3tDkQObGQpo-1769756196947-0.0.1.1-604800000
+      - __cf_bm=jDUfnPqCrSD5rXYjdmRfjdve0HckPaFRMxZ6Japadus-1770079436-1.0.1.1-KIEk9b50P42ARb8x_TDs_uchIsK9J0pM9KGtkYhpDHC9BC.A5QzkRRw0jsMAVkthPskNzNmPuqxy31ZFLwTHTLhK7edyclt5iOcXrLI7rJ4;
+        _cfuvid=b4jqi5hSj1odzBS5W7382lo0twgbEL4s83GCAcVggj4-1770079436474-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
     parsed_body:
       messages:
-      - content: Call the get_two_images tool and describe what you see.
+      - content: Call the get_images tool. One image shows a fruit - what fruit is it? Just name the fruit.
         role: user
       - content: null
         role: assistant
         tool_calls:
         - function:
             arguments: '{}'
-            name: get_two_images
-          id: call_SdY9HTB7HyW85QeCRVQc3mQA
+            name: get_images
+          id: call_KjpHfQhagRuugsEaGC0SLgBp
           type: function
       - content: |-
           See file 241a70.
           See file 6a18c6.
         role: tool
-        tool_call_id: call_SdY9HTB7HyW85QeCRVQc3mQA
+        tool_call_id: call_KjpHfQhagRuugsEaGC0SLgBp
       - content:
         - text: 'This is file 241a70:'
           type: text
@@ -144,7 +144,7 @@ interactions:
       tools:
       - function:
           description: ''
-          name: get_two_images
+          name: get_images
           parameters:
             additionalProperties: false
             properties: {}
@@ -160,13 +160,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1297'
+      - '617'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '9671'
+      - '3269'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -181,34 +181,27 @@ interactions:
         index: 0
         message:
           annotations: []
-          content: |-
-            File 241a70:
-            - A close-up cross-section of a kiwi fruit cut in half.
-            - Bright green flesh with a pale, creamy central core. Small black seeds are arranged radially around the core in a ring. The flesh shows the characteristic fine radial fiber structure. The brown, slightly hairy skin is visible around the edge.
-
-            File 6a18c6:
-            - A single orange-yellow rose blossom, shown at an angle with part of the stem and a small leaf visible.
-            - Petals have a warm gradient from yellow to orange with some reddish edges and visible water droplets on the top petal. The background appears removed or transparent, and there are faint horizontal compression/artifact lines behind the flower.
+          content: Kiwi
           refusal: null
           role: assistant
-      created: 1769756197
-      id: chatcmpl-D3cijzkC6slw3hxRL3T8AIhJ2KKqk
+      created: 1770079437
+      id: chatcmpl-D4yoHs5GBGai48GzyI0SlqmnZkW9l
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 345
+        completion_tokens: 139
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 192
+          reasoning_tokens: 128
           rejected_prediction_tokens: 0
-        prompt_tokens: 758
+        prompt_tokens: 765
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 1103
+        total_tokens: 904
     status:
       code: 200
       message: OK

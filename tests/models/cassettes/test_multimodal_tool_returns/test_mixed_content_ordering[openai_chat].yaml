@@ -46,7 +46,7 @@ interactions:
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '7850'
+      - '1768'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -68,10 +68,10 @@ interactions:
           - function:
               arguments: '{}'
               name: get_mixed_content
-            id: call_feTCXnwV4h4juzprN47Gb8T3
+            id: call_U6ue2e5UNX3bLunaLPbNXpYn
             type: function
-      created: 1769756178
-      id: chatcmpl-D3ciQJOt5K0DBS6yWf1dvleXdEVKJ
+      created: 1770079416
+      id: chatcmpl-D4ynw9C2W9cAej7TXVlKnETuhz2ho
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
@@ -104,8 +104,8 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=4EJixDqDy_SgVy32lzTThTTxFwIKEd1W593JagF4Ylw-1769756185-1.0.1.1-mFxCFsZ2N0xRwxnGdfHu_2p65A1kkg4fV0PHb7JfkoDzRh7ObauGdxbPZ1CohbwF72HGClCbkCJDmqhV16yKMyWve9.RZH4B2KGTUd7G1YA;
-        _cfuvid=XradPEnZpQsLaOOI8pf1ClwxZUZMR3r7L9LSdWOYuds-1769756185918-0.0.1.1-604800000
+      - __cf_bm=FUDlwD_Gng0bKBclFekEHa10snCF6oPMeSrPn5n5uso-1770079418-1.0.1.1-yAkg4WeGG22q8gNVMnP02u5DHTQRhHKZuc_LyLHKSkgntA49G8gSatHkKAnL3G4_eF01jZLSKxC2c_by2Ly5rUvhoUKu0Y9Lgam8.wXq6tE;
+        _cfuvid=LFq9B3E7CMyebmR80MBzTCuxi57NUczPbWvySpNNadw-1770079418180-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -119,14 +119,14 @@ interactions:
         - function:
             arguments: '{}'
             name: get_mixed_content
-          id: call_feTCXnwV4h4juzprN47Gb8T3
+          id: call_U6ue2e5UNX3bLunaLPbNXpYn
           type: function
       - content: |-
           Here is the image:
           See file 241a70.
           {"metadata":"test"}
         role: tool
-        tool_call_id: call_feTCXnwV4h4juzprN47Gb8T3
+        tool_call_id: call_U6ue2e5UNX3bLunaLPbNXpYn
       - content:
         - text: 'This is file 241a70:'
           type: text
@@ -156,13 +156,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1355'
+      - '1153'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '9777'
+      - '5851'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -178,27 +178,24 @@ interactions:
         message:
           annotations: []
           content: |-
-            I received a close-up photo of a halved kiwi fruit, shown cut crosswise and centered against a plain white background. Visible details:
+            The tool returned a single image (file 241a70) plus a small metadata object. The metadata string was: {"metadata":"test"}.
 
-            - Bright green flesh with a lighter, almost white central core.
-            - A ring of small black seeds radiating around the core.
-            - Radial, slightly darker green striations extending outward from the core toward the skin.
-            - Thin, fuzzy brown skin visible around the outer edge.
-            - Even, studio-style lighting and high detail that shows texture of the flesh and fine hairs on the skin.
-
-            Suggested short alt text: "Close-up of a sliced kiwi showing green flesh, black seeds, and fuzzy brown skin on a white background."
-
-            Suggested tags: kiwi, fruit, sliced, close-up, green, seeds, healthy food, produce.
+            Description of the image content:
+            - A close-up, well-lit photo of a halved kiwi fruit shown cut face-on.
+            - Bright green flesh with a pale creamy central core.
+            - A ring of small black seeds arranged radially around the core.
+            - Fuzzy brown skin visible around the rim with tiny hairs.
+            - Even, neutral background (white) and square crop; high detail and good contrast highlighting texture of flesh and seeds.
           refusal: null
           role: assistant
-      created: 1769756186
-      id: chatcmpl-D3ciYaZt9Y3MEuAffnpZklXmg2u7F
+      created: 1770079418
+      id: chatcmpl-D4ynyHCcaIQhuE76cpFEkVQIIAezs
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 421
+        completion_tokens: 382
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
@@ -208,7 +205,7 @@ interactions:
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 1017
+        total_tokens: 978
     status:
       code: 200
       message: OK
