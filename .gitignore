@@ -20,6 +20,9 @@ node_modules/
 .coverage*
 /test_tmp/
 .mcp.json
-.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/pydantic-ai/
 /.cursor/
 /.devcontainer/

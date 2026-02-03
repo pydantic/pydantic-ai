@@ -1,0 +1,19 @@
+{
+  "name": "pydantic-ai-skills",
+  "description": "Official Claude Code skills for the PydanticAI framework",
+  "metadata": {
+    "version": "0.1.0",
+    "repository": "https://github.com/pydantic/pydantic-ai"
+  },
+  "owner": {
+    "name": "Pydantic",
+    "email": "support@pydantic.dev"
+  },
+  "plugins": [
+    {
+      "name": "pydantic-ai",
+      "source": "./plugins/pydantic-ai",
+      "description": "Agent framework patterns, tools, models, and best practices"
+    }
+  ]
+}

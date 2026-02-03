@@ -105,6 +105,7 @@ nav:
 
   - Related Packages:
       - clai: cli.md
+      - Claude Code Skills: claude-code.md
 
   - Examples:
       - Setup: examples/setup.md

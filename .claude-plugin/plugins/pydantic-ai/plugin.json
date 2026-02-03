@@ -1,0 +1,8 @@
+{
+  "name": "pydantic-ai",
+  "description": "Official Claude Code skills for PydanticAI development",
+  "version": "0.1.0",
+  "author": {
+    "name": "Pydantic"
+  }
+}
