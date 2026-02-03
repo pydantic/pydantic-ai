@@ -563,7 +563,7 @@ def bedrock_provider():
             )
             yield provider
             provider.client.close()
-        else:
+        else:  # pragma: lax no cover
             bedrock_client = boto3.client(
                 'bedrock-runtime',
                 region_name=os.getenv('AWS_REGION', 'us-east-1'),
