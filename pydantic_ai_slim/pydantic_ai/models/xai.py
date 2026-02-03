@@ -466,7 +466,7 @@ class XaiModel(Model):
                     content_items.append(file(file_id))
                 elif item.is_video:
                     raise NotImplementedError('VideoUrl/BinaryContent with video is not supported by xAI SDK')
-                else:
+                else:  # pragma: no cover
                     raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
             elif isinstance(item, AudioUrl):
                 raise NotImplementedError('AudioUrl is not supported by xAI SDK')

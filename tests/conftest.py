@@ -55,6 +55,7 @@ if TYPE_CHECKING:
 
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.xai import XaiProvider
+    from tests.cassette_utils import CassetteContext
 
     T = TypeVar('T')
 
@@ -508,6 +509,33 @@ def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider | None]
         yield provider
     finally:
         session.dump_if_recording()
+
+
+@pytest.fixture(scope='function')
+def cassette_ctx(request: pytest.FixtureRequest, vcr: Any) -> CassetteContext | None:
+    """Unified cassette verification context for tests with a 'provider' parameter.
+
+    Returns None if the test doesn't have a 'provider' parameter (not a matrix test).
+
+    Note: In CI playback mode, vcr is None so this returns None. Cassette verification
+    (`if cassette_ctx:` blocks) only runs locally during recording. Use `# pragma: no branch`
+    on these checks since the branch is intentionally not taken in CI.
+    """
+    from tests.cassette_utils import CassetteContext
+
+    if not hasattr(request.node, 'callspec'):
+        return None
+    params = cast(dict[str, object], request.node.callspec.params)
+    provider = params.get('provider')
+    if not isinstance(provider, str):
+        return None
+    test_module = cast(str, request.node.fspath.basename.replace('.py', ''))
+    return CassetteContext(
+        provider=provider,
+        vcr=vcr,
+        test_name=request.node.name,
+        test_module=test_module,
+    )
 
 
 @pytest.fixture(scope='session')

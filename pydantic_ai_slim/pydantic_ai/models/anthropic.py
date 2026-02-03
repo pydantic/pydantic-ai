@@ -1098,7 +1098,7 @@ class AnthropicModel(Model):
                 source=BetaPlainTextSourceParam(data=data.decode('utf-8'), media_type=media_type, type='text'),
                 type='document',
             )
-        else:
+        else:  # pragma: no cover
             raise RuntimeError(f'Unsupported binary content media type for Anthropic: {media_type}')
 
     @staticmethod

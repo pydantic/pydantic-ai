@@ -694,7 +694,7 @@ class BedrockConverseModel(Model):
                         if not tool_result_content:
                             if profile.bedrock_tool_result_format == 'text':
                                 tool_result_content.append({'text': ''})
-                            else:
+                            else:  # pragma: no cover
                                 tool_result_content.append({'json': {}})
 
                         user_content: list[ContentBlockUnionTypeDef] = [
@@ -913,7 +913,7 @@ class BedrockConverseModel(Model):
                 return {'video': {'format': format, 'source': source}}
             else:
                 assert_never(file)
-        elif isinstance(file, AudioUrl):
+        elif isinstance(file, AudioUrl):  # pragma: no cover
             # Audio not supported in Bedrock tool results, only in user messages
             # See: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolResultContentBlock.html
             return None

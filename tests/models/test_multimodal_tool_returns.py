@@ -14,9 +14,8 @@ are tracked separately in ERROR_DETAILS since they can vary by source type.
 
 from __future__ import annotations
 
-import json
-import re
 from dataclasses import dataclass
+from itertools import count
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -24,6 +23,8 @@ import pytest
 
 if TYPE_CHECKING:
     from vcr.cassette import Cassette
+
+    from tests.cassette_utils import CassetteContext
 
 from pydantic_ai import Agent, BinaryContent, BinaryImage
 from pydantic_ai.exceptions import ModelHTTPError
@@ -430,219 +431,6 @@ def is_provider_available(provider: str) -> bool:
     return bool(available() if callable(available) else available)
 
 
-def get_cassette_request_bodies(cassette: Cassette) -> list[str]:
-    """Get all request bodies from the cassette as strings."""
-    bodies: list[str] = []
-    for request in cassette.requests:  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-        raw_body = request.body  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-        if raw_body:
-            body = raw_body.decode('utf-8', errors='ignore') if isinstance(raw_body, bytes) else raw_body  # pyright: ignore[reportUnknownVariableType]
-            bodies.append(body)  # pyright: ignore[reportUnknownArgumentType]
-        elif hasattr(request, 'parsed_body') and request.parsed_body:  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-            bodies.append(json.dumps(request.parsed_body))  # pyright: ignore[reportUnknownMemberType]
-    return bodies
-
-
-def get_xai_cassette_request_bodies(cassette_path: Path) -> list[str]:
-    """Get all request and response bodies from an XAI cassette as strings."""
-    if not xai_available():
-        return []
-
-    from .xai_proto_cassettes import SampleInteraction, StreamInteraction, XaiProtoCassette
-
-    bodies: list[str] = []
-    cassette = XaiProtoCassette.load(cassette_path)
-
-    for interaction in cassette.interactions:
-        if interaction.request_json:
-            bodies.append(json.dumps(interaction.request_json))
-
-        if isinstance(interaction, SampleInteraction) and interaction.response_json:
-            bodies.append(json.dumps(interaction.response_json))
-        elif isinstance(interaction, StreamInteraction) and interaction.chunks_json:
-            for chunk in interaction.chunks_json:
-                bodies.append(json.dumps(chunk))
-
-    return bodies
-
-
-def pattern_in_bodies(pattern: str, bodies: list[str]) -> bool:
-    """Check if pattern exists in any of the request bodies."""
-    return any(pattern in body for body in bodies)
-
-
-def verify_xai_cassette_contains(cassette_path: Path, *patterns: str | tuple[str, ...]) -> None:
-    """Verify that all patterns appear in the XAI cassette request/response bodies.
-
-    This ensures content (text, files, json) is actually sent to the API for XAI providers,
-    catching bugs where tool return values might be silently dropped.
-
-    Args:
-        cassette_path: Path to the XAI cassette file.
-        patterns: Patterns to search for. Each pattern can be a string or a tuple of strings
-            (where any one of the tuple elements matching is sufficient).
-    """
-    bodies = get_xai_cassette_request_bodies(cassette_path)
-    assert bodies, f'No request/response bodies found in XAI cassette: {cassette_path}'
-    for pattern in patterns:
-        if isinstance(pattern, tuple):
-            assert any(pattern_in_bodies(p, bodies) for p in pattern), (
-                f'Expected one of {pattern} in XAI cassette but none found'
-            )
-        else:
-            assert pattern_in_bodies(pattern, bodies), f'Expected "{pattern}" in XAI cassette but not found'
-
-
-def get_xai_cassette_path_for_test(test_name: str, test_module: str = 'test_multimodal_tool_returns') -> Path:
-    """Construct XAI cassette path following the same pattern as conftest.py.
-
-    Args:
-        test_name: The test function name with parameters.
-        test_module: The test module name (defaults to this module).
-    """
-
-    def sanitize_filename(name: str, max_length: int = 240) -> str:
-        """Sanitize filename to be filesystem-safe."""
-        # Replace unsafe characters with underscores
-        sanitized = re.sub(r'[<>:"/\\|?*]', '_', name)
-        # Truncate if too long
-        return sanitized[:max_length]
-
-    cassette_name = sanitize_filename(test_name, 240)
-    cassette_path = Path(__file__).parent / 'cassettes' / test_module / f'{cassette_name}.xai.yaml'
-    return cassette_path
-
-
-def verify_cassette_contains_auto(
-    cassette: Cassette | None, provider: str, test_name: str, *patterns: str | tuple[str, ...]
-) -> None:
-    """Automatically choose VCR or XAI cassette verification based on provider.
-
-    For XAI providers, this constructs the cassette path and uses XAI verification.
-    For other providers, this uses standard VCR verification.
-
-    Args:
-        cassette: The VCR cassette object (may be None for XAI).
-        provider: The provider name to determine verification method.
-        test_name: The test function name to construct XAI cassette path.
-        patterns: Patterns to search for. Each pattern can be a string or a tuple of strings.
-    """
-    if provider == 'xai':
-        # For XAI, construct the cassette path and use XAI verification
-        cassette_path = get_xai_cassette_path_for_test(test_name)
-        if cassette_path.exists():
-            verify_xai_cassette_contains(cassette_path, *patterns)
-        else:
-            # If cassette doesn't exist, skip verification (test might be recording)
-            pass
-    else:
-        # For non-XAI providers, use standard VCR verification
-        if cassette is not None:
-            verify_cassette_contains(cassette, *patterns)
-
-
-def verify_cassette_contains(cassette: Cassette | None, *patterns: str | tuple[str, ...]) -> None:
-    """Verify that all patterns appear in the VCR cassette request bodies.
-
-    This ensures content (text, files, json) is actually sent to the API, catching
-    bugs where tool return values might be silently dropped.
-
-    Args:
-        cassette: The VCR cassette from the vcr fixture.
-        patterns: Patterns to search for. Each pattern can be a string or a tuple of strings
-            (where any one of the tuple elements matching is sufficient).
-    """
-    assert cassette is not None, 'Cassette is required for verification'
-    bodies = get_cassette_request_bodies(cassette)
-    assert bodies, 'No request bodies found in cassette'
-    for pattern in patterns:
-        if isinstance(pattern, tuple):
-            assert any(pattern_in_bodies(p, bodies) for p in pattern), (
-                f'Expected one of {pattern} in cassette but none found'
-            )
-        else:
-            assert pattern_in_bodies(pattern, bodies), f'Expected "{pattern}" in cassette but not found'
-
-
-def verify_cassette_ordering(cassette: Cassette | None, *patterns: str | tuple[str, ...]) -> None:
-    """Verify that patterns appear in the VCR cassette request bodies in the given order.
-
-    Checks ordering within the concatenated request bodies.
-
-    Args:
-        cassette: The VCR cassette from the vcr fixture.
-        patterns: Patterns that must appear in order. Each pattern can be a string or a tuple
-            of strings (where any one of the tuple elements is used for position checking).
-    """
-    assert cassette is not None, 'Cassette is required for verification'
-    bodies = get_cassette_request_bodies(cassette)
-    assert bodies, 'No request bodies found in cassette'
-    content = ''.join(bodies)
-    last_index = -1
-    for pattern in patterns:
-        if isinstance(pattern, tuple):
-            indices = [content.find(p) for p in pattern]
-            valid_indices = [i for i in indices if i != -1]
-            assert valid_indices, f'Expected one of {pattern} in cassette but none found'
-            current_index = min(valid_indices)
-        else:
-            current_index = content.find(pattern)
-            assert current_index != -1, f'Expected "{pattern}" in cassette but not found'
-        assert current_index > last_index, (
-            f'Pattern "{pattern}" found at index {current_index}, '
-            f'but expected after index {last_index} (ordering violation)'
-        )
-        last_index = current_index
-
-
-def verify_xai_cassette_ordering(cassette_path: Path, *patterns: str | tuple[str, ...]) -> None:
-    """Verify that patterns appear in the XAI cassette in the given order.
-
-    Args:
-        cassette_path: Path to the XAI cassette file.
-        patterns: Patterns that must appear in order. Each pattern can be a string or a tuple
-            of strings (where any one of the tuple elements is used for position checking).
-    """
-    bodies = get_xai_cassette_request_bodies(cassette_path)
-    assert bodies, f'No request/response bodies found in XAI cassette: {cassette_path}'
-    content = ''.join(bodies)
-    last_index = -1
-    for pattern in patterns:
-        if isinstance(pattern, tuple):
-            indices = [content.find(p) for p in pattern]
-            valid_indices = [i for i in indices if i != -1]
-            assert valid_indices, f'Expected one of {pattern} in XAI cassette but none found'
-            current_index = min(valid_indices)
-        else:
-            current_index = content.find(pattern)
-            assert current_index != -1, f'Expected "{pattern}" in XAI cassette but not found'
-        assert current_index > last_index, (
-            f'Pattern "{pattern}" found at index {current_index}, '
-            f'but expected after index {last_index} (ordering violation)'
-        )
-        last_index = current_index
-
-
-def verify_cassette_ordering_auto(
-    cassette: Cassette | None, provider: str, test_name: str, *patterns: str | tuple[str, ...]
-) -> None:
-    """Automatically choose VCR or XAI cassette ordering verification based on provider.
-
-    Args:
-        cassette: The VCR cassette object (may be None for XAI).
-        provider: The provider name to determine verification method.
-        test_name: The test function name to construct XAI cassette path.
-        patterns: Patterns that must appear in order.
-    """
-    if provider == 'xai':
-        cassette_path = get_xai_cassette_path_for_test(test_name)
-        if cassette_path.exists():
-            verify_xai_cassette_ordering(cassette_path, *patterns)
-    else:
-        if cassette is not None:
-            verify_cassette_ordering(cassette, *patterns)
-
-
 CASSETTE_PATTERNS: dict[tuple[str, str], str | tuple[str, ...]] = {
     ('image', 'binary'): ('/9j/', '_9j_'),
     ('image', 'url'): ('gstatic.com/webp/gallery3/1.png', '/9j/', '_9j_', 'UklGR', 'iVBOR'),
@@ -671,6 +459,13 @@ XAI_CASSETTE_PATTERNS: dict[tuple[str, str], str | tuple[str, ...]] = {
     ('document', 'url'): 'file_id',
     ('document', 'url_force_download'): 'file_id',
 }
+
+
+def get_cassette_pattern(provider: str, file_type: str, content_source: str) -> str | tuple[str, ...] | None:
+    """Get the cassette pattern for a provider/file_type/content_source combination."""
+    if provider == 'xai':
+        return XAI_CASSETTE_PATTERNS.get((file_type, content_source))
+    return CASSETTE_PATTERNS.get((file_type, content_source))
 
 
 def make_image_binary(assets_path: Path) -> BinaryImage:
@@ -880,7 +675,7 @@ async def test_multimodal_tool_return_matrix(
     xai_provider: Any,
     assets_path: Path,
     allow_model_requests: None,
-    vcr: Cassette | None,
+    cassette_ctx: CassetteContext | None,
 ):
     if not is_provider_available(provider):
         pytest.skip(f'{provider} dependencies not installed')
@@ -912,15 +707,8 @@ async def test_multimodal_tool_return_matrix(
         result = await agent.run(prompt, usage_limits=UsageLimits(output_tokens_limit=100000))
         assert result.output, 'Expected non-empty response from model'
         assert_multimodal_result(result.all_messages(), expectation, file_type, return_style)
-        # Verify content was sent to API (handles both VCR and XAI cassettes)
-        test_name = f'test_multimodal_tool_return_matrix[{return_style}-{content_source}-{file_type}-{provider}]'
-        if provider == 'xai':
-            xai_pattern = XAI_CASSETTE_PATTERNS.get((file_type, content_source))
-            if xai_pattern is not None:
-                verify_cassette_contains_auto(vcr, provider, test_name, xai_pattern)
-        else:
-            pattern = CASSETTE_PATTERNS[(file_type, content_source)]
-            verify_cassette_contains_auto(vcr, provider, test_name, pattern)
+        if cassette_ctx and (pattern := get_cassette_pattern(provider, file_type, content_source)):  # pragma: no branch
+            cassette_ctx.verify_contains(pattern)
 
 
 @pytest.mark.parametrize('provider', PROVIDERS)
@@ -931,7 +719,7 @@ async def test_mixed_content_ordering(
     xai_provider: Any,
     assets_path: Path,
     allow_model_requests: None,
-    vcr: Cassette | None,
+    cassette_ctx: CassetteContext | None,
 ):
     """Test that [text, image, dict] are sent to the API in the correct order.
 
@@ -963,16 +751,15 @@ async def test_mixed_content_ordering(
         usage_limits=UsageLimits(output_tokens_limit=100000),
     )
     assert result.output, 'Expected non-empty response from model'
-    test_name = f'test_mixed_content_ordering[{provider}]'
-    if expectation == 'native':
-        if provider == 'google':
-            # Google puts function_response (containing text + metadata) first, then files
-            verify_cassette_ordering_auto(vcr, provider, test_name, 'Here is the image:', 'metadata', ('/9j/', '_9j_'))
+    if cassette_ctx:  # pragma: no branch
+        if expectation == 'native':
+            if provider == 'google':
+                cassette_ctx.verify_ordering('Here is the image:', 'metadata', ('/9j/', '_9j_'))
+            else:
+                cassette_ctx.verify_ordering('Here is the image:', ('/9j/', '_9j_'), 'metadata')
         else:
-            verify_cassette_ordering_auto(vcr, provider, test_name, 'Here is the image:', ('/9j/', '_9j_'), 'metadata')
-    else:
-        verify_cassette_ordering_auto(vcr, provider, test_name, 'Here is the image:', 'metadata')
-        verify_cassette_contains_auto(vcr, provider, test_name, ('/9j/', '_9j_'))
+            cassette_ctx.verify_ordering('Here is the image:', 'metadata')
+            cassette_ctx.verify_contains(('/9j/', '_9j_'))
 
 
 @pytest.mark.parametrize('provider', PROVIDERS)
@@ -983,7 +770,7 @@ async def test_model_sees_multiple_images(
     xai_provider: Any,
     assets_path: Path,
     allow_model_requests: None,
-    vcr: Cassette | None,
+    cassette_ctx: CassetteContext | None,
 ):
     """Verify the model processes multiple images by identifying both.
 
@@ -1013,10 +800,9 @@ async def test_model_sees_multiple_images(
         usage_limits=UsageLimits(output_tokens_limit=100000),
     )
     assert 'kiwi' in result.output.lower(), f'Model should identify kiwi fruit, got: {result.output}'
-    # Verify content was sent to API (handles both VCR and XAI cassettes)
-    test_name = f'test_model_sees_multiple_images[{provider}]'
-    verify_cassette_contains_auto(vcr, provider, test_name, ('/9j/', '_9j_'))
-    verify_cassette_contains_auto(vcr, provider, test_name, ('UklGR', 'iVBOR', 'gstatic.com/webp/gallery3/1.png'))
+    if cassette_ctx:  # pragma: no branch
+        cassette_ctx.verify_contains(('/9j/', '_9j_'))
+        cassette_ctx.verify_contains(('UklGR', 'iVBOR', 'gstatic.com/webp/gallery3/1.png'))
 
 
 @pytest.mark.parametrize('provider', PROVIDERS)
@@ -1027,7 +813,7 @@ async def test_empty_string_in_mixed_content(
     xai_provider: Any,
     assets_path: Path,
     allow_model_requests: None,
-    vcr: Cassette | None,
+    cassette_ctx: CassetteContext | None,
 ):
     """Test that empty strings in tool returns are skipped correctly."""
     if not is_provider_available(provider):
@@ -1047,9 +833,8 @@ async def test_empty_string_in_mixed_content(
         usage_limits=UsageLimits(output_tokens_limit=100000),
     )
     assert result.output, 'Expected non-empty response from model'
-    # Verify content was sent to API (handles both VCR and XAI cassettes)
-    test_name = f'test_empty_string_in_mixed_content[{provider}]'
-    verify_cassette_contains_auto(vcr, provider, test_name, ('/9j/', '_9j_'), 'Some text')
+    if cassette_ctx:  # pragma: no branch
+        cassette_ctx.verify_contains(('/9j/', '_9j_'), 'Some text')
 
 
 OPENAI_PROVIDERS = [
@@ -1065,7 +850,7 @@ async def test_vendor_metadata_detail(
     xai_provider: Any,
     assets_path: Path,
     allow_model_requests: None,
-    vcr: Cassette | None,
+    cassette_ctx: CassetteContext | None,
 ):
     """Test that vendor_metadata with detail setting is handled correctly."""
     if not is_provider_available(provider):
@@ -1093,7 +878,8 @@ async def test_vendor_metadata_detail(
         usage_limits=UsageLimits(output_tokens_limit=100000),
     )
     assert result.output, 'Expected non-empty response from model'
-    verify_cassette_contains(vcr, '"detail": "high"', '"detail": "low"')
+    if cassette_ctx:  # pragma: no branch
+        cassette_ctx.verify_contains('"detail": "high"', '"detail": "low"')
 
 
 async def test_text_plain_document_anthropic(
@@ -1103,6 +889,8 @@ async def test_text_plain_document_anthropic(
     vcr: Cassette | None,
 ):
     """Test that text/plain documents are handled correctly by Anthropic."""
+    from tests.cassette_utils import CassetteContext
+
     if not anthropic_available():
         pytest.skip('anthropic dependencies not installed')
 
@@ -1121,16 +909,13 @@ async def test_text_plain_document_anthropic(
         usage_limits=UsageLimits(output_tokens_limit=100000),
     )
     assert result.output, 'Expected non-empty response from model'
-    verify_cassette_contains(vcr, 'Dummy TXT file')
+    ctx = CassetteContext('anthropic', vcr, 'test_text_plain_document_anthropic', 'test_multimodal_tool_returns')
+    ctx.verify_contains('Dummy TXT file')
 
 
 @pytest.mark.skipif(not bedrock_available(), reason='bedrock dependencies not installed')
 async def test_s3_document_url_bedrock():
     """Test that S3 URLs are correctly parsed for Bedrock documents."""
-    from itertools import count
-
-    from pydantic_ai.models.bedrock import BedrockConverseModel
-
     document = DocumentUrl(
         url='s3://my-bucket/path/to/document.pdf?bucketOwner=123456789012', media_type='application/pdf'
     )
@@ -1145,10 +930,6 @@ async def test_s3_document_url_bedrock():
 @pytest.mark.skipif(not bedrock_available(), reason='bedrock dependencies not installed')
 async def test_s3_image_url_bedrock():
     """Test that S3 URLs are correctly parsed for Bedrock images."""
-    from itertools import count
-
-    from pydantic_ai.models.bedrock import BedrockConverseModel
-
     image = ImageUrl(url='s3://my-bucket/images/photo.png', media_type='image/png')
     result = await BedrockConverseModel._map_file_to_content_block(image, count(1))  # pyright: ignore[reportPrivateUsage]
 
@@ -1161,10 +942,6 @@ async def test_s3_image_url_bedrock():
 @pytest.mark.skipif(not bedrock_available(), reason='bedrock dependencies not installed')
 async def test_s3_video_url_bedrock():
     """Test that S3 URLs are correctly parsed for Bedrock videos."""
-    from itertools import count
-
-    from pydantic_ai.models.bedrock import BedrockConverseModel
-
     video = VideoUrl(url='s3://my-bucket/videos/clip.mp4', media_type='video/mp4')
     result = await BedrockConverseModel._map_file_to_content_block(video, count(1))  # pyright: ignore[reportPrivateUsage]
 
