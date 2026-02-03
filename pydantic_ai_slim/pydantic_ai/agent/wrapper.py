@@ -202,6 +202,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
+            deferred_tool_handler: Optional handler to resolve deferred tool calls inline.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.

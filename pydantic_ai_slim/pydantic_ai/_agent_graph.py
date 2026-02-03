@@ -1058,13 +1058,14 @@ async def process_tool_calls(  # noqa: C901
                         approvals=deferred_calls['unapproved'],
                         metadata=deferred_metadata,
                     )
+                    handler_results: DeferredToolResults | Awaitable[DeferredToolResults]
                     if is_async_callable(deferred_tool_handler):
-                        handler_results = await deferred_tool_handler(run_context, deferred_tool_requests)
+                        handler_results = deferred_tool_handler(run_context, deferred_tool_requests)
                     else:
                         handler_results = await run_in_executor(
                             deferred_tool_handler, run_context, deferred_tool_requests
                         )
-                    if inspect.isawaitable(handler_results):  # pragma: no branch
+                    while inspect.isawaitable(handler_results):  # pragma: no branch
                         handler_results = await handler_results
 
                     handler_tool_call_results: dict[str, DeferredToolResult] = {}
@@ -1119,13 +1120,16 @@ async def process_tool_calls(  # noqa: C901
                     deferred_metadata = handler_deferred_metadata
 
     if deferred_calls and not final_result:
-        final_result = result.FinalResult(
-            _output.DeferredToolRequests(
-                calls=deferred_calls['external'],
-                approvals=deferred_calls['unapproved'],
-                metadata=deferred_metadata,
+        if not ctx.deps.output_schema.allows_deferred_tools:
+            raise exceptions.UserError(
+                'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
             )
+        deferred_tool_requests = _output.DeferredToolRequests(
+            calls=deferred_calls['external'],
+            approvals=deferred_calls['unapproved'],
+            metadata=deferred_metadata,
         )
+        final_result = result.FinalResult(cast(NodeRunEndT, deferred_tool_requests))
 
     if final_result:
         output_final_result.append(final_result)
