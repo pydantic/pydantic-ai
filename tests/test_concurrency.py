@@ -4,13 +4,19 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+import importlib.util
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from pydantic_ai import Agent, ConcurrencyLimit, ConcurrencyLimiter, ConcurrencyLimitExceeded
 from pydantic_ai.concurrency import get_concurrency_context
 from pydantic_ai.models.test import TestModel
+
+if TYPE_CHECKING:
+    from logfire.testing import CaptureLogfire
+
+logfire_installed = importlib.util.find_spec('logfire') is not None
 
 pytestmark = pytest.mark.anyio
 
@@ -382,13 +388,14 @@ class TestConcurrencyLimiterName:
         assert limiter.name == 'my-limit'
         assert limiter.max_running == 5
 
-    async def test_named_limiter_waiting_adds_limiter_name_attribute(self):
+    @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+    async def test_named_limiter_waiting_adds_limiter_name_attribute(self, capfire: CaptureLogfire):
         """Test that waiting with a named limiter adds limiter_name to span attributes."""
         limiter = ConcurrencyLimiter(max_running=1, name='test-pool')
         hold = asyncio.Event()
 
         async def holder():
-            async with get_concurrency_context(limiter, 'test'):
+            async with get_concurrency_context(limiter, 'test-source'):
                 await hold.wait()
 
         # Start holder to occupy the slot
@@ -396,6 +403,75 @@ class TestConcurrencyLimiterName:
         await asyncio.sleep(0.01)
 
         # Start a waiter - this will trigger the span with limiter_name attribute
+        async def waiter():
+            async with get_concurrency_context(limiter, 'test-source'):
+                pass
+
+        waiter_task = asyncio.create_task(waiter())
+        await asyncio.sleep(0.01)
+
+        hold.set()
+        await task
+        await waiter_task
+
+        # Verify span was created with the correct attributes
+        spans = capfire.exporter.exported_spans_as_dict()
+        assert len(spans) == 1
+        span = spans[0]
+        assert span['name'] == 'waiting for test-pool concurrency'
+        attrs = span['attributes']
+        assert attrs['source'] == 'test-source'
+        assert attrs['limiter_name'] == 'test-pool'
+        assert attrs['max_running'] == 1
+        assert 'waiting_count' in attrs
+
+    @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+    async def test_unnamed_limiter_waiting_uses_source_in_span_name(self, capfire: CaptureLogfire):
+        """Test that waiting without a limiter name uses source for span name."""
+        limiter = ConcurrencyLimiter(max_running=1)  # No name
+        hold = asyncio.Event()
+
+        async def holder():
+            async with get_concurrency_context(limiter, 'model:gpt-4'):
+                await hold.wait()
+
+        task = asyncio.create_task(holder())
+        await asyncio.sleep(0.01)
+
+        async def waiter():
+            async with get_concurrency_context(limiter, 'model:gpt-4'):
+                pass
+
+        waiter_task = asyncio.create_task(waiter())
+        await asyncio.sleep(0.01)
+
+        hold.set()
+        await task
+        await waiter_task
+
+        # Verify span uses source in name when limiter has no name
+        spans = capfire.exporter.exported_spans_as_dict()
+        assert len(spans) == 1
+        span = spans[0]
+        assert span['name'] == 'waiting for model:gpt-4 concurrency'
+        attrs = span['attributes']
+        assert attrs['source'] == 'model:gpt-4'
+        assert 'limiter_name' not in attrs  # Should not be present when name is None
+        assert attrs['max_running'] == 1
+
+    @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+    async def test_limiter_with_max_queued_includes_attribute_in_span(self, capfire: CaptureLogfire):
+        """Test that max_queued is included in span attributes when set."""
+        limiter = ConcurrencyLimiter(max_running=1, max_queued=5, name='queued-pool')
+        hold = asyncio.Event()
+
+        async def holder():
+            async with get_concurrency_context(limiter, 'test'):
+                await hold.wait()
+
+        task = asyncio.create_task(holder())
+        await asyncio.sleep(0.01)
+
         async def waiter():
             async with get_concurrency_context(limiter, 'test'):
                 pass
@@ -407,12 +483,18 @@ class TestConcurrencyLimiterName:
         await task
         await waiter_task
 
+        # Verify max_queued is in span attributes
+        spans = capfire.exporter.exported_spans_as_dict()
+        assert len(spans) == 1
+        attrs = spans[0]['attributes']
+        assert attrs['max_queued'] == 5
+
 
 class TestConcurrencyLimiterWithTracer:
     """Tests for ConcurrencyLimiter with custom tracer."""
 
-    async def test_custom_tracer(self):
-        """Test that custom tracer is used when provided."""
+    async def test_custom_tracer_is_stored(self):
+        """Test that custom tracer is stored and returned by _get_tracer."""
         from opentelemetry.trace import NoOpTracer
 
         custom_tracer = NoOpTracer()
@@ -422,7 +504,7 @@ class TestConcurrencyLimiterWithTracer:
         assert limiter._get_tracer() is custom_tracer
 
     async def test_from_limit_with_tracer(self):
-        """Test creating limiter from limit with tracer."""
+        """Test that from_limit passes tracer to the created limiter."""
         from opentelemetry.trace import NoOpTracer
 
         custom_tracer = NoOpTracer()
