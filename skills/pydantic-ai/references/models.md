@@ -182,6 +182,28 @@ with agent.override(model=TestModel()):
     result = agent.run_sync('test')
 ```
 
+## Model Observability
+
+With Logfire instrumentation enabled, every model request is traced. For the deepest visibility, add HTTP instrumentation to see exact request/response payloads:
+
+```python
+import logfire
+
+logfire.configure()
+logfire.instrument_pydantic_ai()
+logfire.instrument_httpx(capture_all=True)  # See raw HTTP payloads
+```
+
+This reveals:
+
+- Request/response latency per model
+- Token usage (input/output) for cost tracking
+- **Full HTTP request body** — the exact JSON sent to the provider
+- **Full HTTP response** — the raw response before parsing
+- Fallback sequences when using `FallbackModel`
+
+When debugging provider-specific issues (unexpected errors, malformed responses, rate limits), the HTTP-level view shows exactly what the provider received and returned.
+
 ## Key Types
 
 | Type | Import | Description |

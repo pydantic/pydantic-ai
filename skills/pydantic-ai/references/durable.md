@@ -75,3 +75,13 @@ prefect_agent = PrefectAgent(my_agent)
 - Simple request-response agents (just use `agent.run()`)
 - Short-lived operations that can be retried at the application level
 - When the overhead of a durable execution framework is not justified
+
+## Observability for Durable Workflows
+
+For long-running durable workflows, Logfire instrumentation is particularly valuable:
+
+- Trace the full lifecycle of workflows that span hours or days
+- Correlate agent runs across workflow restarts
+- Monitor workflow health and identify stuck or failing workflows
+
+Combined with the durable execution platform's own observability, this gives complete visibility into your agent systems.

@@ -188,6 +188,16 @@ async def my_tool(ctx: RunContext[None]) -> str:
     return 'result'
 ```
 
+## Debugging with Dependencies
+
+When debugging production issues, Logfire instrumentation captures the full `RunContext` state, including:
+
+- The `deps` object values at each tool call
+- Message history and usage counters
+- Retry state when tools fail
+
+This helps reproduce issues by showing exactly what context the agent had when something went wrong.
+
 ## Key Types
 
 | Type | Import | Description |

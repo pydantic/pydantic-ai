@@ -174,6 +174,20 @@ def simple_tool(arg: str) -> str:
 
 See [tools.md](tools.md) for complete tool documentation.
 
+## Debugging Agent Runs
+
+When an agent behaves unexpectedly, enable instrumentation to trace the full execution:
+
+```python
+import logfire
+
+logfire.configure()
+logfire.instrument_pydantic_ai()
+# Now all agent runs are traced with full message history, tool calls, and model responses
+```
+
+This captures every model request and response, making it easy to understand what the model "saw" and why it made certain decisions. See [observability.md](observability.md) for details.
+
 ## Key Types
 
 | Type | Import | Description |

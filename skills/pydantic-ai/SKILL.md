@@ -204,6 +204,7 @@ async def test_my_agent():
 
 - **100% test coverage** required on all PRs
 - **Python 3.10+** compatibility required
+- **Observability**: For production systems, enable Logfire with `logfire.instrument_httpx(capture_all=True)` to see exact HTTP requests sent to model providers — invaluable for debugging tool schema errors, unexpected model behavior, and understanding what's actually being sent to the API
 - **Class renames** must include deprecation shim (see `CLAUDE.md`)
 - **Documentation references** use backtick + link format: `` [`Agent`][pydantic_ai.agent.Agent] ``
 - **Testing**: Use `TestModel` for deterministic tests, `FunctionModel` for custom logic

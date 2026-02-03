@@ -164,6 +164,17 @@ from pydantic_ai.exceptions import UserError
 # Runtime error caused by incorrect API usage
 ```
 
+## Debugging Exceptions
+
+When exceptions occur in production, Logfire instrumentation captures the full context:
+
+- The complete message history leading up to the error
+- Model responses that triggered `UnexpectedModelBehavior`
+- Tool call arguments that caused failures
+- Retry sequences before `UsageLimitExceeded`
+
+This context is invaluable for diagnosing intermittent failures that are hard to reproduce locally.
+
 ## Key Types
 
 | Type | Import | Description |

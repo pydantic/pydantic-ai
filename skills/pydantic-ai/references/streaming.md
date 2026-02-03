@@ -110,6 +110,16 @@ async with agent.run_stream('prompt') as result:
         print(text)
 ```
 
+## Tracing Streaming Responses
+
+With Logfire instrumentation, streaming responses are captured with:
+
+- Time-to-first-token metrics
+- Complete reconstructed response for debugging
+- Tool call events during the stream
+
+This helps diagnose issues like slow initial responses or truncated streams that are otherwise hard to reproduce.
+
 ## Key Types
 
 | Type | Import | Description |

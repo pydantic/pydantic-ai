@@ -204,6 +204,27 @@ def dangerous_action(target: str) -> str:
 
 When `requires_approval=True`, the tool raises `ApprovalRequired`. Use `DeferredToolResults` to resume.
 
+## Debugging Tools
+
+When tools behave unexpectedly or fail silently, enable Logfire with HTTP instrumentation:
+
+```python
+import logfire
+
+logfire.configure()
+logfire.instrument_pydantic_ai()
+logfire.instrument_httpx(capture_all=True)  # See tool schemas in requests
+```
+
+This reveals:
+
+- The exact JSON schema generated for each tool (visible in HTTP request body)
+- Arguments the model passed to each tool
+- Tool execution time and return values
+- Retry attempts and `ModelRetry` messages
+
+If a tool generates "schema too complex" errors, inspect the HTTP request to see the exact schema being sent. Complex nested Pydantic models can generate large schemas — consider using `strict=False` on the `Tool` to relax schema constraints, or simplify the parameter types.
+
 ## Key Types
 
 | Type | Import | Description |

@@ -120,6 +120,16 @@ print(mermaid_code)
 - **Multi-agent pipeline**: Use `iter()` to coordinate between agents.
 - **Complex workflows**: Use `pydantic_graph.Graph` with custom nodes for branching, looping, and state management.
 
+## Tracing Graph Execution
+
+With Logfire instrumentation, graph execution is traced with spans for each node, showing:
+
+- Node transitions and decision points
+- State changes through the workflow
+- Time spent in each node
+
+This is essential for debugging complex multi-step workflows where it's unclear which path was taken.
+
 ## Key Types
 
 | Type | Import | Description |
