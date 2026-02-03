@@ -370,7 +370,7 @@ async def test_a2a_file_message_with_file_content():
                     'history': [
                         {
                             'role': 'user',
-                            'parts': [{'kind': 'file', 'file': {'bytes': 'foo', 'mime_type': 'text/plain'}}],
+                            'parts': [{'kind': 'file', 'file': {'bytes': base64_image, 'mime_type': 'image/png'}}],
                             'kind': 'message',
                             'message_id': IsStr(),
                             'context_id': IsStr(),
