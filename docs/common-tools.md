@@ -143,7 +143,7 @@ Feel free to click on the links to dive deeper into each story!
 
 You can filter search results to include or exclude specific domains using the `include_domains` and `exclude_domains` parameters:
 
-```py {title="tavily_domain_filtering.py" test="skip"}
+```py {title="tavily_domain_filtering.py"}
 import os
 
 from pydantic_ai import Agent
@@ -165,8 +165,16 @@ agent = Agent(
     instructions='Search for information and return the results.',
 )
 
-result = agent.run_sync('Find recent papers about transformer architectures')
+result = agent.run_sync(
+    'Find recent papers about transformer architectures'
+)
 print(result.output)
+"""
+Here are some recent papers about transformer architectures from arxiv.org and github.com:
+
+1. "Attention Is All You Need" - The foundational paper on the Transformer model.
+2. "FlashAttention: Fast and Memory-Efficient Exact Attention" - Proposes an IO-aware attention algorithm.
+"""
 ```
 
 ## Exa Search Tool

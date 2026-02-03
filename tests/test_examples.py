@@ -188,6 +188,7 @@ def test_docs_examples(
     env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'testing')
     env.set('VOYAGE_API_KEY', 'testing')
     env.set('XAI_API_KEY', 'testing')
+    env.set('TAVILY_API_KEY', 'testing')
 
     prefix_settings = example.prefix_settings()
     opt_test = prefix_settings.get('test', '')
@@ -557,6 +558,12 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         tool_name='final_result',
         args={'name': 'test', 'value': 42},
         tool_call_id='pyd_ai_tool_call_id',
+    ),
+    'Find recent papers about transformer architectures': (
+        'Here are some recent papers about transformer architectures from arxiv.org and github.com:\n'
+        '\n'
+        '1. "Attention Is All You Need" - The foundational paper on the Transformer model.\n'
+        '2. "FlashAttention: Fast and Memory-Efficient Exact Attention" - Proposes an IO-aware attention algorithm.'
     ),
 }
 
