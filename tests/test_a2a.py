@@ -913,7 +913,7 @@ async def test_a2a_multiple_send_task_messages():
             result = response['result']
             assert result['kind'] == 'task'
             task_id = result['id']
-            context_id = result['context_id']
+            _ = result['context_id']
 
             while task := await a2a_client.get_task(task_id):  # pragma: no branch
                 if 'result' in task and task['result']['status']['state'] == 'completed':
@@ -980,10 +980,10 @@ async def test_a2a_with_deps():
     async def get_data(ctx: RunContext[TestDeps]) -> str:
         """A tool that uses the dependencies."""
         deps_received.append(ctx.deps)
-        return f"API Key: {ctx.deps.api_key}, Multiplier: {ctx.deps.multiplier}"
+        return f'API Key: {ctx.deps.api_key}, Multiplier: {ctx.deps.multiplier}'
 
     # Create deps to pass to the A2A server
-    test_deps = TestDeps(api_key="secret-key-123", multiplier=42)
+    test_deps = TestDeps(api_key='secret-key-123', multiplier=42)
     app = agent.to_a2a(deps=test_deps)
 
     async with LifespanManager(app):
@@ -1032,7 +1032,7 @@ async def test_a2a_with_deps_multiple_runs():
     def return_with_counter(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         # Return a simple response
-        return ModelResponse(parts=[PydanticAITextPart(content=f"Call {len(calls_with_deps) + 1}")])
+        return ModelResponse(parts=[PydanticAITextPart(content=f'Call {len(calls_with_deps) + 1}')])
 
     counter_model = FunctionModel(return_with_counter)
     agent = Agent(model=counter_model, output_type=str, deps_type=CounterDeps)
@@ -1041,7 +1041,7 @@ async def test_a2a_with_deps_multiple_runs():
     async def use_base_value(ctx: RunContext[CounterDeps]) -> str:
         """Tool that uses the base value from deps."""
         calls_with_deps.append(ctx.deps.base_value)
-        return f"Base value: {ctx.deps.base_value}"
+        return f'Base value: {ctx.deps.base_value}'
 
     # Create deps with a specific base value
     test_deps = CounterDeps(base_value=100)
