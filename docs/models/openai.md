@@ -208,6 +208,37 @@ print(result2.output)
 #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 ```
 
+### OpenAI compaction
+
+The Responses API supports [compaction](https://platform.openai.com/docs/guides/conversation-state#compaction-advanced) to reduce the size of message history sent in requests.
+You can use this using a `history_processor`.
+
+It is recommended to use compaction together with [Referencing earlier responses](#referencing-earlier-responses) so compaction has access to full conversation state including reasoning items are kept in context.
+
+```python
+from pydantic_ai import Agent, ModelMessage, RunContext
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+
+async def context_aware_processor(ctx: RunContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
+    if len(messages) > 4:
+        compacted_messages = await ctx.model.compact_messages(
+            messages[:-1],
+            model_settings=ctx.model_settings,
+            model_request_parameters=ctx.model_request_parameters
+        )
+        return [compacted_messages, messages[-1]]
+
+    return messages
+
+# Create agent with history processor
+model_settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+model = OpenAIResponsesModel('gpt-5')
+agent = Agent(model=model, history_processors=[context_aware_processor], model_settings=model_settings)
+```
+
+
+
 ## OpenAI-compatible Models
 
 Many providers and models are compatible with the OpenAI API, and can be used with `OpenAIChatModel` in Pydantic AI.
