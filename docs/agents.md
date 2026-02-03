@@ -766,7 +766,7 @@ This is useful when you want to prevent overwhelming external resources or enfor
 ```python {title="agent_concurrency.py"}
 import asyncio
 
-from pydantic_ai import Agent, ConcurrencyLimiter
+from pydantic_ai import Agent, ConcurrencyLimit
 
 # Simple limit: allow up to 10 concurrent runs
 agent = Agent('openai:gpt-5', max_concurrency=10)
@@ -775,7 +775,7 @@ agent = Agent('openai:gpt-5', max_concurrency=10)
 # With backpressure: limit concurrent runs and queue depth
 agent_with_backpressure = Agent(
     'openai:gpt-5',
-    max_concurrency=ConcurrencyLimiter(max_running=10, max_queued=100),
+    max_concurrency=ConcurrencyLimit(max_running=10, max_queued=100),
 )
 
 

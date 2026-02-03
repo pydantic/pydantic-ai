@@ -109,26 +109,26 @@ async def main():
 The `limiter` parameter accepts:
 
 - An integer for simple limiting (e.g., `limiter=5`)
-- A [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for advanced configuration with backpressure control
-- A [`RecordingSemaphore`][pydantic_ai.concurrency.RecordingSemaphore] for sharing limits across multiple models
+- A [`ConcurrencyLimit`][pydantic_ai.ConcurrencyLimit] for advanced configuration with backpressure control
+- A [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for sharing limits across multiple models
 
 ### Shared Concurrency Limits
 
 To share a concurrency limit across multiple models (e.g., different models from the same provider),
-you can create a [`RecordingSemaphore`][pydantic_ai.concurrency.RecordingSemaphore] and pass it to
+you can create a [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] and pass it to
 multiple `ConcurrencyLimitedModel` instances:
 
 ```python {title="shared_concurrency.py"}
 import asyncio
 
-from pydantic_ai import Agent, ConcurrencyLimitedModel, RecordingSemaphore
+from pydantic_ai import Agent, ConcurrencyLimitedModel, ConcurrencyLimiter
 
-# Create a shared semaphore with a descriptive name
-shared_semaphore = RecordingSemaphore(max_running=10, name='openai-pool')
+# Create a shared limiter with a descriptive name
+shared_limiter = ConcurrencyLimiter(max_running=10, name='openai-pool')
 
 # Both models share the same concurrency limit
-model1 = ConcurrencyLimitedModel('openai:gpt-4o', limiter=shared_semaphore)
-model2 = ConcurrencyLimitedModel('openai:gpt-4o-mini', limiter=shared_semaphore)
+model1 = ConcurrencyLimitedModel('openai:gpt-4o', limiter=shared_limiter)
+model2 = ConcurrencyLimitedModel('openai:gpt-4o-mini', limiter=shared_limiter)
 
 agent1 = Agent(model1)
 agent2 = Agent(model2)
@@ -146,7 +146,7 @@ async def main():
 
 When instrumentation is enabled, requests waiting for a concurrency slot appear as spans with
 attributes showing the queue depth and configured limits. The `name` parameter on
-`RecordingSemaphore` helps identify shared semaphores in traces.
+`ConcurrencyLimiter` helps identify shared limiters in traces.
 
 <!-- TODO(Marcelo): We need to create a section in the docs about reliability. -->
 

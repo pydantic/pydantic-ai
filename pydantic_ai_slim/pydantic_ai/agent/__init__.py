@@ -168,7 +168,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     _event_stream_handler: EventStreamHandler[AgentDepsT] | None = dataclasses.field(repr=False)
 
-    _concurrency_limiter: _concurrency.RecordingSemaphore | None = dataclasses.field(repr=False)
+    _concurrency_limiter: _concurrency.AbstractConcurrencyLimiter | None = dataclasses.field(repr=False)
 
     _enter_lock: Lock = dataclasses.field(repr=False)
     _entered_count: int = dataclasses.field(repr=False)
@@ -200,7 +200,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
-        max_concurrency: _concurrency.ConcurrencyLimit = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
     ) -> None: ...
 
     @overload
@@ -230,7 +230,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
-        max_concurrency: _concurrency.ConcurrencyLimit = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
     ) -> None: ...
 
     def __init__(
@@ -258,7 +258,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
-        max_concurrency: _concurrency.ConcurrencyLimit = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         **_deprecated_kwargs: Any,
     ):
         """Create an agent.
@@ -327,8 +327,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 the tool is considered to have failed and a retry prompt is returned to the model (counting towards the retry limit).
                 Individual tools can override this with their own timeout. Defaults to None (no timeout).
             max_concurrency: Optional limit on concurrent agent runs. Can be an integer for simple limiting,
-                a [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for advanced configuration with backpressure,
-                a [`RecordingSemaphore`][pydantic_ai.concurrency.RecordingSemaphore] for sharing limits across
+                a [`ConcurrencyLimit`][pydantic_ai.ConcurrencyLimit] for advanced configuration with backpressure,
+                a [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for sharing limits across
                 multiple agents, or None (default) for no limiting. When the limit is reached, additional calls
                 to `run()` or `iter()` will wait until a slot becomes available.
         """
@@ -395,7 +395,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._event_stream_handler = event_stream_handler
 
-        self._concurrency_limiter = _concurrency.normalize_to_semaphore(max_concurrency)
+        self._concurrency_limiter = _concurrency.normalize_to_limiter(max_concurrency)
 
         self._override_name: ContextVar[_utils.Option[str]] = ContextVar('_override_name', default=None)
         self._override_deps: ContextVar[_utils.Option[AgentDepsT]] = ContextVar('_override_deps', default=None)

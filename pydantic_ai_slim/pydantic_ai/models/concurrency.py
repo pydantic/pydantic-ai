@@ -9,11 +9,12 @@ from typing import Any
 
 from .._run_context import RunContext
 from ..concurrency import (
+    AbstractConcurrencyLimiter,
+    AnyConcurrencyLimit,
     ConcurrencyLimit,
     ConcurrencyLimiter,
-    RecordingSemaphore,
     get_concurrency_context,
-    normalize_to_semaphore,
+    normalize_to_limiter,
 )
 from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
@@ -43,21 +44,21 @@ class ConcurrencyLimitedModel(WrapperModel):
     model = ConcurrencyLimitedModel('openai:gpt-4o', limiter=5)
     agent = Agent(model)
 
-    # Or share a semaphore across multiple models
-    from pydantic_ai.concurrency import RecordingSemaphore
+    # Or share a limiter across multiple models
+    from pydantic_ai import ConcurrencyLimiter
 
-    shared_semaphore = RecordingSemaphore(max_running=10, name='openai-pool')
-    model1 = ConcurrencyLimitedModel('openai:gpt-4o', limiter=shared_semaphore)
-    model2 = ConcurrencyLimitedModel('openai:gpt-4o-mini', limiter=shared_semaphore)
+    shared_limiter = ConcurrencyLimiter(max_running=10, name='openai-pool')
+    model1 = ConcurrencyLimitedModel('openai:gpt-4o', limiter=shared_limiter)
+    model2 = ConcurrencyLimitedModel('openai:gpt-4o-mini', limiter=shared_limiter)
     ```
     """
 
-    _semaphore: RecordingSemaphore
+    _limiter: AbstractConcurrencyLimiter
 
     def __init__(
         self,
         wrapped: Model | KnownModelName,
-        limiter: int | ConcurrencyLimiter | RecordingSemaphore,
+        limiter: int | ConcurrencyLimit | AbstractConcurrencyLimiter,
     ):
         """Initialize the ConcurrencyLimitedModel.
 
@@ -65,14 +66,14 @@ class ConcurrencyLimitedModel(WrapperModel):
             wrapped: The model to wrap, either a Model instance or a known model name.
             limiter: The concurrency limit configuration. Can be:
                 - An `int`: Simple limit on concurrent operations (unlimited queue).
-                - A `ConcurrencyLimiter`: Full configuration with optional backpressure.
-                - A `RecordingSemaphore`: A pre-created semaphore for sharing across models.
+                - A `ConcurrencyLimit`: Full configuration with optional backpressure.
+                - An `AbstractConcurrencyLimiter`: A pre-created limiter for sharing across models.
         """
         super().__init__(wrapped)
-        if isinstance(limiter, RecordingSemaphore):
-            self._semaphore = limiter
+        if isinstance(limiter, AbstractConcurrencyLimiter):
+            self._limiter = limiter
         else:
-            self._semaphore = RecordingSemaphore.from_limit(limiter)
+            self._limiter = ConcurrencyLimiter.from_limit(limiter)
 
     async def request(
         self,
@@ -81,7 +82,7 @@ class ConcurrencyLimitedModel(WrapperModel):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         """Make a request to the model with concurrency limiting."""
-        async with get_concurrency_context(self._semaphore, f'model:{self.model_name}'):
+        async with get_concurrency_context(self._limiter, f'model:{self.model_name}'):
             return await self.wrapped.request(messages, model_settings, model_request_parameters)
 
     async def count_tokens(
@@ -91,7 +92,7 @@ class ConcurrencyLimitedModel(WrapperModel):
         model_request_parameters: ModelRequestParameters,
     ) -> RequestUsage:
         """Count tokens with concurrency limiting."""
-        async with get_concurrency_context(self._semaphore, f'model:{self.model_name}'):
+        async with get_concurrency_context(self._limiter, f'model:{self.model_name}'):
             return await self.wrapped.count_tokens(messages, model_settings, model_request_parameters)
 
     @asynccontextmanager
@@ -103,7 +104,7 @@ class ConcurrencyLimitedModel(WrapperModel):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         """Make a streaming request to the model with concurrency limiting."""
-        async with get_concurrency_context(self._semaphore, f'model:{self.model_name}'):
+        async with get_concurrency_context(self._limiter, f'model:{self.model_name}'):
             async with self.wrapped.request_stream(
                 messages, model_settings, model_request_parameters, run_context
             ) as response_stream:
@@ -112,7 +113,7 @@ class ConcurrencyLimitedModel(WrapperModel):
 
 def limit_model_concurrency(
     model: Model | KnownModelName,
-    limiter: ConcurrencyLimit,
+    limiter: AnyConcurrencyLimit,
 ) -> Model:
     """Wrap a model with concurrency limiting.
 
@@ -134,9 +135,9 @@ def limit_model_concurrency(
     model = limit_model_concurrency('openai:gpt-4o', limiter=5)
     ```
     """
-    semaphore = normalize_to_semaphore(limiter)
-    if semaphore is None:
+    normalized_limiter = normalize_to_limiter(limiter)
+    if normalized_limiter is None:
         from . import infer_model
 
         return infer_model(model) if isinstance(model, str) else model
-    return ConcurrencyLimitedModel(model, semaphore)
+    return ConcurrencyLimitedModel(model, normalized_limiter)

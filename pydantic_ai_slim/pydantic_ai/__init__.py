@@ -20,7 +20,12 @@ from .builtin_tools import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from .concurrency import ConcurrencyLimit, ConcurrencyLimiter, RecordingSemaphore
+from .concurrency import (
+    AbstractConcurrencyLimiter,
+    AnyConcurrencyLimit,
+    ConcurrencyLimit,
+    ConcurrencyLimiter,
+)
 from .embeddings import (
     Embedder,
     EmbeddingModel,
@@ -139,10 +144,11 @@ __all__ = (
     'EmbeddingSettings',
     'EmbeddingResult',
     # concurrency
-    'ConcurrencyLimiter',
+    'AbstractConcurrencyLimiter',
+    'AnyConcurrencyLimit',
     'ConcurrencyLimit',
     'ConcurrencyLimitedModel',
-    'RecordingSemaphore',
+    'ConcurrencyLimiter',
     'limit_model_concurrency',
     # exceptions
     'AgentRunError',

@@ -1,6 +1,6 @@
 """Tests for concurrency limiting functionality."""
 
-# pyright: reportPrivateUsage=false
+# pyright: reportPrivateUsage=false, reportAttributeAccessIssue=false, reportUnknownMemberType=false
 from __future__ import annotations
 
 import asyncio
@@ -8,23 +8,23 @@ from typing import Any
 
 import pytest
 
-from pydantic_ai import Agent, ConcurrencyLimiter, ConcurrencyLimitExceeded
-from pydantic_ai.concurrency import RecordingSemaphore, get_concurrency_context
+from pydantic_ai import Agent, ConcurrencyLimit, ConcurrencyLimiter, ConcurrencyLimitExceeded
+from pydantic_ai.concurrency import get_concurrency_context
 from pydantic_ai.models.test import TestModel
 
 pytestmark = pytest.mark.anyio
 
 
-class TestRecordingSemaphore:
-    """Tests for the RecordingSemaphore class."""
+class TestConcurrencyLimiter:
+    """Tests for the ConcurrencyLimiter class."""
 
     async def test_basic_acquisition(self):
-        """Test that semaphore limits concurrent access."""
-        sem = RecordingSemaphore(max_running=2)
+        """Test that limiter limits concurrent access."""
+        limiter = ConcurrencyLimiter(max_running=2)
         acquired: list[int] = []
 
         async def acquire_and_hold(id: int, hold_time: float):
-            async with get_concurrency_context(sem, 'test'):
+            async with get_concurrency_context(limiter, 'test'):
                 acquired.append(id)
                 await asyncio.sleep(hold_time)
 
@@ -37,48 +37,48 @@ class TestRecordingSemaphore:
 
     async def test_nowait_acquisition(self):
         """Test that immediate acquisition works."""
-        sem = RecordingSemaphore(max_running=10)
+        limiter = ConcurrencyLimiter(max_running=10)
         # With high limit, should acquire immediately
-        async with get_concurrency_context(sem, 'test'):
+        async with get_concurrency_context(limiter, 'test'):
             pass  # No waiting
 
     async def test_waiting_count_tracking(self):
         """Test that waiting_count is accurately tracked."""
-        sem = RecordingSemaphore(max_running=1)
+        limiter = ConcurrencyLimiter(max_running=1)
         started = asyncio.Event()
         release = asyncio.Event()
 
         async def holder():
-            async with get_concurrency_context(sem, 'test'):
+            async with get_concurrency_context(limiter, 'test'):
                 started.set()
                 await release.wait()
 
         task = asyncio.create_task(holder())
         await started.wait()
 
-        # Now sem is held, check waiting count as we add waiters
-        assert sem.waiting_count == 0
+        # Now limiter is held, check waiting count as we add waiters
+        assert limiter.waiting_count == 0
 
         async def waiter():
-            async with get_concurrency_context(sem, 'test'):
+            async with get_concurrency_context(limiter, 'test'):
                 pass
 
         waiter_tasks = [asyncio.create_task(waiter()) for _ in range(3)]
         await asyncio.sleep(0.01)
-        assert sem.waiting_count == 3
+        assert limiter.waiting_count == 3
 
         release.set()
         await task
         await asyncio.gather(*waiter_tasks)
-        assert sem.waiting_count == 0
+        assert limiter.waiting_count == 0
 
     async def test_backpressure_raises(self):
         """Test that exceeding max_queued raises ConcurrencyLimitExceeded."""
-        sem = RecordingSemaphore(max_running=1, max_queued=2)
+        limiter = ConcurrencyLimiter(max_running=1, max_queued=2)
         hold = asyncio.Event()
 
         async def holder():
-            async with get_concurrency_context(sem, 'test'):
+            async with get_concurrency_context(limiter, 'test'):
                 await hold.wait()
 
         # Fill the running slot
@@ -92,7 +92,7 @@ class TestRecordingSemaphore:
 
         # This should raise - queue is full
         with pytest.raises(ConcurrencyLimitExceeded):
-            async with get_concurrency_context(sem, 'test'):
+            async with get_concurrency_context(limiter, 'test'):
                 pass
 
         hold.set()
@@ -100,16 +100,33 @@ class TestRecordingSemaphore:
 
     async def test_from_int_limit(self):
         """Test creating from simple int."""
-        sem = RecordingSemaphore.from_limit(5)
-        assert sem._max_running == 5
-        assert sem._max_queued is None
+        limiter = ConcurrencyLimiter.from_limit(5)
+        assert limiter.max_running == 5
+        assert limiter._max_queued is None
 
     async def test_from_limiter_config(self):
-        """Test creating from ConcurrencyLimiter."""
-        config = ConcurrencyLimiter(max_running=5, max_queued=10)
-        sem = RecordingSemaphore.from_limit(config)
-        assert sem._max_running == 5
-        assert sem._max_queued == 10
+        """Test creating from ConcurrencyLimit."""
+        config = ConcurrencyLimit(max_running=5, max_queued=10)
+        limiter = ConcurrencyLimiter.from_limit(config)
+        assert limiter.max_running == 5
+        assert limiter._max_queued == 10
+
+    async def test_properties(self):
+        """Test the various properties of ConcurrencyLimiter."""
+        limiter = ConcurrencyLimiter(max_running=5, name='test-limiter')
+        assert limiter.max_running == 5
+        assert limiter.running_count == 0
+        assert limiter.available_count == 5
+        assert limiter.waiting_count == 0
+        assert limiter.name == 'test-limiter'
+
+        # After acquiring one slot
+        await limiter.acquire('test')
+        assert limiter.running_count == 1
+        assert limiter.available_count == 4
+        limiter.release()
+        assert limiter.running_count == 0
+        assert limiter.available_count == 5
 
 
 class TestGetConcurrencyContext:
@@ -117,8 +134,8 @@ class TestGetConcurrencyContext:
 
     async def test_returns_context_when_provided(self):
         """Test that get_concurrency_context returns a working context."""
-        sem = RecordingSemaphore(max_running=1)
-        async with get_concurrency_context(sem, 'test'):
+        limiter = ConcurrencyLimiter(max_running=1)
+        async with get_concurrency_context(limiter, 'test'):
             pass  # Should acquire and release
 
     async def test_returns_null_context_when_none(self):
@@ -157,7 +174,7 @@ class TestAgentConcurrency:
 
     async def test_agent_concurrency_backpressure(self):
         """Test that agent raises when queue exceeds max_queued."""
-        agent = Agent(TestModel(), max_concurrency=ConcurrencyLimiter(max_running=1, max_queued=1))
+        agent = Agent(TestModel(), max_concurrency=ConcurrencyLimit(max_running=1, max_queued=1))
         hold = asyncio.Event()
 
         @agent.tool_plain
@@ -186,14 +203,14 @@ class TestAgentConcurrency:
         """Test that agent accepts int for max_concurrency."""
         agent = Agent(TestModel(), max_concurrency=5)
         assert agent._concurrency_limiter is not None
-        assert agent._concurrency_limiter._max_running == 5
+        assert agent._concurrency_limiter.max_running == 5
         assert agent._concurrency_limiter._max_queued is None
 
     async def test_agent_with_limiter_concurrency(self):
-        """Test that agent accepts ConcurrencyLimiter for max_concurrency."""
-        agent = Agent(TestModel(), max_concurrency=ConcurrencyLimiter(max_running=5, max_queued=10))
+        """Test that agent accepts ConcurrencyLimit for max_concurrency."""
+        agent = Agent(TestModel(), max_concurrency=ConcurrencyLimit(max_running=5, max_queued=10))
         assert agent._concurrency_limiter is not None
-        assert agent._concurrency_limiter._max_running == 5
+        assert agent._concurrency_limiter.max_running == 5
         assert agent._concurrency_limiter._max_queued == 10
 
 
@@ -237,38 +254,38 @@ class TestConcurrencyLimitedModel:
         from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
 
         model = ConcurrencyLimitedModel(TestModel(), limiter=5)
-        assert model._semaphore._max_running == 5
-        assert model._semaphore._max_queued is None
+        assert model._limiter.max_running == 5
+        assert model._limiter._max_queued is None
 
-    async def test_with_concurrency_limiter(self):
-        """Test ConcurrencyLimitedModel with ConcurrencyLimiter."""
+    async def test_with_concurrency_limit(self):
+        """Test ConcurrencyLimitedModel with ConcurrencyLimit."""
         from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
 
-        model = ConcurrencyLimitedModel(TestModel(), limiter=ConcurrencyLimiter(max_running=5, max_queued=10))
-        assert model._semaphore._max_running == 5
-        assert model._semaphore._max_queued == 10
+        model = ConcurrencyLimitedModel(TestModel(), limiter=ConcurrencyLimit(max_running=5, max_queued=10))
+        assert model._limiter.max_running == 5
+        assert model._limiter._max_queued == 10
 
-    async def test_with_shared_semaphore(self):
-        """Test ConcurrencyLimitedModel with shared RecordingSemaphore."""
+    async def test_with_shared_limiter(self):
+        """Test ConcurrencyLimitedModel with shared ConcurrencyLimiter."""
         from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
 
-        shared_semaphore = RecordingSemaphore(max_running=3, name='shared-pool')
-        model1 = ConcurrencyLimitedModel(TestModel(), limiter=shared_semaphore)
-        model2 = ConcurrencyLimitedModel(TestModel(), limiter=shared_semaphore)
+        shared_limiter = ConcurrencyLimiter(max_running=3, name='shared-pool')
+        model1 = ConcurrencyLimitedModel(TestModel(), limiter=shared_limiter)
+        model2 = ConcurrencyLimitedModel(TestModel(), limiter=shared_limiter)
 
-        # Both models should share the same semaphore
-        assert model1._semaphore is model2._semaphore
-        assert model1._semaphore.name == 'shared-pool'
+        # Both models should share the same limiter
+        assert model1._limiter is model2._limiter
+        assert model1._limiter.name == 'shared-pool'
 
-    async def test_shared_semaphore_limits_across_models(self):
-        """Test that shared semaphore limits concurrent requests across multiple models."""
+    async def test_shared_limiter_limits_across_models(self):
+        """Test that shared limiter limits concurrent requests across multiple models."""
         from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
 
         request_count = 0
         max_concurrent = 0
         lock = asyncio.Lock()
 
-        shared_semaphore = RecordingSemaphore(max_running=2)
+        shared_limiter = ConcurrencyLimiter(max_running=2)
 
         def create_tracking_model():
             base_model = TestModel()
@@ -287,7 +304,7 @@ class TestConcurrencyLimitedModel:
                         request_count -= 1
 
             base_model.request = tracking_request
-            return ConcurrencyLimitedModel(base_model, limiter=shared_semaphore)
+            return ConcurrencyLimitedModel(base_model, limiter=shared_limiter)
 
         model1 = create_tracking_model()
         model2 = create_tracking_model()
@@ -332,35 +349,35 @@ class TestConcurrencyLimitedModel:
         assert model.system == 'test'
 
 
-class TestAgentWithSharedSemaphore:
-    """Tests for agent with shared RecordingSemaphore."""
+class TestAgentWithSharedLimiter:
+    """Tests for agent with shared ConcurrencyLimiter."""
 
-    async def test_agent_with_shared_semaphore(self):
-        """Test that agents can share a RecordingSemaphore."""
-        shared_semaphore = RecordingSemaphore(max_running=2)
+    async def test_agent_with_shared_limiter(self):
+        """Test that agents can share a ConcurrencyLimiter."""
+        shared_limiter = ConcurrencyLimiter(max_running=2)
 
-        agent1 = Agent(TestModel(), max_concurrency=shared_semaphore)
-        agent2 = Agent(TestModel(), max_concurrency=shared_semaphore)
+        agent1 = Agent(TestModel(), max_concurrency=shared_limiter)
+        agent2 = Agent(TestModel(), max_concurrency=shared_limiter)
 
-        # Both agents should share the same semaphore
+        # Both agents should share the same limiter
         assert agent1._concurrency_limiter is agent2._concurrency_limiter
 
 
-class TestRecordingSemaphoreName:
-    """Tests for RecordingSemaphore name parameter."""
+class TestConcurrencyLimiterName:
+    """Tests for ConcurrencyLimiter name parameter."""
 
-    async def test_semaphore_with_name(self):
-        """Test that semaphore name is properly set and accessible."""
-        sem = RecordingSemaphore(max_running=5, name='my-semaphore')
-        assert sem.name == 'my-semaphore'
+    async def test_limiter_with_name(self):
+        """Test that limiter name is properly set and accessible."""
+        limiter = ConcurrencyLimiter(max_running=5, name='my-limiter')
+        assert limiter.name == 'my-limiter'
 
-    async def test_semaphore_without_name(self):
-        """Test that semaphore name is None by default."""
-        sem = RecordingSemaphore(max_running=5)
-        assert sem.name is None
+    async def test_limiter_without_name(self):
+        """Test that limiter name is None by default."""
+        limiter = ConcurrencyLimiter(max_running=5)
+        assert limiter.name is None
 
     async def test_from_limit_with_name(self):
-        """Test creating semaphore from limit with name."""
-        sem = RecordingSemaphore.from_limit(5, name='my-limit')
-        assert sem.name == 'my-limit'
-        assert sem._max_running == 5
+        """Test creating limiter from limit with name."""
+        limiter = ConcurrencyLimiter.from_limit(5, name='my-limit')
+        assert limiter.name == 'my-limit'
+        assert limiter.max_running == 5
