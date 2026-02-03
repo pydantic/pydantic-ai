@@ -250,7 +250,7 @@ ERROR_DETAILS: list[ExpectError] = [
         content_source='binary',
         return_style='tool_return_content',
         error_type=NotImplementedError,
-        match='Binary content is not supported yet',
+        match='Unsupported content type for Bedrock user prompts: BinaryContent',
     ),
     ExpectError(
         'bedrock',

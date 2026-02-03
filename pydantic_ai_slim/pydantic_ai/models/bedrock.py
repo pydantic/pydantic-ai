@@ -921,7 +921,7 @@ class BedrockConverseModel(Model):
             assert_never(file)
 
     @staticmethod
-    async def _map_user_prompt(  # noqa: C901
+    async def _map_user_prompt(
         part: UserPromptPart,
         document_count: Iterator[int],
         supports_prompt_caching: bool,
@@ -933,52 +933,13 @@ class BedrockConverseModel(Model):
             for item in part.content:
                 if isinstance(item, str):
                     content.append({'text': item})
-                elif isinstance(item, BinaryContent):
-                    format = item.format
-                    if item.is_document:
-                        name = f'Document {next(document_count)}'
-                        assert format in _BEDROCK_DOCUMENT_FORMATS
-                        content.append({'document': {'name': name, 'format': format, 'source': {'bytes': item.data}}})
-                    elif item.is_image:
-                        assert format in _BEDROCK_IMAGE_FORMATS
-                        content.append({'image': {'format': format, 'source': {'bytes': item.data}}})
-                    elif item.is_video:
-                        assert format in _BEDROCK_VIDEO_FORMATS
-                        content.append({'video': {'format': format, 'source': {'bytes': item.data}}})
-                    else:
-                        raise NotImplementedError('Binary content is not supported yet.')
-                elif isinstance(item, ImageUrl | DocumentUrl | VideoUrl):
-                    source: DocumentSourceTypeDef
-                    if item.url.startswith('s3://'):
-                        parsed = urlparse(item.url)
-                        s3_location: S3LocationTypeDef = {'uri': f'{parsed.scheme}://{parsed.netloc}{parsed.path}'}
-                        if bucket_owner := parse_qs(parsed.query).get('bucketOwner', [None])[0]:
-                            s3_location['bucketOwner'] = bucket_owner
-                        source = {'s3Location': s3_location}
-                    else:
-                        downloaded_item = await download_item(item, data_format='bytes', type_format='extension')
-                        source = {'bytes': downloaded_item['data']}
-
-                    if item.kind == 'image-url':
-                        format = item.media_type.split('/')[1]
-                        assert format in _BEDROCK_IMAGE_FORMATS, f'Unsupported image format: {format}'
-                        image: ImageBlockTypeDef = {'format': format, 'source': source}
-                        content.append({'image': image})
-
-                    elif item.kind == 'document-url':
-                        name = f'Document {next(document_count)}'
-                        document: DocumentBlockTypeDef = {
-                            'name': name,
-                            'format': item.format,
-                            'source': source,
-                        }
-                        content.append({'document': document})
-
-                    elif item.kind == 'video-url':  # pragma: no branch
-                        format = item.media_type.split('/')[1]
-                        assert format in _BEDROCK_VIDEO_FORMATS, f'Unsupported video format: {format}'
-                        video: VideoBlockTypeDef = {'format': format, 'source': source}
-                        content.append({'video': video})
+                elif isinstance(item, (BinaryContent, ImageUrl, DocumentUrl, VideoUrl)):
+                    file_block = await BedrockConverseModel._map_file_to_content_block(item, document_count)
+                    if file_block is None:
+                        raise NotImplementedError(
+                            f'Unsupported content type for Bedrock user prompts: {type(item).__name__}'
+                        )
+                    content.append(file_block)  # pyright: ignore[reportArgumentType]
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
                 elif isinstance(item, CachePoint):

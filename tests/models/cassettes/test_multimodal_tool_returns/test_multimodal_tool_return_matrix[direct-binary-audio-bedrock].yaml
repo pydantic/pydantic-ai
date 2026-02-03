@@ -7,7 +7,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        NGU0ZmE5YmItYWIyMC00MzAxLTg4N2MtNWJkYzRhZTM2MjA2
+        M2QwYjlmYjMtMzljNy00MzU3LWEyMjUtYjhiNzMwNjRhZTk4
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -23,79 +23,28 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '502'
+      - '484'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1125
+        latencyMs: 1079
       output:
         message:
           content:
           - text: |
-              <thinking> I need to use the get_file tool to retrieve an audio file. Since no specific file name or path was provided, I will attempt to retrieve a generic audio file. </thinking>
+              <thinking> I need to use the get_file tool to retrieve an audio file. Since the tool does not require any specific arguments, I will call it directly. </thinking>
           - toolUse:
               input: {}
               name: get_file
-              toolUseId: tooluse_EYmWW6VcRhG2-8qnJY7kWw
+              toolUseId: tooluse_StvjKIKARKW7w7YK-EjrjQ
           role: assistant
       stopReason: tool_use
       usage:
         inputTokens: 396
-        outputTokens: 55
+        outputTokens: 50
         serverToolUsage: {}
-        totalTokens: 451
-    status:
-      code: 200
-      message: OK
-- request:
-    body: '{"messages": [{"role": "user", "content": [{"text": "Use the get_file tool now to retrieve a audio file, then describe
-      what you received."}]}, {"role": "assistant", "content": [{"text": "<thinking> I need to use the get_file tool to retrieve
-      an audio file. Since no specific file name or path was provided, I will attempt to retrieve a generic audio file. </thinking>\n"},
-      {"toolUse": {"toolUseId": "tooluse_EYmWW6VcRhG2-8qnJY7kWw", "name": "get_file", "input": {}}}]}, {"role": "user", "content":
-      [{"toolResult": {"toolUseId": "tooluse_EYmWW6VcRhG2-8qnJY7kWw", "content": [{"text": "See file 2d36ae."}], "status":
-      "success"}}, {"text": "This is file 2d36ae: [Audio not supported by Bedrock]"}]}], "system": [], "inferenceConfig":
-      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_file", "inputSchema": {"json": {"additionalProperties": false,
-      "properties": {}, "type": "object"}}}}], "toolChoice": {"auto": {}}}}'
-    headers:
-      amz-sdk-invocation-id:
-      - !!binary |
-        MDcxM2U4MmMtYTI0OS00OWU1LTg5M2QtMmE3NWU4ZDdjMTYy
-      amz-sdk-request:
-      - !!binary |
-        YXR0ZW1wdD0x
-      content-length:
-      - '919'
-      content-type:
-      - !!binary |
-        YXBwbGljYXRpb24vanNvbg==
-    method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-pro-v1%3A0/converse
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '750'
-      content-type:
-      - application/json
-    parsed_body:
-      metrics:
-        latencyMs: 1974
-      output:
-        message:
-          content:
-          - text: |-
-              <thinking> The get_file tool has returned an audio file with the identifier "2d36ae". However, the content of the audio file is not supported by Bedrock, so I cannot describe its content. I should inform the user about this limitation. </thinking>
-
-              I have retrieved an audio file with the identifier "2d36ae". However, the content of the audio file is not supported by Bedrock, so I cannot describe its content. If you need information about the audio file, you may need to use a different tool or method to access it.
-          role: assistant
-      stopReason: end_turn
-      usage:
-        inputTokens: 504
-        outputTokens: 118
-        serverToolUsage: {}
-        totalTokens: 622
+        totalTokens: 446
     status:
       code: 200
       message: OK
