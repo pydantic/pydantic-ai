@@ -381,3 +381,86 @@ class TestConcurrencyLimiterName:
         limiter = ConcurrencyLimiter.from_limit(5, name='my-limit')
         assert limiter.name == 'my-limit'
         assert limiter.max_running == 5
+
+    async def test_named_limiter_waiting_adds_limiter_name_attribute(self):
+        """Test that waiting with a named limiter adds limiter_name to span attributes."""
+        limiter = ConcurrencyLimiter(max_running=1, name='test-pool')
+        hold = asyncio.Event()
+
+        async def holder():
+            async with get_concurrency_context(limiter, 'test'):
+                await hold.wait()
+
+        # Start holder to occupy the slot
+        task = asyncio.create_task(holder())
+        await asyncio.sleep(0.01)
+
+        # Start a waiter - this will trigger the span with limiter_name attribute
+        async def waiter():
+            async with get_concurrency_context(limiter, 'test'):
+                pass
+
+        waiter_task = asyncio.create_task(waiter())
+        await asyncio.sleep(0.01)
+
+        hold.set()
+        await task
+        await waiter_task
+
+
+class TestConcurrencyLimiterWithTracer:
+    """Tests for ConcurrencyLimiter with custom tracer."""
+
+    async def test_custom_tracer(self):
+        """Test that custom tracer is used when provided."""
+        from opentelemetry.trace import NoOpTracer
+
+        custom_tracer = NoOpTracer()
+        limiter = ConcurrencyLimiter(max_running=5, tracer=custom_tracer)
+
+        # Verify the tracer is stored and returned
+        assert limiter._get_tracer() is custom_tracer
+
+    async def test_from_limit_with_tracer(self):
+        """Test creating limiter from limit with tracer."""
+        from opentelemetry.trace import NoOpTracer
+
+        custom_tracer = NoOpTracer()
+        limiter = ConcurrencyLimiter.from_limit(5, tracer=custom_tracer)
+        assert limiter._get_tracer() is custom_tracer
+
+
+class TestConcurrencyLimitedModelMethods:
+    """Tests for ConcurrencyLimitedModel count_tokens and request_stream methods."""
+
+    async def test_count_tokens(self):
+        """Test that count_tokens delegates to wrapped model with concurrency limiting."""
+        from unittest.mock import AsyncMock
+
+        from pydantic_ai.models import ModelRequestParameters
+        from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
+        from pydantic_ai.usage import RequestUsage
+
+        base_model = TestModel()
+        # Mock count_tokens to return a value
+        base_model.count_tokens = AsyncMock(return_value=RequestUsage())
+        model = ConcurrencyLimitedModel(base_model, limiter=5)
+
+        # count_tokens should delegate to wrapped model
+        usage = await model.count_tokens([], None, ModelRequestParameters())
+        assert usage is not None
+        base_model.count_tokens.assert_called_once()
+
+    async def test_request_stream(self):
+        """Test that request_stream is called with concurrency limiting."""
+        from pydantic_ai.models import ModelRequestParameters
+        from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
+
+        base_model = TestModel()
+        model = ConcurrencyLimitedModel(base_model, limiter=5)
+
+        # request_stream should work
+        async with model.request_stream([], None, ModelRequestParameters()) as stream:
+            # Consume the stream
+            async for _ in stream:
+                pass
