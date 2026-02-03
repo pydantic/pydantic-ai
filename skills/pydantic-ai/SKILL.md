@@ -207,6 +207,8 @@ async def test_my_agent():
 | Migrate from deprecated APIs | [migrations.md](references/migrations.md) |
 | See advanced real-world examples | [examples-advanced.md](references/examples-advanced.md) |
 | Look up an import path | [api-reference.md](references/api-reference.md) |
+| Extend framework behavior | [extensibility.md](references/extensibility.md) |
+| Build custom toolsets or models | [extensibility.md](references/extensibility.md) |
 
 ## Decision Trees
 
@@ -372,3 +374,4 @@ Need deterministic, fast tests?
 | [migrations.md](references/migrations.md) | Upgrade patterns from deprecated APIs |
 | [examples-advanced.md](references/examples-advanced.md) | Real-world examples: RAG, support bot, code assistant |
 | [api-reference.md](references/api-reference.md) | Condensed public API with import paths |
+| [extensibility.md](references/extensibility.md) | Wrapper patterns, extension points, building on abstractions |

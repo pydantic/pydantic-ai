@@ -132,6 +132,7 @@ EXPECTED_REFERENCE_FILES = [
     'durable.md',
     'api-reference.md',
     'run-context.md',
+    'extensibility.md',
 ]
 
 # Exports that are intentionally not documented in skills (internal, deprecated, or low-level)
