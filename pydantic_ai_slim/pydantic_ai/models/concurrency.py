@@ -45,7 +45,7 @@ class ConcurrencyLimitedModel(WrapperModel):
     agent = Agent(model)
 
     # Or share a limiter across multiple models
-    from pydantic_ai import ConcurrencyLimiter
+    from pydantic_ai import ConcurrencyLimiter  # noqa E402
 
     shared_limiter = ConcurrencyLimiter(max_running=10, name='openai-pool')
     model1 = ConcurrencyLimitedModel('openai:gpt-4o', limiter=shared_limiter)
@@ -129,7 +129,6 @@ def limit_model_concurrency(
 
     Example:
     ```python
-    from pydantic_ai.models import infer_model
     from pydantic_ai.models.concurrency import limit_model_concurrency
 
     model = limit_model_concurrency('openai:gpt-4o', limiter=5)

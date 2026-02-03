@@ -30,6 +30,7 @@ class AbstractConcurrencyLimiter(ABC):
     ```python
     from pydantic_ai.concurrency import AbstractConcurrencyLimiter
 
+
     class RedisConcurrencyLimiter(AbstractConcurrencyLimiter):
         def __init__(self, redis_client, key: str, max_running: int):
             self._redis = redis_client
