@@ -931,7 +931,7 @@ class OpenAIChatModel(Model):
         _model: OpenAIChatModel
 
         texts: list[str] = field(default_factory=list[str])
-        thinkings: list[str] = field(default_factory=list[str])
+        thinkings: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
         tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = field(
             default_factory=list[ChatCompletionMessageFunctionToolCallParam]
         )
@@ -961,14 +961,12 @@ class OpenAIChatModel(Model):
             Returns:
                 An OpenAI `ChatCompletionAssistantMessageParam` object representing the assistant's response.
             """
-            profile = OpenAIModelProfile.from_profile(self._model.profile)
             message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
             # Note: model responses from this model should only have one text item, so the following
             # shouldn't merge multiple texts into one unless you switch models between runs:
-            if profile.openai_chat_send_back_thinking_parts == 'field' and self.thinkings:
-                field = profile.openai_chat_thinking_field
-                if field:  # pragma: no branch (handled by profile validation)
-                    message_param[field] = '\n\n'.join(self.thinkings)
+            if self.thinkings:
+                for field_name, contents in self.thinkings.items():
+                    message_param[field_name] = '\n\n'.join(contents)
             if self.texts:
                 message_param['content'] = '\n\n'.join(self.texts)
             else:
@@ -993,11 +991,33 @@ class OpenAIChatModel(Model):
             """
             profile = OpenAIModelProfile.from_profile(self._model.profile)
             include_method = profile.openai_chat_send_back_thinking_parts
-            if include_method == 'tags':
+
+            # Auto-detect: if thinking came from a custom field and from the same provider, use field mode
+            # id='content' means it came from tags in content, not a custom field
+            if include_method == 'auto':
+                # Check if thinking came from a custom field from the same provider
+                custom_field = profile.openai_chat_thinking_field
+                matches_custom_field = (not custom_field) or (item.id == custom_field)
+
+                if (
+                    item.id
+                    and item.id != 'content'
+                    and item.provider_name == self._model.system
+                    and matches_custom_field
+                ):
+                    # Store both content and field name for later use in _into_message_param
+                    self.thinkings.setdefault(item.id, []).append(item.content)
+                else:
+                    # Fall back to tags mode
+                    start_tag, end_tag = self._model.profile.thinking_tags
+                    self.texts.append('\n'.join([start_tag, item.content, end_tag]))
+            elif include_method == 'tags':
                 start_tag, end_tag = self._model.profile.thinking_tags
                 self.texts.append('\n'.join([start_tag, item.content, end_tag]))
             elif include_method == 'field':
-                self.thinkings.append(item.content)
+                field = profile.openai_chat_thinking_field
+                if field:  # pragma: no branch
+                    self.thinkings.setdefault(field, []).append(item.content)
 
         def _map_response_tool_call_part(self, item: ToolCallPart) -> None:
             """Maps a `ToolCallPart` to the response context.
