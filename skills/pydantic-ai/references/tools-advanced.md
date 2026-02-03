@@ -1,0 +1,257 @@
+# Advanced Tools Reference
+
+Source: `pydantic_ai_slim/pydantic_ai/tools.py`
+
+## Tool Output Types
+
+Tools can return anything JSON-serializable, plus multimodal content:
+
+```python {title="tool_outputs.py"}
+from datetime import datetime
+
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, DocumentUrl, ImageUrl
+from pydantic_ai.models.openai import OpenAIResponsesModel
+
+
+class User(BaseModel):
+    name: str
+    age: int
+
+
+agent = Agent(model=OpenAIResponsesModel('gpt-5'))
+
+
+@agent.tool_plain
+def get_current_time() -> datetime:
+    return datetime.now()
+
+
+@agent.tool_plain
+def get_user() -> User:
+    return User(name='John', age=30)
+
+
+@agent.tool_plain
+def get_logo() -> ImageUrl:
+    return ImageUrl(url='https://example.com/logo.png')
+
+
+@agent.tool_plain
+def get_document() -> DocumentUrl:
+    return DocumentUrl(url='https://example.com/doc.pdf')
+```
+
+## ToolReturn — Advanced Tool Returns
+
+Separate the return value from rich content sent to the model:
+
+```python {title="tool_return_example.py" test="skip" lint="skip"}
+from pydantic_ai import Agent, BinaryContent, ToolReturn
+
+agent = Agent('openai:gpt-5')
+
+
+@agent.tool_plain
+def screenshot_and_click(x: int, y: int) -> ToolReturn:
+    """Click at coordinates and show before/after screenshots."""
+    before = capture_screen()
+    perform_click(x, y)
+    after = capture_screen()
+
+    return ToolReturn(
+        return_value=f'Clicked at ({x}, {y})',  # Sent to model as tool result
+        content=[                                # Additional context for model
+            'Before:',
+            BinaryContent(data=before, media_type='image/png'),
+            'After:',
+            BinaryContent(data=after, media_type='image/png'),
+        ],
+        metadata={'coords': (x, y)},             # Not sent to model (for app use)
+    )
+```
+
+- `return_value` — the actual tool result
+- `content` — extra context (text, images, etc.) sent as user message
+- `metadata` — app-only data, not sent to LLM
+
+## Tool.from_schema — Custom JSON Schema
+
+For functions without proper type hints or docstrings:
+
+```python
+from pydantic_ai import Agent, Tool
+
+
+def foobar(**kwargs) -> str:
+    return kwargs['a'] + kwargs['b']
+
+
+tool = Tool.from_schema(
+    function=foobar,
+    name='sum',
+    description='Sum two numbers.',
+    json_schema={
+        'type': 'object',
+        'properties': {
+            'a': {'type': 'integer', 'description': 'First number'},
+            'b': {'type': 'integer', 'description': 'Second number'},
+        },
+        'required': ['a', 'b'],
+        'additionalProperties': False,
+    },
+    takes_ctx=False,
+)
+
+agent = Agent('openai:gpt-4o', tools=[tool])
+```
+
+Note: No argument validation is performed with `from_schema`.
+
+## Dynamic Tools with ToolPrepareFunc
+
+Modify or hide tools at runtime based on context:
+
+```python {title="dynamic_tool.py"}
+from pydantic_ai import Agent, RunContext, Tool, ToolDefinition
+
+
+async def only_for_admins(
+    ctx: RunContext[str], tool_def: ToolDefinition
+) -> ToolDefinition | None:
+    """Return None to hide the tool, or modify tool_def."""
+    if ctx.deps == 'admin':
+        return tool_def
+    return None  # Hide for non-admins
+
+
+def admin_action(command: str) -> str:
+    """Perform an admin action."""
+    return f'Executed: {command}'
+
+
+agent = Agent('test', tools=[Tool(admin_action, prepare=only_for_admins)], deps_type=str)
+
+# Tool available for admin
+result = agent.run_sync('Do something', deps='admin')
+
+# Tool hidden for regular users
+result = agent.run_sync('Do something', deps='user')
+```
+
+### Modifying Tool Definitions
+
+```python
+async def customize_description(
+    ctx: RunContext[str], tool_def: ToolDefinition
+) -> ToolDefinition:
+    """Customize tool description based on user type."""
+    tool_def.parameters_json_schema['properties']['target']['description'] = (
+        f'Target for {ctx.deps} user.'
+    )
+    return tool_def
+```
+
+## Agent-Wide prepare_tools
+
+Filter or modify all tools at once:
+
+```python {title="prepare_tools_example.py"}
+from dataclasses import replace
+
+from pydantic_ai import Agent, RunContext, ToolDefinition
+
+
+async def make_all_strict_for_openai(
+    ctx: RunContext[None], tool_defs: list[ToolDefinition]
+) -> list[ToolDefinition] | None:
+    if ctx.model.system == 'openai':
+        return [replace(td, strict=True) for td in tool_defs]
+    return tool_defs
+
+
+agent = Agent('openai:gpt-4o', prepare_tools=make_all_strict_for_openai)
+```
+
+## Tool Timeout
+
+Prevent tools from running indefinitely:
+
+```python
+from pydantic_ai import Agent
+
+# Default timeout for all tools
+agent = Agent('test', tool_timeout=30)
+
+
+@agent.tool_plain
+async def slow_tool() -> str:
+    """Uses agent default timeout (30s)."""
+    ...
+
+
+@agent.tool_plain(timeout=5)
+async def fast_tool() -> str:
+    """Override with 5 second timeout."""
+    ...
+```
+
+Timeout triggers a retry prompt: `"Timed out after {timeout} seconds."`
+
+## Parallel vs Sequential Execution
+
+Tools run concurrently by default. Force sequential execution:
+
+```python
+from pydantic_ai import Agent, Tool
+
+
+@agent.tool_plain(sequential=True)
+def must_run_alone(data: str) -> str:
+    """This tool will not run in parallel with others."""
+    ...
+
+
+# Or use context manager for entire run
+with agent.parallel_tool_call_execution_mode('sequential'):
+    result = agent.run_sync('Do things')
+```
+
+## Tool Retries
+
+```python
+from pydantic_ai import Agent, ModelRetry
+
+agent = Agent('openai:gpt-5')
+
+
+@agent.tool_plain(retries=3)
+def flaky_tool(query: str) -> str:
+    if not query.strip():
+        raise ModelRetry('Query cannot be empty. Please provide a valid query.')
+    return f'Result for: {query}'
+```
+
+Retries trigger on:
+- `ValidationError` (invalid arguments)
+- `ModelRetry` exception
+- Timeout
+
+## Key Types
+
+| Type | Import | Description |
+|------|--------|-------------|
+| `Tool` | `pydantic_ai.Tool` | Tool wrapper class |
+| `ToolDefinition` | `pydantic_ai.ToolDefinition` | Schema + metadata |
+| `ToolReturn` | `pydantic_ai.ToolReturn` | Advanced return with content/metadata |
+| `ToolPrepareFunc` | `pydantic_ai.tools.ToolPrepareFunc` | Dynamic tool preparation |
+| `ToolsPrepareFunc` | `pydantic_ai.tools.ToolsPrepareFunc` | Agent-wide tool preparation |
+| `ModelRetry` | `pydantic_ai.ModelRetry` | Exception for tool retry |
+
+## See Also
+
+- [tools.md](tools.md) — Basic tool registration
+- [deferred-tools.md](deferred-tools.md) — Human-in-the-loop approval
+- [input.md](input.md) — Multimodal content types
+- [observability.md](observability.md) — Logfire debugging

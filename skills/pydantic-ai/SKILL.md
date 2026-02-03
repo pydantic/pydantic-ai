@@ -188,6 +188,14 @@ async def test_my_agent():
 | Evaluate agent performance | [evals.md](references/evals.md) |
 | Use embeddings for RAG | [embeddings.md](references/embeddings.md) |
 | Use durable execution | [durable.md](references/durable.md) |
+| Build multi-agent systems | [multi-agent.md](references/multi-agent.md) |
+| Require tool approval (human-in-the-loop) | [deferred-tools.md](references/deferred-tools.md) |
+| Use images, audio, video, or documents | [input.md](references/input.md) |
+| Use advanced tool features | [tools-advanced.md](references/tools-advanced.md) |
+| Make direct model requests | [direct.md](references/direct.md) |
+| Expose agents as HTTP servers (A2A) | [a2a.md](references/a2a.md) |
+| Handle HTTP retries and rate limits | [retries.md](references/retries.md) |
+| Use LangChain or ACI.dev tools | [third-party-tools.md](references/third-party-tools.md) |
 | Look up an import path | [api-reference.md](references/api-reference.md) |
 
 ## Architecture Overview
@@ -240,4 +248,12 @@ async def test_my_agent():
 | [evals.md](references/evals.md) | Evaluation framework, evaluators, LLM judges |
 | [embeddings.md](references/embeddings.md) | Embedder, embedding models, vector search patterns |
 | [durable.md](references/durable.md) | Temporal, DBOS, Prefect integration |
+| [input.md](references/input.md) | ImageUrl, AudioUrl, VideoUrl, DocumentUrl, BinaryContent |
+| [deferred-tools.md](references/deferred-tools.md) | DeferredToolRequests, ApprovalRequired, CallDeferred |
+| [tools-advanced.md](references/tools-advanced.md) | ToolReturn, Tool.from_schema, ToolPrepareFunc, timeout |
+| [multi-agent.md](references/multi-agent.md) | Agent delegation, hand-off, deep agents |
+| [direct.md](references/direct.md) | model_request, model_request_sync, low-level API |
+| [a2a.md](references/a2a.md) | agent.to_a2a(), FastA2A, inter-agent communication |
+| [retries.md](references/retries.md) | AsyncTenacityTransport, RetryConfig, wait_retry_after |
+| [third-party-tools.md](references/third-party-tools.md) | LangChain tools, ACI.dev tools |
 | [api-reference.md](references/api-reference.md) | Condensed public API with import paths |
