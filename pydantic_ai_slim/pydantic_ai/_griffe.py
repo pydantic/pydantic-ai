@@ -20,7 +20,7 @@ def doc_descriptions(
     sig: Signature,
     *,
     docstring_format: DocstringFormat,
-) -> tuple[str | None, dict[str, str], str | None]:
+) -> tuple[str | None, dict[str, str]]:
     """Extract the function description and parameter descriptions from a function's docstring.
 
     The function parses the docstring using the specified format (or infers it if 'auto')
@@ -33,13 +33,10 @@ def doc_descriptions(
             * Plain text if no returns section is present
             * XML-formatted if returns section exists, including <summary> and <returns> tags
         - dict[str, str]: Dictionary mapping parameter names to their descriptions
-        - str | None: Return description string. Always None when a returns section is present
-            (since it's embedded in the main description). Reserved for future use cases where
-            return description should go to the return schema instead of the tool description.
     """
     doc = func.__doc__
     if doc is None:
-        return None, {}, None
+        return None, {}
 
     # see https://github.com/mkdocstrings/griffe/issues/293
     parent = cast(GriffeObject, sig)
@@ -68,8 +65,6 @@ def doc_descriptions(
     if main := next((p for p in sections if p.kind == DocstringSectionKind.text), None):
         main_desc = main.value
 
-    return_desc = None
-
     if return_ := next((p for p in sections if p.kind == DocstringSectionKind.returns), None):
         return_statement = return_.value[0]
         return_desc = return_statement.description
@@ -82,11 +77,7 @@ def doc_descriptions(
         else:
             main_desc = return_xml
 
-        # Return description is already embedded in main_desc as XML, don't return it separately
-        # to avoid duplication in the return schema
-        return_desc = None
-
-    return main_desc, params, return_desc
+    return main_desc, params
 
 
 def _infer_docstring_style(doc: str) -> DocstringStyle:

@@ -676,17 +676,6 @@ class ToolReturn(Generic[T]):
     - A return value for actual tool return
     - Custom content (including multi-modal content) to be sent to the model as a UserPromptPart
     - Optional metadata for application use
-
-    To enable return schema generation for models that support it, specify the generic type parameter
-    in your tool's return type annotation:
-
-    ```python
-    @agent.tool_plain
-    def my_tool() -> ToolReturn[int]:
-        return ToolReturn(return_value=42)
-    ```
-
-    Without the generic type (e.g., `-> ToolReturn`), no return schema will be generated.
     """
 
     return_value: T

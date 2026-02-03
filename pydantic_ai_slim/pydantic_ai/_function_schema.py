@@ -116,7 +116,7 @@ def function_schema(  # noqa: C901
     var_positional_field: str | None = None
     decorators = _decorators.DecoratorInfos()
 
-    description, field_descriptions, return_description = doc_descriptions(
+    description, field_descriptions = doc_descriptions(
         original_func, sig, docstring_format=docstring_format
     )
     missing_param_descriptions: set[str] = set()
@@ -239,8 +239,6 @@ def function_schema(  # noqa: C901
             return_schema = TypeAdapter(schema_type).json_schema(
                 schema_generator=schema_generator, mode='serialization'
             )
-            if return_description and 'description' not in return_schema:
-                return_schema['description'] = return_description
         except (PydanticSchemaGenerationError, PydanticUserError):
             pass
 
