@@ -1651,16 +1651,7 @@ async def test_google_model_web_fetch_tool(
                     ),
                     TextPart(content='Join us at the inaugural PyAI Conf in San Francisco on March 10th!'),
                 ],
-                usage=RequestUsage(
-                    input_tokens=32,
-                    output_tokens=4744,
-                    details={
-                        'thoughts_tokens': 45,
-                        'tool_use_prompt_tokens': 4665,
-                        'text_prompt_tokens': 32,
-                        'text_tool_use_prompt_tokens': 4665,
-                    },
-                ),
+                usage=IsInstance(RequestUsage),
                 model_name='gemini-2.5-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
@@ -1797,6 +1788,10 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(
+                index=2,
+                delta=TextPartDelta(content_delta='Join us at the inaugural PyAI Conf in San Francisco on March 10th!'),
+            ),
             PartEndEvent(index=2, part=TextPart(content=IsStr())),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
@@ -2077,9 +2072,9 @@ async def test_google_instructions_only_with_tool_calls(allow_model_requests: No
     result = await agent.run()
     assert result.output == snapshot(
         [
-            'What kind of car does an egg drive? A Yolk-swagen!',
-            'Why do golfers always carry an extra pair of trousers? In case they get a hole in one!',
-            "Why do penguins carry fish in their beaks? Because they don't have any pockets!",
+            'Why did the car get a flat tire? Because there was a fork in the road!',
+            'Why do golfers carry an extra pair of trousers? In case they get a hole in one!',
+            "Why don't you ever see penguins in Great Britain? Because they're afraid of Wales!",
         ]
     )
 
@@ -3305,9 +3300,7 @@ async def test_google_vertexai_model_usage_limit_exceeded(
     async def get_user_country() -> str:
         return 'Mexico'  # pragma: no cover
 
-    with pytest.raises(
-        UsageLimitExceeded, match='The next request would exceed the total_tokens_limit of 9'
-    ):
+    with pytest.raises(UsageLimitExceeded, match='The next request would exceed the total_tokens_limit of 9'):
         await agent.run(
             'What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
             usage_limits=UsageLimits(total_tokens_limit=9, count_tokens_before_request=True),

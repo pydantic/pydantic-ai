@@ -1102,9 +1102,9 @@ async def test_multiple_agents(allow_model_requests: None, client: Client):
         assert output == snapshot(
             Response(
                 answers=[
-                    Answer(label='Capital of the Country', answer='Mexico City'),
-                    Answer(label='Weather in Mexico City', answer='Sunny'),
-                    Answer(label='Product Name', answer='Pydantic AI'),
+                    Answer(label='Capital of the country', answer='The capital of the country Mexico is Mexico City.'),
+                    Answer(label='Weather in the capital', answer='The weather in Mexico City is currently sunny.'),
+                    Answer(label='Product name', answer='The product name is Pydantic AI.'),
                 ]
             )
         )

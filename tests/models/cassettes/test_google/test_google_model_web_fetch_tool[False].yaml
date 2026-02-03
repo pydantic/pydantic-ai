@@ -34,11 +34,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1741'
+      - '975'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1995
+      - gfet4t7; dur=1943
       transfer-encoding:
       - chunked
       vary:
@@ -49,9 +49,6 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: |2-
-
-              The first meaningful sentence on the page after the title and navigation is "Join us at the inaugural PyAI Conf in San Francisco on March 10th!".
           - text: Join us at the inaugural PyAI Conf in San Francisco on March 10th!
           role: model
         finishReason: STOP
@@ -64,8 +61,7 @@ interactions:
           - groundingChunkIndices:
             - 0
             segment:
-              endIndex: 212
-              startIndex: 146
+              endIndex: 66
               text: Join us at the inaugural PyAI Conf in San Francisco on March 10th!
         index: 0
         urlContextMetadata:
@@ -73,19 +69,19 @@ interactions:
           - retrievedUrl: https://ai.pydantic.dev
             urlRetrievalStatus: URL_RETRIEVAL_STATUS_SUCCESS
       modelVersion: gemini-2.5-flash
-      responseId: oDR8af2BMIycz7IPs-_ggQQ
+      responseId: UCuCadvHC9LBqtsP1JivyQc
       usageMetadata:
-        candidatesTokenCount: 66
+        candidatesTokenCount: 34
         promptTokenCount: 32
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 32
-        thoughtsTokenCount: 45
-        toolUsePromptTokenCount: 4665
+        thoughtsTokenCount: 35
+        toolUsePromptTokenCount: 4677
         toolUsePromptTokensDetails:
         - modality: TEXT
-          tokenCount: 4665
-        totalTokenCount: 4808
+          tokenCount: 4677
+        totalTokenCount: 4778
     status:
       code: 200
       message: OK

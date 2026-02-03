@@ -34,11 +34,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '975'
+      - '1089'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1951
+      - gfet4t7; dur=17198
       transfer-encoding:
       - chunked
       vary:
@@ -61,7 +61,8 @@ interactions:
           - groundingChunkIndices:
             - 0
             segment:
-              endIndex: 66
+              endIndex: 67
+              startIndex: 1
               text: Join us at the inaugural PyAI Conf in San Francisco on March 10th!
         index: 0
         urlContextMetadata:
@@ -69,19 +70,23 @@ interactions:
           - retrievedUrl: https://ai.pydantic.dev
             urlRetrievalStatus: URL_RETRIEVAL_STATUS_SUCCESS
       modelVersion: gemini-2.5-flash
-      responseId: ttWAad-ZLvu4mtkP7eu7uAQ
+      responseId: YSuCaeniLtqLqtsP0abpsQk
       usageMetadata:
+        cacheTokensDetails:
+        - modality: TEXT
+          tokenCount: 30
+        cachedContentTokenCount: 30
         candidatesTokenCount: 34
         promptTokenCount: 32
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 32
-        thoughtsTokenCount: 45
-        toolUsePromptTokenCount: 4665
+        thoughtsTokenCount: 4457
+        toolUsePromptTokenCount: 4677
         toolUsePromptTokensDetails:
         - modality: TEXT
-          tokenCount: 4665
-        totalTokenCount: 4776
+          tokenCount: 4677
+        totalTokenCount: 9200
     status:
       code: 200
       message: OK
