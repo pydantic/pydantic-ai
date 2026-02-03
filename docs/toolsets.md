@@ -762,7 +762,7 @@ Toolsets for file operations help agents read, write, and edit files:
 
 Toolsets for sandboxed code execution help agents run code in a sandboxed environment:
 
-* [`mcp-run-python`](https://github.com/pydantic/mcp-run-python) - MCP server by the Pydantic team that runs Python code in a sandboxed environment. Can be used as `MCPServerStdio('uv', args=['run', 'mcp-run-python', 'stdio'])`.
+- [`mcp-run-python`](https://github.com/pydantic/mcp-run-python) - MCP server by the Pydantic team that runs Python code in a sandboxed environment. Can be used as `MCPServerStdio('uv', args=['run', 'mcp-run-python', 'stdio'])`.
 
 ### LangChain Tools {#langchain-tools}
 
