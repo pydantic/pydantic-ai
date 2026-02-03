@@ -2,7 +2,6 @@
 name: pydantic-ai
 description: Build Python AI agents using the PydanticAI framework with type-safe tools, structured outputs, and dependency injection. Use when creating LLM agents, adding tools to agents, configuring model providers, implementing structured output with Pydantic models, testing with TestModel, or building multi-agent systems. Provides patterns for Agent creation, tool registration (@agent.tool, @agent.tool_plain), RunContext usage, streaming, message history, and observability with Logfire.
 license: MIT
-compatibility: Requires Python 3.10+
 ---
 
 # PydanticAI Skill
@@ -287,7 +286,7 @@ Need deterministic, fast tests?
 - `Agent[AgentDepsT, OutputDataT]` — dependency type + output type
 - `RunContext[AgentDepsT]` — available in tools and system prompts
 
-**Model string format:** `"provider:model-name"` (e.g., `"openai:gpt-5"`, `"anthropic:claude-sonnet-4-5"`, `"google:gemini-2.5-pro"`)
+**Model string format:** `"provider:model-name"` (e.g., `"openai:gpt-5"`, `"anthropic:claude-sonnet-4-5"`, `"google-gla:gemini-2.5-pro"`)
 
 **Output modes:**
 - `ToolOutput` — structured data via tool calls (default for Pydantic models)

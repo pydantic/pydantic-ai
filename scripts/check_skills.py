@@ -99,6 +99,14 @@ def validate_frontmatter(content: str) -> list[str]:
     else:
         errors.extend(validate_description(frontmatter['description']))
 
+    # Check name matches directory name
+    if 'name' in frontmatter:
+        expected_name = SKILL_MD.parent.name
+        if frontmatter['name'] != expected_name:
+            errors.append(
+                f"Name '{frontmatter['name']}' must match directory name '{expected_name}'"
+            )
+
     return errors
 
 

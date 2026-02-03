@@ -4,11 +4,17 @@ PydanticAI includes official skills for AI-assisted development with Claude Code
 
 ## Installation
 
-### Manual Installation
+Copy the skill to your Claude skills directory:
 
 ```bash
-git clone https://github.com/pydantic/pydantic-ai
+# Clone and copy
+git clone --depth 1 https://github.com/pydantic/pydantic-ai
 cp -r pydantic-ai/skills/pydantic-ai ~/.claude/skills/
+
+# Or download directly
+mkdir -p ~/.claude/skills/pydantic-ai
+curl -o ~/.claude/skills/pydantic-ai/SKILL.md \
+  https://raw.githubusercontent.com/pydantic/pydantic-ai/main/skills/pydantic-ai/SKILL.md
 ```
 
 ## What's Included
