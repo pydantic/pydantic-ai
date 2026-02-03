@@ -892,7 +892,11 @@ class BaseToolReturnPart:
         data = self.content_excluding_files
         if not data:
             return ''
-        value = data[0] if len(data) == 1 else data
+        # Unwrap single-item list only if original content was not explicitly a list
+        if len(data) == 1 and not isinstance(self.content, list):
+            value = data[0]
+        else:
+            value = data
         if isinstance(value, str):
             return value
         return tool_return_ta.dump_json(value).decode()
@@ -906,8 +910,12 @@ class BaseToolReturnPart:
         data = self.content_excluding_files
         if not data:
             return {}
-        # Unwrap single-item list for cleaner serialization
-        value = data[0] if len(data) == 1 else data
+        # Unwrap single-item list only if original content was not explicitly a list
+        # This preserves semantic meaning when tools intentionally return single-item lists
+        if len(data) == 1 and not isinstance(self.content, list):
+            value = data[0]
+        else:
+            value = data
         json_content = tool_return_ta.dump_python(value, mode='json')
         if _utils.is_str_dict(json_content):
             return json_content

@@ -5189,6 +5189,28 @@ def test_tool_return_part_binary_content_serialization():
     assert tool_return.model_response_object() == snapshot({})
 
 
+def test_tool_return_part_list_structure_preserved():
+    """Test that model_response_object preserves list structure when content is a list."""
+    single_dict = {'result': 'found'}
+    single_item_list = [{'result': 'found'}]
+    multi_item_list = [{'a': 1}, {'b': 2}]
+
+    # Single dict content gets unwrapped as before
+    tool_return_dict = ToolReturnPart(tool_name='test', content=single_dict, tool_call_id='tc1')
+    assert tool_return_dict.model_response_object() == snapshot({'result': 'found'})
+    assert tool_return_dict.model_response_str() == snapshot('{"result":"found"}')
+
+    # Single-item list content preserves list structure
+    tool_return_single_list = ToolReturnPart(tool_name='test', content=single_item_list, tool_call_id='tc2')
+    assert tool_return_single_list.model_response_object() == snapshot({'return_value': [{'result': 'found'}]})
+    assert tool_return_single_list.model_response_str() == snapshot('[{"result":"found"}]')
+
+    # Multi-item list content is also preserved
+    tool_return_multi_list = ToolReturnPart(tool_name='test', content=multi_item_list, tool_call_id='tc3')
+    assert tool_return_multi_list.model_response_object() == snapshot({'return_value': [{'a': 1}, {'b': 2}]})
+    assert tool_return_multi_list.model_response_str() == snapshot('[{"a":1},{"b":2}]')
+
+
 def test_tool_returning_binary_content_directly():
     """Test that a tool returning BinaryContent directly works correctly."""
 

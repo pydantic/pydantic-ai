@@ -1535,10 +1535,12 @@ async def test_run_stream_builtin_tool_call():
             {
                 'type': 'tool-output-available',
                 'toolCallId': 'search_1',
-                'output': {
-                    'title': '"Hello, World!" program',
-                    'url': 'https://en.wikipedia.org/wiki/%22Hello,_World!%22_program',
-                },
+                'output': [
+                    {
+                        'title': '"Hello, World!" program',
+                        'url': 'https://en.wikipedia.org/wiki/%22Hello,_World!%22_program',
+                    }
+                ],
                 'providerExecuted': True,
             },
             {'type': 'text-start', 'id': IsStr()},
@@ -1671,6 +1673,69 @@ async def test_event_stream_file():
             {'type': 'start'},
             {'type': 'start-step'},
             {'type': 'file', 'url': 'data:image/png;base64,ZmFrZQ==', 'mediaType': 'image/png'},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_tool_return_with_files():
+    """Test that tool returns with files include file descriptions in the output."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {
+                0: DeltaToolCall(
+                    name='get_image',
+                    json_args='{}',
+                    tool_call_id='img_1',
+                )
+            }
+        else:
+            yield 'I see an image'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    async def get_image() -> list[Any]:
+        return ['Image description', BinaryImage(data=b'fake_png', media_type='image/png')]
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Get an image')],
+            ),
+        ],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'img_1', 'toolName': 'get_image'},
+            {'type': 'tool-input-delta', 'toolCallId': 'img_1', 'inputTextDelta': '{}'},
+            {'type': 'tool-input-available', 'toolCallId': 'img_1', 'toolName': 'get_image', 'input': {}},
+            {
+                'type': 'tool-output-available',
+                'toolCallId': 'img_1',
+                'output': ['Image description', {'files': ['[File: image/png]']}],
+            },
+            {'type': 'finish-step'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'I see an image', 'id': IsStr()},
+            {'type': 'text-end', 'id': IsStr()},
             {'type': 'finish-step'},
             {'type': 'finish'},
             '[DONE]',
