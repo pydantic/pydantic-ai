@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '1412'
+      - '1392'
       content-type:
       - application/json
       host:
@@ -16,10 +16,11 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: |-
+      - content: |2
+
           Always respond with a JSON object that's compatible with this schema:
 
-          {"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"const": "CityLocation"}, "data": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}}, "description": "CityLocation", "required": ["kind", "data"], "additionalProperties": false}, {"type": "object", "properties": {"kind": {"const": "CountryLanguage"}, "data": {"properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "title": "CountryLanguage", "type": "object"}}, "description": "CountryLanguage", "required": ["kind", "data"], "additionalProperties": false}]}}, "required": ["result"], "additionalProperties": false}
+          {"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "CityLocation"}, "data": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object", "additionalProperties": false}}, "required": ["kind", "data"], "additionalProperties": false}, {"type": "object", "properties": {"kind": {"type": "string", "const": "CountryLanguage"}, "data": {"properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "type": "object", "additionalProperties": false}}, "required": ["kind", "data"], "additionalProperties": false}]}}, "required": ["result"], "additionalProperties": false}
 
           Don't include any text or Markdown fencing before or after.
         role: system
@@ -52,10 +53,8 @@ interactions:
       - '1068'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '428'
+      - '272'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -76,14 +75,14 @@ interactions:
           - function:
               arguments: '{}'
               name: get_user_country
-            id: call_wJD14IyJ4KKVtjCrGyNCHO09
+            id: call_MFe0RdBQSM9qbQMWcuIAjhAW
             type: function
-      created: 1749514898
-      id: chatcmpl-Bgh2AW2NXGgMc7iS639MJXNRgtatR
+      created: 1769747654
+      id: chatcmpl-D3aUwOYVFd4VXd0tzrA44OBpgY26l
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_9bddfca6e2
+      system_fingerprint: fp_fa7f5b168b
       usage:
         completion_tokens: 11
         completion_tokens_details:
@@ -91,11 +90,11 @@ interactions:
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 273
+        prompt_tokens: 268
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 284
+        total_tokens: 279
     status:
       code: 200
       message: OK
@@ -104,40 +103,42 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '1643'
+      - '1638'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=gqjIEMZSez95CPkkPVuU_AoDutHrobFMbFPjq43G66M-1749514899-1.0.1.1-5TGB9WajW5pzCRtVtWeQfiwyQUZs1JwWy9qC8VGlgq7s5pQWKerukQtYB7GqNDrdb.1pbtFyt2HZ9xV3YiSbK4H1bZS_hS1CCeoup_3IQW0;
-        _cfuvid=ZN6eoNau4b.bJ8kvRn2z9R0HgTUd9nOsupKUtLXQowU-1749514899280-0.0.1.1-604800000
+      - __cf_bm=tSpNWhtWdp8rwPKffaZP1vK_g2MPvTgZkYEbOtqDhg8-1769747654-1.0.1.1-n8qJS8bV10pfkkmTGEmUjgZqWU0cMcdBc75ezPlu2MXJQhAPr3YZCzWXC.sqO_MkqX8ULNpijAxowKL2HNsCnLpNBT.9F6KEeLQOYTW_0KY;
+        _cfuvid=c8v9b73t3.BAmvt7LWszFjI1Zl7WQ1Npma4wtxjC1bw-1769747654763-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
     parsed_body:
       messages:
-      - content: |-
+      - content: |2
+
           Always respond with a JSON object that's compatible with this schema:
 
-          {"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"const": "CityLocation"}, "data": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}}, "description": "CityLocation", "required": ["kind", "data"], "additionalProperties": false}, {"type": "object", "properties": {"kind": {"const": "CountryLanguage"}, "data": {"properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "title": "CountryLanguage", "type": "object"}}, "description": "CountryLanguage", "required": ["kind", "data"], "additionalProperties": false}]}}, "required": ["result"], "additionalProperties": false}
+          {"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "CityLocation"}, "data": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object", "additionalProperties": false}}, "required": ["kind", "data"], "additionalProperties": false}, {"type": "object", "properties": {"kind": {"type": "string", "const": "CountryLanguage"}, "data": {"properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "type": "object", "additionalProperties": false}}, "required": ["kind", "data"], "additionalProperties": false}]}}, "required": ["result"], "additionalProperties": false}
 
           Don't include any text or Markdown fencing before or after.
         role: system
       - content: What is the largest city in the user country?
         role: user
-      - role: assistant
+      - content: null
+        role: assistant
         tool_calls:
         - function:
             arguments: '{}'
             name: get_user_country
-          id: call_wJD14IyJ4KKVtjCrGyNCHO09
+          id: call_MFe0RdBQSM9qbQMWcuIAjhAW
           type: function
       - content: Mexico
         role: tool
-        tool_call_id: call_wJD14IyJ4KKVtjCrGyNCHO09
+        tool_call_id: call_MFe0RdBQSM9qbQMWcuIAjhAW
       model: gpt-4o
       response_format:
         type: json_object
@@ -165,10 +166,8 @@ interactions:
       - '903'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '763'
+      - '799'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -185,12 +184,12 @@ interactions:
           content: '{"result":{"kind":"CityLocation","data":{"city":"Mexico City","country":"Mexico"}}}'
           refusal: null
           role: assistant
-      created: 1749514899
-      id: chatcmpl-Bgh2BthuopRnSqCuUgMbBnOqgkDHC
+      created: 1769747655
+      id: chatcmpl-D3aUxsdHafpet2y6DFHn2ZpbfT6Cn
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_9bddfca6e2
+      system_fingerprint: fp_fa7f5b168b
       usage:
         completion_tokens: 21
         completion_tokens_details:
@@ -198,11 +197,11 @@ interactions:
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 294
+        prompt_tokens: 289
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 315
+        total_tokens: 310
     status:
       code: 200
       message: OK

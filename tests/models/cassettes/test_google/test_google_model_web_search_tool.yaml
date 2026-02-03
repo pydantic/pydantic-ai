@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '247'
+      - '277'
       content-type:
       - application/json
       host:
@@ -19,7 +19,9 @@ interactions:
       - parts:
         - text: What is the weather in San Francisco today?
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       systemInstruction:
         parts:
         - text: You are a helpful chatbot.
@@ -32,11 +34,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '9827'
+      - '10382'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=8115
+      - gfet4t7; dur=8285
       transfer-encoding:
       - chunked
       vary:
@@ -48,68 +50,77 @@ interactions:
       - content:
           parts:
           - text: |-
-              ## Weather in San Francisco is Mild and Partly Cloudy
+              Here's a look at the weather in San Francisco for Friday, January 30, 2026.
 
-              **San Francisco, CA** - Residents and visitors in San Francisco are experiencing a mild Tuesday, with partly cloudy skies and temperatures hovering around 69°F. There is a very low chance of rain throughout the day.
+              **Today's forecast calls for a mix of clouds and sun, with cloudy skies in the morning giving way to partly cloudy conditions in the afternoon.** The chance of rain is low, at around 10%.
 
-              According to the latest weather reports, the forecast for the remainder of the day is expected to be sunny, with highs ranging from the mid-60s to the lower 80s. Winds are predicted to come from the west at 10 to 15 mph.
+              The high temperature is expected to be in the low 60s, with different sources predicting between 61°F (16°C) and 64°F. The low temperature for tonight is anticipated to be around 48°F. You can expect winds from the north-northeast at 5 to 10 mph.
 
-              As the evening approaches, the skies are expected to remain partly cloudy, with temperatures dropping to the upper 50s. There is a slight increase in the chance of rain overnight, but it remains low at 20%.
-
-              Overall, today's weather in San Francisco is pleasant, with a mix of sun and clouds and comfortable temperatures.
+              **Hazardous Conditions:** It's important to be aware of a Coastal Flood Advisory in effect for bayshore locations through Sunday. Additionally, a Beach Hazards Statement is active until Monday, so caution is advised near the water.
           role: model
         finishReason: STOP
         groundingMetadata:
           groundingChunks:
           - web:
+              title: wunderground.com
+              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEtIMuE-qRD5sZj_LCu_5McCA8JLJOk7maet5sQ9DHIOSHCup7I3X2p-ERs77Ri1HmhoCKKRi31xHLo5yJKtRQz5aJz408iaDnkjYIkjX2RsaNk1g8nnzq13Qme6hVQhfXa38l-2zMctvbmAhJpaMqOtg==
+          - web:
               title: Weather information for San Francisco, CA, US
               uri: https://www.google.com/search?q=weather+in+San Francisco, CA,+US
           - web:
-              title: weather.gov
-              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF_uqo2G5Goeww8iF1L_dYa2sqWGhzu_UnxEZd1gQ7ZNuXEVVVYEEYcx_La3kuODFm0dPUhHeF4qGP1c6kJ86i4SKfvRqFitMCvNiDx07eC5iM7axwepoTv3FeUdIRC-ou1P-6DDykZ4QzcxcrKISa_1Q==
+              title: accuweather.com
+              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFj_Qm-tG4ohXlBnuw_2KkZkt-9gOaSZpFQ3tOCvrZeAgo3mpoobp0f_tMfbVPptdKoLFB-V1Pj9Xt9HpYPrxUPk9-VyQpZEM2qeyG_yJ6Y6vReEk-4XfrcBVEaEiWeH5BXXsdWK75kHpfSeqFTqQRYnRBa1F9PQy8U76gISO_p5ATCADVFvpY=
           - web:
-              title: wunderground.com
-              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFywixFZicmDjijfhfLNw8ya7XdqWR31aJp8CHyULLelG8bujH1TuqeP9RAhK6Pcm1qz11ujm2yM7gM5bJXDFsZwbsubub4cnUp5ixRaloJcjVrHkyd5RHblhkDDxHGiREV9BcuqeJovdr8qhtrCKMcvJk=
+              title: weather.gov
+              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG_QDYAlEKqk0Pz0unIB2ZaI8LdvAgYTlbPqmBsZZFtnV09N1BO1Ufu1m7OrNxrCspdumvT0790s7vPRYDJ7BvBtKGTUq4S46085nyPJkcK_6cED1Thcw==
           groundingSupports:
           - groundingChunkIndices:
             - 0
+            - 1
             segment:
-              endIndex: 216
-              startIndex: 55
-              text: '**San Francisco, CA** - Residents and visitors in San Francisco are experiencing a mild Tuesday, with
-                partly cloudy skies and temperatures hovering around 69°F.'
-          - groundingChunkIndices:
-            - 0
-            segment:
-              endIndex: 271
-              startIndex: 217
-              text: There is a very low chance of rain throughout the day.
+              endIndex: 220
+              startIndex: 77
+              text: '**Today''s forecast calls for a mix of clouds and sun, with cloudy skies in the morning giving way to
+                partly cloudy conditions in the afternoon.'
           - groundingChunkIndices:
             - 1
             segment:
-              endIndex: 434
-              startIndex: 273
-              text: According to the latest weather reports, the forecast for the remainder of the day is expected to be sunny,
-                with highs ranging from the mid-60s to the lower 80s.
+              endIndex: 264
+              startIndex: 220
+              text: '** The chance of rain is low, at around 10%.'
+          - groundingChunkIndices:
+            - 1
+            - 2
+            segment:
+              endIndex: 387
+              startIndex: 266
+              text: The high temperature is expected to be in the low 60s, with different sources predicting between 61°F
+                (16°C) and 64°F.
           - groundingChunkIndices:
             - 2
             segment:
-              endIndex: 493
-              startIndex: 435
-              text: Winds are predicted to come from the west at 10 to 15 mph.
-          - groundingChunkIndices:
-            - 1
-            segment:
-              endIndex: 614
-              startIndex: 495
-              text: As the evening approaches, the skies are expected to remain partly cloudy, with temperatures dropping
-                to the upper 50s.
+              endIndex: 454
+              startIndex: 388
+              text: The low temperature for tonight is anticipated to be around 48°F.
           - groundingChunkIndices:
             - 0
             segment:
-              endIndex: 701
-              startIndex: 615
-              text: There is a slight increase in the chance of rain overnight, but it remains low at 20%.
+              endIndex: 516
+              startIndex: 455
+              text: You can expect winds from the north-northeast at 5 to 10 mph.
+          - groundingChunkIndices:
+            - 3
+            segment:
+              endIndex: 647
+              startIndex: 518
+              text: '**Hazardous Conditions:** It''s important to be aware of a Coastal Flood Advisory in effect for bayshore
+                locations through Sunday.'
+          - groundingChunkIndices:
+            - 3
+            segment:
+              endIndex: 749
+              startIndex: 648
+              text: Additionally, a Beach Hazards Statement is active until Monday, so caution is advised near the water.
           searchEntryPoint:
             renderedContent: |
               <style>
@@ -233,26 +244,26 @@ interactions:
                   <div class="gradient-container"><div class="gradient"></div></div>
                 </div>
                 <div class="carousel">
-                  <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGpaVYtZtg0AbOkyluH7ZfyxRSvLNFvK5HnFIwTqMQdOecLCFYzxIHes41UAd1GgIx1aL-q51HCGjUQXXLrnESB-F5HEvrsMB2_mb3hOwZrelCAn-F28bDl6IQvgTriNrfzd3IlnDYc42uD37aYMQjIWgznihXP-MiUdY5Cchwxn7_GcQNdbsPMQX6K9S0SQX_5GChPnOvfO48W-ULhcHTR">weather in San Francisco today</a>
+                  <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGOI1sNU10x8YcKO0TvhNIAp07VgAh0fzAheG3DzSk6VeZXKtmBs7mimGTrllhVsvYXs2xygv9mttjYmzuddq_kkGhX9K4qwMmd-iU1XKMgQW2GTTLSQOLnUJ_ZLSJadW1yKI5i98YDh94Mt_uhv4FsHrU1gnqIRJkzorjiwbGcUSFu4SAz7MCR7VKhcqIX-YXBbI1h2ibXRYBsUtex5el-">weather in San Francisco today</a>
                 </div>
               </div>
           webSearchQueries:
           - weather in San Francisco today
         index: 0
       modelVersion: gemini-2.5-pro
-      responseId: btnJaOrqE4_6qtsP7bOboQs
+      responseId: Gjt8aem4N9nRz7IPqJDR-AM
       usageMetadata:
-        candidatesTokenCount: 201
+        candidatesTokenCount: 205
         promptTokenCount: 17
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 17
-        thoughtsTokenCount: 213
-        toolUsePromptTokenCount: 119
+        thoughtsTokenCount: 437
+        toolUsePromptTokenCount: 103
         toolUsePromptTokensDetails:
         - modality: TEXT
-          tokenCount: 119
-        totalTokenCount: 550
+          tokenCount: 103
+        totalTokenCount: 762
     status:
       code: 200
       message: OK
@@ -261,11 +272,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '1184'
+      - '1157'
       content-type:
       - application/json
       host:
@@ -278,20 +289,20 @@ interactions:
         role: user
       - parts:
         - text: |-
-            ## Weather in San Francisco is Mild and Partly Cloudy
+            Here's a look at the weather in San Francisco for Friday, January 30, 2026.
 
-            **San Francisco, CA** - Residents and visitors in San Francisco are experiencing a mild Tuesday, with partly cloudy skies and temperatures hovering around 69°F. There is a very low chance of rain throughout the day.
+            **Today's forecast calls for a mix of clouds and sun, with cloudy skies in the morning giving way to partly cloudy conditions in the afternoon.** The chance of rain is low, at around 10%.
 
-            According to the latest weather reports, the forecast for the remainder of the day is expected to be sunny, with highs ranging from the mid-60s to the lower 80s. Winds are predicted to come from the west at 10 to 15 mph.
+            The high temperature is expected to be in the low 60s, with different sources predicting between 61°F (16°C) and 64°F. The low temperature for tonight is anticipated to be around 48°F. You can expect winds from the north-northeast at 5 to 10 mph.
 
-            As the evening approaches, the skies are expected to remain partly cloudy, with temperatures dropping to the upper 50s. There is a slight increase in the chance of rain overnight, but it remains low at 20%.
-
-            Overall, today's weather in San Francisco is pleasant, with a mix of sun and clouds and comfortable temperatures.
+            **Hazardous Conditions:** It's important to be aware of a Coastal Flood Advisory in effect for bayshore locations through Sunday. Additionally, a Beach Hazards Statement is active until Monday, so caution is advised near the water.
         role: model
       - parts:
         - text: how about Mexico City?
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       systemInstruction:
         parts:
         - text: You are a helpful chatbot.
@@ -304,11 +315,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '8690'
+      - '6593'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=6875
+      - gfet4t7; dur=8657
       transfer-encoding:
       - chunked
       vary:
@@ -320,43 +331,16 @@ interactions:
       - content:
           parts:
           - text: |-
-              In Mexico City today, you can expect a day of mixed sun and clouds with a high likelihood of showers and thunderstorms, particularly in the afternoon and evening.
+              Here is the weather forecast for Mexico City on Friday, January 30, 2026.
 
-              Currently, the weather is partly cloudy with temperatures in the mid-60s Fahrenheit (around 17-18°C). As the day progresses, the temperature is expected to rise, reaching a high of around 73-75°F (approximately 23°C).
+              You can expect a day with variable cloudiness and a slight chance of rain. The morning will begin with overcast skies and temperatures around 53°F (12°C).
 
-              There is a significant chance of rain, with forecasts indicating a 60% to 100% probability of precipitation, especially from mid-afternoon into the evening. Winds are generally light, coming from the north-northeast at 10 to 15 mph.
+              As the day progresses, there is a 10% chance of passing showers in the afternoon, with the high temperature reaching approximately 70°F (21°C). The evening will be overcast with temperatures around 60°F (16°C), dropping to a low of about 50°F (10°C) overnight.
 
-              Tonight, the skies will remain cloudy with a continued chance of showers, and the temperature will drop to a low of around 57°F (about 14°C).
+              Winds are expected to be light, ranging from 2 to 8 mph.
           role: model
         finishReason: STOP
         groundingMetadata:
-          groundingChunks:
-          - web:
-              title: theweathernetwork.com
-              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEvigSUuLwtMoqPNq2bvqCduH6yYQLKmhzoj0-SQbxBb2rs_ow380KClss6yfKqxmQ-3HIrmzasviLVdO2FhQ_uEIGfpv6-_r4XOSSLu57LKZgAFYTsswd5Q--VkuO2eEr4Vh8b0aK4KFi3Rt3k_r99frmOa-8mCHzWrXI_HeS58IvIpda0XNtWVEjg
-          - web:
-              title: wunderground.com
-              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFEXnJiWubQ1I2xMumZnSwxzZzhO_s2AdGg1yFakgO7GqJXU25aq3-Zl5xFEsUk9KpDtKUsS0NrBQxRNYCTkbKMknHSD5n8Yps9aAYvLOvyKgKPDFt4SkBkt1RO1nyPOweAzOzjPmnnd8AqBqOq
-          - web:
-              title: wunderground.com
-              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEDXOJgWay-hTPi0eqxph51YPv_mX15kug_vYdV3Ybx19gm4XsIFdbDN3OhP8tHbKJDheVySvDaxmXZK2lsEJlHITYidz_uKAiY38_peXIPv0Kw4LvBYLWUh4SPwHBLgHAR3CsLQo3293ZbIXZ_3A==
-          groundingSupports:
-          - groundingChunkIndices:
-            - 0
-            - 1
-            - 2
-            segment:
-              endIndex: 542
-              startIndex: 386
-              text: There is a significant chance of rain, with forecasts indicating a 60% to 100% probability of precipitation,
-                especially from mid-afternoon into the evening.
-          - groundingChunkIndices:
-            - 1
-            - 2
-            segment:
-              endIndex: 618
-              startIndex: 543
-              text: Winds are generally light, coming from the north-northeast at 10 to 15 mph.
           searchEntryPoint:
             renderedContent: |
               <style>
@@ -480,26 +464,26 @@ interactions:
                   <div class="gradient-container"><div class="gradient"></div></div>
                 </div>
                 <div class="carousel">
-                  <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGbyM4W4itB9H_ZJw2_8WIuXcL7VHN0Ek1Cm5mXlJ9nwPPb-OBVlLWqvK6Zu3T72A8yNEzw9czyIcQ6Q0d7lWJhUGqPEJj5CzI9ZG8zJs0D1p5vZxrurYFVVkH2_lSsF7OXc09V2aZ9lXKeYqweKX5UG6wDWM3Pz4UVB8QTe7iSINZaYrn_RMncMcDqXjXuxbZvLMuMtGBTtep4wuc57z9Xjw==">current weather in Mexico City</a>
+                  <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFLi_nFrqcPWK9Hewe4-1EDW8x1xJkhwH2CwmIt9_ke24tgCBGbcgRr8t52c0YM_Bzd5fvyTV7J968QotMYY-17P0FGOshri8vabg38DqyczKhKsCoINUaHAXtTZaYlcQecdH_MFBBY5tnAArDjwJVpSS7_xlXXYGnu96M3HeY5AnMch2CVzVtajzEqaWtA0AFob2kCCuYkBCh5wTlNbTU=">weather in Mexico City today</a>
                 </div>
               </div>
           webSearchQueries:
-          - current weather in Mexico City
+          - weather in Mexico City today
         index: 0
       modelVersion: gemini-2.5-pro
-      responseId: dtnJaKyTAri3qtsPu4imqQs
+      responseId: Izt8ab2tLueHz7IP49zxaQ
       usageMetadata:
-        candidatesTokenCount: 206
-        promptTokenCount: 209
+        candidatesTokenCount: 170
+        promptTokenCount: 213
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 209
-        thoughtsTokenCount: 131
-        toolUsePromptTokenCount: 286
+          tokenCount: 213
+        thoughtsTokenCount: 375
+        toolUsePromptTokenCount: 308
         toolUsePromptTokensDetails:
         - modality: TEXT
-          tokenCount: 286
-        totalTokenCount: 832
+          tokenCount: 308
+        totalTokenCount: 1066
     status:
       code: 200
       message: OK

@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '35848'
+      - '35878'
       content-type:
       - application/json
       host:
@@ -37,18 +37,20 @@ interactions:
       - parts:
         - text: What is in the documents?
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '797'
+      - '828'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1353
+      - gfet4t7; dur=1641
       transfer-encoding:
       - chunked
       vary:
@@ -57,26 +59,27 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.10110493968514835
+      - avgLogprobs: -0.45176074618384954
         content:
           parts:
-          - text: Both documents contain the text "Dummy PDF file" at the top of the page.
+          - text: |
+              Both documents contain the text "Dummy PDF file". They appear to be placeholder or example PDF files.
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: 5FpeaMCpH_DZx_APsLvzqAM
+      responseId: jDR8ae2eD5XQz7IPqs6ekAQ
       usageMetadata:
-        candidatesTokenCount: 17
+        candidatesTokenCount: 21
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 17
+          tokenCount: 21
         promptTokenCount: 542
         promptTokensDetails:
-        - modality: DOCUMENT
-          tokenCount: 516
         - modality: TEXT
           tokenCount: 26
-        totalTokenCount: 559
+        - modality: DOCUMENT
+          tokenCount: 516
+        totalTokenCount: 563
     status:
       code: 200
       message: OK

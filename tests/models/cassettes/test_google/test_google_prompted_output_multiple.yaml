@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '1226'
+      - '1203'
       content-type:
       - application/json
       host:
@@ -21,12 +21,15 @@ interactions:
         role: user
       generationConfig:
         responseMimeType: application/json
+        responseModalities:
+        - TEXT
       systemInstruction:
         parts:
-        - text: |-
+        - text: |2
+
             Always respond with a JSON object that's compatible with this schema:
 
-            {"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "CityLocation"}, "data": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CityLocation"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "CountryLanguage"}, "data": {"properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CountryLanguage"}]}}, "required": ["result"], "additionalProperties": false}
+            {"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "enum": ["CityLocation"]}, "data": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false}, {"type": "object", "properties": {"kind": {"type": "string", "enum": ["CountryLanguage"]}, "data": {"properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false}]}}, "required": ["result"], "additionalProperties": false}
 
             Don't include any text or Markdown fencing before or after.
         role: user
@@ -40,7 +43,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=524
+      - gfet4t7; dur=1063
       transfer-encoding:
       - chunked
       vary:
@@ -49,24 +52,24 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.0005381196323368284
+      - avgLogprobs: -5.099495562414328e-05
         content:
           parts:
           - text: '{"result": {"kind": "CityLocation", "data": {"city": "Mexico City", "country": "Mexico"}}}'
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: R1teaPyBINbL1PIP17GMgQ0
+      responseId: nzR8abbGBqjpz7IPpK3MoAE
       usageMetadata:
         candidatesTokenCount: 27
         candidatesTokensDetails:
         - modality: TEXT
           tokenCount: 27
-        promptTokenCount: 240
+        promptTokenCount: 230
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 240
-        totalTokenCount: 267
+          tokenCount: 230
+        totalTokenCount: 257
     status:
       code: 200
       message: OK

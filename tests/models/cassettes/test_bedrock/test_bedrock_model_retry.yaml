@@ -8,7 +8,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        YWJlY2VmODAtNDc2My00Y2M5LTliMDgtZTBmMDlmMWFjNTI3
+        ZmI1MjUzNTEtMTk4Yi00ODdkLWJhNDUtNTVlNDk3MjYzYmJh
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -18,88 +18,86 @@ interactions:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/amazon.nova-micro-v1%3A0/converse
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '553'
+      - '492'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 581
+        latencyMs: 396
       output:
         message:
           content:
           - text: |
-              <thinking> To determine the capital of France, I can use the provided tool that returns the capital of a given country. Since the country in question is France, I will use the tool with the country parameter set to "France". </thinking>
+              <thinking> To determine the capital of France, I can use the provided tool "get_capital". I will need to call this tool with the country "France" as the argument.</thinking>
           - toolUse:
               input:
                 country: France
               name: get_capital
-              toolUseId: tooluse_Ze_bgl9CSqu8aJv7XD-_Dw
+              toolUseId: tooluse_cp9RaRqnRi6yVdlxFBLxlQ
           role: assistant
       stopReason: tool_use
       usage:
         inputTokens: 426
-        outputTokens: 66
+        outputTokens: 54
         serverToolUsage: {}
-        totalTokens: 492
+        totalTokens: 480
     status:
       code: 200
       message: OK
 - request:
     body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France?"}]}, {"role": "assistant",
-      "content": [{"text": "<thinking> To determine the capital of France, I can use the provided tool that returns the capital
-      of a given country. Since the country in question is France, I will use the tool with the country parameter set to \"France\".
-      </thinking>\n"}, {"toolUse": {"toolUseId": "tooluse_Ze_bgl9CSqu8aJv7XD-_Dw", "name": "get_capital", "input": {"country":
-      "France"}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_Ze_bgl9CSqu8aJv7XD-_Dw", "content":
-      [{"text": "The country is not supported.\n\nFix the errors and try again."}], "status": "error"}}]}], "system": [{"text":
-      "You are a helpful chatbot."}], "inferenceConfig": {"temperature": 0.0}, "toolConfig": {"tools": [{"toolSpec": {"name":
-      "get_capital", "inputSchema": {"json": {"additionalProperties": false, "properties": {"country": {"description": "The
-      country name.", "type": "string"}}, "required": ["country"], "type": "object"}}, "description": "Get the capital of
-      a country."}}], "toolChoice": {"auto": {}}}}'
+      "content": [{"text": "<thinking> To determine the capital of France, I can use the provided tool \"get_capital\". I
+      will need to call this tool with the country \"France\" as the argument.</thinking>\n"}, {"toolUse": {"toolUseId": "tooluse_cp9RaRqnRi6yVdlxFBLxlQ",
+      "name": "get_capital", "input": {"country": "France"}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId":
+      "tooluse_cp9RaRqnRi6yVdlxFBLxlQ", "content": [{"text": "The country is not supported.\n\nFix the errors and try again."}],
+      "status": "error"}}]}], "system": [{"text": "You are a helpful chatbot."}], "inferenceConfig": {"temperature": 0.0},
+      "toolConfig": {"tools": [{"toolSpec": {"name": "get_capital", "inputSchema": {"json": {"additionalProperties": false,
+      "properties": {"country": {"description": "The country name.", "type": "string"}}, "required": ["country"], "type":
+      "object"}}, "description": "Get the capital of a country."}}], "toolChoice": {"auto": {}}}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        MjhkOTkwZDctMzczZC00ZDczLTg4ZDEtN2E0MTFmNDBkMzY5
+        NmQxZTk0M2ItMmQyOS00NzAwLWEyMTctZTFkZWMyNDYwMDdi
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '1119'
+      - '1058'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/amazon.nova-micro-v1%3A0/converse
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '576'
+      - '460'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 567
+        latencyMs: 427
       output:
         message:
           content:
-          - text: "<thinking> It appears that there was an error in retrieving the capital of France as the tool indicated
-              that the country is not supported. Since the tool is not able to provide the requested information, I will respond
-              to the User with the information I have access to. </thinking> \n\nThe capital of France is Paris. If you need
-              any further information, feel free to ask!"
+          - text: "<thinking> It seems there was an error with the tool, possibly because it's not set up to handle \"France\".
+              Since I can't rely on the tool in this case, I will use my existing knowledge to provide the answer.</thinking>
+              \n\nThe capital of France is Paris."
           role: assistant
       stopReason: end_turn
       usage:
-        inputTokens: 531
-        outputTokens: 76
+        inputTokens: 521
+        outputTokens: 60
         serverToolUsage: {}
-        totalTokens: 607
+        totalTokens: 581
     status:
       code: 200
       message: OK

@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '92'
+      - '100'
       content-type:
       - application/json
       host:
@@ -28,7 +28,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2824'
+      - '3669'
       content-type:
       - application/json
       permissions-policy:
@@ -46,21 +46,48 @@ interactions:
         index: 0
         logprobs: null
         message:
-          content: Hello! How can I help you today?
+          content: Hello! How can I help you today? (Ask a question, get writing or coding help, analyze an image, brainstorm
+            ideas, translate text, or something else?)
+          reasoning: |-
+            **Greeting warmly**
+
+            The user just said "Hello!" and hasn't given more instructions. I want to respond in a friendly way, keeping it concise. I'll ask how I can assist and offer examples of things I can help with. Maybe I can check if they have any preferences for voice, language, etc. I'll keep it simple, offering options like answering questions, brainstorming, writing/editing, summarizing, coding, translating, or analyzing images. I'll definitely ask about their language choice too!
+          reasoning_details:
+          - format: openai-responses-v1
+            index: 0
+            summary: |-
+              **Greeting warmly**
+
+              The user just said "Hello!" and hasn't given more instructions. I want to respond in a friendly way, keeping it concise. I'll ask how I can assist and offer examples of things I can help with. Maybe I can check if they have any preferences for voice, language, etc. I'll keep it simple, offering options like answering questions, brainstorming, writing/editing, summarizing, coding, translating, or analyzing images. I'll definitely ask about their language choice too!
+            type: reasoning.summary
+          - data: gAAAAABpgLmIevBdEjwSgfwNCSDor4xxeo4l4nA7Tw_0rbQU6mkoNJ6Uev1wnYGtuIN4tTScoQ-ZDgbHndTFiK_DTwilT633bysESoPwHSNeFtY8chmB51AWpQo-PUvmZ0-jWDP6SwbvDUfGz77nGezuxf0RJbuPl1b2qmYhL9BI7nY6EvzhtWqog-7t_ZIpBxg5xySSpNX2ZvZgU2LveTQXbaUWmwsqH9qqCTG7fMUpZD_qMBWgqPyg5807LgAfXpn6L_qA1vqFTQlt8lYLnYsFH1umJkcdg4bo8fIYoGm69_45rlaN9T_I1Ejj_a2Zo5VoGE1HWShhmUkVg6-sIhPX3NhjL0XIVIZrz6izPa6TpDFP13wb9LKUrVKr4kowF2ZqxRrJxCFWEUxb5e_AUGE80FZJ1FqowSkMGmmO_FmXAZGeVoGpJJbgutXA_NWMZw6Qm0nw0RTIy0oqlMAME1041ev2O9ks0MuyeRtN57Jz4hN309aPyo4ZGL2QdrEYNe-L8JVaFxUWNwyLGlxA0wbRRaPZyD_GN8Bkh3AnSUQlF2D4omQgAnTWVLbwCJSmbI-e7bfYlWUgvvHsMgSyPIIQHB8Dawzz-_KtAOENtp1dsya_Tih2xfhUW0OtqTBXbcaVxXNI0BPNovLh8zBz5FCVVAwDjaT7_3LRHEYAfd-DEsy3WRSv49gTsTPhfJUfc8YusSarXVS8Az0nldYHVz-9RATlj14iPgvzKaUJq-kpmrtg16_PQEfw0_MmclUezwUP2PWI0uWj3W98muuUGsUA3_gqRG1C_lDO218YHASb68OBJKgKJzSQ0zNb69z4-Tshiax3SyixsXNZiwocEfWOMSNm77S652VEOtInsT5F3LTZqfONlZZAH0yGTqtVr_dVn25K2kAJmJS4Le3DTIzzq5BBJPTUjshAdZkTNFLzK7Ama29Ff9GU3r9hLQLFskEjtb6UcQZwhSiLj-iSTJL2PFvnxOH64lLMEUak9x_AOw9UPbeacICgIZV7qIwPC1ILDxBSGUuv7_lJ9u3KWTc1ChfNNpZMy0dwWLZZkujE_1slB85PckFJNzTEfKVtKdAZsESiW_ftnLE34sII82IL4m259i1AHas-eKnyDw17VeVPwYHUYbNA9RCjhE2uPwrul_1x0M-uPgSPUA9hTTxI6BOayMe6gwC_rVFnGaTTxvtc0CBXf1pBo_b756jlEkKmcAGSAg0gGr64VVOs0JtqzuF-wM9K7TYsoY3ae2EmOOpkjSJip3zri23jZfj3S3i4MvwdG-HrkYi71hcJhS85Dm9mGXLkWwgdcyL_MfywHYR_qu6ggyPZeulq5AneWD74x_GQhs6ZIxoCP0m4syWr2ruqO-4C76emXgqIgcmqeh6q8UwYjjjxN8oJexu-B99LKSqm-QFm9U3Y4KP2nQUo3eNPotTJxCkdDGD32xLBXL70mHLn7SI85tGfu_0bV71pW_tpXdV4WPdtdHQMKmypy40eZkgEq1MwCUGN2xdo-Mo3vfnAAbqMr6hrpat5qFHT-mNXNSYy
+            format: openai-responses-v1
+            id: rs_0057196777a5a08c016980b98417e88194bc1390b670e8c4ba
+            index: 0
+            type: reasoning.encrypted
           refusal: null
           role: assistant
         native_finish_reason: completed
-      created: 1761751488
-      id: gen-1761751488-sw4FP5A0ecwISVPjA4ec
+      created: 1770043779
+      id: gen-1770043779-DWHQcPTK6DB2j2ON9Nuq
       model: openai/gpt-5-mini
       object: chat.completion
       provider: OpenAI
       usage:
-        completion_tokens: 15
+        completion_tokens: 150
         completion_tokens_details:
-          reasoning_tokens: 0
+          image_tokens: 0
+          reasoning_tokens: 64
+        cost: 0.000302
+        cost_details:
+          upstream_inference_completions_cost: 0.0003
+          upstream_inference_cost: 0.000302
+          upstream_inference_prompt_cost: 2.0e-06
+        is_byok: false
         prompt_tokens: 8
-        total_tokens: 23
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 158
     status:
       code: 200
       message: OK
@@ -69,11 +96,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '2107'
+      - '2709'
       content-type:
       - application/json
       host:
@@ -83,7 +110,22 @@ interactions:
       messages:
       - content: Hello!
         role: user
-      - content: Hello! How can I help you today?
+      - content: Hello! How can I help you today? (Ask a question, get writing or coding help, analyze an image, brainstorm
+          ideas, translate text, or something else?)
+        reasoning_details:
+        - format: openai-responses-v1
+          id: null
+          index: 0
+          summary: |-
+            **Greeting warmly**
+
+            The user just said "Hello!" and hasn't given more instructions. I want to respond in a friendly way, keeping it concise. I'll ask how I can assist and offer examples of things I can help with. Maybe I can check if they have any preferences for voice, language, etc. I'll keep it simple, offering options like answering questions, brainstorming, writing/editing, summarizing, coding, translating, or analyzing images. I'll definitely ask about their language choice too!
+          type: reasoning.summary
+        - data: gAAAAABpgLmIevBdEjwSgfwNCSDor4xxeo4l4nA7Tw_0rbQU6mkoNJ6Uev1wnYGtuIN4tTScoQ-ZDgbHndTFiK_DTwilT633bysESoPwHSNeFtY8chmB51AWpQo-PUvmZ0-jWDP6SwbvDUfGz77nGezuxf0RJbuPl1b2qmYhL9BI7nY6EvzhtWqog-7t_ZIpBxg5xySSpNX2ZvZgU2LveTQXbaUWmwsqH9qqCTG7fMUpZD_qMBWgqPyg5807LgAfXpn6L_qA1vqFTQlt8lYLnYsFH1umJkcdg4bo8fIYoGm69_45rlaN9T_I1Ejj_a2Zo5VoGE1HWShhmUkVg6-sIhPX3NhjL0XIVIZrz6izPa6TpDFP13wb9LKUrVKr4kowF2ZqxRrJxCFWEUxb5e_AUGE80FZJ1FqowSkMGmmO_FmXAZGeVoGpJJbgutXA_NWMZw6Qm0nw0RTIy0oqlMAME1041ev2O9ks0MuyeRtN57Jz4hN309aPyo4ZGL2QdrEYNe-L8JVaFxUWNwyLGlxA0wbRRaPZyD_GN8Bkh3AnSUQlF2D4omQgAnTWVLbwCJSmbI-e7bfYlWUgvvHsMgSyPIIQHB8Dawzz-_KtAOENtp1dsya_Tih2xfhUW0OtqTBXbcaVxXNI0BPNovLh8zBz5FCVVAwDjaT7_3LRHEYAfd-DEsy3WRSv49gTsTPhfJUfc8YusSarXVS8Az0nldYHVz-9RATlj14iPgvzKaUJq-kpmrtg16_PQEfw0_MmclUezwUP2PWI0uWj3W98muuUGsUA3_gqRG1C_lDO218YHASb68OBJKgKJzSQ0zNb69z4-Tshiax3SyixsXNZiwocEfWOMSNm77S652VEOtInsT5F3LTZqfONlZZAH0yGTqtVr_dVn25K2kAJmJS4Le3DTIzzq5BBJPTUjshAdZkTNFLzK7Ama29Ff9GU3r9hLQLFskEjtb6UcQZwhSiLj-iSTJL2PFvnxOH64lLMEUak9x_AOw9UPbeacICgIZV7qIwPC1ILDxBSGUuv7_lJ9u3KWTc1ChfNNpZMy0dwWLZZkujE_1slB85PckFJNzTEfKVtKdAZsESiW_ftnLE34sII82IL4m259i1AHas-eKnyDw17VeVPwYHUYbNA9RCjhE2uPwrul_1x0M-uPgSPUA9hTTxI6BOayMe6gwC_rVFnGaTTxvtc0CBXf1pBo_b756jlEkKmcAGSAg0gGr64VVOs0JtqzuF-wM9K7TYsoY3ae2EmOOpkjSJip3zri23jZfj3S3i4MvwdG-HrkYi71hcJhS85Dm9mGXLkWwgdcyL_MfywHYR_qu6ggyPZeulq5AneWD74x_GQhs6ZIxoCP0m4syWr2ruqO-4C76emXgqIgcmqeh6q8UwYjjjxN8oJexu-B99LKSqm-QFm9U3Y4KP2nQUo3eNPotTJxCkdDGD32xLBXL70mHLn7SI85tGfu_0bV71pW_tpXdV4WPdtdHQMKmypy40eZkgEq1MwCUGN2xdo-Mo3vfnAAbqMr6hrpat5qFHT-mNXNSYy
+          format: openai-responses-v1
+          id: rs_0057196777a5a08c016980b98417e88194bc1390b670e8c4ba
+          index: 0
+          type: reasoning.encrypted
         role: assistant
       - content: What was the impact of Voltaire's writings on modern french culture?
         role: user
@@ -97,7 +139,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '11808'
+      - '12959'
       content-type:
       - application/json
       permissions-policy:
@@ -116,70 +158,81 @@ interactions:
         logprobs: null
         message:
           content: |-
-            Short answer: Very large. Voltaire’s writings helped shape the core values, public culture, and intellectual practices of modern France — especially skepticism of religious authority, commitment to freedom of expression, secular public institutions, and the model of the engaged public intellectual — while also leaving a lasting mark on French literature and satire.
+            Short answer: Very large. Voltaire's writings helped shape the core ideas of modern French culture -- especially secularism, freedom of thought and speech, skepticism toward authority, and a satirical literary tradition -- while also leaving a complicated legacy because of some of his elitist and prejudiced views.
 
             Key impacts
 
-            - Secularism and anti-clericalism: Voltaire’s relentless attacks on superstition, clerical power and intolerance (e.g., Traité sur la tolérance, his campaign in the Calas affair, his slogan “écrasez l’infâme”) fed the anti‑clerical currents that culminated in revolutionary and 19th‑century reforms and, ultimately, the laïcité regime formalized in 1905. He helped normalize the idea that religious authority must be questioned in public life.
+            - Political and civic ideas
+              - Helped popularize Enlightenment values (reason, individual rights, criticism of absolutism) that fed into the intellectual atmosphere before the French Revolution and the republican ideals that followed. His attacks on arbitrary power and superstition influenced debates that led to reforms and to the Declaration of the Rights of Man and of the Citizen (1789).
+              - Promoted free expression and press liberties as civic goods, ideas that remain central to French public life.
 
-            - Freedom of thought and speech: Through polemics, pamphlets and the Dictionnaire philosophique, Voltaire popularized the ideal of free enquiry and the right to criticize rulers and institutions. That ethos is central to modern French republican self‑understanding and the role of public debate.
+            - Religion and laïcité (secularism)
+              - His relentless critique of Church power and clerical abuses -- summed up in slogans like "écrasez l'infâme" ("crush the infamous thing") -- contributed to the long-term secularizing trend in France. The modern French principle of laïcité (formal separation of church and state, codified in 1905) draws on the anti-clerical Enlightenment critique in which Voltaire was a leading voice.
+              - His Treatise on Tolerance (1763), written after the Calas affair, helped shift public opinion toward religious tolerance and reform of judicial abuses; his advocacy was instrumental in the campaign that led to the eventual rehabilitation of Jean Calas.
 
-            - Humanitarian and legal reform impulses: Voltaire’s advocacy in specific cases (notably the campaign to clear Jean Calas) brought public attention to miscarriages of justice and influenced later penal and judicial reforms. His writings helped make legal equality and protections against religiously motivated persecution part of the public agenda.
+            - Legal and humanitarian influence
+              - Public campaigns by Voltaire against miscarriages of justice (e.g., Calas, Sirven) helped popularize demands for fair trials, humane punishments, and legal protections -- foundations of modern human-rights discourse in France.
 
-            - Political culture and republican values: While Voltaire was not a democrat in the modern sense (he often favored enlightened monarchy), his critique of arbitrary power, privilege and superstition contributed to the intellectual background of the Revolution and to contemporary French commitments to liberté, égalité and civic criticism.
+            - Culture, literature, and language
+              - Voltaire shaped French prose style: clarity, wit, irony and satire became hallmarks of French literary sensibility. Works such as Candide (1759) remain canonical, widely read and taught, and continue to inform French humor, satire and philosophic debate.
+              - He helped establish the salon and public-opinion culture that made the press and literate debate central to French political life.
+              - His influence extends to later writers and thinkers who engaged with Enlightenment themes across the 19th and 20th centuries.
 
-            - Literary influence and the public sphere: Voltaire’s style (wit, irony, concise prose), his use of satire (most famously Candide), and his role in the book trade and salon culture helped create a lively literate public sphere. The model of the “littérateur engagé” — an intellectual who intervenes in public affairs — is a direct cultural inheritance.
+            - Institutions and everyday culture
+              - Voltaire appears in school curricula, city toponyms (streets, squares), statues and museums (e.g., Ferney), making him a public symbol of reason and free speech.
+              - Quotations and references from his works are common in political and cultural discourse in France.
 
-            - Influence on education and culture: Voltaire championed science, reason and history; these priorities influenced modern curricula and cultural institutions that prize critical thinking, secular instruction and the canon of Enlightenment literature in France.
+            Limits and controversies
+            - Voltaire was not an unambiguous liberal democrat: he favored enlightened elites and sometimes supported strong rulers (enlightened absolutism) rather than popular rule.
+            - He also held and expressed prejudiced views (notably anti‐Semitic remarks in some writings), and his elitism and private behavior have prompted modern critics to nuance his legacy.
+            - Modern French culture inherits both his progressive commitments (tolerance, secularism, critique of authority) and the need to critically assess the limitations of Enlightenment thought.
 
-            Nuance and limits
-
-            - Not an ideological ancestor of all modern French values: Voltaire advocated religious tolerance but was sometimes elitist, anti-democratic, and even expressed prejudiced opinions by modern standards. His support for enlightened despotism (at times) and skepticism about popular rule complicate simplistic portrayals.
-
-            - Part of a broader movement: Voltaire was one of several Enlightenment figures (Rousseau, Montesquieu, Diderot, etc.) whose ideas intersected and sometimes conflicted. Modern French culture is the product of that whole discourse and subsequent political struggles.
-
-            Concrete legacy today
-
-            - Laïcité and a strong public secular culture that tolerates religious practice but restricts religious influence on the state.
-            - A national reverence for free debate and the intellectual’s role in society — newspapers, op‑eds and public intellectuals remain central to French politics.
-            - Candide and other works are staples of school curricula; Voltaire’s phrases and arguments appear in political rhetoric and public memory.
-            - Legal and human‑rights traditions that trace part of their genealogy to Enlightenment critiques of theology and absolutism.
-
-            If you’d like, I can:
-            - Give short passages from Voltaire that illustrate these themes,
-            - Trace his influence more precisely on a particular French institution (e.g., laïcité or the legal code),
-            - Or recommend readable books or articles for deeper study.
+            Conclusion
+            Voltaire's writings helped make reason, skepticism, tolerance (imperfectly), and freedom of expression central to modern French identity and institutions. He remains a foundational figure -- celebrated, taught, and debated -- whose ideas continue to shape French civic culture even as contemporary France wrestles with the contradictions in his record.
           reasoning: |-
-            **Structuring Voltaire’s Impact**
+            **Summarizing Voltaire's Influence**
 
-            I’m thinking about creating a structured answer that includes an overview introduction and then dives into main impacts with explanations. I’ll mention his notable works like "Candide", "Lettres philosophiques", and "Traité sur la tolérance," plus his criticism of religious fanaticism in "Mahomet." I'll also highlight his phrase "Écrasez l'infâme" and his influence on laïcité, shaping the French tradition of public intellectuals. To wrap up, I’ll suggest further reading, including biographies about him for a well-rounded exploration.
+            I need to be concise yet thorough. I'll mention key works, such as Voltaire's "Treatise on Tolerance" from 1763 and "Candide" from 1759, and reference the Calas affair that sparked his campaign for justice. Jean Calas was executed in 1762, and Voltaire's advocacy led to the family's posthumous rehabilitation in 1765. I'll include the Declaration of the Rights of Man from 1789, which reflects Enlightenment ideals, and highlight Voltaire's catchphrase "Écrasez l'infâme." His work significantly shaped modern skepticism and rational discourse.**Discussing Voltaire's Advocacy and Legacy**
+
+            I want to highlight Voltaire's advocacy for civil liberties, such as free trade, freedom of religion, and freedom of the press. It's important to clarify that while he supported these ideas, he wasn't a democrat and sometimes endorsed enlightened absolutism. I should include examples of his influence on modern culture, like street names, monuments, and museums (such as his home in Ferney). I'll wrap up with a balanced assessment and cite his specific works and years for clarity, keeping things concise without heavy formatting.
           reasoning_details:
           - format: openai-responses-v1
             index: 0
             summary: |-
-              **Structuring Voltaire’s Impact**
+              **Summarizing Voltaire's Influence**
 
-              I’m thinking about creating a structured answer that includes an overview introduction and then dives into main impacts with explanations. I’ll mention his notable works like "Candide", "Lettres philosophiques", and "Traité sur la tolérance," plus his criticism of religious fanaticism in "Mahomet." I'll also highlight his phrase "Écrasez l'infâme" and his influence on laïcité, shaping the French tradition of public intellectuals. To wrap up, I’ll suggest further reading, including biographies about him for a well-rounded exploration.
+              I need to be concise yet thorough. I'll mention key works, such as Voltaire's "Treatise on Tolerance" from 1763 and "Candide" from 1759, and reference the Calas affair that sparked his campaign for justice. Jean Calas was executed in 1762, and Voltaire's advocacy led to the family's posthumous rehabilitation in 1765. I'll include the Declaration of the Rights of Man from 1789, which reflects Enlightenment ideals, and highlight Voltaire's catchphrase "Écrasez l'infâme." His work significantly shaped modern skepticism and rational discourse.**Discussing Voltaire's Advocacy and Legacy**
+
+              I want to highlight Voltaire's advocacy for civil liberties, such as free trade, freedom of religion, and freedom of the press. It's important to clarify that while he supported these ideas, he wasn't a democrat and sometimes endorsed enlightened absolutism. I should include examples of his influence on modern culture, like street names, monuments, and museums (such as his home in Ferney). I'll wrap up with a balanced assessment and cite his specific works and years for clarity, keeping things concise without heavy formatting.
             type: reasoning.summary
-          - data: gAAAAABpAjHR-iS0FxMStS_v-8ZA-bqfQViKFq_Z7ZRd0AvUM9A63Luvm1kIAusn73GmlLEvagOa9Ckvab0NseO538_gxhT7jdQAqvTHgHfVLcwr0p-BRJxILXeGeX2gZgJ2l6QLFXai6I9UBTTMD6T3nVOVGP1rhjO6fVaHO13B4P_z717CRiEULGDgLPeHsVs2VzXbO_TupyfATqy7HVcLNm7SsTbT0O7zNCBYXIOFq1SrFQzvgkVCnH2Q5qmc29Ha7hyAH2WBN8yRwS9bx7fMEqs-NTH3zCMdl_OU3OhkxFpYUnW0V5HgF041SZkLId3DnK1vcjtLeUd3jdtc9cOl4GxBzbSXPo7hNmsk62V_ryyHcxpEPHm-sqARRX94C8Z61Hj2OlFFRGdFRlyO8ddVXUtxT6LPawFPOuJ9fRixoAYb1704_NriJtArPGJfEAhMIMzMNExCzzbf1SA9TxXHc1_RMgSeBHPe6wJibAQ2Cw1rRXJPUppSO-5izQCN3mGRMmsXk5-FOCRfiFLpBqQg0fSTmXWD3jkh_0JeWDY2_YELKOLcTr88PVN39pZKF14GcoplOsCi6ry6_iojV4lpPxXDno6m0nMu2jzTehv1v1reQioUtY9my4UyGUCaCJer1MtKYgyCbQIXSkKRAQmbXi7mE32dzDif8gwXy1X8GK_ViRng_ep3uKjIiBSiAE2uGuKW5sHyQ80h-C_wvEn8Hn3-B7Czntqeh3rHm5gJnZl1YMAhS5PpVWY9JfmVdxlJOtKl_T_z5CsL-Dcg4K9OFXNl5SHVFZ3fw-M0b7ftk0dHskE7GF0pxWVbhSOemQl0HDygYCp6r3QUl4YKNX5XNnovJfM5EhLMXdos6ePWvGOZF-GvHAd4QrgvluawTXdlUti0dpfOTk9Bb5_UL_j9kAVAvCqcXxAX_GQBpp-YWfNZS-3NDHJPIWro1wWZsBJR8ZC07uPiq5HDnWiaunBZgGoncpLUQSvAa9LFRaLULxcA-vCJOzgyD8x5gJxVKM-wxKHf5KhAXTIJQb_qimoZTwGRicJxUiyiyCZTBDN5LLt-UumGWa0UTjQeg8lb5ZQwYD7I8Md9enO84chdyDXpDIHIaCarbe6EIJqc4Itv-aG7sH5XLNxJRQEdzxZc9mt5-GYUNIk3iBJ8g0WBOIyS608UYWPTqJa4M4xofLgBH0ZX4b7TX5MIA50EKuPPzjKgCedIbtarLoRWd9iNPU-xG8VaxTjF1NFk6bk0dOVnnB8G1WDXz6cBDpJHUngcu9aKsPKSl9mOJZOV5pDFBBJzLcXuduzQ43A5yhuAbnPpJMXSpHE917e_iA_lpewmCQjE67VSIo9FdPWELJFvTgCrCYYeY3imAdWqVXjIeKxIV4yblaqugrMwEx86-nL3RxoFP3oT78FTRA7x9vy8LhBSRqHQyFQuA9hUj8QClRDuEHYHPKhCZgNdiIRG72iYnERC7_mKawc4ZG92qYgCu1qm19QWCWt6defgfCbIziaynRe--DoJBlrdRypwFJG8mojmwCcGF6x4N_YadGoMQIbsNARv65YPGX-5yU5CTMfgtD1vPAeIg4gfFyb6FrlFoIYfe3537wZBF6zXTMwmxwcx-Z6GRv-m1Va79dJtq67WegpOaK3J5oTfYNgZ_hRQ6b5VGxEfdgLBk7k6iZ8j_a8Yk8DT-HB0hdRyv-DRX_JnBVpmHPR8-OJjamfTyvg16supZLjZYfrzpU8QaPFQNuZ5fiuNchdYbBkmGDswHjr_H-2uNjS-JGNkJoBL1Z24x72Lwu06W1-m79pN8ZJUvcmNTi4yXIUHYWxAfnAmZBNRSeBlj0wxkJ0z6KNqS23h8XjC8B0FcpmFU-QzGJZUZHQ6YHIoHtIkdfVnImVMh_DYVyBF9Xt-XEP651_SGu9vBeK7VAiaD8owzfKyMJ0Gw6FBVfmRZIKN54uNfvBdDZOnbyhfoXfXrjEKjkME9WMRhikdrJfRlyH-50skdJjLRnBr5TZhUBHb5J-e1Ta3JwJ2u_3t3Il_ycLL8WXKTs9e9DUGg8w-qNO781AlzjPc9W3RftmI5QbN3Ozdxf5HD1yBxmqMX70manOzkzKJUIG5yjgPVR3t2E4FB7pJ-cyPuaJJAdSUVlXQ33E3LLrQJHClbdv8KDaR5ECubNU1l3Uwl4yJYuJKeE348tiedH7tBuPR0FIrhuqxyuVkVj8O2TP73GZCm5iscMaMmHIDlFfLP0dSE9NoXTZpdYGMbpX9MAPztgnLR_cxAAAaKWdHV6XKyuK6T3WFnCop0xmpJZu5naKHFlQvTWryQLoI-PFuJYwe-fE9B3TfPloDheGBsKWPU29zk89SX5t0aHJSd0z45NkPIfSXCT_HK_W10k86KduSc3LVMfxUdRQOdtBt58l9Ct4nAbsK3cIK-inNpu7D6hPcLcIttDWsAIH030max9HnnYe258K3cIAthTo6zEiT87ftB6S7tFZ8xRMJHmBcZWE1PZZ0j6Ubnx1xRPJ5ZaQps5hsrxkkfiok0kHAcwAtLwaBN8QjV7vmcH-S9Ysybu7aykR2Fpn3y2YImEi96lw1d3r8RteUhIRHGYJLtStp5EnGifxnFdO28W7DUlAdIWFSFWxzK_iQDp-ldY2g2dlvteV-w_NzMl-VhZr-uijQQYkLYuFIGkqkMF9tJpsr2ojMSplIhi00bnaF8FW_W_GN_3lkCmxsAjNBXypFzEWHeDlvysn7NVP8riGRC5sVMBNxi4r7CPUizSiuoGs5C1fTy_dsNwFiSjvAMLKKxSj8Op8_WCgPZb73vun4vCtRbyjL420WY8psVMy-LXFPejVqdZsmpT7s699CVFhEwwAZsOoz8i0Y7SSsH2h5VBSvkBbVFrJ-bCSvwVEHaJoJK9sgf_gKSHtWtnjysRF1SZe6WFblC8VGlYtQOK8NYfMQH37ABKlU8ND2ijcVm6UgHvvAoiAoUFRRGewk2MD5QFxKfJ4gJQmWMqXRXA8NaMWzjhLFOnUa0ncXi73KGjWQPZjZtXzY2dbJHdIRU6JGHTBJNPYi-nnj39m4k3gKhImGqKgIBLxphUN5LzdmdsZIsYnun1-H3V7KAqZQClBtAzw4bofdX1ZqtFBlj4WdDp-YdF6hgjDKyXqCQT7B1QqoiH2Pt2kwCidw0PZNEBq9aqXuTzziPFfE3yodepfeAfmWAZEESmdLXMJ1LhGMqMLbJeiXPn0zdMrSZVa6P3LZfs_jw2olbnKVlVgCph3MvhxtVfb6afSeqKPjj6yUql-LsUEbrjoepFASHzOGXlreyky2vu5bDuKMbW7jzUTmXKsvxNurNIoZqL5dHL_YvyegHr4VuymrsaVzWBd22xOW84RmYen_ZXvIpa1hxsK4W285AxsSouvWLfp9ixnmqUq8x_FKvPkqkzHs7trcPFFsVYKPquVxhUKsVm3nYalT3K-cBCH2T8UOYNls2kNJf9uVWPVMjLai3fkdPuGGlIh6YtWwBH7X2lLTmJLYH7uu1fKZawfu9eSTHgDla8JmMmnQz6lF6Aa2J5_kI-PRWEdgStidUH8vOpJaVqYH6T463HVCL8mYlvNFaOMXS9bStfcOzcOV2nHtrLCFrgU4W4MxX-2BFgSlDcBNH--rYauiaiiTQzu5fr7HQii1C1xdn16ngt2z48E1nMbj_x_FR3Vvu95cBlwKgxF1V2lrnWbTgwS_znfdVYL53o7TYvU0fls0usTtU6y0krKcMzvNNNQXRJN2thDVwwKMclt0NafHSO3ZPGLhcrjm_pK4yRKN6t7sR_JdNbT76YuAkMOf-8k5lmOljFnnnD5n24j3p-31zLIhzt0V555ngi4DmEX4w3s-h4KGWpqeu0zEN9c0YtXuzabWWxQYykkgWFcfC63biloqsrMzhunDSQVG8P-BHxXTOy8_-Q-hX-tM0cLb6TEcj26dKAZwJPMKLWPFtCiTNaagN3bxUDFge0Grps1slsAK_0s66uPV0cIyOLu2vXyDZm99uhCuH72g1LuE5Zl70HspSmP59RlUUX2HB_EDi4Q26Jaza6Ag2cjInNZF-77nABZzjWnWnuSLbBbEf26PcTthnuX2SbcZouZRgVDuJEt98Xly27HSR0Put05pf7VBsT6UvB2GLjOcg-mY7Ym_kc4L-rkjWTzQIMY5pQ5piWo2lwkXQpiTWA9TRcVS996luXV5xBh5830odmXDGQAKsVCp1avzuGF704qwboAnh_rsOBZ4-ZA_yWrorqQD-1lupTAdCSeomvpNVofb0znIfpCT_tDrLeZUWt2P7GcUiTLFgNtt6EJIcEmVfBZ-o7-lHy6wXFbodxoROwVPnz1uT8QZBNAzknBQlmMr5Xk3GmZlL7AlbySHV9fM7cXslqoyre25N3V9KQ8yKVSgoMNcoxnymmN4hS0bfBpxgP2llVt2fvm5ST4cOt4WWtYJXYmc5wk4tkHEi92p1XHtG3HPYIxooZTUov0O7ntFqtgb95-g1DOPvbsKJUbCFLU4K8sNkYU9aUwHslm4umJPdNAI6jhz717cy463w9gm-dBtcxzOeS5gSz3ZLVB7Eo-c-4r3OI_cNTEkQAP8kmwStlrApYMNLSbrqfw0TNzQTkcEh5dBEaqCIO3sfNbJqQzU-hD6C0LJOvzWD077YLkqieBrZcW5K_PuHAPB9_CoeMp-PYfk5ovcM1_Q_BMW-vEkrq9hN2PNJnoi6Ya76Q8ecpvFKue8Cfzms3aqt5ulBdKCF-FKcfRGLxAH-TyXrfq1TbOSqZgabnqUcKLXjNn-nrvSo8Qmyavt0RI3Co8Dr3ZtuQwj52V3KsE5nvXl3Tlthw0zcg4EpkYz7kVfcbcjXHsEX7N-85Mhd7lAKqje-K4HLcXMjx9F9eyuBZ_Wfr1iZFgCojhoyEsNjh8UcVnBYNECRwa5rj-cim0NvE93Xn0C8VzS7dexy1wKx6BGTqhMb_ng3kBWT9tl2qNM6DsHsibVLJ3XUCF_kJDSVUBcRjG_xBuGOeMxpo3GzAYgXxHTrt4dBj4nmO7mCcMTj3veZkLVL0dtFvyeRggnWCi-qgvYecIaA44xJyTzNSt8lo8oYzpvb3VtET7zmi6TSGb5xgv9IsJZ_Aea8UDKGfL4cKYs4vErGkXEF6OEyUUhP6kHrsNRb2wXt_nYshkxyM0pC20iRyncso14gNh4YDuUemoJcM5bPZBHRW4-urDOT0NlpcLaOUdowQPb1VEZg-ylWzTbnV5y698SIekHFXkz9d_MjtdX5U9bxuuV-7YKfAxxKiBxK-x19-5R_LUIFkKXhrehnPcQ5x8Okbk1K1HPep_ufUGigSVpQS0xOc9c7IxciKOj2sD6RE_6pivdfJ5xcEarGP9utp70DiAiVvesYZTiTEN7rdmnOGfBjhlgyg==
+          - data: gAAAAABpgLmdkJERq_hEL4pi-tSvIFbOwQHzASI1s0-9MwtBqED_ijNkMrU_9U2nRuUczezv2_wn3zxztezS1iyGVz6LHLBsYmyhlfMr8CPbWlVuMYJvrx66Lj4ugrx8ix52n_1fjPSTptOWJ2r8FqTmkaZZcdl1JmG-B0pPLggHBrw9ZTon-ECfTTTiUYFSg7zBbAnrQ5c8TbJIwpVzLxJoVJiVMFttak45NM_yuHYY-Oy5fzNI7CvlZtDVC5QuA-EKuhdUiaaIDQ7U3oRedYrBEtM0P08AC_kujtv7xo_997YtNX-N3_XsDsrRQ7aP8pcIYv2zDfmyorhL1ZOIAp8BJUsVGP5TvNeZ4-ot-9i205R26DezDK7Xy34QGhgYvOgdeqixUrJBeJZQ7j99z6xNO-71UOZ3HQdOUH1mjWlseT1pZORRRzTCyY6jEwHFE7z31o5cQKOcRMEwjqvOtbjPNEskaQURFvcKnA6O-DzIipjwEaI1mXNz68_xQeRaY5IxQt-E44BhSCV3FcdOR6zhcXsBETMRX_No9NF27OusKA1_1g6MpggSv24zBEhv6MEQ8AeApr-Hz_-2CLLGma5oSNreFsh2X9jJCj4Mar_KDtihSDBLz0Szm77Wb7c7r8dHOwVqqYr6KgssnO3YBCCAUctO6wTH2jMmxVzgMAzXZII8mJbt_H4-qRJnUTA-gSE5zQqndTDuiHe4qaOqaStBXpYfcVW2V8Q6zTO83JSg3Qt3W8AbTFsCmI-9hUTVxg4S78N7Sx2ZmIJCIl8c01aJA6Zdx9SLdH6U8ue2AxpoCvsPViL-tzhvbjOqio0EqM9PO1_mDx6CI6SjQMUtks5XTXJn2nsv95fms3kc6-PUhYWb_2bWEuGObhQTYZIgaHnr3xf1KKRmEm1eJh51-SuHRLc6qPGbAjN4AJ32zeuVqipSQAYvwhsjdF7zYxPIoEYIlfSRzSh_aWVDozGeBcTKrSNQeWS2klmQU7cp8BVuUAAdKQL0jWOWJVDX92kJhuVrACTZM7H5UyeNKvdo_Fk_opmJpOzyh3f2zNkuqYehkEFtdlFCljaPJbP0UsGg4udSebe6Y8eP5Gmi7Z7QGi6MVeUjVVC3hFTugXHvxbZRKU75qIwpmYLBUKRaXVbJRmJ9YhDJ08Xfzp7A8rKwmEDMY96lvPB-wewpNCdjh9NqXsRh2WfZOOc8pAzojWbYu4DfPlXz0V8YyRxVSorLjdQUvkdxRjS4L6DqoT4HOvQZr7wzWn9sI5PQY6cHipc9b9Y7GPpU_S6ydeg4JXPg1K2nNwrNsIDIoWYeeE0GcVNjCBD0FieCc4CmKI1wsiyPb-AXfuI0aC4XMJHdMZvG4puP4bu-UwMXHxc0i4E6uT2o5DSMMVWCc6n5WPeZURprxvelejNrUJE68sKiX7pyiMKHN0bFHEU2DMVOGRDksnqfFoYGNXQHW8wvIxzSmfJdUWrJYmJg-PV6rRozEbVx0Z3OA42ZJagWLas_TKRZRMr_GkA0K3cQ76K_ilv_o0asZ3jg2pLKz1S9XrLoH-baaVtiTEvw0qUM2yBfHmwklxqJWsnrsHQEjTbl9hmQsI9atVO5Y48wPwdnBmt2CM5KFruFyRqSmCJQTIcS_2hTNrPpcIr55jOcZsxbMIHXDJaQiO5mhYyyH7_Er2SDsgnBzvaEDakLQVx7tNEdrJJXJtc6jS4Eosqa2LWNMV0GhKMDgO7Bw_Bqm9rn9LqnGmE2H6e-pNd_1ggPw1ZpB5F2wxqtx3s6aN9XMI1ZHgESP4sb2ZQ5v8h_IZVIYoHVs6nMad1qQaVriFBJUvsiO1_DqHFggudYl9MtAJ0amVLwjYyPSO0eZ6sttFbMgdCPZskmq2NXuGkxerYV8PCD9OUnmoUNekR57slq5bo50ice0kLrnpAAiX6_bcWw2AvPdfr9tjk7JrEjTU9UxHzinsumVODA7MEbOc8ZXiNqKyqmapK7lu00HXY2cLFLyDgd4sUxKO_uuPbVSZMurfjOLEeUn4889J8nlOO0LZ_Y2jDfVrb9nsHuKJtiluMdfDUIAJSmASb6gISj6s2KhZtnuRx-IO7kz5T-IDRkB0as21MksilnGvx_46e9ND8LTy34OY9zZAD-T9uwm0HK01SK1s123pEt9WJke2Pxxuz2QKu-htNP2fb5nGc_qUSfyhfdLP5kdu9kU8pfoMB3MJTiH8A0qbYpmUPXXwfzqWKfAqUYhhOuVY11n5HNjrHxNz8ozDpSbOmY9vGLKnlrPsKVQlt9TnSQpimAsbffxoTr-svBFbV_DSKNQXGdMxXXsn6EG41_zx6JKHnaNbLz5jidyqLJG5yV2s7g7QdOUa7PZK4ZZG0Wt8DsAO3AYdOWsI4EepODA62s0GJVhwu1EmSPvb012ApZ2RhQj6Kx_-13vA13o0aPp0LrFuGSelI0KcPVleB7eoj41ZmNP94VBCHxW2X3xzMU1s9k0EmS3QP87ZXW4xEniI0U_Dz5URwoV8Wg3M8o77yr6jKsCxXlOty2mmCf-g3bGBHcjiRj847Bj7ST0ap4QUTx8t4hJ_a8cxgMdd_E6oWb_3xGQHnAiaWboi2MEtuDAQhQLRY5ug9xfQHImGMFyOwe5QvuhqgcTXlOF_b4aNXHt2z4-cRBZQuK3VFzbVH5bZnwmIaPT34kL5t2Ih5p0e28NX5mwt1XBDheCpVwaL29msTh4-ox20WStj2E-ffOYUwCSUjJ9wLxfgAaqFKSceZW8053R9pEDQI0fO3u0RVpcqyLIuWSDC_BcLSU-6F7P2kknvFonKPYkixwaIeGK1BjNYIZfTJgNYbu7qxl1GV8ZqJCMkWyFnnHCq9AMHR1hG4Flh4OaOuxC6YBui7r54P0pCMNCy9PqmobmUSb_t0Qx0qXHVgUCW2oGiSWZtauWrOIiTG-eN8Tqieve6FVRRoiZvitL1qhHjOc1uzAsT2oFPQVA1esERAueqzAXb4ba5ZJ8vD5HZj0QJbhFQBHqv3Z-0DYlR6Kw37StM47zY1cfIJ4oMZmuEAooIW1w0701EygrL2FbK4aqzXuk_kes9lmNX5XCBQRijJ_KqEepTm5ku56c_gY2C31L8TSzluMDdCJ58ROaXWYyoI3LiFEfeMJOZr-Ql30uUyuzdxATFLQnTmkOV7rArc-vXjOPLSwRPUYibZEw2FQbSgHPIQtcOmAZh0rR9Nrx7yDM1d4dP4mMHq5iM_PsUXqjV2Rg0dqBDLfeeTahWedlqXKihti6T2NQQpx4ZP8Iqhh8ji7-Q08dQ3v4l1cpSIU4zqKWzDyRINn3r9gp0pMt-X7xuKWw0Ic58V7PBl0D_p2WVnAatk6P40kKzj7Z8cqnnm8Nn0PYGub-eu0vyY2086zwbWYG3X_9k0V1kRw4ySC1AiUhAtGFxiIHXLNitRdoaOmxw-J0e74xdqhSoHgIHN1qclDhcnE2SpYnYAJbVAvoQ4zAFK3bDf0WaFpadPcB4BWcOkXIsYltORxTu5g2LEUWrdEsSlXIT4HqCxN1PXSWqk33Dqdz3D0V2e7j0VLxXBh4xJlVxINTffcKWj6XTkVVw-eh2UBY5wL8O_A_cpatR1Cwv_7e6SkzATGFdXQ_26Il7kIgILiwtMuF2tp79YrVhLcaKAQR5BMK91ZWGl-zoiBtJWZP8xgN--OZEtRPOQdSIal07ILipmKkaJ6_U0LS-qrkJIKg_BzdT4YLcRw7ySXc69n48hxGArsanN092DSw21tyBvY_Tnkb2_hK2ZshWOKKtOr9sD5TNaSTMtATBq4WQ3Ul7Diqfo6OP3zIBWNPyEwyrjD_PTaF2VPRzVAkVVw0ubU5qaLGirpHHfzIe8CW6y3ZPXcDXFFjQZNnkt_6Jtz2bfsLAI5MAn_qpsLqU3VnU-_upjrZIW7shIzEJ7B97SJ9egfZY5rnMApFTDTFcakQxyMXfNXdTspn1XQK9wcX-VexttDOM0dB1KYI4Pg6MqjsLFCKNDj1jt2fOdOQ3zY_2nJV6CHfJdZ-3YBguRu-1_WzTtCkCmEFqIbfxtFxnWlZQC8lXmM99RyD5zBm4kWsb-qvmonHn3Cak8XvkuFtp8J_HAjlMXHvJ6ZaVYVZfXrd9LqsS7ZMo9pPCw79i4udmas_0vqATmH1LaKfeftRoOT9MLy2BoOy5UN9s8PhbrB6LVnkfAcKnJM2mb1nMIOPfD_I5h-Tez7eoLt0SY6rHt2gDh7XuMAs6bAo_1gsZu_DgLuDRCSTf_gQqbilVeSDuRFGCu4cYn8npa9C9OK105-tmlFTeMjyfpzCjRowm3l9QVyyWH46yqItyA2N4GMwWdLwMFR719NR_D2qlBDxXAkhLusb7Xi88FCFTEc9YRjcVNqq2zBTNe3l9DP6p10RKD6fXiWT9EB4ATDULqdmre1aA8zI45peR0rKvF8lkNbNkTg54i1W1byKDPh0vUw5Tr-qnxPQ5RRfgjDNtGlDN7e5ct9JIS3fr210S-Y6ft6xlMk9YybSeKL4PhBB_ZawrmdSZZ8BtS7LjjRS_997QJSIxjfO2lMpexj3lmJyPuNdiX6MneSSHo9p-WDEHpQGgDo9YjhBd7LIs72ZtQ83Ye6s_0bzPV-7ftT9wHCNzBNv88UxbzmeBQs1_jabE6LoiBcnqADbG4QkAOCGjriyGiC6Y_ONc7l6pSsqzuMByQmWrvZI3abznyfxu7XrRdXAPme09GmMDRi51prEVFh8brXNtBCN3SVqVq2BEDDNuXYkOt6VGKnrbrDc5nZROz2NZpwbBR55paqqCW2YECJ5_nIwVt-VKw-aGsnKzIQ5JIx9diArXE9InrL150b8_-54_vJKM9YuB-hrRe0AxdQByl4TMu5yMsnP1JnRCzHcDigCkz7eU6vi5-izFPq3O_fGlAfKkn4YbmKatSzDWVNua4qWXaidCCdlHnTY_FeiPDQ5TZP7LgVwek_O6oU3npwAEvMkNiMvSiPtyRamUyWlCEJo8FmyAEn5pNP8GKEgX0HMwkf3TeH3Da21OcUt1XagNE_YgtcZtZLqsWhjRBvgOFOSBH2rfpPySxXwpo76lyUJxfJfulZGJSaJd9i1kkxKjZWl8jBdxpZp43QyUSMpFkF0bfhzEkJct9qwsrMHNqULH4G9a9pAqmJyaQnCpecT6dS3-AZpSpB8uM_B51ZESZ9RcTqj-VreHJDHji43Vh5mOqG-ncvC4HrF4b4BPQ87NK5Hm9BG5B22ove6fr9_tLkBg78V4M5OstbMkaMuOWuAW0wG59hEAgAr_MNkxSk8FGASkNh4arMKg1uJL7JWVNvJbAo3nNEbHcJtt2E_C5kOILxsRjkPEhECgqUQDpKmkfRGhHNwRIMmoxxw749_1aUsiO8n1YT8SYKVGMaUI4vz1hMk7xrV0CHtjS2mgcgcwcCdakjxFmLg1kPO97cYRg4QriBScuP9PRdfe2yClhjsjqQMq8MOX3Wc0HnEMOwRw0EHs7TA_E14VeQPBv6DVFsLiZZisWmw9eZ8cp4mh4YEuoM009v_zhDs3bIhv5h2I7qpOfpISFijlrmJx5hlnPc96vXEoN8xodvLGs7eNHpKbCEL4WJEDNM0DeXFGhSWi2NdSSwneLqDpzzTk7k51RUtoVbJrqG-C5Z2BGY23Q1PZQ2H-fQxbSnslb0YoNLvVq4OjPs47iiXTqUgUscu65bC6hsw-45MrSdeCDmyawN3e3nEgSCmSAVSQN2sH3gVQVeb9MA93WiVKgHdt9km8ZPgG78hXp2FV6k8SsRgg-EijAfL_Uc0PkgLqH50QkWImN57eHx2MDMDz5rHt74NPHWoZJekMrRYMTlltSUphCu7TjwFDVxTfIC6LQUn0Wk4ooLUGToSC5p8CR3QDNaMJsl1WaWFsKKJ0NQhJSJ8MkxpKN4dpf1_bo4MTM6293CkEoV6FzE7FY=
             format: openai-responses-v1
-            id: rs_0e67143e70e2c03a01690231c4b7c08195b5bfcc5c216e88b2
+            id: rs_0057196777a5a08c016980b989be9c819498cce3c275140fc5
             index: 0
             type: reasoning.encrypted
           refusal: null
           role: assistant
         native_finish_reason: completed
-      created: 1761751492
-      id: gen-1761751492-aqUa1mlCAz0HhuH0IC5P
+      created: 1770043785
+      id: gen-1770043785-QXhLBN1Yr6HulsptbdJS
       model: openai/gpt-5-mini
       object: chat.completion
       provider: OpenAI
       usage:
-        completion_tokens: 1457
+        completion_tokens: 1515
         completion_tokens_details:
-          reasoning_tokens: 704
-        prompt_tokens: 41
-        total_tokens: 1498
+          image_tokens: 0
+          reasoning_tokens: 768
+        cost: 0.0030465
+        cost_details:
+          upstream_inference_completions_cost: 0.00303
+          upstream_inference_cost: 0.0030465
+          upstream_inference_prompt_cost: 1.65e-05
+        is_byok: false
+        prompt_tokens: 66
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 1581
     status:
       code: 200
       message: OK

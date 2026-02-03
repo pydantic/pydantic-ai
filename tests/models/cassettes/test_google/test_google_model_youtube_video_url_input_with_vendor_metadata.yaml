@@ -1,9 +1,19 @@
 interactions:
 - request:
     headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '337'
       content-type:
       - application/json
-    method: post
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
     parsed_body:
       contents:
       - parts:
@@ -14,7 +24,9 @@ interactions:
           videoMetadata:
             fps: 0.2
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       systemInstruction:
         parts:
         - text: You are a helpful chatbot.
@@ -25,11 +37,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '2759'
+      - '2224'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=11467
+      - gfet4t7; dur=12816
       transfer-encoding:
       - chunked
       vary:
@@ -38,35 +50,56 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.4793745385795377
+      - avgLogprobs: -0.7314803365598689
         content:
           parts:
           - text: |-
-              Okay, based on the image, here's what I can infer:
+              Here's a breakdown of what's happening in the video:
 
-              *   **A camera monitor is mounted on top of a camera.**
-              *   **The monitor's screen is on, displaying a view of the rocky mountains.**
-              *   **This setting suggests a professional video shoot.**
+              **Context:**
 
-              If you'd like a more detailed explanation, please provide additional information about the video.
+              *   The user is in a development environment, likely using VS Code, examining TypeScript code related to a browser router.
+              *   The user is interacting with a chat interface within the IDE, specifically using a tool called "logfile" (indicated by the bot's opening lines).
+
+              **The Task:**
+
+              *   The user asks the bot to analyze recent 404 HTTP responses from log files.  The goal is to identify any patterns that could explain why these "Not Found" errors are occurring.
+
+              **The Process:**
+
+              1.  **Logfile Schema Check:** The bot first checks the structure or schema of the log files to ensure it can accurately query the data.
+              2.  **Query Creation:**  Using the schema, the bot formulates a query to search for 404 responses specifically within the last 30 minutes. The query will focus on relevant information like the URL path, HTTP method (GET, POST, etc.), and timestamp.
+              3.  **Analysis and Pattern Identification:** The bot analyzes the query results to identify common patterns, which will include the following:
+
+                  *   **Most Common Endpoints with 404s:**
+                  *   **Request Patterns:**
+                  *   **Timeline-Related Issues:**
+                  *   **Organization/Project Access:**
+                  *   **Configuration and Authentication:**
+
+              **Key takeaways:**
+
+              *   The bot is using log data analysis to automatically identify patterns and issues related to 404 errors.
+              *   The analysis provided by the bot is then displayed in the chat interface to assist the user to find the errors.
+              *   By identifying frequent 404's the tool also recommends monitoring these 404's to track expected behavior or indicate actual issues.
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: ldpraPqBM6HshMIPgsi60QI
+      responseId: YNuAaY2-E_60qtsP4OzryQQ
       usageMetadata:
-        candidatesTokenCount: 459
+        candidatesTokenCount: 386
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 459
-        promptTokenCount: 4605
+          tokenCount: 386
+        promptTokenCount: 4606
         promptTokensDetails:
+        - modality: VIDEO
+          tokenCount: 3096
         - modality: TEXT
           tokenCount: 10
         - modality: AUDIO
-          tokenCount: 1475
-        - modality: VIDEO
-          tokenCount: 3120
-        totalTokenCount: 5064
+          tokenCount: 1500
+        totalTokenCount: 4992
     status:
       code: 200
       message: OK

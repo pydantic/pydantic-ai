@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '472'
+      - '435'
       content-type:
       - application/json
       host:
@@ -18,7 +18,6 @@ interactions:
       input:
       - content: Give me the name and age of Brazil, Argentina, and Chile.
         role: user
-      instructions: ''
       model: gpt-4o
       stream: false
       tool_choice: required
@@ -35,7 +34,6 @@ interactions:
           required:
           - name
           - age
-          title: MyOutput
           type: object
         strict: true
         type: function
@@ -47,13 +45,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1656'
+      - '1968'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '853'
+      - '559'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -61,33 +57,45 @@ interactions:
       transfer-encoding:
       - chunked
     parsed_body:
-      created_at: 1743090725
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1769747658
+      created_at: 1769747658
       error: null
-      id: resp_67e5742504ac819191829f922689e4f0009eb9aa6872824c
+      frequency_penalty: 0.0
+      id: resp_023ee9d32354c2a300697c34ca13cc8196b2fb8069ec6c2e8f
       incomplete_details: null
-      instructions: ''
+      instructions: null
       max_output_tokens: null
+      max_tool_calls: null
       metadata: {}
       model: gpt-4o-2024-08-06
       object: response
       output:
-      - arguments: '{"name":"Brazil","age":2023}'
-        call_id: call_Ve7O5nYyD0JkuZuqOwBVkNe0
-        id: fc_67e57425a6b48191b74a3c62b1df1a19009eb9aa6872824c
+      - arguments: '{"name":"Brazil","age":522}'
+        call_id: call_2mzQFkcvJSgzNIzrndvvm2Pc
+        id: fc_023ee9d32354c2a300697c34ca615881968398812837005747
         name: final_result
         status: completed
         type: function_call
       parallel_tool_calls: true
+      presence_penalty: 0.0
       previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
       reasoning:
         effort: null
-        generate_summary: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
       status: completed
       store: true
       temperature: 1.0
       text:
         format:
           type: text
+        verbosity: medium
       tool_choice: required
       tools:
       - description: The final response which ends this conversation
@@ -102,20 +110,20 @@ interactions:
           required:
           - name
           - age
-          title: MyOutput
           type: object
         strict: true
         type: function
+      top_logprobs: 0
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 286
+        input_tokens: 66
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 11
+        output_tokens: 10
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 297
+        total_tokens: 76
       user: null
     status:
       code: 200

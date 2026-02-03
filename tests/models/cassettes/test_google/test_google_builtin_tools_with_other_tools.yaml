@@ -4,7 +4,7 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
@@ -28,7 +28,7 @@ interactions:
 
             Always respond with a JSON object that's compatible with this schema:
 
-            {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+            {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object", "title": "CityLocation"}
 
             Don't include any text or Markdown fencing before or after.
         role: user
@@ -44,7 +44,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=873
+      - gfet4t7; dur=1176
       transfer-encoding:
       - chunked
       vary:
@@ -61,15 +61,15 @@ interactions:
         groundingMetadata: {}
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: 0f4caf7iM-mgz7IPtLeryAc
+      responseId: pjR8aYSzGKXUz7IPopGb6A8
       usageMetadata:
         candidatesTokenCount: 13
         promptTokenCount: 85
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 85
-        thoughtsTokenCount: 32
-        totalTokenCount: 130
+        thoughtsTokenCount: 30
+        totalTokenCount: 128
     status:
       code: 200
       message: OK

@@ -3,7 +3,14 @@ from typing import Any
 import pytest
 import yaml
 
-from .json_body_serializer import deserialize, serialize
+from .json_body_serializer import (
+    deserialize,
+    looks_like_base64,
+    restore_truncated_binary,
+    scrub_sensitive_fields,
+    serialize,
+    truncate_binary_data,
+)
 
 
 @pytest.fixture
@@ -175,3 +182,118 @@ def test_round_trip_data_integrity(cassette_dict_base: dict[str, Any]):
     # No 'parsed_body' in the final dictionary
     assert 'parsed_body' not in req
     assert 'parsed_body' not in resp
+
+
+class TestScrubSensitiveFields:
+    def test_scrubs_access_token(self):
+        data = {'access_token': 'secret123', 'other': 'value'}
+        result = scrub_sensitive_fields(data)
+        assert result == {'access_token': 'scrubbed', 'other': 'value'}
+
+    def test_scrubs_id_token(self):
+        data = {'id_token': 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.payload.signature', 'scope': 'openid'}
+        result = scrub_sensitive_fields(data)
+        assert result == {'id_token': 'scrubbed', 'scope': 'openid'}
+
+    def test_scrubs_nested_fields(self):
+        data = {'outer': {'access_token': 'nested_secret'}, 'list': [{'id_token': 'in_list'}]}
+        result = scrub_sensitive_fields(data)
+        assert result == {'outer': {'access_token': 'scrubbed'}, 'list': [{'id_token': 'scrubbed'}]}
+
+    def test_preserves_non_sensitive_fields(self):
+        data = {'model': 'gpt-4', 'messages': [{'role': 'user', 'content': 'hello'}]}
+        result = scrub_sensitive_fields(data)
+        assert result == data
+
+
+class TestLooksLikeBase64:
+    def test_short_string_returns_false(self):
+        assert looks_like_base64('abc') is False
+        assert looks_like_base64('a' * 99) is False
+
+    def test_base64_image_returns_true(self):
+        base64_sample = (
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+        )
+        assert looks_like_base64(base64_sample * 10) is True
+
+    def test_regular_text_returns_false(self):
+        text = 'This is a normal text message that happens to be long enough. ' * 5
+        assert looks_like_base64(text) is False
+
+
+class TestTruncateBinaryData:
+    def test_short_string_unchanged(self):
+        data = {'image': 'short_base64'}
+        result = truncate_binary_data(data)
+        assert result == data
+
+    def test_long_base64_truncated(self):
+        long_base64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAA' * 50
+        data = {'image': long_base64}
+        result = truncate_binary_data(data)
+        assert result['image'].startswith('__BINARY_TRUNCATED__:len=')
+        assert 'sha256=' in result['image']
+
+    def test_nested_truncation(self):
+        long_base64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/' * 50
+        data = {'outer': {'data': long_base64}, 'list': [long_base64]}
+        result = truncate_binary_data(data)
+        assert result['outer']['data'].startswith('__BINARY_TRUNCATED__')
+        assert result['list'][0].startswith('__BINARY_TRUNCATED__')
+
+    def test_preserves_non_base64(self):
+        data = {'text': 'Hello world! ' * 200, 'number': 42}
+        result = truncate_binary_data(data)
+        assert result == data
+
+
+class TestRestoreTruncatedBinary:
+    def test_restores_placeholder_to_valid_base64(self):
+        placeholder = '__BINARY_TRUNCATED__:len=2550:sha256=abc123def456'
+        result = restore_truncated_binary(placeholder)
+        # Should be valid base64
+        import base64
+
+        decoded = base64.b64decode(result)
+        assert decoded == placeholder.encode()
+
+    def test_restores_nested_placeholders(self):
+        data = {
+            'outer': {'image': '__BINARY_TRUNCATED__:len=1000:sha256=abc'},
+            'list': ['__BINARY_TRUNCATED__:len=2000:sha256=def'],
+            'normal': 'keep this',
+        }
+        result = restore_truncated_binary(data)
+        import base64
+
+        assert base64.b64decode(result['outer']['image']) == b'__BINARY_TRUNCATED__:len=1000:sha256=abc'
+        assert base64.b64decode(result['list'][0]) == b'__BINARY_TRUNCATED__:len=2000:sha256=def'
+        assert result['normal'] == 'keep this'
+
+    def test_leaves_non_placeholders_unchanged(self):
+        data = {'text': 'normal text', 'number': 42, 'nested': {'key': 'value'}}
+        result = restore_truncated_binary(data)
+        assert result == data
+
+
+class TestOpenAIHeaderFiltering:
+    def test_openai_org_headers_filtered(self):
+        cassette = {
+            'interactions': [
+                {
+                    'response': {
+                        'headers': {
+                            'Content-Type': ['application/json'],
+                            'openai-organization': ['pydantic-28gund'],
+                            'openai-project': ['proj_wlzE3wrTAwGKSsoZUKNhfDgz'],
+                        },
+                        'body': {'string': '{"result": "ok"}'},
+                    }
+                }
+            ]
+        }
+        output = serialize(cassette)
+        assert 'openai-organization' not in output
+        assert 'openai-project' not in output
+        assert 'pydantic-28gund' not in output

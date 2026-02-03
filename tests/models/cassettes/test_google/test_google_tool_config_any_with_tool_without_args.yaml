@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '526'
+      - '611'
       content-type:
       - application/json
       host:
@@ -19,7 +19,9 @@ interactions:
       - parts:
         - text: run bar for me please
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       toolConfig:
         functionCallingConfig:
           allowedFunctionNames:
@@ -30,29 +32,30 @@ interactions:
       - functionDeclarations:
         - description: ''
           name: bar
-          parameters:
+          parameters_json_schema:
+            additionalProperties: false
             properties: {}
-            type: OBJECT
+            type: object
         - description: The final response which ends this conversation
           name: final_result
-          parameters:
+          parameters_json_schema:
             properties:
               bar:
-                type: STRING
+                type: string
             required:
             - bar
-            type: OBJECT
+            type: object
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '720'
+      - '721'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=442
+      - gfet4t7; dur=1092
       transfer-encoding:
       - chunked
       vary:
@@ -61,7 +64,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: 2.5814981199800968e-05
+      - avgLogprobs: 2.911267802119255e-05
         content:
           parts:
           - functionCall:
@@ -70,17 +73,17 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: LFteaOOfMaPG1PIPi5qVEA
+      responseId: 21R8aeD7KP7aqtsP_tH-uAI
       usageMetadata:
         candidatesTokenCount: 1
         candidatesTokensDetails:
         - modality: TEXT
           tokenCount: 1
-        promptTokenCount: 21
+        promptTokenCount: 16
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 21
-        totalTokenCount: 22
+          tokenCount: 16
+        totalTokenCount: 17
     status:
       code: 200
       message: OK
@@ -89,11 +92,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '808'
+      - '961'
       content-type:
       - application/json
       host:
@@ -107,17 +110,20 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_e3268c26ec6340bf82ce92c8342ddad2
+            id: pyd_ai_903796605e794c37a7e179313d87d7ae
             name: bar
+          thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_e3268c26ec6340bf82ce92c8342ddad2
+            id: pyd_ai_903796605e794c37a7e179313d87d7ae
             name: bar
             response:
               return_value: hello
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       toolConfig:
         functionCallingConfig:
           allowedFunctionNames:
@@ -128,18 +134,19 @@ interactions:
       - functionDeclarations:
         - description: ''
           name: bar
-          parameters:
+          parameters_json_schema:
+            additionalProperties: false
             properties: {}
-            type: OBJECT
+            type: object
         - description: The final response which ends this conversation
           name: final_result
-          parameters:
+          parameters_json_schema:
             properties:
               bar:
-                type: STRING
+                type: string
             required:
             - bar
-            type: OBJECT
+            type: object
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
   response:
     headers:
@@ -150,7 +157,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=402
+      - gfet4t7; dur=1112
       transfer-encoding:
       - chunked
       vary:
@@ -159,7 +166,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.039950957894325255
+      - avgLogprobs: -0.02294951379299164
         content:
           parts:
           - functionCall:
@@ -169,17 +176,17 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: LVteaNDWD5-Yx_APw-Pt8Ao
+      responseId: 3FR8afu2OLGwqtsPqv7A4AI
       usageMetadata:
         candidatesTokenCount: 5
         candidatesTokensDetails:
         - modality: TEXT
           tokenCount: 5
-        promptTokenCount: 27
+        promptTokenCount: 22
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 27
-        totalTokenCount: 32
+          tokenCount: 22
+        totalTokenCount: 27
     status:
       code: 200
       message: OK

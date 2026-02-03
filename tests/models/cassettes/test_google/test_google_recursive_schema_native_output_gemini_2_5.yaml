@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '556'
+      - '535'
       content-type:
       - application/json
       host:
@@ -34,7 +34,6 @@ interactions:
                   type: string
               required:
               - value
-              title: TreeNode
               type: object
           $ref: '#/$defs/TreeNode'
           title: TreeNode
@@ -51,7 +50,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1444
+      - gfet4t7; dur=1973
       transfer-encoding:
       - chunked
       vary:
@@ -67,15 +66,15 @@ interactions:
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: D08Yaa3eKYmznsEPt4u8gAk
+      responseId: pzR8aZaFMYetz7IPqonx0A8
       usageMetadata:
         candidatesTokenCount: 16
         promptTokenCount: 20
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 20
-        thoughtsTokenCount: 183
-        totalTokenCount: 219
+        thoughtsTokenCount: 204
+        totalTokenCount: 240
     status:
       code: 200
       message: OK

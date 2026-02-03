@@ -4,63 +4,106 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
+      content-length:
+      - '152'
       content-type:
       - application/json
       host:
       - api.openai.com
     method: POST
     parsed_body:
+      include:
+      - reasoning.encrypted_content
       input:
       - content: What is 2+2?
         role: user
-      instructions: ''
       model: gpt-5
+      stream: false
       text:
-        format:
-          type: text
         verbosity: low
     uri: https://api.openai.com/v1/responses
   response:
     headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2636'
       content-type:
       - application/json
+      openai-processing-ms:
+      - '1195'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
     parsed_body:
-      created_at: 1743075630
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1769747670
+      created_at: 1769747669
       error: null
-      id: resp_test_verbosity_simple
+      frequency_penalty: 0.0
+      id: resp_0b2c3ebd3bd8fbf400697c34d581f481919677b45179b33069
       incomplete_details: null
-      instructions: ''
+      instructions: null
       max_output_tokens: null
+      max_tool_calls: null
       metadata: {}
-      model: gpt-5
+      model: gpt-5-2025-08-07
       object: response
       output:
+      - encrypted_content: gAAAAABpfDTWniE3_woeOAFz6RCnVeVhZ-Gps5HDzkLocevVMRY_0DJ9lJxmAEvm_hnRV2wpkX_Z_PLqz3vczpGy4EF0z5acOechDF6DodBf33bvsSkAGIZkIlvXyJSPhRkoFYrDGKB3162RmZSQuwvfDRrVi4UGNgI9ofzXWakKm6IgpONNparcASXqq5avBFOWgYOS-bOq_CJX042eri6fBpc9sQVAcil8VbFlZ91peDafjSLBivoEjJS1wfhoyPOG43hQA4gpIdBGqghw3ndmR8F8IV29_cstvywT90wznv5SL_dy5oBtP4RIHIXPlmeBfxhWEc1A8dcz4CP9Avj1JuqIuYELtG5eBK19zBtijWJLM-gm0_8LaEwX7JZ7I4niM9Km565sTgNzPl0r2wzyqTkuXz6LNIRB2M7ZIN-8kIyRPQUfbHFxp1Q4CL_rIVK9vLmNFnlRVWBUb5RQC819tkNpk_z80AYfV9Ywg9txfmXWhuKTT9LJpzkj6xFgk1PuZGph1EpB4rxpICsUavP5EGwxRdG33UddH95-oMDgYOuRiqZfoRL_5b8yvKQWm7NU_pP_WjP71UnSbuaq7m5Ed4TQsU3ZIlB7k9EAjYmaEn54rbFC001omlIeP68hSyrrb4CeWyykvFOvn7CnR4iNlPriJpGtCtQd-MV4sQPkgMPUBMMwEx16IJ2_r8S6NwfWzhAuyvLjnt7Pdfww4KMsDbvVjK1_cXR5pYDTz15FojsFiZ2xxQqLM3FtyhBPxIisUiU1DwQRysqHx6QKwW6R6GpDDabuCjC8WdUG43rngmhtumfjCbIWDisKZoSVqfGQs8b-kQYtYToI-pvLl1wUCYcm8eyZgPzCNkUpMmF1ymQABo2kqsRlYYd3koO1Hmjk9SkQO3p1vfNWsorCuNHt9Tev8GujngIRA6DuinWqo419lFeoFjY=
+        id: rs_0b2c3ebd3bd8fbf400697c34d5ebc88191963a66e99db77d51
+        summary: []
+        type: reasoning
       - content:
         - annotations: []
-          text: "4"
+          logprobs: []
+          text: '4'
           type: output_text
-        id: msg_test_verbosity_simple
+        id: msg_0b2c3ebd3bd8fbf400697c34d64ddc81919ddbea1ad2d6788e
         role: assistant
         status: completed
         type: message
       parallel_tool_calls: true
+      presence_penalty: 0.0
       previous_response_id: null
-      reasoning: null
-      status: complete
-      status_details: null
-      tool_calls: null
-      total_tokens: 15
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: low
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
       usage:
-        input_tokens: 10
+        input_tokens: 13
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 1
+        output_tokens: 26
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 11
+        total_tokens: 39
+      user: null
     status:
       code: 200
       message: OK

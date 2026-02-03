@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '358'
+      - '475'
       content-type:
       - application/json
       host:
@@ -21,18 +21,15 @@ interactions:
         - text: What is 3 + 3?
           type: text
         role: user
-      model: claude-sonnet-4-5
-      output_format:
-        schema:
-          additionalProperties: false
-          properties:
-            response:
-              type: integer
-          required:
-          - response
-          type: object
-        type: json_schema
+      model: claude-sonnet-4-0
       stream: false
+      system: |2
+
+        Always respond with a JSON object that's compatible with this schema:
+
+        {"properties": {"response": {"type": "integer"}}, "required": ["response"], "type": "object", "title": "int"}
+
+        Don't include any text or Markdown fencing before or after.
       thinking:
         budget_tokens: 3000
         type: enabled
@@ -42,35 +39,30 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1563'
+      - '1187'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
-      retry-after:
-      - '48'
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
     parsed_body:
       content:
-      - signature: EpEECkYICRgCKkBevTTAKlgYyxh1U6olWdqLd5cV0KKViBdsaidSSqI55TeC59ngdwK+NwXALIJArf9ayGq7z2Y++6f9n4gS0MmhEgxbAJIseNnXz9uSgPsaDElQizdciEcDkG0xlCIwD9zwOZA4kqNsjKp8uNgHC97LxRmdo4tUu87KSvvHnR7x0eiGo01W6CV94W71xB6IKvgChpTBQeBGjGaP7mELZonHoh0LF4tQKNVL3LnRgL9sritYl7IxwJPvVWbojmSQEoGaFJtRJJPHSReFvYlD8HKABz24PSrRCboJYTA3O1/agsuHzIdZSCf3Nhd7ftnJ3fxx6wnBs79s9TL+dbgzkiJjXrb9ZnherjWdqFJ6aPTti26i88U2co/0Q+IKtUigzBaiAGABuc5LaIzNGqeg0yPQV4pbVjvjap5jRAbzwYmpxdZMrRwbSIQ6smjkYaRg2mxs0OxvhHoDKAuAyEplRHtIYTjnjUoogqaa4TttGX3vhLKJD1WTwcp6NJlZqr34SeW1PlfG0mmuPmG8N85zQfWXQpLVuUvxdrFYePMO7dqrYgthP69zuLLgI9jUn1TteF9mgbs8nMZ9oQ99R4v2qRf7P08KFb58xxqM+/Hu5c4CazeXJsw4kiBfdNcSL4zaCZEodgGH7Yp/9jNzRSOX0UsCrZ4SnmOr7wOS8usNYr+cWK/vVR3NRgzLYxgB
+      - signature: EvQCCkYICxgCKkAxVzJtN3/7xxh3lXXqsyNSTcYVkLgykjf7C8guFzkhclhUL8Ffpkfgq7QJgL4MZyJrflcQlkdzTcK2GDxZUJELEgymV3BhV1ha5+kDoPQaDM0Lv7Bt09J4AaIwFyIwcvJVgHum7QnbrYa9ypk+2xz4A60W81d0GTVc2qvkyOTTgbhr4LXu/HrLpsbDyfDjKtsBgfwwiIrSLbMQBhXMrMZ+Gc4ssMRDe2sY9z29MoxtyWu67Ivf/Ubc9HibMIcycbuw8ZV0evXcP/tsPTLCf2u7NpynbpfQXNHYzhPHqgiZF4Wv0iVWPw/F0PUWH+oNitszLEOf2qv98GU350Bskby85AaZnT+JG6r3b0PDr+DkWS6o8bEeZWkCWGlaMp/eHvM3AouV/eWICrfIIP5hTxfvQ5gwVaqhm6R1gYg4W3Di4DbxdwSSebzKv7bKUPN0NlzBkYpt7/JpNdOg5QfmMa74O5/9lTsjJf+kyKneGAE=
         thinking: |-
-          The user is asking a simple math question: 3 + 3.
+          The user is asking for the result of 3 + 3, which is 6. I need to respond with a JSON object that has a "response" field containing an integer value.
 
           3 + 3 = 6
 
-          I need to respond with valid JSON that conforms to the schema provided. The schema requires:
-          - An object with a property called "response"
-          - The "response" property must be an integer
-          - No additional properties are allowed
-          - The "response" property is required
-
-          So I need to return: {"response": 6}
+          So my response should be:
+          {"response": 6}
         type: thinking
-      - text: '{"response":6}'
+      - text: '{"response": 6}'
         type: text
-      id: msg_01AoK283YkWYce78oTzoF5Qz
-      model: claude-sonnet-4-5-20250929
+      id: msg_012EKbxpbKsr7K8TLbpqzZPZ
+      model: claude-sonnet-4-20250514
       role: assistant
       stop_reason: end_turn
       stop_sequence: null
@@ -81,8 +73,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 187
-        output_tokens: 113
+        input_tokens: 107
+        output_tokens: 81
         service_tier: standard
     status:
       code: 200

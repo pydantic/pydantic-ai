@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '203'
+      - '233'
       content-type:
       - application/json
       host:
@@ -19,7 +19,9 @@ interactions:
       - parts:
         - text: What is the capital of France?
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       systemInstruction:
         parts:
         - text: You are a helpful assistant.
@@ -34,7 +36,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=444
+      - gfet4t7; dur=872
       transfer-encoding:
       - chunked
       vary:
@@ -43,7 +45,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.0001856483577284962
+      - avgLogprobs: -0.0002058004029095173
         content:
           parts:
           - text: |
@@ -51,7 +53,7 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: 41peaK-wOMSenvgPh-vRiAY
+      responseId: izR8ab-DHeboz7IPz-2CmAQ
       usageMetadata:
         candidatesTokenCount: 8
         candidatesTokensDetails:

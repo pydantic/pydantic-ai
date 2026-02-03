@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '133'
+      - '161'
       content-type:
       - application/json
       host:
@@ -16,10 +16,12 @@ interactions:
     method: POST
     parsed_body:
       input:
+      - content: You are a helpful assistant.
+        role: system
       - content: What is the capital of France?
         role: user
-      instructions: You are a helpful assistant.
       model: gpt-4o
+      stream: false
     uri: https://api.openai.com/v1/responses
   response:
     headers:
@@ -28,13 +30,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1211'
+      - '1553'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '419'
+      - '945'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -42,47 +42,61 @@ interactions:
       transfer-encoding:
       - chunked
     parsed_body:
-      created_at: 1743075639
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1769747655
+      created_at: 1769747654
       error: null
-      id: resp_67e53937459c8191bfbe53cfca6a5d3e056b30c8cbeecd7b
+      frequency_penalty: 0.0
+      id: resp_04340b98259e5d0800697c34c6c2608193a62906a9a6176c51
       incomplete_details: null
-      instructions: You are a helpful assistant.
+      instructions: null
       max_output_tokens: null
+      max_tool_calls: null
       metadata: {}
       model: gpt-4o-2024-08-06
       object: response
       output:
       - content:
         - annotations: []
+          logprobs: []
           text: The capital of France is Paris.
           type: output_text
-        id: msg_67e5393791c0819185c91fab3113b3db056b30c8cbeecd7b
+        id: msg_04340b98259e5d0800697c34c77fc88193bb537edae7ab13ae
         role: assistant
         status: completed
         type: message
       parallel_tool_calls: true
+      presence_penalty: 0.0
       previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
       reasoning:
         effort: null
-        generate_summary: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
       status: completed
       store: true
       temperature: 1.0
       text:
         format:
           type: text
+        verbosity: medium
       tool_choice: auto
       tools: []
+      top_logprobs: 0
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 42
+        input_tokens: 24
         input_tokens_details:
           cached_tokens: 0
         output_tokens: 8
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 50
+        total_tokens: 32
       user: null
     status:
       code: 200

@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '958'
+      - '920'
       content-type:
       - application/json
       host:
@@ -20,75 +20,68 @@ interactions:
         - text: What is the primarily language spoken in Mexico?
         role: user
       generationConfig:
-        responseMimeType: application/json
-        responseSchema:
+        responseJsonSchema:
+          additionalProperties: false
           properties:
             result:
-              any_of:
-              - properties:
+              anyOf:
+              - additionalProperties: false
+                properties:
                   data:
                     properties:
                       city:
-                        type: STRING
+                        type: string
                       country:
-                        type: STRING
-                    property_ordering:
-                    - city
-                    - country
+                        type: string
                     required:
                     - city
                     - country
-                    type: OBJECT
+                    type: object
                   kind:
                     enum:
                     - CityLocation
-                    type: STRING
-                property_ordering:
-                - kind
-                - data
+                    type: string
                 required:
                 - kind
                 - data
-                type: OBJECT
-              - properties:
+                type: object
+              - additionalProperties: false
+                properties:
                   data:
                     properties:
                       country:
-                        type: STRING
+                        type: string
                       language:
-                        type: STRING
-                    property_ordering:
-                    - country
-                    - language
+                        type: string
                     required:
                     - country
                     - language
-                    type: OBJECT
+                    type: object
                   kind:
                     enum:
                     - CountryLanguage
-                    type: STRING
-                property_ordering:
-                - kind
-                - data
+                    type: string
                 required:
                 - kind
                 - data
-                type: OBJECT
+                type: object
           required:
           - result
-          type: OBJECT
+          type: object
+        responseMimeType: application/json
+        responseModalities:
+        - TEXT
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '799'
+      - '797'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=806
+      - gfet4t7; dur=1134
       transfer-encoding:
       - chunked
       vary:
@@ -97,7 +90,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.0002536005138055138
+      - avgLogprobs: -5.418194822319176e-05
         content:
           parts:
           - text: |-
@@ -113,17 +106,17 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: PlteaKyjEvDZx_APsLvzqAM
+      responseId: nDR8aZf9HdWiqtsPsb65mQI
       usageMetadata:
         candidatesTokenCount: 46
         candidatesTokensDetails:
         - modality: TEXT
           tokenCount: 46
-        promptTokenCount: 50
+        promptTokenCount: 9
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 50
-        totalTokenCount: 96
+          tokenCount: 9
+        totalTokenCount: 55
     status:
       code: 200
       message: OK

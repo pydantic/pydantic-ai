@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '326'
+      - '312'
       content-type:
       - application/json
       host:
@@ -18,7 +18,7 @@ interactions:
       messages:
       - content: What is the current time?
         role: user
-      model: gemini-2.5-pro-preview-05-06
+      model: gemini-2.5-pro
       stream: false
       tool_choice: auto
       tools:
@@ -35,12 +35,18 @@ interactions:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      cache-control:
+      - private
       content-length:
-      - '1166'
+      - '392'
       content-type:
       - application/json
+      expires:
+      - Fri, 30 Jan 2026 15:09:12 GMT
+      p3p:
+      - CP="This is not a P3P policy! See g.co/p3phelp for more info."
       server-timing:
-      - gfet4t7; dur=1609
+      - gfet4t7; dur=2280
       transfer-encoding:
       - chunked
       vary:
@@ -52,26 +58,21 @@ interactions:
       - finish_reason: tool_calls
         index: 0
         message:
-          extra_content:
-            google:
-              thought: true
-              thought_signature: AVSoXO4AzAXs7GGvOY63fp8CwJK3yR8HbUPhxhfN2HaPvJnscmZCkaWvckz5NL3nIMK+si/baQcsM2Q8ME9V1RQrb3w1IKceWfjO3kHPL11odY/p6Us4GkkvJqKU/OgUnbAMbuvNdX1pyXWZUrQ7WyXZ5F4mjbxBSCLiVOTdFlK53zn+ajq5JIuG9AYHgwE/sJxUUpvNd6RcWvZR3fQb8gufjCspiO2ZdInRcdGsz/+XftFHxFbXkdtCRAw74AtjlN5osb+KgDYojdohKIEit9DcTBe7hI7oEHWMfnqYSgGrrad4FJpNB3jXmSFevE2iYYKUBzWvxJNj8fIYrCC0g4rJ1aJvuoU=
           role: assistant
-          thought_signature: AVSoXO4AzAXs7GGvOY63fp8CwJK3yR8HbUPhxhfN2HaPvJnscmZCkaWvckz5NL3nIMK+si/baQcsM2Q8ME9V1RQrb3w1IKceWfjO3kHPL11odY/p6Us4GkkvJqKU/OgUnbAMbuvNdX1pyXWZUrQ7WyXZ5F4mjbxBSCLiVOTdFlK53zn+ajq5JIuG9AYHgwE/sJxUUpvNd6RcWvZR3fQb8gufjCspiO2ZdInRcdGsz/+XftFHxFbXkdtCRAw74AtjlN5osb+KgDYojdohKIEit9DcTBe7hI7oEHWMfnqYSgGrrad4FJpNB3jXmSFevE2iYYKUBzWvxJNj8fIYrCC0g4rJ1aJvuoU=
           tool_calls:
           - function:
               arguments: '{}'
               name: get_current_time
-            id: ''
+            id: function-call-2900024254458648715
             type: function
-      created: 1748902365
-      id: 3SE-aKjdCcCEz7IPxpqjCA
-      model: gemini-2.5-pro-preview-05-06
+      created: 1769785752
+      id: mMl8af2XFseqqtsPtbCn6Qg
+      model: gemini-2.5-pro
       object: chat.completion
       usage:
         completion_tokens: 12
         prompt_tokens: 35
-        total_tokens: 109
+        total_tokens: 126
     status:
       code: 200
       message: OK
@@ -80,13 +81,15 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '575'
+      - '564'
       content-type:
       - application/json
+      cookie:
+      - NID=528=TB9eNcZ3yXslBmHEs4bHyH5K1dFA9S8dVsrQ3cJd10EEpJwUhecu3kd8jk1q9N4i9xw4xNU3u-eN81rwyFRQnXD7e_kW9HEyNmQK4Y2LEgxJxXIpyqcZu7HjFR1-HGPH7A4nR7KMplMRlcLiZcnk7gCdArp8tiGhLQ0ySJqOL7sHI2ELraDIx_tDOsGHgii1ZbA
       host:
       - generativelanguage.googleapis.com
     method: POST
@@ -94,17 +97,18 @@ interactions:
       messages:
       - content: What is the current time?
         role: user
-      - role: assistant
+      - content: null
+        role: assistant
         tool_calls:
         - function:
             arguments: '{}'
             name: get_current_time
-          id: pyd_ai_cee885c699414386a7e14b7ec43cadbc
+          id: function-call-2900024254458648715
           type: function
       - content: Noon
         role: tool
-        tool_call_id: pyd_ai_cee885c699414386a7e14b7ec43cadbc
-      model: gemini-2.5-pro-preview-05-06
+        tool_call_id: function-call-2900024254458648715
+      model: gemini-2.5-pro
       stream: false
       tool_choice: auto
       tools:
@@ -121,12 +125,18 @@ interactions:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      cache-control:
+      - private
       content-length:
-      - '755'
+      - '293'
       content-type:
       - application/json
+      expires:
+      - Fri, 30 Jan 2026 15:09:14 GMT
+      p3p:
+      - CP="This is not a P3P policy! See g.co/p3phelp for more info."
       server-timing:
-      - gfet4t7; dur=1097
+      - gfet4t7; dur=2063
       transfer-encoding:
       - chunked
       vary:
@@ -138,21 +148,16 @@ interactions:
       - finish_reason: stop
         index: 0
         message:
-          content: The current time is Noon.
-          extra_content:
-            google:
-              thought: true
-              thought_signature: AVSoXO4/lu90Bn7IxVcWAjD6KH3ZHMmsCX1tnPJERDI6SZb63hrSEtmJT/v+sn2SzlecMoXBVmtcrd3keFszUgDpLjFm1gB+uMzLS1IqPdEAh+m5S71k1hfStNMFen63UnphYHWt4UrjVHXckysRLVJjCuMmE01hQXcVh9b3YXvfWfZEFA==
+          content: "The current time is Noon. \n"
           role: assistant
-          thought_signature: AVSoXO4/lu90Bn7IxVcWAjD6KH3ZHMmsCX1tnPJERDI6SZb63hrSEtmJT/v+sn2SzlecMoXBVmtcrd3keFszUgDpLjFm1gB+uMzLS1IqPdEAh+m5S71k1hfStNMFen63UnphYHWt4UrjVHXckysRLVJjCuMmE01hQXcVh9b3YXvfWfZEFA==
-      created: 1748902366
-      id: 3iE-aNK3EIGJz7IPt_mYoAs
-      model: gemini-2.5-pro-preview-05-06
+      created: 1769785754
+      id: msl8ad3eHbaRmtkPwoOb2QY
+      model: gemini-2.5-pro
       object: chat.completion
       usage:
         completion_tokens: 6
         prompt_tokens: 66
-        total_tokens: 100
+        total_tokens: 72
     status:
       code: 200
       message: OK

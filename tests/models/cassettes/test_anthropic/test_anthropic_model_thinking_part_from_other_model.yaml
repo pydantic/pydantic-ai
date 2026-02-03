@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '249'
+      - '253'
       content-type:
       - application/json
       host:
@@ -18,10 +18,9 @@ interactions:
       include:
       - reasoning.encrypted_content
       input:
-      - content: You are a helpful assistant.
-        role: system
       - content: How do I cross the street?
         role: user
+      instructions: You are a helpful assistant.
       model: gpt-5
       reasoning:
         effort: high
@@ -35,15 +34,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '20367'
+      - '16793'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '24717'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - '48060'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -52,85 +47,85 @@ interactions:
       - chunked
     parsed_body:
       background: false
-      created_at: 1757543847
+      billing:
+        payer: developer
+      completed_at: 1770047986
+      created_at: 1770047938
       error: null
-      id: resp_68c1fda6f11081a1b9fa80ae9122743506da9901a3d98ab7
+      frequency_penalty: 0.0
+      id: resp_0cd2b5edf91e3cfb006980c9c214bc81a280f68dd94870e776
       incomplete_details: null
-      instructions: null
+      instructions: You are a helpful assistant.
       max_output_tokens: null
       max_tool_calls: null
       metadata: {}
       model: gpt-5-2025-08-07
       object: response
       output:
-      - encrypted_content: gAAAAABowf2_AHOXmEAKsNdyGIMNmBt3qK8T8OcybLOuQkkIgjjciRaVh5lvEYzq0T3Tiuov9JXstCcNjH5TF36PUM53JjnJ2x7qPZg0DfOc7XzUtwH_OJGLc_eX18QOw-zohEZuf7TJWzXue0nwVpKTQWN_6zXPtLj9OZtccEcu-fHT5rrSt-Z7WLoYKj9Bp1u-SfShJPL7v7I1jzPMwGf0I2C6uBmHSqPAlJ-QunpuAo3u_xp1l7w6z1iIeWJ7gV46E0UmaLk4fexi0x9Fvk9BTBd4dbjAV46IvWJkeQeGKuivgJ3X9C41KsaOZTknyLXGQYuE_PI1nd3O8obIUK37ODoOmxjqqVJfBzZXbqfOwTwMRiv1wSzahBfLytCKmU1a43iNjJhsSQGqdogD0RIv9unoYcXTjfSQk9R7qxNCo3oPMLO3LYLZgs8abjFpLGTiI36tze62L-NEbbJpOV0tKDZ5nVLxCS6-XG6IKKI9ltMhY-cISfx4VcLG_TLp68nyYGdu7ascSrUXRpH8yNJciMjfRDtu9C3mojioaxi9FUmQ95vsYpuUlxOytUWcXxj1k6HdzOVhJNGtD8RCAHp28usbuIFDobvOo0K3BTU0z-umGYDSRIksK5M-XAHRfXoBoBBiTEVRDH5WiqLpSy_gL73CDtJFXpW5PlwNa-zwrp1zVD7HIhgG0oQeQ5kNSO8hV40rm8WYrKXnWpD25zjFA7E-qx47Sn98rBVk9UGNYfw2RV0aN_0lCwFNi_8dtY5-V2feSMXWAR7MNX2QRuc7RsMzfAvDv8TDJJFn0EZvX0Bv7TA7UkjQoLPOi5OKbeNuAT8k42TA_cob3uiejsqQ1mrYixezVJX4jQ4ARLxp0uAyAjnWHhnqkb4oCfIDQ8ht9IgS4dqm9pc2BKhGGYvqH1Vk0aUONciXGipfxEN-ZGhhls6CfPH3WUytB_qhWFiWF8aewSttku4sL9AkGtbG80lLc9lRAvtWHWviW_2XH_yvLuDMDvRAa-cYOaTMtxk1iQ_A8mGnSxDut5heIOK5z8ReUq9qtcOR2xiKF0wVSZX9wticGT6EwLrgPPKafbE10Hl6kkkwo02WkREhkD7rmRyqPuUyPqRaTC_qIxINYSx6DiidnDDfiIjXitlnt6Dp0eFmqfce0cVyKJwc2AEl3QvzG2rHyWTYrVLk_K_M8bPueX2Dgp5fQKZW8GjuXOHVuMnQFVoiiWWs3SYUdAD0aiqJg6BmRYpcdwlkKT_BCZzQIp2QQF_n2W5IhI1VDULmV7WW0ljtW9Rq2-47qaVyMFRrLD5SS-siFwH-AhraBUxhYX4lLe6GrTFLJ5jUYBl1xBuhVUPPSV-qUhGgGmgQb-hgDIXQb3AX8wH9JrToM93SMh-zstW-GNLcdlAH1t1CExqqcUs2wc2ecMrTL8dxHg9AY4jCM2hDMgp_ZmiRzBF_8IhH5b_qEArG_fAZ2U7-4FOWm2-dF2aFYqG0gW8VzjhS2knnzqd2YJS-MtTmCuJdmwql_7mhMcgQvQmnbpj-TON_hf4t_IQHT65hZ20JmQNMX2qc_JY6Xp0IPpt908_soJN2ml9fI-ObNL6a9tkx1oRaKBB25dH5ZYWjDzC2_jHZwlEL2JRkSUgcF_H0tohI8cNnQSJ89jkCcgTHqIDqcp9w7-0TvLGj05TzIodJAlI6eOXqoNNAof2F2y6wsyD7lRnhPqPmTpIG6nYVZXEOHICTVNEfAAewtXZ82OYfO-uU0y535huv7bBJv5RYImhHMC-tkUAUGox1223I8O14UsyhXJrsOIaSLdhmrm_9hvAfs2YKF4WprnSzkxsda6C_WIuJy7tDNAo6EVXkB9i9INElyfnxGJgvWfwXOIbLLsdsS5Ocf1mqpBdECU6vsgOnio8opZ6MoWDexB515C8mCngOlIZKGZ3TojdOLGKoeeOn4Y1USVr9bndXIN9-hm3xzLXyfgfUMuaF3ehx2IXTFA0oJhy-z3N6Orgey6ibNNCsGtq5QKfYyIV7o-_cqjGcXyMjQqNXeH-imRwMXevfWiKNHowJf3_cjUIAOUnXXPi2c8Tv0KMWQDR1mKyASXh8QY5GyPMYDF3mfI6zHiSumIfSFZiiX6xCs2lKdy1wfrYPHjde8Qi4DZhDFOX5imeziWBAdLrWA5QVdNy45p88zKwZYiQKFqmsWpZYwYjji-OdikTn6FKxpYlzRJMRSQjpOU30sNov8FIwySApK0mPsxBulkT1gcipyb3bKuXm5wvbzMDcS24vx26PlnUluX9jo1ElJBkxCqfwJZK9vOLPfVZHeN9uS2JU_GCMBLrAmXcLG-scaikRawW2SDhv3seFJHPL330wT2_i2DY_fVi0Q2YZxsELZ_YSAMzL11RMgzbdvE9GF1LOt6PkALQxlhmyKnaOjpqwlfSgoeKSmgM4h9JbOQ8CRTrT2KbIAxQF3D5IA3arKkLsL6HE55x7okRRqQzI5hN80vQAfSa4wUe7r7EV_AoypQZPSkWMnDfqJDcjIwju0-H6iE875b1AUVqx8QjiRDJRzEupZ3pC15z9qx0LmbIsjGoD2KNutWtgbWdPqGo53EKaksEhgalbGe08U5yl081OyP6U6EpLvIXnZGRSQvpgHCUg9uNhshgz1-GIZXC0h97PLA5JaUR9cdsKH5F6LC78LU8XJphS6k7U4gaP4tmCIp4rs1qVMCVAxShszolHGZo1JQIbAakNi8-f5tNgMZQulDe9FaFtecrGfCugL11PwmT0RbrV0M-wotDBpo0uC9vuAI4wB6HW7FGhpLwZnJ1c27kkWaGo0jltCPTiUvxTCRK-BtAYz0S2YedVSmKOaUP9vomJqeg2LfKokDJLDwPRFmfZPstc5nYAQPWbN_L8OrjkeNKrW3XdB3wFw0FSehoTwNkAjyeMmcKWxZKXIfkqXkhe4arw6df9dIVWqBTELDxhGp8X8Q6nxDPU8S4EgbdP7SmhQM9utpqz2dT0057InogmYcVzLV98PBdsF3yVwkmCPYUlKu1e84rLqL9iQ0JbsBjRRd45sbXI2xqeIQxgp4Onz16m0cXg5lFq5uhFagW5syJvDVZtZY_IAF0b3vQvHo5QuCnLJPaJHayVDFDcSi3qYUYMa5eDhglYEn0tDKuIqLyu0jIXCBSUVqjKiBkFkIiYlJLc-L4Z3BV2waO-AaEIUAl9mT7mNBlu4N90K9C6wcrqKZcxFvRUicMO8Ak-tcqolvwVqmTxch9SkHX-Wtjh_vXytOpePfRH339z9QH1gQYTK-tb1Gu3sv6IJrL1enJwqMydKDiISp-oPH7YeA-nwsuWB3PSDxCrUdozyhr_HharZ6ComY6ESf4o9mzSJxKjJWVGFRHEvvWlCcD31L0aYGBB0ZXUGT0gXxWz_jyScH40g9Rfflt4N_HfOeyZFw_EDMWr4cXQ4_m0LEYqEfbINNS0vUCupaQ4igsQjy9W3QXsmmD-CsYFiLT9u2bhsM4cYhg04cGz3zjfuteIEub3YNWIAfK6CCglnQK0Ty8sKBRq5s8-bLohoWJV2W0vlsdO7RP5HEYzdfyFBzpuqXaXIfGwt055lxnTew4iOGmnNcaWDmKUeQtdFjyQqRn8dGh_ScSk92J__sRqM4P4BEDKJIhxmJclVpKlpN3ujDm7MJyC_D9tVLjXyItouS85BNAHaYE34t2fZYhQXdpYNedPFzscNZF-shqU8Z1ppbh11eqwL5aU_GvpUU3AQjvu7oHxaNOwS9IzktzNZC5lvmfGGi9qJsTuZnqUhIumkwSB_N6NSsXCXmoB2dhp1JsP1Tra9R1Cn63KF5yvvQ0eddZG0Hy4cY-ehTas7YKPoJmiRdLikQXSiCKEqQSykM65NbSysEvHSPsVGQQiiTD9Ha0ukcsoEu_luctbAgX4MJdQ8EjZjsKIDG-CTAML0W6rL8NGlFNZ8XBf-OAFQGWKBqzjiJtbTV9FxcYzZNMwlpVLmweVO8Q8J2x1zk6DxYKQQyD2P0VSLW2G3WTKkfzB6JEBJ3xO7hF72oAUsE97FCMVvp9tU-JcS8ONfM_V06Mc8ySIlqLExN4lotXgoarB-oTkTBElKfssgbT9_aKsfOkINXCwvRWDWHmL3WMvH0MqIxJJ03M0J2PEWYeR8qXH8gQ6XDe3r_f7VBka9xMamOxtsbRDUvEhcvLPIPBV_GwOjVyrRzhMPGxqXyuCiXaDy8qwQ6A6P7JlexpqWA6Flq8X90sT64guSup-y87lUwQYLe8IuFFI2siJj4ipSUTUKdybuSThLT-zb5NN0Q5nzFJVhLssQ0wgtgdUXH9pGV6QrnYmQ8hcwbeLuoqs-rmCaFmKvNo2ucH5kf1t0hihakCd1wAUMW-HsAQ9zbC5KdNlFu5xaCUzPHrpgiW5VlV3lvpKFLGqAb3dYFNeWrUjvt_G3rSxjBh9e5KKrt5F9y3DV-_ZZ1lC9ANRoVnwTrlSD5bx1SxvoIdgBa_RQq8D3eCH9G7fPw42dr5gDg2vFrWoVcuRvwCaaHdHkpXR9f5uL1s32DCsFB-jCjVCDvPEo_V3bMSHROszGQYu8FCERK-mVgpLYGfd6jV6YP-qluL_ezukhQfB67jti3GT0Ze9Las9EdXYmJGpvZPYWl6x8okBe06-NARmzrDMVi8QryKFZ5gBPwim50yome3lYnf9MhiCjLIsVKX45X2J-7pF5WmfnhatPnMAxlVD5UTi_GNILD0cQasHKVLMMRSr5xJ6-YN5zyZIOr3hpOuZ_iPmbveucxtwwN5eZrPaIMWyPKThkmdThOd5dL0mceWyimZDcVqZa5fl0NVEkFzqA6RpVPBW_fAh6FynEwBIxdSQ_sE8Ozv5ztcTg805cfYQDi0ssVC0PAVywMzsirCGB3UJQFueiD88Pz-haU_WV1ckskScmumgxxESoLq_i0PZIKjMZf5DQp8auLSjff9EyNrQAnX3vIF5BULz1S6MrzJCOYHrIkJyN3-fuJIw6JlfDbOgijmH3heINhARq9k2wHByNLYzmrQV3jPp1nPLViLHsRihY_-zGA89N5fy-LYg9CcUzb05fW-hAz0EJDG8C15E6sqXaWgs9wFnNhQkOsfgNPwGDd6dPdd-X51N1ewz84welWcOrR0RtehCPqpOkOQ5Kh7FnyuQizT4doZ1uVFFQrKrLjliucn5ZKAJNmpnYtl_7IJhIffJkXEhbsAOy-jrVTxx0w2SoRbTInV5MENDT9EDjQgZEgCkoyT_8RIt4RSNS2DrH7HU-U8RFgAXeYhQaiBQSG73yBH6sqNXxNsFU7I_U6rNCVib-FRIoMVLcocqswFbZNm2CV7qzM4euUa8vw0Kp_mfFAtFg0M3M1s8T2y2ce0vHtEBKiFZRewHqL8LfYU-q8PxMJJrHRzJ54PXDGdH_kyDmXophBboXpYoyQKf0ikmdl0mcUtgx8jQOMjwzaFyx8cfNXlhaKZxWLZnTPuUDCXv8jm4jbyBxv-fT1k26Iaz_e8vJ6kraT1mOLUWeYsHQ9niNlOQd9iXl9WqSiUSZjIDRYZdpPgEUAvTgVS_eIevUEqWmdDYcUmK36l7c8sBZoOSO1biIt2bnyasvORv549ihVWinxjyVsTvHX7_oFL2TcWt_yqd_WbQCekEHR2FhnuVjgUogCMXHxaEqgtLv2PDMDQc8MaXoFVyrzhfJQMQiPO1BHIDyRUE-WtEiZSk1gSDpNIn8-gUzSujF-qsSOgjPh-hOuGaX3mI-NEs9UR7kV7jf1ILWY5wpUOZwD-jVq3MQXgQOVOZifcoOXb2tLnTa2aR7aORFrgdsyx6DhW64ghEavdlK5GF269oKwpZIU_z8ue4Ps6TakA8vv9wGHfobndoT6sGH_xA3tFpR4tLCJti2FwkUIqApVRPXR-vHctd3NGshiyGiESz4QL0kaXXNa_ws4MSniVSdNDF06n-RKzR1pSdyQlpR9OOSnUbX9at9vaCIHjBi3fiir12SzXL-cg0LYYJlft7rTZnxQZsW869c-S0QscBfvINhIehyN_ht71lOQGzelvBCfWGjnKzlLgyBm8pVmowB1g3IURgTeMyegdIFmZl0H7oJ6U4_X9fjWuQbzUei7mqA6mIpncOw3sk_xuIRtmC8SQwnYkKsuHNTCOzgaYm92ouU25znn9xnsNxxaUQLA0dGesut1vbLIWj-ENX9ZWXl6KyLEc41U9LPuzH9SY0aZxeHbuDOPBuROV9NsRQ8kkJUMM0R1jQ9TtOgZeIWIHqpD7bjljdeX_DxGGnkHeediTkcFJwRXr_ROZcCjP6E4_81RbYraWQ52Yvaj5Ac1Qt_BgReC_7WueorRgRElEKksbRq_CBMj6Zivo38m8Lk-JvP9x8FOITJvJ_iS58LNptrNNC5cE-SLtr5QHlEVwOfnr0nCG8Elstx8wo0T0kXOP3BF_i-Ui2yNPB1DjRPVy04DgFOBtBOAP-Gjt2efS_hkd3O2iiNLXitj48X2FyFD6s4R9h1JpdRSFQg4ILII4yF8IHlS6QzBKUD9sxl4f2U1RvDOQ_P3e6rTLStrFN3UvM2pp3j-EzAL321Xjzq0U-Z1RflUiQbFcnf6nnFz0XjFIA6QhRi8vv3OR-7euA0cTRwQPwIKgui8RzrNy9OlmOvuGaaHm11xZxN6DFtCvbsneyw2HnrX4w7-r67-8pUwXaJVPOQAeTK7NrIBCj44J5WIXHepQCI7z8tMUzawwHSXMzcA55gx5nvYbIKYEhnHgpD24_Jw9WEwGu5dCvswEVq12qit6UzmHYdYeLIjWM9widuQo-pPCdZxpv-vWGSJ1ZordSx19hoWxReY32TOP9ik0LXBVixgIICIJsv8Bd0UUr_761PnYmIbBOrtLa2QG3VxT7r8MAawRJjG85jiPeYj7iB8HI--PRoKsa8sonlx-pfkZhKWjfb86-8a49LETKIEPHfpoTh0trg3rMDxdisKt2AwNgDGAdCAaNWF5VkPCuLnivue7pUOXiazUyuvWdh_Jxvq7NOl_Y0lgzW-W0iHdDdVqZd4L24N4F2T-SRdxbvwhE3forHjC7kX3ewHSKEMBriq9qQ8ryc7OMRD4dvtEFMbRyFOJdxIRGd0zsj-BhdY0Yf91sLkO7rwSMYy49y5x6s7_3SlNGDRVdthc9H1gPHFXzNsE9AKIaEbiceNtlgPoaHtqNpVfX-cvsELpAa-d_HlGWxgSRB43Yk2Cg4uGTb9TNC3B0Z2u_n1mjqrkQkpxMdZMH6ZXT-90UKb0-Lfp-Mk0ZRJwHQm_hnmqu7ufnk4dYULEuEpQ2UFgEMHcsr0_854uexobvgrc-USkEj-Yw7jOqxnBaSS_eanJfxt2MPHH6XKoRsxThZaqwHM6IYyYjTvwiQ2iEWooA3kEVeKOYJhTDub3n9c2AoomHhleViDyTXQI4bVqtwjhKIxsWE3fRwLRG939tB2T6i1pQGkox0XkuStFCGKUl-glcIooxKbbXmrs8RmHhVNxOFs_nyuHO_Mpk-w6P1ImcjhRcwovSh5qSRBEIMsubFhhnUo4Xo9Pa7BXc_RQZ8SNCHU5PdLvDPL4dx7TgHPvZ4pkXJUd_8gxHBXiWDfQloHPQ0ur9MkQ0rDknE6FbcOP5oDbyKs1qb1I-p0pL4__IAXo5G1Tg0vzKrVq8oVBsFaIf87e2jyR7IWZRQ1PyC7opFtvOOC35MvvGedOw10-f5vP94vy4LpLSjq71CESIeRnq8WdQXlKFSQ4-rWAKeSXGBWkAxb5bevdSWleTaQPJ-9sz3RULfPmzs8eJj7LG4JDX1aS98Mvh21lvWJiyq-I97OtPtRl7S14fwkuZhM3dKTsXYxrqORzD0CeKF6cHUITsK1EbfAyk8UdZOvXlWTr8lgQp_W-nGIx5WGRFAoZ_TaPpCyJeoKFWZQr3oR5MgexgPGg6wuywDU68dUpgei1l45C3_RcxftD_4ljNopyq8CrVrZdqMjv-_psxSoUJT2-O3eJXB07kc482tsFSvNSIq_sBxYt-bPuqwn6z5V6yRky_D8ra2TwyPE8j98vZjjxoskM3my8oN-uYIf-v4PgXTf33qs0EcYCAWQ0BS0nU07AKs07kZW6TY_GDNQh33cSC9WJTVgu91gvYdpzTZQNc7IH9wZFTcW32eWtGkEcjF8fyivst9y68jvfgoDEfVAGQ76XsjKLBQTKJsIqDTtHge4wcJ0syW_R3YfrdwhdqLYDE3Glevn__JfB6aJAU_U4j-5xejrwX_Qu0qB_zuLcylphNZ-Aww36qkl7l93hZYa-iCAci1LptJRqJB2LLWetjMPe2JvO74jCpt-MM-FrfSkLaSHmTLXoLR4UAgfJ9PXlax1iiVSWgVX_OpjGqcVtKkXbgy7MuGwPkvkKstHd1z8cm1m3NYjp4yHZOOrrmNklMCYfCEaoOVkjoZfubgvJBQ9alReQI_OSe2iHaVvrjT26s-QAqsCLai5UEjFBRQSOK_V-bL8r2kLL9nhyNMuaaVyFnjPkp9j8EJ2u5XE9cQxG8pSkG_bZmPJOti0UOf7M99sEnJM6oP4xH_vVVmfAWEtDDefvWcwoa9JI5ue7NS9bvIzSm3mxjIFY76dPFh7kX8ZMzSxvgqnWWCeDJ-dFVgapSTQ9CzCtdqMVf3Wb0nj2nDxz9HguzEbSVKBkIip3FdIo-7HkgAlutZcwugcglhWzrfiiAR_ZS4emHGWSSftj7UfUu1Olhwm62ejZf8FbdJ4Io6Hk0EhAZG47-StUaUs6vy0bWUoGYuoC2x8YJCVMenKvIHFAVzbj-4o7A8X2KfjdVskti-DHrTV0f8wjqt68YOX-OdRGj5-84dqxWamIQVa-YMZns_TGRfzA8QtYpctv9bOvyb6JqTSGiSICHi6n6lJRpn_SbQ7fQU8P4VnVSrbKMmL1KA3XvqILCeuF_Xf-wEGVfAJeZh1YXLLtVB58-BLty4cqTfxyhHkyxgsxzemPhsLJj95Qxv_zvnQVH1-nTNdpy7HLapEBZ7jwDFHpt1RqSU4m9lUx8bZ0UcA_ie2AepxglvhaBF-68zihJHGeqi3ttADoJiGKrNZAmFEYL_pGZSdH9uVN_gBlNBzQOc0nf57fJuNUksjNRYxykvy8Nl0sy4L0_HyCHv5_JwEK4xgaZVuvPMUK6YWk2wJ34iMYCpu-Ixlj8hSb911P75lddDPUdLIpzliDsW1h4j82y-CthnSH7PVgK8CuiYgj63z1Ovptw5gMA5RofXUMM-ZYDRFoEvUauWAaaSb8ISMqiTIwLIB5yyoVGVkvIJ-8nTc8lP8OistLah3VZLLlY2xGcKjECuGwLAdpV4zpviy886sG6lGgI3m_5TJ6VDV76SCzgOMdAQSmbeOlpWrYD8hM88-0pgrky-R-OUiamjbeFCj0AoGd12USuXlLJXjbf_9KPwxgnP9Wj9EEFcyemS8vcU5aCABcuETtNYtrV7rzmc7LMcf1yWMx3rFejq7OC7EfBqf4qeUFhYxNAmxgDS9QotPKlZf3QB6INCurxCABLcKVQ-ULw3lavSSwaicdhNDBM1cQsGQOIx4RoY70yH7BmGKH_pjSUa42bYLJ5xX6zawZ4qj9bBE6ZOG7sY2XI8ZB0fhKzjYKMtfn9bcYR0voMYWnZCB04FtvCxm_YF1b2c6OGfMwqBSU2Sa3FoPV6csUlISf6G1kkLr0neqOKMjm4fLvYTptlC3U-XkJpM8JY_ZmZ66h0A7ogKfVQ0-pCNYh8ISOS-IWQyf9kHCtQcjAs0Q7vPEN5ZF7yGI7nshpFxiJ0qXv3A7wReE190DLWFHw7FOQDbzxVkOzdeGH9mrNw5Lli32Jzga5NflP34skOAlJ85VJrOBbI2egWLrV-Hw4Px2w_khKWEeqVgiEwCf2zkaFEGJYvmfdLTVShhULzNyQj291gkRrqv4byN1SbRKlAO5cromYII7DaDv0F-T1g52O2d6U-EO767kFhvesXVIWsMWaLjdV78o-sNatlY6TLUh5zn6JEW0QE6iBlbYlQeuiRr7Cna4SJGYfrCPlXwR8Is5paRzdFiNXfFwnQQzlyxsJZ3wLo6_aU4WYuh4NdUlAft3mkDkeNOgU2VSF6ysMORSMfnEhGfh-9wObGR5iN068gXspb3fbSkl9Cr8uCkDGyhoh_MmqXNbiCJJRb6PLTB5IteEoDGgIXkDKontPgfoSE7QxgWwjMW8XTQRVDkoyy-REsMzbVG_g46plaRW8hwQooUVk408hEg8T6LCEmrs8qptQd0jOymBQVYO8JVJYx7wpMr2QEQw8GCNI7nxZbRLn09TLeEdqvFqQJo5I0ZaiDDlCZD3j5_5MDkLmhINInfv8Aj8ZdcZZ40yre4rZ3JzwlHi5-IrPBRifIRCcKtHWknHH5_n7St7srg8XLz8mppKFtw-Ba5iIQJwjPKZlQC_lrb1VjaXAkpCMKkVKRMdAgUciac3TOdEA6jLb0umQynhF_ffGMjG4P7RptF58Q7KCN2COw5xq7bqoQDsKF_PavftXdmF0_rA1vgQcUrihI2LzeOP5v23giMOTm5vGQefhMjHU0mUyCEtwbDQ0mORiYc4GKBZ3u077SEx6spBXTFny5UM1tgN7ZO4-zed-LBgtkeDLSrcylj0Vk6nFn7RKGJzrYeXP6qIGT4UhgDLrG5SW-YUqmogXJLYg7ttAePlz520rqwULZrzUS-YfQ_KLcfOFuGt5sXv5KRqJlzujmngeicQLulBLhlvtPpEiBsnLUul_By4I2HKcF5l_9ZAUdlJD1GZ6oKbVAmJ6pQK1M-tLql8lFViZZCKCz8GOXlk1Z8vq1CgMp_BuZQr76Vky71YYvROw4vmrz-A_aXObMANFuKzL3HmcwHKpcz9mufDn-E89WPBw7nOPvW7Tum9HPXAmTHwUmRzGvy-h3rs8Gv9yA_UL70u6fco75vcX6QHQ_zbqB3RYa9PwuSSOUM56MkJpWZHVomwa08CgcvsJXhKwORlAkzEgaaog2LKFOsgJt9PqyHbfHU8EXBonDuhj6KnPtsKMKuO_mXI0QiJ1nyrkYeyx38Lb2lfLua1WZDfEC66KZIrCnZ1awzgdpDVzVpzTU9F1k2C53Do_LzAl36tkAmGxlGtYRzVtUDPVbRax_0JL0LXyw8uavzDWvAhxVpmWnhzYU5i6W8Lj-gA20XB_b0A14TZCAHA6y_W0vRQavN3M9ZOvWlb-meivRYcvLSLq-MD2sU5vP3I2ONfucnsPD4Phs64Fhb3X7jdBsAqouCSnfPz9S1fOQ6tZVRhESDOPFPFDUNbNQcPegBca683ldlfGEfD-nj90CsYGq4HSaQsR9CjHI5MVmviXF9y0QkITryfXzohqv5q80ThaP_dTw9WZI7dH3Cs7yHnM3QkWEbLlp2f0sUCjYaSl42NdKN-_PvcIswwqmGL-tA1_EwnqCAFP5cHddgeCAp5ehMuGugBZsNrwrisG6a_SVjHPZeA2RFM15PMvJxstBBlf0DBAc1-pJ3gVlIyLyz8nVsM4KQgPwAQzmYi0amrFbmQix3sx_2-F1STeNSl7NldNGj4ahn9V8XFMga7-BUaSNIX8tbpZd2E7tzV6x8Dk7S8UcuNlbWztIuV0CAsLKxrAAP6ueaD3AKkU9kfUS2iKq-H__Kj-1F8pzk3yDYOifjWaubrkAIVRzR8cnK8-EI41Sm1QSYrOryEYQ9eWEDEth9l5tpAb3OeUDOUrSqK36Q5cQvtslA6SLCB7ZsKRqOXnKSuuNHZPAmLlMIItiHNQEjXp2bwn1W-1D-wYgInh7XGDdidtmcGNk94haoRZW0BIEVB6ixfQwl9Bwcdok9QXMRD5v9nN2PMrc14RwFkkiMWspvZFZDN1hyc4YwdZFaxEZidf35RILDkXX3hLiL15aatI9eT1jMn-4j7NTDwPD9eV-02iNR2afwcK8WXZci6-iu3YoqPRQl6oiNj4MlRN-HS4Vs_zAl69EhmAK-k0HUDLyafZqYb-Uo9iBnHmpc7t7NSM80OEHmAmy5i0uZ_iEsosNFdT03FiDXiBKaN8e-WnRK2mVvmpGajcOFOpAv4_6bAzMJYz1SgSIlojNkXsNRJAzQmP5y0U2b-CARoJGsSaBku7OQh3l-WI9YKrptDhciGR54TiMLqFwbAUPqm4jY0ZtWbo0QtCq3yrEFfPtVHmCXlaYwXC6REsdwdmj47rzp8waAmc6-iwCgt8Zg3GdtUrTLyDNCe7Id7GRDcxKCWjH54mL_jTzlexAmSTPdOtwlz9SX2BDiLj71AopySjGs9VFzRMZR7hfn-wM3PIzT7aRFZd9snSXobJIQVi0zkm-TiuORItG18LGBvUAoF9CZpRWBl-aHV_yjNol7j_9jjLyCLpau8wPGbnwuqbOE0dTqXce8S6F0ljA1fMMdA40HVy57kOnU2INijcX_-eMUHyzbgvRqdwmezDf22ucYZuiCF4vCoE6UOsOthNK7_ueqqx25l8Tb5eda-Z5a3-NjdXk3Z6gJAbaRZkj7uIxS2uyDPg-b7GwmouUjU4Z85ICWHq-3UZMbYBy4Pfmsj5TykWH5ZuHLx6FVzFtLLkboUwdf1EJ-OuAXeDBCQr73hfI8clIyRO0P46aAaZ9D1IRyw9fyArd2v3-vEuaWCChBla8j1v71UnZJ6s5JDQh5xE-duHpFMAoboynbRyICVS7cm5-8lqoRhQ4JquGBraLMt2U3mdW0w1CfGLqZb7tObf-ZA3gjuSG-r89htZtBc2564xcPnl_B4cD3mq_t94aeKDp5a7lVtlW9kCcDXEAlBNJtjakgjdOhUqP2Xg6LZFKtdZUDnmGH6QNguRfDZesE95nO4PZHDMyJdQvFR_m44pQInrOMmi80XUaN5LVRrM9I7eyk7qN0zf9R6I2Jg==
-        id: rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7
+      - encrypted_content: gAAAAABpgMny_FuB_cVT4SeEAoEu70FqmHf1u6RMvWsekWPnuWu9WwmeJe1qtbZoDZIvPKVRq7XtCuvgJniGTcrbHGdaTPrBdKulQZDgz0760Nke5_zoEe-Ty9uLGNZT1K6BmNWSDyqZQCcjCVparM25vLEucRDkI2eNz3MevJ2H-V3Q7itaiEQbDnofeHiIB-xrAKiWHHepA1eDKl3mPhl7-qgWrNtlELu0rqM-W85Qs-jOXXgMlaRetKkGye4iYnD7hEJidtcUWwyd_cBw7pOvxRbshL89d15kJThEf4ZppovesHfTxqYZb_axERXZ1w71E3BZoqbNZRWZd6rRU9BcmRfb0gqlvm8frK9RSTX7L-GM-bXVfFH3J6bi5W31wPUZ0avrRiHEjg1iTUTvnGeN_d1zAW9WCSOJgjrsuLoqnwq4z7O0IBoqCTFXfVGNh_KMgyYj75VxJM4DR128zJ67u0-HDrSSm6tGwKJlSh61gP4Rw-jZysXE8VxWWGH4koFRelcQF2gQPifh6ZIABLFCA5gEs9M69FxDxd31kuGZSTXdnaSClB-HPFbERDJDuzgOJJy2tIpvEW69kOmnNr5DZAv-gcX3WNDnkyEw9oursmll_lA88SpGb82kozjcafRGMpbKoGC2Y1u8w3dDDVQjdfXqC2hcWh7eIT5SEKBYJO0NrejfHGahRsL-lFnhIX1ZAPhhxkDo3yJ4wE0wXl09BFelFvNXvZxoi4KA4yofeCAvO-din2-APPdit2hkC3hIhJ-cv_r7AmFZwBXsahhD9OybQ7v2juyMb7eMkciSC9plM4Cykq7tDFAF8z5_vQrt7Uqc8xg3NIn-j22hgSdoDe5mgfpn4faOBBb4CfWg0oRTx05vOrGjZO2B5j5D_R0Qnmwahe8VgOGdatR9xWYKeuQlGyTax1VqOGoeNmMPy87thtjgdQ0U8QN4D5qnnXQIyjG1zosreu3EuuQkRZe2OM0jIebmMwe5Ojgs3FyP28RpMycK5LnWRB4aRoO3UGtTQEQaiRDyEkJLQSh5UYexhQky0BwhZkuPz5XtaXy5NtoM4CzQVKsf9kUq5YY6MKEs_Nn0K2BdTeDdPr-JQsY5dr2FHu-ON0OlyQflmC7RVzbw0VT9Y0vO9EgxI4I_EpLYU1dDQu5ahyEBi9fbfGhAPqSgPTDqtyy75osOl8fz2DlBGgbhwPDelXElO3Mx2E8B_oFGsMxt5qSsNiie2rXDgrpUQqrMBlkN-lAWkMad4YuKLWR9t_dPuUIeVHwMBnWn2seYP2tdPYttF-YKyXUMSHOvZAGHMaluaVPDAIPQbWJh6T-NsQbpdV95Sl7T3R_uPyYSNI2fxHSpJqhZBEK156_txNC9dXkCXFfWV-gow4rRqu67WbulyalnZt4NQVKY_F9FYEMKdDtH38mtLnx9V66VWQ47zDWJhEGSavuIT__zf_UVnXA0Cxj8lgU0_FbMiFQOWjviZKBevRUTomtVckdJTh3cBUpBkKAVLoQIMBxgYe8Qm73krBC0twe6SF-gn8y_pGqByOeUCWOsjs7wyYXTT6uYPTq4KixWUFpY-xkYMdawXNIsPB6xdxy2zrtrArAzQf6e-uYrXvRYuiEK8EF60YN4kqxAzw__XGXJPnAEYWk-J8TU2Pg6kE-9gkrvDu8_TdiCcYJgjPP-9NZiha4M5yhRdT32xtk3jiBOc3-h5z5OIhjNgSUUmGca2c6fxXqm4zoyTbzRMGw7YhxbaMWSkQE7e6criSpZWH_AoDyS2CGAczphDApZJHhtfkjhP7cAZV_BAvKwnGgcplaXhMnUaOCuJcCqzeZZxYTnjsRALlgtJovEYgXSs3bDNY08rRa0Vb3aQXbFqNrQ1JPcCD3mvN2TiltMBqFLoOP_5mUkSyswjOe_RMR5Ei6_vcy2zE91lwc8IVTE6L5TsgLdm9xfbc_PHlzZB4V_RI-v7SiVTyC0_91JDyG-rFmdWEY1IdgGEe_7xt-L-7eiSmVwDVFSLlZfbef66gwEDkPdKsiI1d7q_mOG1ifIMUniOyAlwycntVNAF2uEbNecOqqhy7jwqAGJfUssOKX2HA8TP0nstNpwej45DGXHuwokj6o_85lRmDyWgkzSC1HJVf2MK680HpCvOGJp0Dv-DlVi5Mpedjg45pVQ6o9bX9rHv-NoT1lUWk-YJ30GmTQYenXbFWPeODwEqLVmuDLpITORzx1_nVKpjUDDK2YdzntCPh2FWgZ5Ij7W0VGbP0U5LD35jkvdQI5StojslV3cS0HJLO6hEgltYihOANRuFmuRTxtKzWR6PgGWrSSC1Nw3Gc7U0qg1dj83RTd6uSBDtxDhN5n7jKeihM6hi0xzfYaAusU0I4FzWYir45A4rGEQ6WW9JbtrVWLcRR_SFrkfHHxyXWPPvBXTmlDUgJ9NPkh5xbev8LMIGTpU7hHPlpP4KSM-ZQiuVBChy-SdRoVDJvBcoG3cwbVj6Jwg2_78_9-elUvTtS8ULpfx6YIb9HpsBcikqGdE7_-CryrsZmfBirk4DDYcmPG738NOrNjaA7tx8ajC6UonX9_zOKEuHnameS2eXTEv4FCesDrIaJFF9BP01TumAXdmqiQW-K-_iJwHzlXV8TxV8aR0FiJM4FoHAOz7RgyN2KLkDPO7H2o7mFUu1dKOAHwVyu9y6uI27q7dpewR1yObyZXEO7TtQEWg5bp-14Ywi2aGTWw32vssGljEK8RHNqlzSdH7-su-UNDDyciBCq6TsWmPXCOrjP-YONoEmgWmt-T9La0LLUJi_qSFqZ4chW9RWhQBHD9KbMk_ny5xyOjP_FHpY9u95PtUpFVBgJdJkY5EQ5ZFLFSfh9BaxyvTwAku_oqJhz36eRWRtG5TfxBljdxgXwMSGQ2gz3wB0Q0hllY7EAV-h_aIyRonmbP7nJMARPsEG50GN3T7V09xUiiZj26wGvtHor7p7xQKk_iQrD6836CO7YpjXA0rnr-Rrh8GSuCwXSKEraJnQlk2LCYtm1attxyy8Wwo9DGuA-lPIiIltLLMlGhtZ5V84nOV-5slEVzMOTxlpr9JJ8Q_VFpTST7XO3q7iyA884kIUmZQu-i1UNsvvwgP-QMybCE1yxHATNUPJeqCN5N7OxF7y9mz68sJEeNgcTzX1WDvQItRC9TlXpcQRdJZ-VC5gqFWTSTP5VcSb0unx5lSUpndoHeU1EcA4oLI0T2yI3Obl5G30f87wjKpUAYNlklL0xjMEBg92JyJYRyrA1FXOckLsgP_WjTGPG5hdt7tmvUl7_oKLZh6TbhxQQN_g9HIGShukY0QGlzaED_rod_gStpclaprmPW9Opluy8cvg5qmrv2Paouig1DbhsWSRXGm56CJ0N28aTrPnVLB3AfF7Z9Wiqg4cWKuUpY93nxHZ-T-sWtQ32h2AhBb53SOlwzS2B4fLntOIIcJfYnXWogvhCuUWCUSHe_l-FzqRn2eG8HxtVTWdHR9ebAS1wwmsWN-hdL90DKdGs7751W480sgqL6zF-1yXgc_ios6yDlSAfZkB0PRUgLyL7zaDUa2r0mQOjTpAVl2NUmM9v66UaBtvUx0Hak3Yw9S_K9guGzhkhZQxbQ4OtGiGfhQYlCNl13lV0O6Wft57FkiD9X3higgCYIgaTAITeVLeaxXT03AtervNTC0Lu77QqJxj53rw45Cm6HzNiJy12tcqPkz4mkK3AkOpG51BRVBJRPQRQ8UvVKYU5chvKsq9CPze3TQJiYENth7L6lRj2-zd_R1WgPtKKl3LA1nC6FafgbTmbSqjWI8F5QTjFOAo5jCPUfeKQLD402Vrz1-m0hpgh6F4DZCUJpSIUzG0FJXqbmIEW6P95dDYlqRV6RbwLia1J4CDo_msNnpXTosWYunhVuaFwpe0NQXDQIsyTkqPcP1A1LwQAWQs6vCPpe4XK38PUKYD-AO53vUy6K9ZymSx0uN7gYf7Ms_3pBiNo__cwdvzYuyfTKiXJ4qb5L3f4xrbvK--MoxIDEFxD4yWXyKXBdxWYYoioTgTe8GoBiqVq7Ex10BsctNqupv4MYJ8fexUUJtrr6zWEQdomFBtdKL-VLRySytLvGM-rRTIaLD3q9gM9xWWqjgYrMqefsKDFxjf--NovxAdsGrSvfd1n5aZtts89eVlVe9S2MM2pM3BEwgWAU8JRhwQtiNgdzMjd12mA5uulPdPBJsPBcUiYom4IRJy3VEXVBvMaVQiY1EgGKZoLid25BuUWOV5BvYzhdOmrpBjV6uLya7A_QQUAj6Fj6YX6Hd4EjZN3uQAJdPynJwHreLrecBqJSMQp7sA2IdUKDL2bkvnCih_88ddkQ7M9Bi5bgq6Z9e77GUD5eZ-92LOjr4NjZQtXbSiHnKL0celgMTTdqHb5DdDgu0S10RN-H5N1utT51JfCVefdrS5eBMOJijAnXCZimyuFj3ik7IOOfrZgwhkviiUsAw3JwgznPUW_tFnAi6c6Oqad-vJsOsuKnsa74-1J1dkwmQnw6gNkvDgRVBpKtCB-Br0OxcmJJepupIXFJ_5CZSG3Xp66SRvsamdNyDK_CggeFFwgqFAhpXmAUT7KKuBhRUC3valQoxhZxa8CyZwEkRtOX4GJ7McqY2UtQ58BK9fm1Ov8qjYtMBMjd4GRPhnT5-L92ANSdjcghM5ZT8RNkpqMsLI6o_qA61mRPNTR1nSgwIrh3ZNwM5HyFsA4VGKf1jtMnTNYOuhYQohyI7LI7mg8wt2IHUnIUwE_EwI2OmPMRX5wbazZIrtXbE9xvZDroi9ThfpW8TqidLW7NfqIYkEIKC-xm1PWf9Al2gYy1UQFkY_kZIXybYODpkmxOGNAdPDOqXdDOcPXvuDBqGEn_buELNOISD04-dW-YNIdzqlBrGbi6gKltaVkMWnS4PTCsXaMpCVK_fjVJtX1Sjzz4LwUIWy0MCyKRn0u3Rcj6xdpHfdrlxZXhoT7WNDGwF6NOc9f1Ih5EqP2jtuZTLUSNdaSzh4vLL59jw-HbO59rqsruKDRTTNqUQgFdUu91cNizABdvtanb8CKaGqvCrxQAGTSpMk6V0jKCMpYQqsQkYVFwRHD0IYPAqCGXthr3bRNwJdFEnay_bkbOcSoq0vMUA1LkNTP7XglvyTmmHT1oLl1fWco4_vNepNbesbKJaV_Jp9RRo1MDcZFjXlL3sPrDm19aXugckAuSdyWNZNhTqVryX3h29Dz7M5iosTTvubKgrC0Dm13xeRzkhvKhiwazWfOnGoA6pnRVFCxK30EKJmbE_ebobOPKn1scbF0RAqV6Da_KFGn_POqw5_zFZJ_issGx6Xzu53drq1-7vScpE9viWm2volS20kH2gBD6DrvrEF0tsNicYEePParfA6RFkiHDFQFYQGh7TvcHqnGlkc9q9CDusPKRrZsdqtQvN-sZAyNBhrfvgXEoSLecyyI_UpPMBghrpk_uslmSx6GVK5J2m36Dl-GhqCj5IOCWF9WJj4Lnr31hGLNUciGERZaUmHeaE6rqsXSixUZ4FzRZWY6lSY3qAj_8RTOgMg_j_BIL1buqSTij9moYnDb49o7luDj3Z0d4pgBophTfF0alIwO6XSRgQLjD_mR26f7_xxzIbqQt82dl6LyIeava1z1isFdy11ecF4orjrRPjtHZfJkmkT4ENfE8owrZsKz135SnV81RyT8AWN1hVuYOHCMLqC_uyJRC9PKtdgDFh-VCee_DxomybUrEbQNLGkVovM02Et3Z-8JrlTuT3PGZclFKtx6TBQ50SjlCpy7bwU93P1hvqlzmqnSw-1Nul4k5kH1rLNnSW4oaFV1kRnzsml9sA3q35sWS2gWsvtWGklA5zIyferEukbl3hHLVR5EIAnUr0B88ATLfkzQbGcVlxsW0Vowbf2aF6-68uXBsAXHsW1bK2pQW8kYBhTGRiEcB1qM1pkwiS8htXsn-Jp4ABL2vve-hqG3zkmcuGUjDNzOA-Vy_Jd-ZyjIPbU__Fq9HXXEc1HVBt7TZrhrVD3i2wlZz7TSoDylCcz52qZVhY961ddT1P33aWCqL6rVXXR8uS_aygD50kb77V_dtpbH3gutzMjX1tyt0y_zhFEC2EmTQwErfQYRVvKbmAUZ1TomUfB5fXjYkgygDBnJZsMNt5ptzxthF5DHa8DFf0_ep1zmJwjFgWvUX2BrEPWsIy64_Y4EVvlDK5dVhFoGS9kQnd2uA1uTbTMD2g6YL9eGjPEavcGF5eek6Z5y2A7c67qfbldgC0Gv3UVXU5dwjisf8A_h8Qpacj91uQmSzTp2ePO3bMmEQBFDV-Yc5MGffW7tBdJFfmsG2pwyGd-jWZdcJBkx4tuhPQpURd8KfUlvj6D3qmPRnVN-s7-MPf8JOq9x5sShwi69XMPjaWm_Dx_MX0m6g7MeFpasloSJcbxvGGNkolB0wXe42cIYFtt_FN2LVPOtVr4znIv9DQhUrUSJXfeJndtMitzAvs-4TktSpCzZtJirjbFJnuuJ7y6FWnhW7ogdj0n2pMndvyNJ45W3__5CIwyQeMsM-Yxlsc2atReRY1zoa7YHqf94p26Hd9catDpF8xzDXVBe49QC-BTOrv2WhldHGAGbHC23omYqh75npqM8GWMVr6W5pLev8_y-b8RTZel5PTDTClQw-jz4eS4flKykQkhK4aA2DbjkpWUSw-4Y6yORrGUpVvsBMP-NjkO3ndsCdZhWEkdLucbOITZd7HWFjAg5SfsVW8JSPaXuGiFYIfnIh6TORFfVE5Lk-pL7GozklQ-vsofTa7VGJM_x66oiaoF0CtLUXI1Vvki9uyA_48Y8i8SHOPE48sfvu79QluSh2fmrP84_lNWkX6UPcnZ0sgcUS6ceY76w9ivyFv8MosQwqjK77Hjbeb2rq2um8fdnlgRPDoPITzc2V2zZ_6DEa4nwf1ZUkounisDHO8Jm3WsP2FawDzDzHcqm7sIX57_H77mhXCgYG3-NMWxY1yTbFbAz2uPsUtX9XuOTzFZs6LPVtNEE_07se8lH0MuUCVk8uFjtvmaE17nXtcK5TkF4ipSeu6F5rRqVDBOJDDm-rYH2D5p3DX69ASPkfLhRaG9-7P9Z8Wp0hJaxpKfr8G7f-DKp_whyMXjjwK2H8UXzqOEavqeZ9SNko6ExcJKIPtBbSTwrr1l8KaoOa9SadCOCaUBV6blYrJk8mhIPD1-40O3SSumsCCDvC6k65AdmI--k7g_kL0T4YzcjdHyCSi2IMdd74tLolvFZ1t9nTbnauKqnocAREDptdLTZcUneJvnc8c1Uxkit2itO-PNvz1Xi4jBgAVxb1x1aeMioMD9Jpqo-V_Ij3cUy8v6zXJY5JuU3a9Z1UHFr7HMWwoaU8Y9RxEfQ6eXYmupmakPnKK8fohmDSIdiHHUPjW43mOYKqAJOeyGtVnaes-2FcX_Z_zBQK3ukktA9si7oIob2BK5y9SwhZjoV1JT2gNO2TnGqD1unQPIeD0KomhnZZD4Llwohpl5vqKV148KZ2sN-YvJLdJfwod3JQ1DhKBseh3JvETTo0VR0qh6I2sTEbWag_KeLPOcvdIZKo3WPESlD0ezZyp9BsXwSlUCdfdV9E2CD-aRoQTSDhRwqxm66yXAE0kWaNlRqj8Hc45iqQrkxwYgWa6SrUUeC87mLXHiBmX8O11ZG125900InbT5Gir5fzW_MGV__mShJ2bsxLIUYEoCdhwRgRs6mh2ZEsF8Ie5IAhPY_52LqRju_w7HUnt1zd3Um9wnFhuxOZ_hkW0E9GmuBzksEISGG-LT2EeyWlCiSTBquQvmUYRX4aoOR6Q7YFOV973GBijUSW96eAVd7aQOIwJidMf6_nbTP9Z0ixcdE0CbyS6-z71YkxO9yMMb88Kxr3LqhSPQwAjzrKsraPRNnvAOhhfIxmgBuNgmniJ9gJC9WtS2352FMVxsOCaXH3M0fOTSb0wKZc5raaZZhxkwtXWjT88_v3hHQe6ZqGa9NEpueoCwDVOdiiiLcpb3z46JwKXodhGyCRlaWTgpLDACSh3agRzNqO1apDkHajQkiTVl758d9q4mq90-QAw9Bq9HPzj_tJHSuFOh-whMl_1DwtUHvCfaS5zX8eWUSl9Hplfqt-OxpHsN0LyxDR217aCSyU81jQ2YdlvxMzoXgYAVgH6P5PPTVO-3iuvsTiAMMSqJLaDu2uW4H1oyYYORnFkjBTa8F3Khv7r1buixaWRBYK7SAAeCVEHf6fAiA9v1lNicwkMR0afaMBUKsyxpvRIY5VSQ20iTzWG_ZiVmzwDaFMJYhGw2Mn8oelfdpJU5ewD0dyJoIJsCZHhaAWNHlqMe2fukQFG7XQgB2ArC8LuaWZHntUmEgowlve1OcAVc_6uY2guQgyJ-eRUoxI18iwaMHPyHEYlR6sru3rllmHTjxM9xR4N3lWg8_hNlfmuRgIO-9qFF4NKSPJmXkH7oJbYL3elRvGr4SS05qstyMIzn9stUasHz52BlfcMRitsnTpxfAczLoOgmWtI3vQfDx-9KHWP-KgPGostFbwnlrwI3JY8dS3MI1iMfDF9EERifnJC4KrjGLrAOphYcgervxOV8wqbXOkGt1kSEMTVT9C_VF1Y4_1BbYP97FCoHCMEdZRAgP40nbD9XhDZ-kqL6i3l74PYwBr1hu4uWF3bDxdZlm_l7Ir68YOU_9z28dUM5_-vi2MaxBMYIjGMS_swGMjQV4hoxDU6XDWxmfLTSu2EUmok_vp0uPBx3l8yqi1SPqIq8uqeadyAgkgiqjNbh3S9KHJS_CBpfz_HInle5ApBSYNHCDCRZpTSdG-FhEy4A87Incp_ji4AYhI4Mx-iCh0hOlfRpi7KoJBMqnBN5VDny-ucj_N8f0VqnDh7jDBBfEx2vyVN8N9bPYgxQzdTdOmwQJmmv2TVm7KjP09FyP8gzifbtZGt4BwQxDyZ3yacf2HrXLs_lS02HYvLpjBdF8cqsB-BjFRJwHJc7idkypb3foia7UMpo28VYaJiKgPRZXVGxiQPEiA57iAwO0RpellDY8-6rKHV-3KXJTiLbE4618QJ5ldFFEmllhp5Q2HGweYo3JudfM9CeWkCPaap7pR3LxwuVNgvF1UHXXUZ9TtW0qDqhXuB-0R0V2VgdSOgEXD8uowEHMFESArv3gIPhknp1Avs6oRKNg5NdU1cv5aV826C1iZhkZIi5vmpLXfmfpgeq_xmBRNLQp7TYBmb_dIVcdZx-wOy4ZxIqTTBPexCVgLjU47ZepbT9h5pxMfZSlDsvES9KmyMQqHezcramsiRNW-SQOOuE6wxvdFhSyulx2KQv1CrFv1Iy7pRIkiKPd15ECCZtiiqXwPZToQAOv_IE7kO8ibr6Dvr8pKoQoVISP9VszKE7K4qHL8qwUTreiPCq9UHHF10XQL8t18NqjpzGITIkI9c5uZjHRg2SzrGeLsb6EWLCLO4Qsv6LIIkN3zX2129JWb6rCjW5mc1pIFQRYb4uGMPy-mmlSAXrBwZNUgZIiuVDprKgzjLbDs-QhgP6F32Tx9x4Qf2RvKnSphPYHGGs-RymkePofltPR9dusPt-V0ubpMO6Qef7bRkx1E7crZAQmcJ8Ru7nLzdhofG0RrsxP0cpaYJgdoBoV1qQzZ3Bs4kJwrQ6w3Jxv9HGYiw_XUULODhMgMAsgbfez1BsgmETDsSf6tIBbuZE181NqNXp1m-L12VnmuY8rVYkztXf4dI5eNFu-pqvR5RW33WXc6xJ4LtHMu78olHzNO0JCMMxD5Y1LCbdv-O4Jwqnj3vL3YAnU6jiiaYAspV4leolI9EMroYbs0YFEapTVBL7H__ZE9s1P_LW0N3dRGrpNSDr6x84_vmx3xGB6LHxRSnLYE_4hhFTabKrLyu53T5FxXZlz78as2WQA1Erch97c7s-IMBjyh3lc14effPH3CSz6huOC-QCmhtDJQ-Q7Ed6NnC_7MxCm10lBAMjCk7IRxdsx1DypNsKFOhZuEFlJ7JK-7Tsdp2JkMG2wLZu75WaC82CxoQY6hkRUoP7jC6cnKKI-SnV6F6NwM2xo6lQ38F79lvm_rBkYPN6lMFLTwDiu4f3SL64jYBTZyYgiLcREBRJld_p_wbqNJcsSgL-6b82i-mZ35et1Gfo8cRF_mR62RPsI3U_R5dgx3rV7a3gylo4Jkz9ei5ueuNjBHS1wyb1pkBPC2OeTI8fEEjkjFtvTWPB8-79dITiTL7jcQZ7NiX5OD7cY9lvc-0seyqElqAzx0T1rO-WEtjioMPeqCDFCl4IAzXOo8iZ4S51ilL2Ra_oNExe6rWoujX7dmFPFFZ6APdHEdJ_Rw-5WJyJ_tm45n72CIn9UKEM7fneFvcbH6NB29e9KKKPU_wDAJI__4Y54C_DFPROZVD22iQxHqXH72mNH12AaZhS5mTa8A06T9ArpWGOT_bhG8eFHhcArg51L6R6biW5uaMLZB-z0FUHChhDAtt-Bj4aqOYDr2ihg5akp6ZdAjBFQg9l9sgNZJKFai0YDMpmQRDzvDZzyHxd-4yNEOrVmBkmSY0zxO1lMrhSyByFvlj_p_Vg1jItt2_u5VoT69vEHbm4actFb3ceU_V94aF9rdnn2ml-pD0iv6JQwMfg1NzMT3ilgbUDqzMX5b3A4g1AMxyMhg8HZkBxNJ1VfkCWH0A_J-0LT6gYvkXgD6kO29j34dZbH1BaW7AVYT1pLIL9i6Jnxutyu1FZvGvCtYyYbLTlHIOsV95AnCQkNoAcncJvgLvXJ95YbKLViFYGHIo0rXwkcOzAO88P1IdBmfMUJEF9q6WzrtIS4Uu7uzcKyMsvLiY1lBImO-Yl1cD11FgIEUwtcChWhgRfbSUjvDoNnjXyfkgNJ2RWHaW6gHL54LiwvHfPsDxpk68w-xFrYNGTvpfWgLHC82Vw121AiVimw4vxlqmzMnUXeuhmgb4AqPtQYuWISe_CSuxm6ax
+        id: rs_0cd2b5edf91e3cfb006980c9c29bb081a2a99771f13fdbe042
         summary:
         - text: |-
-            **Providing street crossing advice**
+            **Considering street crossing safety**
 
-            I need to answer the question, "How do I cross the street?" Safety is the priority here! I’ll outline practical steps like using crosswalks and signals, looking both ways, and stopping at the curb. It’s wise to consider the user’s location, as traffic direction varies by country. Universal advice can include checking for vehicles turning and being aware of bikes. Also, at night, visibility is crucial. If there’s a pedestrian bridge or tunnel, that’s the way to go!
+            The user is asking for guidance on how to cross the street, which is a general instruction scenario -- likely aimed at pedestrian advice. Since this relates to safety, I need to ensure I'm providing broad suggestions without making assumptions about their specific situation. I'll include important safety tips: use crosswalks, obey signals, stop at the curb, look left-right-left, make eye contact with drivers, and avoid distractions. Keeping kids and pets close, especially at night, is crucial too!
           type: summary_text
         - text: |-
-            **Addressing street crossing complexities**
+            **Providing street crossing guidance**
 
-            I want to consider the environmental context when crossing the street: multi-lane roads, parked cars, buses, and hidden driveways. It’s important to cross straight, not diagonally unless permitted, and be cautious of slippery surfaces. If I'm with children, I should hold their hand. For those with mobility concerns, pressing the button for more time can help. For visually impaired people, accessible crossings with audible cues are key. I'll provide concise bullet points, including tips for both urban and rural roads, and remind everyone to obey local traffic laws.
+            I want to ensure I'm not giving overly specific or professional disclaimers since the user's question is simple. It's important to keep in mind that while there's no image involved, I can still include some high-level safety guidance. I'll aim for accessible language for both children and adults. I'll outline concise steps: look for a safe crossing point, stop at the curb, check for vehicles, and ensure to wait for signals or safe gaps in traffic.
           type: summary_text
         - text: |-
-            **Considering edge cases for crossing**
+            **Crossing safely with median islands**
 
-            I should consider edge cases like one-way streets and multiple-phase signals with protected turn arrows. It's crucial to cross only when there’s a walk sign and to ensure that turning vehicles yield. For roundabouts, I'll recommend crossing at designated crosswalks one leg at a time. I want to address both signalized and unsignalized crossing steps. If the user feels unsafe, they should choose a different crossing point and wait longer. I'll keep things concise with bullet points for clarity.
+            I'm considering how to advise crossing streets safely, especially at median islands. First, I should recommend looking left-right-left (or the opposite for left-driving countries) and listening for vehicles, bicycles, or e-scooters. Making eye contact with drivers is crucial. I'll suggest crossing straight while keeping watch. At night, bright or reflective clothing is good, and holding hands with kids or pets is essential. For multi-lane roads, ensure all lanes see you and stop! Stay aware of the weather too, like slippery surfaces.
           type: summary_text
-        - text: "**Creating crossing guidelines**\n\nLet’s establish some clear steps for crossing safely. \n\n- Begin by
-            choosing the safest place, such as a marked crosswalk, intersection, or pedestrian signal. Bridges or tunnels
-            are great options too.\n\n- At signalized crosswalks, press the button if available and wait for the WALK signal.
-            Avoid starting to cross on a flashing DON'T WALK or steady light. Before stepping off the curb, stop at the edge,
-            look for turning vehicles and bicycles from both directions, and make eye contact with drivers. Keep scanning
-            while crossing—cross straight, avoid distractions like phones and headphones. \n\n- For unsignalized crossings,
-            stop at the curb and look left-right-left, or check both directions based on which side traffic comes from."
+        - text: |-
+            **Considering accessibility in crossing**
+
+            I want to ensure I'm being inclusive in advising about crossing streets. I should mention that if someone is using a wheelchair, they should look for curb cuts. For those visually impaired, using audible signals or a mobility cane can help, and it's always okay to ask for assistance. I'll keep bullet points concise, including tips for rural roads like walking facing traffic and crossing in clear, visible spots. Finally, I can remind users to follow local laws and suggest asking a crossing guard if unsure!
           type: summary_text
-        - text: "**Crafting safe crossing steps**\n\nLet’s create some concise steps for crossing the street safely:\n\n-
-            Always use marked crosswalks or intersections, and press the button if available.\n\n- At signalized crossings,
-            wait for the WALK signal. Before stepping out, look both ways for turning cars and bikes, making eye contact with
-            drivers.\n\n- If the signal starts flashing DON'T WALK while you're crossing, keep going to the far curb.\n\n-
-            At unsignalized spots, stop at the curb where you're visible. Look and listen for traffic and bikes, waiting for
-            a large enough gap to cross safely. If there’s a median, treat it as two separate crossings, ensuring all lanes
-            have stopped before proceeding.\n\n- General tips include putting your phone away, removing earbuds, being extra
-            visible at night, and avoiding crossing from behind parked cars. Also, remember to follow local laws! \n\nFor
-            a simplified version, I can suggest a catchy mnemonic: \"Stop, Look, Listen, Think\" to make it even easier to
-            remember!"
-          type: summary_text
-        - text: "**Crafting safe crossing instructions**\n\nI’m thinking about how to summarize crossing the street safely.
-            Here’s a short version: \"Use a marked crosswalk with a signal, wait for the 'Walk' signal, look for cars and
-            bikes, make eye contact, and cross straight while scanning.\"\n\nFor the details, I suggest: Stop at the curb,
-            look and listen for traffic from all directions, and wait for a safe gap or the Walk signal. Make eye contact
-            with drivers and continue to scan while crossing. \n\nI'll also ask: \"Is there a signalized crosswalk where you
-            are, or is it an unsignalized street?\" This keeps it simple and relevant!"
+        - text: "**Crafting safe crossing steps**\n\nHere's a simple, safe process for crossing streets:  \n\n- Cross at a
+            designated spot like a crosswalk or intersection; avoid bending around parked cars.  \n- Stop at the curb and
+            put away distractions such as headphones and phones.  \n- Look for traffic: check left-right-left and behind for
+            turning vehicles; listen carefully.  \n- If there's a signal, wait for the WALK indicator; ensure cars have stopped
+            and watch for turning vehicles.  \n- If there's no signal, wait for a large gap in traffic, checking each lane
+            before crossing.  \n- Make eye contact with drivers before stepping out.  \n- Cross straight at a steady pace;
+            keep scanning and, if needed, use a median.  \n\nExtra tips: Be visible at night with reflective clothing, allow
+            extra time in bad weather, hold children's hands, and keep pets leashed. Follow local rules!"
           type: summary_text
         type: reasoning
       - content:
         - annotations: []
           logprobs: []
-          text: "Short version: Stop at the curb, look and listen for traffic from all directions, wait for a safe gap or
-            the WALK signal, make eye contact with drivers, then cross straight while continuing to scan.\n\nIf there’s a
-            pedestrian signal:\n- Press the button if there is one. Wait for the WALK symbol.\n- Before stepping out, look
-            left, right, and for turning cars and bikes in all directions (including from behind you).\n- Make eye contact
-            with drivers. Keep scanning as you cross; don’t use your phone.\n- If the signal starts flashing “Don’t Walk”
-            after you’ve started, keep going to the far curb.\n\nIf there’s no signal:\n- Cross at a marked crosswalk or intersection
-            if possible. Avoid crossing between parked cars.\n- Stand where drivers can see you. Look and listen for traffic
-            in every lane and for bikes/scooters.\n- Wait for a big enough gap so you can cross without rushing. If one driver
-            stops, make sure all lanes have stopped before you go.\n- If there’s a median, treat it as two separate crossings.\n\nExtra
-            tips:\n- Be visible at night (light clothing/reflective, small light). \n- Keep earbuds out and phone away.\n-
-            Follow local laws; in left-driving countries, traffic comes first from the right.\n\nDo you have a signalized
-            crosswalk where you are, or is it an unsignalized street?"
+          text: |-
+            Here's a simple, safe way to cross a street:
+
+            - Choose a safe spot: a crosswalk or intersection is best. Avoid crossing from between parked cars or on a curve.
+            - Stop at the curb. Put your phone away and remove headphones.
+            - Look and listen for traffic and bikes: left-right-left, and also check for turning vehicles. Keep scanning.
+            - If there's a pedestrian signal, wait for WALK/green person. Even then, confirm traffic has stopped and watch for turning cars.
+            - If there's no signal, wait for a big gap in both directions. On multi‐lane roads, make sure each lane is clear--don't go just because one driver stopped.
+            - Make eye contact with drivers before stepping out.
+            - Walk straight across at a steady pace; keep looking as you go. Use a median/refuge island to cross in two stages if available.
+
+            Extra tips:
+            - Be more visible at night or in rain (light/reflective clothing, a small light).
+            - In bad weather, allow more time--vehicles need longer to stop.
+            - Hold children's hands and keep pets leashed.
+            - Follow local traffic rules and signals.
+
+            If you describe your specific crossing (signals, number of lanes, visibility), I can tailor this to your situation.
           type: output_text
-        id: msg_68c1fdbecbf081a18085a084257a9aef06da9901a3d98ab7
+        id: msg_0cd2b5edf91e3cfb006980c9f190e881a28ee465e66131ff7b
         role: assistant
         status: completed
         type: message
       parallel_tool_calls: true
+      presence_penalty: 0.0
       previous_response_id: null
       prompt_cache_key: null
+      prompt_cache_retention: null
       reasoning:
         effort: high
         summary: detailed
@@ -152,10 +147,10 @@ interactions:
         input_tokens: 23
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 2211
+        output_tokens: 1835
         output_tokens_details:
-          reasoning_tokens: 1920
-        total_tokens: 2234
+          reasoning_tokens: 1536
+        total_tokens: 1858
       user: null
     status:
       code: 200
@@ -165,11 +160,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '6159'
+      - '4979'
       content-type:
       - application/json
       host:
@@ -185,64 +180,59 @@ interactions:
       - content:
         - text: |-
             <thinking>
-            **Providing street crossing advice**
+            **Considering street crossing safety**
 
-            I need to answer the question, "How do I cross the street?" Safety is the priority here! I’ll outline practical steps like using crosswalks and signals, looking both ways, and stopping at the curb. It’s wise to consider the user’s location, as traffic direction varies by country. Universal advice can include checking for vehicles turning and being aware of bikes. Also, at night, visibility is crucial. If there’s a pedestrian bridge or tunnel, that’s the way to go!
+            The user is asking for guidance on how to cross the street, which is a general instruction scenario -- likely aimed at pedestrian advice. Since this relates to safety, I need to ensure I'm providing broad suggestions without making assumptions about their specific situation. I'll include important safety tips: use crosswalks, obey signals, stop at the curb, look left-right-left, make eye contact with drivers, and avoid distractions. Keeping kids and pets close, especially at night, is crucial too!
             </thinking>
           type: text
         - text: |-
             <thinking>
-            **Addressing street crossing complexities**
+            **Providing street crossing guidance**
 
-            I want to consider the environmental context when crossing the street: multi-lane roads, parked cars, buses, and hidden driveways. It’s important to cross straight, not diagonally unless permitted, and be cautious of slippery surfaces. If I'm with children, I should hold their hand. For those with mobility concerns, pressing the button for more time can help. For visually impaired people, accessible crossings with audible cues are key. I'll provide concise bullet points, including tips for both urban and rural roads, and remind everyone to obey local traffic laws.
+            I want to ensure I'm not giving overly specific or professional disclaimers since the user's question is simple. It's important to keep in mind that while there's no image involved, I can still include some high-level safety guidance. I'll aim for accessible language for both children and adults. I'll outline concise steps: look for a safe crossing point, stop at the curb, check for vehicles, and ensure to wait for signals or safe gaps in traffic.
             </thinking>
           type: text
         - text: |-
             <thinking>
-            **Considering edge cases for crossing**
+            **Crossing safely with median islands**
 
-            I should consider edge cases like one-way streets and multiple-phase signals with protected turn arrows. It's crucial to cross only when there’s a walk sign and to ensure that turning vehicles yield. For roundabouts, I'll recommend crossing at designated crosswalks one leg at a time. I want to address both signalized and unsignalized crossing steps. If the user feels unsafe, they should choose a different crossing point and wait longer. I'll keep things concise with bullet points for clarity.
+            I'm considering how to advise crossing streets safely, especially at median islands. First, I should recommend looking left-right-left (or the opposite for left-driving countries) and listening for vehicles, bicycles, or e-scooters. Making eye contact with drivers is crucial. I'll suggest crossing straight while keeping watch. At night, bright or reflective clothing is good, and holding hands with kids or pets is essential. For multi-lane roads, ensure all lanes see you and stop! Stay aware of the weather too, like slippery surfaces.
             </thinking>
           type: text
-        - text: "<thinking>\n**Creating crossing guidelines**\n\nLet’s establish some clear steps for crossing safely. \n\n-
-            Begin by choosing the safest place, such as a marked crosswalk, intersection, or pedestrian signal. Bridges or
-            tunnels are great options too.\n\n- At signalized crosswalks, press the button if available and wait for the WALK
-            signal. Avoid starting to cross on a flashing DON'T WALK or steady light. Before stepping off the curb, stop at
-            the edge, look for turning vehicles and bicycles from both directions, and make eye contact with drivers. Keep
-            scanning while crossing—cross straight, avoid distractions like phones and headphones. \n\n- For unsignalized
-            crossings, stop at the curb and look left-right-left, or check both directions based on which side traffic comes
-            from.\n</thinking>"
+        - text: |-
+            <thinking>
+            **Considering accessibility in crossing**
+
+            I want to ensure I'm being inclusive in advising about crossing streets. I should mention that if someone is using a wheelchair, they should look for curb cuts. For those visually impaired, using audible signals or a mobility cane can help, and it's always okay to ask for assistance. I'll keep bullet points concise, including tips for rural roads like walking facing traffic and crossing in clear, visible spots. Finally, I can remind users to follow local laws and suggest asking a crossing guard if unsure!
+            </thinking>
           type: text
-        - text: "<thinking>\n**Crafting safe crossing steps**\n\nLet’s create some concise steps for crossing the street safely:\n\n-
-            Always use marked crosswalks or intersections, and press the button if available.\n\n- At signalized crossings,
-            wait for the WALK signal. Before stepping out, look both ways for turning cars and bikes, making eye contact with
-            drivers.\n\n- If the signal starts flashing DON'T WALK while you're crossing, keep going to the far curb.\n\n-
-            At unsignalized spots, stop at the curb where you're visible. Look and listen for traffic and bikes, waiting for
-            a large enough gap to cross safely. If there’s a median, treat it as two separate crossings, ensuring all lanes
-            have stopped before proceeding.\n\n- General tips include putting your phone away, removing earbuds, being extra
-            visible at night, and avoiding crossing from behind parked cars. Also, remember to follow local laws! \n\nFor
-            a simplified version, I can suggest a catchy mnemonic: \"Stop, Look, Listen, Think\" to make it even easier to
-            remember!\n</thinking>"
+        - text: "<thinking>\n**Crafting safe crossing steps**\n\nHere's a simple, safe process for crossing streets:  \n\n-
+            Cross at a designated spot like a crosswalk or intersection; avoid bending around parked cars.  \n- Stop at the
+            curb and put away distractions such as headphones and phones.  \n- Look for traffic: check left-right-left and
+            behind for turning vehicles; listen carefully.  \n- If there's a signal, wait for the WALK indicator; ensure cars
+            have stopped and watch for turning vehicles.  \n- If there's no signal, wait for a large gap in traffic, checking
+            each lane before crossing.  \n- Make eye contact with drivers before stepping out.  \n- Cross straight at a steady
+            pace; keep scanning and, if needed, use a median.  \n\nExtra tips: Be visible at night with reflective clothing,
+            allow extra time in bad weather, hold children's hands, and keep pets leashed. Follow local rules!\n</thinking>"
           type: text
-        - text: "<thinking>\n**Crafting safe crossing instructions**\n\nI’m thinking about how to summarize crossing the street
-            safely. Here’s a short version: \"Use a marked crosswalk with a signal, wait for the 'Walk' signal, look for cars
-            and bikes, make eye contact, and cross straight while scanning.\"\n\nFor the details, I suggest: Stop at the curb,
-            look and listen for traffic from all directions, and wait for a safe gap or the Walk signal. Make eye contact
-            with drivers and continue to scan while crossing. \n\nI'll also ask: \"Is there a signalized crosswalk where you
-            are, or is it an unsignalized street?\" This keeps it simple and relevant!\n</thinking>"
-          type: text
-        - text: "Short version: Stop at the curb, look and listen for traffic from all directions, wait for a safe gap or
-            the WALK signal, make eye contact with drivers, then cross straight while continuing to scan.\n\nIf there’s a
-            pedestrian signal:\n- Press the button if there is one. Wait for the WALK symbol.\n- Before stepping out, look
-            left, right, and for turning cars and bikes in all directions (including from behind you).\n- Make eye contact
-            with drivers. Keep scanning as you cross; don’t use your phone.\n- If the signal starts flashing “Don’t Walk”
-            after you’ve started, keep going to the far curb.\n\nIf there’s no signal:\n- Cross at a marked crosswalk or intersection
-            if possible. Avoid crossing between parked cars.\n- Stand where drivers can see you. Look and listen for traffic
-            in every lane and for bikes/scooters.\n- Wait for a big enough gap so you can cross without rushing. If one driver
-            stops, make sure all lanes have stopped before you go.\n- If there’s a median, treat it as two separate crossings.\n\nExtra
-            tips:\n- Be visible at night (light clothing/reflective, small light). \n- Keep earbuds out and phone away.\n-
-            Follow local laws; in left-driving countries, traffic comes first from the right.\n\nDo you have a signalized
-            crosswalk where you are, or is it an unsignalized street?"
+        - text: |-
+            Here's a simple, safe way to cross a street:
+
+            - Choose a safe spot: a crosswalk or intersection is best. Avoid crossing from between parked cars or on a curve.
+            - Stop at the curb. Put your phone away and remove headphones.
+            - Look and listen for traffic and bikes: left-right-left, and also check for turning vehicles. Keep scanning.
+            - If there's a pedestrian signal, wait for WALK/green person. Even then, confirm traffic has stopped and watch for turning cars.
+            - If there's no signal, wait for a big gap in both directions. On multi‐lane roads, make sure each lane is clear--don't go just because one driver stopped.
+            - Make eye contact with drivers before stepping out.
+            - Walk straight across at a steady pace; keep looking as you go. Use a median/refuge island to cross in two stages if available.
+
+            Extra tips:
+            - Be more visible at night or in rain (light/reflective clothing, a small light).
+            - In bad weather, allow more time--vehicles need longer to stop.
+            - Hold children's hands and keep pets leashed.
+            - Follow local traffic rules and signals.
+
+            If you describe your specific crossing (signals, number of lanes, visibility), I can tailor this to your situation.
           type: text
         role: assistant
       - content:
@@ -261,7 +251,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '4209'
+      - '4379'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -270,59 +262,54 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - signature: ErcHCkYIBxgCKkBZJZKmgqTGMrerntNOcgoakLxACdlqZhs9ARPkSHfxpKy8WFQJGmTqM8F5gcZ4poD5uHULbNVyCKQ5iyQToITuEgyMSMFkX8rWNC+QsFQaDKf0KnH66FeMiSl4ZyIwxyuh2BSP4OfaA90p4t4Wd5H1BzuugU8JlLRnlDyMKkTzlGBOpROR0YfLgVGRJ5nXKp4GFVoHGIvHEivxrnLmvJVesc2Py+d2YSMEgCyegtAyeXaLCH9bhpqe+Nj+CQjBP1EObqinccTYysoHJPZ2iPWr2EnoV9sXqWL7FoAC48ehLXqUiS9uthPu8jqEETsay9CacSdZEQAd7QQQ22ors4bcGCmaxydaWoVYXG+NiOEILtclRpyM8amsfZb17tGvsY50tkK62uYylAvw7sIZqq74kKgMTcdps0kPmPILtvEekVlNsnJgy6HEvF4XKDMno3qcvLuemOF+tdaVx0f2Xz2NE6w/R6PRwk/eW5Gt9u5wtB0E7p2axGptfZwIErF+JhvnhYj5ILIlzg2P+6v3zpdn0dbkQPJJbUGqTSScm6AS0hFV0EqFzSf+GmPuKHGO6lWPAHUORzZMud5VdDMkPAPuStwwL3+cJPUHGAuYGciClLrFX7gtHCbVTXUXScPfNpPosWSm5/Zcxyz6UpAZRxqeIFmNZ2bJFLKHt7yJRCbD1KyPPridIXb4h7ArvKheM35tpJUQndedmys8Ekwgwtz1OYxDAuv/1gtFuR7PoF/xOR0wyJOkEFENi1dxjHSzNhMgWxJm1nh2mrbVdNge1jpNhQpYdeKZNx4Le4CROJTam3spHcNL8HTr5uV0T8UxbfJjsKEDj4uk4z9tSQIA0ASlMiIvnCXewbLZkSMB8E6ivZdaY5boHBV3q2lJnd9X96avYnzF1rYRw2RYgLRvbE/bsqKFtVC21sUaW/KTnb7KDSkdUIdzjiRU/fgyms1/KAvlnsS09GOk7XzSZooplPAQSCZlRNhnIilCZF/kBHvnZlpN53a+eXAcsMD0HH1ajpwSTAZV5YGuRce2wD5MTrDNiX6eq0QAXFbq0cZv6b4banO7YTgQUIjcDH7ZTfBNSMmNgg9z2B683T4XootQK7/B7d/Lau7AsU24soCThSxfzR/O6knvkRyjVEDdqMATBG5938qQQ/98Z8+POR7SUPX5B4sV7abUwpl7LorpwXur2LcdJC6todfTw2AyDpbsQxb3z58LuwrSM6BzLGTODl+95w+Ja8b+czLcAkINUWgdGAE=
-        thinking: |-
-          The user is asking for an analogous approach to crossing a river, based on my street crossing advice. This is an interesting question that requires me to think about the similarities and differences between crossing streets and rivers.
-
-          Key similarities:
-          - Safety assessment before crossing
-          - Looking for designated/safer crossing points
-          - Being aware of hazards (traffic vs. water conditions)
-          - Having a plan and being prepared
-
-          Key differences:
-          - Rivers involve water hazards (drowning, currents, temperature)
-          - Different infrastructure (bridges, ferries, fords vs. crosswalks)
-          - Different skills needed (swimming vs. walking)
-          - Environmental factors (weather, water levels, seasons)
-
-          I should structure this similarly to my street crossing advice but adapted for water crossings.
+      - signature: Es4ICkYICxgCKkAqrTRzX0N03yiL/e6ihg4JXs5Tgp36ILv+cZjyNN4cEGkKtJve5lBy060Pl+GvVRbH+939QwRliSN83hryR/+IEgzZZodChXAMgqgRAY0aDGtXelqkF1M6cjWuziIwBiykETkG12BpJOnUk2xC9dPzWhZ2ujMNXkWCPO7tUWlSam66HWoGcC63tRQp6wONKrUH15YML96j3gF5/Liq7mSAu6KCZVCVFdU/s1CaCvPOn9rNi9VuX0KKIQ/roJyRYh1CL/+zT0ZQzMfI5qIPKswuYJJ03U60lIYP4pYzSI03+Oea+5MHsPL1M/Px4OALEc/KSpR49x2XbILtrWXEHnTPkaGFDC1rFYFr6CRwI66SUzFC2s4zo3EP25VEjhlSXZGVFgX2XQGi3Z6hJuA/WfmKeNA127b7I8shz4tw8lbyQ1oerd35OfK4oLihwaZLqaNuh61qwvFZhXVh+ca8Cojztqz5HtfHvjohK5FdRUB99oD+H58gbdUh0raVqL/jJaallB/4vMF4VXrB5sL8qslWFZ66qzmCciyAIaZkaB8FvlydqWP0xkg2OEGK6pcD7Xg4CxhOpGVQ6JurvlH45mK9IcDOE8jMj6k5dpQNjNEIX+G0950Bbe/XwdozYWkRuDyh1TYFoS/5Y81/cFc/KDFgM7YlxR+HaWJeTqxWDEspYcemMlYtOf37lz/G2MSd1K/+eYVLlaEGWUhmrEwmDam2pwgpsuOXQIZ3cqn0rJvYuze+boilFaYhhQKEX5d7EjVVgBVr0KFRMLTkFB3Q2XwAkcPbO1HSpXy9XEX+EY6WlGoXRKa6I00FSPVv7hEH0+B+97T5qZw/xJFR8GxbB07MKSD0fJGHIdhfB28J8Wga1E4dRYni+CE1qc3PNI2+ICk5TN+nI3sGdHNAq4r5tupN0ulqvJMuEClDaXbDCSCpSdbUlhjndAG4jE4uh0fAU6XdmRwjssDK6GecfCpWKKOGjrY/ebb21LGyqAIS8kOei6gi8+G2R1IPuTVNQv+F+KU0jLRAWW0PMM3VKYpZYmHp+k4exKmYt49I2QSZF7jp+2sSdlqRTFMflQm5EX42h6jgWSeNyZlh1MKRdFw6vwAF75nM/zCC07uLKZKoawfHjSCi1RBMqR0OLHBNu+zkOBMP5+fz4aXwACdrMOCM7VDoUDzbTHE/yJQzzuxl1V8Kduk5nXY8sZUNw5wumJ2iMqbSQ2rXC+hXGay5arKtdKn4DFjRQLJ5u5YqB1fZYNz8qhm2CrM9EQJF2JikeThWyh31bvFMNyFahTy3rIvGjn9i9OUIzPx7QGsFmavm1kgfa22A6lR5lJOGA2M2joq0Hwliu2MiXcGxI5D6FNaAdEXs2uOQHbfW0O+cpxXqk++/Ped7bu4tn+n6TZqB/E4aoHFs8YO85lUVeyWa10PirEQvtTGiFcll61QLyDJnYJEte5CmLhUtxRgB
+        thinking: "The user is asking about crossing a river, using the street crossing analogy. This is an interesting question
+          that could have multiple interpretations:\n\n1. They might be asking literally about how to safely cross a river
+          (water safety)\n2. They might be using this as a metaphor for overcoming a challenge\n3. They might be curious about
+          the analogy itself\n\nGiven the context of asking about street crossing first, I think they want practical advice
+          about river crossing, but I should cover safety considerations carefully. River crossing can be dangerous, so I
+          need to emphasize safety while providing helpful information.\n\nI'll structure this similarly to the street crossing
+          advice but adapt it for rivers:\n- Find safe crossing points\n- Assess conditions \n- Safety preparations\n- Crossing
+          technique\n- Emergency considerations\n\nI should also mention when NOT to attempt a crossing and suggest alternatives
+          like bridges, ferries, etc."
         type: thinking
       - text: |-
-          Great analogy! Here's how to "cross the river" safely, following similar principles:
+          Great analogy! Here's how to safely cross a river, adapting those street-crossing principles:
 
-          **Short version:** Look for established crossing points (bridges, ferries), assess water conditions, have a backup plan, and never cross alone in challenging conditions.
+          **Choose your crossing point:**
+          - Look for designated crossings: bridges, ferries, or marked fording spots
+          - Avoid crossing near rapids, waterfalls, or obviously deep/fast sections
+          - Find the widest, shallowest area if you must wade--water spreads out and slows down there
 
-          **If there's infrastructure:**
-          - Use bridges, ferries, or designated boat crossings when available
-          - Check if services are running and safe (weather conditions, maintenance)
-          - Follow posted rules and weight limits
-          - Wait for proper signals/clearance before boarding ferries
+          **Stop and assess conditions:**
+          - Check water depth, current speed, and bottom conditions
+          - Look for hazards: logs, rocks, drop-offs, or slippery surfaces
+          - Consider weather--recent rain means higher, faster water
 
-          **If crossing naturally (ford, shallow areas):**
-          - Scout the crossing point first - look for established fords or naturally shallow, slow-moving areas
-          - Check water depth, current speed, and bottom conditions (rocks, mud, drop-offs)
-          - Test with a stick first; if it's deeper than your knees or the current is strong, don't attempt it
-          - Cross at an angle upstream to compensate for current
-          - Use a walking stick for balance and to probe ahead
+          **Safety preparations:**
+          - Never cross alone; use the buddy system
+          - Wear appropriate footwear with grip (not flip-flops!)
+          - Consider a walking stick for stability and testing depth
+          - Keep essentials in waterproof bags
+          - Have a plan if someone falls in
 
-          **Safety essentials:**
-          - Never cross alone in challenging conditions
-          - Wear appropriate gear (life jacket if deep water is possible)
-          - Have dry clothes waiting on the other side or in a waterproof bag
-          - Know your swimming ability and have an exit strategy
-          - Check weather - avoid crossing during floods, storms, or when water levels are high
-          - Tell someone your crossing plan and expected return time
+          **Crossing technique:**
+          - Enter slowly, testing each step
+          - Face upstream and move diagonally downstream
+          - Shuffle your feet rather than lifting them high
+          - If it gets too deep (above your knees) or fast, turn back
 
-          **When NOT to cross:**
-          - Fast-moving or flood-stage water
-          - Unknown depth or underwater obstacles
-          - Extreme weather conditions
-          - If you can't swim and water might be over your head
+          **Know when NOT to cross:**
+          - Fast current, cold water, or flood conditions
+          - If you can't see the bottom
+          - During storms or at night
+          - If you're unsure of your swimming ability
 
-          Just like with streets - when in doubt, find a safer route or wait for better conditions!
+          **Better alternatives:** Look for bridges, ferries, or go around. Unlike streets, rivers don't have "walk signals"--when in doubt, don't cross!
+
+          What type of river crossing are you considering?
         type: text
-      id: msg_016e2w8nkCuArd5HFSfEwke7
+      id: msg_01LbeEgfkZoBZDUa38s8Nk9o
       model: claude-sonnet-4-20250514
       role: assistant
       stop_reason: end_turn
@@ -334,8 +321,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 1343
-        output_tokens: 538
+        input_tokens: 1061
+        output_tokens: 546
         service_tier: standard
     status:
       code: 200

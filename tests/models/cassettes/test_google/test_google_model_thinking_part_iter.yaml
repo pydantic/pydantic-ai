@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '371'
+      - '447'
       content-type:
       - application/json
       host:
@@ -20,8 +20,10 @@ interactions:
         - text: How do I cross the street?
         role: user
       generationConfig:
+        responseModalities:
+        - TEXT
         thinkingConfig:
-          includeThoughts: true
+          include_thoughts: true
       systemInstruction:
         parts:
         - text: You are a helpful assistant.
@@ -30,115 +32,103 @@ interactions:
       - functionDeclarations:
         - description: ''
           name: dummy
-          parameters:
+          parameters_json_schema:
+            additionalProperties: false
             properties: {}
-            type: OBJECT
+            type: object
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse
   response:
     body:
-      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"**Clarifying User Goals**\\n\\nI'm currently
-        focused on defining the user's ultimate goal: ensuring their safety while crossing the street. I've pinpointed that
-        this is a real-world scenario with significant safety considerations. However, I'm also mindful of my limitations
-        as an AI and my inability to physically assist or visually assess the situation.\\n\\n\\n\",\"thought\": true}],\"role\":
-        \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 34,\"totalTokenCount\": 102,\"promptTokensDetails\":
-        [{\"modality\": \"TEXT\",\"tokenCount\": 34}],\"thoughtsTokenCount\": 68},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\":
-        \"beHBaJfEMIi-qtsP3769-Q8\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"**Developing a
-        Safety Protocol**\\n\\nI'm now formulating a comprehensive safety procedure. I've pinpointed the essential first step:
-        finding a safe crossing location, such as marked crosswalks or intersections. Stopping at the curb, and looking and
-        listening for traffic are vital too. The rationale behind \\\"look left, right, then left again\\\" now needs further
-        exploration. I'm focusing on crafting universally applicable and secure steps.\\n\\n\\n\",\"thought\": true}],\"role\":
-        \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 34,\"totalTokenCount\": 332,\"promptTokensDetails\":
-        [{\"modality\": \"TEXT\",\"tokenCount\": 34}],\"thoughtsTokenCount\": 298},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\":
-        \"beHBaJfEMIi-qtsP3769-Q8\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"**Prioritizing
-        Safe Crossing**\\n\\nI've revised the procedure's initial step, emphasizing safe crossing zones (crosswalks, intersections).
-        Next, I'm integrating the \\\"look left, right, then left\\\" sequence, considering why it's repeated. I'm focusing
-        on crafting universal, safety-focused instructions that suit diverse situations and address my inherent limitations.\\n\\n\\n\",\"thought\":
-        true}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 34,\"totalTokenCount\": 586,\"promptTokensDetails\":
-        [{\"modality\": \"TEXT\",\"tokenCount\": 34}],\"thoughtsTokenCount\": 552},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\":
-        \"beHBaJfEMIi-qtsP3769-Q8\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"**Crafting Safe
-        Instructions**\\n\\nI've identified the core user intent: to learn safe street-crossing. Now, I'm focusing on crafting
-        universally applicable steps. Finding safe crossing locations and looking-listening for traffic remain paramount.
-        I'm prioritizing direct, clear language, addressing my limitations as an AI. I'm crafting advice that works generally,
-        regardless of specific circumstances or locations.\\n\\n\\n\",\"thought\": true}],\"role\": \"model\"},\"index\":
-        0}],\"usageMetadata\": {\"promptTokenCount\": 34,\"totalTokenCount\": 821,\"promptTokensDetails\": [{\"modality\":
-        \"TEXT\",\"tokenCount\": 34}],\"thoughtsTokenCount\": 787},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"beHBaJfEMIi-qtsP3769-Q8\"}\r\n\r\ndata:
-        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"This is a great question! Safely crossing the street is
-        all about being aware and predictable. Here is a step-by-step\",\"thoughtSignature\": \"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\"}],\"role\":
-        \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 34,\"candidatesTokenCount\": 23,\"totalTokenCount\":
-        844,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 34}],\"thoughtsTokenCount\": 787},\"modelVersion\":
-        \"gemini-2.5-pro\",\"responseId\": \"beHBaJfEMIi-qtsP3769-Q8\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\":
-        [{\"text\": \" guide that is widely taught for safety:\\n\\n### 1. Find a Safe Place to Cross\\nThe best place is\"}],\"role\":
-        \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 34,\"candidatesTokenCount\": 47,\"totalTokenCount\":
-        868,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 34}],\"thoughtsTokenCount\": 787},\"modelVersion\":
-        \"gemini-2.5-pro\",\"responseId\": \"beHBaJfEMIi-qtsP3769-Q8\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\":
-        [{\"text\": \" always at a designated **crosswalk** or a **street corner/intersection**. These are places where drivers
-        expect to see pedestrians. Avoid\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
-        34,\"candidatesTokenCount\": 74,\"totalTokenCount\": 895,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        34}],\"thoughtsTokenCount\": 787},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"beHBaJfEMIi-qtsP3769-Q8\"}\r\n\r\ndata:
-        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" crossing in the middle of the block or from between parked
-        cars.\\n\\n### 2. Stop at the Edge of the\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
-        34,\"candidatesTokenCount\": 98,\"totalTokenCount\": 919,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        34}],\"thoughtsTokenCount\": 787},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"beHBaJfEMIi-qtsP3769-Q8\"}\r\n\r\ndata:
-        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" Curb\\nStand on the sidewalk, a safe distance from the
-        edge of the street. This gives you a clear view of the traffic\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
-        {\"promptTokenCount\": 34,\"candidatesTokenCount\": 125,\"totalTokenCount\": 946,\"promptTokensDetails\": [{\"modality\":
-        \"TEXT\",\"tokenCount\": 34}],\"thoughtsTokenCount\": 787},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"beHBaJfEMIi-qtsP3769-Q8\"}\r\n\r\ndata:
-        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" without putting you in danger.\\n\\n### 3. Look and Listen
-        for Traffic\\nFollow the \\\"Left-Right-Left\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
-        34,\"candidatesTokenCount\": 150,\"totalTokenCount\": 971,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        34}],\"thoughtsTokenCount\": 787},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"beHBaJfEMIi-qtsP3769-Q8\"}\r\n\r\ndata:
-        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"\\\" rule:\\n*   **Look left** for the traffic that will
-        be closest to you first.\\n*   \"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
-        34,\"candidatesTokenCount\": 173,\"totalTokenCount\": 994,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        34}],\"thoughtsTokenCount\": 787},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"beHBaJfEMIi-qtsP3769-Q8\"}\r\n\r\ndata:
-        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"**Look right** for oncoming traffic in the other lane.\\n*
-        \  **Look left again** to make sure nothing\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
-        34,\"candidatesTokenCount\": 197,\"totalTokenCount\": 1018,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        34}],\"thoughtsTokenCount\": 787},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"beHBaJfEMIi-qtsP3769-Q8\"}\r\n\r\ndata:
-        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" has changed.\\n*   **Listen** for the sound of approaching
-        vehicles that you might not be able to see.\\n\\n### \"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
-        34,\"candidatesTokenCount\": 223,\"totalTokenCount\": 1044,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        34}],\"thoughtsTokenCount\": 787},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"beHBaJfEMIi-qtsP3769-Q8\"}\r\n\r\ndata:
-        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"4. Wait for a Safe Gap\\nWait until there is a large enough
-        gap in traffic for you to walk all the way across.\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
-        34,\"candidatesTokenCount\": 250,\"totalTokenCount\": 1071,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        34}],\"thoughtsTokenCount\": 787},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"beHBaJfEMIi-qtsP3769-Q8\"}\r\n\r\ndata:
-        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" Don't assume a driver will stop for you. If you can, try
-        to **make eye contact** with drivers\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
-        34,\"candidatesTokenCount\": 274,\"totalTokenCount\": 1095,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        34}],\"thoughtsTokenCount\": 787},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"beHBaJfEMIi-qtsP3769-Q8\"}\r\n\r\ndata:
-        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" to ensure they have seen you.\\n\\n### 5. Walk, Don't Run\\nOnce
-        it's safe\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 34,\"candidatesTokenCount\":
-        298,\"totalTokenCount\": 1119,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 34}],\"thoughtsTokenCount\":
-        787},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"beHBaJfEMIi-qtsP3769-Q8\"}\r\n\r\ndata: {\"candidates\":
-        [{\"content\": {\"parts\": [{\"text\": \":\\n*   Walk straight across the street.\\n*   **Keep looking and listening**
-        for traffic as you cross\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 34,\"candidatesTokenCount\":
-        322,\"totalTokenCount\": 1143,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 34}],\"thoughtsTokenCount\":
-        787},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"beHBaJfEMIi-qtsP3769-Q8\"}\r\n\r\ndata: {\"candidates\":
-        [{\"content\": {\"parts\": [{\"text\": \". The situation can change quickly.\\n*   **Don't use your phone** or wear
-        headphones that block out\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 34,\"candidatesTokenCount\":
-        346,\"totalTokenCount\": 1167,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 34}],\"thoughtsTokenCount\":
-        787},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"beHBaJfEMIi-qtsP3769-Q8\"}\r\n\r\ndata: {\"candidates\":
-        [{\"content\": {\"parts\": [{\"text\": \" the sound of traffic.\\n\\n---\\n\\n### Special Situations:\\n\\n*   **At
-        a Traffic Light:** Wait for the pedestrian signal\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
-        34,\"candidatesTokenCount\": 373,\"totalTokenCount\": 1194,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        34}],\"thoughtsTokenCount\": 787},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"beHBaJfEMIi-qtsP3769-Q8\"}\r\n\r\ndata:
-        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" to show the \\\"Walk\\\" sign (often a symbol of a person
-        walking). Even when the sign says to walk, you\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
-        34,\"candidatesTokenCount\": 398,\"totalTokenCount\": 1219,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        34}],\"thoughtsTokenCount\": 787},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"beHBaJfEMIi-qtsP3769-Q8\"}\r\n\r\ndata:
-        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" should still look left and right before crossing.\\n*   **At
-        a Stop Sign:** Wait for the car to come to a\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
-        34,\"candidatesTokenCount\": 424,\"totalTokenCount\": 1245,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        34}],\"thoughtsTokenCount\": 787},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"beHBaJfEMIi-qtsP3769-Q8\"}\r\n\r\ndata:
-        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" complete stop. Make eye contact with the driver before
-        you step into the street to be sure they see you.\\n\\nThe\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
-        {\"promptTokenCount\": 34,\"candidatesTokenCount\": 448,\"totalTokenCount\": 1269,\"promptTokensDetails\": [{\"modality\":
-        \"TEXT\",\"tokenCount\": 34}],\"thoughtsTokenCount\": 787},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"beHBaJfEMIi-qtsP3769-Q8\"}\r\n\r\ndata:
-        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" most important rule is to **stay alert and be predictable**.
-        Always assume a driver might not see you.\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\":
-        {\"promptTokenCount\": 34,\"candidatesTokenCount\": 469,\"totalTokenCount\": 1290,\"promptTokensDetails\": [{\"modality\":
-        \"TEXT\",\"tokenCount\": 34}],\"thoughtsTokenCount\": 787},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"beHBaJfEMIi-qtsP3769-Q8\"}\r\n\r\n"
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"**Defining the Goal**\\n\\nI've homed in on
+        the user's need: safe street crossing guidance. It's a straightforward task with clear safety parameters. My focus
+        is now on extracting core safety principles for a successful outcome.\\n\\n\\n\",\"thought\": true}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 34,\"totalTokenCount\": 104,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 34}],\"thoughtsTokenCount\": 70},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"2zR8aYTnEvahz7IPmq6EoQ0\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"**Refining the Steps**\\n\\nI'm now detailing each step,
+        starting with finding a safe crossing point. I've broken down safe and unsafe locations, explaining the reasoning
+        behind each. Next, I'm defining \\\"edge\\\" in the second step, clarifying the vantage point. The goal is to provide
+        specific, actionable advice.\\n\\n\\n\",\"thought\": true}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 34,\"totalTokenCount\": 359,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        34}],\"thoughtsTokenCount\": 325},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"2zR8aYTnEvahz7IPmq6EoQ0\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"**Structuring the Guidelines**\\n\\nI've organized the safety
+        instructions into a logical, step-by-step format, and I'm adding crucial details to each point. I've covered safe
+        crossing points, and I am now expanding the second step, clarifying the vantage point as the edge of the road, giving
+        reasoning as to why it gives a clear advantage. I am working on the third step, which entails looking and listening
+        for traffic. The mantra is \\\"Look left, right, then left again\\\", and I will add what to do about headphones.\\n\\n\\n\",\"thought\":
+        true}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 34,\"totalTokenCount\": 637,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 34}],\"thoughtsTokenCount\": 603},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\":
+        \"2zR8aYTnEvahz7IPmq6EoQ0\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"**Developing the
+        Structure**\\n\\nI am finalizing the safety instructions with clear, concise language. I've incorporated the core
+        safety principles into a step-by-step list, fleshing out each point with details like the importance of looking left,
+        right, then left again. I'm focusing on ensuring clarity and addressing potential scenarios, and have added extra
+        safety tips, such as wearing bright clothing.\\n\\n\\n\",\"thought\": true}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 34,\"totalTokenCount\": 793,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        34}],\"thoughtsTokenCount\": 759},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"2zR8aYTnEvahz7IPmq6EoQ0\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"Here is a step-by-step guide to crossing the street safely:\\n\\n###
+        1. Find\",\"thoughtSignature\": \"CiIBcsjafACy65Vwcm8qOq5jkTTLReoTQLfzt+Kzcg/hK99FCmkBcsjafEthipDTcI/YYtUZ7CYSyHmQdcB+9mnqDLhmtT0vndI0EY9S37MSOIm5dy738djlO27x3QllTQIvHkbLqXcDx3GN4mkY/Cq3J74DS7wz1aCe3yoRdcBGF4FIQU8i2mP2Z8YwMuEKkAEBcsjafAdxPvSPMu8qVh+5hqSc0PS2Rva4qlixtQ2+UlHa1F3c9DjyuXktVSKnfYsrbAMAvZw0/KMCCUKADGqSfuB8J7A/BPMqioQmm23OFhYBLUhdXSS1dhKZouTuLc60AVSWVkTBshrFO6JbAYf0RpadtMetexCKp6yntmvExVKy2+KdhBIc/UUJUV/1QrsKmQEBcsjafBTK0Gw/MYo5EvLmvj1aGQKcvWEDcxLiF0WMorzF/YXqOSxba5rx66aCXV9xEGgT5jAIQsjPnmxfbAkfTihs9zqVhdcKJDr1zWrPBJMHHJDpoFEhyC81zYbbaziVUo6bfcx3ErexVEL8z18RyQr+N0lyRBjgahyeUhYVr8rCilULsK6Y676VrQajhBUwNkgi+Y/ZZc0KiAEBcsjafKwKqrQP+k196he1FwtaTPLQp9Bo4QCKQUBkqu23uWdppjHijbraYjL2d6eBRBXQMzxEUqBD+xd3V+M3TDF7rn2azvOcbpoK/JYi25+Mq8z4wo+6Hx3+khQ2KS0fL6HUs/0QVEqCv2KtvdF3QcB6U2xS9rgLVbfJ7/qOidE7Vg5ANTPDCnwBcsjafMnf7SeuJ3vWjQfJpz6Y5EwdOrGBuaXR+T/5PTNA/LtB1C41iCgdD4JSVpu9QdFVTRZr+1elxCPSHtfSqx53pUziNg2EGeafnPEimi2cuyN5K7AjWkR35FuFhqeBIxy0sgSz6WGGkqab2SlE/41yV0vSUGl6O9KNCoMBAXLI2nwE+8Mh0NJfQJCJ8FkhaO8YaWiVS8geVGV0YJWJVwXfs0HWPooFXw58gylR79Dzjo56K5xD6oMiW3ngC+6bEFOYdWQOdy4b3RrxmTULosCG/wh4jnAcRIjybdub8Hk5nAxLAvgbRIlP0Hs88/NDhWFJ6iPMaiVD01BlkHeSOS8KhAEBcsjafI6/PFHEPpCpfFfwCKknyEglJ+1E/arOJnz+C4BoN6XfjtauKQr+HkW0ggFTlNf/B2J+yGb/TxUgcmau0G2wOGw4qajUANV10JIRR8fgNqkyAIzhJGtv50PfwKLYzGLQS70V5ii4NvwEx2I8wPyyuFJWVDiP0FFVjig+4Xx5860KmAEBcsjafKR+hrxVfW/8jq49f6vTh/fU6Al+JRm4U2z56dVVIa2u3kHbGkfBCKUQoaLFulXhGj9msVCuRe9yUSZ1n9HXWh0XyRn0ltO7aY/JlQNxNTBTFqwid4XEQ6WwnTZcDOOhjtQsSIN75D9DFS1HjVYdIHOG62eJPpHU/V9A9AgY1ywSI/N1SDLhFOBlupiO4guOdM7GYgp7AXLI2nwobe+ifytCSaqBYbjDEOJJCn5KLYncUyHd7JpKnLxmzjMBYPLeHoyPzmapNml9cIe/CHS+Nzhw+ELfGXdJdAg+RIhHYwHK1NZERwu50xw0yvfE3Hsrz6nQizwlnsEK8gtC9Zmq1QbI5od2WJzNlTbA1wPp0+SWCpoBAXLI2nytqQvHki5Em0/Ftsm9MdStFcsa0GtInC77SsRYFyX+qNdQekczgAgaygz1fkkKzl290A4DqQd785J7e4SXLDu2n7c2Ig11dYacn/d2Z+qqW/3Kkg0SiRHXjeoMzyxTABfm1s8m+qwwV+y6S3iKgyds6qD/xYhzZwl5tOp5sOzm4lkP2JjeOqjexDtqRIfVgdON0zNqegqXAQFyyNp8tginVqSEkTh3wNuYPO9QnrkI6yPokmQjEzPMnaOdT2wcxKIjDapY3jwtIpgDB67y/vj8uFtBt7RP7EA5bIYLP6Szq5X2cw5AeSAx+/t69nRX0+P3a7B2LxhpjxKVF2S7/XwcfrYR15yd46Dhtf0phjP0x4s8MHhNa4VI7BOWaZtHBAbTf55LABP/xTGhKxKbAKUKcAFyyNp8NZuxSqlDqSqjcmVvK1nlWnABjHUjHZYHq3Bt55EG8ZQk/twJDmtpeKvj/IUfCixIsRn4PXguwC5Kyxnh+UxkMI+CpyxkW5jmkxHw9qIThtjHRvd4GG5GTVMODUj1m4RbaWfV5V1Uk/+H/0cKmAEBcsjafHZFPTXzVBcDd7eobMpNNF5YE3aE1fBTYGQSE4uI+1wkF/D39k0X6tjGC65DoEyfz68cQcVapVs6GO2v6yew3CjmjoMEPNGg0z6E/BVq7EXtOuGhYg4vwR7WrjiZ25g9LdGQYRppPtsqUjUIBM2cDP6PeIxVR2lnAF2+55uHmr82cUCB/jhIbWPuEtY1h4bPpQGEDgp6AXLI2nztjpnHlTH1r94P2P7VkhCjl6wQ4ortQQW9E2vi75hreDf90ETnaqciHoWqgaVuYM6YdifUKGGN0bFS+97sgReoZSmvQ/MWo+LIvYx1JLqDZszMCatrc8o84mmQVEDaxlQXiWPjyRZ5Z33G1mIAY7fZsSQKkfwKjAEBcsjafFwj4S1mgkkU9c/ZG5MuyCDq8eagrnsMJAkWOarXTwLL3RvFnsAuzal/3yAqR6C0U34a6FI7czM6TJACs9aEPkfiYww8gzTq+Hjjg+5d4PurvGJQ6bPN9dLbRb9BivW6FIjrjQdFqD/Y4ytTYzne2S9SvWDZCnFoArIoWbuVVjsEeFeJZJdLZgqSAQFyyNp8Nfxzs0+LX/AeDWmbyWKHJVzXKck2D3ZJfkSkdskN64RihO40MlHATNTS4X7o1tbrYA18Z8EdCNk0tYYlq+xs8Q5EybdiBEzhM92a93216HJ5pXpS8ZAldk2h7d+caMh7WQDIEpLb3rnVBcLc6Ubeg+UC1bWcKeh+xpNOZd46h4kaXlZiiB35krFXY/Q9CnsBcsjafMr0DZ67HvLPnmUADP0D7w6Wj4CmlkOSe275Kxtp/vjDLuNh1ByiWL7wskzwYN/Q4ciCqfRlee/VzD13UZCcGBYDr/3gaVNd6lEspB4PU3oIXidPtRQ827MMObefmHJrJrV2YNwd43SD4qnpJG/tbOgDRz2/g3EKlAEBcsjafFDOxmOuai77CB3Kaw6t38NpAFcJJspXJmMFZM+PvEaiQV+ZNJ+sIVNf/KuZKEC/5iPAnIN+cWhlRxdL4YYNJWb44ML+YNdPrzudbZzDrG1s3VJs0/lsr2abWfC3AlG7avxN8bYnC8TjjKkyY5JiiM3mf2VNF04Tu8MAf9neBD1Z7IyKPpFaD3mrgSfVKTRdCnEBcsjafA5yF0lMMxnW5nZBfkAO8rv2HDWNXmAybK1rUHrsdfbPo6NnIMZzdMovb1FHAKiFyLdzT9MHQP2Y5ruTv/KT+toGgHTJT8Xjv+DcdA5HzHXCdMek1as1L0H33alVTm7Ef7zyN4T7WUEFNGAtfwpwAXLI2nwNzQKDOfvMaXds3GovGNppjYuDEf9vsOvxJYokUn1zuumibw4JbKgnErX2Q4v3cFhVtuSYMC31Y6xYyvIzkNmJlXXbWVAKoUdtFr4j2zFBJ/Qfx2pAEIUeoap3uDQc6oPwAhm2cV53Lu9PRQqRAQFyyNp8uboYGDVg2rPPh6i/CUk3z+yP8/hzOK2U+ueeoMyu7NeToJxaqIj8gC7KQkvQknTSJjwu6xQcpp3swiN560dmp3NYmir5qHWkgVjpVmoqSM05lyeZELK2uIXcYQCjvVuBLIEtSqQmkOoG2+rUj4iBxFFzQhvcW6VFn8TtINS5Km3h+dsqD1uoivEl3tcKeAFyyNp8pbmfDRxq3oFB54m9Qujvqk9BDGY2JvNfCgN7o2EpAD2jeBhxEUPe9NHo9pCpqRcn/0OMGxZmetQrteTfutcf2fErBRS3JAjLxoANCNjYC8Le/vSvSXpqdxuYjWfaIG9KjsKuXtjwJxHpnmBrF4mEABfe3Qp4AXLI2nxr0+n1fTJxj1zyAm3q6efzCwUbuZ7uPnUZzpjk0JuVKVQ00TRaXKYlSB+7eGbvLlv0vfOnssVNTl44tSDSkVPCpadeI6T/Le5+rdjAfAbIspB1jJCfkrE6iYzZTIzIcpXspeDI5Zpbunp6A9pbgJYQ6cYqCpUBAXLI2nwvooeD0vz6Bm8Y+aoM9KSHWk+E41imx6gTkbqzlM6I0jOgMfRIAxszuYKYXkYtyZxE5IgEpqX46ln4/hcLMQ1TUYzmhrSqFJVK/28+N0sXzP7ipwKl3dDBmatkcz8jFUZu9Jsyi6dF6VkS+uEYsGRMJoifuBE+nhW205BAGecNKKiSnM+QEiq9ifUlPV3m4ukKnQEBcsjafNgBr1osMbscOEBczCaRcZSXg2l32R0BrpV27YdtynvU9XRt8FLOvzsNe/LiQ6wlewYhINxFcLOgROA3BBu+nZ0aKzYvfol9ybSoVqDNOFxWadrcIkBk+IkuUWiemnpj3SGIn+MJiBjZCpIsXB8X0Ox3+RU5E9RWP77wGOF9u0ZtLSkLXbkvU8RUrGc/wqpUU0ZRZKgA3lJ3CokBAXLI2nx7hag5RPvGMbUMO9bPS//SkYOsiwV7X7ZfYx6lj2DSKQZK7BR6zAaJSliwheIUVZe8CILurPYeLxCuH1NI8F386H1pel99rLmie6ffZOvABddqe4V2jqdKCAvIHYA8xf50WuiysGQT3QcACZv1E7afXVxHIrFeAIB2XXPpK+qkBVEJoL8KnwEBcsjafKI4FaMql0VPW1SjGnvWUm7kH55u1QIRThQx8zx7bgvGXPJWCcuYBo5izUgcTzWV/8dFHDVg7td4l6kGggzcj/rwbKJD/x6R8Cne4d60aLOxCNHH6gm/TVNkfK0oSU4wHuJWr/ofwFDbDYeEHVr/Au/SBDbY13gofcj3pnXvZ5oNN1WRj/hc56u41NwpCDRDxLaWwe3KUT21Ti0KkAEBcsjafFQR+qJox1wkP7x+3EAWodk8Shaj1f4t9+PFtDPvzZMHPxaVd6M9BR0gbcZ8H7g9SZm20WgtghNVaMw9vqAgzlPGg81ntfuG6oB8XNKClpsjee7GJ/ix/e2Mp3v8SPcPyBJZQU7iOFFtEYpasLJ5AGvfOI1hvqh/El++m7TSt/BH81A/6MaSid4i82cKkQEBcsjafDy8KtWV/ScYNWSJLJuQfjOLW2wBH8Bfr5bI8jV70LLJETb4wdv/VrSSJCz2hZ5QgUn1RILk6z3Lwig5RKKy/eRez+heE2MFKl5KWpeLjUSH2TiYadYjynpm/Xq9ZcGARTzlsMKL5UGTWAdhBALQC99aeAgc+tD98DIaGKZr/UzQ+YQ0enS0N9exl8biCrQBAXLI2nyt/V9vmM6NWkC03Ps94E65tw6vx6OizTaa2F3po6zVSDNNVdZBHea9DARe1HjV7OTwOONXY+YxSlhQs6cvz8GyavgvILC+q76zPDi9iuVWNY3jCopIUD4RQvVH4vWev0qyClWL1K9b1VFtI4Qs5rZOLFkqmQXLUxladtLBfMuZPMTZCt5iwBIWlJDFveaZ5kkV13feaIWeb1B2Q8/94tpuUTfyF7NHzDjj68oyJ0uiCkEBcsjafIdj7PVms26ffk3HqiqaFZw/NqX/4Dh02L3PX5Y6ErYxBOZ3oSszKgr9l9lUo9LKWXD4u5p8ER1RSSogng==\"}],\"role\":
+        \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 34,\"candidatesTokenCount\": 17,\"totalTokenCount\":
+        810,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 34}],\"thoughtsTokenCount\": 759},\"modelVersion\":
+        \"gemini-2.5-pro\",\"responseId\": \"2zR8aYTnEvahz7IPmq6EoQ0\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\":
+        [{\"text\": \" a Safe Place to Cross\\nAlways use a designated crosswalk or a street corner with traffic signals.
+        These are the safest places\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 34,\"candidatesTokenCount\":
+        42,\"totalTokenCount\": 835,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 34}],\"thoughtsTokenCount\":
+        759},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"2zR8aYTnEvahz7IPmq6EoQ0\"}\r\n\r\ndata: {\"candidates\":
+        [{\"content\": {\"parts\": [{\"text\": \" because drivers expect pedestrians to be there. Avoid crossing in the middle
+        of the block or from between parked cars.\\n\\n### 2\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        34,\"candidatesTokenCount\": 68,\"totalTokenCount\": 861,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        34}],\"thoughtsTokenCount\": 759},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"2zR8aYTnEvahz7IPmq6EoQ0\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \". Stop at the Edge\\nStand on the curb or the edge of the
+        street. This gives you a clear view of the\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        34,\"candidatesTokenCount\": 93,\"totalTokenCount\": 886,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        34}],\"thoughtsTokenCount\": 759},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"2zR8aYTnEvahz7IPmq6EoQ0\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" road without putting you in the path of traffic.\\n\\n###
+        3. Look and Listen for Traffic\\nFollow this simple but crucial\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 34,\"candidatesTokenCount\": 119,\"totalTokenCount\": 912,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 34}],\"thoughtsTokenCount\": 759},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"2zR8aYTnEvahz7IPmq6EoQ0\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" rule: **Look left, look right, and then look left again.**\\n*
+        \  **Look Left:** For traffic\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 34,\"candidatesTokenCount\":
+        143,\"totalTokenCount\": 936,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 34}],\"thoughtsTokenCount\":
+        759},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"2zR8aYTnEvahz7IPmq6EoQ0\"}\r\n\r\ndata: {\"candidates\":
+        [{\"content\": {\"parts\": [{\"text\": \" that will be in the lane closest to you.\\n*   **Look Right:** For traffic
+        in the farther lanes.\\n*\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 34,\"candidatesTokenCount\":
+        169,\"totalTokenCount\": 962,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 34}],\"thoughtsTokenCount\":
+        759},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"2zR8aYTnEvahz7IPmq6EoQ0\"}\r\n\r\ndata: {\"candidates\":
+        [{\"content\": {\"parts\": [{\"text\": \"   **Look Left Again:** To make sure nothing has changed in the closest lane
+        before you step off the curb.\\n\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        34,\"candidatesTokenCount\": 191,\"totalTokenCount\": 984,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        34}],\"thoughtsTokenCount\": 759},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"2zR8aYTnEvahz7IPmq6EoQ0\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"*   **Listen:** Sometimes you can hear a vehicle before
+        you can see it. It's a good idea to remove\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        34,\"candidatesTokenCount\": 216,\"totalTokenCount\": 1009,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        34}],\"thoughtsTokenCount\": 759},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"2zR8aYTnEvahz7IPmq6EoQ0\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" headphones.\\n\\n### 4. Wait for a Safe Gap\\nIf there
+        are cars coming, wait for a large enough\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        34,\"candidatesTokenCount\": 240,\"totalTokenCount\": 1033,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        34}],\"thoughtsTokenCount\": 759},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"2zR8aYTnEvahz7IPmq6EoQ0\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" gap in traffic for you to cross safely. If you are at a
+        crosswalk with a signal, press the button and wait for the\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 34,\"candidatesTokenCount\": 267,\"totalTokenCount\": 1060,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 34}],\"thoughtsTokenCount\": 759},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"2zR8aYTnEvahz7IPmq6EoQ0\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" \\\"Walk\\\" or walking person symbol to appear.\\n\\n###
+        5. Make Eye Contact\\nIf possible, make eye\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        34,\"candidatesTokenCount\": 291,\"totalTokenCount\": 1084,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        34}],\"thoughtsTokenCount\": 759},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"2zR8aYTnEvahz7IPmq6EoQ0\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" contact with the drivers of any stopped or approaching
+        vehicles. This is the best way to be sure they have seen you.\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 34,\"candidatesTokenCount\": 315,\"totalTokenCount\": 1108,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 34}],\"thoughtsTokenCount\": 759},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"2zR8aYTnEvahz7IPmq6EoQ0\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"\\n\\n### 6. Cross Quickly but Safely\\nWalk, do not run,
+        across the street. Keep looking for\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        34,\"candidatesTokenCount\": 338,\"totalTokenCount\": 1131,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        34}],\"thoughtsTokenCount\": 759},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"2zR8aYTnEvahz7IPmq6EoQ0\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" traffic as you cross, as the situation can change quickly.
+        Once you have started crossing, do not stop in the middle of the road\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 34,\"candidatesTokenCount\": 365,\"totalTokenCount\": 1158,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 34}],\"thoughtsTokenCount\": 759},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"2zR8aYTnEvahz7IPmq6EoQ0\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \".\\n\\nBy following these steps, you can greatly reduce
+        the risk of an accident. Stay alert and stay safe\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 34,\"candidatesTokenCount\": 387,\"totalTokenCount\": 1180,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 34}],\"thoughtsTokenCount\": 759},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"2zR8aYTnEvahz7IPmq6EoQ0\"}\r\n\r\n"
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -147,7 +137,7 @@ interactions:
       content-type:
       - text/event-stream
       server-timing:
-      - gfet4t7; dur=2666
+      - gfet4t7; dur=2887
       transfer-encoding:
       - chunked
       vary:

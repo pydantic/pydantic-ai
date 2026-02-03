@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '362'
+      - '423'
       content-type:
       - application/json
       host:
@@ -26,6 +26,7 @@ interactions:
           description: ''
           name: find_education_content
           parameters:
+            additionalProperties: false
             properties:
               title:
                 anyOf:
@@ -42,7 +43,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '611'
+      - '938'
       content-type:
       - application/json
       permissions-policy:
@@ -66,20 +67,32 @@ interactions:
           role: assistant
           tool_calls:
           - function:
+              arguments: ''
               name: find_education_content
-            id: toolu_vrtx_015QAXScZzRDPttiPoc34AdD
+            id: toolu_01HDrihMKz5npKoC6xoaXjmF
             index: 0
             type: function
         native_finish_reason: tool_calls
-      created: 1764308342
-      id: gen-1764308342-FInFdBZR9TF8jmnOwZGZ
+      created: 1770044234
+      id: gen-1770044233-TSFNa8omNa80bmpO22Nx
       model: anthropic/claude-sonnet-4.5
       object: chat.completion
-      provider: Google
+      provider: Anthropic
       usage:
         completion_tokens: 48
-        prompt_tokens: 568
-        total_tokens: 616
+        completion_tokens_details:
+          reasoning_tokens: 0
+        cost: 0
+        cost_details:
+          upstream_inference_completions_cost: 0.00072
+          upstream_inference_cost: 0.002445
+          upstream_inference_prompt_cost: 0.001725
+        is_byok: true
+        prompt_tokens: 575
+        prompt_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        total_tokens: 623
     status:
       code: 200
       message: OK

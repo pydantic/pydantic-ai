@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '556'
+      - '586'
       content-type:
       - application/json
       host:
@@ -22,7 +22,7 @@ interactions:
       stream: false
       tool_choice: required
       tools:
-      - description: ''
+      - description: null
         name: get_user_country
         parameters:
           additionalProperties: false
@@ -33,6 +33,7 @@ interactions:
       - description: The final response which ends this conversation
         name: final_result
         parameters:
+          additionalProperties: false
           properties:
             city:
               type: string
@@ -42,7 +43,7 @@ interactions:
           - city
           - country
           type: object
-        strict: false
+        strict: true
         type: function
     uri: https://api.openai.com/v1/responses
   response:
@@ -52,13 +53,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1854'
+      - '2191'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '568'
+      - '763'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -67,27 +66,36 @@ interactions:
       - chunked
     parsed_body:
       background: false
-      created_at: 1749516043
+      billing:
+        payer: developer
+      completed_at: 1769786533
+      created_at: 1769786532
       error: null
-      id: resp_68477f0b40a8819cb8d55594bc2c232a001fd29e2d5573f7
+      frequency_penalty: 0.0
+      id: resp_08ff313743aa5a6200697ccca45810819f9e5ef7bc8b8a5d1e
       incomplete_details: null
       instructions: null
       max_output_tokens: null
+      max_tool_calls: null
       metadata: {}
       model: gpt-4o-2024-08-06
       object: response
       output:
       - arguments: '{}'
-        call_id: call_ZWkVhdUjupo528U9dqgFeRkH
-        id: fc_68477f0bb8e4819cba6d781e174d77f8001fd29e2d5573f7
+        call_id: call_Bm3vvu0Y5L5gEYzStXNReZ94
+        id: fc_08ff313743aa5a6200697ccca50118819f9f50f8853c7c1ebb
         name: get_user_country
         status: completed
         type: function_call
       parallel_tool_calls: true
+      presence_penalty: 0.0
       previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
       reasoning:
         effort: null
         summary: null
+      safety_identifier: null
       service_tier: default
       status: completed
       store: true
@@ -95,6 +103,7 @@ interactions:
       text:
         format:
           type: text
+        verbosity: medium
       tool_choice: required
       tools:
       - description: null
@@ -108,6 +117,7 @@ interactions:
       - description: The final response which ends this conversation
         name: final_result
         parameters:
+          additionalProperties: false
           properties:
             city:
               type: string
@@ -117,8 +127,9 @@ interactions:
           - city
           - country
           type: object
-        strict: false
+        strict: true
         type: function
+      top_logprobs: 0
       top_p: 1.0
       truncation: disabled
       usage:
@@ -138,16 +149,16 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '792'
+      - '788'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=78_bxRDp8.6VLECkU4_YSNYd7PlmVGdN1E4j5KBkoOA-1749516043-1.0.1.1-Z9ZwaEzQZcS64A536kPafni6AZEqjCr1xDJ1h2WXjDrs0G_LuZPuq7Z27rs6w0.2DAk_UEY0.H.YMVFpWwe0QTOI28mlvDMbZvVsP6LT4Ug;
-        _cfuvid=Qym79CFc.nJ8O7pqDQfy1eFUEqIDIX3VuqfAl93F07o-1749516043838-0.0.1.1-604800000
+      - __cf_bm=PGT1p2JBaHKbAeAiJOV_7AgYGX2_wGOfPUbdknMTlnM-1769786533-1.0.1.1-eSGwr0ISOC7wZAXEx7kcfpcf9Q5aWvINm_XOx_reAJ3f9Jb1pnztZpdmNKaJA35F5nDET6IddUsmcmoA_9sAZyhi1.AtRg4yaONWbu.tkGc;
+        _cfuvid=CONM6XFwSrb1CXfjVWRSvh9z0ilHCsISZoGICHE1fwg-1769786533144-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -155,92 +166,15 @@ interactions:
       input:
       - content: What is the largest city in the user country?
         role: user
-      - content: ''
-        role: assistant
       - arguments: '{}'
-        call_id: call_ZWkVhdUjupo528U9dqgFeRkH
+        call_id: call_Bm3vvu0Y5L5gEYzStXNReZ94
         name: get_user_country
         type: function_call
-      - call_id: call_ZWkVhdUjupo528U9dqgFeRkH
+      - call_id: call_Bm3vvu0Y5L5gEYzStXNReZ94
         output: Mexico
         type: function_call_output
       model: gpt-4o
       stream: false
-      tool_choice: required
-      tools:
-      - description: ''
-        name: get_user_country
-        parameters:
-          additionalProperties: false
-          properties: {}
-          type: object
-        strict: false
-        type: function
-      - description: The final response which ends this conversation
-        name: final_result
-        parameters:
-          properties:
-            city:
-              type: string
-            country:
-              type: string
-          required:
-          - city
-          - country
-          type: object
-        strict: false
-        type: function
-    uri: https://api.openai.com/v1/responses
-  response:
-    headers:
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-length:
-      - '1898'
-      content-type:
-      - application/json
-      openai-organization:
-      - pydantic-28gund
-      openai-processing-ms:
-      - '840'
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    parsed_body:
-      background: false
-      created_at: 1749516044
-      error: null
-      id: resp_68477f0bfda8819ea65458cd7cc389b801dc81d4bc91f560
-      incomplete_details: null
-      instructions: null
-      max_output_tokens: null
-      metadata: {}
-      model: gpt-4o-2024-08-06
-      object: response
-      output:
-      - arguments: '{"city":"Mexico City","country":"Mexico"}'
-        call_id: call_iFBd0zULhSZRR908DfH73VwN
-        id: fc_68477f0c91cc819e8024e7e633f0f09401dc81d4bc91f560
-        name: final_result
-        status: completed
-        type: function_call
-      parallel_tool_calls: true
-      previous_response_id: null
-      reasoning:
-        effort: null
-        summary: null
-      service_tier: default
-      status: completed
-      store: true
-      temperature: 1.0
-      text:
-        format:
-          type: text
       tool_choice: required
       tools:
       - description: null
@@ -254,6 +188,7 @@ interactions:
       - description: The final response which ends this conversation
         name: final_result
         parameters:
+          additionalProperties: false
           properties:
             city:
               type: string
@@ -263,18 +198,103 @@ interactions:
           - city
           - country
           type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2235'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '861'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1769786534
+      created_at: 1769786533
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0b35d9cb374e54a700697ccca54538819dbb37ad4ada16529d
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - arguments: '{"city":"Mexico City","country":"Mexico"}'
+        call_id: call_7bZyjNnz9xsPUFHTcdnNKwDb
+        id: fc_0b35d9cb374e54a700697ccca5fb7c819dadd8dbf17e545af9
+        name: final_result
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: required
+      tools:
+      - description: null
+        name: get_user_country
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
         strict: false
         type: function
+      - description: The final response which ends this conversation
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            country:
+              type: string
+          required:
+          - city
+          - country
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 85
+        input_tokens: 81
         input_tokens_details:
           cached_tokens: 0
         output_tokens: 20
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 105
+        total_tokens: 101
       user: null
     status:
       code: 200

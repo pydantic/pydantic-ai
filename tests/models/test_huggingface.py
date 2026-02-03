@@ -1023,15 +1023,15 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                     IsInstance(ThinkingPart),
                     TextPart(content=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=691, output_tokens=1860),
+                usage=RequestUsage(input_tokens=15, output_tokens=1090),
                 model_name='Qwen/Qwen3-235B-A22B',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 7, 9, 13, 18, 14, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='chatcmpl-35fdec1307634f94a39f7e26f52e12a7',
+                provider_response_id='chatcmpl-957db61fe60d4440bcfe1f11f2c5b4b9',
                 run_id=IsStr(),
             ),
         ]

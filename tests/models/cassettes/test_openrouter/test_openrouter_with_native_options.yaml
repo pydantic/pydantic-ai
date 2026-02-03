@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '193'
+      - '204'
       content-type:
       - application/json
       host:
@@ -18,7 +18,7 @@ interactions:
       messages:
       - content: Who are you
         role: user
-      model: google/gemini-2.0-flash-exp:free
+      model: google/gemini-2.5-flash:free
       models:
       - x-ai/grok-4
       provider:
@@ -35,7 +35,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1067'
+      - '1981'
       content-type:
       - application/json
       permissions-policy:
@@ -54,28 +54,38 @@ interactions:
         logprobs: null
         message:
           content: |-
-            I'm Grok, a helpful and maximally truthful AI built by xAI. I'm not based on any other companies' models—instead, I'm inspired by the Hitchhiker's Guide to the Galaxy and JARVIS from Iron Man. My goal is to assist with questions, provide information, and maybe crack a joke or two along the way.
+            I'm Grok, an AI built by xAI. I'm designed to be helpful, maximally truthful, and a bit witty--think of me as a blend of the Hitchhiker's Guide to the Galaxy and JARVIS from Iron Man. My goal is to help humanity understand the universe, one query at a time.
 
-            What can I help you with today?
+            What can I do for you today?
           reasoning: null
+          reasoning_details:
+          - data: BGR2opReihSPH3IoYQW1UyUChhlfLy/AREnFljNGVOntu/BrLjcAgBIPLvUAMLw9d4J7NXXgea+klPzNwK2Q4iMxLxHOR3GUdtuFke8h1eFFIsLXpr5fZHZzVqVS1SIw/al/1mqlr6zh1PXNPw2qBdFvr9oqFjdlLj7mNOtBrojNuz+7ME5nCuB+m0+BinjvwkStwnDwtzYF4F/8wYZofowcUIsY9RGz0xQIEVYaiG1UuX9jMTPGuwHUvvOSSJ1wWDirJqc4gMHHUVyPEt5wDGpHMmnSm0LeauUHf+rxpKq1KI2MlaAwcuXOmRlrE2sj2dbiTT5vhIm1DmP/qGH704101/AbVD+T43EMP5wn/SJXN+PoV+03NMGSZBX5AJ6+5YjsArMmvVV+rWGyHx1yid63Jjp1h/oKI5P6CA4gQcE7xB+gwD6goqdjvKydSG6LOjebGCWitEMtQetpJ8sLOox1P32Fz6N66EaXByayotYd2hWmxEKIS1zWXwozobe3Ayh/Gt3r36LKgDLggW5ElHfphGze5M94KcXhbJ0krIZmR1Bq4OTJVKpyQA4pBzvOyVA1dCqjMtQlG7t1AZ4nNc2G2b3x50MqvL9tYXV0hlB+kOIDdWs7ok66s0t3ewSQjiblZTNxbpKqBTh0JUZtFuBXnTqHmjlbY57CwBqgVEC4uhreeOBVMEEZXG+ZNmSC03qOCgzPFToejT4f5H+Dve8h+rpkRCT7CzTTQTfe8uMmAPRjKCXCeJxF32MkD9T8zwfp75sHUrGq9y6PvXYH1joWKlVWH5cviV5aTOb9tElVVXEteJiXdPwORG0
+            format: xai-responses-v1
+            id: rs_e94c324f-1051-cca9-9af3-700614916bcf
+            index: 0
+            type: reasoning.encrypted
           refusal: null
           role: assistant
-        native_finish_reason: stop
-      created: 1759509677
-      id: gen-1759509677-MpJiZ3ZkiGU3lnbM8QKo
+        native_finish_reason: completed
+      created: 1770044149
+      id: gen-1770044149-miW3zzivqGfQNbG1F8Rl
       model: x-ai/grok-4
       object: chat.completion
       provider: xAI
-      system_fingerprint: fp_19e21a36c0
       usage:
-        completion_tokens: 240
+        completion_tokens: 192
         completion_tokens_details:
-          reasoning_tokens: 165
+          reasoning_tokens: 121
+        cost: 0.00341325
+        cost_details:
+          upstream_inference_completions_cost: 0.00288
+          upstream_inference_cost: 0.00341325
+          upstream_inference_prompt_cost: 0.00053325
+        is_byok: false
         prompt_tokens: 687
         prompt_tokens_details:
-          audio_tokens: 0
-          cached_tokens: 682
-        total_tokens: 927
+          cached_tokens: 679
+        total_tokens: 879
     status:
       code: 200
       message: OK

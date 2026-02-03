@@ -25,7 +25,9 @@ from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
+from pydantic_ai._utils import filter_str_dicts
 from pydantic_ai.models import Model
+from tests.json_body_serializer import normalize_body
 
 __all__ = (
     'IsDatetime',
@@ -292,7 +294,8 @@ def raise_if_exception(e: Any) -> None:
         raise e
 
 
-def pytest_recording_configure(config: Any, vcr: VCR):
+def pytest_recording_configure(config: Any, vcr: VCR):  # noqa: C901
+    """Configure VCR.py for pytest-recording with custom serializer and matchers."""
     from . import json_body_serializer
 
     vcr.register_serializer('yaml', json_body_serializer)
@@ -302,6 +305,140 @@ def pytest_recording_configure(config: Any, vcr: VCR):
             raise AssertionError(f'{r1.method} != {r2.method}')
 
     vcr.register_matcher('method', method_matcher)
+
+    def _normalize_google_contents(contents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Strip ephemeral fields (id, thoughtSignature) from Google contents for comparison."""
+        normalized: list[dict[str, Any]] = []
+        for message in contents:
+            msg: dict[str, Any] = {'role': message.get('role'), 'parts': []}
+            for part in message.get('parts', []):
+                normalized_part: dict[str, Any] = {}
+                if 'text' in part:
+                    normalized_part['text'] = part['text']
+                if 'functionCall' in part:
+                    fc = part['functionCall']
+                    normalized_part['functionCall'] = {'name': fc.get('name'), 'args': fc.get('args')}
+                if 'functionResponse' in part:
+                    fr = part['functionResponse']
+                    normalized_part['functionResponse'] = {'name': fr.get('name'), 'response': fr.get('response')}
+                if normalized_part:
+                    msg['parts'].append(normalized_part)
+            normalized.append(msg)
+        return normalized
+
+    def _normalize_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Strip ephemeral tool call IDs and normalize smart chars from OpenAI-style messages for comparison."""
+        normalized: list[dict[str, Any]] = []
+        for msg in messages:
+            new_msg: dict[str, Any] = {}
+            for key, value in msg.items():
+                if key == 'tool_call_id':
+                    continue
+                elif key == 'tool_calls' and isinstance(value, list):
+                    new_msg['tool_calls'] = [
+                        {k: v for k, v in tc.items() if k != 'id'} for tc in filter_str_dicts(value)
+                    ]
+                elif key == 'content' and isinstance(value, str):
+                    new_msg[key] = normalize_body(value)
+                else:
+                    new_msg[key] = value
+            normalized.append(new_msg)
+        return normalized
+
+    def _normalize_bedrock_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Strip ephemeral toolUseId from Bedrock messages for comparison."""
+        import copy
+
+        normalized: list[dict[str, Any]] = []
+        for msg in messages:
+            new_msg = copy.deepcopy(msg)
+            if 'content' in new_msg and isinstance(new_msg['content'], list):
+                for item in filter_str_dicts(new_msg['content']):
+                    if 'toolUse' in item:
+                        item['toolUse'].pop('toolUseId', None)
+                    if 'toolResult' in item:
+                        item['toolResult'].pop('toolUseId', None)
+            normalized.append(new_msg)
+        return normalized
+
+    def body_matcher(r1: vcr_request.Request, r2: vcr_request.Request) -> None:  # noqa: C901
+        import json
+        from typing import cast
+
+        content_type_raw: str | bytes | list[str | bytes] = cast(
+            'str | bytes | list[str | bytes]', r1.headers.get('content-type', '') or r1.headers.get('Content-Type', '')
+        )
+        content_type: str
+        if isinstance(content_type_raw, bytes):
+            content_type = content_type_raw.decode('utf-8')
+        elif isinstance(content_type_raw, list):
+            first: str | bytes = content_type_raw[0] if content_type_raw else ''
+            content_type = first.decode('utf-8') if isinstance(first, bytes) else first
+        elif isinstance(content_type_raw, str):
+            content_type = content_type_raw
+        else:
+            return
+        if not content_type.startswith('application/json'):
+            return
+
+        try:
+            body1: dict[str, Any] = json.loads(cast(str, r1.body)) if r1.body else {}
+            body2: dict[str, Any] = json.loads(cast(str, r2.body)) if r2.body else {}
+        except (json.JSONDecodeError, TypeError):
+            return
+
+        fields_to_check: list[str] = []
+        normalize_messages = False
+        uri: str = cast(str, r1.uri)
+
+        if 'api.openai.com' in uri or 'api.azure.com' in uri:
+            if '/v1/responses' in uri:
+                fields_to_check = ['model', 'input', 'tools', 'stream']
+            else:
+                fields_to_check = ['model', 'messages', 'tools', 'stream']
+                normalize_messages = True
+        elif 'api.anthropic.com' in uri:
+            fields_to_check = ['model', 'max_tokens', 'messages', 'tools']
+            normalize_messages = True
+        elif 'generativelanguage.googleapis.com' in uri or 'aiplatform.googleapis.com' in uri:
+            if '/openai/' in uri:
+                fields_to_check = ['model', 'messages', 'tools', 'stream']
+                normalize_messages = True
+            else:
+                fields_to_check = ['generationConfig', 'tools', 'systemInstruction']
+                c1 = _normalize_google_contents(body1.get('contents', []))
+                c2 = _normalize_google_contents(body2.get('contents', []))
+                if c1 != c2:
+                    raise AssertionError(f'Request body field "contents" mismatch:\n  live: {c1}\n  recorded: {c2}')
+        elif 'api.groq.com' in uri:
+            fields_to_check = ['model', 'messages', 'tools', 'stream', 'reasoning_format']
+            normalize_messages = True
+        elif 'api.mistral.ai' in uri:
+            fields_to_check = ['model', 'messages', 'tools', 'stream']
+            normalize_messages = True
+        elif 'api.cohere.com' in uri:
+            fields_to_check = ['model', 'messages', 'tools']
+            normalize_messages = True
+        elif 'bedrock-runtime' in uri and 'amazonaws.com' in uri:
+            fields_to_check = ['system', 'inferenceConfig', 'toolConfig']
+            m1 = _normalize_bedrock_messages(body1.get('messages', []))
+            m2 = _normalize_bedrock_messages(body2.get('messages', []))
+            if m1 != m2:
+                raise AssertionError(f'Request body field "messages" mismatch:\n  live: {m1}\n  recorded: {m2}')
+        elif 'openrouter.ai' in uri:
+            fields_to_check = ['model', 'messages', 'tools', 'stream']
+            normalize_messages = True
+
+        for field in fields_to_check:
+            v1 = body1.get(field)
+            v2 = body2.get(field)
+            if field == 'messages' and normalize_messages:
+                v1 = _normalize_openai_messages(v1) if v1 else v1
+                v2 = _normalize_openai_messages(v2) if v2 else v2
+            if v1 != v2:
+                raise AssertionError(f'Request body field {field!r} mismatch:\n  live: {v1}\n  recorded: {v2}')
+
+    vcr.register_matcher('body', body_matcher)
 
 
 def pytest_addoption(parser: Any) -> None:
@@ -338,6 +475,8 @@ def vcr_config():
         # Note: additional header filtering is done inside the serializer
         'filter_headers': ['authorization', 'x-api-key'],
         'decode_compressed_response': True,
+        'match_on': ['method', 'scheme', 'host', 'port', 'path', 'query', 'body'],
+        'allow_playback_repeats': True,
     }
 
 
@@ -622,12 +761,12 @@ def model(
             from pydantic_ai.models.gemini import GeminiModel  # type: ignore[reportDeprecated]
             from pydantic_ai.providers.google_gla import GoogleGLAProvider  # type: ignore[reportDeprecated]
 
-            return GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))  # type: ignore[reportDeprecated]
+            return GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))  # type: ignore[reportDeprecated]
         elif request.param == 'google':
             from pydantic_ai.models.google import GoogleModel
             from pydantic_ai.providers.google import GoogleProvider
 
-            return GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
+            return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
         elif request.param == 'bedrock':
             from pydantic_ai.models.bedrock import BedrockConverseModel
 

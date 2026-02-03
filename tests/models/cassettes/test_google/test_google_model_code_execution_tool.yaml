@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '234'
+      - '264'
       content-type:
       - application/json
       host:
@@ -19,7 +19,9 @@ interactions:
       - parts:
         - text: What day is today in Utrecht?
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       systemInstruction:
         parts:
         - text: You are a helpful chatbot.
@@ -32,11 +34,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1604'
+      - '1228'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=7403
+      - gfet4t7; dur=5330
       transfer-encoding:
       - chunked
       vary:
@@ -48,46 +50,36 @@ interactions:
       - content:
           parts:
           - executableCode:
-              code: |
+              code: |-
                 from datetime import datetime
                 import pytz
 
-                # Get the current time in UTC
-                utc_now = datetime.now(pytz.utc)
-
-                # Get the timezone for Utrecht (which is in the Netherlands, using Europe/Amsterdam)
-                utrecht_tz = pytz.timezone('Europe/Amsterdam')
-
-                # Convert the current UTC time to Utrecht's local time
-                utrecht_now = utc_now.astimezone(utrecht_tz)
-
-                # Format the date to be easily readable (e.g., "Tuesday, May 21, 2024")
-                formatted_date = utrecht_now.strftime("%A, %B %d, %Y")
-
-                print(f"Today in Utrecht is {formatted_date}.")
+                utrecht_timezone = pytz.timezone('Europe/Amsterdam')
+                utrecht_time = datetime.now(utrecht_timezone)
+                print(utrecht_time.strftime('%A, %B %d, %Y'))
               language: PYTHON
           - codeExecutionResult:
               outcome: OUTCOME_OK
               output: |
-                Today in Utrecht is Tuesday, September 16, 2025.
-          - text: Today in Utrecht is Tuesday, September 16, 2025.
+                Friday, January 30, 2026
+          - text: Today in Utrecht is Friday, January 30, 2026.
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-pro
-      responseId: 5djJaLa9JImR6dkPnOOpuAs
+      responseId: NDt8acncJ_KEz7IPq57X6Ag
       usageMetadata:
-        candidatesTokenCount: 177
+        candidatesTokenCount: 75
         promptTokenCount: 15
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 15
-        thoughtsTokenCount: 483
-        toolUsePromptTokenCount: 675
+        thoughtsTokenCount: 343
+        toolUsePromptTokenCount: 429
         toolUsePromptTokensDetails:
         - modality: TEXT
-          tokenCount: 675
-        totalTokenCount: 1350
+          tokenCount: 429
+        totalTokenCount: 862
     status:
       code: 200
       message: OK
@@ -96,11 +88,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '1101'
+      - '757'
       content-type:
       - application/json
       host:
@@ -113,34 +105,26 @@ interactions:
         role: user
       - parts:
         - executableCode:
-            code: |
+            code: |-
               from datetime import datetime
               import pytz
 
-              # Get the current time in UTC
-              utc_now = datetime.now(pytz.utc)
-
-              # Get the timezone for Utrecht (which is in the Netherlands, using Europe/Amsterdam)
-              utrecht_tz = pytz.timezone('Europe/Amsterdam')
-
-              # Convert the current UTC time to Utrecht's local time
-              utrecht_now = utc_now.astimezone(utrecht_tz)
-
-              # Format the date to be easily readable (e.g., "Tuesday, May 21, 2024")
-              formatted_date = utrecht_now.strftime("%A, %B %d, %Y")
-
-              print(f"Today in Utrecht is {formatted_date}.")
+              utrecht_timezone = pytz.timezone('Europe/Amsterdam')
+              utrecht_time = datetime.now(utrecht_timezone)
+              print(utrecht_time.strftime('%A, %B %d, %Y'))
             language: PYTHON
         - codeExecutionResult:
             outcome: OUTCOME_OK
             output: |
-              Today in Utrecht is Tuesday, September 16, 2025.
-        - text: Today in Utrecht is Tuesday, September 16, 2025.
+              Friday, January 30, 2026
+        - text: Today in Utrecht is Friday, January 30, 2026.
         role: model
       - parts:
         - text: What day is tomorrow?
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       systemInstruction:
         parts:
         - text: You are a helpful chatbot.
@@ -153,11 +137,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1200'
+      - '616'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=7051
+      - gfet4t7; dur=3338
       transfer-encoding:
       - chunked
       vary:
@@ -168,35 +152,20 @@ interactions:
       candidates:
       - content:
           parts:
-          - executableCode:
-              code: |
-                from datetime import date, timedelta
-
-                tomorrow = date.today() + timedelta(days=1)
-                print(f"Tomorrow is {tomorrow.strftime('%A, %B %d, %Y')}.")
-              language: PYTHON
-          - codeExecutionResult:
-              outcome: OUTCOME_OK
-              output: |
-                Tomorrow is Wednesday, September 17, 2025.
-          - text: Tomorrow is Wednesday, September 17, 2025.
+          - text: Based on the previous answer, tomorrow will be Saturday, January 31, 2026.
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-pro
-      responseId: 7NjJaPy6Kem3mtkPzvP1sAs
+      responseId: ODt8abKwBu7hz7IPodGG8AQ
       usageMetadata:
-        candidatesTokenCount: 58
+        candidatesTokenCount: 22
         promptTokenCount: 39
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 39
-        thoughtsTokenCount: 540
-        toolUsePromptTokenCount: 637
-        toolUsePromptTokensDetails:
-        - modality: TEXT
-          tokenCount: 637
-        totalTokenCount: 1274
+        thoughtsTokenCount: 255
+        totalTokenCount: 316
     status:
       code: 200
       message: OK

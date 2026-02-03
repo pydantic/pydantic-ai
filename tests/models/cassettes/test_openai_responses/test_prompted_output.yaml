@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '689'
+      - '728'
       content-type:
       - application/json
       host:
@@ -16,10 +16,11 @@ interactions:
     method: POST
     parsed_body:
       input:
-      - content: |-
+      - content: |2
+
           Always respond with a JSON object that's compatible with this schema:
 
-          {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+          {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object", "additionalProperties": false, "title": "CityLocation"}
 
           Don't include any text or Markdown fencing before or after.
         role: system
@@ -32,7 +33,7 @@ interactions:
           type: json_object
       tool_choice: auto
       tools:
-      - description: ''
+      - description: null
         name: get_user_country
         parameters:
           additionalProperties: false
@@ -48,13 +49,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1408'
+      - '1707'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '8314'
+      - '703'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -63,27 +62,36 @@ interactions:
       - chunked
     parsed_body:
       background: false
-      created_at: 1749561106
+      billing:
+        payer: developer
+      completed_at: 1769786537
+      created_at: 1769786536
       error: null
-      id: resp_68482f12d63881a1830201ed101ecfbf02f8ef7f2fb42b50
+      frequency_penalty: 0.0
+      id: resp_0dce1d99089e937500697ccca8ebfc819f9ec20f40988ca782
       incomplete_details: null
       instructions: null
       max_output_tokens: null
+      max_tool_calls: null
       metadata: {}
       model: gpt-4o-2024-08-06
       object: response
       output:
       - arguments: '{}'
-        call_id: call_FrlL4M0CbAy8Dhv4VqF1Shom
-        id: fc_68482f1b0ff081a1b37b9170ee740d1e02f8ef7f2fb42b50
+        call_id: call_OU3eMY1qbWDJ4UZTXLjEUVx3
+        id: fc_0dce1d99089e937500697ccca98340819f9f3dc70adf128bf3
         name: get_user_country
         status: completed
         type: function_call
       parallel_tool_calls: true
+      presence_penalty: 0.0
       previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
       reasoning:
         effort: null
         summary: null
+      safety_identifier: null
       service_tier: default
       status: completed
       store: true
@@ -91,6 +99,7 @@ interactions:
       text:
         format:
           type: json_object
+        verbosity: medium
       tool_choice: auto
       tools:
       - description: null
@@ -101,16 +110,17 @@ interactions:
           type: object
         strict: false
         type: function
+      top_logprobs: 0
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 107
+        input_tokens: 114
         input_tokens_details:
           cached_tokens: 0
         output_tokens: 12
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 119
+        total_tokens: 126
       user: null
     status:
       code: 200
@@ -120,37 +130,36 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '925'
+      - '930'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=8a8rNQQYozQt3YjcA61k6KGe.AlrMMrtcIvKv.D1s1E-1749561115-1.0.1.1-OFcqg8xD2_HdbeO74bU2.mLTqDuiK.ploHeu3_ITPvDlGwrVkwk8erMkHagxk4UDxACCCAygnUs1HL.F4AGjQCaZm1m2eYiMVbLqp0iQh7g;
-        _cfuvid=wKTRRc2dbdYNYnYwA2vRxVjUvqqkQovvKDwULW0Xwns-1749561115173-0.0.1.1-604800000
+      - __cf_bm=.dEFI9pQDZ5wNanIiMusE0B5oorosvNRA8UxBlJgB_8-1769786537-1.0.1.1-Ze4p0etDaZKpdZib7oaZEapnvkVgU5_mPqjosNa58WTQrUHOV2OrkPtNsWp2fyi2TZVksuiS7XrtqxFEP9PZPx8Un_zuitEYUs6W4RVKpnU;
+        _cfuvid=WrBeGKx.yOq0MdH_tw12W5UOVHyVxnA_cUrSTLfJfpA-1769786537661-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
     parsed_body:
       input:
-      - content: |-
+      - content: |2
+
           Always respond with a JSON object that's compatible with this schema:
 
-          {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+          {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object", "additionalProperties": false, "title": "CityLocation"}
 
           Don't include any text or Markdown fencing before or after.
         role: system
       - content: What is the largest city in the user country?
         role: user
-      - content: ''
-        role: assistant
       - arguments: '{}'
-        call_id: call_FrlL4M0CbAy8Dhv4VqF1Shom
+        call_id: call_OU3eMY1qbWDJ4UZTXLjEUVx3
         name: get_user_country
         type: function_call
-      - call_id: call_FrlL4M0CbAy8Dhv4VqF1Shom
+      - call_id: call_OU3eMY1qbWDJ4UZTXLjEUVx3
         output: Mexico
         type: function_call_output
       model: gpt-4o
@@ -160,7 +169,7 @@ interactions:
           type: json_object
       tool_choice: auto
       tools:
-      - description: ''
+      - description: null
         name: get_user_country
         parameters:
           additionalProperties: false
@@ -176,13 +185,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1501'
+      - '1826'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '1098'
+      - '690'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -191,29 +198,39 @@ interactions:
       - chunked
     parsed_body:
       background: false
-      created_at: 1749561115
+      billing:
+        payer: developer
+      completed_at: 1769786538
+      created_at: 1769786537
       error: null
-      id: resp_68482f1b556081918d64c9088a470bf0044fdb7d019d4115
+      frequency_penalty: 0.0
+      id: resp_09edffa02192a81c00697ccca9cd4c8196910b110c2eefe971
       incomplete_details: null
       instructions: null
       max_output_tokens: null
+      max_tool_calls: null
       metadata: {}
       model: gpt-4o-2024-08-06
       object: response
       output:
       - content:
         - annotations: []
+          logprobs: []
           text: '{"city":"Mexico City","country":"Mexico"}'
           type: output_text
-        id: msg_68482f1c159081918a2405f458009a6a044fdb7d019d4115
+        id: msg_09edffa02192a81c00697cccaa3d748196902e046649fa3e59
         role: assistant
         status: completed
         type: message
       parallel_tool_calls: true
+      presence_penalty: 0.0
       previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
       reasoning:
         effort: null
         summary: null
+      safety_identifier: null
       service_tier: default
       status: completed
       store: true
@@ -221,6 +238,7 @@ interactions:
       text:
         format:
           type: json_object
+        verbosity: medium
       tool_choice: auto
       tools:
       - description: null
@@ -231,16 +249,17 @@ interactions:
           type: object
         strict: false
         type: function
+      top_logprobs: 0
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 130
+        input_tokens: 133
         input_tokens_details:
           cached_tokens: 0
         output_tokens: 12
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 142
+        total_tokens: 145
       user: null
     status:
       code: 200

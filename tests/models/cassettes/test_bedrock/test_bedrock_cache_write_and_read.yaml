@@ -32,7 +32,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        YjlmZjc1ODgtNGRhNi00YWFjLTg0NWUtMGRmMDJlOGMyMGY0
+        NDEwNmIzNGEtZmRhOC00NWRlLWIyMDEtY2Y5MTNkZDU5MDMz
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -48,12 +48,12 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '321'
+      - '370'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 2023
+        latencyMs: 1800
       output:
         message:
           content:
@@ -61,6 +61,9 @@ interactions:
           role: assistant
       stopReason: end_turn
       usage:
+        cacheDetails:
+        - inputTokens: 1322
+          ttl: 5m
         cacheReadInputTokenCount: 0
         cacheReadInputTokens: 0
         cacheWriteInputTokenCount: 1322
@@ -105,7 +108,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        NWVlODQ1M2EtYmY4Ny00ZTIyLThkNTEtNzNlOWQ5Y2E0NDUz
+        OGE4ZjRhZGUtYjc3ZC00NGRhLThkMDAtM2ZhZTcxYmY2ZWRh
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -126,7 +129,7 @@ interactions:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1990
+        latencyMs: 1912
       output:
         message:
           content:

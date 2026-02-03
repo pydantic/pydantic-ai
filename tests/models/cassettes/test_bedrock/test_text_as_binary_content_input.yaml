@@ -6,7 +6,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        ZDI5MGRkY2ItMWRjZi00YzljLWExNjUtZjhlNmViYjc3YjFi
+        ZGY0OTM4ZDgtNGJlNC00YjZmLWJmZjAtNDdlZjVmNDZkMTI5
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -22,30 +22,28 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1106'
+      - '865'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 2174
+        latencyMs: 1315
       output:
         message:
           content:
-          - text: |-
-              The document you're referring to appears to be a test document, which means its primary purpose is likely to serve as an example or a placeholder rather than containing substantive content. Test documents are commonly used for various purposes such as:
-
-              1. **Software Testing**: To verify that a system can correctly handle, display, or process documents.
-              2. **Design Mockups**: To illustrate how a document might look in a particular format or style.
-              3. **Training Materials**: To provide examples for instructional purposes.
-              4. **Placeholders**: To fill space in a system or application where real content will eventually be placed.
-
-              Since this is a test document, it probably doesn't contain any meaningful or specific information beyond what is necessary to serve its testing purpose. If you have specific questions about the format, structure, or any particular element within the document, feel free to ask!
+          - text: "It looks like the document you're referring to is a simple test document. Typically, a test document might
+              contain placeholder text or basic information to demonstrate the format or functionality of a document template.
+              \n\nIn this case, the main content appears to be:\n\n1. **Title**: \"This is a test document.\"\n2. **Content**:
+              There isn't much additional content beyond the title. It's likely used to show how text appears in a document
+              or to test printing, formatting, or other document-related functions.\n\nIf you have a specific document in
+              mind and need more detailed analysis, please provide more context or specific sections from the document!"
           role: assistant
       stopReason: end_turn
       usage:
         inputTokens: 21
-        outputTokens: 175
-        totalTokens: 196
+        outputTokens: 132
+        serverToolUsage: {}
+        totalTokens: 153
     status:
       code: 200
       message: OK

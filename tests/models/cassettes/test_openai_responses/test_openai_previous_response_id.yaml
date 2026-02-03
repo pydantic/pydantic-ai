@@ -4,62 +4,111 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
+      content-length:
+      - '137'
       content-type:
       - application/json
       host:
       - api.openai.com
     method: POST
     parsed_body:
+      include:
+      - reasoning.encrypted_content
       input:
       - content: The secret key is sesame
         role: user
-      instructions: ''
       model: gpt-5
-      text:
-        format:
-          type: text
+      stream: false
     uri: https://api.openai.com/v1/responses
   response:
     headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '9431'
       content-type:
       - application/json
+      openai-processing-ms:
+      - '21254'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
     parsed_body:
-      created_at: 1743075629
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1769747691
+      created_at: 1769747670
       error: null
-      id: resp_1234
+      frequency_penalty: 0.0
+      id: resp_0d0ac3f7be738fc000697c34d69d1081a0be14982cd5b4ff9d
       incomplete_details: null
-      instructions: ''
+      instructions: null
       max_output_tokens: null
+      max_tool_calls: null
       metadata: {}
-      model: gpt-5
+      model: gpt-5-2025-08-07
       object: response
       output:
+      - encrypted_content: gAAAAABpfDTrFiXoa3-zB1ovK2mKNl9cCyKXhXh_7_ZkjkPJEB6qklUTdHy19GUE5TgI1dw4OJLGEWYu1NeYipjSnrvX3CCVMGROeST4RFf8sUXjnlnTn6QXGJ2Rmy_xv_Yrt_kjzN2kvJ4gLVuKb27e6cQQZDBoVy6dYj9K0EM1Y8yBl6L3QdM-HTwZsz-_C5A38HFyQq1mxwhR5tI2LqzqO8tXw4-Ut8RevSUCbT-ldVZLq7YAxJNvnM6Roh0u8KvtlzBzBWBGqyQDzqi5GigqwlzGSK-AIrKwGa5H2cuO4WU00GdxTs5UIygwdBWZffB_wZu-R3_JpxxgU8l1TORcRe01OP6EkiwrK1-mn8GgVdN1aLzgRDNqNgfWEoFHu3-3ppKas0AHwui8MxeLn-xR1BEvWSLxTmBUeBz3EGmUNSCvxPSn_fPskc5csuIX-zR0ki2gzKwxZJOr9KTI3n_hUiknZTo1_GKVicRDbkfnFjt9rUMySIzjOdS6xQEFKIy8SAjL7hoiKnS82o4A7CqXRtuXQSH96KE_osP1_silWCREf-i_ktXsBKr2lnszP4u_94zWUMGh0oqgLQMYpp2W_chDrt6YsN1dhIOyIvjAw7zsR7oMIZinM8cFC3F-Y64Ca4KZxbD9F6mJFjFOB3rQ1TTpgaaeMST8C68co8DSl72NrGfRkzG07SYgA8sgz61jWLFk2u9l3m56dpCqaKu_wrI0_NhxaeGT0j3LHnAT3HH2FWeWEaIJTYXkUvyBWlkBS1XFCL_2XLjCc9Gc963cPl_e4I0jT48dQHnUK-99dS6LiRzvBavztVqo0smDsOog7wr5zyJfvQ2B1trv1uKmv2au6EzrexLYvF7LHm1X218oSqNZLD6-Vq1SQ2mUpVwnkO5_cgb6GD8CYLkmuFYXrMT9pN8Cg7nc0ukuaQlPqOBc3NENf4YR9VbpqESo7ITgaKFR-W2q-kFWkuo5IAdKAo4mlvZfcICn2GB3i6eNGyraQSx5WJCAkaFo9J_EUWwrNl8x8InQKQk-4XE-gADMVYVpu7zFNQ08vxoxiIQmHB-s4Op8H6syeFXQ9SghTmCOHeGElPPRnsfGL8XJGl1hDNTvIzoUAoCoN8msmZ8eCMmwXQUE-zSsP1vRbIUPXcpNgWhH1FvkeiBC_8TiAfxjFgsjEW6zrySY_0K81cjdFNPzgfXs252q4nq4Wq7eE0UXvhO2Es3hGWar6gKo65b_ik72UysCotWfitGl9F2UPgJuaI85n2oOKub82hzIaJLW4FXkKRhp80_urqteNuUXF_Kg5u5Te5Flf97yLBr4ogM95-mfAfA6a6-Z5SzZQFrJAzVokdexbJAIBvQRyeRnrCrkUP9RGDNAbFCkfZo5uj19V2lzrpvOyKxTXGqB0vjR093yuV0qQWx8qMQin-pebojllMtymhdI7fDCiIrncoq2yx115fSNl_MyeTIxs_U5GIalnNX4LIGV5_ZOgWb_2BkC1rCzNsCj-Wq1SfWXj-K4tVIetvBcYFaAzLb76oWQLAWnu1zo3SqFnW46lwXeXTKtRB7CcMmRH2q8bLMvI4cSk1-zYfhPXLNosNzgKaJClRciFTxekQd3h49v6Cg4QbOAIFs-yR9PcKckl_DpSRYhlcZD0ugN18lPIWP3-gzE_A19VB-AUf16ZqIeafdz2_t8TrxhCUOkzDWQS2qhP_kaI7YIRvVhvI07XCME7R6a1dPBv0SAQNoC25r92RFNyytKpYsfL8nCTRqurS5wGIO0SNs3DnFCFVtuviqIA2lduyYA6ajlDgbBdZJfGvAGhMC0503c-oCNg8V9hcCEUIXqX5bcggLL7A7nf3rrLcxB_-lOUGnqZYR8NkUFYmVsQ6gYq6BAhH6znet8BKoYQbrP2T2FybfR1y7PnrTXwdpBD2qB_4vN2_AaMwidEO5J1mnnSUAmgYwHAi66bfpOkWVkCka190Ryph4QDK5ulZ2dFf6Xzn045cLjFfcnBG65b-gtvC5VKenHwzflVFx--1Ne9ddAuirfj-w5LpRY_wZdI-F6VwZ1JnFqVml_wtRn-ch-paaJh5CqbwDL16qHtajVgDVTTo_ezaD6hXGmBUlmZ6kMujwAgfLes8xtdDbtZlOvzo-mXyI44wJ8SrtYTeQgIH31jIbvWS2tDVuz3x9pa4IgVCB9sJe4Bde8vEp2jEeLi-ZMLQ0zdr5TYc48fTwwwsJjd0dnu2xHcipzemKuYCLTk1pB1rKG0E_u2MzZTLBNklC4MYEUqe-WPdE197_bVfNvb7kCtOy2JwWp3AwjnSIbHn_5MqaVunWPeuX12TuJcrrVzjMoojV9ojrlOM_OWZLZS2f3R-9wlLnZpIZ3kN-3BN7nTOoXIk3h5C2XRErt15yCu2FsOMlKMT801CuSLQ_XGUb3ukS5dM0v953pe0ewXDiIrSevNwnYOd0yeZ4LARaW6THUjcC3Gik52q880NIcv7VxBykFLbo2Nbz7RmuTJr66UHCz0fnUV6124iq9VE9T25JcR3tIJKTpABK_SlkU-ZwJ2fjWwwcu_ve5aVG889dnFZMYz54o03H5CAF84eQ80aEEBpupcjYPnOL3JJ85rlg2Ge4lTi-fpyDENpEBBAqHyNcduwbo4fvcUTT5NeQwjeZLnzxbeSsC8Zjc7Uf3IqZdEHrE97Auxuee_DNtvsKXD61xbOX_nCFZXjdGIq8LLJLHGg-aPMA8B1NdteEuVTwtKjx8cs-wTcqi1ajwgbkOHFMm7bj6P1RfXUq0d5O7iApijNmxBItmJzjn9rj9YL2fjpbBQFu7iFk5pBL0jKUt6aBFyh98DJgsk9AEfXYCwtDErMMkrxxaihwB-0iU7usN3y07spGyq28rNYyg2nISEwsJrpfV45BRaTMpVjTa3v5sYfWY9nrtzHoOpIgD3j514bH2WEojgX66V6TucHe2bUE9Pe98UtzCQVIATBbFVBL-nqfzoOphsdTbaa4jHGQk_fiFPhmXnPjv1PJlkmGHv_MwRZRKYaspuSdFYd0GAnCOFn6_vxjLu4vx8T6SU9INQx28R75v-wr_4d4D0wvqgMV9vs9b0rn4p0lAbsKMmWhQN4vVOzCq1ixge5VUKQzIn21uJhBlrs1jkXebk28qtzD7_pqS64ebNc2qYhjEcEAP8BTN7xILuXlSXytNMe4XBpa9vI09SfBPQuV8Zstld0afvbe3FHPL2gfsp3djinfJtLFZxCHUzqKZoIczQnGp5n0YpR-ZZNaQaYwu8npUVT11rnAY-pJy6rLJyDB5dUIftcDGegi04KYiBBk6_f_ddf37-jXSvvd-AweS6uV4ykYyVkEvFGu3cdWv0pyMK0Pv6NE74z9tne_Zn48wqJ-MhfUFJuGQoDAkWtGU6jyIhaKXN1aQzP5fMRTVEdleQK6CAPoGEXmF8iKTWVOXiTfnIxJGDIRH9ombyC7AB3Wuqa0azFHh9g0f07cdPwcw3su82-zkPyfImHnGVfacgKRiQi6p9woWFHIFRQYmQZ-KiN9PU6roeRe6bQX2srBU4xaiVEYDDQRZmOsc8nIZNqViGB4mgUegwcroppWSj4pcmem3oVzXM96cFhkrhzHjAlfIHCq2Opqc6KyAWx-OclHRjHGd-CSL4rX7oGMwW4OBfKh5N1b4HLkhgo5fqOqBNizDSRN8X68gOB745Exv8aoaKPmYXXXmX1pJOTNLT685xqrqCrCwWYTofnqizectKM-dFtjFDrp69ut6MS2QohH7apQLoJz3_YXrSyt6oFCKLr_gaQz38hKU1oP1Eqi-yPCQYKdVxn1rcKKaNV6hEkqvyJ2rgdTNVEpojl0zHwXkootrNhFmqWJfMg0ncoPYv_93JlojE_oJdK8oT9rQED9oekGWtIzEBjkNzbq8PqPrVO6pKhEnbIj3m_kKHRYQLdvUIVoO2Y3Zx3aLQiCO8vHC_NAjQni57Dri7JyCzFZG7gZj-KmZslvOKkRvy5axyITUUAi0EasQmmfwsRddKzESrGH8GcCUiXiK3XpFL-RAmpJxi49v7ZfttmMo-P0Hk7ev5HUsaVqeqsszWNUBngRYIh6XY5J7rCeQ014sQbSiFOxCHSDf9XGwID0eXOO2lIdUohEyVVOmbYeMDG0GfjVPNIyVzOPo0HB8vE7igKCt3SWkmCHCfaGHX3KCd4_tt6u0BKSgQz_lAD4dqBencw1mrWFt06FVFO2R3GmvLYh7uPz8IFohWohmQWqGC7IBC59ZNAFi4zPq4y27rDHPAv7i9I5-zSy6lV_CzjHN77pBgXLNF9fxqXP1KJUBJGSlLj-AcLksX4HUoA8mr0iB9kjzqsBDdLJLAaOU1HOlvfjzEvMcxzmQSexdRnD24G1MArASmn2f1oZbj6o1k2niNhyFinvbv0MX-YapGxgOk14M7_m8P8pArVCsajo7xRVZGWWgIENsvlhFpoIahIl9159tLkZ6v3DgsIhwvTM6i1fJ4Zvs61VtOqFH9efF0QeqmcyDKjD9Gl71A4XIhqJdGRereG1oF0pbIc3pTkIO5dRebXcbWpDjcaA08w5sP47wXss2o2kfb16kMI-67jPVANjKM3KMxryVXSGFloJD5pVfHzuFpHWDL0QeojwOvb4SCop0yFt6iSlVGnLRmLIWQgc7CthSYv6CW_aRUjfx3lTWjnCE61yMu-V7vzEOTFIVM_sCczqzl7fSxURcOadrO5v_beDhRDAwaU8yu-TrDtCUfqZ7L9_e9Y-JYGsZARm_jHMyB9S2GEaquIXVkfg1Il1mzyXVpe5FR7AvFeyBbkdSshRY2IxvCc4qQ0796N-o0YfBZQD4Z1oIje8lGftBWKq06Ns62kiix038jlXWONUVp2SFhH5oxRWHz_KZv18HHB_PKdsmnwV3ufzcir7_A703_g3dso8OBmcyaI1_KC6FeOtrd1x7Jcs538Vdhdu0fdrwfI-1wuWKETJ3AY1TEHm-s6EjcgMT_k3Jm0cj7IuFtCoHzNz1pgA59QFDBxt29Y0gQaeV38HwSmtlfjOLX_Kb8pWlBIZ5PKI31Arl8J5nBFlyFZEJWt_8tdGsSh4QmxERNrflxN9EZSuvmsZRbXE79WZJ-TNQK4JtBqOLN1xAunyKCfjMQ_Y2PkRcM4WKgFmFUcG3zhUjvoRrhBtBta6B0qJ6SgjOhfVHM4tL48OLVI485GC5_a6ZiB3H3r47pNwmywyRrmkTxw3cnL2gmq7XN6HR0vqx7z3FTb7fv0O0U5WVXyFhHBF-4YTqwCQwzwJURs7ol5GvFV1A5pi9C-CXan2go_qWJCVh-lieWSx464bbTz_pxJHowzd-4ZkJ0H8xI8epy65A1IgRotyPevrzcJQOp15bPLYMBl7cmhU1A4VHMgO7KIRth6zNgbDYM0k0eClnLHeLJdXsQmsWvMxXJn7hC-LCbpndx9v-Yjy7FDhxmAtRnfREcI5dFRtfmYhNKg2ejt_Rwg9-RpqsJ4sTD1kRr7oXYK47hKmeTAjUQh2OLslBnlGK50Thqo_Vu_zeOvkzvi_74pA5JO58-AP02c6CjGavN05nut9hgxxf5mO4BShXpSBHoeNkzWenGwcH4sFvY9B7uaLtqJ154crir1NeHy_XY-xjv45RoA2VkVczu01_nEUE9b_EQxy7pzknWQL-pnNPa2-rElAIOialGhQFXYws_0dhEKz8D-fUP7-iZ2wWnAWEOC7Orzw6cYV4bTx1n8GQbh_1gXcu-pZgVNfXMtRocuI9yWogFc6tjwGKX84SqUrjMAJt5EmEjnMNuz7L3_1qspbz9XUZAqhNbJcz_S0oEfNxyb4C2HOhuGczLZE8hPVOOSUujYK8l-hB-I--XR0DZD8SmPWvWSg7fxRXCx2rY4i9u9RWlzCu61iccMhTaMiY47VHh9GePAIHgYEIyDA0tv2VYeuUDCd-TQggrmWk4IZzq_goHeBkXgbEHyDVLyZYScZLTEVWwBe5MEJry4vAVpnmS5XNwP5TRBW1yjGt75iHU4F--KfWnv2RDRX-SvCepdvoau_6arfUBkgDGK9CKdwds_1jANb7nO799EV6J7MnuviBhHZsHjfYpdIjh6xTR-wOCH32MMAtWEL7SeuikffUQy3kwrhX1s07DZcSHxkN35ZZmUYzYbIq2oPiWr0tVWsBnmHYs1Aw44Rx6uNCRnLHnvwru-wm5G8SDF5PLNVyNZasNGWOPL5LQBeohOV_cUjLnGE8NijQsn57wXPQOeotu7v3a681J-KepwDO22MGx_dSsqsUtOrrpfPDanVLkGFBK5gd8yc2e7pInVWMdQyEKBbF0eky2GZzDYo7rZv7IfCn9zS_tY7Vm_Tekn_6Q-lSqn6hgOtv6Jtoui5Akb2CBQkbggSqPvjh8lwTuftqrGg_d_qK9_YdeHJfo3nhfwXaHDbgzdGqCPrYgP_5AKwP-TnpDHEOpmA0zCslgrTNRkYGfgIsqc7O6vcFvT2HbKGKqhnLEyiqH0R3aNOnE0cu3osLq9cE6bDwjUwo7c1iHW9S5Pu6MHlID12xek5gXynFTYv2pw8mLtKP1ZTe7ZDFGvXkCk_-QWaZW2qvZ1NHZc3uVUhF0gHWGhYqa9yAApecDCtpCJOHmABE_WaJgwf3ocwUwWY-xpeeyZ8rYr55rLoR_8AunUzgHf9JuXNCY6S_O45Nomd2M00vdsPdpWP2VWMs5ozB6QoE4WVUu0U3uRSZ8jh6Pm7jihpTtdMDFFrbyI9v3hW0bF3M-AcWFfFB9gniPy0_IvdTQUf-HQ3i9Q5HN_hqGD1_ryxerVNsl-aVCbwVDZGBoGMbUBZDzZCu11CjXxrE-eNq8sHxLjFj_hLUYFvg5b1rxuWPCtOb4Tryvruv1WpuM-vGvtxtUJOoTC2AGPvNBAj9EE4W1tOSqdQRMVcfFuf5nVfOOLT7dQfc8gKVhdufr9qsb-D8HRIS4Yqz5FVYTTbo6zinA3mawmMufwTtrtrHht6Bh_9JS5R1jXsbQh56EY4BY1NfIzxjpsofbadYccy2YHPw6s5Cp8ugUhGNHUSRc_dyOOu3ba6FhFC9Uzy3zTbg7p0-UVIcF_-3lPbfBbpIb8F2tFxfZPGUNXIOgHgcsmpM7nvNX9TYBaryEGknAT1S-XBTmHlTkFAmc2-QDO_r5jWgutpZ2C8j24MBTXg8_qAohtVSkYBpB9cEus87G4WM5_BPCsemx587HGwV4B9TAoAM3NjadWimXoUc
+        id: rs_0d0ac3f7be738fc000697c34d6ea7081a09925e76822c8af26
+        summary: []
+        type: reasoning
       - content:
         - annotations: []
-          text: "Open sesame! What would you like to unlock?"
+          logprobs: []
+          text: |-
+            Got it. How would you like me to use "sesame" in this chat? Pick one or customize:
+
+            - Gate spoilers/answers: I'll only reveal solutions when your message includes "sesame".
+            - Gate sensitive commands: I'll only follow special instructions that include "sesame".
+            - Prefix mode: I'll only execute commands that start with "sesame: ...".
+
+            Note: This is just a chat convention (not real security) and applies only to this conversation.
           type: output_text
-        id: msg_test_previous_response_id
+        id: msg_0d0ac3f7be738fc000697c34e9c7f081a092f870b6569ebebf
         role: assistant
         status: completed
         type: message
       parallel_tool_calls: true
+      presence_penalty: 0.0
       previous_response_id: null
-      reasoning: null
-      status: complete
-      status_details: null
-      tool_calls: null
-      total_tokens: 15
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
       usage:
-        input_tokens: 10
+        input_tokens: 11
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 1
+        output_tokens: 1128
         output_tokens_details:
-          reasoning_tokens: 0
-        total_tokens: 11
+          reasoning_tokens: 1024
+        total_tokens: 1139
+      user: null
     status:
       code: 200
       message: OK
@@ -68,63 +117,108 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
+      content-length:
+      - '218'
       content-type:
       - application/json
+      cookie:
+      - __cf_bm=wRXRjCm3I3nNR2CUqEWySAcOyu67W6H3v67mSwS3LG4-1769747691-1.0.1.1-wcTpOr.dlTAr2SDcJEW6wGee3qsVwewG0Plhsh8kKoDpf6PCYoHCgcCBNiJEgXHK5X17sIsA79eLhEW3x9PjUy7b9fvWMHcuNaiy7PPV7L8;
+        _cfuvid=xau91q4tZIXrfZ2jODgK.Jiab5xNgrLAYjjbLMcHHb4-1769747691906-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
     parsed_body:
+      include:
+      - reasoning.encrypted_content
       input:
-      - content: What is the secret key again?
+      - content: What is the secret code?
         role: user
-      instructions: ''
       model: gpt-5
-      text:
-        format:
-          type: text
-      previous_response_id: resp_1234
+      previous_response_id: resp_0d0ac3f7be738fc000697c34d69d1081a0be14982cd5b4ff9d
+      stream: false
     uri: https://api.openai.com/v1/responses
   response:
     headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3950'
       content-type:
       - application/json
+      openai-processing-ms:
+      - '5540'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
     parsed_body:
-      created_at: 1743075630
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1769747698
+      created_at: 1769747693
       error: null
-      id: resp_5678
+      frequency_penalty: 0.0
+      id: resp_0d0ac3f7be738fc000697c34ed20e081a08ada676c0a340b0e
       incomplete_details: null
-      instructions: ''
+      instructions: null
       max_output_tokens: null
+      max_tool_calls: null
       metadata: {}
-      model: gpt-5
+      model: gpt-5-2025-08-07
       object: response
       output:
+      - encrypted_content: gAAAAABpfDTymtKVqONQ-FlYfpDQvDlwDGNagSodwUO13XppqxCPSHibbmCih74eEj9MWnui7iTh00hRO5vAme9gJOoznHeJ-3xWY5wBh7p8jZe0mOf_Cb8-3V6jsQ6NCUQHx-KYiPkekIaTeLqFynVrK9EFb6KNMZtDcN5oSVcnffC7CNdiy7sQIgcbzkO7bUSsK5efoE5o0Oo9kCFScwy-HIM2xt9rOtY0scZPp9ef1BIv-hS8bHeM_LwxU0GvAJ1lZwLmGBKp7h38OE3WuI4nn7bW6T3mseYIgmVBO_oLUkB1TmHPfyGd4IZ3DwtqdR8V8GpYY3Vao3SjtHJw8h6wGygv0z-fdxfDtNwLyE__5tx5mXKcIHCng-ysDZSBVXMbRbNC43Q4jKnojGS_IEzoNwVAla75IeCuupHDtZ-jq8b8Lvyg7MgLnIEausKZdqLEJjmXpzg3aTx_xmCKEA8f1UEnXNwUh_mFXvusWTKLZvjWV4I7QEyKTsrYS7Ul0Byn-r05EsrjGPXq8PtybGVhRmmB2fULLTqN3fGEcgPoJEV6GGImxpCgQxxS6GAeOkQ9qBQVVH5_FFEilf9uEsH5z83DsGGx2H1lqMDu7UL6NDmyDEOrMSO3YIiyO9wmr0svbWgeEuhXNHckhO9FoDTPqa1eJsVB8T_Sk1ZEYKW1gmgehdgfPhdG_hOMQk5ztW_jWRB7I6UPM0Kc-RXGrFv363T_9Vi3_kURvt-B8mnOXs6QjxoMG97TGj7_zuI0UR8C_-ttJHuLnlZ-LS1u0UYeINqwFZvZWt-kzHuI_5i5R64hvYnwfwN9fDt_UsJK5t5cBkFBKwqGfCU8NNYXK1vsNCA52MZabGW9BrBsfJIr-s7Z21J98P7D8ULi1o6XVbGzgh6XYd5CM-6IBK_dt1NV2ygULTofqKYAqrjFgtR51fMBPKgl-nNGwEkfi2BQ2PKrGfsJsX0QGxo0Gt7bMWz6KiLro_xUkM0KCciEIpHtQPWIoH8tRKDvhIe9TLTR6ssGp94qaDZNYLdzysw9vYnlLGuTJVtHiOv1d3wgsDluXuqBG71lpsIJw0l71H9fwNOZn3vVxVq4Qr9hClifL49CF8DsKCYorWhMSEGIfcSpjietZKscxwSgG4waE9VEmZNTtlInFNRLITTVYxRlsluZvRIHAhGzRPOqbORg6nxz8JkUqyChsdvZHKpwFSNWbriP6rR1A9Mg0L8xxHGAuwYeyMQmuEEXbR2azcFOoFLLwDo-oNFdsjelBn9VHoHfY4vPZYn6OK1WrgcK08QR0XgXTIz7Kbl8ergmzXZRqDcGvKweCfCVLSpVvi5tjaLwubX0L03QzumTt59FA25RAIEb5mEOvyrWzsTW7hafbl0Qa5qVHnRdJIm1TS6aSnlywOUkmpC6xHSYxTE4MlDmZ6suDo73X6jaeLkv5IZB_9-ywmcWb8vUDdhEilab0pQAbN-8TC0OdKAbdGYsWS7BWYhepzyxIy98dZL6AeppIqqbu1FN8xNVR1SdKmeCZLxhjboJVpjNQDSVMnGi3rL4DkpzcKK5Gm-MDVc4PeCOFT1-fGIhxjw8jNiaZ5VV1oDi3OHU-dAqqEL5pQ72E9x2bd8WtjAZVj0iFBTlqG_yioST_2EV1GXj6dRXOgJj8p4sqQGNgr18kOOFpAMC1jRUqbdiLlbfz-7SGdmKxRXzGZJzFzyz-U_TQr3V8WDquZO4wFj0R87hwfprQzLjFsPiXUUYshVEcE4JjJd4gMsrtPEK0RMELQSZM3mc0OKb4fgTuYNudmOVc_R37_4S7TbFUgc6ekAbEw2poVrV0QpwSIXrj2HBRLmvYTL9xDD3NOr_yiihX7xbG_rI4bswhXf6Pnu0Vm1dIEu774xLOjDrwn3wNNf-I0wxC4M0R7zxXPeiaK6yEh1Spfl8wyNC1TSMWOxakr3KpOMm4c9gvobL-Wi6aw4lNkn9hETg4iIH8FNV8pFwWlyYEcnItri8YJ_7fXix3zYtusZQhdpOA3M6EhUrGthh_WGB7a_OZQRu-ah-tVNYGQQ7_Mz1iXs8XIRRpDft_YLCaIEycjIMoo71WRKEFFrK4eHwRBrGsT-iF5pBFVPtEGk6IUEdJpqSSN7EN02y3G-iczSvJtDY3phpaI2MJKQGkgoTNU4=
+        id: rs_0d0ac3f7be738fc000697c34edbd0c81a0a4d59091c126a9ab
+        summary: []
+        type: reasoning
       - content:
         - annotations: []
-          text: "sesame"
+          logprobs: []
+          text: The secret code is "sesame."
           type: output_text
-        id: msg_test_previous_response_id
+        id: msg_0d0ac3f7be738fc000697c34f2290c81a08e6686568eac846f
         role: assistant
         status: completed
         type: message
       parallel_tool_calls: true
-      previous_response_id: resp_1234
-      reasoning: null
-      status: complete
-      status_details: null
-      tool_calls: null
-      total_tokens: 15
+      presence_penalty: 0.0
+      previous_response_id: resp_0d0ac3f7be738fc000697c34d69d1081a0be14982cd5b4ff9d
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
       usage:
-        input_tokens: 10
+        input_tokens: 124
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 1
+        output_tokens: 232
         output_tokens_details:
-          reasoning_tokens: 0
-        total_tokens: 11
+          reasoning_tokens: 192
+        total_tokens: 356
+      user: null
     status:
       code: 200
       message: OK

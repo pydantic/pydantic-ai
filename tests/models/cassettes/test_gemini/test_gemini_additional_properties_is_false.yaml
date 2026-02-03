@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '360'
+      - '334'
       content-type:
       - application/json
       host:
@@ -33,7 +33,6 @@ interactions:
             required:
             - city
             - country
-            title: CurrentLocation
             type: object
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
   response:
@@ -41,11 +40,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '752'
+      - '745'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=723
+      - gfet4t7; dur=1024
       transfer-encoding:
       - chunked
       vary:
@@ -54,25 +53,25 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.13673184228980023
+      - avgLogprobs: -0.2695000171661377
         content:
           parts:
           - text: |
-              I need the country to find the temperature in Tokyo. Could you please tell me which country Tokyo is in?
+              I need to know the country to find the temperature in Tokyo. Could you please tell me the country?
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: V_cgaZvoEIGhz7IP0LnHiA4
+      responseId: tTR8advIKJGtqtsP8_qruQ0
       usageMetadata:
-        candidatesTokenCount: 23
+        candidatesTokenCount: 22
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 23
+          tokenCount: 22
         promptTokenCount: 10
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 10
-        totalTokenCount: 33
+        totalTokenCount: 32
     status:
       code: 200
       message: OK

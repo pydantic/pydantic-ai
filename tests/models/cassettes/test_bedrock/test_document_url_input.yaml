@@ -5,7 +5,7 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       host:
@@ -252,11 +252,11 @@ interactions:
       accept-ranges:
       - bytes
       age:
-      - '155717'
+      - '54972'
       alt-svc:
       - h3=":443"; ma=86400
       cache-control:
-      - public, max-age=604800, s-maxage=604800
+      - public, max-age=2592000, s-maxage=2592000
       connection:
       - keep-alive
       content-length:
@@ -267,8 +267,6 @@ interactions:
       - application/pdf; qs=0.001
       etag:
       - '"33d0-438b181451e00"'
-      expires:
-      - Tue, 11 Mar 2025 19:48:29 GMT
       last-modified:
       - Mon, 27 Aug 2007 17:15:36 GMT
       strict-transport-security:
@@ -285,7 +283,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        NzUzNWQ3N2QtY2I1OS00NTE4LWFjNWUtYmZkYjg4YzcxOTY4
+        N2VmY2I2OGItMmRlYi00OTMzLWI2NDQtNjA2MTFjNmRhYjE3
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -295,29 +293,38 @@ interactions:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-v2/converse
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-20250514-v1%3A0/converse
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '353'
+      - '776'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1698
+        latencyMs: 2696
       output:
         message:
           content:
-          - text: Based on the provided XML data, the main content of the document is "Dummy PDF file". This is contained
-              in the <document_content> tag for the document with index="1".
+          - text: |-
+              Based on the document you've shared, this appears to be a very simple PDF file with minimal content. The main (and only) content on this document is:
+
+              - A title that reads "Dummy PDF file"
+
+              This appears to be a test or placeholder document, as indicated by the word "Dummy" in the title. The rest of the page appears to be blank space. This type of file is commonly used for testing purposes, file format demonstrations, or as a template placeholder.
           role: assistant
       stopReason: end_turn
       usage:
-        inputTokens: 68
-        outputTokens: 42
-        totalTokens: 110
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 1636
+        outputTokens: 104
+        serverToolUsage: {}
+        totalTokens: 1740
     status:
       code: 200
       message: OK

@@ -207,7 +207,7 @@ async def test_openai_responses_output_type(allow_model_requests: None, openai_a
 
     agent = Agent(model=model, output_type=MyOutput)
     result = await agent.run('Give me the name and age of Brazil, Argentina, and Chile.')
-    assert result.output == snapshot({'name': 'Brazil', 'age': 2023})
+    assert result.output == snapshot({'name': 'Brazil', 'age': 522})
 
 
 async def test_openai_responses_reasoning_effort(allow_model_requests: None, openai_api_key: str):
@@ -218,41 +218,35 @@ async def test_openai_responses_reasoning_effort(allow_model_requests: None, ope
     )
     assert [line.strip() for line in result.output.splitlines()] == snapshot(
         [
-            'Ingredients for the dough:',
+            'Alfajores uruguayos are delicious sandwich cookies filled with dulce de leche and rolled in coconut or covered with chocolate. Follow these steps to prepare them:',
+            '',
+            'Ingredients:',
             '• 300 g cornstarch',
-            '• 200 g flour',
-            '• 150 g powdered sugar',
-            '• 200 g unsalted butter',
-            '• 3 egg yolks',
+            '• 200 g all‐purpose flour',
+            '• 100 g unsalted butter, cold and diced',
+            '• 100 g powdered sugar',
+            '• 2 egg yolks',
             '• Zest of 1 lemon',
             '• 1 teaspoon vanilla extract',
-            '• A pinch of salt',
+            '• 1 pinch of salt',
+            '• Dulce de leche for filling',
+            '• Optional: desiccated coconut or melted chocolate for coating',
             '',
-            'Ingredients for the filling (dulce de leche):',
-            '• 400 g dulce de leche',
+            'Instructions:',
+            '1. In a large bowl, sift together the cornstarch, flour, powdered sugar, and salt to avoid lumps.',
+            '2. Add the cold diced butter, lemon zest, and vanilla extract. Work the ingredients with your fingertips or a pastry cutter until the mixture resembles coarse crumbs.',
+            '3. Add the egg yolks and gently mix until the dough comes together. Avoid overworking the dough for a tender texture.',
+            '4. Shape the dough into a disc, wrap it in plastic wrap, and refrigerate for at least 1 hour to relax the gluten and firm the dough.',
+            '5. Preheat your oven to 180°C (350°F). Line baking sheets with parchment paper.',
+            '6. On a lightly floured surface, roll out the dough to about 0.5 cm thickness. Use a round cookie cutter (approximately 5 cm in diameter) to cut out circles.',
+            '7. Place the cookies on the prepared baking sheets and bake for 8-10 minutes until the edges are just set. The cookies should remain pale.',
+            '8. Remove the cookies from the oven and allow them to cool on a rack completely.',
+            '9. Once cooled, spread a generous layer of dulce de leche on the flat side of one cookie and sandwich it with another. Repeat with the rest.',
+            '10. For finishing touches, optionally roll the alfajores in desiccated coconut or gently dip them in melted chocolate. Place them on a rack to let the coating set.',
             '',
-            'Optional coating:',
-            '• Powdered sugar for dusting',
-            '• Grated coconut',
-            '• Crushed peanuts or walnuts',
-            '• Melted chocolate',
+            'Enjoy your homemade alfajores with a cup of mate or tea!',
             '',
-            'Steps:',
-            '1. In a bowl, mix together the cornstarch, flour, powdered sugar, and salt.',
-            '2. Add the unsalted butter cut into small pieces. Work it into the dry ingredients until the mixture resembles coarse breadcrumbs.',
-            '3. Incorporate the egg yolks, lemon zest, and vanilla extract. Mix until you obtain a smooth and homogeneous dough.',
-            '4. Wrap the dough in plastic wrap and let it rest in the refrigerator for at least one hour.',
-            '5. Meanwhile, prepare a clean workspace by lightly dusting it with flour.',
-            '6. Roll out the dough on the working surface until it is about 0.5 cm thick.',
-            '7. Use a round cutter (approximately 3-4 cm in diameter) to cut out circles. Re-roll any scraps to maximize the number of cookies.',
-            '8. Arrange the circles on a baking sheet lined with parchment paper.',
-            '9. Preheat the oven to 180°C (350°F) and bake the cookies for about 10-12 minutes until they are lightly golden at the edges. They should remain soft.',
-            '10. Remove the cookies from the oven and allow them to cool completely on a rack.',
-            '11. Once the cookies are cool, spread dulce de leche on the flat side of one cookie and sandwich it with another.',
-            '12. If desired, roll the edges of the alfajores in powdered sugar, grated coconut, crushed nuts, or dip them in melted chocolate.',
-            '13. Allow any coatings to set before serving.',
-            '',
-            'Enjoy your homemade Uruguayan alfajores!',
+            'Note: Clean up all utensils and surfaces promptly and store any leftovers in an airtight container to preserve freshness.',
         ]
     )
 
@@ -318,27 +312,27 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                         tool_name='get_location',
                         args='{"loc_name":"Londos"}',
                         tool_call_id=IsStr(),
-                        id='fc_67e547c540648191bc7505ac667e023f0ae6111e84dd5c08',
+                        id='fc_0a4779586464cbd900697ccca057908195ae0f71a641babecf',
                         provider_name='openai',
                     ),
                     ToolCallPart(
                         tool_name='get_location',
                         args='{"loc_name":"London"}',
                         tool_call_id=IsStr(),
-                        id='fc_67e547c55c3081919da7a3f7fe81a1030ae6111e84dd5c08',
+                        id='fc_0a4779586464cbd900697ccca05de88195ae0972ae4dd26603',
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(details={'reasoning_tokens': 0}),
+                usage=RequestUsage(input_tokens=21, output_tokens=48, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 3, 27, 12, 42, 44, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_67e547c48c9481918c5c4394464ce0c60ae6111e84dd5c08',
+                provider_response_id='resp_0a4779586464cbd900697ccc9f35388195b56656b6141ff1cf',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -364,24 +358,24 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                 parts=[
                     TextPart(
                         content="""\
-It seems "Londos" might be incorrect or unknown. If you meant something else, please clarify.
+I was unable to find a location named "Londos," but here's the information for London:
 
-For **London**, it's located at approximately latitude 51° N and longitude 0° W.\
+- **London**: Located at latitude 51 and longitude 0.\
 """,
-                        id='msg_67e547c615ec81918d6671a184f82a1803a2086afed73b47',
+                        id='msg_0d7ae142b967b8f500697ccca13aa88197b285c8cf2e5b3d9f',
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=335, output_tokens=44, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(input_tokens=115, output_tokens=37, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 3, 27, 12, 42, 45, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_67e547c5a2f08191802a1f43620f348503a2086afed73b47',
+                provider_response_id='resp_0d7ae142b967b8f500697ccca0b9948197bc26a3697805a4aa',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -418,7 +412,7 @@ async def test_image_as_binary_content_tool_response(
                         tool_name='get_image',
                         args='{}',
                         tool_call_id=IsStr(),
-                        id='fc_023a281a6afcb9a000694a982c56e48194bcf3664373c8dc4b',
+                        id='fc_052d4bce83a89de800697ccc9d8968819e9cdbcd70b5ac82ba',
                         provider_name='openai',
                     )
                 ],
@@ -428,7 +422,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
-                provider_response_id='resp_023a281a6afcb9a000694a982b41c88194b95a756ecfbce9cc',
+                provider_response_id='resp_052d4bce83a89de800697ccc9c9d6c819eb584867c766fc9bb',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -437,7 +431,7 @@ async def test_image_as_binary_content_tool_response(
                     ToolReturnPart(
                         tool_name='get_image',
                         content='See file 241a70',
-                        tool_call_id='call_KRVWp1xfOSXIGBY4lxDwWyuL',
+                        tool_call_id='call_steJXNgwhlXh2G0FkkTPyGyF',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
@@ -449,7 +443,7 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     TextPart(
                         content='The fruit in the image is a kiwi.',
-                        id='msg_002c332eac8db08d00694a982fc6f081a2ac774015989ab025',
+                        id='msg_05920e5ace9f274500697ccc9f448c8196aeacf9cdac7ca867',
                         provider_name='openai',
                     )
                 ],
@@ -459,7 +453,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
-                provider_response_id='resp_002c332eac8db08d00694a982d671081a29eb61df34452171c',
+                provider_response_id='resp_05920e5ace9f274500697ccc9de1dc8196adfe7c5e228888fd',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -494,7 +488,9 @@ async def test_openai_responses_document_as_binary_content_input(
     agent = Agent(m)
 
     result = await agent.run(['What is in the document?', document_content])
-    assert result.output == snapshot('The document contains the text "Dummy PDF file."')
+    assert result.output == snapshot(
+        "It sounds like you're referring to a file named \"Dummy PDF file.\" Without specific content details, it's hard to say what's inside. Typically, dummy PDFs are used as placeholders and might contain sample text, random characters, or lorem ipsum to simulate a document's layout or design. If you need help creating or analyzing the content of a dummy PDF, let me know!"
+    )
 
 
 async def test_openai_responses_document_url_input(allow_model_requests: None, openai_api_key: str):
@@ -505,20 +501,18 @@ async def test_openai_responses_document_url_input(allow_model_requests: None, o
 
     result = await agent.run(['What is the main content on this document?', document_url])
     assert result.output == snapshot(
-        'The main content of this document is a simple text placeholder: "Dummy PDF file."'
+        'It sounds like you\'re referring to a placeholder document often used for testing purposes. These "dummy" PDFs typically contain random text (like "Lorem Ipsum") or repeated characters, and they help in testing layout, formatting, and file handling. If you have specific details or need further assistance, feel free to provide more context!'
     )
 
 
 async def test_openai_responses_text_document_url_input(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    m = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
 
     text_document_url = DocumentUrl(url='https://example-files.online-convert.com/document/txt/example.txt')
 
-    result = await agent.run(['What is the main content on this document?', text_document_url])
-    assert result.output == snapshot(
-        'The main content of this document is an example of a TXT file type, with an explanation of the use of placeholder names like "John Doe" and "Jane Doe" in legal, medical, and other contexts. It discusses the practice in the U.S. and Canada, mentions equivalent practices in other English-speaking countries, and touches on cultural references. The document also notes that it\'s an example file created by an online conversion tool, with content sourced from Wikipedia under a Creative Commons license.'
-    )
+    with pytest.raises(ModelHTTPError, match=r'Please try again with a pdf'):
+        await agent.run(['What is the main content on this document?', text_document_url])
 
 
 async def test_openai_responses_image_url_input(allow_model_requests: None, openai_api_key: str):
@@ -531,7 +525,7 @@ async def test_openai_responses_image_url_input(allow_model_requests: None, open
             ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
         ]
     )
-    assert result.output == snapshot("Hello! I see you've shared an image of a potato. How can I assist you today?")
+    assert result.output == snapshot("Hello! That's a nice potato. How can I assist you today?")
 
 
 async def test_openai_responses_stream(allow_model_requests: None, openai_api_key: str):
@@ -553,20 +547,20 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
                         parts=[
                             TextPart(
                                 content='The capital of France is Paris.',
-                                id='msg_67e554a28bec8191b56d3e2331eff88006c52f0e511c76ed',
+                                id='msg_0565aca8c997b45400697ccca3fb9c8197a61c6abf40e44aca',
                                 provider_name='openai',
                             )
                         ],
-                        usage=RequestUsage(input_tokens=278, output_tokens=9, details={'reasoning_tokens': 0}),
+                        usage=RequestUsage(input_tokens=62, output_tokens=9, details={'reasoning_tokens': 0}),
                         model_name='gpt-4o-2024-08-06',
                         timestamp=IsDatetime(),
                         provider_name='openai',
                         provider_url='https://api.openai.com/v1/',
                         provider_details={
                             'finish_reason': 'completed',
-                            'timestamp': datetime(2025, 3, 27, 13, 37, 38, tzinfo=timezone.utc),
+                            'timestamp': IsDatetime(),
                         },
-                        provider_response_id='resp_67e554a21aa88191b65876ac5e5bbe0406c52f0e511c76ed',
+                        provider_response_id='resp_0565aca8c997b45400697ccca39bb08197ba2c6c7e7808a63a',
                         finish_reason='stop',
                     )
                 )
@@ -994,7 +988,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 16, 20, 27, 39, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id='resp_028829e50fbcad090068c9c83b9fb88195b6b84a32e1fc83c0',
                 finish_reason='stop',
@@ -1840,7 +1834,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                         tool_name='get_user_country',
                         args='{}',
                         tool_call_id=IsStr(),
-                        id='fc_68477f0bb8e4819cba6d781e174d77f8001fd29e2d5573f7',
+                        id='fc_08ff313743aa5a6200697ccca50118819f9f50f8853c7c1ebb',
                         provider_name='openai',
                     )
                 ],
@@ -1851,9 +1845,9 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 6, 10, 0, 40, 43, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_68477f0b40a8819cb8d55594bc2c232a001fd29e2d5573f7',
+                provider_response_id='resp_08ff313743aa5a6200697ccca45810819f9e5ef7bc8b8a5d1e',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1862,7 +1856,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_ZWkVhdUjupo528U9dqgFeRkH',
+                        tool_call_id='call_Bm3vvu0Y5L5gEYzStXNReZ94',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1874,21 +1868,21 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                     ToolCallPart(
                         tool_name='final_result',
                         args='{"city":"Mexico City","country":"Mexico"}',
-                        tool_call_id='call_iFBd0zULhSZRR908DfH73VwN',
-                        id='fc_68477f0c91cc819e8024e7e633f0f09401dc81d4bc91f560',
+                        tool_call_id='call_7bZyjNnz9xsPUFHTcdnNKwDb',
+                        id='fc_0b35d9cb374e54a700697ccca5fb7c819dadd8dbf17e545af9',
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=85, output_tokens=20, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(input_tokens=81, output_tokens=20, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 6, 10, 0, 40, 44, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_68477f0bfda8819ea65458cd7cc389b801dc81d4bc91f560',
+                provider_response_id='resp_0b35d9cb374e54a700697ccca54538819dbb37ad4ada16529d',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1897,7 +1891,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='call_iFBd0zULhSZRR908DfH73VwN',
+                        tool_call_id='call_7bZyjNnz9xsPUFHTcdnNKwDb',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1940,8 +1934,8 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                     ToolCallPart(
                         tool_name='get_user_country',
                         args='{}',
-                        tool_call_id='call_aTJhYjzmixZaVGqwl5gn2Ncr',
-                        id='fc_68477f0dff5c819ea17a1ffbaea621e00356a60c98816d6a',
+                        tool_call_id='call_2KOvRpMHLjrlWgf3O0GaNT1k',
+                        id='fc_0e72e194bd8a114f00697ccca77f1881a09797e17c0a84fbd6',
                         provider_name='openai',
                     )
                 ],
@@ -1952,9 +1946,9 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 6, 10, 0, 40, 45, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_68477f0d9494819ea4f123bba707c9ee0356a60c98816d6a',
+                provider_response_id='resp_0e72e194bd8a114f00697ccca6e88c81a0a184b8d6a8696988',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1963,7 +1957,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_aTJhYjzmixZaVGqwl5gn2Ncr',
+                        tool_call_id='call_2KOvRpMHLjrlWgf3O0GaNT1k',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1974,20 +1968,20 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                 parts=[
                     TextPart(
                         content='The largest city in Mexico is Mexico City.',
-                        id='msg_68477f0ebf54819d88a44fa87aadaff503434b607c02582d',
+                        id='msg_06e59ea7bd8d01b700697ccca915dc81928358b6746724aa62',
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=59, output_tokens=11, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(input_tokens=55, output_tokens=11, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 6, 10, 0, 40, 46, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_68477f0e2b28819d9c828ef4ee526d6a03434b607c02582d',
+                provider_response_id='resp_06e59ea7bd8d01b700697ccca871bc8192bd6fdf70fcd63490',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2031,20 +2025,20 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                         tool_name='get_user_country',
                         args='{}',
                         tool_call_id=IsStr(),
-                        id='fc_68477f0fa7c081a19a525f7c6f180f310b8591d9001d2329',
+                        id='fc_0832bea62c53a02600697ccca9bc2881a3ae7755db09e0bdd0',
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=66, output_tokens=12, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(input_tokens=73, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 6, 10, 0, 40, 47, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_68477f0f220081a1a621d6bcdc7f31a50b8591d9001d2329',
+                provider_response_id='resp_0832bea62c53a02600697ccca96cc481a38cb13a92f58c87d7',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2053,7 +2047,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_tTAThu8l2S9hNky2krdwijGP',
+                        tool_call_id='call_Uog29U6F8U0yDj7TKqzN9Zkm',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -2064,20 +2058,20 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 parts=[
                     TextPart(
                         content='{"city":"Mexico City","country":"Mexico"}',
-                        id='msg_68477f10846c81929f1e833b0785e6f3020197534e39cc1f',
+                        id='msg_0d9cda63e0df6f8400697cccaa73ac8191ae9802f1a191a44d',
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=89, output_tokens=16, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(input_tokens=92, output_tokens=16, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 6, 10, 0, 40, 47, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_68477f0fde708192989000a62809c6e5020197534e39cc1f',
+                provider_response_id='resp_0d9cda63e0df6f8400697cccaa03f08191912457f35e032578',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2123,20 +2117,20 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                         tool_name='get_user_country',
                         args='{}',
                         tool_call_id=IsStr(),
-                        id='fc_68477f1168a081a3981e847cd94275080dd57d732903c563',
+                        id='fc_0194c6208474c48c00697ccca7642c8193847d79b96145e416',
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=153, output_tokens=12, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(input_tokens=142, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 6, 10, 0, 40, 48, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_68477f10f2d081a39b3438f413b3bafc0dd57d732903c563',
+                provider_response_id='resp_0194c6208474c48c00697ccca7009481938b922cc028479565',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2145,7 +2139,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_UaLahjOtaM2tTyYZLxTCbOaP',
+                        tool_call_id='call_UgLxgDyY8kJc9hTrnXN8CWXd',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -2156,20 +2150,20 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                 parts=[
                     TextPart(
                         content='{"result":{"kind":"CityLocation","data":{"city":"Mexico City","country":"Mexico"}}}',
-                        id='msg_68477f1235b8819d898adc64709c7ebf061ad97e2eef7871',
+                        id='msg_0ee8ed22d03afdd500697ccca83440819ead369b6ce161efba',
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=176, output_tokens=26, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(input_tokens=161, output_tokens=26, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 6, 10, 0, 40, 49, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_68477f119830819da162aa6e10552035061ad97e2eef7871',
+                provider_response_id='resp_0ee8ed22d03afdd500697ccca7b7ec819ebea5ece5c562b17e',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2211,20 +2205,20 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                         tool_name='get_user_country',
                         args='{}',
                         tool_call_id=IsStr(),
-                        id='fc_68482f1b0ff081a1b37b9170ee740d1e02f8ef7f2fb42b50',
+                        id='fc_0dce1d99089e937500697ccca98340819f9f3dc70adf128bf3',
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=107, output_tokens=12, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(input_tokens=114, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 6, 10, 13, 11, 46, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_68482f12d63881a1830201ed101ecfbf02f8ef7f2fb42b50',
+                provider_response_id='resp_0dce1d99089e937500697ccca8ebfc819f9ec20f40988ca782',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2233,7 +2227,7 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_FrlL4M0CbAy8Dhv4VqF1Shom',
+                        tool_call_id='call_OU3eMY1qbWDJ4UZTXLjEUVx3',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -2244,20 +2238,20 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                 parts=[
                     TextPart(
                         content='{"city":"Mexico City","country":"Mexico"}',
-                        id='msg_68482f1c159081918a2405f458009a6a044fdb7d019d4115',
+                        id='msg_09edffa02192a81c00697cccaa3d748196902e046649fa3e59',
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=130, output_tokens=12, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(input_tokens=133, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 6, 10, 13, 11, 55, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_68482f1b556081918d64c9088a470bf0044fdb7d019d4115',
+                provider_response_id='resp_09edffa02192a81c00697ccca9cd4c8196910b110c2eefe971',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2303,20 +2297,20 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                         tool_name='get_user_country',
                         args='{}',
                         tool_call_id=IsStr(),
-                        id='fc_68482f2889d481a199caa61de7ccb62c08e79646fe74d5ee',
+                        id='fc_09232c544b13ca7d00697cccab636c8190bcd3c0ea92d4d307',
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=283, output_tokens=12, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(input_tokens=266, output_tokens=30, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 6, 10, 13, 11, 57, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_68482f1d38e081a1ac828acda978aa6b08e79646fe74d5ee',
+                provider_response_id='resp_09232c544b13ca7d00697cccaac4d88190af5732ffc2d78f23',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2325,7 +2319,7 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_my4OyoVXRT0m7bLWmsxcaCQI',
+                        tool_call_id='call_t2ZBySHadRskjx1WQCV4UqhH',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -2336,20 +2330,20 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                 parts=[
                     TextPart(
                         content='{"result":{"kind":"CityLocation","data":{"city":"Mexico City","country":"Mexico"}}}',
-                        id='msg_68482f296bfc81a18665547d4008ab2c06b4ab2d00d03024',
+                        id='msg_06e8c8752e648e5700697cccad01a08197ab77911a45e122e0',
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=306, output_tokens=22, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(input_tokens=285, output_tokens=22, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 6, 10, 13, 12, 8, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_68482f28c1b081a1ae73cbbee012ee4906b4ab2d00d03024',
+                provider_response_id='resp_06e8c8752e648e5700697cccacae688197bf0b3e56af187f7c',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2377,7 +2371,7 @@ async def test_openai_previous_response_id(allow_model_requests: None, openai_ap
     result = await agent.run('The secret key is sesame')
     settings = OpenAIResponsesModelSettings(openai_previous_response_id=result.all_messages()[-1].provider_response_id)  # type: ignore
     result = await agent.run('What is the secret code?', model_settings=settings)
-    assert result.output == snapshot('sesame')
+    assert result.output == snapshot('The secret code is "sesame."')
 
 
 async def test_openai_previous_response_id_auto_mode(allow_model_requests: None, openai_api_key: str):
@@ -2418,8 +2412,11 @@ async def test_openai_previous_response_id_auto_mode(allow_model_requests: None,
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model)
     settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
-    result = await agent.run('what is the first secret key', message_history=history, model_settings=settings)
-    assert result.output == snapshot('sesame')
+    with pytest.raises(
+        ModelHTTPError,
+        match="Previous response with id 'resp_68b9bda81f5c8197a5a51a20a9f4150a000497db2a4c777b' not found.",
+    ):
+        await agent.run('what is the first secret key', message_history=history, model_settings=settings)
 
 
 async def test_openai_previous_response_id_mixed_model_history(allow_model_requests: None, openai_api_key: str):
@@ -2657,33 +2654,88 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content=IsStr(),
+                        content="""\
+**Analyzing river crossing instructions**
+
+The user is asking for analogous instructions on crossing a river, similar to those for crossing a street. Safety is key here since crossing a river can be risky due to factors like current, depth, and weather conditions. I need to break this down into steps, such as choosing a safe spot, preferably using bridges or ferries, and checking for hazards. It's also essential to have the right equipment and to know how to manage it safely.\
+""",
                         id='rs_68c42cb43d3c819caf078978cc2514ea07460311b0c8d3de',
-                        signature=IsStr(),
+                        signature='gAAAAABoxCzZ6TwL-z6tYv85YPC9CwMFJRrSrWgYUyOhSFYLkdfGwRUIbrgBnmAW0qtzE-shPNPNfbUltLnBS4uU8kMuSMPxotFngVcFFnZ8qmzDUJiEf2CsnqYqH5d2RmuvIXUQTau20SjGte8vOLksGsz0sXRUQnFs7ZoT_2DSy7tKVCCN7fbvkxm2l9D-IibdvGiflbP6lGGgYWczEl3_QyEyJGhDTcL_nUk511C2hjvqI6YkEjujvYjEGMh-BdhFrJeLFL2wCbn6beWaDB2IXYVo7LqhlQUtKksY2PQ4ybBgPhERNvWWf2N-K4NxEQuv6vdB_5ni_BlUKFMabeeeI4wVr5M3HKE6cSgnM8cpi93o_rGu9uSh5fbN5zZcIYumnjkGJ-ULwku7TVtpw_Vha8bJl67qCLvRe90MaCCgJxFKp-IsxakpnNCXVrAlN70cIchPEjOWW3VKrGZ-omyQLgs3EzddhaPmSqDELbmYkxCUuRYdLvZPzhI5VvNiW_j-WGBKEMJLFz0k33oPbH3Q6Fn9HcJSruSsQ8Lc-QWQsibGoABEY_auM7LDLjbvpEYcdsP5BJOBUS8wpyOD7N5jEQL2PYPT3tsP6mvWy7csRIkwEbh1x1sXp6NL3skS6QwpqNiWalP4OQvs8jDi8Gz-NrtNvmX3RR4A0MIuX4q0Tb1VI9PilRUvOvg9hF-fk3bqIh7wW7_iD2eDoXjvI99M-UZ2QZGZlPa1O039QVGLBTi-KwrLuhh-D5q3N-3-DyXY0sjsdFzM5Qf__lVaxtRhZRKyxSONZsTt8mGatlOH4Q-MIPgCXsrLu25gWn6Jr6vt_iQ1eZG30cox98F4aU11Hp-o4tFKuHL8Kbgl9Eetpd4ggfJrTe9QxQfWfgCHAKnhjVRJOepHPEFzSRFKiHrOgATIw_x5xNRacsF_tO1WkpeBdBJhpAUozarHgPQi2A71LCcmd5Zzy7FAL6R_5QtHW-H7NE2PjqqXnf2ZMiMM-oYLHKhfu8tZu9EV7V21xKkovIGH-0OQ-lk44ww8-j3rBNXjWIwp8SO73O85PP7vzE_zJJCF8riB_rOpazJpMCaDP_HUOZq5XhcfHseiS1SownunaXj2wOmgLJ103BowC18-i83n8RVTtRQxLsiCRzMwRH3eEbEClqZ1Fqt4V6NKqICKK3kF3_R_oPtX_-7xYBpl8LGR2Ei_2hXkEIuQ8cCRz1zmuyfjLEWIbm6Rm9wgYafXIXugOqGl4lUc2NSeeJ5T_-ziLEX9-Z6LZafWo9PMvxbxpm86-e5ZqTBlsbukWWIePrKZ6BjElMcxTOUr2XYg-vMAc7QRx11Ld11DwesN_Xj62Kc0TUQRfREPp2AF0gAlYYKLvl7XKwU12Rg6UlWBfJWjX-hUvPY83B7H1saGyAv6V4RR9PODI0p8duptI4mC6u3cYPUk8pOVwFvX1PYCTM3I2yik_XG5ZyI6BIGBNAGL5SoAyMfpqYu0Da4duOIve6tQ3FWkMYnU9sSjxvS00mRJ3JscA-pNm2B_dUXBRATIAD6XVg1m19-pV6OLG58tuDtbjE7nBHUHuS2sm2gbm4PFjpGKFMS07LUSfYax19Ombld0hV_0kwaIjl-4UTcRcqqLK-Tc2E3NPwmdJuzb95-lUoAJG9Jp8UCoyXQRcZk33IGXMYtNquee5K-Oc-ajKjbbevpi6rIEOVjwKrZYwTC5ddl8FBcCBTm0NunKUzo9TkDeEIF6kce9zYdKo9GwYc8Go2S9lxbb6tlizDql2Uv_ZiTz0d5RUvShsMH6RzKiXu8eFzv5sUraMbLUtm3VtZsz9Ld0iztNIqV7q6glrqD2UuLgWxKsa7EbDRvrlBnAOP1iMRtg6ICr2YHYtlwU6R5RzKllG4LGMccZ3x6HsZL6MMaMJc8rLMTtQYqE067kCnXAIBz_-FJS0CzwCwnbh70tc-ytaiTm404Jp3CIBTlGwDwTvXUqzzNAdFRHrilKUPNgtKb6uQAyPhJZwbFIfrFevaMdOGZ9UhJoKtQtsSj1qM-dhXIkn4T_SL0o72wgb08zYSjsemhfJdbNO6jPG_GfWV6FDAhY9vNyTT8XlqgsePnALnV60AIvRZPI7mfh8D7F8SI0yZU4AJVtEHKKgStPvCuixxtjTt9nSWm-cXOItJdKYxMjVtWCmcCI9LbPolXXkewgNhmUx-b0XlY_BN9cX2j0COic5Ml6LS0BZ6ikG65a-7kIl_yofLeat8q9-4OI-lhKYOxwMhQq8yWNCBuJZCGg5n3DM_QgEQt7cqWYuTuTMTgMnRIvSefK_Q-ZSY-ZfzPcNp13-v56KgA_yUqYOHvQDu4ZuZCI3KvlO1WSO17SiqiNZvo3iaM2BrrgzOAJYcSx4TUzl7ZuFE_6LkokGlxguZH82W9dpewDyN83yLLwakOhgLfbTlMCFs8NCLzMr17eBFNX8YqP9bh88f98KtLSYr09naEesCwW3v-M-I1MUdR7oEC64ixrAWEwpSI-Jcc60oUgvLBVbwkeoQWI29NqZCS2JYGsxjXfNmhWWB3kW7_7ik5RHk3oNRWXiEQ_N_K7c97Ui1YkomyAAZv4t3zQYHwsLBmnf2DCEMBViQn2nXXjGwBxEf9KY2dlT1ihIbcPBmyzI17UrKYXvYKkfE25c_R0VjQtRSiXrlEWkBgLwRzWt18_62P00dJRAeJOEq6etGKoSh0PsrmtCGfnOf1EJhksjZPyObdHWm_yrNiX-h3myewuYT4BIanBFdUQxQvpNyvoQJIMtKH3gAh9oCJY8os-vS1Mx7h4Zh0gEdQZhIVn7KoJwqbx09F8hGokOaVXx6H9gMD5kVZkXkX56AFC78ykpMLSsolvyUhAI_qxcpTVGSgDIzfK7BzQsMd4TawOtHObxfvVr9qojhx__eQEipXplbfOVh8vjM8TFY7eb8k5EvxaU_pBuEmSagGoV0fiPUmMTzipVTMQ-cpaF6xQSVYZK3CvmUwxHfcX2r8lPPH_SyeiVFKRdqTmpIGYw8drhwc9GFgFM_N1O_iJuhjSt-8iLt9BExKYJZftIcXPYl4eGgC1yC6oUBurdmvQUOZD2tv_isd28fMNeoiWAy7HCDz57TAkJg9nJsfULk_z5ClBqz7rPP9Qq9CZrYEsz6Lggj19AXh6PmA9Skl9nUSgsqn2GvDI3I5E8YmxhlP58XrZyYKLkYLqqAMDy4tqI2eiQMe4z1OhMGpVxoEt7ACxw8-YaQTKgItzSNNskrXkRsGvWa2m9XcaZNwbZFeqek7OZ0vxLMsQJ3InnvY1lj9aMUUGukolxZEZ0KolEPOsIKhwH4iMg79yNlxeqdM2e-OoxrUyIBvBqC5uNemtqnulwarV_0K4XYtimpR2ONcwjzSO-eY9untVEmJRdw-OYEJiKJoRRNEjmr77UuJLDhPqjtxmcF2LHRTbpQ8b73Vp-mt-1okyP2yOr8Rd6LbsJuntv77VWE6Mt2JBzJpwJZab3mKd-2c6VkTswJX8p8Lf3g6m3uPwBRrvyCuuxztoxG2rDrh-3krcjDFnwU5tZjpZ3G3pq6KXbcmsX3kvJhJc6er38kO6uR9SkJUcRkbQPZ5nUKCtRZ3AkFukiT_YHtUamsUlA0nX5DI0CcrrNtu71HD7jSkwF9-P_QNX3_c9k31cSfHQ8BCMHcy7DO0vPYuzj2BiStEdTymAXfMeTFVO3wUvQf9KyuqVnKFMtFwP2DaospAJCd4TaHeDCm-uczeg1of-R2SB0f5XorCQ5MljHFk1VTHmWG3LHgCTEmAtx2KKbdMO8zXsBop6LAnFj3dNEBv1grO5lMCZRqKRo-csAJKwqXn9kuIa6GXi-NMZWBGLvxWhJpWdCeGnaFjCk-7uzPQ7PN_JhtPjeI3W-9A5bY8RvzYLrKKIEOEMGyHb-77dcYPhhLgn10-HpglS0_uJw5f0STZE60rxVXH-sb7vrpyAyBqMUh-OdoGAqR4r9dflKk-jECG0sggRuzx8jLGGfO-dNZSznD8JbaCsRDdLuHWiFSZKJswXwX5PS9rmVpYRrH-0QniMhPiMOuINwp9GvTtzSvXNIPBWtNMsY_jN_O2gIKxL-KnyoQkyUFWHN0Anuyv5pCHQk1lhfcR0alSvDLVmVVgi1tQdjsdAl19qMdfm43ViBTRLDwzP8iauhipIfCpxFjak0Ka8uFaHfEhKstcmUdxEnzIsN3SQXrPud-p0YJ3O1MsyUDjzMROP43FKMhVCSnM5PsXVvuPZKRmuEFbJyj0dwwBnSH-rk8tuK5SYoX8PIrJXyAySgj2VouGdzvkqa9WPSHU42AxDZNQT2c5pEI3gUS7VzcGCTwoznmFtmHKGOJj8HxKswzB2z0AumI_ht8zx6kehnvKK4cJfKjdJfO--2o_gzVR0DkA1HcenMD4ugxj6rWQDiJvo6cFdfkXpMfLAe4NQRLVLNv4UdIehCxCHMsF1RZJf93Z6sdxW_2PumLLcfdb2XIkouuFN0mECzZlWgM4XLUErlaaqDc8oU_gRrgHEJbjZqF7by2nHtqCjyWOZC9n7vF18iSRJES5DX71nY84a8ydPR2_KEYfHHgqF51Nz9zMo2Gv6ramAFs6lZC5rjOUR1VmpLd2pKs-sPQJpYNncwbDe8dG_NDJI1wIgs2K42eKPE4lEueCtp359ifPU58DpJA0JiB_FW3jBBh_9MphsnQjuso9S-YSaSFt4Llc_Zf0MJ3CbiEsk-IwfgsLysFQg-vJq9hHR48ZoW0kx7CaIAUgkiJg7-7m_dVNsfaUM-OSHtfryYXWrUsotLJ6OTuicPOfb_LfaYz5OoasG0o-4vdtF8e4VX6ZpR_Krje-dZaCph1XjgGLfFlRRkywl7i8IEUirHpQJaoCPmc9q61hjETcuPCEVDy-dJMwPLiNzXY1mkJI1lQQ1LL8Ke5EgtAcC-2K_5Nwh4h4bafWA44XgnisMfYDv66CzsL35i0XtZHibfLqPwdLyHqInlLPtiFyhJZifcJ_GsiQ0U4SZO3WHmvSG9AHy0YnA2jC3O4x7yj73RmroELKFvT-_CSO5LVz3qRRVdlyL0CQr3lkHUXJbFNpOz7Uek4q6MjB8Cn0xAKzt9ztcClLdAA9NkR88Dy3rOP5yPjRJJVVG6SbelsE1SnPDaKQqu2ZN1zdtGUY9AcULc2dGFb4mezcbJsC_eL3DD0LwfwcSAILDfDIrqHACR0XmI7jmF_p_PzmBhMsocLnblzKTho5ufo4htqhTEjVdFywm9WIjw1N_9PWge3i3J8mSdILp0HQ1QvbRlMt13qPyLNwAmY75m4Zw7EIlk4cyxMjcTSY02TRCC3cBKX2e6xl0DIAygChReVOxL16BT21sEgT2ps24Mljsvht-fokU3JPtj3fY8wojksHAWNv2hlF62xKrOv9h9AqM_Q9JlghHHNTrzxvT8SVeLBhEvysbhErrgtTPcgvKfMUCT1JMWolxLZUSFEFKNR9cl2GiSqMIhdTL3JvA0-etZ7ykeIbUEU0jlRZAw4a3vY1R1zW1-c6XRSNiS9VDPAfcN2OD4bXL8Hi2Un7Vc_pRyWn32kWQqQuw7v6J4RB-sr3Bkb4OzUljytF3ixqGkMIpuA-LjJwdBJ-XgR8Fj_DONbguNct7MTkMtQqWU9twa8XF_sot8iEYc1UOkZQVJvTtNclIkklJhP8VNj1aY18Y1Gtnn0fvfaOFfY4wa7HIq0U7paT2Fqb0xtY62bqNM6rRXLsAQex5HvMvHQvL_9JbQngBOD2ehk7zIAJKZWzbAKqKCgH-_v4kaGBVrciIxffYF6WnWq35pQwbsvNqQG4uJR0qhLEXfc5akEon1sL2fjxim_GFcgunyCqL28lMB8yhnzA48QESW0sotVss_GIeeftSYS74zPaHXiuSx0RoAmw90kERXPDGVCRkwTTwaW2BkshCJCx2JOSDEWVRMjxngzaoroybl9A1VzTrDEbodeq2O_kVyZfrZE58BO8DDd6ZH07m4zuiL_NKXLw23NmC4CuAN0ufn7HFtX_ow4ZJILfZI9PczBi16liV0LWrBwvadZ2Lf4o3sV65CLg1VKujttEiOhtpYjmB9zIRLfAHViz5vgTonL6H_9N4D2dXLzUWlaDPNGJNnt7EbHS64f3jSXGG1fb7LGKhNtTHqbfBJnMpmPjFQGb4ae2kKv_V_L8xgXNpQRi5I_QNTzDzfBs4avowydppTpEE1b8WNITLc7qvMa6gwpDxp2N91fIVC9wyd0k2DXaz3VbDn-2v7W72D2UPa0L00NKvIKYecd9FMpYmkEyxJfFFr7b9hKA1ZXdqlejjPJPjVYC9XTEZLEwzdeoG6yrxtYMrl7o72M37uIRNZAj1Jf0B8s0qhPaaBfUVKtKl7bd2Ub2503LZ7ZvJ_1segaIT4S8nt17hjfep3re_4rEKA2rrxMbWoLhM4qkAPZvdjyAFF1YNB7u-Uex7l4STRYSpzl4eQIMSl7N0pGlKk58Z1FxTKHsAZTkZYtj40lptma1AfcwRPViNPceCFA36XfVjaratWPYgDhcjK8nNnAhxvL7t25nPbCXazPK1D16ZkY2SwcX7sMx8QklNQdzukZwGyP51yhU8o0PT-u3xGDaXnP6Wh_o35cCIRnar6Id9h2ovViZXJRUzNa8aXedxiFp7hLScSQfIPrPBcqN45EvLjEmtLvzzxNgHY7zw6gzj5QFgv64u2fI9zAY00B9U37bHIZPQnFAhge0466vyXNENzYO3acUGo5HhyFDlcuiBCbIZ413bmfbtRbj5W1FZMY58l1plTmNljfcwQ7Kd0PUGvGEb_jwKlmyKni1HzyyUmElGHdRkyS5Yk7aja6AJOk6z12WUM5snqG-uRVkByxCXQ2KaFR6Qm-IOHMFqzrPINkjyEJgG6KyKfkF5ScVfQaThHBuMrb7ETWMnlk0L28ZszB-TLt3HfaxINsoD5pndSSqBpHB1z_2kEweik3y_PdxIchV3CyBLnmrlqBPBIarCoM8VwzForh3RzQmgNsOGkJXy3Lk0rIr3t-BE7qgXWsrDolobtH6MMFO96Taa6MYIYYYbYvzQYcDuQwD21yGTLwKAnynBDn99bGYEg65LomsJbTSKCYQRcj2Rh2AaScsq8JiHYJEGAnRkgsXNivZnioTlkI9_5XqXBJt3GKMY37YL6qIU3XJ7HapKELorbX4fH_JlOIZLIOIaU80295GZcFdx1I2La9lp_UvAtALEDJklGNvbcDG51NNn2mj_P85vIfzsVdrfX7N_AftR8t1kQx7bdbVLyP4ls_qKnXXigfNJajWtPVgwGeroQq2jtaQw6Tj2Wsi3Itmo5QNg3N_ja3erlEHEdTo8lm4XZHjbl2bAH3n_wuEdYKTt2B3jhj4ddhO8atc1fryqbRfn61YFKUnR3f5vQ1qUq79uisQi0cvHr6DQ_12FpKzFvFckAkQmbk5fcS5Ri5S4L_JtFAexj8n2f_oYuG_9CYYplOU5i1Q84MyXUZ2fZyDhRPRiyjvPJ07_IAiL2ny1btmIFtVPeQSHVwfun-m5Lba3KgnZIJ6CRFqxR-o6F8e5K78d-bAotgA5vOcfeC_fBQfaom-EX0mJyzf7_Wjgam4IA_W3PO_wGoVULHfr7mwUw2Qc-VzITtjajZvRoT-SkVREyJVnKBxHFj2cNTcTtooSxCu115KmbtePf2OwgJocB2jyPT2GK-kIVZtuGdv4Dns8m7Z7FpT7PvjCVjidQqVsJxFQUs7ZzcTXX4vdChdcVK1_OiUwCJKiYN9ZKGA_OmwQJjhnV6gutHFYanu3Gm0m5PQLIM6Pip7yXCw8-Lhq0sxFTl2f-7DeYlfrWpYJyc2wR3T2u-kHl1g52CxX5XoHCV1LsBIU75L23Igsx5_v9ZNeewK2Qh8yWwlWZ18qnXOh5ZJqJUpYtxy3sUhHMG8fe5RKVGbbJyHltosuW26yJ9eUQXqJOSj4wv0YN6a-BezPdkkCqdiUGDHllrgAi96kkeM4jES6iZV60rTgdmfOS03JL0eqCwLnH0gP9t5Xq7l0-GUKp7mrsUjgN4Utb89AVPyIDFWxfJTuFJK-g6Z1EHexEvDY4iTsuOdq9M49_zV6iL8ChB4p5l0lUOiFzIH1Qj-gNMqpU2p0H73cMd3MNeecFhMsCfRadVCO8D4UN39W2mEXDxLBlTN2f4m6aDKjLHi58zyDiJ4aga_ntZRnv56KJpWob0A-4U6_GRJI3OynwKPfb0wpAzK8Gm6Ak1OpxvD-8TmbKUKVA5m55PMoBgGbmvtrwC9Q9Exg-zdotpZ5-iWM1ssnKLXobFa2SmYJeOcGbEjh_yvRvjBRNHxWmq_sP1ohPCTce4Pt97WVQs0Kc_Peb85RqZEnCyjRfV4C3nFUkTxJhFJbmIBPG-VPJDfKEMVTtUe7xB_w55BKViE87CTrd9AAveBFKkBrL3x4bVba3SK5HLU3tOgUPMDnN6Q-waVbjTXsNPGPwJjvbDAN-xwm1V19e-gYcI9sExy4hH9fCkx7Y93e3EMo_EvPA8ZFO8C-KKKlKttqg66BlOp_WYj4GnTpurNDHjVtBQZI6FN5HGl72n7ZL0me0cbfiDkFh7mIfHJCc3EcRCp__gjeBYQaGaR3hh7hLrNeuJB_oAfW5mz-2mIgUYz7vGxRrTeo9CyNYjr5CNwd-hp06pklYw1Bmce-1ZqG87pwFGjfWaAABwqNElf9Wdhgzll31WmopAxDC12Q8pzpAiFfkWWeHsPgvx_Hfm6B50TiIn_LCi8hjTaVUkvtNxZgiKJdAdL5btiUvPwVD10EkysT4dfAEg6l9Z64sZT6oss0KlH55VrNoLOybfx9-TGJZOCB5Zf7JU0KuA1Dpfp8I8TlCOUBwybFvNbECafzsrKB8XI6cmvDtsG0NqNzifoYUPzZDv4eNQhb4QAxlWx_xjiD_G33rgZ27DfvecgVkhDUc317uWUTrWt0f4WJItv4A8P4fj2CDa4cAjfe9CCWM8oehppoxScG5nBFdeebs1m3efdBi0VlYbJTEFQC92q0Zdr7kdfo0FbR1GQ05x66u5b0qLRqqsgF6n72p8Vo_izkLs1N3HKOz9AvcoTmD_tD70rZC6SVJ0jQcKtOMre7VK7lJQJwkuuUL-TRcVYVFeKln1CDs0zpqwza1iCVw3LcUdh96iPsN3XcHrH9pqUxSEY_T6Bq8aSTHdf-iqucTB2u2zsq5BgU40_zXUqvfvQRhcHbaNl0NkdbWKVr8AA3KkoGHMe-H_FBRmyBFX2KL7F4naGngOz7crLfNoSqvPF6cBudn3Q_PPxutj_F5d3FxcfHSHizhfZ3sC39DiwyKgWMU4rUm4gsyYpnKQ90aXtF9nuLWDyNZEb1hsHiVyIoNkUx4IznUY94rrMNzlobnMyqtaic819_vgKqTo9jYA-i5JgMoTPy2DTtIZIpU_p-TggdpEActJ7qncHdQjM0mCrZGYo78NvZ0697fexOgo-dQjfUmNNKNtLp1UQiMBllHwIDZzRePAgOeisXx-E10lLdPUm6AKQcg6IYbvrPDil1_EaQyV3JXqEgNCZwXvkDIh2cnaBLUzyWsep_iupiypilShz_QWLsa467qw5dJ_Q0vR1ulAzMWokaCmTTiJQ6RL71J4WBiGAnobFDrluwJtRr4BTRNDmzDBh8_G3EKTS5mr6W1EQnFnMAqIrW_TOvKasBlQqlLVcFDlllp7X2akyW6Z23NBe7JCnYi4m1HkM0_gnHqnFbnT3cS4umAd22ugbPbo8gn0KRoFxAZK4_4JPHbz_T2itrnDcl4z6_50F-I0Ynp9nHSKnlG5x5V6IGd47vfF7sIks8Vfpq8LUKgQu2g9XHzwf-q_jmwH-eokmnUlznsJnZWnz_GnHyeEMsdQbBKDGK9rjNuMC_QZGuiaARSlSvP7hMyowcczvtuKrN7sZc5nTWPD31UV-TBzrDnzmmsKZ_3BdPebNj71vt31hatE4Mc6OJJUZ-HPPUieICZJFiYXltJBqApmSrscPjDUy9fUoD0iJudrtDu6UJ31SFMkaapXqHG2FqMOwkEk_T5wGmdZ3Y6I8QKKiI4bXRcjPexjVQUJdHnGLRZ4L7tyKU1mFJHMEIMwAer1LiYsnFLHBt3XoAQbNu7LewtB3Cd1Qzeo16USsORAgO8DYtAiu9T0yfTOMAn6lfMgEIdqdJdY5KiPC2TWro08m4pn3mhDlfIWB4XzyBsaO8JiRlF_7Dfg0UpDEnk2AN7ACqsjeUoMk5478ov9JeTPOnCDw2W3x4-w3VhTndvrAD3OrnDoxsc7OcoQjni96fsh-E72g_FKaHJVqH591bROjD5nAPTj5rseGJYDTJkAlHauG67pXgIpMLSLgTUUeplBgjDDTWPdww6dYp8yW9CJNOXCrqmAunZDJe5d0n2BmzGLiOHxiDLKT4-7XoycRXq9adUn2uWgHUooKJbs4BI9sF_28FhxsbN5E2KT4b51aZsK91802OXcSbLCF1K-HqxFNeELpvrlnYT4Cefr_gQydbzRvzSdpTSpUTLtCspJ8RZzJZzQT6x6DnOT8KVt95Sx2OsaE6zCOEBUf5EX85M3Xw630kFQPAjAXx85FxEos_Fl5NtgSssugztP0Q6dbXJTuQrsSgSb6TWsJWaC6agqNudU2lkI3lWpxcxjnYdlDisZE2CVtPXIbMc0fP81Oz9g-LybenNrYDUdIL_FvJ9FM2ZSAleLrEgMM6IyDUXBC8PXA7QP-DukpVBDGkt6GRaNqiqMFN6ceHu1IcTRy8RBucg2ahZqS9BgLlbj2xGANaeZKjzvNKBbtqawx-RkwsHludZ4I6WaLC6-fCnqE0GuK3kw8mbym6gAbfHouwbWarAdtesd3tjoa620dCNg9QwQ1Hzgs4Fd0pjsSgMFB7ahRSDy78GWbdPXZqPollN22uUgQ1zWEva_VxrPK2C05iQMPE4Cg5X8XQbxGH6GY7wuOnc23Pvh9qe6po8voXKaUAPVb3oUGgYx7lgsWZIW-2c861ip10CSjcfFm6AVrS5Iaf7m0OZvUvL52q2r5Py_LWxLbgf0ubrDXMtHbhEGXYmiRaHcmuOxoFUtaqCB6kr6970im-84hk-SiCoL_96yg6Bna4isurYJb2JQgGktUX_SjcB4TshvDDx-G4H-lUYId4AaqP1zNJ0ryUPOlQQXlKtc6s0tUfEZu5SagAE6h6iTUkCr4hJ9hLanj_mMSMJiCjBCFUYMeZ4LCxzQagyR5qWxq90n2HlHhmPy5eCj16DTBIL49ScuUqyN5x8fWt23H-B0VjTUdFEVk8FFaPsSFv0SddM9LEvrlUcA-RcMpyZ1a2ifF7N_HwvRlMslVSzW2BUZRibnB0xpeZlUbqy2CDkr10azuxJYajE6giMCnSHfiKM2EPMuFl5-sX6FiyfsTIA3CmcdoHvd83KNQbMuDRp_nDCAl6LNcj8CXPyenI56CAX5owOddnszaI3C7fEfW7MavfzLE4KlNBPYeFmQLL7w0Rw6uZfqjBKLFLNtXNDBnJW3GSWYKFB0QiAMjf_9_nfOU0w3cwgnfsdmUU0BG_9bXy-qvzYvnWs1eLfoCfruH7gt5Bvb4iGPr37EFMI8yv-df__xbRHgDxVtAd-A5kL8N8DR4U6eSsw5UH8--p3ZpLyrh9vklTf4LDr0xt62qvZjUKzcuMZjQpcBvDHmKRx55aZ8BEkKhIhsWlZJMsE5prZOz3pwT5_pAp1h9u7sw60NnWisoTdBM08hP-JD06OWB_OFPa3I0x1boTojwlzVpiVGUdNeMgpWKa9wQj6rVsEl3-UFIyrKNpgir2df5m5q9vxZ3TSKawBZUAQJnQp9aYgysMtCnUCNrZ-zaC6mojA6cBLk-g5rCcXsyd1WqkHrFwYoPAu5593tQA-ttSVSFCUQxCILqKUZx1-fw2NIchE-NUak3dAZ4RTWm6EwMGXh6rmanI2swBjkglVxw3CfmOAsL7yXEhm2tOofu5EoADa_lEdy8ihHgsCPoJiq4hxlwFXrg9y-Pww0xsrldPuFcc6AAIpPR9UrKHoEdxoDnANqi6zsBTsp-VdyaNj5nFWgpm5mxgnuWUrBGif-U5ldingoapB0hJ50--CucJyHaLHHV2m7WcVDTXiykeHhjIp8qnKBaXwoyezqmLgzIOmhrJgqBH-drr_Usl2Mtzq5lyA2if9MFtKcktldky2GXDiMlwLWSf70Jj5d2Tq8_4P0C-StEZ66V_PkVarTSrFahni4g1OqUJbxxsK7oV932wEtpHJPo6MYnkebOFGlGQlxxk6OlqoZwyP6xbJCwu1_36FuIYcl09Vy11EXK58g62eDyg9eGaAAe1mU4fTByEowy94v67qTC9otmjGlB6K3pyqsGnpWEGz5FujtRPO_ChDNN84qZRMSk5QMU3jx1t3-_0Mg48WnuWGiDDveAhZVxNz9HThbvMviECVk2E70W0nj9XEybPhNLcKQxKMekE6_3qJxUTk8Q7KJpoDysmWznz0Brg-GT6NSJG0pFFfgdNCAK_K5G9SkdnS7Pr2S7DcDIasmdvIciCzw0Lv7Z2rZR8eiica4lrrz52lwO-rD2380r-UgaLsbX5PhZDc57JSkIKnAfS5qeqxK9koKyD4UyR-6gfA2SsoRbxayLigQOk4O6bIDoJ0ECvEoyaJTohselYUhhQDuwaYQ3UVBsxyNzFxXv4i_ldHItOjckkNBLTyz0rfh0bAbqP5ROsXG7Q9OIMglRSRyDjZdlMaRVO1-lXy_zQ8AoBxuAwGOyc2CQm4zvxMjmiAyMymBdZS5w3-aa6ILoaqvhMzYTEyP8pojxTER7-swPs4J_zroRVV-USiheF9qLRr8C7WtZnzaJXYhAap3HrTtfCVMAy8bHYFjk5zYLmVYw09C04sFxQ3apXWUc6A-30D_Ix_x-Nh0LmnhBXc-BiCPdaGA-iqaCScX94nyMmCC5-26KpbcKZL9qH6ZFUez72d2gmu0oX59AgiJkLaVqmWkC2fKMc-GxO7SI-tzO8AGmi2G5vVeYHIwc2zfRhHuNn8znS7SSRKD1uzTLvJzt0Bonu6NLukVUamhLf5SYmHR3Rd9Qb6NNprHYCyJkim-szlYjso9-EhfRqt3TZtuNx7zbXIoJJ_anSIBQKXrWpLJHr4CMexa0xlnVrB_K6-RPVBfKMZWdcRc2cltFzo-w1VvqOzmK_-B_9FkVhCdObJ-aak26s2CjdzF4SmyetdbUt1U6zDx3lb2InlGz544dNY6OjjQX0X0ImPVTlFAFWFO4ONwnUp5GQmqBjYQZ7CYKqx7RZexDqbmGsW33jnf17hPsToLphEo8M6_p9-I4-PSity9OSX3Gw35Lon-myQxV9Nq_Ui9Mtql08C_Uyhdqwk2FH8wESENlRPoM8Dq044Yj0gHqwUj4xqUht8j9Hk-au6fYM_fLPRyXv9jqjT_KklnmfaeAqZOb4hHRIFBxXA9Q-1rreVfYFWVMz-FRiyf3cWd7QQdMciuMBulWeJjgOUoZK3vQIS5f4AZzwYkNOt6F96hwRtdI8bU6tKJU2afAeqNQ6xiSa85tx8_YGzMsrdKdWAPQIKe66QmQLlQP04k_EoSLH_f9dc51NZYfGF8YwzJuvclpqtAeMNguhPuGj-7V5wFMYhni7osiiPQ==',
                         provider_name='openai',
                     ),
                     ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c42cb43d3c819caf078978cc2514ea07460311b0c8d3de',
-                        provider_name='openai',
-                    ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c42cb43d3c819caf078978cc2514ea07460311b0c8d3de',
-                        provider_name='openai',
-                    ),
-                    ThinkingPart(
-                        content=IsStr(),
+                        content="""\
+**Providing river crossing safety tips**
+
+When crossing a river as a non-expert, there are some critical guidelines to follow. First, avoid using ropes or attempting to cross in flood conditions or alone. Look for the widest and shallowest sections, and be aware of obstacles like strainers. If fording, link arms with partners for stability, face upstream, and use trekking poles. Always keep three points of contact and evaluate the current's speed before crossing, especially if the water level is above your knees. It's best to err on the side of caution here!\
+""",
                         id='rs_68c42cb43d3c819caf078978cc2514ea07460311b0c8d3de',
                         provider_name='openai',
                     ),
                     ThinkingPart(
-                        content=IsStr(),
+                        content="""\
+**Outlining river crossing strategies**
+
+I need to provide some general heuristics for crossing a river, similar to crossing a street. First, choose a safe method like a bridge or ferry. If none are available, assess if crossing is necessary. Then, evaluate conditions such as flow, depth, and width, along with weather and recent rainfall. Choose a spot that's wide, shallow, and free of hazards, and prepare by wearing a PFD, securing gear, loosening backpack straps, and possibly using a wading staff or trekking poles for stability.\
+""",
+                        id='rs_68c42cb43d3c819caf078978cc2514ea07460311b0c8d3de',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content="""\
+**Detailing river crossing techniques**
+
+When wading across a river, ensure you unbuckle your hip belt, face upstream at a slight angle, and maintain three points of contact while shuffling your feet sideways. Be on the lookout for safe exits and avoid slippery rocks to prevent foot entrapment. If you slip, assume a defensive swimming position by floating on your back with feet upstream. For boats, wear a PFD, cross at a right angle to the flow, and be cautious of obstructions. Special considerations apply for tidal and icy rivers, where experienced guidance is essential.\
+""",
+                        id='rs_68c42cb43d3c819caf078978cc2514ea07460311b0c8d3de',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content="""\
+**Emphasizing river safety precautions**
+
+It's crucial to mention that you should never tie a rope to yourself when crossing a current, as it could pin you dangerously. Also, avoid running handlines unless you're trained and using proper anchors. If safety ropes are necessary, opt for throw bags and quick-release chest harnesses, again requiring training. If wearing waders, unbuckle the waist belt to reduce drag. I think a good structure would be to mirror street-crossing steps, ensuring everyone is ready and aware, and then ask for more info to tailor the advice further.\
+""",
                         id='rs_68c42cb43d3c819caf078978cc2514ea07460311b0c8d3de',
                         provider_name='openai',
                     ),
                     TextPart(
-                        content=IsStr(),
+                        content="""\
+Short version: default to a bridge or ferry; only ford if conditions are clearly safe and you're prepared. Here's a street-crossing-style checklist for rivers.
+
+- Pick the safest "crosswalk": a bridge, ferry, or established ford. If none, ask if you really need to cross or can reroute.
+- Stop and assess conditions:
+  - Recent rain, snowmelt, tide, or dam releases can spike flow—check local gauges/reports if possible.
+  - Watch the current with a leaf/stick. Lots of debris, standing waves, or muddy, opaque water = higher risk.
+  - Rule of thumb: fast water above knee depth is often too dangerous to wade.
+- Choose your spot and exit:
+  - Look for a wide, shallow, straight section with a firm, non-slippery bottom.
+  - Avoid rapids, chutes, waterfalls, strainers (downed trees), undercut banks, and blind bends.
+  - Identify a primary exit and a backup eddy or beach downstream.
+- Prepare yourself and your gear:
+  - Wear a PFD if you have one. Keep shoes on for traction; use a wading staff/trekking poles.
+  - Loosen or unclip backpack hip and sternum straps so you can shed it if you fall; dry-bag valuables.
+  - Do not tie a rope to yourself or stretch a "hand line" across the current unless you're trained and properly anchored.
+- If crossing solo on foot:
+  - Face slightly upstream; keep three points of contact (two feet and a pole).
+  - Shuffle sideways, feeling each step; don't jump rock to rock.
+  - Move at a slight downstream angle toward your exit; keep your eyes on where you want to go.
+- If crossing as a group:
+  - Link up: strongest person upstream, others braced behind/alongside; move in sync and communicate.
+  - Alternatively, send one person at a time with spotters ready downstream.
+- If you lose your footing:
+  - Don't try to stand up in fast, deep current. Float on your back, feet up and pointed downstream, angle toward shore.
+  - Avoid strainers; if you're being pushed under or pinned, ditch the pack immediately.
+  - Stand only in slow, shallow water.
+- Cold water and timing:
+  - Cold shock and hypothermia are real. Test water, minimize immersion time, and have dry layers ready.
+  - Levels often drop overnight or midday in some systems; waiting can turn a no-go into a safe ford.
+- Alternatives:
+  - Walk upstream/downstream for a safer braid or gravel bar.
+  - Use a bridge, call a local ferry/boat, or turn back. "Not crossing" is often the safest choice.
+
+Tell me your context (on foot vs. in a boat, river width/depth/clarity, current speed, gear you have, group size, weather), and I can tailor a go/no-go and the exact technique.\
+""",
                         id='msg_68c42cd36134819c800463490961f7df07460311b0c8d3de',
                         provider_name='openai',
                     ),
@@ -2695,7 +2747,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 12, 14, 22, 43, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id='resp_68c42cb3d520819c9d28b07036e9059507460311b0c8d3de',
                 finish_reason='stop',
@@ -2953,48 +3005,48 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c42d29124881968e24c1ca8c1fc7860e8bc41441c948f6',
+                        id='rs_0c4304d16a4bf24200697cccab25d081a1969a2adbce35d18a',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c42d29124881968e24c1ca8c1fc7860e8bc41441c948f6',
+                        id='rs_0c4304d16a4bf24200697cccab25d081a1969a2adbce35d18a',
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c42d29124881968e24c1ca8c1fc7860e8bc41441c948f6',
+                        id='rs_0c4304d16a4bf24200697cccab25d081a1969a2adbce35d18a',
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c42d29124881968e24c1ca8c1fc7860e8bc41441c948f6',
+                        id='rs_0c4304d16a4bf24200697cccab25d081a1969a2adbce35d18a',
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c42d29124881968e24c1ca8c1fc7860e8bc41441c948f6',
+                        id='rs_0c4304d16a4bf24200697cccab25d081a1969a2adbce35d18a',
                         provider_name='openai',
                     ),
                     ToolCallPart(
                         tool_name='update_plan',
                         args=IsStr(),
-                        tool_call_id='call_gL7JE6GDeGGsFubqO2XGytyO',
-                        id='fc_68c42d3e9e4881968b15fbb8253f58540e8bc41441c948f6',
+                        tool_call_id='call_MZPoaCDhIYRyG4kUPSdtdINs',
+                        id='fc_0c4304d16a4bf24200697cccd20f7c81a18d8f8d981765e27e',
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=124, output_tokens=1926, details={'reasoning_tokens': 1792}),
+                usage=RequestUsage(input_tokens=124, output_tokens=2286, details={'reasoning_tokens': 2112}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 12, 14, 24, 40, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_68c42d28772c819684459966ee2201ed0e8bc41441c948f6',
+                provider_response_id='resp_0c4304d16a4bf24200697cccaacc9081a19d741d6b31bbb790',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -3003,7 +3055,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                     ToolReturnPart(
                         tool_name='update_plan',
                         content='plan updated',
-                        tool_call_id='call_gL7JE6GDeGGsFubqO2XGytyO',
+                        tool_call_id='call_MZPoaCDhIYRyG4kUPSdtdINs',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -3015,12 +3067,12 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                 parts=[
                     TextPart(
                         content=IsStr(),
-                        id='msg_68c42d408eec8196ae1c5883e07c093e0e8bc41441c948f6',
+                        id='msg_0c4304d16a4bf24200697cccd335fc81a1bd645d03f7a68f42',
                         provider_name='openai',
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=2087, cache_read_tokens=2048, output_tokens=124, details={'reasoning_tokens': 0}
+                    input_tokens=2423, cache_read_tokens=2304, output_tokens=103, details={'reasoning_tokens': 0}
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -3028,9 +3080,9 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 12, 14, 25, 3, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_68c42d3fd6a08196bce23d6be960ff8a0e8bc41441c948f6',
+                provider_response_id='resp_0c4304d16a4bf24200697cccd2d57481a1992bbe58a5da3992',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -3221,26 +3273,26 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c42de022c881948db7ed1cc2529f2e0202c9ad459e0d23',
+                        id='rs_07e4c22b60f9810000697ce6d2ba1481a387699e728e73b334',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
                     TextPart(
                         content=IsStr(),
-                        id='msg_68c42de31d348194a251b43ad913ef140202c9ad459e0d23',
+                        id='msg_07e4c22b60f9810000697ce6d61d5c81a3beb80cd29b725a8f',
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=248, details={'reasoning_tokens': 64}),
+                usage=RequestUsage(input_tokens=13, output_tokens=315, details={'reasoning_tokens': 64}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 12, 14, 27, 43, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_68c42ddf9bbc8194aa7b97304dd909cb0202c9ad459e0d23',
+                provider_response_id='resp_07e4c22b60f9810000697ce6d2179081a38850cbe01092e148',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -3283,26 +3335,26 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c42de4f63c819fb31b6019a4eaf67c051f82c608a83beb',
+                        id='rs_03fe771535c7d3c700697ce6da3374819599dada8b8c8884c2',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
                     TextPart(
                         content=IsStr(),
-                        id='msg_68c42de8a410819faf7a9cbebd2b4bc4051f82c608a83beb',
+                        id='msg_03fe771535c7d3c700697ce6df89e88195ba6e046677f0dbc8',
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=142, output_tokens=355, details={'reasoning_tokens': 128}),
+                usage=RequestUsage(input_tokens=134, output_tokens=332, details={'reasoning_tokens': 128}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 12, 14, 27, 48, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_68c42de4afcc819f995a1c59fe87c9d5051f82c608a83beb',
+                provider_response_id='resp_03fe771535c7d3c700697ce6d9b56c81959aab90d95bd190c4',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -3416,7 +3468,11 @@ If you intended different grouping with parentheses, let me know.\
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content=IsStr(),
+                        content="""\
+**Calculating a power of two**
+
+I need to answer the question simply: 2 raised to the power of 8 equals 256. It's straightforward, and I want to keep it concise for clarity. I know users appreciate quick answers, so I'll just present the number without any extra elaboration. 256 is the answer, and it's important to communicate it efficiently!\
+""",
                         id='rs_68cdba6c100481a394047de63f3e175009b7445677780c8f',
                         signature='gAAAAABozbpuOXVfjIYw7Gw6uSeadpkyaqMU1Frav7mTaf9LP8p8YuC8CWR9fYa02yZ5oYr1mqmYraD8ViOE33zqO2HBCdiWpOkVdNX-s4SGuPPB7ewyM7bDD4XbaSzo-Q5I6MgZmvVGWDGodqa3MfSKKNcGyD4aEfryQRLi4ObvHE5yuOqRo8FzGXMqe_pFdnvJXXD7njyfUofhWNvQPsLVLQFA_g_e7WKXtJJf_2JY183oi7-jNQ6rD9wGhM81HWSv0sTSBIHMpcE44rvlVQMFuh_rOPVUHUhT7vED7fYtrMoaPl46yDBc148T3MfXTnS-zm163zBOa34Yy_VXjyXw04a8Ig32y72bJY7-PRpZdBaeqD3BLvXfMuY4C911Z7FSxVze36mUxVO62g0uqV4PRw9qFA9mG37KF2j0ZsRzfyAClK1tu5omrYpenVKuRlrOO6JFtgyyE9OtLJxqvRNRKgULe2-cOQlo5S74t9lSMgcSGQFqF4JKG0A4XbzlliIcvC3puEzObHz-jArn_2BVUL_OPqx9ohJ9ZxAkXYgf0IRNYiKF4fOwKufYa5scL1kx2VAmsmEv5Yp5YcWlriB9L9Mpg3IguNBmq9DeJPiEQBtlnuOpSNEaNMTZQl4jTHVLgA5eRoCSbDdqGtQWgQB5wa7eH085HktejdxFeG7g-Fc1neHocRoGARxwhwcTT0U-re2ooJp99c0ujZtym-LiflSQUICi59VMAO8dNBE3CqXhG6S_ZicUmAvguo1iGKaKElMBv1Tv5qWcs41eAQkhRPBXQXoBD6MtBLBK1M-7jhidVrco0uTFhHBUTqx3jTGzE15YUJAwR69WvIOuZOvJdcBNObYWF9k84j0bZjJfRRbJG0C7XbU=',
                         provider_name='openai',
@@ -3432,7 +3488,7 @@ If you intended different grouping with parentheses, let me know.\
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 19, 20, 17, 46, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id='resp_68cdba6a610481a3b4533f345bea8a7b09b7445677780c8f',
                 finish_reason='stop',
@@ -4950,8 +5006,8 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                     ToolCallPart(
                         tool_name='get_meaning_of_life',
                         args='{}',
-                        tool_call_id='call_3WCunBU7lCG1HHaLmnnRJn8I',
-                        id='fc_68cc4fa649ac8195b0c6c239cd2c14470548824120ffcf74',
+                        tool_call_id='call_otDUd1BvDW9o3wOIccaWfU5S',
+                        id='fc_03b12740d1d3962e00697cccd4ea5c819ea3cdfdafadcdc2d2',
                         provider_name='openai',
                     )
                 ],
@@ -4962,9 +5018,9 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 18, 18, 29, 57, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_68cc4fa5603481958e2143685133fe530548824120ffcf74',
+                provider_response_id='resp_03b12740d1d3962e00697cccd48a04819ea4edd6cdda5957ae',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -4973,7 +5029,7 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                     ToolReturnPart(
                         tool_name='get_meaning_of_life',
                         content=42,
-                        tool_call_id='call_3WCunBU7lCG1HHaLmnnRJn8I',
+                        tool_call_id='call_otDUd1BvDW9o3wOIccaWfU5S',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -4983,25 +5039,21 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
             ModelResponse(
                 parts=[
                     TextPart(
-                        content="""\
-The meaning of life, according to popular culture and famously in Douglas Adams' "The Hitchhiker's Guide to the Galaxy," is 42!
-
-If you're looking for a deeper or philosophical answer, let me know your perspective or context, and I can elaborate further.\
-""",
-                        id='msg_68cc4fa7693081a184ff6f32e5209ab00307c6d4d2ee5985',
+                        content="The meaning of life, according to Douglas Adams' famous novel \"The Hitchhiker's Guide to the Galaxy,\" is 42. This has become a humorous and philosophical answer, often cited in popular culture. If you're looking for a deeper or different perspective, feel free to ask!",
+                        id='msg_024fab3cae04892000697cccd5a488819683ce43e6d5f621ef',
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=61, output_tokens=56, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(input_tokens=61, output_tokens=59, details={'reasoning_tokens': 0}),
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 18, 18, 29, 58, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_68cc4fa6a8a881a187b0fe1603057bff0307c6d4d2ee5985',
+                provider_response_id='resp_024fab3cae04892000697cccd53470819699bfc0debde05e0e',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -5019,17 +5071,13 @@ If you're looking for a deeper or philosophical answer, let me know your perspec
             {
                 'name': 'get_meaning_of_life',
                 'arguments': '{}',
-                'call_id': 'call_3WCunBU7lCG1HHaLmnnRJn8I',
+                'call_id': 'call_otDUd1BvDW9o3wOIccaWfU5S',
                 'type': 'function_call',
             },
-            {'type': 'function_call_output', 'call_id': 'call_3WCunBU7lCG1HHaLmnnRJn8I', 'output': '42'},
+            {'type': 'function_call_output', 'call_id': 'call_otDUd1BvDW9o3wOIccaWfU5S', 'output': '42'},
             {
                 'role': 'assistant',
-                'content': """\
-The meaning of life, according to popular culture and famously in Douglas Adams' "The Hitchhiker's Guide to the Galaxy," is 42!
-
-If you're looking for a deeper or philosophical answer, let me know your perspective or context, and I can elaborate further.\
-""",
+                'content': "The meaning of life, according to Douglas Adams' famous novel \"The Hitchhiker's Guide to the Galaxy,\" is 42. This has become a humorous and philosophical answer, often cited in popular culture. If you're looking for a deeper or different perspective, feel free to ask!",
             },
         ]
     )
@@ -5278,7 +5326,7 @@ If you want different colors or a holographic gradient background, tell me your 
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 19, 20, 57, 1, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id='resp_68cdc39da72481909e0512fef9d646240187028ba77f15f7',
                 finish_reason='stop',
@@ -6918,7 +6966,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 19, 20, 59, 28, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -6999,7 +7047,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 10, 1, 20, 40, 2, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -7135,18 +7183,18 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                 parts=[
                     ThinkingPart(
                         content='',
-                        id='rs_68cdec207364819f94cc61029ed4e1d2079003437d26d0c0',
-                        signature='gAAAAABozexg98F3au1443vbazt85gDycVpBeC63gC3bUrFg_jpx3BYCksfaKwRkdFirkKpRHBYG1go0Kbzl_1w7ZqwT-BcPYX1Q7a--X9S-5OvU43ikr2kPbJgGhjWv1W37aLPKfIFOvt0VspdWlN3Diq6u67ktR0R0BXOFuSSv7WQmRAIl2JxiDzquSCb12Uc6i61LxNLpzalYk9lyW4Nm5c4czAsbUNv22AeTsB-nwWzO9NJyPfe6cVybz5gdShl8lKIvBsjHMonyiZqqzuSZakXSlbteA8yvZmOYO9XT1ruXNhCoFnq4pNuMHiZuOyCSIvASPUebLO9Q9uMv-t2aKku_4Xg4VsNUuQQpJfZ_gqYJyZFmANBTAcbMGBVotJS0V0ZkO9kyM9W99udKPuS-IzAkPCiHuBsjMaQzhM9xA2-uNm169O4P6TfqD65iCYAMLvwZbXauC6etI17If_731Oo0k4qcR5G7vruSd_Om-vwAGmb0u3_FNcI73bNw4WkhfGdUucfquaGIBkSm2_H63SOfLHOiLsnLIZT1QkEm2k2LP6O57WHAE3H1Rd1nKkw7GQcY-oQlF9_AGi_okM_nCNf7RXzfEocRYXlkSwoJT67TGV_rp1aSzhxKgzOzntDlcOT4FdyVY_0MMtxnBANZL2mBM8nvmqogWOnrJui-7qmFYP6DJj-GkoqPhi_gXlb9gTHtus_lQtLvJSXFhDlQDT40dPbU6T716Bp1TRQSAtj5s4aIhEupcAyoza4Vzko9WF0lrwyTKeU0Yh2nkrieKNqL9XbhknW9bp8dRMRM5-cG4WZHWgD5nLV4EP-8xcZc0ApwBLebiUhkX3MZ7phpS_ZpwnHxO8GDnvuPNT6pXbvvrUL-Vitwe-qWoodziaUetUcopfpGlBYnZb6_cJOVFUoJDxPxgOkLiUW0WSSe-NsU0XllTG75sVx6cciU7LbDJjkPU3yLOrJcwpE81Khsefm-yyk4BOMzPbhJKg9Lrs9pZmuhXa0-GdMP6fHks4UKYeR5pX7zTU36t4BUYFssq-p8QqSuXah64S50W644yvaJR52PzkjDhNtl_lBbLRsVvlimUz2vGuJfFrATSnw-pkuGEDznc5BfdjqNDxncVWpwu0u2HnfAXbzBBtgNFVvWUegjRhBAwqrlWdjhvTcfzp2xUAoaXcQdRmZUh9Cw1Ib3pvejHk8l56i2Gf5X0VrDVxj2av3LugJ0sDgahri96q_EfYVD6TEF5D1lz-GBFTWJ3CZgdICN1HM2ny8yNg60U7EWFNqN3Rn9wx1LnntWcKxmwLRfTWFr3k3-TTHGam9Nw41T8hSkpGmpDYM2LsOcqdGa6ZYlFEBstzvf8JmPtBxIlD-nFIAVLo0Y4lFmt29x8hi56Ybu3_xdwY63SMj0rydOF0bX1K1QXcIJrSY4joCesFCJ05vB9F39HNByztFA3cBvyZkwzpmif9juYOpM2qfZVtG8oCnaBU90u7lkIvfgRd2H8lH0pnVTLjSq885mjhxRad1pnD-0rIoPY7ppz-quELsMOVqNTZWW8mkCy6uKiWna-3m0THLNz0CNFCnIz5ZTmchoj0x1WewlSamGL6n_SnB0H_lIXq9RUZlwrd1ASQtiOnI94pBRHPXfQ3a4PfNyeZv9GOKHr4pR0uHATkCd-rldmWQ5kG6MbNjNMJChaCMuSwrJiBondTeGIZswsMwOfV5eHgoZwfzkTxD3xo91CLGsE77IDjp05mNYc_KMbEqSmnDWpPJzsHWAX5vahfVXsRFx1Jjw-D4d5PIU_Mx4mwjPLjTrWkd5Hl2uKWvjw0Hb55lHT8D3cGlvIjRnTGM6ndLGndeKjXobs0NBcmgDQNLpHMccHAbb2UVIdvx8cF3zhkc6FdKJ17TZGJQbzWSqkkKwNUCYuRrf6CeHoEZh2ErArmcj57QVdXeDREoSzHhu1XRBfgc-ey4WF2RMzJ47Y0LNxFHpLxEk4Tpg4jcMvfRRKv-8tIu5kZeVSBqZTac90ly9qDeb32mv131YXy9G1A4RCLhjCoxM9M5r8a3AnDIvoMCusPxAM5mHpLEdv8A_5mliza9hztzmDKIQq7sQAow_XafhRJfX0dOeOft6aLkLTaq3KHN1HE0xy9Fupg5ut_AUd8tIvst7Av6vHPiK7gR-rxgWNx2FmKKXhvcWqMeeqFwSyq_18Y4w3ibPc-l-oYXD5gEMAaXGa6WgyaeNBSHNup7HDYlm_WLK3UdH-5IuIMxkhLFgDFED7g9lFl5V0I4bmW8Vqg0AqmNC2hkADsr7mNjuYr3NOzGCTsE2Ed992VG_e3k2PqtHVegZ41jxZTbfqYRM_HYg2rOdnzNN_NV3w0hpKmV-F6UIrb8Sfpscdwa2kz9Zz2huG_QGzI6AyjoepNgOYYZ_Phq4JMtrjge8HcOGRR3z8_hV21N61o5Z9yBfwx5kSnAvPXuAgeuh2MIfB_koOrwbEryE4HJTSA9b2IAs3BS9cvAu36VHVYP7Cj-U3EZxaxRIqusjNHb3WIzswa4AXFfjK65aaCCizHwxTSdn53nlSe_f7y9pMnOV3o467Vtt-oR9dqz92pauT1MxXYdBD8o0q7iOgHsqdcHBDvQmWOlpag9W1sF5uEyzA9bxDGlKLA9xtvfwnC2Y3nv9i-haFaoknx8eQGsM_bzWC54o6VlhJiNeeRUuTNEAsoTXv13usbK6MtSXoGvWPNDkj0CJ4sluSWmOidGG6DW0bEj58HYCedg71EKyNcrxcN7JJFklv1ju6IVY4k6pLMPu6kbYdKzXaxFWkOmB27Qz0dgBbK7hHhHagJWjOKrHWNiOphce9SHf9xQP2U0uJRNKqNnqmKRZLBQ-QcwRUxzaFrDByG7nRV0ybRHpJvrRfCjq-FVF0b8JXudNY3D2gI4p7WJeBqk84bt5a00DzmTZap1cEYi8VYs6zwFRa-LTemxgq8jOaeR33x8I8tDBbnqJdOV_o88Mek2E0mXkKfl_3ZzPzajcjyNHYdfhNHfcB0Oeyk6w_TXnVxOJVHuoYUsXuB4gDDMENk2yubSUFjOUzuZhXXZ4CdE4bymK54tzj9qATV0c7k-YsRlfUk5fX0JRQF6iMMWl0VtVgi3HolN7S5K4Tbs9tB0ByOS5H5N0D2BjlDl-kmd9Yrn6-B7Dxz2rxCtj_TQneCyMzfb6edt8X17c-iLsOV-fZOP3mFTCcnI6HyMxaLQDENgPF12gW3mDZyX2gAd7iRFXCHzmTnVkUEBhlCoIbq5Dc5s0niA3Jq9MHvhtgcXaUusGqCxOtQ22_CWixDntwS3hQx1KxEUzYZxThNSv-f5ji56iiWOB9uVzv6XLPdGYkN5CgdKzqPsim6VWfz52q2TTSZFRuaMGZsJuEpprdcWpHcHiBZsk3Qa-giYazywLHxj3Ph_Kf7kByYuzspVpGX3bct_unkM8jQzg8AWkn0LuFIY8ScyzXAVECJbFiOv4HipzyoyYcpDiPmadV-qAG8ghpw90xwcvgrGnHm5pzHQaqZVPKWXrHnkaJFgQ7OyEpmX-U52R5t4PZCeWJA90zAnvmL7s5MFEDLzSlzXPFjzUo3T8XWz6p6tUksLsGdUUqILT7hYdWwCdDnUJYZvjysEVIkNPNx3lAGW_e82KYUZUjQqiQqsbu1meJkdZdvMPmOlVEGx9oFvTW8cZrZZfJ1EKNOPR_1eyGdh5ZOfxGU2sogpOST3U6dxdeUwpEdhl1dTaZA_chepczFdHI7aMoKSISbpNC7nNhKNfQIpBcwPLtAhlgCOQKuBRMJUPK7VcOpl_nhz3FKexgJ0X_hFqN5qygPtKITZ_Et5ME9k5tzelHVAiosKhWOLngFJzKZkYFavSYUOHemVmUo7licjeUTPAb0d6kKbqqrJ44ZP22gL-Rw0YZa7t0VM7LrD4jD_taPhqmZ28CCchPAfP6Umo6txaiXDusvPG7v-zUGh4XWQlV_5SBSQwvPHUfQHlogHH69jxfJYRD3F-lDIfKR9ta8RuCuCdd2VsBUUAWFaRuulGcLiQ1BFWZ2Fx7W6rXgW8QkufqX9sp0zgTK9fCPN0rPLLU27BUwn0EB3EZe4bDBYrm9xAxYCgoOOE28GMpZsznXXIVaAXvUGVTBnXks9ycNghOw35fsAniH64H8u7Yp45JH8BMb7sk4zHcW_An1TzmUxjq3_JdOo9kkzNEu_qs0Y9btf4M6NajoVWlttXT2RD8XPxIrASjFMv8fxYJG0OsVHJoKTnGFlHqy13dIDMtfOkT658EuGe_pHwp8B1zI1jjpPmMW2MG3TAlumFgy9T0iyw0V3dp6qCZCjavMPIJ2HD9V9TJYueufIptuN1_hZF-xESc1ENH6z_NtMBJmW0hwCU9a6UqZ-K3_ZsJ7EK7q06V53KOSzzaJUY7SgUAFgwfbqFpvqi8emyHMxxIFylw_E1iauYGssBb_tzY1fTWwk9n4h4A9bdKesz_JBNRuKmKyOeYOS2LdJGhp9VOsbTvJtJ3MvwXuiH9rgFTXzXbDgIHxSUnUkMo4mJhnWXiqENnfqc_oOgx6zkicwwX05Bjn_k4nj800fT4RkJTY81dXy54TbvqBgPR--nTkq-WJD0e8_9hjOrtD7c7_p08FhVGWl_d499ylunVccNQ51zfeP0uGt8uYK-S9fNN8ED5PJ5iBycLRU0uvyFdsZFS0DJ4N96xSrdkdPAZ5CjfIn4bawnCs8MrHg47sCgONAqrZ1WZTgyL8j8J0kdfVJTZoLRud4oFmM4t8nQsL1sxH322EWVaXsy9aWAMVWGcc2fesk4jVODZ4mfGtnvm-Q8ifjV7wqRa7s5uXv_-JFUawxNvHqMw2AvG1M0RJTIEnRkCKB_8CXNb4K-GRw12XtZs1KRED6j1yPzLwabcWNl2BpR9JCBmogxFFuPPLdevD2JWptQ3YwTQSIMridFriwY8g31iFMFrNub9Z356Vc9zyMvZ0sRBB4oK6iSy8Y39nU3512YdGpDmMTH-T5Cxy3pi1dphlbYHcar1Yl-n5gSS0_dezGILZbxfvGbxOAIL-AGwSE4JJpUFn6N0xRclaNTPDk9VkKpVktgJeWqkWFI1xdBUp0K9BQdNs6XsJsfMCaIE-ed9SbQpJRdc1S7m6lFKFZFvHujK1zplJemcpOrYIpsuTD8wzWJAxzWwtUoo0DXi0YQOrnFdo9PbcTscUGyNArCcGjOYiL5_oMwhJh5kg5L_OPLH3UhiLI_aHs4gT7nX__HHm_3GVOov7-kK_Rs5lGsZtFQ-yoau74FnzVn8N3YWMqWzCVbwGRBhvAm_fdI53h77CZeJm9yWZkWTzrc0Ua2HqA7KB-eZgCNx9Ox9n0Ilh42hdGLFSwOEF1oEHw63x4ZTENyAP7j7mHWnyVbqRVSZOlP6w8JquYAtS9hUJQb8GZs2MFuFcwTO8SX8gMWWVM3tGtpnz7UwqhcFMZHrJ0ehues8kdtrlqR2BWPYAquFhOQebvqhlYxieuLggwAIxudJr3PFYJrAgAxivKZlhKRSoa1HCFSp_4k_kuVp5AvfBMViLJ39pi_xHX8PnokEmi3_GZiz31hGjj1GgNg8HZCkQtQJcOjMA3YPE3kQHy76YIdxzL59EdWsfuHj9IhJ4J_PoHTg5k683yXkvcXsz_sOYj9j6eMNn3Krp-ZFmWbtmqpWuvKS7vmE2Wtq9RmzvkGPC0jeY6J_ndbyCCljLpFGbvSYC50ejEulcMSUw1ypHhHzoDzO1jFo1xBDfta1H_hAsLkmYKOseTZce6hHIZR5xUwWStmu0y3OoOeVT3cZXEErr7qPLxEzB6nTlSgzLRX-ncRCnnUy0f_pXWwBE9dE6w1Nq4Y9BuS2Ip9oZZvj-gRCxTmmJLL8RYd-G9EeiBSlf09kezq4plUsJwvvPqVlj5CVLk6DkEsTvAM5r8DK3FYnLUgf7hQI_EZ8P9VN_rrPTPa25y19MR1-XIsVGLrVPmyXcj_w6XLBxEc1J8qQ37NZCw_DRfS0_ZUUqSDNlIy-y-DsdLIVtXE-BzpUkgqx5ADmbsiFFj87rS7wE5Yi2-btSpkWdTjaBbsWBgN3sOvcZgFt-AQrCK8BMLENwFrkFicExianGcwm55IlO2iUvCNjz84ogzU0IYhzDbHGCZBzYaLNX4JIVeonOoQuKA6QGueCffX1MKQ8fDKVZQc11Pr9rwjPNR3xxAs0G4ykW0c3809YE60dLbP-AZ8Qm6vxvAmTzd3XlMFaC-KbBxskXtMJRJqxUd5jYx-YQMQiOA8wLytP8INXSHi2_lgMI8QivRHoKx4oAl-qTx_qz0Ut4iw192OVWoJqTjhwIE_NB1Um9GawsbM9gb8VgI69RTPmQi9obao9kkQEUU-NrNtDkumrltR9Q9fXFyRbKn5Hs0PHzC2yiRFa_IqGEqJeqz2CSBkdC5GauukZj2XumrXKKCIYV2vJ-42D6MUqD138clb-prSiOe4dA2-wrKPjaaWdpaMeAbLXbLkHuH4K5h6HOpYIVMu_JWdnzzDnvye0o8A8vrxFZsOSDeiHPcoDyN6-6KYQwOlKpjiswFVdoD_e3Aw9ge6YHDOggsKeyERzv46Hc2GwW_GWrwaWgXSv-lePsj94L1b17WG_y4oEKbNMAmE4A4EBH1aJI6_wEeySONFKhbyOIwUBcRKCoKT40dbGie7kW23rrzSTQHpjdd4NbAbNAGEtbAJbVwZbFC2RMwMWQbz8mmnMSdVw0VN6UVaCdUatYzATx-gk-lg_8ikyOhMwA_lXFI9pfnHIIqGmKHDJdrE4pdDBK5wVLB1H_CYqzUneygueeTUc_rHiMj7QdekTGh4KnA2lurqXemNemePYl621G_FqimReuPlTPmn88h-DvnmcVhTJEMCT2O6huU2_6yOlyulJw-mq6KMS_b3PSB3bgYmJEH7EM7ljv7lu0ZIqZm9xbpVTntP2s9jDBPMb95q8AnllIwH6uZEYdyiIDU9NQj9RIlR4RZ8Oi5b6n2IuKojvP6aK47npwKMvC4IOAMmGaE3_S2X0vFnpT1djiFPAjvklOEA8o0k91YV_z-QbWwVTd5fdRgaqXcqb3dLAuvnFq0bOpJMchlL9lrC02JW07Xi9Lw4EIoDsPBRr5s5DWLG8kLfpEv-YNZatryAbjbwMtJX0O9aNxLzG1bzyXVFwBb_HUgkotdbmlT7cXMMX8D4_xIQcDyjwo925uAVU3va121ddHt2JasKJc1vMyuOKXuDg5F3dYByqEQQH8zywgBi_IRtUx8aXNoNXobUf3LGaLc-3HqVTZby9Xv_Axm-s5jSqcEPL4WJX60rY28qx_lmajcmcVLY7irKovGmfEIlVeHYdMxDxZue2nHHHc7NmF7dGORg870x5iGUcqtmjvOx-NIqVShVQlalGOdIF3_u6r8xlvOL8xWJ6WLXKNaAFVtaoDdObEoR3stpG8iaaaGNcrRqIH7J86ntBUmQ8chIgOOvPz81W0Op5jbSc4d2e_qAAuvt6j_qElh9qsGNMVPoY9DlxqqrlJ3ojG_6yqlX_jP6NGSx31vxc-IgggbyeEm2BVt1v3dJv_Z1Kmt8PGa3--atQsH3cemYMbWcwX2mAdMCHLY7xQJs_X9OgDaPd25bGPHFJQVNM4cypyPSWXEDiR-xIqkB7NzTrSEGf82wSgIPRAo7k-CBpbBVvsuLre4zof8K5u7QH2jYFQA0-9YtDa_Uyc_JcErLU7AroB5ZZr7s_s9qx5w_wJxMNW1NLZJdOKUVryP6DJPqTNmly3PT88GaPUDdrcQa7NplSF1FcqFmzOlZc1Se_fSkgEcFKrX9M7_65bTgLbAvj-8bCTIxZp0-PcmoQO4mrkNkW2Vr1rfSuOH5_vqJCT7s9A-H77RjLseMxJ27YF_dEXOHjsEV0DPM_zfno9_Lb6gL0rqffxhKdM_xRhSsLg47PJlCgoZkL2xVTJfahwydAzbr4ZWbZ84WwprOimGLJBdcQgjHEhxx0_cT9tFpUKkUbpAlUYqm1e23JGUXKrS9kBqM68RjcBAiaAgeKMx_5pNU4RzuJqCARPYgqhsy50LxkN6DgIMiDglLxho4wUYHVVkez3XXPHmO8FJcRuuk85Z-7qDeExR-Dp8vHkAvSGuyuUKHdyaQdhigMm18qFzu5-L_m3-C7xEblO7KJBDtK9mDdaviyLU9bQA4i7lLgUUdkCClPjm7yDt3SgjDZKXpBeD_HEb134vjhc6EVJN0IK0bf-lSswaAPJYcGc9ArU_mch_F1w0X1ISwvFHWKLYBM1bUSCr7vLyX-j-sbwroVSJ53bTedlaUpoVhEjKxcksjSgnndvAeeHAwHV-HCkOH_zqhxp5aTO1vNXeNESG7WoSRLE1_6vF7ZzTGmpG3GIbuBexi0BUe95UwrAJpdtzWMrAiRNQ3LlB8JkPIqX_ZXmHsu1bo84_x1u-VWQZFNTOitRXyLdA9GtDqg2q7RUJLj1Axq6CzjcewoW380K7r95Kimr6RDUUkvi85SjekZuV8NNd328heZWNSdov9lzmJlCokX6N5VDpg-NIPvjJyaQtf6YZfYtOk7pp_koGxatbsxZTSVh_DwXz7K8VfC2mEhr_xdDPe9nKAPrU4r_J9zdtAkkzdJssMWhSCMTj8z3l1bbIzMt05ivwEGLZYqZ5Sy2-duQVd1wA0NfKB2HjfgSyYhX5wN4aDW15copsEtPTrxCLidwc75rLdoi5Ch1Jt74v5UzKh8mxDaGqjdWeHkDrHbVy5hDVk00n1TZ5UAzWCq3lge3717y0ECZX992BrkqjffUYe0dZUUJr_3GWKSS0AZHg5uI-1Tka_DGqF7mWwdz7XpafzU4siolRkGa3QYmB8LWqdbAnpvte-uSwxAiQm2LiFF9h4dOO8U_2gNsniQViwLkD0KTHnuk1_N94P6QsypEL2bcPWCvCw1SgMmgKBaXYpP8FIN1trlpqyk_0abqnq9GoeCI2AjAOkHI0LnNsM8lTwWNqh1b8YVco3or8J4dOPeVQ=',
+                        id='rs_02bf8d298b645b0100697c34d7366881a0bdb502183984ee50',
+                        signature='gAAAAABpfDUg__7uoiLN7UA3bQO_LBoJUM79G4uVBJBah0zLoYbC2XRIa6g4PhYFiQszB-k_bNqTpAy75QJt5tiBdExNlfmAlHojKTX1l_hnlAIJgWgsv4_dIavqx5vXS37Mfx9_ASBVbWK0DLbWZhl2_7dciPAmD142YNE5auzXPXGDWoBpVwJmloqaN8oEDUtCud0frxFI1ECmcPqtxD5gVb7H2GeWukjlZoGY4qYaaeIqpCg0ZoQSJtIUoeUreLfCdJAE5EfJDeqdCp6tD3-7TJmnnBaU9xTLU938wO29jVy6_eKH7zvQlZg9atAR8wxoMtQyXr7h5lNSKa8RZJ7Dlm-o7j5wHhHMmhi2JrVNYth7vOyrH3HBz55okJ-RvGWw8wdeMwFKkWM9J1wkT9ii5-R2xkeBmC618W6XL9rBRTi3BIOLl9HGCODF7Z4OW3G6pAxA7xTmPYwy6NFP_t7cSVT0mJYnAUzY3EV6XIc9_IMdkTF9fv8rKjOVKhs6PXoCvk2ctzYvISSOSxkKfBdLyPaXfeh7kcpTXNCuAzH70-S0gksJBQg7xwAG-GGR1QkLT_CRTcRSUfuhhRzof7xmk3nWLIY1osucy0SwefziWu3W44DIDwQS1ts4YmLnf5qmwVEJ-y74V2wSIgXd9ePUmzLKqbISE05HynS3ml370p9XyJGk7Oo_Xo-rlOhrfpzQZHEnrNnqGGWhR71pkGMlM9BYX2z8s6lcNRg-F7HBoSksdkbV4oZQLsTkNNLgr7Wk1jpK4O-onVSPU3_U9i-kO8TSlN1CvzJ7AamflebKecPESLOLlQioeb_VfaqBKSZKSO6RIBc8OAtys30wl3ZrCqwa-DHNt6QFe1mmAhsiHTfheD4LOjQLjj2b3aSnhT6vw_xqe2H_gobmwKCChpQS5c7wcQyerlmfvnnirKu4o_QqdG6ivZ4iH0kQFHoz27zclwvssRsA5mF2RHX1AB29-b7sXG3lbAzq3JbNS_F3zBiududFEkYqRBRgF1zAD6CznBsxfN2TNMOSLe1Vnivp8srso28e35Mxp8DQy_40fYkBuN2a9-rukINRK7qf8ve2bMMRn8qwwEHuFABmB389gwGso4shFyADOl5OZohtgbKr2O32Fafp2aK9Gl7XbVCT8--wyZvEVYjsHUiP31-gDTiwRRU4FJuW5Jvgob_UDGF8zGI_UpOLqgP2CwkU0u2Mol3SydUhxCImaT_vkYznQMwzolTHY4Lhvq6NMOOkJJzw8R51yT9HwlyWeaS1h8y7fOKQq1HQDFTbDb7oqHUcw5hNccD7PwTM38hkt201xdjyTsMpFTPrvi5dNYnovPwxjL9Kyv9zEMvx8Gd1U1Rtcb2j020DRcAqNudiB102LFukJYEggwya1JPqMa_9kxnj-LFHPBhsNjePGWthmroeCXYdvUV0vAWVEmXnCrKAYBgNMJFi4ZWmzc0uUiJ8xG-c_2Rg6etEFQnSWK71h1ACJISipPY5m8sXEM3P46lu8biRDxAFPFE7oKJMDvg1mbyJsBJChIp1FRr0Rqvpl2J7og7U-jCgi6-Ez4rxtn_iI7Z2fm2qp2k3ke7BU_d5B5KOGBJNmcvMr5wxCrIaJy7ugfvr9ZLunKkde19OM8LhRIGDdNEE0TZ5gChkia4ZCRyOcL7p2IjS9f_UBWyqEZERDPVsusjiWA0vkwtlfhXSe0ap2UvhfDQjjbVyRRSGMVPpIqEwnTz8_D0PM8f8N3ciT7LCDV3gGhQGxgH-Nbk23V5QH6C44xyJuB4zsv-bz0QAOOvoAelQZ78zHwd6faOeNdSsN5suMgJmKKD7JHVJqQzhjjgc04Y3hiVdxfmo6EqB23z0Mlpb9TJBSzqt4WGW3OS2jVwQ0HjPvUfw-5Q3a_TTUggAgPkxdVCLF5iJwHaUqrTOvc1cjMtm_OZmGo3CSabcmgJitL8lXF8B18-2mucopSpsisPAXeAuNW5Z75nFroVrs7Psd1jhRUn001keXTwE3Ao2DAsizTrHtIH-LFTbuo4SRHsyA0oQ7wWqpIhX-VpxdxPxGglrzPUJurdbVrzOO3N3OzPsplx4Wn1QmA0h5r_wQG0ZwgROh6pPfXif49nRQKUkj5nlc4gIN19u0EoAic7PZWdTBBiBGmP-hgYn3qCBZxHifPHohIQrwF0kQ-Kwte2pRux87dXizeNrSOygRsJqIPT8FaLI5xWX0xZRPui_lDxc0wBlkQc-PXu0Gq9cstTMJSK-fWVCQZvNbowGcGZSHqOZTVsRhuxQmq2EDmpNC0YaJQf7tHcC8RpwcuYLj3Rnt00I3rnEAv3W_uAmje4i6kf_ONFoT5E9U7xw3hArT6yYjdHKgk7NTFWj8moV58wpisyn79u38iSEly0kwTsPz8eQfyYMM0Wz8LVSg4pb9V1L-qTj-leqL9Dx7rtyexkiz8U_hfOcRMlNqkb-g6E-OEuL1P1GxKLDN1bNsKFeGt0I-paKCRpzi2WOKy2DCH1qrUUNwjZ2gcEDuaonCUztK9dr28AYzn9edZHNA4hsQ29AbDXf1_G9fc8r18wp42JtULTNM9J-O0ZO3I4efHwCHTrJWGxmTuRj4O9zxkPgHDuQxuCHcMRkrbngUVHb55ASv0kp883tqkYvis1OlqwPLmYfv8uFTdaSJi95OXlezXTg-Z0AZAgn1cwTNuvcG6n0aM3cBpW-gpfrFLKCDr_KnPFEMjwJiBVdyRu3Gg7oCr_iCsuS5t3WIZjvKqSagDFbbHOb1ohoj4F2OOvmjv4P9p-YC-MKBpOxCSg99NplzRScvwOU-CPyRdElnfl7zL0kX8f2FX-B3L_3Z58gasJNhsCfft4UEVEgOq5I2IZjZOSzhSyvVjN0jR6y96wOjktLo2bDGCE4ZLHrbxPQWkcFSAGwS3UXQ_q30oT31Ur57SCnIDvrBUo1fmNbMgCug_pTczUmuPv7Fm5DkJHjwGmGSlHjH-5SEPgkivNBQcqFnhqgIZPlDpdqLKZBcaRGmGSd9uKIin3LGXeZ8r5iC96gK-52yJn6Dqg13WCwZ0bwqnySx2z4bQScvWaa-aJEpFjnNUM1tHPxszxTJ0WbNUAQ4ygB-L5OEpC-UfJ__dumivLWqq44pKflM6NzU89Cy18yt4uwJT-hyLAczFIlYVRkWC-afOivPkGeE43gd6dfv62LT3wmwweeOtKcXowcd0fu3kgI8Bo_mPDIbjvo01EA-MGvTYUovuMLiloqCxe1NvMafJXbsXKNEBxZNb8xtD1gr9-yB5vriZZMhP6hiy2GeV76fQu_xvKzzUGLqSgj1W6_EhvW1buOPF4ItqkFHOddYA0hJDEtgWcdETBATD9Aovxs6jipEP14RnEyeopXKeKX47pU6i_cfZHTVP0KKWiYvJnanWEwGwTbrhBOOVnK0TGpY2x0VLAf8dFZprQL9995CqUGVloWCeQ0LvXp0ok-RxQy_XYJlpuKnckma_KlmMZJlVmX4oN3YS0bFej9WGV12fRSarV8oy6_vYVzroDK20WEBygIQyMu-IXoaNA8Yhe0gPjMmeAuqnS9XSOMKnPqfl5c9QhHTy8vbGGo4xTIYKyt8uV6NBWEnW2ZTUtJhX532UoivAM1Dl6Mfteqq2WXI9bVGeClCxQgNNkuzqy0FzNZ47Be8kkc10oHZzZYdM4aosWYoZbVDjKKM2DUcyEEtQ6i2V7vmpzkkUbIeWgAYO9et9ZtCzPD2mKGsDE4oEK6tjysSX6Ly5da0ESAfsnetBHIMDtXQ97qRlqC6oBdgF-L_JpqJ5ryVpiXhvT7e8qXJU45sDTO6YF5eM_4pXFM2yh4X2x2vsl-iseLotXBexZHF-glPU7kANx1-QgilWg0Vfxs5e1Mg2mqPINiv1BcIjpNqJwfvjMH2PsGrVwFY0_9BRLwHuBrfNQdwLcdflhgrIMMtbisLHRQ5buQcRdxh6UDo1wyQtzUuPZsarPcO1-Sb0e1wO6a32sUQeDcuhai_R9oVcp-zBJoxTJJnVYWy_pEBsAZr-MUS-gAX0HuHDqb38hLv7G8Y2stGqc7SMvPxUhitbf661a1y2BgnLPoR2-Enw3Z4i0V1fRAgCZOK6Jahf0bejiJkf-Ehr6SH8XQBYFhdre8vfZOSjJabBst-3r1HF7IDgNElRg5q8kgvwyqolIDLk8z5riigJ4ckKcbgBrb4tk3shnNQKUoXbra4JU8KxUVqeKzuZUyTvLCMcKZ5aJi4hnL1UrmuSH0WNseIQZI66KuORWVrp-cTh1N9cTC80ihuBgHfZDPFH_c13iMEiQL78f2P4KRTXps4QPlkv1fdX0Ppf7xi8WTR9KNTWfP6ijectlU4nIpmYi_tk8vsXY3Ml0SFobuUODO040zrPPns1MNIKFVVyU5LIvFkWkjJ8kxQQW4_egb8k3T84K_D8C8nr_ch5_fnfhUXVRaJT6dPrZOdCz_LJWw7AEUFThnzFA4CXsiPPu1tTnchTpIMwSunsMqXfWttaqNZ08V7jdBOPsbu-NQ_QCdyMTqBmyMDnD8DxqTYSm2C8zOgJmqh7zRuMEOpIOuPaUOhb7nbpgsF9b4OAfFB1qhVNRmDS8WUgZKWwmOwOd0CJbgbFkD-UiFJZx657pjMgZ3CDV7rk5BO8Cn-OCmMhSgQHSoLR1J9H-PfQMj20SMuPVzPCGJKjazKdDpHaDPsVvRdRe6_1o72awZaneMus6bZuXzwwLWIHSrDXeevsrAi3gn7Lg3Aznis1pztUPSQImo_40gXX80T2mO7YGZQq4dSKLb7bg0kYyeJHT80HPxXiiV6uIB1e7ObwqK0-eYLFqTOEsWlFu6M0kWh05nqQUhdIoJkXe5087RajtSn3PUTsnz2-dA12EEaaJtcSJWbdi8wXZixCX42IlstZZZcuymJ-7IQD1zCxRwUK_36a2x3A3wRKMm1fgEsCrYci6JjKI69aZZl5lQUCoHkb2pe9zEb3RUcemV8wcmsDYjTX_y4lOmr9CShs_MaQOf_FE6wzn1o_o29j3D_fliJyKaBuczXWpkInC6_n9C1GmqUyghKeCIHBWI3q2iMpAUzzOsTv5EWXAey8uDdocY57ek-aafv9ArSNrXsK87ZNwwfMR2xz1Re2VBmrtt2gCkcFVwtBgomJgmu6KHZsMnSRA9_0NlrkaTRFCH2G6g7wiNVZ8gBi2AEqPYuLSUi-yrOIE-uKwVAW8BFgbMVPCJvUF4WiTBsIathThM80e6dHepA2NYO8dDUXdrcydfR9rihUG0AmkoquWU1pU-z6HGwq1-GmAxokuE-i2FBBkzmwmw0uCW4AhHtoQaLyGU2zJKT2oCfM31gefM4BkGaaJ9ltWjzX-Vug9Oi7uMWyN3E-RTvKe6LxEE6j-Tqx6coRIBVqLFy4rp7_x0XADKOsfdJ_7i4jZAFf2nCTsmEYx8S7bUUMLtn-HSkwXc-_nyulbdiIeX830P73CNaSrLlDUyj7RE0w2KG-t-MDSXudXKjy3zHd7nmWWE69LSvrpTTaTeRe_yltf8GWsdNuzqdms3-QFv6akoQ56MFGZcSM_yeDTM2oAikfc0ehPo73vqFVpwbH9INApcqNSgH_Y-j9zMcgERyWqfHcyqIvmWafpncyuM8qT4X4RbwjOlyqP2lCSvXO9wC2D1_qvFsDpVKQd_UTt_xPbHrkY2qc92c9jfTy01wWnwqqVmfObyeiGdp6xyTY6ZIeurKqb3dkVDl1ItE2ypm2qUFOgwuFkY4KDI8RWfqeAxyrRwTDWTz-P24zPZD0o0DjnBUSXzbiz0_KcswBQfePr3YxoDD6sLxmvg79nwHKBGBKmQMHevNAbNhrF9rZ5iGrCQSvsOSqiICc-w09blN9kIwk2KqNzEmIUd38c6QeQa8cXTtufvniSiU29zB4PKlM6MlYKAowPYUNhafLtmyPjbOqm9XM8Lba1rlhQu8gg44ZKYILVTDnOrT1IQL2VjHZSlmwP8UTOCPiub_eQYuQje-A4nZqEptlkXO5HjawjlffoDENDTovOECB1TRFJHRSfTg28Lno5mdHAmYNwARhy7UuyKRX2XlEaPu1XjzAcUh91gxINc40GgA6WUQFAdOGAiWnZAU0oEXgcTLUePFAOJNvhSuvUIfSny6HIVqd7jaeGHqf6UzNDzhVZf1pZuOVs66H2mV7h7n_PWpy0x_ZmGLv9xPhvcgBKDj5zbcEwHupqOidBRjPJpAq7pTzkHHg59y2inPFwz03KYmGP5OXVEN1auDVoW3j6jmKicJTj-KB_7-6UNBANAkRMQNAJrnqph4m11TDG6GWhJtXyFR7D0xRrMQu0kD93DsQTRyaLodl-XKUMZayi-071FJTccAz8BeAkMFBa2fEKuH9eIaH89wq9NQcFnVZCfLaAxq5sqorcvdniKY7ABD8cTfMjjKeIM-PLMEV_MKnRtVyG7xEnK2McaL4Cp9Jdx0VlFE7awnPf7lJ0iashQHLh-9t2M7YquVfVq596x3hxrR5WeKiSe-NdH0micmebpAO8Egg2laC5ZfKqXpNUnh2PmIML5r56Gi-L828nz6WB7p9RK5L7xVfTwkINzcAjOV69US3NsQ7uvjwz5zUUJgJ-393ck94W6uQ002GEB1me9r8RJLPPXXJvNOLpLBB1fHSk1N_EC9TjAhkB3t8OR53bpPr87n7EPTYuCpag8x7e3b-AF2hFlsjZg21RsQORarfr2axCTmk9hHcrPtP0FipgrIpLyiWapZO1fEEpg1cgiEIJ3dBF1k8wAQcyg3tPgiFOqZ7ag-qgIqkNe3qJM7CinNmAojuBYJqa2f5uEp4GJY7rYRFSGY4SvnaFco3tt1L3v4Tk7VHwlO56X4hlmnMUafTFGp5ubrpMRreWvKl-myIIDvRpTHMXsPRlco7b16hoUzG_2eMuZrbBzPDP6eAhxVBrlcfPRsz4Rk51UOEXWts-TdaBT4zaXG3LZ19ec12MXC73X9pHTToZD15VLzvxW0sQXV8FWcenB04auj5UlCG2N4Wp_pzTEiyuGXm_U3eKHWJ_oIOu4tjcGX_ZiZOAuu5djUUVoUNmnz2TL7gIxG4zb_n6Ewq8UlhIjQtYJ_uukVNJcChc4TmyNhOtPkU6VuEh0cHLgEZ54DJHiM68iAQNRlpQtbdTMnEt5ZJhXk_mvTRkYd8nDBFjXBEs3p-JsxlTlQpOscGmGOwSToAobPrvE7_8jfvO2hlHiILV_FpAYEoDE0eiUiLd4EcvdqdKbEbVFS0L-r_LASnGG6nnCLN3Co8Q3zW1WvsUh_6Vmfq1dsiIHZfe9vztYjzyRBWWh5NSfMDFvCSCGK-MFo5OiHEA235jfI6hKYZItfAw3zsJ_sr4B2i3DhRWLzom4IeC-HPq7zAjjqh0igUtrTIGk9YaDDWJ7kMWkNKo_7qB_I-vALYsNLEhXfpR_tuO1CsXxEiTCbWUsM57fndF6CNkZZh_CcDTH4mxJjmQ8_RPSlQo0GSBl4bsWi9cFnh2EVT19pfywV56JpUP8kzrIP0DAz_92EoTPvudA0Qgo13e5pQMmm2QddA9k8hcblGYHGBYKdFNGUmKhVCO-uS1dH_df7Yd0jFC0ur2Z6RSNO0CC3Pl9kFYFDi5miIu6pK1nJA5qJR2rWSoWsMOZV5rrnos_R7TrKwinw5PZLsL2oCj0vYPFqJXPuqMdwY0wr0NL9DomEZlsc2xI4taFGmJ0FeexVPMM5l5rOAz1Xdt4hQ7XEW6HrQaZwMQId0Ik9eD_K0bsesWXnQ1gIFK_asigLmcPGCOEVDmbmEzt1ASDx8jIdrBvETgCPNk3mjF-LSjIRxZ2PqF3Fh7CE-2hhurmWkvApakfS4M7RobwXX9R7cDMaH60JyokeMn09sccn1uuvcoEOZt2ZP8oxw0stZpshc0TEJ-WPNcXKRt9ttluCspd7wJCuS7nHHTmby5tExI1mEfHIDFTf2H_OSqwN6aKrrT92VQi-ySxBhrTPb9jCPfiELWB8OTzZekIuxZ7dPUMoDfF7LcV9DyLMR8406j6KmKwCY8Gg_teGYflxYWqFNxR8itEPReS5R5cZMuYHZ7b1l3tD8JnFKXdpAliozs8nIWJibD41PCf0TSU0NTOv5zInzPr59UkPFaR-LUa6P_k5hSKgyNt3egahkyHQ8i5w2YuxmvFpDOquHSOkxC9-09PIPUWu_lA4mvXXJGT3VE0zcM05KSyA-CH5d-b2FxqrrwvoOzy1KMi3GFzupibraurlvgBh5PwLvrcN7gmRnPHR_CmPZby22vhCNYIjLczV6VxcnUpt3M19HKGTpwmh6hrndvAsLxG0wwi6zL6w8zWKKaGnMACDIACNUB0D304c8G0zk2pGkU8IQ9r6o3vzHYo0HmXYsIRCsxj9K6pqZ4IQh2VrRtaQbn6Op4WL90MZZnZebrwSeqmNEJ-3YKeFtOy7_cMZVUSHYSXWp63uwe49eqneHjjqQ0QnqXJCmVsLn4tVK6i-MEN1qJNRKqTHMoHjonq5WX_xSNQdtrkYN9OKdklDzYGrv2JA0wsCFlzg4Aau34tT8-iub4VgzIGr4cnt79NgKhGUBBNCDFVuKzsHr95R8L7WEiJT4DVIU9YaHmIoWeiWp_4l1k1HbWR-3nahj52f95_SEnJtz8wrKTOk3nECrkdhySS8jON72vLAxPnh1tkuQMK2Ud5cYsy5nxlP9hCuvxZ6lWpd2sqqkaBxaLQEpyZlrItdlSS0xukr_XBezP8ncr38ivuWu1aOVSw85hKiVyWCWV6358s0_AFKfJs8aHAigguyGBjgn-GL2eycqzt-mgOdFUITxKm_9sZ-I1wx-8-2A7eVDGdNaVWCCiTZY6fdwl6zEIrLJTBUgUGyB5h_697AfI7AG9rt2DRRPHELXzZ9vNntlBnbSpRNy02ipKYKrSdfkeLVS_japiQ2rSGO8BT86diJwPYcK63Y5LFng2qelGGbOh4Co-tv3PhkfjUZtepCOUJmywmmNLhwWTrjKc9e1onnpYUsmG_iEY__QZhTqj7',
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='image_generation',
-                        tool_call_id='ig_68cdec307db4819fbc6af5c42bc6f373079003437d26d0c0',
+                        tool_call_id='ig_02bf8d298b645b0100697c34ecbca081a09d255983d11483df',
                         provider_name='openai',
                     ),
                     FilePart(
                         content=IsInstance(BinaryImage),
-                        id='ig_68cdec307db4819fbc6af5c42bc6f373079003437d26d0c0',
+                        id='ig_02bf8d298b645b0100697c34ecbca081a09d255983d11483df',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='image_generation',
@@ -7154,29 +7202,27 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                             'status': 'completed',
                             'background': 'opaque',
                             'quality': 'high',
-                            'size': '1024x1024',
+                            'size': '1536x1024',
                             'revised_prompt': IsStr(),
                         },
-                        tool_call_id='ig_68cdec307db4819fbc6af5c42bc6f373079003437d26d0c0',
+                        tool_call_id='ig_02bf8d298b645b0100697c34ecbca081a09d255983d11483df',
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
                     TextPart(
-                        content='', id='msg_68cdec605234819fab332bfc0ba35a5d079003437d26d0c0', provider_name='openai'
+                        content='', id='msg_02bf8d298b645b0100697c35202fa881a0aaa89ad03dd7d453', provider_name='openai'
                     ),
                 ],
-                usage=RequestUsage(
-                    input_tokens=2799, cache_read_tokens=2048, output_tokens=1390, details={'reasoning_tokens': 1216}
-                ),
+                usage=RequestUsage(input_tokens=1872, output_tokens=1438, details={'reasoning_tokens': 1280}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 19, 23, 49, 51, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_68cdec1f3290819f99d9caba8703b251079003437d26d0c0',
+                provider_response_id='resp_02bf8d298b645b0100697c34d6e02881a0a3973161bc98b257',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -7195,18 +7241,18 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                 parts=[
                     ThinkingPart(
                         content='',
-                        id='rs_68cdec62725c819f92668a905ed1738d079003437d26d0c0',
-                        signature='gAAAAABozey1vHMbs_Q2Ou1f-stI__3zJS-qTasRefyc_eyOxqogM8UGbPpL8D6PLFHcypshJpa9SQli-qZRIyG4ioUDLsKpBwFbfjdIhps667-8st03DRTRP0ms2izupS0ae6QqY9qrsPSchrSF2o2PlJOWKZAFJ609S0hGX8VDtrU8nESfp78NQ5HgpgXksXQTxk3_xRmXES2AThlUD0LYykoVKRX-xOyPQsOK7aDEs1CIk3lG1meiXdtJxP1Jm9JQGLWk6kePWUgwnAs818LMVvjcj8GWzFjxKUQlI3S855vYngivkMqYqh4gOcDRGRWej4NRzRmhOK-2yrATl26qnpRwNA1YXkFtn1ojxEkXD99P8RIXNItH4KW19ALs7ZizQmQlKzd96eyPT16OSLqEIfHAXWEKwoB2vTM2ExvHK4il76X9XmgRDy_CI3HAPI-7M3787MJBEY3z9cBe2sIS_GtSk12_GXRBUREhu8wcc4920FxkufYegHd3FzKxBRjyxGpR-jLyI24ahOZRKvoXi4-n1v4umoD5OSMjYpMtr0ykwIBQyyqldi9KqHBpJCzB0wA3JyAn-4JvQsXwIeeAtq3bNSJFaaf9aLJ5OwMO9I6IIWGxoQ1mzqmCs5cVwwjeJLzEc0T5g2qWJdXxdYmjesvMj3pJtgIq3iR2105LydhUiKE-0VLVAQGg-lnjkCtj-muEqlko2_FCHQ7b_hA0VkOUIKOYUDHRtwgtaeNnUpiWk8L7GnBNHtVQ7_kHEGj00UIVC4CKiJqESXS1om73Xt1K1-bglZLfSKfjrAd6E3W51cKQXM7KOfmpRwP-9DThdeOBgjlmMFveru6NYl2ntiu7GF8JJAvjebF3Q6SR4AtFSp8zrZVjlduW3hzQtKaROHLBVgH1KaMST-Nfnkn4AHCbhYNGSZxg4J8M3hh-BLba-lM7o9d0cHsHSORXeuAg40qioVCZNCtIooo6fAdWSAULw-uGdAbRbrJq5nE-w_Lilyeb2mWnMwMbKBHjQO7Kwe92UHvve46vMkiSSX-wZYwthfbO9BM6_ha5BJOtwNggKuBXxqMVizL8WKdvdTVwzP1guDvuVgVoCYKl340jB_EE2V-L-YzbSdaxHi09Gi6E10MgdaSGhNqUJMZWXrezkT6pyRYYRIWhaaImIuQf6JybMUH5hHH8DDEKvofLnQmgPVccU6womuYosIgLOLPOetK6OEFlMsQPBn95hb6jY5vETMyhiVYAVxaeXgk5WA-NdYQ-F2q4kQQS6Ku858AaO9rXMYpkaJ0nIubIbdgQMaXzq6ha5Z0BaxrJhxCDqmHXA5-INBBqWDw0AgJcAlMM_a5ShZA4zVWu4ydzikq8PlnATLbFzOkL8WBhJGRyveKaSyknPfPCBvXu_1l-hwAyvFv2dWWBloD_IIJ3ID_qtjgT7epwC88qmQd5ICPMMdx4DjEu72hU-rTIz30ks970qi_dKVbgpsLAJbHeCCWXBJzJ3UKrC6sc7Kj3rhtelPNEJqFyuB_EJOVX4o7R0AZvkk3wWs3IZ2nE9TeuYckw-hHg35YsC43QSrbIZUbfonaN57ZbwyrnEwnhH3oYXaMiPqqywH0CsZYrO0QLuAeGJTknlpWHgLEVmz39-e3UZFb6WIGIfSFaZHAFpmQBiPjae-qudcbvvfmAgBHqt-Aq4D_06ySnELOtDWlFusZcmHQwG9b0OCDXt6KRTR_-49uuoPCoXlv2nKb2eFhXp1gp6m6WsH21XNaeLU4RF4PR6oRUh-TCLzyBtwCscukF_3gBvcTdwJ4io0Fu6YVtEJux_Ec1vCaQHlUVGtZR7JDVyE5lu1y-aZx0u4s6HheF0bHLYaFgqgOmaNNWwK_jldqp99ZhU7Qat8GcG8YLLEJ04WDIp6_i_Ri7OUf5xgTEkAxS9gOxeJ1EMKR2oB0pf7YJ18XkNqeA7zxXmufJNIbEmXOC3XQKiDY9-2UzTyqjzdZ4V2naUggs7DjAAntcHhVFLGOZgGeQ5FLJ9jfzFlpE8mAg95ZtVvPzYBNFaPoTynqUlukCH4eje_62w_u2TruBMSU3cOV5IqVTLMHu2uwxHWdA1zrVi32LMv8FEYZ8nPyyk_BdapV-SRGQKn1yjGml__I5ksVlqNWVC3BX4hkIxH9K1bO6HjWP2-cdRtTYtRNcOOGOZZv5RtKfpvzjIK5o6d45KDK-jp39_cY9Veyawzc4XwT7jkyL8U0YNsRTEjafcPONK7yWasrOIzNuUppBFdMyER_R8Q1bTMQp1sE-NoAN-0MqupZe1jltzga6i6KLWuOXtMm1_DeHHH3OPNq-kfVs19gbQD13R9kMNjgu8FbAWdoVreG24tKUVSf2nWKReXwxc3WiiODaYTew2ynZ3BUchm3eKebybh4lKoYCw6lLoclnD7smFkP4-72RfaTylVe_npaWU_kWIhxItYosjWGc_ScJhLFdwAOUaNijGNX0TmeMb3uaESw23E3Y0M2pAC_wVkaHvJEYv_nYebwYc6yON5oMFAnOmqaJ14d-LfhuATtTrqD8fGXTPi73rpN5IpA3fVklkyUuu0GWqvsRujNnEcN2nL43LPRwFvwYSeL_tXJoTpTxdgkwjEg4dJr6hImPIwk6Yu_a159LyNKIeZOSZbHi0gao7OeDiSM2_1zb_srjUXgiVPJ26r3GCz07dhcwqUS8lU6nx5q1ncCt9mjTgUG0qmVPzDjfRmeqOU1gPZhh2XQeiXp2AWB-_9M9vu2EiSeOO2gfYKeaFjVhBLbjOeKs9r0xt5JXpdx5IDB1JOfK_MSlKwjl2kOlNo7p3e7RIVB38MQoih95hSz5E6EyOoH2O6KAXLM3qhgcmXe-XJwQKOkA8rPRclgvN-hLSopl6mDGqg7dNKXZB6SQspQPiB4mx91Wwt62aMqWa7Ve-thQ6-oCq9IQTLT34xpCOpHWz4b8kSfr-WDg9cTDdvYIGEDGj_XlE6CK5PuxzezWGYvYggwVJC_65zkGHFBURkBCRHc7otAyxMTKMCTKZnYWUdUEGpTCBonYFPOlh_ApDPnh1h3feF1x8AEIoVkq_ADRKhKbs28y44LQGp9pe49LdsgKN7YT8_azHknz5frvCUQJu8aiP_TaFCAiZhUc0JSATHPv3q6ZsNoUzF8ZfeSWuI3ZpQyoyMq4wxcyH1sFNqtIHd_iS2U9AkEACp6q6FAohK_O7GaDr_T7VfeO3JuRL9icg82WtPOtgJ1o7oqZxa1lfypGkWAgX_KF5aytblSoxlwn-Zk84Mf_YlbJEBO2mUa0Me5uLhM183akeG4y06FR-ANXrsYxrGmhpIWfl90WAKEG4ExdaexgzQOKXedTLOKnIwDW0ZSAu6O-Eiddn2w5GBO93OGEGQwkXDddA9PB9--mdyHgJM1OvXFYIWtziDLZ5qHAUrUFpYUth9B9mV4TXXLeLqx25TO7DL9czT6cGPeYNSOR3HpNdw93Pbro_kDIk-4zrmhlLd-I6w1tSisK7veJE0Y9Svvf6VLky34iV0RlIw-Z976oPP3rVJpSIujNbuFm84V2EvHFkG1oaHoViDxp4QesbToOdhl8GfnHHuwPaT78C1rwucflil_XkLAi0PBv0uGYLWaaAVlhm_lNZc4CYd7qHcdgma8dL27kHwVUJctIzphtV4yAhL-06SY-kwR9snNogfzDSuuNTVHPofu0_B7qA9vjwf3jeE8WJUbq0HxPSIGMSvJ57uh2YzRPWnMJ2PmARWgHAYoWUsZknHyr7DlKqzV1kxrLmr40xk98D9-Qkkq3enbEazhNWXRTIGMuWQbM1FQB3VL8GX3Xa1TjujWQS8_nC9LTId1XzNWsSCNOg8gHXqvt5hAeJVZ9GMTFJREPCBk5ts9odm3N3bjK5KgA3pNahnOS0u_c2auAc1t9C_5xqxEnIRxE6R1lVHz7hDTebYMcpldFI8IEuToExCjUUpoW6FmpeJrv16hwzTqbX69oToXJ2YA4WYCerDob0BAMHKWDC0nqPJTp9wjq2OnC5YKmMKfJ7lKhVprYG14RKnJfOJdChRpWQH2iK1Hc12sCJBJT2Lvm138cQeRApo2uUTs1dpJ-faoPvb6H_Wg-9ys5JsZtrzUXVpj4ttC84M7dZnbdyEh64iOoUINTSG4yryVDfN7PokiuN3DHuuXlWG8hkWAP4uyZg6sXdeSBGfVOjmG7Tc0zNqxZFkCMo9XEaLk_Zz6X7fQPM-MQVkSrb_0-S7tNwcufe3Y0nEnKpM1WohnyojInkRUzPWLUcBukzYpwuXg3MxxayDLwfjfybNb3hO_aNF_5mLz8s40IotW2Oxa1eKfZO5igty32jA5ipXwPjJjBj5yVgmTESDPmYrPkJCdFUtJJpGRTRX30BbLAybWkhJWBGilR-f5wp7yHp1pAcLl8YIKi-Di35kCCG0qtTimMeyb6E9hQww06pdDKAuVuDmC-RhgG9-x6MlmeJgKeNu2VeANq5lIiAKuDEXz4cs-TBrC_PC4j7dnaIbvchVdxx9Regcqfa2XTeXsKJB8uGwHDBQ_qu6zyKJ2ANyqk8x7Vmmz3YNREGNgiiRQK-zDjU2ZRJN0DJnHxdFMYcmywKz0QOab4orE01eqaG_Zy3vr7fDLOMJOl_puAjLnF7xiVmj1UWC2FwoWngvCrGO-2wsHB7fnvJapv-NpIoW146QuSVwhMROuZ-5SmzQz4MlF-ARtdkEvCAO45BZTM-AnTlOiMqMXspKrHGCiwE_S4FStVdHT4D7m6Ha4q_BRD9nBYp9r0vP4QdsfsK0pegYawDfZ3U9Vuk0dRZp3Z2QBXDLuIs0-0ol7_liDeC64KCdL2zrDSQCXeSQGtDpBdbSDf5xkzQ1N_IStAz6dI_FLbLqRPfE9tf3AfA9k7j3BwN_K6eeVfRueVnf0VOXukHURPwMTVE9C8IdPA8OnwLBD-k1YT2aV3Aow6eC4Dwl7cW2FtQ_BuHcpjMfWuJFiUuw9L8bLCWSlJ3rYdX_MYv-9mY--9d3r49p5FHAoK-bJS5yxHg2Q6Eg6DrSC4dORU5p_fKxrPklgOJKbZoQyb96_dp2qkCVgPjN1naoHfhgqHp49MxalqSx9n-vd86NTSXNw22lnboj4qAsLg54P4RSayO-U6jvj09ZuGtLGrCvKPAgHl_xP4dtpdbOC8OJ3nwHNfxAgZr2P5JEaFHN3RuIQGH5gkwNEA2otd40YptNJvD6r4gasyBPNY15jeYYL18yFQobK60gnXQweT_JXTlnGgbvgoGw6rJ2nifXw_o6Q_uBDQE9MOCJiN0FoivBdcwk-NHU-nNg93U30q4zbGbJ96O0E2X2qRyoOaEhBKAqkHrQM-NGjX7aj1YJFCxIFtQ00OQjT0vhGng6-3cB01l44mGdDFV47PZLzcFrGx7iDaR1Oy2Na5rOLphgT1_zvVF2mCw10HYxOYwSDnm6uqo_kADX_HQAGxQx1xDZ9iaZZGD00hdoZp55kRPGt6uZ9ZEEXPWUpAV8mPUlu0DcK6rr948_btFuMWo9KrVneCiF4qxkk_Q56aFoRa_HQwEEuh3sp9PSCT9wIfBYSR3661Ox7C-25rHNkrdv7XC8ArnQ7xT04y9JYOF_XLxtOLlAzscUryz56Qk7lexv7Qqe80fTTSRNFseDNFCxLjWm6wAo_kpaTOOvFiPUxlYwcmW4hy-hW8zH_JRVPaBCCKR_s68yEEAVve-8q0ePzqcElS4Bt8cFyU2kqodDmzzh2HAFcrA_ScDciNbwKWeJublK97rkWmLCuPZwJcvKNT_FfgYU5OxtF6G2TVVhUcbVAhPQFFegVn_8hYkZ3mJFkZa8FYYNMSGn8nssR8F9RInU9PFLfBiI2_sDJKwfhgLZ9Lb4x2Idx1-XNh9pAFkCv4eRKCoQNrfxZ4VgD7L2UeLTiTBOsH117rSSF3Aq5kaLLV9yqXc7bB8ZVdvsQ64ET6Z3sNM6xk78phFYy-Dnl9sM73dX2qpUefxdItLtql4E_jwm-D2qRdGtdkm3FpQhYhTKgfm--H3hj64AfDQP-7WVykl508pb7Ultl6j9ne28UqtsV6LHaXX3Raq78sZZl7pmkgp3dSZlZXuo0zwyh0eR8aDp201EdOqbG6a8Vs7cHo2pjy_31ZrIGA_rZhFRN5uVohUvtPWCwwV3D6qq9XQRFK6GsiIMgO8oH8v2AB_qopEXWkStyn9HgA-UntHqncuVnnVrprWFYfWVuTDkJhTC1-i9ZgdA1eUvZVxl-I4SfmDG540HUVVRw-Kt15vS7K2vc1FDiQA91Iya8eMjVKOs96Cr--cngQ_zZw062ZqKp7avO0EOTamvz8Zi2a0XzdIH5dH0_9_kXE_T4U43Ud_29QMElOxJfxt-9p9lBNBjfEkUvBayPX2XWlePtoQL89QLg-Xwe7RaGu0hvUiROaArk47B_703dSKDll2V5eUKc5f0H7icWyqp8u5rnjQsafBu6RCWHr7YJ1Pk5TBaw1qQCvNA2Z_FVZWN18No61fV16DHyjoiHBBjTROCS7m7_3snv4SDkoiFvIswpEt7pbYtbXLp5t0EQOQkWQOITojrGYIUi9c23kdiXr3EoPsvSMKlJcDyag25wzVNfA-bfiMCkdHPqaaTFBqYqlwA0SI6bwHKhqFKdGkrJ5YIxgaFLsLwwiNMSBR2wWXSFRXz-HCMewHkVV4LpGxkzeihWXJUO3gXeJuVY1EGxB8U15BUtQQcAAe2Om9KZtOsS2kRtO7vZq62E8jl7bUbTmw0XTZ4eh3xg-IRiK1ynur6XqtZH1kNQFq7k60X-6cFwDS7eDGdzrgl-Kbl6VSzxpwxu5Lz-KIjV5gGBUcOjnIpRuwY_s',
+                        id='rs_02bf8d298b645b0100697c3521c9d481a0842be7ffbfdee51d',
+                        signature='gAAAAABpfDWTHqH7_9b7kgcIE8c08g9zwhTW0C5JXo1OPXFEneKCmAst-uMsZZ6Zwq-YS9uBDzVfNBJrlYPkg1rdFez1N7imsWXrrAnRlSFqPIOoLglPWWe2Im9z_bFgir5RaPm2DvYIiUOos57Hqw7p-V3DP9BA_ta_sL_T8D-8kieZq_Fb_o8hlYk_Gw1Cq36MyTpCBX4H4N-RXLqjEPf68oVVrW3MJLVWhs9FVT6XgK6265wusIb3DbWcXp7ySorfp1xUZACP40eupui3tKnsO4hkLuCtnGRfkmpzF9gJ0y-x2f0ZYN2yvBO14TOHtPEE-LXVmYBLIPAQAO_ApEMq90ibEibggO3EZbElJrNTJXXKVtqbrXAIYi3-jc-Iqj1z5cj1rwmMJnZX7dtbfT-iCEg3KJZVg3rtkkNS5KicADUrPB5EpGR7dOKXdR-6WVKQC0qDjctdyTHDeVR1C9dRiUA0N1pOlTuHBYfryRsByG-8zjBnMPwSkv_uCorXEpMStEI5VBLwjyq7IsHEqJWj-lMEXDaL-yudqNA6lDxAWu88dRFlhlVNYJeRQTm0Ro6XnGLR5VW1Hqr8yMx-9qsSmD1mRr0i-VrwHXFjzKnxVolweIcrgreECecOqbsYAYsteWxgrJtqsYh3p6_tG9PtnalH8RFWeALF4x7wKaeGPuNO8dkldiT--5AeP-L8Z9ay70FfctDKPX1AROSE2jT5kA3qVEuM800PgENeusru-Ngto0HqPXfpZtyFVHgdCMcLU4OHGLVHn4QjzSCKUOhZy0Ktpc2NVzojFgCUQY5DuucyC8_0Tn4rq0bV714HR830kTi-8a2fpGMVLP_gWRCwota5XDWcfXgFRWEXE0NJcYkneazxHxnZQwSTbtq1YZCCkbOZR2qFtKOXAhWf5NQcI0Vekyhm8G-5tpDmNsfM_ioTpRaUcRjVdkIGaxQ7tAAR7XZIeY9nNkuWq-XA2PEODqtmtHWMj-GNlkPA-l_0D0S5mzuADLd2Lzfzrtop18YQhs-9j3i8-pVNAhMP2Z__i9_BksDFTzfuww7otyHMMZA4w3E5iimVttc7Crgot1CeWrn8yJJTHrxwgw8kDzngkTYIGMUfG4JOiYjKJZ32UKi2uYzjvCQrcKVxPby18BCwnlP3kLebEe7A-SXhpZ0-1rI2CgYd9L6WpCXIPSqX1DKBNGVcyBS01ak_-QmUrrot6sJYbfccCNWeAhkA2yLXv3P9nATasmBnwO5O1bPkBY83a9c6Sjk9lnp7TDwt1a-UbBrb34wfnboVySud6XAl1_q960P8Ghwtsb6SrP36gVtR4eUoxFA4tqFMCb9kaQaBLsmMK8fpjpMzs6YZ_dekffgaaN5hamp0zyDKemCrB_-ILNLaWsvkV2LAqPHFuGdNgtUHf5w-22XciLWtZL3EjOiLrOMVmR8LBGT2VIy22c8BhhOoiJs1X-z9SpB8IjI3RucN7aZv5vqiKRDy7r8KBaa_M-_GUZlyoQ69YieQ-SicIMJAoP7eYdO6IWsVMq9G5ng4uxmSo1OgkxerqgTrcfPlmPByaZUQggCXUHrUu3W6b_lyq-ooOIp0GuuoJdCBpoCZBUV_uysI314nppFMBM1iCLkTxjUq3cOgqtJpKbNwaMUblJkONfm9iF2ngj8BjVbMRczw0TM4s-xY8IU-nwRRRr3lWVPvoAQ44mV3UGnC88dGT6F51lCSgphzNesvZu9sp-NFY1hrsf2Yqt7FVoIKGNUnZooLMKba_rJULg_yD28SMolHCeNmSwZ7KZ89lHy8VPmZ6t_5gbDCNDUZouFt_N6of0U7LRrco36TJp9qsi1doNK2IQxh2oIea0maGjrq9g6w-sTfUoT2A2QzyqNWckqDjU7UwTYKyGgSjgoBK-eWXM1WT9N2V2x0XD8En0fO4etI90EbDQ09O0KGlE6KtRx7hrz1qg6Wq_VUM6zUwWaPJnZrxgQmfZ0cyTVTbjRMbL76XtiWasUNNWXY-c8523HqTapdw0w0Weqyp-kUypu5ul2TDM8pNs5ex7dvtk0l2TOimLiXVMaOGqkn34-j92BywaKvDN_0hAOSNBTvWEZilVYgBVeOkwJX2SqvjXnqbh71gXNjmZrHry3AoZ397dsWWkmO0-IzKnrWeuZgLaOwJW5nha6Wx-X3gEp4pv0JCwoJ31h49DFthm6plAsjLR36wr5EJAxFTxtKkKO2z8kKE1dolhrn-QKoejpEqv7AVRbdrYHcKB9pag5yCJGOxd_i9ah1m-CD3fAIR1YaDgQbrrfIesSlpcy9omqdrzcfnVpqpjVk4zTCHPQO-E9REqrFrHMzJYfRpoGSnMmqgp0nJGPJzXPN0g_Sr4IQabFcHBcTXjEzkXE2gmtEr2JQzX5QEaI4IQ8thwduIxogzap0jJ3CRjZRyamzg60DszrSKE5YKNkKb2AQQEAQMpuxtXKtoJhW3ifpGd2TLk1fJbMivZlUzU-aulZrNkXmvPn-gRL2don64bwMtM2fjL1WjfmsiQ65KXuSjTHuEkPJkVhAskHEjlIid3KFXl1VCyHniNSS-Cxpnc4arL3nQ9susIJPK1c1pdz45JUGG0PnxXDp_s9gdhxNG4r08hMDjwDLKCgHAhBN6nVgXhSO22B1-ToKuPd_FMK6U0NCGguvrijOw7fDEFXzCrpeUUR_U-t1HmBoyYfo9RRveJUrSpAwf4IbtlUB85V2s8lNkIi6GUgh-lQQESymVnS9lu2O_fHkI8HKUJloWzJ9xg5vMHWLM00dKk6RKl0f8ul6dERpfzps4JESd7sWBYds8j-0HwQE6v7Re8VTuH1JZKJvZeyMgEP90L_kiTo35QxyisO7dbXXTn5fGM7LpLaLPYX04lFTvRdvyFrLj2I1keFyhGdD5Agl-uHTyW_C2Z4mcYbpE2yctnIlEi12sA6oyQzyZDzJXKTe69y0HO4v2_74WTycNYCjxw0a8qVtZ4eAu37f-XU9tl5z9HWlXbpaIUbYEQZ1IEetSyXLAZkK8-HLNoReAilGGbhwceAjP7QSKZO0-Lal1rn3cSBYnY82pmgsHM67P4-OKrW5_f3YllMBZndWquGIjZnZu5EtKhDC_w5hAjDLQHvo__73c_sNH3JcF-ZRtmyHTOlfuW76-ubX1zK2DC7JYD9KzHNXiWYerkf78dPgCp1zSQsr51bCN84snmLKhMWujWd09XiG68m9jKxPC8ZHvVw_In1lNyG72jQHDislPJDcFlkoMR3XjiAIYaohxeRE58rQoyfeXDiv7_9VNYbV8ImQIPxaTCdQmnSEcvkwk0z-SoFeT0gogATyRz1lthgA__u28AltiMTuoxT8tOET42pc1eTY-IcRFVf6lajOAKP5DrRVvCJU3wtEpbVvRnwq_3D4xM-y5saEt3HEGiNT37Zdpp4GNCAInjJX0Z6y9NiVq5BeYpmNemn_pk4aXDy6QNe9v50pN2eXxmU-gVR_6DJl-TxnDwKRyHS1Vezzo6p9_Az6aVQhUMZ77i3ftQ2W6XbUC9ACOffHvsl4ZEieOWzlyUcUeDYNIFlSrhW-ZVmk1KDwtu6OswtsIwb6CcgTjSTRVh8nT0BLhR_WAqbmxQ4yysJ0_ghLhM3p8u5G-5MZPUTGSFhLnlX-pRvZISfWb-OaB_VbOsp7YSyPxbbthcz3IKP1W2WkdFZ31rPrMYhJhT1hNtEbdx0N76itnE0IWYoji2QIhDHMTuq5j2s7CTM6QMMgKC44q67u7bXeKZ88-GjWMakwKkFYGl1P6kGYs8jS68sFLMf3hLizGMF8RHFpWz78OK2EgheSV7cKkFHFAT2qcT7AYZGf9o-va5wLdt64EEGNwR1a25UsjeGumNhZVJs_-RZ39axEaLyry7sTX4jx_6GyzgW1BGIZDIrDI5vy0TeIiJQcLbOFesgBqRDkmRazwm_Pc3o-1lZ8Yg_N9t9Zd5aKp-3dMfOSDUE1i_pWDXxeSbST_dSDGqYwvLeMtqTkYMZolPeuBX950tZ9B4rbPTxH3PZh1sU-8Y6DOO4MBv0TzkBxy23EwS1bWOwXsLkjonWBJmAIfBRotz5_WWxaFqz2jItX_PbMTt8vkrcNE0AaRyYQofRFNt7_q_4amnRpLEOyLLMC2rjOChpTkZ0FQVuvKMeyiFJ4BTwrMovjwz9jHZFR2Q4TpPqOkotjKydgrPM_Ua534kbAzElDaPeDgDMqFSRd5pak4Qzrilqjx_AQwRiUeGwYXxgdeNbhLJ1UYNYEaopKKRUNZN1N94mENLgy_oW7fSWTumU8DftGpsXVmkHl3od8o_4X_cD2WUGS4te5YmJhpRdsIl-kU6ZT3NrPqGiJqK5dVMK39M1fJhHB5MEiMDIPILctZ0NOBeS14o2gZ9S2GKoducHsaGRMhWi1eyHZNDIsxWh0EDjXzIUDO8fC47hMq8QVf79LZj3Ku4kbFIJPh9em-reV5hhiWuD2P-vy1ZynyAzGMrkJldAoHq4WcGT008tdY9tNYTikP-LmxNKyI5AKwkLPuPR1XjDCn65uVQgJCgKnC2oDBEsv0AHVnvj0wkMhFuNMuUohM8BqRq6RzBNl8CMp2CIQsSfoV137lLmDzolIPRdIswnuBUdEKnINiPSQInJDTfyQ5nc0xAEKC0AC_-dXNGkKTKv_Dx7P9tYHrBimw2wpP43njwjtRJCebY8_dPbglJNTaQ8pN4x9LqP0IuU_xKJAegMkUIL7C5iyiMph1d9PDfglrhgSH0ugy6jyCTOxFe8HKJoh-ioCZzvGb39_327o8nnKLvhSyt2j3QSfk2C0jkcDXaTpW3LHhM3fYEijT34WjuNQVcuOyyoH8T0hQznHSBIu96Xj8cdOQPBDf_mjdMoq0-hZsT_w8C9LD4bglv5ibbkvai9L8hvFkZu5AWp3jm1dWvQPYk5nuRLgY6osbcciWQ7ZwdIA9fDynKZjb1smOqN5yVJgX_aeGJ47jT1DCXS9u1ZOZ9BQzBnAlk9k0i8dm99RQRzH-pNeOe0h007S9dHAFan--pfXdD2kw-c6WWi_000eLulSlinmokRyiDplPtXVKvGB7G_R91YGzZa_4njZQ5N3iuMRez8OZwkORovslK8OhWGQYAOjQXdExGkaTc4KSNkKXmDlgnCKe2uGCoL7VewPMqsChcyLEO4mlxMZY-GLBqD7knCQRTPnvaYLNUt_aZlnpW634HCWVX8JD3muRThP5gDWdKAcCOq6SWYuAF9d_dz8kCNaP3SjCsXKDru85jyIAVqsDbVIOIkfSnr9MI3ozipwur8_EZEISALav8jKQBPupr6gBdF3nvArNeQgFBZe8KiKzSpRakzwerztMuJo7K4_32KWnpIFhRW4-lw_WnfFhJhZCU9-K47H3sGgaH9mVth8d_O8wHHTuXV59i8GWFNiCv0NLlLTRv-Hg2kUj_AoP97Bkcc9XJ4Zb9jtaBjs7qHEr5Ydp_reIemwHqTAE5TS46zJ4P4ZnC6miyj7ibO1K6o_GP-1K7i7-IcuS1uxram10pqVevSFBkrhbla8aZfvkZ4qa3jYpQC1A-wrEeq8eHzKJ9XheWgpDkOyhlg4wFhE2izBKQPTfCYrPvR5v9vobK27gld_pW9Pu2F5HSzIJjoCvJWqk3O9Y_ygkheZErWwQkKwtWoE_utKtCho23xPpa0uLqyKs1uQ2Z9N3idXNk6JzrEzejcEgML3h8mWT5uuOAIfzkFtLbT2u2yrxk4RiipSICUKAjcaf2wvTxH8so90XFk8hfLX7PxSrMKOB6zderU4p6nXqAVwjDZ--9Ly35GA_IfChhSx5cxVmeVK4L7X9Re1kPR8omCfuDpRmjIgHvNrv9RQwZkT4N7ZuucvGZAQsBk6owB60gMTqE9zUBKEEg1psqU00MHM0KFNzeyH-tQtwGXEmMvxVSfdYFiqmn7lojHmaKEJhCeIBuKM_zTl0bzEu2-NFoRL8KzcR9H6wZ57vlu4GMfzG8XPvNR6iIsejpw8D6IXExZH9FGL7QV6O_g0EEHIv_L6uMiNzGo80f4RbVmEP-J5XwCqp4qh2MRmcp0Qp2QvXn-RM1RXM58-A5qu0ypq0FtAgm_msiydt0N3YZ-CKEQrqRXYzWxvETuVTKxvE8VODxdV9zvX5zgDsOmFV612Pyj7N__mdk7ZrJfvV2z7Zm4cWawo-aR59Nsq8ye4pLe5sSGiyobsZB6Ku_fZWqiLfYtJG7KGpSfDXnicK6jAWooqr07stRZ5pLgCSKVb4-M76RK9IQ-711pWdHZGrKQGEuGEN5cf-Oh4V5fUKWxIPQHA49lOGMIG_fkxjuaFPD6g_joPv_lcbjjq54WLVz8_70SBw3HA8R8Qn-9xBd9MMZkl8hkRpUEBnGLKN6E-wX_L-7QltGMb-ruLzXK-lsyjF4CiyzxZ6-iDCZDzhfvmdMd2wG-oOYoz6mPDXB9zMT1qqYPKF71Y0439cct86bziVKHYFg8JDvcf-Eo1jYCAcnIlfp6PPRUThsJopom0h811D5zw26wf9rP1Xinh_aSoosen6Ezu36aZJhUF6GsMEEnrdDu-oVMJEY3prWKd9ZlaSCdUP-5aQO_L7OqeMik0hksOleRCUs_HCCzgjQS7XoX9MnNJ3Vls-RsKGv9JRQ1BSEQDGzrikw5ivubsH4TKhi6KWV3wsIDpH4jpxbC5dTj7swdqrd2Fs5KJcYqRJg9N2IaO8entkMHPhwg8T0Vt33rV60iBls6N8M3Rpkjw4e1tvG34FQIigqruzbwGxvKjHiioG62LGmJTk_DxrlwRMwZDdIVcCC6OejTK3PcpdQGqmDCGoEXMo5KndYqxw0speuoLgLvttC2ldpFAXtnQGka7-ay9X3Dfrjdq-GyZqw4R_t-Y4-r4OhURyCOp8aarlWVBN6E8NzVY0CRuHDineEjNtV7nGMqacPRHsDf-6eU6C2z2ZK4ML8Zw9fCWnXG6gyHwckvh5OrdGNUYlgqG-Ql0CckZHlAIj_5zB9T1WUeGd_QwS6n4HPvSMjE96qM6bdfJUpWeiWlZw90uxJCmWLl8QV6oGw0C9MQGKx_5sX6btq9RCPc8-aRQPnHScPuY6lp0yc5YVp-rv6FkIe87SfucRlJYkq-JrySRtFcIYII0oad4qQsQ083M9kusIjMU5poc1KOSUgSPhjA1g1_HkGruiAwnEeEYazHOyKyn23Ec298SD1KtR8XgC7eZZZuWwBpAnl2eYJy-NmuxzdOToQoapJy3WcnMS11yXTJrMYqEELRCFz0087Wa92Ghqw2VHf_7RKg8lQr3IIcGrMQnUbM6jkLy69PpDAwdadPMmITUFvkj-sZwAtDzm5aIIj3XLJKayX6BjYjdY5dPWCXSqPWd5Qgm8Mn6dQGzlulkkS1zQxyLrYqFzq3JumnI8ibjK21gMdKX3La_fGKYJSPrxcvksHE7kgpo8Dg87rxXfT4CaYdRKjydydBmzOgimdB0NPTaexfYBEUwIr8BHz9coAmJ8LU71n4eQkJw-ysjjn56b9smH932dPUj53Q9fiKwrEFuN-3PGJg9LOLeUQOkUhr594foWS8pIiKtepzOXJ1ly_kdplKBCWqm08nNDO9844tMKq7zhgAfiMkx0EhfN2SbsUzcKpLTztDWkND3SBEtpOArE1EPmH8PckCt8V38-mnqghT5xxqvUfknTaXYdoBhNoRair4dJUiu7bfeejQweTu0LTLroxX_3Qi3OrM1K0GwS3U86sr36ulBoD7Br8ZSbrbPF841k0LYDdvKdL8Q5Lda-P2ZLERMiJBqoDgHs52qKzHi7NbTXzYa94n-NtZbuxedyM-VlrItyhBJG6YtIzek7SHjeVSkW8vnAaGNQrI-jLgsRecMm_36VB8Nenn7C8JxwyY0Z8-HSSMhv8s1D5vpOma6ERpv6AbefE8V3U6Vn5nN6TfhAKIodwr2lIPTlw1JNGKTUhm7CjWqERDJdSnh98uePSLVbs4MJdtZTJbrw-wzBpzIOF5yTzK4rmHdIG6i8QYWg46gbVF4IXjVQSdTVriXJVRfvyOEd_CpcQtc3fn4Rmc2tUG1sB6p6cB3uBhkbmnGUseRk_2X3LWLiQTmlRbuqKaY9GQ7nlnr0tY7IWpyCCzh1b02NtTJRDpsa7yISmJvOBnUTY0v2FMng_o3HEa5_gbogIDly0ftYbzOxmPMkC_zJCZooF4Ci4SaXHjj4pMArYiUDPBMl9CbpBpoK7iLnEG4CWTTZwJnQ7hy_XD2eoaWrBYzZY6N0BMJBu71dsjHk7_UUNbpYJJG2dmL_VxE_2etSwuKdA9QeIJMME74vtEiQP4S16Bet2yVzvnMWU9cu-iy_T2JT0tAmHdRTyKE5B-RvbfwQUc1EK-kzNPMaTHZ3VWjkN4RGf6g2IVxZp3f7XReBZhnPVmmbY-aThNYXuJW5CbIE7ryOc6JjWmEzU52Gw-LAWf2nFOf--yXAC-QlzuvU7nhSCxSA3Jj-kFPGub0xUxRrJ2Zktx4hldOim9YuKIOnVlKEuQln5hVOfqeKmHAmcMCBGXQ70ZGLi7Pp_gXSlarhJw08k3u11BQnToE6gAs-DoiKZAQhhXGkGnmArL-j8IAZFj9Np4yWVsKHmI5CkR-8-u4vuwO47_v1acGpTJOR-Z2Gw4TFxWkFf-Vr3bUuV8eATmWFx63szxZ4ooHIpnYuP0CgVL15thrCLou76MzuPzZYgXFKNCWVqQMAMNZbn6SYn6og2oqEUmWaym9FHj99aJqIpLXINxLrZv84O9W4n0u87R7IMIOVKNYqP0LqiN67pDRvfJ5CqfOcmXDt3HBydj-TI9F_O-2FCSyw2plWDRANZrhA0VIBenJDL3cP4tgxYUZNW0UFmaeVpCa6p4NByTjOM47VfF3enF-r3AOUeoW-fYp61Zr_0wCqJuoiNoXARXn5fBF1kj_eCew64Vp45YwCt7kU2yjXUpFNy1e7hSDN3YA2whsAin8wzsqThN0nqqxgGcgrH9CgoVNenVUmH2tgmL2y419-Pl0Df84OEPLgqXnhrc_oUcvoZBlNrtDyhPQ-jjeKgKxoLT_jR6HTDV1UHb7af_8v21lkLh84snzVbOfneU25eHf7eeMuQUmMw23mSXdLUXrCKZ7n_ECDzJznxDHiejRFuhtInqAciJIQxEMGb996Z_3OhpxWOZQkxJ5hSQ-UGM1qGZQsjSlym43ThyS_hI2zLDII9H-UkIZNqrwRyL-RBQY62EQpNfTjYXJkNKb0J0eRT3oMXfD-KlcmQhJLaJ2OQNe-NQ9oyRVttTdM47GQt5DzFfSmg8yfQzQ5RCRdAUleuqGtaPGC7_nSvx4T_eMl1bXwqxDQvpFHH-jFtQf9jZgpu96BRPLCx_0ujP3vIP97yIbG9Zc1qUoHa_ny7iWuYF-KlUOVAwcwgptDzMYkt0fURgmqFPBBirt836ZrZ_2yYjMAHP0Jm2_lC0TnaZDVcHqpFhmLLY4SyngmXZmt3a7Cu3LGaiA-pfVui4bnfz4-DJAnWNeE1PbYDPYKhwSDc8YwrdOOemyaze3pu0Xk6YxZ6ooQplyQws1CAhX6-jl3CIS4OlDVh54QlzlynT86fDUPUJ3Non6_8vkuVqg2m4qqzb4yEpl7faZwLIXcV7lVO6EmLCYWjYe4OYnCEYqZzhs5lUj6As7ZmpexaTMR1ImPML4uyMYr503j2YoiPsYVkq5qvv3LV16uL4FppFps7Ry5bI5OS8nWiXBzE6oC4OcbTJxToqRdbLTI80s5o1XAwgofOHHn2FrjIgZc5THOtvn6odM7iZqhiuMfkY3DiIKdzGvaIwvkz8cGjsSRdRKNo6thZ1fAXoaUwsuM7WE_1tcoGc7D023s_vuwm8p3z8kuBfskV0Ex0Udhs8lOI7ybkHijCkD1fJ4Ou3quXO_3mMuFMm6qncXQ70lDetUtodF0omrPcfshRIM_e6_chvvN4gjtJlfgjEuyakwX6VBPNgSbx-7jZW3cCwCF_QZ-6vQyleC7PHahlGg1iE4wPb3TY8lOU3mW4MC-cSdZMreEKxoX701ub5Iwya6gP4miijnWbsJWy-P9tMZpfA-TGBzklEUHlz2V_TZMTLrkk82l3pCX3ln8Jyx7eQz_zplW2ZcB2HGlDlsIclPd7b0IjTn5rdL6Dobme7JZQHWv4a787rNSabugVlD9BYtpRSqgShZB_SlP-8Zo519Volw3gNAE-fBsE3pUHUXjNeI5zPDEI9EgRmuKxz1RnoufKfhsA_ElnVLBrec12nNXnPlQFUJoug6Dxju61LaGrdxSMnpUVZVYob-e6-r3t8KYO5Cagi3ttEz2V9EDP6T4kS3uYGMr3kZy6bNIHXYzBT2uXIgO4i4LKGkH7qExz7x2WRIoffOPLigyf_CLVb8nQOiQq6zKx7xhhYlq29qmPZhTy-FhsmadZqUghFcK_N6ib3zH5kv4qphoxmlp_kJxW0sCAJXDuNI4T2zEmBT3R9eTRzMArPBwDlMJOgOHPBwcdImLlDA60TbGLDaTwcUretpOtudq2fPADHOK6c9y613JtBpGjt8TtOr4nblkNiu4-FN3U8yY-rgGJ7CFHzTF9mxGB__lvuRywTBVrKRYgxEVvUEzwLCjguJH8skGBvhsH6ALQE9f0ftlYUbGzQVPY3pDX0BjiQanuggSOIoOm9HQmGIo3z4B9x1aal2eNaUTYAEOEcQb6C8ETuZS93SY_z0y-M2038t74C2iAO8m9q9LTXwLuEIc42dmBq801oPPgDXe5nLgCkd1ltGqd_2cfLHmwRlTY_xfC0nNGodffiP-xmThwMlS--rnzhhut1jEGwmmCt1IBL56NSDXrt4U2vDlwEJkpJ4XsSyr9Nob1u4aaIj4DfTkJG6tQEIyr8frJbEWsvT1nKZLNvk3sbDW8nXSx9qhTiE4dcK9Tz9baxJHXIHBl7PtxqWdgiXuwK5tKsufNoQKGP7sJmNiVNYerX9AKFHVFEO687BD7uGYDkovbrr_ZbcL29uCyZOZtkIyFiH5fYOQSw4LYdqEEln4OmSvAg-KdFhXcwl0thG31JY23WJDoJ72I1cDsXOaWLQ9jiA-p0Kiy2_ZxnonXGlR4WovxPwnVgCUcJug_RGXkbPeo3TjaA-Y0YSUX6jOh6OSwl-JDykeAIr7dXHpkZ4UjLWY7wVJD4UhLUVnu4TnazEVTIE8fv2cv8479bIXf0Fd6kHd8Ex6hbAIGZO-Ia-rWKeHLxgO86GmKPVY9VwM1E2V6nuZFXZ4fX44dIoQtDm3c1IhS7fJIZQyP4WWXkQ1WY1U7Lld1x_pP__k-Ye01U_0oLUP2GFf-cgCGvMdR1YKS1rvM1O8nDKC8ycO0bSCXFbdWViWqjy8-iAhOQPgh3jUeSh0ToRiGqP5M9tYRgi_L2RZDvFg2_P0GxXptyap8ZKaL1B45bhguQ2G1tBlmWlilPZ2QLnOyZDVMziWtXUh9JzfnYeh0OkVlVdWIup20sA_uF1CICyhHWK8OWTHj2L3ewU5DXiJvZP0dzQOsJEm-wqPYpMW5yLK396QM669wzYTs0H45-llEaxzfxTBaYo-r-d4hh1haZ4_Mw73WZY6SptgsqUM5SWu6-SFs1QPZeS8jWqf0JNi6suHnkClwmVGhm5w4UmwNNd7nQcynA0cSB_PihVeR40F-57khlLdHv9A0VU4ut-bfhScSrUKKLSRhKkYzON6o0as6loHBwtZPJN7337rCoLIZpu0uqvAje1pQgwAV9lL4mXBq7CST7viki17nQ8v0E4z2KhTGNZq-ToYv-oxnqt6NIkXImgA13SXTcDLyIfitLQgLBf54HSC6-_noWU6OOQ4lVo5Cu_qmyXOf8M7xzSu8ItZNj-Do0fyvnde5lbjCdqSBuoJ8cT8V4u0yj6CsrXdIezgMXS0HhI4McEz1uTSp5thkypoUxoFYEB3z-EcFugXMZ8IUIYbwIWOGpUgjY98x0T-tBu8egO_pCG1GwaK9NEL-dKuLCvTMpBtzncsB-QWTn3h-z3KWxrOVaIDItRgoAqjOsG0yF11oMVRTQLMYZAT9K7vr8LsfiMzNgQxojctbzU2QCa1NS5z3D0SSAOQNlhXEIe0K3ta0n0lBSqudfzXxm4mo3UqEakXyJ23uilnubgf4qucCG1c0tGM7wBYtfEk17iuz_gKHyt1SILbinnnckpfzgpYq0yID2y_l9uNe3ttOHeLNcvUb029mCE9wUjfHDKZIf8fePJx6Yekk7ZD7uK3g-GOs_v29HQxTLqwpTR2J8B0LSKnz20N2GIUXH9XKgq_mwiynlVDzz7Ex5Oyp5IzD-w95Gik1Nu8KLoRsOeKHTN3EWR9uGjsZBrd2cYLEjk1be6zL7KmUcqvovb29j8e4AEGH8JVpHDkDvvOZJcitjhFJ7Wqj6ED6W4R9sCvzqYEUG6VBJGLLhE1JKG1x1HZisMcFtFllozQ686-hVUeTDvC90nGgYov0TAGFtmkcySjbffQBIiffd_8Wf9M1pMmQA3Q5lXSGTkHrya5AFr_Tv3vEUSxSU3ziJWuKQQUsc5BU_Bje_244Lv5vwoa85APqokVCaD81P1oKH1TL47bxW4ODE0ebfUaLeUkkcIcKy7YHAWIaIN8vGXtltDqouDXl5UotQF1AazrjBhrbQsoIGnsnI6AKOb6LHjEYqjr0mzWz8q7f6EzOyK5HB1ur1u4wud0VqoZpzIZ8uId2TaeniW3e9Kjx6_mdlqwcfSpdSgz7UYgBj_GlwxBOuFJ-OKJKC1M0Okvtab3qTPWydIp6fdEbkzeOeQtzTbIN9mY8UkGwqf0WaMNgcFTeJU3aTI7XkdWThyD0cxRj9zfi6VxixvjsXYnw99nrSqphE9ctj7081AuYLFmnKth11o1upuNFQ0hccY4Rv35wFfltY99AYqqBEDy8w5jPVy1C_ZXrTn6rlYh0CfxqLadOwbfNySjLXU9lNpt54H7QKPdVJqcbAH-WPT5Xv2Ja8Uo5oag9KofPI4DfOUrTSYHzvJwRI_JzDGeP_He1CMGY7V0-aQH1mwZjEADDqenOEZ0rqEwspgptV0w74BZsAawz95L3Nu9gnaM5ojL_1HdO0i5gF58x6b5je0ttoEMztTc-YL4WFIAVr0Ohw8VZFy-pQuP-MnziM-9y9nkGKkam7hD3A_dF4guJUe5VDrALS45g2wF0jm3aOzHOjQ9e7EU_OR77rJ96Vkog6XWwTjiTiH5RnLcJHhasrVy_1FQvaaUdUWTg264vwwo8D_reWMTp4xih36EpjaVHdGBhure_oh-vMIrHFMRx059pt8TXGx88un9NYg6qCb4d7P1T4EnQIr9CuMbkVuJ2Ugbt2j18Ye-EpUflBrErjho0AG9D7pinDEx0GSNhf92gnXcIHlWUc95mUyjZVYQx2iM3rGrGIHI4QAvud0mlexZX3r92suOUeqUAuNuOlOCnMvXdVKhzzSihGfBM3fX6sQ1rOpukUSba8qTPW3gmHLbgul2iOlEhmYrF1QLFbsnMJCytZWH7er-71DNjLGhbkEpH6tT25-ymYN9Nv3OXZ5Gsc9Q35usnNCF8FUdez5kzgW2uQsUBVVfR4f9MoeVsiyOJfWm950F5xROiOsYJWA-EVh08WdGLlDq2TF8HJuPJdub6M1zySNNdR8fOyT1_RijSYvnAs-ofDsuqxa1haH9UR5L16SY8nP-qqUaic-Imm0D2UUYGXbrL_OKRGnwEFlC1-6iabKba7x3v8oKEb8AkZyJHcYExrFVOJQ7geviQ3eAgON_DNSIL_Mzon2UC6EBRO0xkaZhcJ0Nd7H4ZMUHsnZvsy7ikKRg_GNMXcjaOaJKW2VIRTTtK4ldld-MsttvP6t0-xk1LQFApylK81hekMWSFm3DWDvHhrUV4LHzHac2YioLv2wyG0aAt0JLi8qvf2CDVRArD_hi3aufNRD4aLEZtFpaFJPEcfGFhsctR1wbY_mV9MEJ3MvWA8302oKXwpjgQwgNw_o8ckuSeCCaIRh2a6APULynnmFSMb492o3JimapB3SyqTewFiYbbW5mfehRY06ZyzO2SwVGb1dWwcD3VWK5MaLiaSWQf_XH6AfDF7KyR_shpUD26Bo7JijpKlMRCK_xfES-koRim2aVy7PGKSArsI-AJ8XOHyS0PFl9vJgWXaw9ccPFioiHTxECCTNn-5h1HeYSC0A1vEv_vFKFgrXaiBpXkrns_Qwpg2peR4jayx_HXYtaIiis8CF_Bb4bPjaSowdM7Ry7DCBVOP-Tk4vER2ZuHC7dsDtwX21Bi_kKwzSWMC_qF22JPI-yGmK3qQaekGzuDlqDjeTGrkGBqmbBzwx9lGIF0PCsvFxGCvYNY3C1LCst2rEqJFG4dts7ebd-1o1_neMnp955eJ2cYvMQsRb5gvi4VvfYey3J1QEVDRVVynWcUbQl5hmqWdFPmVDHMWjDWoiJWMq3W8hN6g-uiYVdhJP1hu-SAFZ5sVfLuILIFR-_8xQG9WqN-Z0TjhN9KljZdYNHgwKnb58oGYAG-KP6iE8xZsdr0VQ-7RgboLTLt9QnLskRWSpIuvv2gbjQzZKMQtvaIz5mtYUgK7kYziGeCUveUbmz2fQOVnV-ng7w0FCBI_nXSQ_LG4A-r4EZuxWbYmAWLQWcWQ24vvB268tAPhCTC-8gdY9mJJbKb3my4lPQZfHNergnWDMjXp_ix25abn6BVqHv48v_54Y5SnwrB4sOdnDq1-cxnRBZrFlWYFNrSSWByNq33-GM0Ydu7-sgN77GOUvOmL8EfJ4zGvyxkdWOqYtyyM-yCJelMrmHhlEt_36NKf2l3MHtvf0-g7auAw-UihU06qe0CsQC9J2kqnfTpPPpJoXSqhe7wAVN4DLYpFtY_dr5d7txurR340KxC8gS2qaSCB_axLqIxjx7Q48uVJpyuXCZAhk_nKdvg02udqaGGhpZpp7xJDjzIdjIlHuuMaPRcSbC3ikvSnKPEZbCaZOvfQ1Kr4mSPZER2GeukJY9wJ87p_UdM_ySKWoFEBvEft2vD-qn4lgoAU6ene58cU471CwdAKBGWuOfQD6Q8ipZ_J0bZcMiRp45Y9fLFiR2zvMUnllpbRXwqJwo0lMQaA7aOvm5EXBH-D3hCdF7WBW2A901gpFHJYCyCMhRV_tIHIQeT2bXM4HecO5OYfgDM64kIGqpUwiaOntMc2IMNdx2zfU9QYOKD6hp1iOAka1gGnBYct3QzyyczUGO0Jvhh-IWfWfIJtP2SEHs1kEEwOl29DVqMqE0ntN9HJZdNkC_PKgnYnoWeeUtcsdGk1_O45DPn1trQa7YvxoXDxRIfAcnbE-TJTShWKLG8bwVx-_mciN1kCAQDZH5RRx7Hgk9s-ybHIwPWchJ0XxJPCOnS3d8jBjLUImJJSS0-7krQb-JO7km0VVeqg7j33z8RSeKD6FNYB87zD6hc4H0nAhPhowchdQpuuSZ02zBaFeX5Xw-8jJFG8iKJwEivfYU5MWO64PT2lXX1Nd0F3jlMNmrdh1Kw6f9z7pC0Y5vKXyeT1fyJrKk3pwaZvDmLBMVjRlQT3sHsIlTDj0pojhGZFC0C696DMDitplGlULE1bFwrMyDh2Nyuk316A9_E-T0JGqQcMgLdE3V6YmBxQVxGP5JpnevIhf7zvMj-EFHpGDzpnLmzPanfH06wpOWM7Hl2H_nurcflmf__O8lqZgojNiwOfjfplgU1-nq-KmN7Q7wfOdc6qqXaeap5RRDpaLxHDRIzg2PlMWfUKT7it7galNE4FUp4KSr6JjkkLUPzwqxX9ZS2SdgEUoD6WvrFvwlf-OkQRf7hncT1vVPijwUPLCDMFkCl3hTktiqBcK9-l9PtbFsIXIyNYziPEujlytjxnM5KodsUIzGq-y9OBLHPnxOcPUD9-5ZGAyAmUl8V3PuVCZLBK8R9YJ6XQUROfLhuOfKEJqIMM5Y5TTCmlgGskwRavk6lGhBqRXJuauRPUd-TKxXit7WotTuJBbpebkgZciEyrODr4hthrGmB5SAFRuCzMM1_jT0n4pks9RjGYjY_uyjZndFiTXAIHTptx7L1VkrdM15kmK7BU0a7DsKWP9MONMGGIOTlUXA67Ki_BrF5k-KTCntMI51AKPLO7MC2GXkbguukmNvlp4LcTlTbE6YS22o4bATrgpXKzflYk28zcaBDLEOqCAYQKBN_n1zUa4tFqPB57fNmhhg7q6Rn_kVFWYbw-85blbXnTQhBallw17wJNJXxTeqdpM5PPHmC_GtbUE8cYDWbvJwlwAnUUjtJu49naIinK2-UsVn4d827mABH0meBHJv582LcmRjNUbqiBClZg5ReYfMBnFJKaTTeKeNoGpTgXrU5nUohoqYj0YoqPgWJ5Pz6QdzSNhc_CF2tIt_lQYUGB_Ounwou39HNzfxhKsC9pA4RDyX-ZLadLcfiS6pWCL4WNiA_ipFQSxrQOhO6KJ-AjV19CS776PhjfFpS2in0RRDxzoBrEFnyftVk6pnyhb',
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='image_generation',
-                        tool_call_id='ig_68cdec701280819fab216c216ff58efe079003437d26d0c0',
+                        tool_call_id='ig_02bf8d298b645b0100697c354a2ca081a0a0033b0b954a1a3e',
                         provider_name='openai',
                     ),
                     FilePart(
                         content=IsInstance(BinaryImage),
-                        id='ig_68cdec701280819fab216c216ff58efe079003437d26d0c0',
+                        id='ig_02bf8d298b645b0100697c354a2ca081a0a0033b0b954a1a3e',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='image_generation',
@@ -7214,29 +7260,27 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                             'status': 'completed',
                             'background': 'opaque',
                             'quality': 'high',
-                            'size': '1024x1024',
+                            'size': '1536x1024',
                             'revised_prompt': IsStr(),
                         },
-                        tool_call_id='ig_68cdec701280819fab216c216ff58efe079003437d26d0c0',
+                        tool_call_id='ig_02bf8d298b645b0100697c354a2ca081a0a0033b0b954a1a3e',
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
                     TextPart(
-                        content='', id='msg_68cdecb54530819f9e25118291f5d1fe079003437d26d0c0', provider_name='openai'
+                        content='', id='msg_02bf8d298b645b0100697c3592f2d881a0bbfe8b69634a604e', provider_name='openai'
                     ),
                 ],
-                usage=RequestUsage(
-                    input_tokens=2858, cache_read_tokens=1920, output_tokens=1071, details={'reasoning_tokens': 896}
-                ),
+                usage=RequestUsage(input_tokens=3202, output_tokens=2602, details={'reasoning_tokens': 2432}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 19, 23, 50, 57, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_68cdec61d0a0819fac14ed057a9946a1079003437d26d0c0',
+                provider_response_id='resp_02bf8d298b645b0100697c3521713881a0af562b3dd4ac5065',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -7273,7 +7317,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
     agent = Agent(model=model, builtin_tools=[ImageGenerationTool()], output_type=Animal)
 
     result = await agent.run('Generate an image of an axolotl.')
-    assert result.output == snapshot(Animal(species='Axolotl', name='Axie'))
+    assert result.output == snapshot(Animal(species='axolotl', name='Axie'))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -7290,18 +7334,18 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                 parts=[
                     ThinkingPart(
                         content='',
-                        id='rs_0360827931d9421b0068dd832972fc81a0a1d7b8703a3f8f9c',
+                        id='rs_0f6cb1c71ef2595f0069814ef35f0c81949a5357c96e5969c7',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='image_generation',
-                        tool_call_id='ig_0360827931d9421b0068dd833f660c81a09fc92cfc19fb9b13',
+                        tool_call_id='ig_0f6cb1c71ef2595f0069814eff87748194b17d4a1a166e9dc4',
                         provider_name='openai',
                     ),
                     FilePart(
                         content=IsInstance(BinaryImage),
-                        id='ig_0360827931d9421b0068dd833f660c81a09fc92cfc19fb9b13',
+                        id='ig_0f6cb1c71ef2595f0069814eff87748194b17d4a1a166e9dc4',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='image_generation',
@@ -7312,31 +7356,31 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                             'size': '1024x1024',
                             'revised_prompt': IsStr(),
                         },
-                        tool_call_id='ig_0360827931d9421b0068dd833f660c81a09fc92cfc19fb9b13',
+                        tool_call_id='ig_0f6cb1c71ef2595f0069814eff87748194b17d4a1a166e9dc4',
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
                     TextPart(
-                        content='', id='msg_0360827931d9421b0068dd836f4de881a0ae6d58054d203eb2', provider_name='openai'
+                        content='', id='msg_0f6cb1c71ef2595f0069814f2b636881949e5e4ce29ed91b29', provider_name='openai'
                     ),
                 ],
-                usage=RequestUsage(input_tokens=2253, output_tokens=1755, details={'reasoning_tokens': 1600}),
+                usage=RequestUsage(input_tokens=1290, output_tokens=811, details={'reasoning_tokens': 640}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 10, 1, 19, 38, 16, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_0360827931d9421b0068dd8328c08c81a0ba854f245883906f',
+                provider_response_id='resp_0f6cb1c71ef2595f0069814ef2a36481948886cc292b5432af',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Please return text or include your response in a tool call.',
+                        content='Please return text or call one of these tools: `final_result`.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
@@ -7348,28 +7392,28 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                 parts=[
                     ThinkingPart(
                         content='',
-                        id='rs_0360827931d9421b0068dd8371573081a09265815c4896c60f',
+                        id='rs_0f6cb1c71ef2595f0069814f2e81648194be9b1f97469b6c3d',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
                     ToolCallPart(
                         tool_name='final_result',
-                        args='{"species":"Axolotl","name":"Axie"}',
-                        tool_call_id='call_eE7MHM5WMJnMt5srV69NmBJk',
-                        id='fc_0360827931d9421b0068dd83918a8c81a08a765e558fd5e071',
+                        args='{"species":"axolotl","name":"Axie"}',
+                        tool_call_id='call_vRkivIBwMklwcKjvUHRfkBI4',
+                        id='fc_0f6cb1c71ef2595f0069814f3a3800819494f57c71530d6a3e',
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=587, output_tokens=2587, details={'reasoning_tokens': 2560}),
+                usage=RequestUsage(input_tokens=547, output_tokens=801, details={'reasoning_tokens': 768}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 10, 1, 19, 39, 28, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_0360827931d9421b0068dd8370a70081a09d6de822ee43bbc4',
+                provider_response_id='resp_0f6cb1c71ef2595f0069814f2de22c819487b1361fbdd5c05e',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -7378,7 +7422,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='call_eE7MHM5WMJnMt5srV69NmBJk',
+                        tool_call_id='call_vRkivIBwMklwcKjvUHRfkBI4',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -7415,18 +7459,18 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
                 parts=[
                     ThinkingPart(
                         content='',
-                        id='rs_09b7ce6df817433c0068dd840825f481a08746132be64b7dbc',
+                        id='rs_04204928974dd26400697c355c39f481a29a7a41202b9844a4',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='image_generation',
-                        tool_call_id='ig_09b7ce6df817433c0068dd8418e65881a09a80011c41848b07',
+                        tool_call_id='ig_04204928974dd26400697c356aad5881a28c7edd638dde83ee',
                         provider_name='openai',
                     ),
                     FilePart(
                         content=IsInstance(BinaryImage),
-                        id='ig_09b7ce6df817433c0068dd8418e65881a09a80011c41848b07',
+                        id='ig_04204928974dd26400697c356aad5881a28c7edd638dde83ee',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='image_generation',
@@ -7434,29 +7478,29 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
                             'status': 'completed',
                             'background': 'opaque',
                             'quality': 'high',
-                            'size': '1024x1024',
+                            'size': '1536x1024',
                             'revised_prompt': IsStr(),
                         },
-                        tool_call_id='ig_09b7ce6df817433c0068dd8418e65881a09a80011c41848b07',
+                        tool_call_id='ig_04204928974dd26400697c356aad5881a28c7edd638dde83ee',
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
                     TextPart(
                         content='{"species":"Ambystoma mexicanum","name":"Axolotl"}',
-                        id='msg_09b7ce6df817433c0068dd8455d66481a0a265a59089859b56',
+                        id='msg_04204928974dd26400697c35a0341481a2a4cf5d29479719a0',
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=1789, output_tokens=1312, details={'reasoning_tokens': 1152}),
+                usage=RequestUsage(input_tokens=1484, output_tokens=1040, details={'reasoning_tokens': 832}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 10, 1, 19, 41, 59, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_09b7ce6df817433c0068dd8407c37881a0ad817ef3cc3a3600',
+                provider_response_id='resp_04204928974dd26400697c355beaa881a296491fd74e4f4e79',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -7490,48 +7534,26 @@ async def test_openai_responses_image_generation_with_prompted_output(allow_mode
                 parts=[
                     ThinkingPart(
                         content='',
-                        id='rs_0d14a5e3c26c21180068dd8721f7e08190964fcca3611acaa8',
-                        signature=IsStr(),
-                        provider_name='openai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='image_generation',
-                        tool_call_id='ig_0d14a5e3c26c21180068dd87309a608190ab2d8c7af59983ed',
-                        provider_name='openai',
-                    ),
-                    FilePart(
-                        content=IsInstance(BinaryImage),
-                        id='ig_0d14a5e3c26c21180068dd87309a608190ab2d8c7af59983ed',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='image_generation',
-                        content={
-                            'status': 'completed',
-                            'background': 'opaque',
-                            'quality': 'high',
-                            'size': '1024x1024',
-                            'revised_prompt': IsStr(),
-                        },
-                        tool_call_id='ig_0d14a5e3c26c21180068dd87309a608190ab2d8c7af59983ed',
-                        timestamp=IsDatetime(),
+                        id='rs_02a6d1e4583fd25e00697c34f3483481908775dddc8e11636f',
+                        signature='gAAAAABpfDUD2DOuEJCw90bVJemvdEV4ltaIAEb4D6rPEmJZJ8ANPSngxjIGfKYMYEkfiPYVC9C1FSLYSq3MnVcQwk4ECmzd7wCpKl9cWxiEoI7ePWZjHKwF568Uj5x5Zf-yyXhsgkyiPj4WVjMW5yOIE_5_a2H5Skft17usT41KJ4gwsTujF7fVM4YlLhqQUxLKH8W7PMH9lyLXamQ7oCZkQV9SkvKNRc9Gb0rq37TcWpLKwuydKIkcgAbrtpyfazWcUQWVOxyv2Zh3GkYyJnWnt-q9IUs9EqsjkOJl7QXFVAchKCDFq5BV7bH4WfaFBVdnrGkKmhqFn-1Kh53_Ho1jvlQaHNL3CZAp-PhJRhEQHiNmeb4mZ9ejAzjwaFrrM05_JLwdJ-0dT3E23VP9Vv_5Scj2X0nTQYTJp9L8kWj1IyB4uDQJ5p6dw2fWPoJlqTTnHByrVKn-dsUkWitUCHlHNpMkTaHpmklNy8FDdYElDa-d72IsRdTJZj_ggskSTirGfWIxV2A6GwC6VLlf9-IMsnSkeomzUarFpDhl8ssPBtRcVz74T2iwzSSZ6dqwmraGgYIapw9BJ31PhRfkGa2TrAJb22TdNznV9vMHOuNpp9Et6syLBjtJRx0FeTCa8uj_Q7btZqpKjAqagQ01CulxBsfyG3niKbhwLFIVWSPoz5WsBXbrJ29W7pn2jl5h0xYd6RamkqaDjLK2b0HCSixArAiegNvY-ShADw6CyREOW2c6ghS8yno0uXkpeRhWcidlJTPhA_ABxDhEbpgjOKiWTIbqqWdkv7diONJ4264C39yyf6tPy2EJrUH49EFpoAqTBI4LhyOAYn02IJttNYceVIZ5MCvPC_TL6qfq5omin4Hxw4lJjVDJU7vIqCrcoDLCV_V8eEhFSXJUqss7cCBLwID7C0EAZTey3omLANy851xm7umVD_h1wu6lhzyXJBmR439LtZWeWJiwgpuIpoUp1tVTojvKRFN1h079KV8wzXMAR_lTH07W-BZK2cpvp2THtibvUp2-rOG5tNBYLdQ3jgQnENiXnANLBp5dhVD-BCTOxY02iY1KfKsNSZq-_fmJ8-WiNDmFGKZK4aw2eLyAQNuZs9vx_GkI0RA88nsNKYb3A0J5PgAK6IOvBJdMPABZpcl0Pt0k3l4TbeJIatd5ZyWSnyHBZHUvNRr2G1GH6-ddMvdYBfAZ4m8SNUGFmsZruXMl8KREiVlZ4p80lQ8L9xHxUzkpglzsUiFmUTAkbJfmx1TmXjSbQIY5DGsJEns9qZcyBEDGbp0uK_FPx7HWcSnlWVRgvXjzoqoqDlFOTdEnA1hkXpA29olTPs38ICuGqHH-lb38JMIA35sQLc0Uq4OZz9I4tdOiNzMBYbOwhG0oDFa_VxFKIsEwwVf54ssiQMVGFfJIIrR_2u_5tJtvPtCLRAjUKycrbfvHXyUlUgYHfwHybuCO44tiimXrb9mRs7P1BsLqkR65LuZnuZBSAX97-cozYSWoBkSlUAtIVj9c_6GJ7ND828bPUbxCsv3oFkO4tCmK-3a2lKocOtxHb3Wob1g3me9MnRcrZcY6VsyNAUVC391kRgUQdF1XUjyncjl2avP06JXJULluOC1oF7bTDBPMdoDVd6xgrQ7gRz6ivNFUN543ImrQjFZWfTo7jvbL4hHMIWkVJBP0eM6pSG_I3hmpaVGyXHyzXK04KAd5QJV7XZrFNuFURnIDGEueKUDi_CPScKXMfYw7NyOdad5vtecKTAjiWl6ReOtVP4vM-wWhO7ctwUafH7ymWw9aHUtjLUf96EHw86q75ZxnLPmLADD1OaJ511XYo9MZEjsoV5PPmAPoYRZtIuLGjCAgvoxB1s3scfEKG6NdlgFEPr2_rGWdU-tRfdZX1U2HdbM3A99Roca_l-NrH5yz75fjCYtMllEGGCtyuNrcfwIU5ASvhrVRRrcKLuDtymX2dEo3m-LWIi9SjdDQUAjvHpAj1kZBa_nM_bklqggJ_v-UiZc7lVMYT8M27FB5Y8z1a2TWbKQwiu58LU9YWP8jJi-ukAyTMiV1X66doaKr29AjUx2F_4wcqzFMWeZuqYJUActfjzU9VfLgt5MT1XC2KUMluslf5-cjSeH3E5J9idQuJ-E_DYuo_vg7euCDX2-Q8aTnV4lLE-vNtXQAy34PWjssFU70MMdn9EBI10BaPNHen1nfuIg4_IOHoCLqYammaA1n7mlIibw7eVKDsgF6ibq4tVve7t8bsNfcp24yG7eZrZL6VQoZJY-p-2sB18cJidBjeJgvYPQ7ed4MQPDpTmvUhAI7_ydc6Wx80rg-ZUvykINtUrb2acrkoTH3_G8pyfiPKTEREnUhqLFvv24PuFpR3spbqlDzYEiwIjfJV9MBLYdCkvGab6lwyIZqPB1e4POSTxqcnf8GxD0ByWv2sCoKrUpu5QnV0EDA28YBj-Q88nyGz3YvwRodW258eXtEulxllXUSSBKqIvgBR51WBC1Rmob1aajtX0ddC0zk1j1siGvT8O2BbHPk1LLuZwOiCsimJON_rYAcYdqIWESQNKa2VOsTeVNJLQbVM2_-GLCRULk883bEWgaTvPG_Bu90E7JJW8u4SN5j-a4Uz_1Pg0deY9D0Ti7T43hf_MZBuPmpN7NaJLTSav-2WqnF0F_JW2tWNq4q2w9UBvUPZj-Rzcv5Yr8TnCQ7cy8p2D-7BvOE4QgPwOJbFfYstEVcMbHxU-4E29PzNLFsbjEv5XvPB_6vIm7xjeS6IwA3QTmyPgBOD9rqBOpksBbp-fMioqi0jJYnVDzMXTZZL7akWC6ekZIabEyjy-G0ETISM77dTS30g2ya85LD9-X2lC9R4dIBdCSHVyUgsxiPdlsaJzK-rfZ9J_Wtw8kdZoiJrHnnO-NR3YdN8V8NtJfYK01hn4GejMf7T4jVrsclDBSiNl84D9dGIIkHCm8ViP2ejuNnUxl0cz9GZiCkNr6j-tFPgbv8hAS6wIdiYyGc_PW4B8i9d6tKGnuOvWeRZa86QMtUFBl_NBIHNl1BuK7k5BNxFRrCqfG9mGBKfTqvcR_UtMtxn36WNmQ3eFnB4F7wDLu4bLxgHK9-Y9iJ_60lUj_jH5RuVA-C9umY9KkoALRDPbY-WsowhsiflsWsKPLSmq1Zqgdi1RLtnhgrCDdbpp-7IzmF-ZUK5_4apO3yGeXGqQLlOt-p-Bygu1XJiIlZzxWcIvAtU5su7WbBUEZeZS-SezPfY3Tc0PqctSalaQHdfkKqhIr5uoV5pPbtYaatxfNl5KcHd6SBz1I3SolteGxWUE7jxNHt-CfVmZE8IpkIkLGlUpg-1BjJhxwgIqndzcqFjkRTlEZ1zHRvi2gIATgBDHVQmZESLByndwUwcW61bf-bwqSea2uOMnR8LUbN4KMAZDeruvbChPxQN4xmTtbDho6KU3fiHoz31rhKo2RBhJ-7puqcapIPkTayAuOCEMdnWlsjjSlWRgRos5vEbqTl_G0v0nSzod6Pn9R-ddPNPKykNSEnkdrWM6JoYjhtcsYjSDeyLcLm1g-xTp4q9mStbJqRPCbO6cfSPvYAcLTP9LESIN5LzuffrcBADS1n5apjMTAMsQ4uMKUAJEN5HdYYXTteXX4nPX8bHPcvoUds4UbWUs3CHJmm7AhN71XgbxOnF8RmYv9pjoYGAZlgWSfyWlWS_53PmlYDOC7qwFfwqQrncyuFDLQmV1ANoizegHrZC4aPmhBZFd5gjGgh908RQ8IM418JDteseWSDbh8rFAAEB6RWAVBIBlxulEubW9TAVI_gC79be3qrpEi4pJmi7VxnaxDCfgidveNEP4xZ2h59ZSu3sotQQ6XOZWKarxA4kJmyihtC591jH202EAkc4Xrq_TboZ-UTsScHP3bwgC69RZTsgzwuuPvEEu-p3CMaoeoDg7v_-rbeYbITG_zUx3HR6Q6GSHpCbLxov7oKlm4cQ-1m1DvNa1y9s3pE1nacyox1Tb2dXhQmWSlobvLPhx9luqJ6-qIhve1n2HaWwKj5R6zxZzR4FVVck1UVFXiFipltMrxGKhxn_x3rRh5SYHmTX6ClFjA5EDmEOokzbMPgsixpUJ9wa5UvWPiibD6zonZ1zS0djMsKcMYQoIJfqWN8bjdrFZLb-bSPi3LlXgZnrcqnGkujZL2jTzWYd1rxMm0w_kjuLodm56mrES0bSyQaKoDl_S-MRwBB8YGFB4tAY5GL9y0CGUWRrtWmrKSmG8Mxny8YnxP25IroxZFFuHEmqqa0dyBDxPUPUxisTisLr9Q3juavgQ8x4J2CIWCzDnUjNu1Re8GrOXHS49l5iEc3a_BV0g71xVcN85pQ54KkKv2TsPhhpYISfTQuR5GQNKLHve0I3wOVAmpIDr4QJacxbUSur__zDyXfpzYy83_3Lgctm5Ia1CKY4OZ4T4gjfuEqxcts63BRbwxcNsqcCzpqtSC0XjIFCH_izYub_cHPMFsK4zwksQZm8qodFpviXgVwZPb301c5qiMPxouYcKx59Wh0fd3OMMx5AdfEdExG2UUF6U0nMf_NcWcuyhh64uZecYY-z-RLkZDYDYGtSxhDDWCZ7MyJniQUarjJccXxiEz7uX4KbV20QDM-Xp_5n21seAEtBNbof9BfzrVAPS0mJNouEVjIMaMFkX3xnPJZlVGTHl2rVfYzaCLA7lOkUBFgBeUQKs9gKBArf5dTrsXgfT0041av1yMOR3ewM9zToewENX7hwulHJUjvipTRBc9nhDs2vsGNyQ_isMXix8DHrptNtdgVh1zbxTOhlRBeN-rbYNsuUf5yTHJEuNrLLi3m7_1Sbq6tc6DQ5s8V7Vcd6-GHAceIrIx-JqW3rnEPosF_L9a_JtEI2Fu9LIs-hIDo0-BW0m1RSNyrBhWE5l5jvASmLDImqFKk0Uaa_-4lR7n36pEzRPggbhBCKs_rucYnymnCPmGM8hGpNIHfMIQEiO3blpZaiw3m0Onss__WQ0TEQWN50zTlj7gctpSiM3Tym0mxQIsp_w4XEWV6dT-fq_RmTeQY8PJsi-9WcIRQDuf3iqzHb0pTjtrVrBnE2V9kNScp5PZVLF5oYlQItsKFkcucYIps6eTuZgKaXukyn7kN4bxLl3nR_8hBe566PFmPxYwQ7EGv6xS419rGIGwL3vjc1oxgoImRD8NafdOzYegCWyD1SLGK-cEXrHi34EzSEOK-FZC73y2OsAcQFS-UAF3-tXB3UPLAas9vm7TDRozpj-qXf_ntfpMP9x7ZBDRKMm8vSFjqPvSwa5fBb9Nft0cGkuvugBdpIrbVUzn1Lk5WwAxzk6JU_usNP_dWkXmY4xYEEZVdSMkV8ldX4epIIO1tzsA_cfTk64FzSjaYObsUkVcgaPMZkD0goVg_v3htpWOGpx7mnt8Sb6h-eweuPm_hCB1sCFFNbYE1QDouFuAF9AKZMjflkVi5I4AqPy3VUa-k1YBSjb1rsN_yW3AlAYAd1k3nLadZ6EH9cKUIpUeCEH4cDqJAzav_qbsw2BtnduipOm1CJS70dvHhO8XbXf5KuFQH0E5oF-4eah1rT8BkUfGfwXAa2LJfeqhDsQN3ss9sdSQIgysIdoGt46auW-CLmllLcg_SfV2X46rPrKXq2lWFcz10_FSYC-QNIHcNABjpAguLeRXSDem3RoSAqIoivBCNPRiY95SYOgBNMPBS0QP9iHpZQodx0yUCEl2Q8ajh1ilw14LHxIUKuUEf5L1FrYkV0EB60TkoQbsFKm1nzj3dftU7Z-HYo0cDpByS7uotGFtMrn4ZihmqdjD48W9gH5hJCSvJQcu4VSgZyzvAkQpqe1nlB2HcogqIzmXztYOdl3Wfd-h-qdqOHHkvzYJLPaIXYRw2pAq7lEe9jjl88XvUc0DqqQV8cgRWDlOAPO-fPV7t7jSDAAWl97c0r6cO66aZYGbPOx6uBiRu8ALwFbI-oWgiOCP1RJuTZ1ARbEVRhMeM1b4KxyJBRXFRwz2dSC94fpfu55a3V4wVad2QXHV9NLmxmi8RMx0yh87KA2IxH0ayemI8Q1t9iDRgCqewkbY9QGMFGq1SRGPCitVwggNQ9kdSQXuyJb2JOrbBkE9d18b2qohMijzL1SDQmzOS9o4Q6dJhqlh5ZRadlAUNBt4cTT-1mF23ddJtL6jncMTIPz-OAbN7cwkho4RI3mYyAITOeJCfmTvQACXEb0imJDd2prHVlEttAHHzmX6SN0qrKauFVKcV4JZtAOZti5m2lEKQ6UBCCs-4KW7Z7R0mGDJI0PwV72YxLkF8S5SCAuwcK8K5GbPaSrie6IdBQIfQgGjWiaARQhhwAllBKCKWmTeT43tBLjayoihHjiwwW1fhhMPjYco0tlN7xSGEhAyS6i655VCNFslcSNsB3UDIjin_L091t2MKF27cbGwG6_22zQDjHi6Kou3v_2R_8TpFSdCZAUicnP4sAEaouWRA9boDav41Wm4YkQQ3U6vU8g1g69Nrqv4G8FD4g8kLoD8r8Q4d50BJDkBgrgwDWgFEcVHclhMZVYNRrB6G4LcpAGZZTcbFq-C3aJ24AE8yHWap-1MbOO90rAQfyw2BBmnuGunuw9xGrRhDF38opKWDgfDvCjnS7x3IXovywB9cC19NSU39G4JGfUDOe8xcQ1PyenpV3293TxcwfoJqAv8cslSw0jC6gv9R94ohSulLmc4Y9wHKjIxVQKoNviqDNSyPYuU6yf2yVLKbqJiX1eoiAhoL6iCueC0wCWeWHYatpWR_ml0aFlqeNW9Uf1AORpsuJD5mLQjbo8LyBAexJhZT5wgUYIsg9ZVgFMtmF7EVg_axU4EgBmN1wog8dDxdAdY5dKIuURKbmDRjTqRo5eHeezP_PZAt1XKlerc2K1ceWOvlB7JnVtBAdeV-POq1id7HC92fPu7biYB9cqQ2in4gzmJdEoiX4V5FqiZvdrePeS5e87IzPXfMXT8zGTXsvwdqgrsqk9fZC7TDenvFYbvts4gMQBCqM7xF2exJK1Fv7HNweKMiMnt3p6gcPLbHECiKjM_JSICFe6Dkoh30cat6um7eBsCB0AFfAJikcNC5l36HoitGcka57qmd7FVs_QX9-d9FKbInC-uqiJCwuo3KEE8g4Ig3jlgqAG-cUNW3yi4mbgH5vL2Tb1rbvaVb-OvllisIXAu2',
                         provider_name='openai',
                     ),
                     TextPart(
                         content='{"species":"axolotl","name":"Axel"}',
-                        id='msg_0d14a5e3c26c21180068dd8763b4508190bb7487109f73e1f4',
+                        id='msg_02a6d1e4583fd25e00697c35033a5c8190b26e121930e67c0c',
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=1812, output_tokens=1313, details={'reasoning_tokens': 1152}),
+                usage=RequestUsage(input_tokens=434, output_tokens=973, details={'reasoning_tokens': 896}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 10, 1, 19, 55, 9, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_0d14a5e3c26c21180068dd871d439081908dc36e63fab0cedf',
+                provider_response_id='resp_02a6d1e4583fd25e00697c34f2ea3881908d505a7a6572977b',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -7565,28 +7587,28 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                 parts=[
                     ThinkingPart(
                         content='',
-                        id='rs_0481074da98340df0068dd88e41588819180570a0cf50d0e6e',
+                        id='rs_08dff3c895eb2c4b00697cccd770a48196aebf38f7d1976566',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
                     ToolCallPart(
                         tool_name='get_animal',
                         args='{}',
-                        tool_call_id='call_t76xO1K2zqrJkawkU3tur8vj',
-                        id='fc_0481074da98340df0068dd88f000688191afaf54f799b1dfaf',
+                        tool_call_id='call_uNor6MBqoGwxTPGsYAOToqR6',
+                        id='fc_08dff3c895eb2c4b00697ccce1ef58819688006826fb3922d1',
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=389, output_tokens=721, details={'reasoning_tokens': 704}),
+                usage=RequestUsage(input_tokens=386, output_tokens=679, details={'reasoning_tokens': 640}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 10, 1, 20, 2, 36, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_0481074da98340df0068dd88dceb1481918b1d167d99bc51cd',
+                provider_response_id='resp_08dff3c895eb2c4b00697cccd700f0819682a45c5e71d3989b',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -7595,7 +7617,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                     ToolReturnPart(
                         tool_name='get_animal',
                         content='axolotl',
-                        tool_call_id='call_t76xO1K2zqrJkawkU3tur8vj',
+                        tool_call_id='call_uNor6MBqoGwxTPGsYAOToqR6',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -7604,14 +7626,20 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
             ),
             ModelResponse(
                 parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_08dff3c895eb2c4b00697ccce2c59c8196b31763695b827a41',
+                        signature='gAAAAABpfM00w96NRvWc2DtltCZ9FEAMB-zddVEfFViB_yKJDYDdoHwDO3YSqq-pG9EJJ5pW7z67Ftnbj6RBOXkdEqJCIive-Bl71vwo-g8zSPmIJYa1oHQ_PfbhrjCjD5MLf7sW7V2Wwnvs-1MdZ0DR66SiGjTlebTgMB8naBfgpydgYrpc6KxLQWaLu6VCCwyWE_wHbE05nnLQH4-xBwjFg_rpUdOVwzNNzUbjSrlhrGypZTAktUQosGVjDsk8-HdN5skiVy5DD_RdpyMKSBlUt172vUVR8r4Lktjxcos7fQO4z0hrugU5U_vv6whtGbGR8TfDXDroFV8rEUIlLSB_e_sztpJlDltatZufteC_lQeRYvKFs94STZlWPMvwtAHRKNcFrPMMnDFLFnQnRyzOEQ4HGyBaVLVxceiq28SnTNBGmXsNBhYPUwPeCJCWIOOjJ-2XIf-ODUkWyh9O6cf2durr8e91fwFz11Mr3u_cNHrX-pGBFZpk-hLm9tQihS7TDfrnvIjgknjy8RRgQeUclD5b92Ceb1_71v1HuAETZDSuNsrwXpkwcoQAsUoRRWdkKcRJ1WWxYbONEsiMBW9Zx-PsoRz5fLUtSrgPMi3E7OyXRfi1X6Z5TjfEFI1JLjDwUe7x1KsWIf09FWfZw2n283c5hSEh4kHMku3CjQXWLRVPRkakmRVKqiy7Pi715VV7fte9lXEQfLRHO1Co7cyj4Ke4ed9POcJFT0MGFE2Ve7Kz1X2A4Vwr8t0MDXWdJxS0qXM_2NrPA4OwlB9YYLFTwK3qJlFvmpyelz94bOC7s6bKQwHQLq4kY3DfHgtWIDA3kWMC1HTGESCvpEBLUkTHYjH3vwUMU5QH98XZSjqHe5yJA6q8AAirNvPjHH_XpxGZi2pVmHTidZPRKRy1uvv7NJeKLvBx5UVstscONgaF0aEnutSQ1TaBVOzdzCcJGA_ne5tRB-1z3Rjol9Uujh9S_nVuzmyi8eaVapCNmC4MLGbwcdTpVkUOR3vQ9bBCGVDkdDP6Q8mRNwbNzJwyOztjHhYlNmfQTfUyawJyGATYdtUwjr7oz2gTK68LELAysU-W6rCrYVGYwuVbYfqPWqXku05a8jB-OxiREYP4GqWxL0E8mrN-0m7XufZTEd6VNUzjKt7JTeYvITlNLlvYWreEfVhBp-zO7a4xRnX-uMGHpW9QNLlTuNunRTH6LP6qdWxPL-lkqO7d362nh6-wvv27oWQkibkng0ESYgfWHgqpFA5CYB9nyN3_NHb_7uAV-WYX9yBz_iVL5JlKuM88_0vtHQc7HVUUCU5FDRGSyccuOFnLbyWTYU1Z1ElEzPcN3CzpBOrXlw0eIz7Mon107zyhwA6k49x2WEXPyH2uY6v6pX7mKCpAna4AN3G1mGma70_TyWdoVl42_0cyjXLyQ_OxuRL7H7imbnFmAPMCM99Ntt7ekxFW_5GDivB8KTLzb-_BiHEieTObKA3uOzo_QQCKMl37HOXRrtfmbfrE7p6hTtxs3yKraMBNfcP2NYjrB9K-um2KpxdRQVtRDyTKM-K6gJxExpqc2Nbk6ds3Cg5Tc5-KaweWjXVOZI8OjWLrp3qnbxj3ScK0g_KLkpCUFLiSQSjWKO40I29ursq0YJkUW2FWotc5ZGOR1YEauuUWdH0u3MPjRvLVqDVrTXEaqElgEIetOElH5G8Y9kmnZUBvto4H3TkI_Mhlx9aJOt5dVIEu-KK-4gs2Awj5RbPS6tigfu-khiz23jEdL8fyYFcwk7LreQcS5lcHfirCpxC0rOUuoL8e79-3oAHCcXNV3m8XGXwe-lPMluO4hgntyDISELej0EV-67Py0NEFybgTrJJVh7JMtc2SwPx3BnFZ7SNrhITJg7NciUBWCqh3_XVQJdDdraScQ0yj5k9creDbqCmhtGaS9TlZU43j2hBmAvz5qZ2hS_mORrVDxsfg0_38e9u1IGIGTwKwD0VvjRSLoFiU7AWdjpW4vVYUb5gq8KHQ5JH5ybDfKfCPEX3DBkOqKBmXvK2-URgoZgHXFb7iVe1_G_nyQF4PSOFvxvfIA8rX9UTbLoU6YMn8tTme_UlcRyBdmxp0IuU5b_NGNm42luZylHwYug-7yArWtuF3fgFZymdD27T7AoX0sqD_RVY6fgS9rk5soof795OTTDKNHyNzd7ejVjTNe23EAgWvSaeNiGaZUxa8Ukoa1IpEF6o2AgBQ9kZFWcvy3ztJqCuwE4gZHTl3-Qfeik17IO8_OQbDiNiyR2ZQ5zaWPO4nSX0OcDjWNTsN9NweiTOfO85ndGYL4abD5iHy4HuRGAeAQn_M0OieydJDTMVeZsloycnnNwfmy2y1IDFVayZXPjAUOm4Ptubn0FRlKBbs_7Mdu7VsB2A2e4Zg5pZpHEWICOPKq-ZM7b9ugRlsJpeH4yjgY3C4FIgAQ4RzWbc874A0wV4HLP6nH59FITVzS0f96Zm72AMCqNDLJ0hduN6hiBzo6yiJ-s1_ZheViE4uwaEPFMu4bnwL578FL0i25fi5xQNSD21jEPXmqBAv1n_6Q7gEXfwOXVGVn2y14UB_jGugVx37Fi4w5OaK-QDwvdTDTnFzk-B_2pEmXWlrMxbdQZWWM6-X7W2zPsaIOfOGmUb83xwdbI8uA2Rfr1e-iFemABgxhMnZWQRC7sFdMifW2tlI9_2ag3Orc6dwq2EKJC0MiUMmcOQf3m9LsxV-JNW1Ph7QR-7sqLdJZhr8F4L6vFrsD_l3f1i4SMnhu34R8t16koN2O6IV5iGGDhyjbU_XrL05wQ4HSppSxsG24LiZdMfJTet29MW6Kl2VIGOKHJNTSglmoOp70fHbXXvv0ErJItFN84h70e0WOSj-K8ZkeySwUOHIzDDIy8G0C2QbgZaljX3mBZV1Q1qZg0Evu0R-eJmQdH5pAjCohfAujV5tkkgqsWKzeMTxc4zVePCxrp9V1R9MHZHUgaZ64_SZWeeuOnTP_ybchLSY9nnw6J4007usppEr2ACtTggQPeDxhDqN_yayuBlfU6Cd2jibPHvS1sIvUmqHc5sFsbFxxdThjFa1yPb-UOk5TjVd-ubJrZdOfsqo5-2GCXABPirqL2pMX2S6BLfGSF8SnQz63M5ssIvX4qQYd5rYn8FpFs8U_z6ul6p9K0i11ciebHtkwcU-aEkSQJPco4598jeM0xWTqbZY-bpDVvZQI9rYl0iNEkSocxOYm1c4Ovag60j2v_1zPcxEWrWdYtQCf6wtRH0Njic3NlewgNTJcsvNzN33t8MABNEQaRWTM_BKV-DcSrM1wti8v8pfvgM6HHIuxIERj394-Qq_YbaPEVi7VgaeEb5glo7xuS3iS3DHQqtp0jhcVvAsNoRGaPSegBzUy8QuCM-ngTYyNKm_HaKgvKcTTnx96k3N97JU_qeU9yjrS5eugERkqpHTxJTNQNAdFWkmTrQlI3mPQqU7OnlVMdKsUpxzeOit-dIZHaDXHZnh3OYUHNobq-FMYnerCx_huu2LjeikeRx9vSDmIMMi2E1xv06X7ErusiTZJwcS286_9_TWY_Tu6E-rlIwwZ_7IgJ8Elwg9hQX4CoN-8oQqAwwVIC8OpKaj_GBtUtRzFRoKituTT1Tt613Mt_hQiQ6P1Q2iMRSbPzBKaj6A7Q6-PfwZkkxYIgNzsuwbiCDsaZxrMtC3p4K6fKzJw4qRdMtu8JN3b_ikBVc3vd2grtSDUkf_39mCDRcKx7SQjnuDuNAfY9c9jBkfngbvpkPnLy4186VCXLWJ9LNjEdgV8bTzypS8AHfoCySmBU-7DKjHzPMk7fJAUePXxf_39QtnYw5Om0vy7shmH53cULvvxO7cTP1GKxSFl92lF4xHUe0MjQAInTjC0eKnzVZGjsjKp8IzRUEDUL2UkOEZCgwq1l3N8yUIOWBVUUzk_aH460968wBgpN5aQryM_GjH9FSwWJJL4zsX9uH1o3zB8BoIeMVl8o63OC_0VxyKKSk_2D3xZmM5T_FWTeA84tsQ6nlBewfQaZaLq2aFlpn9lA1Ko3d9GHqxKpdfA44NWz4EZt7nmnqigswev2HQ9Ss6OJvgDe1kxxFy1ovHfH4YNU_i-zfrXN2opXgw_hZtwW39xrYi7dRpdaODh2b4OxvPLEAjOGGAHtj0aEU57tnzpc0BJa1WRli5qTbmqb5cQzHVhwolwZFJvQSOab1T0zmbn6mBnrf2xSPSak6p__snLkQsmgpH6hMlVmVsZ-qsrUQD1D8-z-iK8r28sUQcPIdbQNIHjsa4Y2z5ushcVKZd33WedDnuFFhIJgEI-Dl1feqOY-Zs9Jr7Hv-ZRgnDWetEMZlbdHeE88NJd2hsS0bDoaTqAAeGHGF3EW_d3gXAFU3rqSmEIN03Sw6ycmtGgP_9yfqU6OVQYZlFO4iQcNnbKCtgrOH1BYX38KcdN7VZXzUaDWnyuCu3nKb8qGBeEKpUUt344I-mjpkJnSJJFnF-VSYevBthu3eNQO3PnI1QGU5v7u9HGeMeQw7k9D4pw0Jv7BSYKNRNyKcS-m5XkNsjVPVb3ORNm26QowcmoE4Y8k3FjX94aDdaO8Q0weEwkg43eMGg7t61vfItr_ZXf0ZZvWSX_dz0OliHFr5SQORo9cG1SxdHeeuI6_ae6j4RnbHi5ev4lT3xLaNMpLBT0gdjuBaaBLidxOUpfOGgfsl5yHyM5Fu5ha8Tgp8KrUAaQLLuQ65vOkFO2Zn4KmHjF8okWy-z2zyXrRcHEPcCstXFba5-xycVw8cHUtEIp8hAgFtjgG3YgM99k3pXEumfJxY_d6_QAVGTuscDkQ1skheXX_bhAErXCIh0ctXco1IXP1lpJvjwJFhN2bvF5_adAs8StFUhqnokoK9p8LHEobHLo0-uYnxgL3ucDWNfAQ4Nh45KbBLUPF26SN7-oRzPZKkIKX1HihzC7MAdg6hiqQIGtAj6tVXRscViKIk8kS8iNCxSxQY6YZxtNjFzZ8EwmlNtZo5etGumSPwfAjq9OF3CK0oGuH1hfpGx-R7bhxWFa4mTEj8V7lUsua8K4S7dkBgW7KMsL8vHNxuWKw4Te5JtWqTuOBOQ4R-3U0P0BqDH2-hQhKc5FQKKkjG4H7w5BSzBqBj0iUlBO-eRTaUI7ydQmlFkDiwwFkQ_E2Pzs5ejDRXglg43f2boGq2BdXsgorqvOjc_g6QhxunP7txOsw_G1ANbxFtBH7hpJ5MomaLXtU_kIZLJsE23sshlxEUqNSFhuYI2A8vMuxYRGrMibIZD_BMhp9jKmT647GxYLSMAx3H3TDp_RneZxNyUKG6Uuk-GiB-U1fQid09V-cKUv5cEtRYVReR27gfwuXaI3TkgMoL5O86om-fCLCYCCTBk8WN7x2vBCs-lB5-CcUY5IP1NEh-cmp9oVJW8QlucdNyF5bcIfFay-rZPAYbLNAq7NA5LxgMRuQNmSxyqevuc64eZNjyT_Cbf0N5hkLTsaQUu5pm__bZLxUN_r5YUxnUHe1vRFXcQp1DjQTOXy1iPQWWNEomwi-8a_8H112Lv0ik_qAEB1uVE5T1yYWmlhtGUcSVbTEildXe4hnH-eJspOegWSkre2OHA_NMtWo2yRAOz_kcKomYdCq9Ws6S6_I2cjoAFEhcB7c7PDNfAerohRNsyobv2zMyOrDYjFaHy70oHi_JhemhqWZA2nFEzgNtws-CUzGx9-l1wmXdXWG-Zvq7e_DDk7nTOBQHOo3fU3YYVBca8fgNP8gO9RvFCTQKVjbKn2Wvv6Z3nMNbLYvuVEkFPwufGGlSNoN-3P_nJgdmt6LyulRB4WJ3by998HdDJ2VN4MH6DONNVMA5yljTOzb88vyTs26DSwMMjxzENv0KeoWVGHqJ0kzXndvMwMxcKSM_cHNMWM0F9oOOcyVefzVatcYlyqboBxNGiGttEBIjVhi-VzurskdArPP-vgTQaEtdWHvWCMG7dyfLTAsiAeZo8XyvxYxl2BKonZKHKaw5OAMSsj_6cohhA0aWs-D8BPNzxlOe7_pZQm5dtZX-2gOwoe8I202a9aaS762sQoyvqsfNQbmxS0UAwh30_17AunpnL9fvkDVFULqmZ7tDyJMfu_cLPJNl-Dw69xxd7z3UdiHTtclVC5F4ZxW9diq3V8chQCNwd--E2arSBmLR6z05Vo-ccRQ5mOa6DfzlJXq5PehJueaLkag8089CwKxUkXbWUm6GNo7iIbMD9-tYnowPbqduQ42a5I6kw-QpHbBQJi-ZkXTtK4ICwu8p8i1SZim7uWhggUdo2fwTrB7bhN0NtYvY7-s5u39jfTVFsuj0Iqn7azTlkcxhPqb_9imC4b3VdULHlLAt2yxtOgY36NQb6OdfSwOwsZcKYjZQMHShC3enKkkZpZIcrMzo49KDZA6v9hg26VcMKOQOaYG5QCDAu3CkTxNFkZ1zws8tQCjfCrUUJYhSx7nMLqivXD81eu0YcVIbiZxWCfLGVwgTRdaAZ7x2umSgOwQFrYJKZzss9eJHe0trCSqbpdnQWMVWKumUPI0EDK_VEGYjnXlPSKLx9Zu-mmOQfkcq7-OHYBfTLdoe5Ll01jx-uoXeTSsBIULtgoXUfzMrsh__cHAnvmsWco7_yyy9sz5Z_94hRhbsgLUDIu_UTMzmRnLKJEVvVcXuLt5JSTzI7pChh2t-uJgNwZLfb0hVS164mxt2xvegmg4ZaRujq_SmDQdZAdAgEKEZwpunSWI6HO13No1Cf7IUk70zPhQtxZiZtkMQC792BtjBbmVAxiVSP8h8tJcaexCs5eibmvFMUEPr8o_ajRQpFChZrSRUH61FDW4zSpxmeYnTXMlgYxS9bWAbq1m0mATFjXdwpLhxaGvULQiPmS1x9twy1Et7SG9-20NPGDYYcIpTnduIPGhWpAmFaZ8dX7_0VgjpsMeBdHlEg6WxJd9u946sX1f957S3rMHqRsLKeqMCTmfAiG4h3Fzvppu6qjpRunieBHrI44LZ1t-xhHF1_gc-tos_Y6sg4uMLH41jbKeg6TjCTcE39LqGSDl6eKEccBxu65oJLLzy7FHmFwDmbokWC6BMF2QMfrGkprEiYHGBXLS8bbaC6-T6K2V__xCcAMtFPP02ZTDkkAI9o9NIq1oGQBp7mQSXISgTN-0CmlU_WO4C-aW_2bS_fTatQQqOXrKJeDFp0tNxFtaZoXOCM-tm4cG_z3TXY4UEKOOlv8BRGPZ-98TzQrRt2HHw3P8E2o_0jWGANwbNiLkB7KKzBLo7pUONIGIu4zCqkFV8AqrFpmb0wtIWXPXzGdZVlJ7VAAlEUbIQyw7-EkfRkBkug12Lt-OJ7J_obPZys_0XzdPScisWsEJJNp0m0M5UYnPbwgIURCK3ijsJ0CdHrVmMAczlHYpyJEoGfgR9Azz48PIDsEIMaNZDJr-AVjlhDkhym4ajMkH4tZKoV54bUbfyIxdL4RoCT89clR8CzZ2C9fIrJTkmOjNSW4Rfm76kic54t-3rW3Wjvz3cOLdIDyCmViJRhV5EqakScybYEi__LjfVNdA8dOkQvhW1v8I7faiMy3EMn2MlhS_nK6FVTobErVpaTbxGJMPStblHnkfXo43wlmQNKXSaKBaPYvgYPBcUXeevU-CpN5G7ejULb3-g9ACd0UaMxS3C_VcZNuBVTsQciUtKHrvE6WgffEGb_dGPoz3UhcQIIk7knv2zvyR1f3JXPDiyeRCh36pDmweafc5gQ2X9U3bLIw1k1wj4vTGq3W87oa7tU3DSHlVEAxkM3StD-F8Bx4sOzmEQyB3-qr9rBe8F3_9b52sn8t4CdctH4UL8Sms6YwsLdxBu1XUNSqV9e5rkoHKkB-LICtFDQaICkRdstk_OfU3hctErKPvtB7323avPl5vL32mg9ayoWC-wNf2R7_U1OJVMImpx0sQEi52OyaG4z0vOgamAfBVorhhvzlDWuXPNRQFg1dzqQ6V2c69tGUxSRexkctKgSAUkExQEsTcTHg4EwYrXicEPE_H9f61FrVngvewxpRm88M1Z47XocJbi73P7Wi177mmTRwDHM0SKNoaHYoIq_KZCIGDyjGZ0fVJHj68MDXTjJu2oN_PufV6BzL9GLVWFuBNzbr_KK731T021-cI-3aK4CBSa_SD8fJiOMOy2yMkZnxWwqZRHDttmYBQ8eDh9NmOQomD2g4GeY31xc_0Gfo-XckpAR9QNMn95wjOzjL7jfBBcu3S2uaXcln5KkaxfzlhJyE9gEUHtoffRWxNRpaNz5swboxIp7UwOdopvC_xlVXVwMvmVoYlb88qnDCT1Fzpbvebj-iyfSLzR0xUD44FhGJLqoN4sSSEd29vEjapVGzkn-H2JAd49WId8jhGUB7rE-7IZlYsQzsNzGrq4nryePrMn2sXzT3fRiXBd2-sarJ6sGrWMUx77Cz6NF6PtpF5mfgwqUfVnnxR3eaUUjrqyoZLY89BNUGcFOYj6bYLVjSz8jSIozZ2GdSQ5DwmZf2-HTjYtwBMFksxIsWfgO1Pf7nv81uPyr7XDt3AmVrAJOR40BY5P8yGiBPXuEuWxCMuhar8QIvjcWdI6o52rByAWsJ7vzv_pGboU0sCxX_qONDkpXsWBB-otCQ-QMR3h0ObRa_8_23Z7EGmKIlSuT6ECD71gVLcfzf0q4wHspxbJ1JKuZmnu7roblBWDjO8NhtgYpQrGqqlNfPsaAIyhd0QU1p2i9CSvUUKZdzACfCT4WZbFv0jU5SFB2bMZnOqG1yjJxZjjDldKCIgzrAR53fxSHNEF7_DxOyH1qV6zD7P9DrjRG1je6t-iXj6y4CIHhOXTI7-VYKyE_05zXfkLGFu-5yGiQB6nADId2OjhdPIWyr3kdYn4HWMtWdJECYEGa7wILnkTHgQSSwCJ405jNFdoDY3z8OOWP7XTaXqEiS37PhvTkTaFduoAn36aYhZHOcnYkgFLcJy5GidZnSe6xK2WBeQIUO7PFjRFcb1UUg5y3J56JYVmbQ_gLdW-kybPKEI9Ymj1P71DVgAe-48y-r_SPTree_MBDvpQyqEUnBp2HK1CGnkborg278DGhr21XEx8hs0LlnfJuhEwxYEvaTEndqU2JegEsxhdsM3QYGEzixSPj6PjZbbaFROmraDaydcGLFiNMSfwClEs8jjDJKzybGkatVfCzRr5S6n0fo2P3Ju2xKJzErHoNBb2-BQ6p4w-hDj8ESPEkjjN5hQDdsP5O10B-YrJuV762XKxZyakxqegOwKQtJeJ6ijF4SCZAjKkNX5pygiDxjNt_V3-X7aRZ6HOhhNE2L0X4HGkuRWNBJWDfjTm_c-4mAEK_cQB-Y7O0AzSLrFmhnAkto4eJN_Ep1VRStvxyQ0lbPAZEriOzr69FW22cR7KnEPICqGCN-gXorGAWB-ZUOCFMr8CYsazvfvGhyRZDw6VZghLqw7aK33eRH_ciRjF5Qu3dZQAKr7X21J6_GRjWu4IBINCaK4lWXQaLjrUE8M4moEOW5hWWY_PMqqHCMfJVTgUVJMRVGz_6-htRFb0kqTVWtN49FeFdSrpvJjvpg-IJsansatBUAvdWP9I37d4k_YOILRKeAbTWWG5rDr7D0oBXikm_XpfpxYg1Z7y8KVwxAvKhcbBMv4FLY5-MI97MNh3OFQwyl76e7Nhzl8N_mm7P9TStVJLhJp101CV8YKWUxOl_OWXq8-0GZhq6Qk0ZPHFY4t2ZI5-UNqjeL3g=',
+                        provider_name='openai',
+                    ),
                     BuiltinToolCallPart(
                         tool_name='image_generation',
-                        tool_call_id='ig_0481074da98340df0068dd88fb39c0819182d36f882ee0904f',
+                        tool_call_id='ig_08dff3c895eb2c4b00697cccff89e08196a7f44060878c033b',
                         provider_name='openai',
                     ),
                     FilePart(
                         content=IsInstance(BinaryImage),
-                        id='ig_0481074da98340df0068dd88fb39c0819182d36f882ee0904f',
+                        id='ig_08dff3c895eb2c4b00697cccff89e08196a7f44060878c033b',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='image_generation',
@@ -7619,27 +7647,27 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                             'status': 'completed',
                             'background': 'opaque',
                             'quality': 'high',
-                            'size': '1024x1024',
-                            'revised_prompt': IsStr(),
+                            'size': '1536x1024',
+                            'revised_prompt': 'Photorealistic axolotl swimming in a clear freshwater aquarium with smooth pebbles and lush green aquatic plants. Pale pink body with feathery external gills, small smiling mouth, dark beady eyes. Soft diffused lighting, shallow depth of field, high detail, 4k resolution.',
                         },
-                        tool_call_id='ig_0481074da98340df0068dd88fb39c0819182d36f882ee0904f',
+                        tool_call_id='ig_08dff3c895eb2c4b00697cccff89e08196a7f44060878c033b',
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
                     TextPart(
-                        content='', id='msg_0481074da98340df0068dd8934b3f48191920fd2feb9de2332', provider_name='openai'
+                        content='', id='msg_08dff3c895eb2c4b00697ccd33edcc819688e3c4a08b7c2274', provider_name='openai'
                     ),
                 ],
-                usage=RequestUsage(input_tokens=1294, output_tokens=65, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(input_tokens=2645, output_tokens=1485, details={'reasoning_tokens': 1344}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 10, 1, 20, 2, 56, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_0481074da98340df0068dd88f0ba04819185a168065ef28040',
+                provider_response_id='resp_08dff3c895eb2c4b00697ccce266b0819685c5e9cb0ab2f1ba',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -8125,7 +8153,7 @@ The monorepo is organized into these main packages:  \n\
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 10, 23, 23, 43, 25, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id='resp_0083938b3a28070e0068fabd9d414881a089cf24784f80e021',
                 finish_reason='stop',
@@ -8769,23 +8797,23 @@ async def test_openai_responses_requires_function_call_status_none(allow_model_r
         [
             {'role': 'user', 'content': 'What is the meaning of life?'},
             {
-                'id': 'rs_01d311e2633707df0068fbac0050ec81a2ad76fd9256abcaf7',
+                'id': 'rs_00109b6f3427f09d00697ccd36c3e881a1b25dda264adab7b4',
                 'summary': [],
-                'encrypted_content': 'gAAAAABo-6wE6H4S9A886ZkwXcvvHqZ6Vx5BtpYvvNAJV5Ijq7pz-mTBJxfdjilNSzBj0ruy7NOsMRMhWzNahRf-n3KDQ2x1p-PjVCHM5IAGqHqae8A-aAUn_FDRiTbAT5N5FXTrZ80DAtdDv17z2HlODmTTYRvBU2-rX7opysjc4rf7-rvy6j4cUcNbM0ntT5DH8UHxC9LCM_s7Cb2unEV0jaDt7NzFxgfWN2u24Avs2EnjPoxOjd6BR-PWHJk_7kGGkVBub8NU7ZOyHsci3T8DAq_eX38DgkHJBJCPT4EqvlNP-VjPdecYEFUCw5G_Pye6h55-77g8LjkrFO43f8p6wscQ0iM601i1Ugmqbzxyv1ogPIN-YuSk2tkCw-D7xBD7I4fum2AmvyN-fR58lWcn-Z0WTqACA4baTJiCtW5b7uVeAp8vm8-gWzFR5BdDHVdQqu1TAKVWl_1P8NauDtd5M24MjVZd6WC0WrbTDPY9i2gieMMjFek2M8aoQFO0CG7r3JHn2zxfFB3THWCpl4VqZAQp6Ok7rymeY0Oayj--OLpNMBXIYUWc51eyYeurwQ943BSkf-m6PPVKO8T5U__Bx-biCNCePSlFKp7V0Du6h7UgYoqqonH2S3Jrg87c6dk7VJ7ca2i8sZqhy0rG6Kb7ENDVvwkMOdpnaFgdWd3VINp6P8j69kBQg-qwWP-YHPC9LnsjT2j1ktMowVO97eOpV4j2BhiThxunmu_SOIAEbghmjJEkLuRxLxBUPFRIajke2CvvFeIuReJr53isPKOxOjVzsc6oG5ZeykDlfz_mfEap7AByPNY0987zwG58tGueNxXjdpd7NQFcn_6DKj60SvUg0sk49V_QrDY3cAhSRvZoEeqA8XR97pEe7CByYMl80b9fzgyahc4NCdUwK8es2ll-lsJwEx1ZGdC8cB45QOrTnw8tJAUsSM44rLKwAQY-KsuN4UygO99d1CQZEm2YWtnPAvA9I-EhY87UIDx0CpPsEyxxFu2GZCTy7ceSnpcmQbAFWXzfBSpM7k42xVV8G8IK_bHpoF1enF5Vbc37_L_aWd4AgzuAwF_RVyd8exVh3NVJtO3BqPv72kTukr2Fok3KEaSeU0whP_dxr-thP2exS0F2Jdn13ZtB_pqxwKVWEsvzdbN92Q9qs10BAgYs2SA4cq66semwRl-1n-dr7XJyZzPOEiA9TQYgUCw0ueIc0ciMOZ0Waaj094bKIylw_TD5Bu1diXpzbTma_AVO-NZn7INhAZN3guSme-zIUEMrh66w0VJP-DbDA-ecSD41eMRSadyV4g86wLL4NOBE5NwSiSkwd2xJ9NqG7YohFM8BlPdEV4zhmqHcIKpVwAitFItqnAaUSU42Aebdritt9oNVnpKCeeA4QQv_8W7rOXJlLfGXRJUBCrh3Rv7KCVC3yncAOIU8FWu3jyaAqhLrWHLW958wjF8ka7lw80YZbToPjIuiii0UXu2w3Tv5EGVdkhf05A3Yj6M_LXStns8iBMzcU4-mJ1649FnnImLnW5AeohoWPBB6WYhW9gfwjuxejTI3Q5R0mo9jUSP3_tFiawlC2zFgvkNFufC6Kry8-Burjf8l6rpAX7_sjtCu1AlAbI6PEFtxcKhNWHfQp4mUATR6P4k68jk_Kl-FpRBtNOf8YOlLGrKE-WbwCoIV7VAgK2CTZJOxaslxVZRCLObNrA3XuEtc3jo8pMzqx8GJWshIgmF4XiQcmgh65U_kjB07adlgnbCZvGUXdIIQiA2vqIWC6Qu8SSO20nOOR65hGXyIgf4aOolU0Ljbi4slXnJKjbcPaX5O3cXvKHbkVFwXmHK2Ymaqb6fZcap78_On8jLK_GRlw3jV18SLeOcJiG2LqtHzcUawY4K7bPDNY2QX89yL5d4qxRF577QgzalmdQDsKyC_N-wk',
+                'encrypted_content': 'gAAAAABpfM080Vlq1Ozupd3MDgnppHzbs25KXa0hICWmqtEZ_eZBJ5SYExC7UThfti52XkjVrCdmKJ0PTNQivIA0oTJzM2LkvGtlhATwWeU_oFqUjqWc0rSEt95WFbEgJMr_ECBlPjj6TZb_acbrBbDR8cANz-qvW8GwS_BwUgX7EQrlEnKKeCV25U4EjLPmKnBhrBSqPmZfkGWppXRsT0BQVX5mY1dxP6QYYcXkiw6j3RnkV1Ooov1dMecEQWcslOUITwW943iahfwHZIDZ7lD4oceQXLptV6mFN6iVMtrfOtGPHcnxY2invRvVrROeYeahXJw1bLFPzuMnb5n0eOjQM0qBo_GpGRNnib1-53SSJxlJgDcL0Q662UVcIW_iW-k7ePz9gl8aebvmxARfwP5EjKGivDKEcM2uHhmbWFXQ3znHLz1eNj_bilDAMOuCa7o9bOj1ZGkJyXGQfpg9xwDL_abCJqJR9oJBZyMSu_Q6kvTE2CXC4mmrsTuDszM-PoyZeZM1hK6zVcrH7-gDQ-WQAjId4Z-D6M3Ra4VZ0f95g0qRRPpfXBHPghsmR3CNZ2Q1nQylfWQhP63Yzp--ktJi1s-_kF3mvXa4gwkHw5a-Qf3AtH8i921yAxsqz-8dH6SAX3c-fcbBTlYYuwikS_hld-1pHzHTa097z7sWz17NiUeC3tYm9PGYsQHrMYgzOZBSTm-OrJ11CRIGH6-ItURj2HoiQIq8lXR6n_Dq4zD6bXZsBlWqCSK4_jpLBlwmvmwis28a2dNde0PXGXw09XccQjhRtK9o--c3as_H6Evw-TgBAA2lQ91PWVNrv4Tu5xO-YY3UfIx3MbBV_Rns_B-jIzZ4mwUu7yAG6BC1yj934H7_U7-5G38gCWZJQMrHbUJTaajNXAcoFzUmmGFr2BOidr8jFsO9RE9D78jjnPOSwiTcBRWsxeOoKssdtAMdsS3BLJ1gmFFuOi9h281tW926txM341LVoJkiq5clnmqt_MIluiFqyd17LqfCoX9wz6yywD_K6hsaz5Op2o__BuPenJcLXOPF5-i22NY8180iwjFNVoVeyfcfa2JXdvf5rupZWxoSl7kpYjTzlcRQVLgLujabiBg86Jt64rG931lOHRfYOFTzPpsUL3TS7T7mThrz6q_hN8uqqTKqhlBPCKN5icLnN1v_GOs0F7iZa5AVBfHFxAqvLFjelxV0gQwXFKBWcT1Ca_nk4WEJ8AgrtmdWS83V743B3aLtT5OLxosM2Xg8xGqEMmF2C8mWtkR1HnAGNND3K7ehatAZjrTF5Z7wMNt6vgxzhaUo70cz5_IOdTTRlbDzHZHS3Nf7_qshOklywVQ96zFwMY6WJJ48GS-qNco_F1qUmezYpTWPsE3wOj-Q6y0XhEmWtFZMs9zO5sUQ9wL3uXUMJlIQvFq6KGXEm056w8mctmfJevMJkAczho0R4468OmnOGrVq656rXs3I1JrxTS8BKY3Q1A9NHBkbHKtR411s5xiUK-au-ivNOApkCVIlHMBhdT1tm6VvcHVxBAMh9xgLZ121DAy3fbZ2tUNoKiEQymSf7victIZR3NnW0E3nrujJCGYrZNpBXBofRwHyzMSO5jnV-lYsVHrR5qtUfq3AkpkMrfV8WkyhgxCCerX7JmGiWsgUxbh1nq8IxGDmgE_Dk2Pa-GlbW232O-XcK6YzwYaPJCt4XHus94eu-l7dRlAR_dNBdvirORkqwfd2d6ZWTn4e3fzFQq3tIMDPS-xEtPTQKmskAaMCpj-ecixlYSfTUeEl6zgzkaXpgiB44CJp6FjyjvY6lAXc8Mf7yarXxauDK5krlvo4I-sGwWLJoyVwPwzs3r1Bu6CUtcJt_Lo09V-3Qcnbk7vmMrow6Emmkd8uCG3NcNg4K0Pav6NRA4LYlK76Oy7mZzT0yfo6bbOeruZq813qAh24GK1fEvKXQ5UznRYBeQpg-v9dgBXzaVk-y69ZyoABCAZ9jWHFUAcJK-b5tOTsvfxWX8DZuJNUBm9Cyr9DM9b2EYA31PecLJR5lrtnxLeZrLlf8d69v_faVCBLXXfbu8DX073ZlLmvOCQCtSvV0e8LhOzEub1BukhXJlnEftyd3seV6gTmbqGFh84VoNxd5VMwmzL6-wf0iow6AQ85dUqEDPg9rA4226E=',
                 'type': 'reasoning',
             },
             {
                 'name': 'get_meaning_of_life',
                 'arguments': '{}',
-                'call_id': 'call_cp3x6W9eeyMIryJUNhgMaP5w',
+                'call_id': 'call_mEugxkUNfk5wWeN6oJldMcJG',
                 'type': 'function_call',
                 'status': None,
-                'id': 'fc_01d311e2633707df0068fbac038f1c81a29847e80d6a1a3f60',
+                'id': 'fc_00109b6f3427f09d00697ccd3c219881a1a6123b2bcbb220fd',
             },
-            {'type': 'function_call_output', 'call_id': 'call_cp3x6W9eeyMIryJUNhgMaP5w', 'output': '42'},
+            {'type': 'function_call_output', 'call_id': 'call_mEugxkUNfk5wWeN6oJldMcJG', 'output': '42'},
             {
                 'role': 'assistant',
-                'id': 'msg_01d311e2633707df0068fbac094ff481a297b1f4fdafb6ebd9',
+                'id': 'msg_00109b6f3427f09d00697ccd3d3da881a1b7be8155b26b7a3e',
                 'content': [{'text': '42', 'type': 'output_text', 'annotations': []}],
                 'type': 'message',
                 'status': 'completed',

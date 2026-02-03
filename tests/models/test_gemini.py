@@ -1362,7 +1362,11 @@ async def test_image_url_input(allow_model_requests: None, gemini_api_key: str) 
     image_url = ImageUrl(url='https://goo.gle/instrument-img')
 
     result = await agent.run(['What is the name of this fruit?', image_url])
-    assert result.output == snapshot("This is not a fruit; it's a pipe organ console.")
+    assert result.output == snapshot("""\
+That's not a fruit!
+
+The image shows the console of a **pipe organ** or a **digital organ**. It's a complex musical instrument.\
+""")
 
 
 @pytest.mark.vcr()
@@ -1423,7 +1427,11 @@ async def test_document_url_input(allow_model_requests: None, gemini_api_key: st
     document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
 
     result = await agent.run(['What is the main content on this document?', document_url])
-    assert result.output == snapshot('The main content of this document is that it is a **dummy PDF file**.')
+    assert result.output == snapshot("""\
+The main content on this document is the text: **"Dummy PDF file"**.
+
+This indicates that the document itself is a placeholder or a test file, and does not contain any substantive information beyond that label.\
+""")
 
 
 @pytest.mark.vcr()

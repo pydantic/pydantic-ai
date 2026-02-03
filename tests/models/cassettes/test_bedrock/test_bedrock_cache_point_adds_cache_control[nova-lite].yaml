@@ -48,7 +48,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        MWRhOGY1NGItNThhMC00YTc3LTg0YjYtNzIyZGEwOGVmMjI0
+        NjE3MzgzMjctZTFlZS00OWJmLThiNjMtODhlNmI4ODM0NTZi
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -69,7 +69,7 @@ interactions:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 797
+        latencyMs: 379
       output:
         message:
           content:
@@ -82,9 +82,9 @@ interactions:
         cacheWriteInputTokenCount: 1298
         cacheWriteInputTokens: 1298
         inputTokens: 10
-        outputTokens: 2
+        outputTokens: 3
         serverToolUsage: {}
-        totalTokens: 1310
+        totalTokens: 1311
     status:
       code: 200
       message: OK

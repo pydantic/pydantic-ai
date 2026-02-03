@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '244'
+      - '406'
       content-type:
       - application/json
       host:
@@ -17,12 +17,17 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: What is the capital of France?
+        - text: What happens in this specific part of the video? Be brief.
+        - fileData:
+            fileUri: https://youtu.be/lCdaVNyHtjU
+            mimeType: video/mp4
+          videoMetadata:
+            end_offset: 80s
+            start_offset: 40s
         role: user
       generationConfig:
         responseModalities:
         - TEXT
-        topP: 0.5
       systemInstruction:
         parts:
         - text: You are a helpful chatbot.
@@ -33,11 +38,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '576'
+      - '623'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1081
+      - gfet4t7; dur=8151
       transfer-encoding:
       - chunked
       vary:
@@ -48,20 +53,25 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: The capital of France is **Paris**.
+          - text: At 00:40, the user scrolls through the "Recommendations" section in the chat interface, highlighting various
+              points related to configuration and authentication.
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: cTZ8aai3B5-pqtsPhovV6QM
+      responseId: Pf2AaaafEO_sz7IPjZehuQs
       usageMetadata:
-        candidatesTokenCount: 8
-        promptTokenCount: 15
+        candidatesTokenCount: 31
+        promptTokenCount: 5918
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 15
-        thoughtsTokenCount: 16
-        totalTokenCount: 39
+          tokenCount: 21
+        - modality: VIDEO
+          tokenCount: 5260
+        - modality: AUDIO
+          tokenCount: 637
+        thoughtsTokenCount: 157
+        totalTokenCount: 6106
     status:
       code: 200
       message: OK

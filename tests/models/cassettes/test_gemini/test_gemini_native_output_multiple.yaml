@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '791'
+      - '822'
       content-type:
       - application/json
       host:
@@ -20,12 +20,12 @@ interactions:
         - text: What is the primarily language spoken in Mexico?
         role: user
       generationConfig:
-        response_mime_type: application/json
-        response_schema:
+        response_json_schema:
+          additionalProperties: false
           properties:
             result:
               anyOf:
-              - description: CityLocation
+              - additionalProperties: false
                 properties:
                   data:
                     properties:
@@ -45,7 +45,7 @@ interactions:
                 - kind
                 - data
                 type: object
-              - description: CountryLanguage
+              - additionalProperties: false
                 properties:
                   data:
                     properties:
@@ -68,17 +68,18 @@ interactions:
           required:
           - result
           type: object
+        response_mime_type: application/json
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '800'
+      - '797'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=963
+      - gfet4t7; dur=1119
       transfer-encoding:
       - chunked
       vary:
@@ -87,33 +88,33 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -3.3667640072172103e-06
+      - avgLogprobs: -5.418194822319176e-05
         content:
           parts:
           - text: |-
               {
                 "result": {
+                  "kind": "CountryLanguage",
                   "data": {
                     "country": "Mexico",
                     "language": "Spanish"
-                  },
-                  "kind": "CountryLanguage"
+                  }
                 }
               }
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: 2jxIaPucEYCK7dcP3OzRiQQ
+      responseId: ujR8aZ7pNIyHz7IPgpnP2Qg
       usageMetadata:
         candidatesTokenCount: 46
         candidatesTokensDetails:
         - modality: TEXT
           tokenCount: 46
-        promptTokenCount: 46
+        promptTokenCount: 9
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 46
-        totalTokenCount: 92
+          tokenCount: 9
+        totalTokenCount: 55
     status:
       code: 200
       message: OK

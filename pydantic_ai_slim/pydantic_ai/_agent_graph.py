@@ -706,7 +706,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                             yield event
                         return
                     elif output_schema.toolset:
-                        alternatives.append('include your response in a tool call')
+                        tool_names = [t.name for t in output_schema.toolset._tool_defs]  # pyright: ignore[reportPrivateUsage]
+                        names_str = ', '.join(f'`{n}`' for n in tool_names)
+                        alternatives.append(f'call one of these tools: {names_str}')
                     else:
                         alternatives.append('call a tool')
 

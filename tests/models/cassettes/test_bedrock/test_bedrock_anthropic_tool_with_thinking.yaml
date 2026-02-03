@@ -2,17 +2,17 @@ interactions:
 - request:
     body: '{"messages": [{"role": "user", "content": [{"text": "What is the largest city in the user country?"}]}], "system":
       [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_user_country", "inputSchema": {"json":
-      {"additionalProperties": false, "properties": {}, "type": "object"}}}}]}, "additionalModelRequestFields": {"thinking":
-      {"type": "enabled", "budget_tokens": 1024}}}'
+      {"additionalProperties": false, "properties": {}, "type": "object"}}}}], "toolChoice": {"auto": {}}}, "additionalModelRequestFields":
+      {"thinking": {"type": "enabled", "budget_tokens": 1024}}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        MmM5YzRmZDctMmNlZS00Yzk2LWIwZWMtZjMxN2NkZDEwYmM5
+        ODQ3ZTBjZmMtMzM4NC00NjM1LTgxMTYtMTU1NzZjZDA4YThj
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '396'
+      - '424'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -23,27 +23,28 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1085'
+      - '1156'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 3896
+        latencyMs: 2286
       output:
         message:
           content:
           - reasoningContent:
               reasoningText:
-                signature: ErcBCkgIBhABGAIiQDYN+P1S3ACL3r24cAMKCrRNiuPPxvmT2uzREPLRyKEUXagRbXn97QCke6L7OEZvlh7NdA/MQNTwMZV8TuB4qPASDLNxYxDx1S3luCIfARoMIwLZXwhsvjjTN72XIjAJrEl5ryAvv6C1+6YMCPC73ffE+kgwB96IcZaOuDFQtyaoWwcFcDPBguM6YNp5e3cqHbDQ3QF5dR4PP5q+3K23pual3pUdT/0e7khyIxXkGAI=
+                signature: ErcBCkgICxABGAIiQFX7K5soRl8+TpP81l9aqf9CeeHb/VrhajZmRFqvlcQ9AnJGDJ0jB21V+aR1fZ7isEho6TqGKxj3PoCosrG5pqgSDGPkibAcz/jQlQCSnhoMXCBpYENzqz6VpRoIIjBFSJRguBN0ZMK+ZfibBir8JIEFWxN0FdPBx2SnK1P7kVZqhu5sirDvnYQWzjisUPIqHTv8Ns1HVCGnL3QfevKAk5aX5fNBdYO5GULIMw7TGAI=
                 text: |-
-                  The user is asking for the largest city in their country. To answer this, I first need to determine what country the user is from. I can use the `get_user_country` function to retrieve this information.
+                  The user wants to know the largest city in their country, but I don't know which country they're from. I need to use the available tool to determine their country first, and then I can tell them about the largest city in that country.
 
-                  Once I have the user's country, I can then provide information about the largest city in that country.
-          - text: I'll need to check what country you're from to answer that question.
+                  I can use the `get_user_country` function to determine the user's country.
+          - text: I'll need to check which country you're in first to answer your question about the largest city.
           - toolUse:
               input: {}
               name: get_user_country
-              toolUseId: tooluse_W9DaUFg4Tj2cRPpndqxWSg
+              toolUseId: tooluse_4Lo0VS-FT5yev_-skOCQdw
+              type: tool_use
           role: assistant
       stopReason: tool_use
       usage:
@@ -52,31 +53,33 @@ interactions:
         cacheWriteInputTokenCount: 0
         cacheWriteInputTokens: 0
         inputTokens: 397
-        outputTokens: 130
-        totalTokens: 527
+        outputTokens: 138
+        serverToolUsage: {}
+        totalTokens: 535
     status:
       code: 200
       message: OK
 - request:
     body: '{"messages": [{"role": "user", "content": [{"text": "What is the largest city in the user country?"}]}, {"role":
-      "assistant", "content": [{"reasoningContent": {"reasoningText": {"text": "The user is asking for the largest city in
-      their country. To answer this, I first need to determine what country the user is from. I can use the `get_user_country`
-      function to retrieve this information.\n\nOnce I have the user''s country, I can then provide information about the
-      largest city in that country.", "signature": "ErcBCkgIBhABGAIiQDYN+P1S3ACL3r24cAMKCrRNiuPPxvmT2uzREPLRyKEUXagRbXn97QCke6L7OEZvlh7NdA/MQNTwMZV8TuB4qPASDLNxYxDx1S3luCIfARoMIwLZXwhsvjjTN72XIjAJrEl5ryAvv6C1+6YMCPC73ffE+kgwB96IcZaOuDFQtyaoWwcFcDPBguM6YNp5e3cqHbDQ3QF5dR4PP5q+3K23pual3pUdT/0e7khyIxXkGAI="}}},
-      {"text": "I''ll need to check what country you''re from to answer that question."}, {"toolUse": {"toolUseId": "tooluse_W9DaUFg4Tj2cRPpndqxWSg",
-      "name": "get_user_country", "input": {}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_W9DaUFg4Tj2cRPpndqxWSg",
-      "content": [{"text": "Mexico"}], "status": "success"}}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools":
-      [{"toolSpec": {"name": "get_user_country", "inputSchema": {"json": {"additionalProperties": false, "properties": {},
-      "type": "object"}}}}]}, "additionalModelRequestFields": {"thinking": {"type": "enabled", "budget_tokens": 1024}}}'
+      "assistant", "content": [{"reasoningContent": {"reasoningText": {"text": "The user wants to know the largest city in
+      their country, but I don''t know which country they''re from. I need to use the available tool to determine their country
+      first, and then I can tell them about the largest city in that country.\n\nI can use the `get_user_country` function
+      to determine the user''s country.", "signature": "ErcBCkgICxABGAIiQFX7K5soRl8+TpP81l9aqf9CeeHb/VrhajZmRFqvlcQ9AnJGDJ0jB21V+aR1fZ7isEho6TqGKxj3PoCosrG5pqgSDGPkibAcz/jQlQCSnhoMXCBpYENzqz6VpRoIIjBFSJRguBN0ZMK+ZfibBir8JIEFWxN0FdPBx2SnK1P7kVZqhu5sirDvnYQWzjisUPIqHTv8Ns1HVCGnL3QfevKAk5aX5fNBdYO5GULIMw7TGAI="}}},
+      {"text": "I''ll need to check which country you''re in first to answer your question about the largest city."}, {"toolUse":
+      {"toolUseId": "tooluse_4Lo0VS-FT5yev_-skOCQdw", "name": "get_user_country", "input": {}}}]}, {"role": "user", "content":
+      [{"toolResult": {"toolUseId": "tooluse_4Lo0VS-FT5yev_-skOCQdw", "content": [{"text": "Mexico"}], "status": "success"}}]}],
+      "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_user_country", "inputSchema":
+      {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}}}], "toolChoice": {"auto": {}}}, "additionalModelRequestFields":
+      {"thinking": {"type": "enabled", "budget_tokens": 1024}}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        ZWM5NzBkMzYtZTZhYi00MjdlLWFmMzItMTBhNTc2ZjBiMWNl
+        ODBlMTYyMDAtODkzNy00YTQwLWJjZGMtNDk1NGZhZDFiNjNj
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '1399'
+      - '1459'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -87,19 +90,19 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '756'
+      - '656'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 4529
+        latencyMs: 1732
       output:
         message:
           content:
-          - text: |-
-              Based on your location in Mexico, the largest city is Mexico City (Ciudad de México). It's not only the capital but also the most populous city in Mexico with a metropolitan area population of over 21 million people, making it one of the largest urban agglomerations in the world.
-
-              Mexico City is an important cultural, financial, and political center for the country and has a rich history dating back to the Aztec empire when it was known as Tenochtitlán.
+          - text: Based on your location, you're in Mexico. The largest city in Mexico is Mexico City (Ciudad de México),
+              which is both the capital and the most populous city in the country. Mexico City is one of the largest urban
+              areas in the world with a population of over 9 million people in the city proper, and over 21 million in its
+              metropolitan area.
           role: assistant
       stopReason: end_turn
       usage:
@@ -107,9 +110,10 @@ interactions:
         cacheReadInputTokens: 0
         cacheWriteInputTokenCount: 0
         cacheWriteInputTokens: 0
-        inputTokens: 539
-        outputTokens: 106
-        totalTokens: 645
+        inputTokens: 547
+        outputTokens: 79
+        serverToolUsage: {}
+        totalTokens: 626
     status:
       code: 200
       message: OK

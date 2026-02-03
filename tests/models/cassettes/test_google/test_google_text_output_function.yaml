@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '331'
+      - '404'
       content-type:
       - application/json
       host:
@@ -19,25 +19,28 @@ interactions:
       - parts:
         - text: What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       tools:
       - functionDeclarations:
         - description: ''
           name: get_user_country
-          parameters:
+          parameters_json_schema:
+            additionalProperties: false
             properties: {}
-            type: OBJECT
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-05-06:generateContent
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '637'
+      - '1734'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=5967
+      - gfet4t7; dur=2896
       transfer-encoding:
       - chunked
       vary:
@@ -51,19 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_user_country
+            thoughtSignature: Cu8FAXLI2nwOxI+G9/9Z3jRnajoJapA7KjidIMHk8OKBiR76nML4Nn50WqYgxcStX00dDeu/1TARhkhemTHJibXzzq37701VyTTKcSO4dKEqOk0uCtG/eyIEU0tbNLYWqYTajhCAPgZFyRHWfclItjEf8J5gAIMrofx0Tg0dwF6YwmSCSe6m/K9LrAqwhXVzFfy1TUm5zBIOFpBlS5mu7DvdP/F4xBc53AlYJ5FRB+SG0UWT0n3ETnREgNyU9yE04dIdImVlVOuG/CN+jVCCxyTxj5PaoU3IFqW/rg1jNgHHE9MRVmSAgO31iCkejYDBL7ckvGg7H8MZ3dvKz2CJHCo5acM0XmOIBFTqaM0jFcR4P0I2v37maY1/MrjFVj3+Cdi7QN1ype+3xk1e7aQSec9THmxjRoPPvGY01SjPZB/SD5JECbR90NEdDrNy09Y1+eVhr5NaBOY0nobngZ7QtcBVtjPQnpXyeQ942ygYiL899MphdcODv1EVMKKTDU4a7rDPs+x69o1BlStafBWUfkzG2L3azJSXDYX9rk3tIV0vJSVQZfQr/e9uGXGHw7pTudyHCK96bSjp6J/RppdkZB/TEPyemUXhbEdtPnqo36i2UatCmfQoU31PSRqXkdEig8drnmwuceAV4Fxadnkt6OwZ5MonjJN+4CK9S0r/rMtHkqv0RdF1HhR/MnvtZP9TGP5Pu9IIR8ToYF5EVbeAIOkiP1HjMJTbXIM89drkWxZGyTKw1JnBGKcA69xj55fUPNfse3FQuto5JlmX2cO5ax/Cwza1/qVR0sSM/2B87RmjZSpbF5ihRDikkRkEM4DkaJCakpJQ45+yKJoq9zHR1eza0Z89Vfbwgp24YZWKLucLtBt8ENeHlsl4Sthjhks3Zf4oufDFtGrpQ6v+3GyZFAEQFKevdlfGs7LlMlx1Rn/Mkwww8Osa4XNjlo4FXLt6dmmRzMN8/a04sKGaYEsPN9VFg00FmdN74Usa4zVyBZ5DYA==
           role: model
+        finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
-      modelVersion: models/gemini-2.5-pro
-      responseId: NVteaJuxIuikkdUP1L_2sAY
+      modelVersion: gemini-2.5-pro
+      responseId: OlV8aZTJEtCbqtsPy96h4As
       usageMetadata:
         candidatesTokenCount: 12
         promptTokenCount: 49
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 49
-        thoughtsTokenCount: 264
-        totalTokenCount: 325
+        thoughtsTokenCount: 169
+        totalTokenCount: 230
     status:
       code: 200
       message: OK
@@ -72,11 +77,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '640'
+      - '1745'
       content-type:
       - application/json
       host:
@@ -90,35 +95,39 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_d6249f6c261544df9841f532be446f03
+            id: pyd_ai_6ccf6a2be6984fb29f49f332ac5261c7
             name: get_user_country
+          thoughtSignature: Cu8FAXLI2nwOxI-G9_9Z3jRnajoJapA7KjidIMHk8OKBiR76nML4Nn50WqYgxcStX00dDeu_1TARhkhemTHJibXzzq37701VyTTKcSO4dKEqOk0uCtG_eyIEU0tbNLYWqYTajhCAPgZFyRHWfclItjEf8J5gAIMrofx0Tg0dwF6YwmSCSe6m_K9LrAqwhXVzFfy1TUm5zBIOFpBlS5mu7DvdP_F4xBc53AlYJ5FRB-SG0UWT0n3ETnREgNyU9yE04dIdImVlVOuG_CN-jVCCxyTxj5PaoU3IFqW_rg1jNgHHE9MRVmSAgO31iCkejYDBL7ckvGg7H8MZ3dvKz2CJHCo5acM0XmOIBFTqaM0jFcR4P0I2v37maY1_MrjFVj3-Cdi7QN1ype-3xk1e7aQSec9THmxjRoPPvGY01SjPZB_SD5JECbR90NEdDrNy09Y1-eVhr5NaBOY0nobngZ7QtcBVtjPQnpXyeQ942ygYiL899MphdcODv1EVMKKTDU4a7rDPs-x69o1BlStafBWUfkzG2L3azJSXDYX9rk3tIV0vJSVQZfQr_e9uGXGHw7pTudyHCK96bSjp6J_RppdkZB_TEPyemUXhbEdtPnqo36i2UatCmfQoU31PSRqXkdEig8drnmwuceAV4Fxadnkt6OwZ5MonjJN-4CK9S0r_rMtHkqv0RdF1HhR_MnvtZP9TGP5Pu9IIR8ToYF5EVbeAIOkiP1HjMJTbXIM89drkWxZGyTKw1JnBGKcA69xj55fUPNfse3FQuto5JlmX2cO5ax_Cwza1_qVR0sSM_2B87RmjZSpbF5ihRDikkRkEM4DkaJCakpJQ45-yKJoq9zHR1eza0Z89Vfbwgp24YZWKLucLtBt8ENeHlsl4Sthjhks3Zf4oufDFtGrpQ6v-3GyZFAEQFKevdlfGs7LlMlx1Rn_Mkwww8Osa4XNjlo4FXLt6dmmRzMN8_a04sKGaYEsPN9VFg00FmdN74Usa4zVyBZ5DYA==
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_d6249f6c261544df9841f532be446f03
+            id: pyd_ai_6ccf6a2be6984fb29f49f332ac5261c7
             name: get_user_country
             response:
               return_value: Mexico
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       tools:
       - functionDeclarations:
         - description: ''
           name: get_user_country
-          parameters:
+          parameters_json_schema:
+            additionalProperties: false
             properties: {}
-            type: OBJECT
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-05-06:generateContent
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '590'
+      - '647'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=8049
+      - gfet4t7; dur=2185
       transfer-encoding:
       - chunked
       vary:
@@ -129,20 +138,20 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: The largest city in Mexico is Mexico City.
+          - text: I can't provide the largest city without knowing your location. However, if I assume you are in Mexico,
+              the largest city is Mexico City.
           role: model
         finishReason: STOP
         index: 0
-      modelVersion: models/gemini-2.5-pro
-      responseId: PVteaKv3JtK2nsEPq97emQ0
+      modelVersion: gemini-2.5-pro
+      responseId: PFV8aebQJd2iqtsPu4ua2AQ
       usageMetadata:
-        candidatesTokenCount: 9
+        candidatesTokenCount: 30
         promptTokenCount: 80
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 80
-        thoughtsTokenCount: 150
-        totalTokenCount: 239
+        totalTokenCount: 110
     status:
       code: 200
       message: OK

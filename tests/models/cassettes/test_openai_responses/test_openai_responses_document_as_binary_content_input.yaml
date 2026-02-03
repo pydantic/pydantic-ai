@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '17909'
+      - '17906'
       content-type:
       - application/json
       host:
@@ -23,8 +23,8 @@ interactions:
           filename: filename.pdf
           type: input_file
         role: user
-      instructions: ''
       model: gpt-4o
+      stream: false
     uri: https://api.openai.com/v1/responses
   response:
     headers:
@@ -33,13 +33,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1203'
+      - '1891'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '720'
+      - '3815'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -47,47 +45,64 @@ interactions:
       transfer-encoding:
       - chunked
     parsed_body:
-      created_at: 1743078010
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1769747663
+      created_at: 1769747660
       error: null
-      id: resp_67e5427aaa48819184b6bd870c1ca0e70d29edd07e7acdcd
+      frequency_penalty: 0.0
+      id: resp_0c9ed3d05b7e7c4b00697c34cbad8c8197a6e800acf27f1597
       incomplete_details: null
-      instructions: ''
+      instructions: null
       max_output_tokens: null
+      max_tool_calls: null
       metadata: {}
       model: gpt-4o-2024-08-06
       object: response
       output:
       - content:
         - annotations: []
-          text: The document contains the text "Dummy PDF file."
+          logprobs: []
+          text: It sounds like you're referring to a file named "Dummy PDF file." Without specific content details, it's hard
+            to say what's inside. Typically, dummy PDFs are used as placeholders and might contain sample text, random characters,
+            or lorem ipsum to simulate a document's layout or design. If you need help creating or analyzing the content of
+            a dummy PDF, let me know!
           type: output_text
-        id: msg_67e5427b27908191b0397017d21fb6a50d29edd07e7acdcd
+        id: msg_0c9ed3d05b7e7c4b00697c34cde6808197a8a16098ecad68d3
         role: assistant
         status: completed
         type: message
       parallel_tool_calls: true
+      presence_penalty: 0.0
       previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
       reasoning:
         effort: null
-        generate_summary: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
       status: completed
       store: true
       temperature: 1.0
       text:
         format:
           type: text
+        verbosity: medium
       tool_choice: auto
       tools: []
+      top_logprobs: 0
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 51
+        input_tokens: 20
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 11
+        output_tokens: 74
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 62
+        total_tokens: 94
       user: null
     status:
       code: 200

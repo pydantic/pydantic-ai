@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '509'
+      - '488'
       content-type:
       - application/json
       host:
@@ -27,7 +27,6 @@ interactions:
               - 1
               - 2
               - 3
-              title: Priority
               type: integer
           description: A task with a priority level.
           properties:
@@ -49,11 +48,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '584'
+      - '581'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2911
+      - gfet4t7; dur=1430
       transfer-encoding:
       - chunked
       vary:
@@ -64,20 +63,20 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: '{"name": "Fix bug", "priority": 1}'
+          - text: '{"name":"Fix bug","priority":2}'
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: D5MUaYKeH9PjnsEPron42AQ
+      responseId: qTR8aZi1Fvahz7IPmq6EoQ0
       usageMetadata:
-        candidatesTokenCount: 13
+        candidatesTokenCount: 10
         promptTokenCount: 12
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 12
-        thoughtsTokenCount: 448
-        totalTokenCount: 473
+        thoughtsTokenCount: 209
+        totalTokenCount: 231
     status:
       code: 200
       message: OK

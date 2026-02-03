@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '615'
+      - '707'
       content-type:
       - application/json
       host:
@@ -21,10 +21,11 @@ interactions:
         role: user
       systemInstruction:
         parts:
-        - text: |-
+        - text: |2
+
             Always respond with a JSON object that's compatible with this schema:
 
-            {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+            {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object", "title": "CityLocation"}
 
             Don't include any text or Markdown fencing before or after.
         role: user
@@ -32,17 +33,21 @@ interactions:
         functionDeclarations:
         - description: ''
           name: get_user_country
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-05-06:generateContent
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '653'
+      - '1832'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=4501
+      - gfet4t7; dur=3003
       transfer-encoding:
       - chunked
       vary:
@@ -56,19 +61,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_user_country
+            thoughtSignature: __BINARY_TRUNCATED__:len=1104:sha256=2b6b3d8f1ca45a80
           role: model
+        finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
-      modelVersion: models/gemini-2.5-pro-preview-05-06
-      responseId: rj9IaPTzNdCBqtsPg-GD6QU
+      modelVersion: gemini-2.5-pro
+      responseId: fjh8aYaeJumtqtsP6ZjwuAo
       usageMetadata:
         candidatesTokenCount: 12
-        promptTokenCount: 123
+        promptTokenCount: 125
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 123
-        thoughtsTokenCount: 318
-        totalTokenCount: 453
+          tokenCount: 125
+        thoughtsTokenCount: 206
+        totalTokenCount: 343
     status:
       code: 200
       message: OK
@@ -77,11 +84,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '809'
+      - '955'
       content-type:
       - application/json
       host:
@@ -96,6 +103,7 @@ interactions:
         - functionCall:
             args: {}
             name: get_user_country
+          thoughtSignature: skip_thought_signature_validator
         role: model
       - parts:
         - functionResponse:
@@ -105,10 +113,11 @@ interactions:
         role: user
       systemInstruction:
         parts:
-        - text: |-
+        - text: |2
+
             Always respond with a JSON object that's compatible with this schema:
 
-            {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+            {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object", "title": "CityLocation"}
 
             Don't include any text or Markdown fencing before or after.
         role: user
@@ -116,17 +125,21 @@ interactions:
         functionDeclarations:
         - description: ''
           name: get_user_country
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-05-06:generateContent
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '616'
+      - '1544'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1823
+      - gfet4t7; dur=2788
       transfer-encoding:
       - chunked
       vary:
@@ -138,19 +151,20 @@ interactions:
       - content:
           parts:
           - text: '{"city": "Mexico City", "country": "Mexico"}'
+            thoughtSignature: CqgFAXLI2nzfYVfoZ/WOiVXRIXw7wMHmNQtQoBs+hql8vKV8fpzWedkz5MCS12vASMxHJJnlWY9nX5ouk7ipOSxWu5PGj/1/woID00YcMawwy+EVT7dkzaD9ZVP6er7JKVgYo4KZz7otso2Hh0rkVTyAubk33hbCIkbdmYt4RMNBDcFD5AbhWeMH5kRC66l+PJLQy4U6ivj+1zvcScL0BgQ7CnK1JSsT69GAvAnmU99FNEqD8+hLkrnTgrRdRFb5mtmnuVwTfJh+3bps9/7CK83zpxYVLQJJmuCzEVBcdMKp7jyhzkvjWVhCFIf9XjUBz4p9BpRxm9FikLb8JLuSdAgghLG2IPXiv2mfgZWUJIe+gToiLsOB4Cb2tEOs5zCpEiR8CXH1I86h22Q/6XDDpoC/yBezv0jo8Wx2hn0VrYpSvm15vsjGq/JgjTSkmAs65ErbcF/8vImitsW4tEc+f2daEsWDrlcZSALKNz+qXhqZBlwJGPLmg7yYU289l0Ik4jbcmBM82sUZJHfis1t73hLxoymfAbedoY/M4MC8wqkiv6R64xxvqks3xGXnf5PnNOmd3ThlL0nGRJpYeZct+GOiXejLMzNu1JUFubK6Gfa6y6tRvNaeOQu4yLrokpl5SfoaL5tc4iIn+PB/G9H6t35B00wS6LI4kvJeWSFlgEFDnN07KTLmo/xv10cz9T9pOxdCUs4C0FxHHdW0JaVFFOo+toJWPZ4ZQVIm2lBZZShsIraCTUAFnzsTevHPkqYSO7F+JIaiYVPLs8w7F4GNOLtkJW0Gcub1dzl2ooG7UjYAFML1Od54vMW6sSKZsPbjiU9h4WwCqwXoQDnXs/4Zcin80AoHrIw6Fsx/RRAUHYaGRFRDrzZp3AdGiDvWnAQhsVEyNdw55s/4R64=
           role: model
         finishReason: STOP
         index: 0
-      modelVersion: models/gemini-2.5-pro-preview-05-06
-      responseId: sD9IaOCyLPqumtkP6p_T0AE
+      modelVersion: gemini-2.5-pro
+      responseId: gTh8acLYHtWiqtsPsb65mQI
       usageMetadata:
         candidatesTokenCount: 13
-        promptTokenCount: 154
+        promptTokenCount: 156
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 154
-        thoughtsTokenCount: 94
-        totalTokenCount: 261
+          tokenCount: 156
+        thoughtsTokenCount: 168
+        totalTokenCount: 337
     status:
       code: 200
       message: OK

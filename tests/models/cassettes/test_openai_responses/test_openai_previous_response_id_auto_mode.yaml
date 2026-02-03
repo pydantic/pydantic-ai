@@ -4,64 +4,49 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
+      content-length:
+      - '220'
       content-type:
       - application/json
       host:
       - api.openai.com
     method: POST
     parsed_body:
+      include:
+      - reasoning.encrypted_content
       input:
-      - content: What is the first secret key?
+      - content: what is the first secret key
         role: user
-      instructions: ''
       model: gpt-5
-      text:
-        format:
-          type: text
       previous_response_id: resp_68b9bda81f5c8197a5a51a20a9f4150a000497db2a4c777b
+      stream: false
     uri: https://api.openai.com/v1/responses
   response:
     headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '247'
       content-type:
       - application/json
+      openai-processing-ms:
+      - '144'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
     parsed_body:
-      created_at: 1743075630
-      error: null
-      id: resp_a4168b9bda81f5c8197a5a51a20a9f4150a000497db2a4c5
-      incomplete_details: null
-      instructions: ''
-      max_output_tokens: null
-      metadata: {}
-      model: gpt-5
-      object: response
-      output:
-      - content:
-        - annotations: []
-          text: "sesame"
-          type: output_text
-        id: msg_test_previous_response_id_auto
-        role: assistant
-        status: completed
-        type: message
-      parallel_tool_calls: true
-      previous_response_id: resp_68b9bda81f5c8197a5a51a20a9f4150a000497db2a4c777b
-      reasoning: null
-      status: complete
-      status_details: null
-      tool_calls: null
-      total_tokens: 15
-      usage:
-        input_tokens: 10
-        input_tokens_details:
-          cached_tokens: 0
-        output_tokens: 1
-        output_tokens_details:
-          reasoning_tokens: 0
-        total_tokens: 11
+      error:
+        code: previous_response_not_found
+        message: Previous response with id 'resp_68b9bda81f5c8197a5a51a20a9f4150a000497db2a4c777b' not found.
+        param: previous_response_id
+        type: invalid_request_error
     status:
-      code: 200
-      message: OK
+      code: 400
+      message: Bad Request
 version: 1

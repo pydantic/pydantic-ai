@@ -40,15 +40,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1629'
+      - '1684'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '1212'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - '1046'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -59,10 +55,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1766496300
-      created_at: 1766496299
+      completed_at: 1769786525
+      created_at: 1769786524
       error: null
-      id: resp_023a281a6afcb9a000694a982b41c88194b95a756ecfbce9cc
+      frequency_penalty: 0.0
+      id: resp_052d4bce83a89de800697ccc9c9d6c819eb584867c766fc9bb
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -72,12 +69,13 @@ interactions:
       object: response
       output:
       - arguments: '{}'
-        call_id: call_KRVWp1xfOSXIGBY4lxDwWyuL
-        id: fc_023a281a6afcb9a000694a982c56e48194bcf3664373c8dc4b
+        call_id: call_steJXNgwhlXh2G0FkkTPyGyF
+        id: fc_052d4bce83a89de800697ccc9d8968819e9cdbcd70b5ac82ba
         name: get_image
         status: completed
         type: function_call
       parallel_tool_calls: true
+      presence_penalty: 0.0
       previous_response_id: null
       prompt_cache_key: null
       prompt_cache_retention: null
@@ -131,8 +129,8 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=UP2DYTKpHmB56yf6rZiRbiI76WqRba87vDM8NavUtgU-1766496300-1.0.1.1-zVMfE52KtAYfcXfNmjxgqP2kLtstvSvU_ECOw5f2SH370bGsIOx8dy61QX4Aw7woOK5nqzn_TTrfMGglKOIYNEaBHo_a8RxsMir5QYjf5AM;
-        _cfuvid=ICDQEdmYBlIBsmMiU1XG3jhJvGccQ_H6XkhabHOAWqY-1766496300522-0.0.1.1-604800000
+      - __cf_bm=kKdGZQnOP4s9eiVwmzQE0ONs1tgyGy0bEhZKQZBSQak-1769786525-1.0.1.1-dKkj0JTq.kwJq.j0XzpmjbP24nBy2UU_mlcQdz.StYMT5wezUP90O5vzfhKGwKGc5DyhibdLaBVQ5lWztV8ZAKGZqPwrNBIF_NJJWX.fJRQ;
+        _cfuvid=gC79ucPlVkSdpDE31oz8101KO0Sykrzwo0ksPeEO9N0-1769786525700-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -143,10 +141,10 @@ interactions:
           type: input_text
         role: user
       - arguments: '{}'
-        call_id: call_KRVWp1xfOSXIGBY4lxDwWyuL
+        call_id: call_steJXNgwhlXh2G0FkkTPyGyF
         name: get_image
         type: function_call
-      - call_id: call_KRVWp1xfOSXIGBY4lxDwWyuL
+      - call_id: call_steJXNgwhlXh2G0FkkTPyGyF
         output: See file 241a70
         type: function_call_output
       - content:
@@ -176,15 +174,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1741'
+      - '1796'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '2753'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - '1757'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -195,10 +189,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1766496304
-      created_at: 1766496301
+      completed_at: 1769786527
+      created_at: 1769786525
       error: null
-      id: resp_002c332eac8db08d00694a982d671081a29eb61df34452171c
+      frequency_penalty: 0.0
+      id: resp_05920e5ace9f274500697ccc9de1dc8196adfe7c5e228888fd
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -212,11 +207,12 @@ interactions:
           logprobs: []
           text: The fruit in the image is a kiwi.
           type: output_text
-        id: msg_002c332eac8db08d00694a982fc6f081a2ac774015989ab025
+        id: msg_05920e5ace9f274500697ccc9f448c8196aeacf9cdac7ca867
         role: assistant
         status: completed
         type: message
       parallel_tool_calls: true
+      presence_penalty: 0.0
       previous_response_id: null
       prompt_cache_key: null
       prompt_cache_retention: null

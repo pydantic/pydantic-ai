@@ -4,7 +4,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
@@ -42,15 +42,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1720'
+      - '1839'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '1811'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - '902'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -61,9 +57,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      created_at: 1761323546
+      completed_at: 1769786524
+      created_at: 1769786524
       error: null
-      id: resp_04907f5d3de791830068fbaa19bb908195a91378279dba0f14
+      frequency_penalty: 0.0
+      id: resp_09befa157ae26c5c00697ccc9c196c8197b9edcd8d74aeb332
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -73,14 +71,16 @@ interactions:
       object: response
       output:
       - arguments: '{"country":"PotatoLand"}'
-        call_id: call_YfwRsW8sUxDKipwyhWTzOXCA
-        id: fc_04907f5d3de791830068fbaa1b310c81958dc9c508e878c632
+        call_id: call_UaQSSCWTV4so815BZMhZbDgl
+        id: fc_09befa157ae26c5c00697ccc9cd17c8197a17f0881e61d9864
         name: get_capital
         status: completed
         type: function_call
       parallel_tool_calls: true
+      presence_penalty: 0.0
       previous_response_id: null
       prompt_cache_key: null
+      prompt_cache_retention: null
       reasoning:
         effort: null
         summary: null
@@ -127,16 +127,16 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '579'
+      - '565'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=g29aPgrRIxmp3X5o6PZW9E8aKljsJ3_YKN58sMhqjnI-1761323547-1.0.1.1-Uj.mPGHnvAjpHojYAfG.QReYxHtLCz0jBoPrirBGA48A.LawB_Afgv0C8s0DC2TIU2y6zbyq4bA1moTVcNApxaq4NaLqfKpLe2hQBB_xM.M;
-        _cfuvid=kiKLNQ6S_H_I6dKfHm0bpQwt35G4FrXx6u4P3LxaXIQ-1761323547535-0.0.1.1-604800000
+      - __cf_bm=V4kVhJ0iTyOrtqCv8o59z2hyHT7KQPgGiyyUDpJdtCM-1769786525-1.0.1.1-BAVAKthbmr_gAAQKqwBUCXgkIvgcCIn8zHmmZCvjiXDgLAAhCRWTmV8eAyHizxHlwBIwPfXnZ10kFWnnlEZKwr2kPOmLWEGgs5Gve8afAAY;
+        _cfuvid=zh_VC2gwDB9kbqJu6PUN1e0byHsMohXtSHyLi4H.cHM-1769786525055-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -145,11 +145,10 @@ interactions:
       - content: What is the capital of PotatoLand?
         role: user
       - arguments: '{"country":"PotatoLand"}'
-        call_id: call_YfwRsW8sUxDKipwyhWTzOXCA
+        call_id: call_UaQSSCWTV4so815BZMhZbDgl
         name: get_capital
-        status: null
         type: function_call
-      - call_id: call_YfwRsW8sUxDKipwyhWTzOXCA
+      - call_id: call_UaQSSCWTV4so815BZMhZbDgl
         output: Potato City
         type: function_call_output
       model: gpt-4o
@@ -176,15 +175,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1810'
+      - '1929'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '1028'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - '684'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -195,9 +190,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      created_at: 1761323547
+      completed_at: 1769786526
+      created_at: 1769786525
       error: null
-      id: resp_0e9950da9eac6a780068fbaa1bc030819da585a6f85ddad1e6
+      frequency_penalty: 0.0
+      id: resp_036dd78f14cb091d00697ccc9daf788190b05655f8256befd0
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -211,13 +208,15 @@ interactions:
           logprobs: []
           text: The capital of PotatoLand is Potato City.
           type: output_text
-        id: msg_0e9950da9eac6a780068fbaa1c738c819d8bddf998e57232c3
+        id: msg_036dd78f14cb091d00697ccc9e129481908aee52a2ef9a8003
         role: assistant
         status: completed
         type: message
       parallel_tool_calls: true
+      presence_penalty: 0.0
       previous_response_id: null
       prompt_cache_key: null
+      prompt_cache_retention: null
       reasoning:
         effort: null
         summary: null

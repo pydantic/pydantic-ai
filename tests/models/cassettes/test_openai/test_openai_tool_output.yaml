@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '561'
+      - '598'
       content-type:
       - application/json
       host:
@@ -19,7 +19,6 @@ interactions:
       - content: What is the largest city in the user country?
         role: user
       model: gpt-4o
-      n: 1
       stream: false
       tool_choice: required
       tools:
@@ -35,6 +34,7 @@ interactions:
           description: The final response which ends this conversation
           name: final_result
           parameters:
+            additionalProperties: false
             properties:
               city:
                 type: string
@@ -44,6 +44,7 @@ interactions:
             - city
             - country
             type: object
+          strict: true
         type: function
     uri: https://api.openai.com/v1/chat/completions
   response:
@@ -58,10 +59,8 @@ interactions:
       - '1066'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '348'
+      - '263'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -82,16 +81,16 @@ interactions:
           - function:
               arguments: '{}'
               name: get_user_country
-            id: call_iXFttys57ap0o16JSlC8yhYo
+            id: call_55Y1MexM7u2PSyLKUqMvO1o0
             type: function
-      created: 1746142584
-      id: chatcmpl-BSXk0dWkG4hfPt0lph4oFO35iT73I
+      created: 1769747651
+      id: chatcmpl-D3aUtEhMCiguYuWihRuozlPfUWEdi
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_f5bdcc3276
+      system_fingerprint: fp_eadf229d54
       usage:
-        completion_tokens: 12
+        completion_tokens: 11
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
@@ -101,7 +100,7 @@ interactions:
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 80
+        total_tokens: 79
     status:
       code: 200
       message: OK
@@ -110,16 +109,16 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '792'
+      - '844'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=yM.C6I_kAzJk3Dm7H52actN1zAEW8fj.Gd2yeJ7tKN0-1746142584-1.0.1.1-xk91aElDtLLC8aROrOKHlp5vck_h.R.zQkS6OrsiBOwuFA8rE1kGswpactMEtYxV9WgWDN2B4S2B4zs8heyxmcfiNjmOf075n.OPqYpVla4;
-        _cfuvid=JCllInpf6fg1JdOS7xSj3bZOXYf9PYJ8uoamRTx7ku4-1746142584855-0.0.1.1-604800000
+      - __cf_bm=q1NlfIX9CFeqEh4evT.mwpXAvksHZkbL_4K24IZki9c-1769747651-1.0.1.1-_3DNkLHVUGpwOrdWQ9xIWhhYPLbxmyGBLb2uT78oy00bgtjT9DTefmBllm9QZ2YMQjl45CYU9DqltxR7qrRMIktfyPNfw7C_EBOj3FgKToE;
+        _cfuvid=qrOnKfsI73HOTSRsAqVfunt_BNJWjcjgSnUXjFiFd0Q-1769747651800-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -127,18 +126,18 @@ interactions:
       messages:
       - content: What is the largest city in the user country?
         role: user
-      - role: assistant
+      - content: null
+        role: assistant
         tool_calls:
         - function:
             arguments: '{}'
             name: get_user_country
-          id: call_iXFttys57ap0o16JSlC8yhYo
+          id: call_55Y1MexM7u2PSyLKUqMvO1o0
           type: function
       - content: Mexico
         role: tool
-        tool_call_id: call_iXFttys57ap0o16JSlC8yhYo
+        tool_call_id: call_55Y1MexM7u2PSyLKUqMvO1o0
       model: gpt-4o
-      n: 1
       stream: false
       tool_choice: required
       tools:
@@ -154,6 +153,7 @@ interactions:
           description: The final response which ends this conversation
           name: final_result
           parameters:
+            additionalProperties: false
             properties:
               city:
                 type: string
@@ -163,6 +163,7 @@ interactions:
             - city
             - country
             type: object
+          strict: true
         type: function
     uri: https://api.openai.com/v1/chat/completions
   response:
@@ -177,10 +178,8 @@ interactions:
       - '1113'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '1919'
+      - '828'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -201,16 +200,16 @@ interactions:
           - function:
               arguments: '{"city": "Mexico City", "country": "Mexico"}'
               name: final_result
-            id: call_gmD2oUZUzSoCkmNmp3JPUF7R
+            id: call_p39CVeTmIRmqTlopIZn7hsic
             type: function
-      created: 1746142585
-      id: chatcmpl-BSXk1xGHYzbhXgUkSutK08bdoNv5s
+      created: 1769747652
+      id: chatcmpl-D3aUusCTbtcO6CY2qNKQFaMYZFnoG
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_f5bdcc3276
+      system_fingerprint: fp_eadf229d54
       usage:
-        completion_tokens: 36
+        completion_tokens: 35
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
@@ -220,7 +219,7 @@ interactions:
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 125
+        total_tokens: 124
     status:
       code: 200
       message: OK
