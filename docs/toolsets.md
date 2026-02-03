@@ -743,7 +743,7 @@ Pydantic AI provides two toolsets that allow an agent to connect to and call too
 
 Toolsets that implement [Agent Skills](https://agentskills.io) support so agents can efficiently discover and perform specific tasks:
 
-* [`pydantic-ai-skills`](https://github.com/DougTrajano/pydantic-ai-skills) - `SkillsToolset` implements Agent Skills support with progressive disclosure (load skills on-demand to reduce tokens). Supports filesystem and programmatic skills; compatible with [agentskills.io](https://agentskills.io).
+- [`pydantic-ai-skills`](https://github.com/DougTrajano/pydantic-ai-skills) - `SkillsToolset` implements Agent Skills support with progressive disclosure (load skills on-demand to reduce tokens). Supports filesystem and programmatic skills; compatible with [agentskills.io](https://agentskills.io).
 
 ### Task Management
 
