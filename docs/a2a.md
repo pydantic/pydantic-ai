@@ -116,6 +116,33 @@ uvicorn agent_to_a2a:app --host 0.0.0.0 --port 8000
 
 Since the goal of `to_a2a` is to be a convenience method, it accepts the same arguments as the [`FastA2A`][fasta2a.FastA2A] constructor.
 
+#### Using Dependencies
+
+If your agent requires dependencies, you can pass them via the `deps` parameter:
+
+```python {title="agent_to_a2a_with_deps.py"}
+from dataclasses import dataclass
+from pydantic_ai import Agent, RunContext
+
+@dataclass
+class MyDeps:
+    api_key: str
+    base_url: str
+
+agent = Agent('openai:gpt-5', deps_type=MyDeps)
+
+@agent.tool
+async def get_data(ctx: RunContext[MyDeps]) -> str:
+    # Use ctx.deps.api_key and ctx.deps.base_url
+    return f"Using API key: {ctx.deps.api_key}"
+
+# Pass dependencies when creating the A2A server
+deps = MyDeps(api_key="secret", base_url="https://api.example.com")
+app = agent.to_a2a(deps=deps)
+```
+
+The same dependencies will be used for all agent runs within this A2A server.
+
 When using `to_a2a()`, Pydantic AI automatically:
 
 - Stores the complete conversation history (including tool calls and responses) in the context storage
