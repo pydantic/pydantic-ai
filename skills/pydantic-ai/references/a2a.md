@@ -11,10 +11,8 @@ The [Agent2Agent (A2A) Protocol](https://google.github.io/A2A/) is an open stand
 ```python {title="agent_to_a2a.py" test="skip"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5', instructions='Be helpful!')
+agent = Agent('openai:gpt-5', instructions='Be fun!')
 app = agent.to_a2a()
-
-# Run with: uvicorn agent_to_a2a:app --host 0.0.0.0 --port 8000
 ```
 
 The `app` is an ASGI application compatible with any ASGI server.

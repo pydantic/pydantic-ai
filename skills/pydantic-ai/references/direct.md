@@ -116,10 +116,14 @@ from pydantic_ai.direct import model_request_sync
 logfire.configure()
 logfire.instrument_pydantic_ai()
 
-response = model_request_sync(
+# Make a synchronous request to the model
+model_response = model_request_sync(
     'anthropic:claude-haiku-4-5',
-    [ModelRequest.user_text_prompt('Hello!')],
+    [ModelRequest.user_text_prompt('What is the capital of France?')],
 )
+
+print(model_response.parts[0].content)
+#> The capital of France is Paris.
 ```
 
 Or per-request:

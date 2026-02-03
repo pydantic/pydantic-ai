@@ -99,7 +99,7 @@ Combine multiple toolsets into one:
 from pydantic_ai import CombinedToolset
 
 combined = CombinedToolset([weather_toolset, datetime_toolset])
-agent = Agent('openai:gpt-4o', toolsets=[combined])
+agent = Agent('openai:gpt-5', toolsets=[combined])
 ```
 
 ## FilteredToolset
@@ -174,7 +174,7 @@ approval_required = toolset.approval_required(
 )
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     toolsets=[approval_required],
     output_type=[str, DeferredToolRequests],
 )
@@ -226,7 +226,7 @@ frontend_tools = [
 
 external = ExternalToolset(frontend_tools)
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     toolsets=[external],
     output_type=[str, DeferredToolRequests],
 )
@@ -332,3 +332,10 @@ class MyToolset(AbstractToolset):
 | `WrapperToolset` | `pydantic_ai.WrapperToolset` | Base for custom wrappers |
 | `ExternalToolset` | `pydantic_ai.ExternalToolset` | External/deferred tools |
 | `AbstractToolset` | `pydantic_ai.AbstractToolset` | Base class for custom toolsets |
+
+## See Also
+
+- [tools.md](tools.md) — Individual tool registration
+- [deferred-tools.md](deferred-tools.md) — Tool approval workflows
+- [mcp.md](mcp.md) — MCP server toolsets
+- [third-party-tools.md](third-party-tools.md) — LangChain and ACI.dev toolsets

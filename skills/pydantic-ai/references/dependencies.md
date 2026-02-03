@@ -166,7 +166,7 @@ The generic type parameter ensures type safety between `deps_type`, `RunContext`
 
 ```python
 # Type-safe: deps_type matches RunContext and run() call
-agent = Agent('openai:gpt-4o', deps_type=MyDeps)
+agent = Agent('openai:gpt-5', deps_type=MyDeps)
 
 @agent.tool
 async def my_tool(ctx: RunContext[MyDeps]) -> str:  # ✓ Matches deps_type
@@ -180,7 +180,7 @@ result = agent.run_sync('prompt', deps=MyDeps(...))  # ✓ Must be MyDeps
 If no `deps_type` is specified, `RunContext[None]` is used and `deps` defaults to `None`:
 
 ```python
-agent = Agent('openai:gpt-4o')  # deps_type defaults to NoneType
+agent = Agent('openai:gpt-5')  # deps_type defaults to NoneType
 
 @agent.tool
 async def my_tool(ctx: RunContext[None]) -> str:
@@ -271,3 +271,10 @@ This helps reproduce issues by showing exactly what context the agent had when s
 |------|--------|-------------|
 | `RunContext` | `pydantic_ai.RunContext` | Dependency injection context in tools |
 | `AgentDepsT` | `pydantic_ai._run_context.AgentDepsT` | Type variable for deps |
+
+## See Also
+
+- [agents.md](agents.md) — Agent configuration
+- [tools.md](tools.md) — Using RunContext in tools
+- [testing.md](testing.md) — Testing with dependency override
+- [third-party-tools.md](third-party-tools.md) — Integration patterns with databases and APIs

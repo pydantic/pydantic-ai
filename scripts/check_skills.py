@@ -43,6 +43,67 @@ SKIP_SYNC_TITLES: set[str] = {
     'bedrock_deepseek_thinking_part.py',
     # Skill-only examples (condensed/simplified versions for skills)
     'test_model_structured.py',
+    # Input examples
+    'multimodal_input.py',
+    'binary_content.py',
+    # Tool examples
+    'tool_retry_example.py',
+    'tool_outputs.py',
+    'tool_return_example.py',
+    'dynamic_tool.py',
+    'prepare_tools_example.py',
+    'tool_with_ctx.py',
+    'tool_plain_example.py',
+    # Messages examples
+    'messages_access.py',
+    # Common use case examples
+    'rag_example.py',
+    'support_bot.py',
+    'code_assistant.py',
+    'data_analyst.py',
+    'webhook_handler.py',
+    # Third-party tools examples
+    'langchain_tool.py',
+    'langchain_toolkit.py',
+    'aci_tool.py',
+    'aci_toolset.py',
+    # Dependencies examples
+    'deps_basic.py',
+    'deps_instructions.py',
+    'deps_in_tools.py',
+    'deps_testing.py',
+    # Output examples
+    'output_validator_simple.py',
+    # Direct API examples
+    'direct_basic.py',
+    'direct_async.py',
+    'direct_with_tools.py',
+    'direct_streaming.py',
+    'direct_instrumented.py',  # Has duplicate titles in docs causing extract_code_blocks to miss first version
+    # Multi-agent examples
+    'agent_delegation.py',
+    'delegation_with_deps.py',
+    'programmatic_handoff.py',  # Skill-simplified version
+    'router_pattern.py',
+    'reflection_pattern.py',
+    'plan_execute_pattern.py',
+    # Toolsets examples
+    'approval_required_toolset.py',  # Skill-simplified version
+    # Model examples
+    'model_settings_example.py',
+    'fallback_model_simple.py',
+    # Retry examples
+    'retry_setup.py',
+    # Approval examples
+    'always_require_approval.py',
+    'conditional_approval.py',
+    # Deferred tools examples
+    'external_tool.py',  # Skill-simplified version
+    # Agent examples
+    'static_instructions.py',
+    'dynamic_instructions.py',
+    'agent_override.py',
+    'agent_metadata.py',
 }
 
 EXPECTED_REFERENCE_FILES = [

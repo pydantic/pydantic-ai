@@ -113,7 +113,7 @@ doc = DocumentUrl(url='https://example.com/doc.pdf')
 ```python
 from pydantic_ai import Agent, ImageUrl
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 result = await agent.run([
     'What is in this image?',
     ImageUrl(url='https://example.com/photo.jpg'),

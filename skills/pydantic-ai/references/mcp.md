@@ -17,7 +17,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 
 server = MCPServerStreamableHTTP('http://localhost:8080/mcp')
-agent = Agent('openai:gpt-4o', toolsets=[server])
+agent = Agent('openai:gpt-5', toolsets=[server])
 
 async with agent:
     result = await agent.run('Use the tools available.')
@@ -31,7 +31,7 @@ Connect using Server-Sent Events transport:
 from pydantic_ai.mcp import MCPServerSSE
 
 server = MCPServerSSE('http://localhost:8080/sse')
-agent = Agent('openai:gpt-4o', toolsets=[server])
+agent = Agent('openai:gpt-5', toolsets=[server])
 ```
 
 ### MCPServerStdio
@@ -42,7 +42,7 @@ Connect to a subprocess-based MCP server:
 from pydantic_ai.mcp import MCPServerStdio
 
 server = MCPServerStdio('npx', args=['-y', '@modelcontextprotocol/server-filesystem', '/tmp'])
-agent = Agent('openai:gpt-4o', toolsets=[server])
+agent = Agent('openai:gpt-5', toolsets=[server])
 ```
 
 ## Important: Context Manager
@@ -50,7 +50,7 @@ agent = Agent('openai:gpt-4o', toolsets=[server])
 MCP servers must be used within an async context manager (`async with agent:`):
 
 ```python
-agent = Agent('openai:gpt-4o', toolsets=[server])
+agent = Agent('openai:gpt-5', toolsets=[server])
 
 # REQUIRED: enter the agent context to start MCP servers
 async with agent:
@@ -181,7 +181,7 @@ Load MCP server configurations from a JSON file:
 from pydantic_ai.mcp import load_mcp_servers
 
 servers = load_mcp_servers('mcp_config.json')
-agent = Agent('openai:gpt-4o', toolsets=servers)
+agent = Agent('openai:gpt-5', toolsets=servers)
 ```
 
 ## FastMCPToolset — Simplified MCP Client

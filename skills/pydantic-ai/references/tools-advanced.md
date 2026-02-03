@@ -116,7 +116,7 @@ tool = Tool.from_schema(
     takes_ctx=False,
 )
 
-agent = Agent('openai:gpt-4o', tools=[tool])
+agent = Agent('openai:gpt-5', tools=[tool])
 ```
 
 Note: No argument validation is performed with `from_schema`.
@@ -183,7 +183,7 @@ async def make_all_strict_for_openai(
     return tool_defs
 
 
-agent = Agent('openai:gpt-4o', prepare_tools=make_all_strict_for_openai)
+agent = Agent('openai:gpt-5', prepare_tools=make_all_strict_for_openai)
 ```
 
 ## Tool Strict Mode (OpenAI)
@@ -200,7 +200,7 @@ def my_tool(x: int, y: int) -> int:
 
 # Enable strict mode for a specific tool
 tool = Tool(my_tool, strict=True)
-agent = Agent('openai:gpt-4o', tools=[tool])
+agent = Agent('openai:gpt-5', tools=[tool])
 
 # Or enable via prepare_tools for all tools
 from dataclasses import replace
@@ -212,7 +212,7 @@ async def enable_strict(ctx, tool_defs):
     return tool_defs
 
 
-agent = Agent('openai:gpt-4o', prepare_tools=enable_strict)
+agent = Agent('openai:gpt-5', prepare_tools=enable_strict)
 ```
 
 **When to use strict mode:**
@@ -237,7 +237,7 @@ tool = Tool(
     metadata={'category': 'database', 'requires_auth': True, 'cost': 0.01},
 )
 
-agent = Agent('openai:gpt-4o', tools=[tool])
+agent = Agent('openai:gpt-5', tools=[tool])
 ```
 
 Access metadata in `prepare_tools` for filtering or logging.
@@ -274,7 +274,7 @@ Tool-specific timeout > Agent tool_timeout > No timeout (unlimited)
 ```
 
 ```python
-agent = Agent('openai:gpt-4o', tool_timeout=60)  # Default 60s
+agent = Agent('openai:gpt-5', tool_timeout=60)  # Default 60s
 
 
 @agent.tool_plain(timeout=10)  # Override: 10s

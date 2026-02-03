@@ -2,6 +2,77 @@
 
 Source: `pydantic_ai_slim/pydantic_ai/agent/`
 
+## Architecture Patterns
+
+### Agent Delegation (Tool-based)
+
+```
+┌─────────────────────────────────────────────────┐
+│              Parent Agent                        │
+│  ┌─────────────────────────────────────────┐    │
+│  │ Instructions: "Use tools to complete..." │    │
+│  └─────────────────────────────────────────┘    │
+│                      │                           │
+│         ┌────────────┼────────────┐             │
+│         ▼            ▼            ▼             │
+│    ┌─────────┐ ┌─────────┐ ┌─────────┐         │
+│    │ tool_a  │ │ tool_b  │ │delegate │         │
+│    └─────────┘ └─────────┘ └────┬────┘         │
+│                                  │              │
+└──────────────────────────────────│──────────────┘
+                                   │
+                                   ▼
+                          ┌───────────────┐
+                          │ Child Agent   │
+                          │  (returns to  │
+                          │   parent)     │
+                          └───────────────┘
+```
+
+### Router Pattern
+
+```
+                    User Request
+                          │
+                          ▼
+                 ┌────────────────┐
+                 │  Router Agent  │  Classifies request
+                 └───────┬────────┘
+                         │
+          ┌──────────────┼──────────────┐
+          │              │              │
+          ▼              ▼              ▼
+   ┌────────────┐ ┌────────────┐ ┌────────────┐
+   │  Billing   │ │ Technical  │ │  General   │
+   │   Agent    │ │   Agent    │ │   Agent    │
+   └─────┬──────┘ └─────┬──────┘ └─────┬──────┘
+         │              │              │
+         └──────────────┼──────────────┘
+                        │
+                        ▼
+                    Response
+```
+
+### Programmatic Hand-off
+
+```
+    Application Code
+          │
+    ┌─────┴─────┐
+    ▼           │
+┌────────┐      │
+│Agent 1 │──────┤  Result 1
+└────────┘      │
+                ▼
+          ┌────────┐
+          │Agent 2 │──────┐  Result 2
+          └────────┘      │
+                          ▼
+                    ┌────────┐
+                    │Agent 3 │  Final Result
+                    └────────┘
+```
+
 ## Complexity Levels
 
 1. **Single agent** — standard agent usage

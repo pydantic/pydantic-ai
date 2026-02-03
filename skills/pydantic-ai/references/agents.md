@@ -2,11 +2,58 @@
 
 Source: `pydantic_ai_slim/pydantic_ai/agent/__init__.py`, `pydantic_ai_slim/pydantic_ai/agent/_agent.py`
 
+## Agent Execution Flow
+
+```
+                    ┌─────────────────┐
+                    │  agent.run()    │
+                    └────────┬────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │ UserPromptNode  │  Build initial request
+                    └────────┬────────┘
+                             │
+              ┌──────────────┼──────────────┐
+              │              ▼              │
+              │     ┌─────────────────┐     │
+              │     │ModelRequestNode │     │  Send to LLM
+              │     └────────┬────────┘     │
+              │              │              │
+              │              ▼              │
+              │      Has tool calls?        │
+              │         │       │           │
+              │        Yes      No          │
+              │         │       │           │
+              │         ▼       │           │
+              │  ┌─────────────┐│           │
+              │  │CallToolsNode││           │  Execute tools
+              │  └──────┬──────┘│           │
+              │         │       │           │
+              │         ▼       │           │
+              │    More calls?  │           │
+              │      │    │     │           │
+              │     Yes   No    │           │
+              │      │    │     │           │
+              └──────┘    └─────┼───────────┘
+                                │
+                                ▼
+                         ┌─────────────┐
+                         │     End     │  Return result
+                         └─────────────┘
+```
+
+The agent loop continues until:
+- The model returns output without tool calls (`end_strategy='early'`)
+- All tool calls are processed and model returns output (`end_strategy='exhaustive'`)
+- Usage limits are exceeded
+- Maximum retries are exhausted
+
 ## Agent Constructor
 
 ```python
 Agent(
-    model='openai:gpt-4o',          # Model string or Model instance
+    model='openai:gpt-5',          # Model string or Model instance
     *,
     output_type=str,                 # Pydantic model, dataclass, or type
     instructions=None,               # Static str, callable, or list of either
@@ -277,7 +324,7 @@ See [tools.md](tools.md) for complete tool documentation.
 
 Tag agent runs with contextual data for monitoring and filtering:
 
-```python
+```python {title="agent_metadata.py"}
 from dataclasses import dataclass
 
 from pydantic_ai import Agent
@@ -399,6 +446,134 @@ logfire.instrument_pydantic_ai()
 ```
 
 This captures every model request and response, making it easy to understand what the model "saw" and why it made certain decisions. See [observability.md](observability.md) for details.
+
+## Performance and Cost Optimization
+
+### Reduce Token Usage
+
+**Use `instructions` instead of repeating context:**
+
+```python
+# Inefficient - context in every prompt
+result = agent.run_sync('User: John. Task: What is 2+2?')
+result = agent.run_sync('User: John. Task: What is 3+3?')
+
+# Efficient - context in instructions
+agent = Agent('openai:gpt-5', deps_type=str)
+
+@agent.instructions
+def user_context(ctx: RunContext[str]) -> str:
+    return f'User: {ctx.deps}'
+
+result = agent.run_sync('What is 2+2?', deps='John')
+```
+
+**Summarize long message histories:**
+
+```python
+from pydantic_ai.history_processors import SummarizingHistoryProcessor
+
+agent = Agent(
+    'openai:gpt-5',
+    history_processors=[
+        SummarizingHistoryProcessor(
+            max_tokens=4000,  # Summarize when history exceeds this
+            summary_model='openai:gpt-5-mini',  # Cheap model for summarization
+        ),
+    ],
+)
+```
+
+**Set max_tokens to limit response length:**
+
+```python
+agent = Agent(
+    'openai:gpt-5',
+    model_settings={'max_tokens': 500},  # Prevent runaway responses
+)
+```
+
+### Prevent Runaway Costs
+
+**Always use `UsageLimits` in production:**
+
+```python
+from pydantic_ai import UsageLimits
+
+result = await agent.run(
+    user_prompt,
+    usage_limits=UsageLimits(
+        request_limit=10,           # Max model requests
+        total_tokens_limit=10000,   # Max total tokens
+    ),
+)
+```
+
+**Track usage across delegated agents:**
+
+```python
+from pydantic_ai import RunUsage, UsageLimits
+
+usage = RunUsage()
+limits = UsageLimits(total_tokens_limit=50000)
+
+# All agents share the same usage tracking
+result1 = await agent1.run(prompt, usage=usage, usage_limits=limits)
+result2 = await agent2.run(prompt, usage=usage, usage_limits=limits)
+
+print(f'Total tokens: {usage.total_tokens}')
+```
+
+### Choose the Right Model
+
+**Use cheaper models for simple tasks:**
+
+```python
+# Routing/classification - use fast, cheap model
+router = Agent('openai:gpt-5-mini', output_type=RouteDecision)
+
+# Complex reasoning - use capable model
+reasoner = Agent('anthropic:claude-sonnet-4-5', output_type=DetailedAnalysis)
+```
+
+**Use FallbackModel for cost optimization:**
+
+```python
+from pydantic_ai.models.fallback import FallbackModel
+
+# Try cheap model first, fall back to expensive on failure
+agent = Agent(
+    FallbackModel('openai:gpt-5-mini', 'openai:gpt-5'),
+)
+```
+
+### Optimize Tool Schemas
+
+**Keep tool parameters simple:**
+
+```python
+# Generates large schema - avoid
+class ComplexInput(BaseModel):
+    nested: dict[str, list[dict[str, Any]]]
+
+# Simple schema - preferred
+@agent.tool_plain
+def process_item(item_id: str, action: str) -> str:
+    """Process an item. action must be 'approve' or 'reject'."""
+    return f'Processed {item_id}: {action}'
+```
+
+**Filter tools to reduce schema size:**
+
+```python
+from pydantic_ai.toolsets import FilteredToolset
+
+# Only expose relevant tools based on context
+filtered = FilteredToolset(
+    full_toolset,
+    filter_func=lambda ctx, td: td.name in ['tool1', 'tool2'],
+)
+```
 
 ## Key Types
 

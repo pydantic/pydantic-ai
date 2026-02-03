@@ -187,7 +187,7 @@ from pydantic_ai.models.fallback import FallbackModel
 
 # FallbackModel for API resilience
 agent = Agent(
-    FallbackModel('openai:gpt-4o', 'anthropic:claude-sonnet-4-5'),
+    FallbackModel('openai:gpt-5', 'anthropic:claude-sonnet-4-5'),
     retries=3,  # Retries for validation errors
 )
 

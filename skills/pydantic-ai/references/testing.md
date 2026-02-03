@@ -306,7 +306,7 @@ class User(BaseModel):
     name: str
     age: int
 
-agent = Agent('openai:gpt-4o', output_type=User)
+agent = Agent('openai:gpt-5', output_type=User)
 
 # TestModel generates valid data from schema
 with agent.override(model=TestModel()):
@@ -324,3 +324,10 @@ with agent.override(model=TestModel()):
 | `AgentInfo` | `pydantic_ai.models.function.AgentInfo` | Info passed to FunctionModel |
 | `ALLOW_MODEL_REQUESTS` | `pydantic_ai.models.ALLOW_MODEL_REQUESTS` | Global API block flag |
 | `capture_run_messages` | `pydantic_ai.capture_run_messages` | Context manager for messages |
+
+## See Also
+
+- [models.md](models.md) — TestModel and FunctionModel details
+- [agents.md](agents.md) — Agent.override() patterns
+- [dependencies.md](dependencies.md) — Testing with dependency injection
+- [troubleshooting.md](troubleshooting.md) — Testing anti-patterns

@@ -202,7 +202,111 @@ async def test_my_agent():
 | Expose agents as HTTP servers (A2A) | [a2a.md](references/a2a.md) |
 | Handle HTTP retries and rate limits | [retries.md](references/retries.md) |
 | Use LangChain or ACI.dev tools | [third-party-tools.md](references/third-party-tools.md) |
+| Debug common issues | [troubleshooting.md](references/troubleshooting.md) |
+| Migrate from deprecated APIs | [migrations.md](references/migrations.md) |
+| See advanced real-world examples | [examples-advanced.md](references/examples-advanced.md) |
 | Look up an import path | [api-reference.md](references/api-reference.md) |
+
+## Decision Trees
+
+### Choosing a Tool Registration Method
+
+```
+Need RunContext (deps, usage, messages)?
+├── Yes → Use @agent.tool
+└── No → Pure function, no context needed?
+    ├── Yes → Use @agent.tool_plain
+    └── Tools defined outside agent file?
+        ├── Yes → Use tools=[Tool(...)] in constructor
+        └── Dynamic tools based on context?
+            ├── Yes → Use ToolPrepareFunc
+            └── Multiple related tools as a group?
+                └── Yes → Use FunctionToolset
+```
+
+### Choosing an Output Mode
+
+```
+Need structured data with Pydantic validation?
+├── Yes → Does provider support native JSON mode?
+│   ├── Yes, and you want it → Use NativeOutput(MyModel)
+│   └── No, or prefer consistency → Use ToolOutput(MyModel) [default]
+└── No → Need custom parsing logic?
+    ├── Yes → Use TextOutput(parser_fn)
+    └── No → Just plain text?
+        └── Yes → Use output_type=str [default]
+
+Dynamic schema at runtime?
+└── Yes → Use StructuredDict(**fields)
+```
+
+### Choosing a Multi-Agent Pattern
+
+```
+Child agent returns result to parent?
+├── Yes → Use agent delegation via tools
+└── No → Permanent hand-off to specialist?
+    ├── Yes → Use output functions
+    └── Application code between agents?
+        ├── Yes → Use programmatic hand-off
+        └── Complex state machine?
+            └── Yes → Use Graph-based control
+```
+
+### Choosing a Testing Approach
+
+```
+Need deterministic, fast tests?
+├── Yes → Use TestModel with agent.override()
+└── Need specific tool call behavior?
+    ├── Yes → Use FunctionModel
+    └── Testing against real API (integration)?
+        └── Yes → Use pytest-recording with VCR cassettes
+```
+
+## Comparison Tables
+
+### Output Mode Comparison
+
+| Mode | Provider Support | Streaming | Validation | Best For |
+|------|-----------------|-----------|------------|----------|
+| `ToolOutput` | All providers | Yes | Full Pydantic | Default choice, maximum compatibility |
+| `NativeOutput` | OpenAI, Anthropic, Google | Limited | Full Pydantic | When provider JSON mode preferred |
+| `PromptedOutput` | All providers | Yes | Full Pydantic | Fallback when tools not available |
+| `TextOutput` | All providers | Yes | Custom function | Custom parsing, plain text |
+
+### Model Provider Prefixes
+
+| Provider | Prefix | Example |
+|----------|--------|---------|
+| OpenAI | `openai:` | `openai:gpt-5` |
+| Anthropic | `anthropic:` | `anthropic:claude-sonnet-4-5` |
+| Google (AI Studio) | `google-gla:` | `google-gla:gemini-2.5-pro` |
+| Google (Vertex) | `google-vertex:` | `google-vertex:gemini-2.5-pro` |
+| Groq | `groq:` | `groq:llama-3.3-70b-versatile` |
+| Mistral | `mistral:` | `mistral:mistral-large-latest` |
+| Cohere | `cohere:` | `cohere:command-r-plus` |
+| AWS Bedrock | `bedrock:` | `bedrock:anthropic.claude-sonnet-4-5-v2-0` |
+| Azure OpenAI | `azure:` | `azure:gpt-5` |
+| OpenRouter | `openrouter:` | `openrouter:anthropic/claude-sonnet-4-5` |
+| Ollama (local) | `ollama:` | `ollama:llama3.2` |
+
+### Tool Decorator Comparison
+
+| Decorator | RunContext | Use Case |
+|-----------|------------|----------|
+| `@agent.tool` | Required first param | Access deps, usage, messages, retry info |
+| `@agent.tool_plain` | Not available | Pure functions, no context needed |
+| `Tool(fn)` | Auto-detected | Define tools outside agent, pass to constructor |
+
+### When to Use Each Agent Method
+
+| Method | Async | Streaming | Iteration | Best For |
+|--------|-------|-----------|-----------|----------|
+| `agent.run()` | Yes | No | No | Standard async usage |
+| `agent.run_sync()` | No | No | No | Scripts, sync contexts |
+| `agent.run_stream()` | Yes | Yes | No | Real-time text output |
+| `agent.iter()` | Yes | No | Yes | Fine-grained control, debugging |
 
 ## Architecture Overview
 
@@ -213,7 +317,7 @@ async def test_my_agent():
 - `Agent[AgentDepsT, OutputDataT]` — dependency type + output type
 - `RunContext[AgentDepsT]` — available in tools and system prompts
 
-**Model string format:** `"provider:model-name"` (e.g., `"openai:gpt-4o"`, `"anthropic:claude-sonnet-4-5"`, `"google:gemini-2.5-pro"`)
+**Model string format:** `"provider:model-name"` (e.g., `"openai:gpt-5"`, `"anthropic:claude-sonnet-4-5"`, `"google:gemini-2.5-pro"`)
 
 **Output modes:**
 - `ToolOutput` — structured data via tool calls (default for Pydantic models)
@@ -262,4 +366,7 @@ async def test_my_agent():
 | [a2a.md](references/a2a.md) | agent.to_a2a(), FastA2A, inter-agent communication |
 | [retries.md](references/retries.md) | AsyncTenacityTransport, RetryConfig, wait_retry_after |
 | [third-party-tools.md](references/third-party-tools.md) | LangChain tools, ACI.dev tools |
+| [troubleshooting.md](references/troubleshooting.md) | Common mistakes, anti-patterns, debugging tips |
+| [migrations.md](references/migrations.md) | Upgrade patterns from deprecated APIs |
+| [examples-advanced.md](references/examples-advanced.md) | Real-world examples: RAG, support bot, code assistant |
 | [api-reference.md](references/api-reference.md) | Condensed public API with import paths |

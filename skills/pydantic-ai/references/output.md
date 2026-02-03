@@ -34,7 +34,7 @@ Uses tool calls to extract structured data. Works with all providers.
 ```python
 from pydantic_ai import Agent, ToolOutput
 
-agent = Agent('openai:gpt-4o', output_type=ToolOutput(MyModel))
+agent = Agent('openai:gpt-5', output_type=ToolOutput(MyModel))
 # Equivalent to: output_type=MyModel (ToolOutput is the default mode)
 ```
 
@@ -42,7 +42,7 @@ Customize the tool name and description:
 
 ```python
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     output_type=ToolOutput(MyModel, name='extract_data', description='Extract structured data'),
 )
 ```
@@ -54,7 +54,7 @@ Uses provider-specific structured output features (e.g., OpenAI's `response_form
 ```python
 from pydantic_ai import Agent, NativeOutput
 
-agent = Agent('openai:gpt-4o', output_type=NativeOutput(MyModel))
+agent = Agent('openai:gpt-5', output_type=NativeOutput(MyModel))
 ```
 
 ### PromptedOutput
@@ -64,7 +64,7 @@ Injects the JSON schema into the system prompt and parses the response.
 ```python
 from pydantic_ai import Agent, PromptedOutput
 
-agent = Agent('openai:gpt-4o', output_type=PromptedOutput(MyModel))
+agent = Agent('openai:gpt-5', output_type=PromptedOutput(MyModel))
 ```
 
 ### TextOutput
@@ -79,7 +79,7 @@ def parse_int(text: str) -> int:
     return int(text.strip())
 
 
-agent = Agent('openai:gpt-4o', output_type=TextOutput(parse_int))
+agent = Agent('openai:gpt-5', output_type=TextOutput(parse_int))
 ```
 
 `TextOutput` can also take a function with `RunContext`:
@@ -129,7 +129,7 @@ Use `ToolOutput` with custom names for union types:
 from pydantic_ai import Agent, ToolOutput
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     output_type=[
         ToolOutput(Fruit, name='return_fruit'),
         ToolOutput(Vehicle, name='return_vehicle'),
@@ -228,12 +228,12 @@ Create structured output without defining a Pydantic model class:
 from pydantic_ai import Agent, StructuredDict
 
 # Static schema
-agent = Agent('openai:gpt-4o', output_type=StructuredDict(name=str, age=int))
+agent = Agent('openai:gpt-5', output_type=StructuredDict(name=str, age=int))
 
 # Dynamic schema at runtime
 def create_agent(fields: dict[str, type]):
     schema = StructuredDict(**fields)
-    return Agent('openai:gpt-4o', output_type=schema)
+    return Agent('openai:gpt-5', output_type=schema)
 
 # Create agent with user-defined fields
 agent = create_agent({'product': str, 'price': float, 'in_stock': bool})
@@ -263,7 +263,7 @@ class Output(BaseModel):
         return v
 
 
-agent = Agent('openai:gpt-4o', output_type=Output)
+agent = Agent('openai:gpt-5', output_type=Output)
 
 # Pass validation context per-run
 result = agent.run_sync(
@@ -296,7 +296,7 @@ async def filter_outputs(
     return tool_defs
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     output_type=[DetailedOutput, SimpleOutput],
     prepare_output_tools=filter_outputs,
 )
@@ -322,7 +322,7 @@ When using union output types with `end_strategy='exhaustive'`:
 from pydantic_ai import Agent, ToolOutput
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     output_type=[ToolOutput(TypeA), ToolOutput(TypeB)],
     end_strategy='exhaustive',  # Process ALL tool calls, including after output
 )
@@ -340,3 +340,10 @@ With `end_strategy='early'` (default), the agent stops after the first output to
 | `TextOutput` | `pydantic_ai.TextOutput` | Custom text processing function |
 | `StructuredDict` | `pydantic_ai.StructuredDict` | Dict-based structured output |
 | `BinaryImage` | `pydantic_ai.BinaryImage` | Image output type |
+
+## See Also
+
+- [agents.md](agents.md) — Agent configuration
+- [streaming.md](streaming.md) — Streaming structured output
+- [models.md](models.md) — Provider-specific output support
+- [troubleshooting.md](troubleshooting.md) — Output anti-patterns

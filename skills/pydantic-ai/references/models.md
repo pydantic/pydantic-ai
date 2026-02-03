@@ -7,7 +7,7 @@ Source: `pydantic_ai_slim/pydantic_ai/models/__init__.py`, `pydantic_ai_slim/pyd
 Models are specified as `"provider:model-name"` strings:
 
 ```python
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 agent = Agent('anthropic:claude-sonnet-4-5')
 agent = Agent('google:gemini-2.5-pro')
 agent = Agent('groq:llama-3.3-70b-versatile')
@@ -31,7 +31,7 @@ When you use `'openai:gpt-5'`, PydanticAI auto-selects the model class, provider
 
 | Provider | Prefix | Install Extra | Example |
 |----------|--------|--------------|---------|
-| OpenAI | `openai:` | `pydantic-ai-slim[openai]` | `openai:gpt-4o` |
+| OpenAI | `openai:` | `pydantic-ai-slim[openai]` | `openai:gpt-5` |
 | Anthropic | `anthropic:` | `pydantic-ai-slim[anthropic]` | `anthropic:claude-sonnet-4-5` |
 | Google | `google:` | `pydantic-ai-slim[google]` | `google:gemini-2.5-pro` |
 | Groq | `groq:` | `pydantic-ai-slim[groq]` | `groq:llama-3.3-70b-versatile` |
@@ -206,7 +206,7 @@ By default, falls back on `ModelAPIError`. Customize with `fallback_on`:
 from pydantic_ai.exceptions import ModelHTTPError
 
 model = FallbackModel(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     'anthropic:claude-sonnet-4-5',
     fallback_on=(ModelHTTPError,),
 )
@@ -263,7 +263,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 
 # Disable OpenAI SDK retries for immediate fallback
 client = AsyncOpenAI(max_retries=0)
-model = OpenAIChatModel('gpt-4o', openai_client=client)
+model = OpenAIChatModel('gpt-5', openai_client=client)
 ```
 
 ### Environment-Based Model Selection
@@ -273,14 +273,14 @@ import os
 from pydantic_ai import Agent
 
 # Select model based on environment
-model = os.getenv('PYDANTIC_AI_MODEL', 'openai:gpt-4o')
+model = os.getenv('PYDANTIC_AI_MODEL', 'openai:gpt-5')
 agent = Agent(model)
 
 # Or use different models for different environments
 if os.getenv('ENV') == 'production':
     agent = Agent('anthropic:claude-sonnet-4-5')
 else:
-    agent = Agent('openai:gpt-4o-mini')  # Cheaper for development
+    agent = Agent('openai:gpt-5-mini')  # Cheaper for development
 ```
 
 ### Model Override for Testing
@@ -360,3 +360,10 @@ When debugging provider-specific issues (unexpected errors, malformed responses,
 | `FallbackModel` | `pydantic_ai.models.fallback.FallbackModel` | Multi-model fallback |
 | `ModelSettings` | `pydantic_ai.ModelSettings` | Model configuration dict |
 | `ModelProfile` | `pydantic_ai.ModelProfile` | Model capability profile |
+
+## See Also
+
+- [agents.md](agents.md) — Using models with agents
+- [testing.md](testing.md) — TestModel and FunctionModel patterns
+- [observability.md](observability.md) — Model request tracing
+- [retries.md](retries.md) — HTTP retry configuration

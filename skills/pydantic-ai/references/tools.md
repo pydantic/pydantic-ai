@@ -72,7 +72,7 @@ def my_func(x: int) -> str:
     """Double a number."""
     return str(x * 2)
 
-agent = Agent('openai:gpt-4o', tools=[Tool(my_func)])
+agent = Agent('openai:gpt-5', tools=[Tool(my_func)])
 ```
 
 ## Tool Class Constructor
@@ -169,7 +169,7 @@ def greet(name: str) -> str:
     """Greet someone."""
     return f'Hello, {name}!'
 
-agent = Agent('openai:gpt-4o', toolsets=[toolset])
+agent = Agent('openai:gpt-5', toolsets=[toolset])
 ```
 
 ## Docstring Formats
@@ -225,6 +225,78 @@ This reveals:
 
 If a tool generates "schema too complex" errors, inspect the HTTP request to see the exact schema being sent. Complex nested Pydantic models can generate large schemas — consider using `strict=False` on the `Tool` to relax schema constraints, or simplify the parameter types.
 
+## Performance Tips
+
+### Simplify Tool Schemas
+
+Complex nested types generate large JSON schemas that consume tokens and may cause "schema too complex" errors.
+
+```python
+# Avoid - generates large schema
+@agent.tool_plain
+def process(data: dict[str, list[dict[str, Any]]]) -> str:
+    ...
+
+# Prefer - simple, clear parameters
+@agent.tool_plain
+def process(item_id: str, values: list[str]) -> str:
+    ...
+```
+
+### Use `strict=False` for Complex Schemas
+
+If you must use complex types, disable strict mode:
+
+```python
+from pydantic_ai import Tool
+
+tool = Tool(my_complex_function, strict=False)
+```
+
+### Run Independent Tools in Parallel
+
+By default, tools can run in parallel. Use `sequential=True` only when order matters:
+
+```python
+# These can run in parallel (default)
+@agent.tool_plain
+def fetch_user(user_id: str) -> str: ...
+
+@agent.tool_plain
+def fetch_orders(user_id: str) -> str: ...
+
+# This must run alone
+@agent.tool_plain(sequential=True)
+def update_database(data: str) -> str: ...
+```
+
+### Set Timeouts for Slow Tools
+
+Prevent tools from blocking indefinitely:
+
+```python
+@agent.tool_plain(timeout=30)  # 30 second timeout
+def slow_api_call(query: str) -> str:
+    ...
+```
+
+### Filter Tools by Context
+
+Reduce schema size by only exposing relevant tools:
+
+```python
+from pydantic_ai import RunContext
+from pydantic_ai.tools import ToolDefinition
+
+async def prepare_tool(
+    ctx: RunContext[str], tool_def: ToolDefinition
+) -> ToolDefinition | None:
+    # Hide admin tools for non-admin users
+    if tool_def.name.startswith('admin_') and ctx.deps != 'admin':
+        return None
+    return tool_def
+```
+
 ## Key Types
 
 | Type | Import | Description |
@@ -238,3 +310,10 @@ If a tool generates "schema too complex" errors, inspect the HTTP request to see
 | `DeferredToolResults` | `pydantic_ai.DeferredToolResults` | Results for deferred tools |
 | `ToolApproved` | `pydantic_ai.ToolApproved` | Approval response |
 | `ToolDenied` | `pydantic_ai.ToolDenied` | Denial response |
+
+## See Also
+
+- [toolsets.md](toolsets.md) — Toolset composition and filtering
+- [tools-advanced.md](tools-advanced.md) — Advanced tool features
+- [agents.md](agents.md) — Agent configuration
+- [troubleshooting.md](troubleshooting.md) — Common tool issues

@@ -163,7 +163,7 @@ Use an LLM to evaluate outputs:
 from pydantic_ai import Agent
 from pydantic_evals.evaluators import LLMJudge
 
-judge_agent = Agent('openai:gpt-4o')
+judge_agent = Agent('openai:gpt-5')
 
 evaluator = LLMJudge(
     agent=judge_agent,

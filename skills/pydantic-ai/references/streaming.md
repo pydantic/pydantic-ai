@@ -38,7 +38,7 @@ class Story(BaseModel):
     title: str
     content: str
 
-agent = Agent('openai:gpt-4o', output_type=Story)
+agent = Agent('openai:gpt-5', output_type=Story)
 
 async with agent.run_stream('Write a story') as result:
     async for partial in result.stream_output():
