@@ -38,7 +38,7 @@ from pydantic_ai.output import ToolOutput
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsStr
+from .conftest import IsDatetime, IsStr, normalize_schema_for_version
 
 
 def test_tool_no_ctx():
@@ -410,11 +410,11 @@ def test_docstring_unknown():
 
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
-    assert json_schema == snapshot(
+    assert normalize_schema_for_version(json_schema) == snapshot(
         {
             'name': 'unknown_docstring',
             'description': 'Unknown style docstring.',
-            'parameters_json_schema': {'additionalProperties': {'type': 'integer'}, 'properties': {}, 'type': 'object'},
+            'parameters_json_schema': {'properties': {}, 'type': 'object'},
             'outer_typed_dict_key': None,
             'strict': None,
             'kind': 'function',
@@ -1076,14 +1076,13 @@ def test_schema_generator():
 
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
-    assert json_schema == snapshot(
+    assert normalize_schema_for_version(json_schema) == snapshot(
         [
             {
                 'description': None,
                 'name': 'my_tool_1',
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
-                    'additionalProperties': True,
                     'properties': {'x': {'default': None, 'type': 'string'}},
                     'type': 'object',
                 },

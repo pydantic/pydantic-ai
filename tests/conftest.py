@@ -40,6 +40,7 @@ __all__ = (
     'ClientWithHandler',
     'try_import',
     'SNAPSHOT_BYTES_COLLAPSE_THRESHOLD',
+    'normalize_schema_for_version',
 )
 
 # Configure VCR logger to WARNING as it is too verbose by default
@@ -668,3 +669,34 @@ def mock_snapshot_id(mocker: MockerFixture):
         return f'{node_id}:{i}'
 
     return mocker.patch('pydantic_graph.nodes.generate_snapshot_id', side_effect=generate_snapshot_id)
+
+
+# TODO: remove this utility and its call sites when vllm relaxes their pydantic pin
+def normalize_schema_for_version(schema: Any, *, remove_description: bool = False) -> Any:
+    """Recursively normalize schema to handle pydantic version differences.
+
+    vLLM 0.15.0 pins pydantic 2.12.5 for Python <3.12, which produces different schemas:
+    - pydantic 2.12.5: `additionalProperties: True` for typed **kwargs
+    - pydantic 2.11.7: `additionalProperties: {'type': ...}` or omits it
+    - pydantic 2.12.5: omits `description` field in some cases
+
+    Args:
+        schema: The schema to normalize.
+        remove_description: If True, also removes `description` fields.
+    """
+    keys_to_remove = {'additionalProperties'}
+    if remove_description:
+        keys_to_remove.add('description')
+
+    if isinstance(schema, dict):
+        schema = cast(dict[str, Any], schema)
+        result: dict[str, Any] = {}
+        for key, value in schema.items():
+            if key in keys_to_remove:
+                continue
+            result[key] = normalize_schema_for_version(value, remove_description=remove_description)
+        return result
+    elif isinstance(schema, list):
+        schema = cast(list[Any], schema)
+        return [normalize_schema_for_version(item, remove_description=remove_description) for item in schema]
+    return schema
