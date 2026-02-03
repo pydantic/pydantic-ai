@@ -16,7 +16,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models._tool_choice import resolve_tool_choice
-from pydantic_ai.settings import ToolOrOutput
+from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import try_import
@@ -63,288 +63,329 @@ def make_tool(name: str) -> ToolDefinition:
 # =============================================================================
 
 
-def test_auto_with_text_output():
-    params = ModelRequestParameters(allow_text_output=True)
-    assert resolve_tool_choice({'tool_choice': 'auto'}, params) == 'auto'
+SIMPLE_CASES = [
+    dict(
+        id='auto_with_text_output',
+        tool_choice='auto',
+        params_kwargs={'allow_text_output': True},
+        expected='auto',
+    ),
+    dict(
+        id='auto_without_text_output',
+        tool_choice='auto',
+        params_kwargs={'function_tools': [make_tool('x')], 'allow_text_output': False},
+        expected='required',
+    ),
+    dict(
+        id='none_defaults_to_auto',
+        tool_choice=None,
+        params_kwargs={'allow_text_output': True},
+        expected='auto',
+    ),
+    dict(
+        id='none_with_text_output',
+        tool_choice='none',
+        params_kwargs={'function_tools': [make_tool('x')], 'allow_text_output': True},
+        expected='none',
+    ),
+    dict(
+        id='none_only_output_tools_no_direct_output',
+        tool_choice='none',
+        params_kwargs={'function_tools': [], 'output_tools': [make_tool('final_result')], 'allow_text_output': False},
+        expected='required',
+    ),
+    dict(
+        id='required_with_function_tools',
+        tool_choice='required',
+        params_kwargs={'function_tools': [make_tool('x')], 'allow_text_output': True},
+        expected='required',
+    ),
+    dict(
+        id='list_exact_match',
+        tool_choice=['a', 'b'],
+        params_kwargs={'function_tools': [make_tool('a'), make_tool('b')], 'allow_text_output': True},
+        expected='required',
+    ),
+    dict(
+        id='tool_or_output_empty_no_output_tools',
+        tool_choice=ToolOrOutput(function_tools=[]),
+        params_kwargs={'allow_text_output': True},
+        expected='none',
+    ),
+    dict(
+        id='tool_or_output_exact_match_no_direct_output',
+        tool_choice=ToolOrOutput(function_tools=['a']),
+        params_kwargs={
+            'function_tools': [make_tool('a')],
+            'output_tools': [make_tool('final_result')],
+            'allow_text_output': False,
+        },
+        expected='required',
+    ),
+    dict(
+        id='tool_or_output_exact_match_with_direct_output',
+        tool_choice=ToolOrOutput(function_tools=['a']),
+        params_kwargs={
+            'function_tools': [make_tool('a')],
+            'output_tools': [make_tool('final_result')],
+            'allow_text_output': True,
+        },
+        expected='auto',
+    ),
+]
 
 
-def test_auto_without_text_output():
-    params = ModelRequestParameters(function_tools=[make_tool('x')], allow_text_output=False)
-    assert resolve_tool_choice({'tool_choice': 'auto'}, params) == 'required'
+@pytest.mark.parametrize('case', SIMPLE_CASES, ids=lambda c: c['id'])
+def test_resolve_tool_choice_simple(case: dict[str, Any]):
+    """Tests where resolve_tool_choice returns a simple string mode."""
+    tool_choice = case['tool_choice']
+    params_kwargs = case['params_kwargs']
+    expected = case['expected']
+
+    settings: ModelSettings | None = {'tool_choice': tool_choice} if tool_choice is not None else None
+    params = ModelRequestParameters(**params_kwargs)
+    assert resolve_tool_choice(settings, params) == expected
 
 
-def test_none_defaults_to_auto():
-    params = ModelRequestParameters(allow_text_output=True)
-    assert resolve_tool_choice(None, params) == 'auto'
+TUPLE_CASES = [
+    dict(
+        id='none_output_tools_direct_output',
+        tool_choice='none',
+        params_kwargs={
+            'function_tools': [make_tool('func')],
+            'output_tools': [make_tool('final_result')],
+            'allow_text_output': True,
+        },
+        expected_mode='auto',
+        expected_tools={'final_result'},
+    ),
+    dict(
+        id='none_output_tools_no_direct_output',
+        tool_choice='none',
+        params_kwargs={
+            'function_tools': [make_tool('func')],
+            'output_tools': [make_tool('final_result')],
+            'allow_text_output': False,
+        },
+        expected_mode='required',
+        expected_tools={'final_result'},
+    ),
+    dict(
+        id='list_subset',
+        tool_choice=['a', 'c'],
+        params_kwargs={'function_tools': [make_tool('a'), make_tool('b'), make_tool('c')], 'allow_text_output': True},
+        expected_mode='required',
+        expected_tools={'a', 'c'},
+    ),
+    dict(
+        id='list_partial_invalid',
+        tool_choice=['a', 'invalid'],
+        params_kwargs={'function_tools': [make_tool('a'), make_tool('b')], 'allow_text_output': True},
+        expected_mode='required',
+        expected_tools={'a', 'invalid'},
+    ),
+    dict(
+        id='tool_or_output_empty_with_output_tools_direct_output',
+        tool_choice=ToolOrOutput(function_tools=[]),
+        params_kwargs={'output_tools': [make_tool('final_result')], 'allow_text_output': True},
+        expected_mode='auto',
+        expected_tools={'final_result'},
+    ),
+    dict(
+        id='tool_or_output_empty_with_output_tools_no_direct_output',
+        tool_choice=ToolOrOutput(function_tools=[]),
+        params_kwargs={'output_tools': [make_tool('final_result')], 'allow_text_output': False},
+        expected_mode='required',
+        expected_tools={'final_result'},
+    ),
+    dict(
+        id='tool_or_output_partial_invalid',
+        tool_choice=ToolOrOutput(function_tools=['a', 'invalid']),
+        params_kwargs={
+            'function_tools': [make_tool('a'), make_tool('b')],
+            'output_tools': [make_tool('final_result')],
+            'allow_text_output': True,
+        },
+        expected_mode='auto',
+        expected_tools={'a', 'final_result', 'invalid'},
+    ),
+    dict(
+        id='tool_or_output_subset_with_direct_output',
+        tool_choice=ToolOrOutput(function_tools=['a']),
+        params_kwargs={
+            'function_tools': [make_tool('a'), make_tool('b')],
+            'output_tools': [make_tool('final_result')],
+            'allow_text_output': True,
+        },
+        expected_mode='auto',
+        expected_tools={'a', 'final_result'},
+    ),
+    dict(
+        id='tool_or_output_subset_without_direct_output',
+        tool_choice=ToolOrOutput(function_tools=['a']),
+        params_kwargs={
+            'function_tools': [make_tool('a'), make_tool('b')],
+            'output_tools': [make_tool('final_result')],
+            'allow_text_output': False,
+        },
+        expected_mode='required',
+        expected_tools={'a', 'final_result'},
+    ),
+]
 
 
-def test_none_with_text_output_allowed():
-    params = ModelRequestParameters(function_tools=[make_tool('x')], allow_text_output=True)
-    assert resolve_tool_choice({'tool_choice': 'none'}, params) == 'none'
+@pytest.mark.parametrize('case', TUPLE_CASES, ids=lambda c: c['id'])
+def test_resolve_tool_choice_tuple(case: dict[str, Any]):
+    """Tests where resolve_tool_choice returns a (mode, tools) tuple."""
+    tool_choice = case['tool_choice']
+    params_kwargs = case['params_kwargs']
+    expected_mode = case['expected_mode']
+    expected_tools = case['expected_tools']
+
+    params = ModelRequestParameters(**params_kwargs)
+    result = resolve_tool_choice({'tool_choice': tool_choice}, params)
+    assert result[0] == expected_mode and set(result[1]) == expected_tools
 
 
-def test_none_with_output_tools_and_direct_output():
-    """Disabling function tools with output tools and direct output returns auto mode."""
-    params = ModelRequestParameters(
-        function_tools=[make_tool('func')],
-        output_tools=[make_tool('final_result')],
-        allow_text_output=True,
-    )
-    result = resolve_tool_choice({'tool_choice': 'none'}, params)
-    assert result[0] == 'auto' and set(result[1]) == {'final_result'}
+RAISES_CASES = [
+    dict(
+        id='required_no_function_tools',
+        tool_choice='required',
+        params_kwargs={'allow_text_output': True},
+        match='no function tools are defined',
+    ),
+    dict(
+        id='list_all_invalid',
+        tool_choice=['x', 'y'],
+        params_kwargs={'function_tools': [make_tool('a'), make_tool('b')], 'allow_text_output': True},
+        match=r'Invalid tool names in `tool_choice`:.*Available tools:',
+    ),
+    dict(
+        id='list_invalid_no_function_tools',
+        tool_choice=['x'],
+        params_kwargs={'function_tools': [], 'allow_text_output': True},
+        match=r'Invalid tool names.*Available tools: none',
+    ),
+    dict(
+        id='tool_or_output_all_invalid',
+        tool_choice=ToolOrOutput(function_tools=['x', 'y']),
+        params_kwargs={
+            'function_tools': [make_tool('a'), make_tool('b')],
+            'output_tools': [make_tool('final_result')],
+            'allow_text_output': True,
+        },
+        match=r'Invalid tool names in `tool_choice`:.*Available function tools:',
+    ),
+]
 
 
-def test_none_with_output_tools_no_direct_output_with_function_tools():
-    """Disabling function tools with output tools but no direct output forces required mode."""
-    params = ModelRequestParameters(
-        function_tools=[make_tool('func')],
-        output_tools=[make_tool('final_result')],
-        allow_text_output=False,
-    )
-    result = resolve_tool_choice({'tool_choice': 'none'}, params)
-    assert result[0] == 'required' and set(result[1]) == {'final_result'}
+@pytest.mark.parametrize('case', RAISES_CASES, ids=lambda c: c['id'])
+def test_resolve_tool_choice_raises(case: dict[str, Any]):
+    """Tests where resolve_tool_choice raises UserError."""
+    tool_choice = case['tool_choice']
+    params_kwargs = case['params_kwargs']
+    match = case['match']
 
-
-def test_none_with_only_output_tools_no_direct_output():
-    """Only output tools exist with no direct output allowed forces required mode."""
-    params = ModelRequestParameters(
-        function_tools=[],
-        output_tools=[make_tool('final_result')],
-        allow_text_output=False,
-    )
-    result = resolve_tool_choice({'tool_choice': 'none'}, params)
-    assert result == 'required'
-
-
-def test_required_with_function_tools():
-    params = ModelRequestParameters(function_tools=[make_tool('x')], allow_text_output=True)
-    assert resolve_tool_choice({'tool_choice': 'required'}, params) == 'required'
-
-
-def test_required_without_function_tools_raises():
-    """Requiring tool use without function tools raises UserError."""
-    params = ModelRequestParameters(allow_text_output=True)
-    with pytest.raises(UserError, match='no function tools are defined'):
-        resolve_tool_choice({'tool_choice': 'required'}, params)
-
-
-def test_list_all_invalid_raises():
-    """Specifying only invalid tool names raises UserError with available tools shown."""
-    params = ModelRequestParameters(function_tools=[make_tool('a'), make_tool('b')], allow_text_output=True)
-    with pytest.raises(UserError, match=r'Invalid tool names in `tool_choice`:.*Available tools:'):
-        resolve_tool_choice({'tool_choice': ['x', 'y']}, params)
-
-
-def test_list_all_invalid_no_function_tools_shows_none():
-    """Error message shows 'none' when no function tools are defined."""
-    params = ModelRequestParameters(function_tools=[], allow_text_output=True)
-    with pytest.raises(UserError, match=r'Invalid tool names.*Available tools: none'):
-        resolve_tool_choice({'tool_choice': ['x']}, params)
-
-
-def test_list_exact_match_returns_required():
-    """Specifying all available tools returns simple required mode."""
-    params = ModelRequestParameters(function_tools=[make_tool('a'), make_tool('b')], allow_text_output=True)
-    result = resolve_tool_choice({'tool_choice': ['a', 'b']}, params)
-    assert result == 'required'
-
-
-def test_list_subset_returns_tuple():
-    params = ModelRequestParameters(
-        function_tools=[make_tool('a'), make_tool('b'), make_tool('c')], allow_text_output=True
-    )
-    result = resolve_tool_choice({'tool_choice': ['a', 'c']}, params)
-    assert result[0] == 'required' and set(result[1]) == {'a', 'c'}
-
-
-def test_list_partial_invalid_filters_silently():
-    """Partial invalid tools are filtered, not errored."""
-    params = ModelRequestParameters(function_tools=[make_tool('a'), make_tool('b')], allow_text_output=True)
-    result = resolve_tool_choice({'tool_choice': ['a', 'invalid']}, params)
-    assert result[0] == 'required' and set(result[1]) == {'a', 'invalid'}
-
-
-def test_tool_or_output_empty_function_tools_with_output_tools_direct_output():
-    """Empty function tools with output tools and direct output returns auto mode with output tools."""
-    params = ModelRequestParameters(
-        output_tools=[make_tool('final_result')],
-        allow_text_output=True,
-    )
-    result = resolve_tool_choice({'tool_choice': ToolOrOutput(function_tools=[])}, params)
-    assert result[0] == 'auto' and set(result[1]) == {'final_result'}
-
-
-def test_tool_or_output_empty_function_tools_with_output_tools_no_direct_output():
-    """Empty function tools with output tools but no direct output returns required mode with output tools."""
-    params = ModelRequestParameters(
-        output_tools=[make_tool('final_result')],
-        allow_text_output=False,
-    )
-    result = resolve_tool_choice({'tool_choice': ToolOrOutput(function_tools=[])}, params)
-    assert result[0] == 'required' and set(result[1]) == {'final_result'}
-
-
-def test_tool_or_output_empty_function_tools_no_output_tools():
-    """Empty function tools with no output tools returns none."""
-    params = ModelRequestParameters(allow_text_output=True)
-    result = resolve_tool_choice({'tool_choice': ToolOrOutput(function_tools=[])}, params)
-    assert result == 'none'
-
-
-def test_tool_or_output_all_invalid_function_tools_raises():
-    """All invalid function tools in ToolOrOutput raises UserError with available tools shown."""
-    params = ModelRequestParameters(
-        function_tools=[make_tool('a'), make_tool('b')],
-        output_tools=[make_tool('final_result')],
-        allow_text_output=True,
-    )
-    with pytest.raises(UserError, match=r'Invalid tool names in `tool_choice`:.*Available function tools:'):
-        resolve_tool_choice({'tool_choice': ToolOrOutput(function_tools=['x', 'y'])}, params)
-
-
-def test_tool_or_output_partial_invalid_function_tools_passes():
-    """Mixing valid and invalid function tools passes silently (at least one valid)."""
-    params = ModelRequestParameters(
-        function_tools=[make_tool('a'), make_tool('b')],
-        output_tools=[make_tool('final_result')],
-        allow_text_output=True,
-    )
-    result = resolve_tool_choice({'tool_choice': ToolOrOutput(function_tools=['a', 'invalid'])}, params)
-    assert result[0] == 'auto' and set(result[1]) == {'a', 'final_result', 'invalid'}
-
-
-def test_tool_or_output_exact_match_no_direct_output_returns_required():
-    """ToolOrOutput matching all available tools without direct output returns required."""
-    params = ModelRequestParameters(
-        function_tools=[make_tool('a')],
-        output_tools=[make_tool('final_result')],
-        allow_text_output=False,
-    )
-    result = resolve_tool_choice({'tool_choice': ToolOrOutput(function_tools=['a'])}, params)
-    assert result == 'required'
-
-
-def test_tool_or_output_exact_match_with_direct_output_returns_auto():
-    """ToolOrOutput matching all available tools with direct output returns auto."""
-    params = ModelRequestParameters(
-        function_tools=[make_tool('a')],
-        output_tools=[make_tool('final_result')],
-        allow_text_output=True,
-    )
-    result = resolve_tool_choice({'tool_choice': ToolOrOutput(function_tools=['a'])}, params)
-    assert result == 'auto'
-
-
-def test_tool_or_output_subset_with_direct_output_returns_auto_tuple():
-    """ToolOrOutput subset with direct output allowed returns auto tuple."""
-    params = ModelRequestParameters(
-        function_tools=[make_tool('a'), make_tool('b')],
-        output_tools=[make_tool('final_result')],
-        allow_text_output=True,
-    )
-    result = resolve_tool_choice({'tool_choice': ToolOrOutput(function_tools=['a'])}, params)
-    assert result[0] == 'auto' and set(result[1]) == {'a', 'final_result'}
-
-
-def test_tool_or_output_subset_without_direct_output_returns_required_tuple():
-    """ToolOrOutput subset without direct output returns required tuple."""
-    params = ModelRequestParameters(
-        function_tools=[make_tool('a'), make_tool('b')],
-        output_tools=[make_tool('final_result')],
-        allow_text_output=False,
-    )
-    result = resolve_tool_choice({'tool_choice': ToolOrOutput(function_tools=['a'])}, params)
-    assert result[0] == 'required' and set(result[1]) == {'a', 'final_result'}
+    params = ModelRequestParameters(**params_kwargs)
+    with pytest.raises(UserError, match=match):
+        resolve_tool_choice({'tool_choice': tool_choice}, params)
 
 
 # =============================================================================
-# Anthropic tool_choice tests (direct model.request() - blocked by Agent)
+# Provider-specific tool_choice tests
 # =============================================================================
 
 
-@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-@pytest.mark.parametrize(
-    'tool_choice',
-    [
-        pytest.param('required', id='required'),
-        pytest.param(['my_tool'], id='list'),
-    ],
-)
-async def test_anthropic_thinking_with_forced_tool_choice_raises(tool_choice: Any, allow_model_requests: None):
-    """Anthropic does not support forcing tool use with thinking mode enabled."""
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
-    settings: AnthropicModelSettings = {
-        'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024},
-        'tool_choice': tool_choice,
-    }
+@pytest.mark.parametrize('tool_choice', ['required', ['my_tool']], ids=['required', 'list'])
+@pytest.mark.parametrize('provider_name', ['anthropic', 'bedrock'])
+async def test_thinking_with_forced_tool_choice_raises(
+    provider_name: str, tool_choice: Any, allow_model_requests: None
+):
+    """Providers don't support forcing tool use with thinking mode enabled."""
+    if provider_name == 'anthropic':
+        pytest.importorskip('anthropic')
+        m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
+        settings: Any = {
+            'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024},
+            'tool_choice': tool_choice,
+        }
+        match = 'Anthropic does not support .* with thinking mode'
+    else:  # bedrock
+        pytest.importorskip('boto3')
+        mock_client = MagicMock()
+        provider = BedrockProvider(bedrock_client=mock_client)
+        profile = BedrockModelProfile(bedrock_supports_tool_choice=True)
+        m = BedrockConverseModel('test-model', provider=provider, profile=profile)
+        settings = {
+            'bedrock_additional_model_requests_fields': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}},
+            'tool_choice': tool_choice,
+        }
+        match = 'Bedrock does not support forcing specific tools with thinking mode'
+
     params = ModelRequestParameters(function_tools=[make_tool('my_tool')], allow_text_output=True)
-
-    with pytest.raises(UserError, match='Anthropic does not support .* with thinking mode'):
+    with pytest.raises(UserError, match=match):
         await m.request([ModelRequest.user_text_prompt('test')], settings, params)
 
 
-@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-@pytest.mark.parametrize(
-    'resolved_tool_choice,expected',
-    [
-        pytest.param('required', False, id='required'),
-        pytest.param(('required', {'tool_a'}), False, id='tuple_required'),
-        pytest.param(('auto', {'tool_a'}), False, id='tuple_auto'),
-        pytest.param('auto', True, id='auto'),
-        pytest.param('none', True, id='none'),
-    ],
-)
-def test_anthropic_support_tool_forcing_implicit_resolution(resolved_tool_choice: Any, expected: bool):
-    """With thinking enabled but no explicit tool_choice, returns based on resolved value."""
-    settings: AnthropicModelSettings = {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}}
-    result = anthropic_support_tool_forcing(settings, resolved_tool_choice)
-    assert result is expected
-
-
-# =============================================================================
-# Bedrock tool_choice tests (direct model.request() - blocked by Agent)
-# =============================================================================
-
-
-@pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
-@pytest.mark.parametrize(
-    'tool_choice',
-    [
-        pytest.param('required', id='required'),
-        pytest.param(['my_tool'], id='list'),
-    ],
-)
-async def test_bedrock_unsupported_profile_with_forced_tool_choice_raises(tool_choice: Any, allow_model_requests: None):
+@pytest.mark.parametrize('tool_choice', ['required', ['my_tool']], ids=['required', 'list'])
+@pytest.mark.parametrize('provider_name', ['bedrock', 'openai'])
+async def test_unsupported_profile_with_forced_tool_choice_raises(
+    provider_name: str, tool_choice: Any, allow_model_requests: None
+):
     """Models without tool_choice support raise UserError when forcing tool use."""
     mock_client = MagicMock()
-    provider = BedrockProvider(bedrock_client=mock_client)
-    profile = BedrockModelProfile(bedrock_supports_tool_choice=False)
-    m = BedrockConverseModel('us.amazon.nova-lite-v1:0', provider=provider, profile=profile)
-    params = ModelRequestParameters(function_tools=[make_tool('my_tool')], allow_text_output=True)
+    if provider_name == 'bedrock':
+        pytest.importorskip('boto3')
+        provider = BedrockProvider(bedrock_client=mock_client)
+        profile = BedrockModelProfile(bedrock_supports_tool_choice=False)
+        m = BedrockConverseModel('us.amazon.nova-lite-v1:0', provider=provider, profile=profile)
+    else:  # openai
+        pytest.importorskip('openai')
+        provider = OpenAIProvider(openai_client=mock_client)
+        profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
+        m = OpenAIChatModel('gpt-4o-mini', provider=provider, profile=profile)
 
+    params = ModelRequestParameters(function_tools=[make_tool('my_tool')], allow_text_output=True)
     with pytest.raises(UserError, match='tool_choice=.* is not supported by model'):
         await m.request([ModelRequest.user_text_prompt('test')], {'tool_choice': tool_choice}, params)
 
 
-@pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
+FORCING_CASES = [
+    'required',
+    ('required', {'tool_a'}),
+    ('auto', {'tool_a'}),
+    'auto',
+    'none',
+]
+
+
 @pytest.mark.parametrize(
-    'resolved_tool_choice,expected',
-    [
-        pytest.param('required', False, id='required'),
-        pytest.param(('required', {'tool_a'}), False, id='tuple_required'),
-        pytest.param(('auto', {'tool_a'}), False, id='tuple_auto'),
-        pytest.param('auto', True, id='auto'),
-        pytest.param('none', True, id='none'),
-    ],
+    'resolved_tool_choice',
+    FORCING_CASES,
+    ids=['required', 'tuple_required', 'tuple_auto', 'auto', 'none'],
 )
-def test_bedrock_support_tool_forcing_implicit_resolution(resolved_tool_choice: Any, expected: bool):
+@pytest.mark.parametrize('provider_name', ['anthropic', 'bedrock'])
+def test_support_tool_forcing_implicit_resolution(provider_name: str, resolved_tool_choice: Any):
     """With thinking enabled but no explicit tool_choice, returns based on resolved value."""
-    profile = BedrockModelProfile(bedrock_supports_tool_choice=True)
-    settings: BedrockModelSettings = {
-        'bedrock_additional_model_requests_fields': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}}
-    }
-    result = bedrock_support_tool_forcing('test-model', profile, settings, resolved_tool_choice)
+    expected = resolved_tool_choice in ('auto', 'none')
+
+    if provider_name == 'anthropic':
+        pytest.importorskip('anthropic')
+        settings: AnthropicModelSettings = {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}}
+        result = anthropic_support_tool_forcing(settings, resolved_tool_choice)
+    else:  # bedrock
+        pytest.importorskip('boto3')
+        profile = BedrockModelProfile(bedrock_supports_tool_choice=True)
+        settings_bedrock: BedrockModelSettings = {
+            'bedrock_additional_model_requests_fields': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}}
+        }
+        result = bedrock_support_tool_forcing('test-model', profile, settings_bedrock, resolved_tool_choice)
     assert result is expected
+
+
+# =============================================================================
+# Provider-specific tests that don't fit the consolidated patterns
+# =============================================================================
 
 
 @pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
@@ -375,36 +416,6 @@ def test_bedrock_prepare_request_thinking_auto_output_mode(supports_json_schema:
     assert result_params.output_mode == expected_output_mode
 
 
-# =============================================================================
-# OpenAI tool_choice tests (direct model.request() - blocked by Agent)
-# =============================================================================
-
-
-@pytest.mark.skipif(not openai_available(), reason='openai not installed')
-@pytest.mark.parametrize(
-    'tool_choice',
-    [
-        pytest.param('required', id='required'),
-        pytest.param(['my_tool'], id='list'),
-    ],
-)
-async def test_openai_unsupported_profile_with_forced_tool_choice_raises(tool_choice: Any, allow_model_requests: None):
-    """Models without tool_choice support raise UserError when forcing tool use."""
-    mock_client = MagicMock()
-    provider = OpenAIProvider(openai_client=mock_client)
-    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
-    m = OpenAIChatModel('gpt-4o-mini', provider=provider, profile=profile)
-    params = ModelRequestParameters(function_tools=[make_tool('my_tool')], allow_text_output=True)
-
-    with pytest.raises(UserError, match='tool_choice=.* is not supported by model'):
-        await m.request([ModelRequest.user_text_prompt('test')], {'tool_choice': tool_choice}, params)
-
-
-# =============================================================================
-# Google tool_choice tests
-# =============================================================================
-
-
 @pytest.mark.skipif(not google_available(), reason='google not installed')
 def test_google_auto_tuple_filters_tool_defs():
     """When resolve_tool_choice returns ('auto', [...]), Google filters tool_defs to only include allowed tools."""
@@ -424,11 +435,6 @@ def test_google_auto_tuple_filters_tool_defs():
     assert tools[0]['function_declarations'][0]['name'] == 'final_result'  # pyright: ignore[reportTypedDictNotRequiredAccess,reportOptionalSubscript]
     assert tool_config is not None
     assert tool_config['function_calling_config']['mode'].name == 'AUTO'  # pyright: ignore[reportTypedDictNotRequiredAccess,reportOptionalMemberAccess,reportOptionalSubscript,reportUnknownMemberType]
-
-
-# =============================================================================
-# xAI tool_choice tests (direct model.request() - tests fallback paths)
-# =============================================================================
 
 
 @pytest.mark.skipif(not xai_available(), reason='xai not installed')
