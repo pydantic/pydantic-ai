@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, cast
 
-from typing_extensions import assert_never
+from typing_extensions import Never, assert_never
 
 from .. import _utils
 from .._output import OutputObjectDefinition
@@ -458,18 +458,18 @@ class XaiModel(Model):
                         image_detail = item.vendor_metadata['detail']
                     content_items.append(image(item.data_uri, detail=image_detail))
                 elif item.is_audio:
-                    raise NotImplementedError('AudioUrl/BinaryContent with audio is not supported by xAI SDK')
+                    _raise_unsupported_media_type('AudioUrl/BinaryContent with audio')
                 elif item.is_document:
                     # Upload document to xAI files API and reference it
                     filename = item.identifier or f'document.{item.format}'
                     file_id = await self._upload_file_to_xai(item.data, filename)
                     content_items.append(file(file_id))
                 elif item.is_video:
-                    raise NotImplementedError('VideoUrl/BinaryContent with video is not supported by xAI SDK')
+                    _raise_unsupported_media_type('VideoUrl/BinaryContent with video')
                 else:  # pragma: no cover
                     raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
             elif isinstance(item, AudioUrl):
-                raise NotImplementedError('AudioUrl is not supported by xAI SDK')
+                _raise_unsupported_media_type('AudioUrl')
             elif isinstance(item, DocumentUrl):
                 # Download and upload to xAI files API
                 downloaded = await download_item(item, data_format='bytes')
@@ -481,7 +481,7 @@ class XaiModel(Model):
                 file_id = await self._upload_file_to_xai(downloaded['data'], filename)
                 content_items.append(file(file_id))
             elif isinstance(item, VideoUrl):
-                raise NotImplementedError('VideoUrl is not supported by xAI SDK')
+                _raise_unsupported_media_type('VideoUrl')
             elif isinstance(item, CachePoint):
                 # xAI doesn't support prompt caching via CachePoint, so we filter it out
                 pass
@@ -508,17 +508,16 @@ class XaiModel(Model):
         for item in part.content_items:
             if isinstance(item, (BinaryContent, ImageUrl, DocumentUrl)):
                 if isinstance(item, BinaryContent) and item.is_audio:
-                    raise NotImplementedError('AudioUrl/BinaryContent with audio is not supported by xAI SDK')
+                    _raise_unsupported_media_type('AudioUrl/BinaryContent with audio')
                 if isinstance(item, BinaryContent) and item.is_video:
-                    raise NotImplementedError('VideoUrl is not supported by xAI SDK')
+                    _raise_unsupported_media_type('VideoUrl/BinaryContent with video')
                 tool_content_parts.append(f'See file {item.identifier}.')
                 file_content.append(f'This is file {item.identifier}:')
                 file_content.append(item)
-            elif isinstance(item, (AudioUrl, VideoUrl)):
-                if isinstance(item, AudioUrl):
-                    raise NotImplementedError('AudioUrl is not supported by xAI SDK')
-                else:
-                    raise NotImplementedError('VideoUrl is not supported by xAI SDK')
+            elif isinstance(item, AudioUrl):
+                _raise_unsupported_media_type('AudioUrl')
+            elif isinstance(item, VideoUrl):
+                _raise_unsupported_media_type('VideoUrl')
             elif isinstance(item, str):
                 if item:
                     tool_content_parts.append(item)
@@ -942,6 +941,10 @@ class XaiStreamedResponse(StreamedResponse):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
+
+
+def _raise_unsupported_media_type(source: str) -> Never:
+    raise NotImplementedError(f'{source} is not supported by xAI SDK')
 
 
 def _map_json_schema(o: OutputObjectDefinition) -> chat_pb2.ResponseFormat:
