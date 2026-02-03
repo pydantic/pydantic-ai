@@ -119,6 +119,47 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
+### Advanced Instruction Patterns
+
+**Combining static and dynamic instructions:**
+
+```python {title="instructions.py"}
+from datetime import date
+
+from pydantic_ai import Agent, RunContext
+
+agent = Agent(
+    'openai:gpt-5',
+    deps_type=str,
+    instructions="Use the customer's name while replying to them.",
+)
+
+
+@agent.instructions
+def add_the_users_name(ctx: RunContext[str]) -> str:
+    return f"The user's name is {ctx.deps}."
+
+
+@agent.instructions
+def add_the_date() -> str:
+    return f'The date is {date.today()}.'
+
+
+result = agent.run_sync('What is the date?', deps='Frank')
+print(result.output)
+#> Hello Frank, the date today is 2032-01-02.
+```
+
+**When to use instructions vs system_prompt:**
+
+| Feature | `instructions` | `system_prompt` |
+|---------|---------------|-----------------|
+| In multi-agent runs | Only current agent's instructions used | Retained from previous messages |
+| Re-evaluated | Always (each run) | Only if dynamic |
+| Recommended for | Most use cases | Preserving context across agents |
+
+**Returning empty string:** If an instruction function returns `""`, no instruction is added for that function.
+
 ## Agent.override()
 
 Override agent configuration for testing or runtime changes. Returns a context manager.

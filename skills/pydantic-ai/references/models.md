@@ -159,6 +159,98 @@ model = FallbackModel(
 )
 ```
 
+### Per-Model Settings in FallbackModel
+
+Configure different settings for each model in a fallback chain:
+
+```python {title="fallback_model_per_settings.py"}
+from pydantic_ai import Agent, ModelSettings
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.openai import OpenAIChatModel
+
+# Configure each model with provider-specific optimal settings
+openai_model = OpenAIChatModel(
+    'gpt-5',
+    settings=ModelSettings(temperature=0.7, max_tokens=1000)  # Higher creativity for OpenAI
+)
+anthropic_model = AnthropicModel(
+    'claude-sonnet-4-5',
+    settings=ModelSettings(temperature=0.2, max_tokens=1000)  # Lower temperature for consistency
+)
+
+fallback_model = FallbackModel(openai_model, anthropic_model)
+agent = Agent(fallback_model)
+
+result = agent.run_sync('Write a creative story about space exploration')
+print(result.output)
+"""
+In the year 2157, Captain Maya Chen piloted her spacecraft through the vast expanse of the Andromeda Galaxy. As she discovered a planet with crystalline mountains that sang in harmony with the cosmic winds, she realized that space exploration was not just about finding new worlds, but about finding new ways to understand the universe and our place within it.
+"""
+```
+
+## Production Model Patterns
+
+### When to Use FallbackModel
+
+| Use Case | Pattern |
+|----------|---------|
+| High availability | Primary → Secondary provider |
+| Cost optimization | Cheap model → Expensive fallback |
+| Rate limit handling | Primary → Different provider |
+| Provider outages | Multi-provider redundancy |
+
+### Disabling Provider SDK Retries
+
+Provider SDKs have built-in retries that can delay fallback. Disable them for immediate fallback:
+
+```python
+from openai import AsyncOpenAI
+from pydantic_ai.models.openai import OpenAIChatModel
+
+# Disable OpenAI SDK retries for immediate fallback
+client = AsyncOpenAI(max_retries=0)
+model = OpenAIChatModel('gpt-4o', openai_client=client)
+```
+
+### Environment-Based Model Selection
+
+```python
+import os
+from pydantic_ai import Agent
+
+# Select model based on environment
+model = os.getenv('PYDANTIC_AI_MODEL', 'openai:gpt-4o')
+agent = Agent(model)
+
+# Or use different models for different environments
+if os.getenv('ENV') == 'production':
+    agent = Agent('anthropic:claude-sonnet-4-5')
+else:
+    agent = Agent('openai:gpt-4o-mini')  # Cheaper for development
+```
+
+### Model Override for Testing
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
+
+agent = Agent('openai:gpt-5')  # Production model
+
+# In tests, override with TestModel
+with agent.override(model=TestModel()):
+    result = agent.run_sync('test')
+    # No API calls made
+
+# Or override per-run
+result = await agent.run('prompt', model='anthropic:claude-sonnet-4-5')
+```
+
+### Validation Errors Don't Trigger Fallback
+
+Validation errors use the retry mechanism (re-prompts same model) instead of fallback. This is intentional: validation errors may succeed on retry, while API errors (4xx/5xx) indicate issues that won't resolve by retrying the same request.
+
 ## ALLOW_MODEL_REQUESTS
 
 Global flag to prevent accidental real API calls in tests:

@@ -249,9 +249,145 @@ Retries trigger on:
 | `ToolsPrepareFunc` | `pydantic_ai.tools.ToolsPrepareFunc` | Agent-wide tool preparation |
 | `ModelRetry` | `pydantic_ai.ModelRetry` | Exception for tool retry |
 
+## Tool Security Patterns
+
+### Credential Injection via Dependencies
+
+Never hardcode credentials in tools. Use dependency injection:
+
+```python
+from dataclasses import dataclass
+
+import httpx
+
+from pydantic_ai import Agent, RunContext
+
+
+@dataclass
+class SecureDeps:
+    http_client: httpx.AsyncClient
+    api_key: str  # Injected at runtime, never in code
+
+
+agent = Agent('openai:gpt-5', deps_type=SecureDeps)
+
+
+@agent.tool
+async def fetch_data(ctx: RunContext[SecureDeps], endpoint: str) -> str:
+    """Fetch data from API with injected credentials."""
+    response = await ctx.deps.http_client.get(
+        endpoint,
+        headers={'Authorization': f'Bearer {ctx.deps.api_key}'},
+    )
+    response.raise_for_status()
+    return response.text
+
+
+# Runtime: credentials from environment/secrets manager
+async def main():
+    async with httpx.AsyncClient() as client:
+        deps = SecureDeps(client, api_key=os.getenv('API_KEY'))
+        result = await agent.run('Fetch user data', deps=deps)
+```
+
+### Input Validation via Pydantic
+
+Tool arguments are validated by Pydantic. Use constrained types for security:
+
+```python
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent
+
+
+class SafeQuery(BaseModel):
+    table: str = Field(pattern=r'^[a-zA-Z_]+$')  # Prevent SQL injection
+    limit: int = Field(ge=1, le=100)  # Bounded results
+
+
+agent = Agent('openai:gpt-5')
+
+
+@agent.tool_plain
+def query_database(params: SafeQuery) -> str:
+    """Query with validated, safe parameters."""
+    # params.table is guaranteed to match the pattern
+    return f'SELECT * FROM {params.table} LIMIT {params.limit}'
+```
+
+### Requiring Tool Approval (Human-in-the-Loop)
+
+Use `ApprovalRequiredToolset` for sensitive operations:
+
+```python {title="approval_required_toolset.py" test="skip"}
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults
+
+# Wrap toolset to require approval for dangerous tools
+approval_required_toolset = my_toolset.approval_required(
+    lambda ctx, tool_def, tool_args: tool_def.name.startswith('delete')
+)
+
+agent = Agent(
+    'openai:gpt-5',
+    toolsets=[approval_required_toolset],
+    output_type=[str, DeferredToolRequests],
+)
+
+result = agent.run_sync('Delete the old records')
+
+if isinstance(result.output, DeferredToolRequests):
+    # Present to user for approval
+    for approval in result.output.approvals:
+        print(f'Approve {approval.tool_name} with args {approval.args}? (y/n)')
+
+    # Resume with approval decisions
+    result = agent.run_sync(
+        message_history=result.all_messages(),
+        deferred_tool_results=DeferredToolResults(
+            approvals={'tool_call_id': True}  # or False to deny
+        )
+    )
+```
+
+### Tool Timeout for Safety
+
+Prevent runaway tools from consuming resources:
+
+```python
+from pydantic_ai import Agent
+
+# Default timeout for all tools
+agent = Agent('openai:gpt-5', tool_timeout=30)
+
+
+@agent.tool_plain(timeout=5)  # Override: 5 second timeout
+async def quick_lookup(query: str) -> str:
+    """Must complete quickly or retry."""
+    ...
+
+
+@agent.tool_plain  # Uses agent default: 30 seconds
+async def slow_analysis(data: str) -> str:
+    """Can take longer."""
+    ...
+```
+
+Timeout triggers retry with message: `"Timed out after {timeout} seconds."`
+
+### Security Checklist
+
+| Risk | Mitigation |
+|------|-----------|
+| Credential exposure | Use `RunContext.deps` for injection |
+| Injection attacks | Pydantic validation with patterns |
+| Unauthorized actions | `ApprovalRequiredToolset` |
+| Resource exhaustion | `tool_timeout` parameter |
+| Excessive permissions | `FilteredToolset` to limit tools |
+
 ## See Also
 
 - [tools.md](tools.md) — Basic tool registration
 - [deferred-tools.md](deferred-tools.md) — Human-in-the-loop approval
 - [input.md](input.md) — Multimodal content types
 - [observability.md](observability.md) — Logfire debugging
+- [toolsets.md](toolsets.md) — ApprovalRequiredToolset, FilteredToolset

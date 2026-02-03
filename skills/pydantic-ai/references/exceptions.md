@@ -175,6 +175,128 @@ When exceptions occur in production, Logfire instrumentation captures the full c
 
 This context is invaluable for diagnosing intermittent failures that are hard to reproduce locally.
 
+## Error Recovery Patterns
+
+### Combining FallbackModel with Retries
+
+FallbackModel handles API errors; retries handle validation errors:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.fallback import FallbackModel
+
+# FallbackModel for API resilience
+agent = Agent(
+    FallbackModel('openai:gpt-4o', 'anthropic:claude-sonnet-4-5'),
+    retries=3,  # Retries for validation errors
+)
+
+# Flow:
+# 1. Try OpenAI → validation error → retry with OpenAI (up to 3 times)
+# 2. OpenAI API error → fallback to Anthropic
+# 3. Try Anthropic → validation error → retry with Anthropic (up to 3 times)
+```
+
+### Graceful Degradation Pattern
+
+Fall back to simpler output when structured output fails:
+
+```python {test="skip"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, UnexpectedModelBehavior
+
+
+class DetailedAnalysis(BaseModel):
+    summary: str
+    confidence: float
+    sources: list[str]
+
+
+agent = Agent('openai:gpt-5', output_type=DetailedAnalysis)
+simple_agent = Agent('openai:gpt-5', output_type=str)
+
+
+async def analyze_with_fallback(query: str) -> str:
+    try:
+        result = await agent.run(query)
+        return result.output.summary
+    except UnexpectedModelBehavior:
+        # Fall back to simple text output
+        result = await simple_agent.run(query)
+        return result.output
+```
+
+### When to Retry vs When to Fail
+
+| Error Type | Action | Reason |
+|-----------|--------|--------|
+| `ValidationError` | Retry same model | May succeed with different generation |
+| `ModelRetry` | Retry same model | Tool requested re-attempt |
+| `ModelHTTPError` (429) | Retry or fallback | Rate limit may clear |
+| `ModelHTTPError` (5xx) | Fallback | Server error unlikely to resolve |
+| `ModelHTTPError` (4xx) | Fail | Client error needs fixing |
+| `UsageLimitExceeded` | Fail | Intentional limit reached |
+
+### Error Classification for Logging
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import (
+    AgentRunError,
+    FallbackExceptionGroup,
+    ModelAPIError,
+    ModelHTTPError,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+)
+
+agent = Agent('openai:gpt-5')
+
+
+async def run_with_error_handling(prompt: str):
+    try:
+        return await agent.run(prompt)
+    except UsageLimitExceeded as e:
+        # Expected: usage cap reached
+        log.info(f'Usage limit: {e}')
+        raise
+    except ModelHTTPError as e:
+        # Provider issue
+        log.error(f'HTTP {e.status_code} from {e.model_name}: {e.body}')
+        raise
+    except UnexpectedModelBehavior as e:
+        # Model misbehaved
+        log.warning(f'Unexpected behavior: {e.message}')
+        raise
+    except FallbackExceptionGroup as e:
+        # All fallbacks failed
+        for exc in e.exceptions:
+            log.error(f'Fallback failed: {exc}')
+        raise
+    except AgentRunError as e:
+        # Other run error
+        log.error(f'Run error: {e.message}')
+        raise
+```
+
+### Capturing Messages on Error
+
+Use `capture_run_messages` to debug failures:
+
+```python
+from pydantic_ai import Agent, UnexpectedModelBehavior, capture_run_messages
+
+agent = Agent('openai:gpt-5')
+
+with capture_run_messages() as messages:
+    try:
+        result = agent.run_sync('Complex query...')
+    except UnexpectedModelBehavior as e:
+        print(f'Error: {e}')
+        print(f'Messages exchanged: {messages}')  # Full conversation for debugging
+```
+
 ## Key Types
 
 | Type | Import | Description |

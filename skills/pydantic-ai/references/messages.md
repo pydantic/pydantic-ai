@@ -142,6 +142,183 @@ Content that can appear in a user prompt:
 UserContent = str | ImageUrl | AudioUrl | VideoUrl | DocumentUrl | BinaryContent | FileUrl | FilePart
 ```
 
+## Processing Message History
+
+The `history_processors` parameter on `Agent` intercepts and modifies message history before each model request. This is essential for:
+- Managing token usage in long conversations
+- Filtering sensitive information
+- Summarizing old messages to preserve context
+
+### Basic Usage
+
+```python {title="simple_history_processor.py"}
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    UserPromptPart,
+)
+
+
+def filter_responses(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Remove all ModelResponse messages, keeping only ModelRequest messages."""
+    return [msg for msg in messages if isinstance(msg, ModelRequest)]
+
+# Create agent with history processor
+agent = Agent('openai:gpt-5', history_processors=[filter_responses])
+
+# Example: Create some conversation history
+message_history = [
+    ModelRequest(parts=[UserPromptPart(content='What is 2+2?')]),
+    ModelResponse(parts=[TextPart(content='2+2 equals 4')]),  # This will be filtered out
+]
+
+# When you run the agent, the history processor will filter out ModelResponse messages
+# result = agent.run_sync('What about 3+3?', message_history=message_history)
+```
+
+### Keep Only Recent Messages
+
+```python {title="keep_recent_messages.py"}
+from pydantic_ai import Agent, ModelMessage
+
+
+async def keep_recent_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Keep only the last 5 messages to manage token usage."""
+    return messages[-5:] if len(messages) > 5 else messages
+
+agent = Agent('openai:gpt-5', history_processors=[keep_recent_messages])
+
+# Example: Even with a long conversation history, only the last 5 messages are sent to the model
+long_conversation_history: list[ModelMessage] = []  # Your long conversation history here
+# result = agent.run_sync('What did we discuss?', message_history=long_conversation_history)
+```
+
+**Warning:** When slicing, ensure tool calls and returns remain paired or the LLM may error.
+
+### Context-Aware Processor with RunContext
+
+```python {title="context_aware_processor.py"}
+from pydantic_ai import Agent, ModelMessage, RunContext
+
+
+def context_aware_processor(
+    ctx: RunContext[None],
+    messages: list[ModelMessage],
+) -> list[ModelMessage]:
+    # Access current usage
+    current_tokens = ctx.usage.total_tokens
+
+    # Filter messages based on context
+    if current_tokens > 1000:
+        return messages[-3:]  # Keep only recent messages when token usage is high
+    return messages
+
+agent = Agent('openai:gpt-5', history_processors=[context_aware_processor])
+```
+
+### Summarize Old Messages
+
+Use a secondary agent to summarize older messages:
+
+```python {title="summarize_old_messages.py"}
+from pydantic_ai import Agent, ModelMessage
+
+# Use a cheaper model to summarize old messages.
+summarize_agent = Agent(
+    'openai:gpt-5-mini',
+    instructions="""
+Summarize this conversation, omitting small talk and unrelated topics.
+Focus on the technical discussion and next steps.
+""",
+)
+
+
+async def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    # Summarize the oldest 10 messages
+    if len(messages) > 10:
+        oldest_messages = messages[:10]
+        summary = await summarize_agent.run(message_history=oldest_messages)
+        # Return the last message and the summary
+        return summary.new_messages() + messages[-1:]
+
+    return messages
+
+
+agent = Agent('openai:gpt-5', history_processors=[summarize_old_messages])
+```
+
+### Testing History Processors with FunctionModel
+
+```python {title="test_history_processor.py"}
+import pytest
+
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    UserPromptPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+@pytest.fixture
+def received_messages() -> list[ModelMessage]:
+    return []
+
+
+@pytest.fixture
+def function_model(received_messages: list[ModelMessage]) -> FunctionModel:
+    def capture_model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Capture the messages that the provider actually receives
+        received_messages.clear()
+        received_messages.extend(messages)
+        return ModelResponse(parts=[TextPart(content='Provider response')])
+
+    return FunctionModel(capture_model_function)
+
+
+def test_history_processor(function_model: FunctionModel, received_messages: list[ModelMessage]):
+    def filter_responses(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [msg for msg in messages if isinstance(msg, ModelRequest)]
+
+    agent = Agent(function_model, history_processors=[filter_responses])
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Question 1')]),
+        ModelResponse(parts=[TextPart(content='Answer 1')]),
+    ]
+
+    agent.run_sync('Question 2', message_history=message_history)
+    assert received_messages == [
+        ModelRequest(parts=[UserPromptPart(content='Question 1')]),
+        ModelRequest(parts=[UserPromptPart(content='Question 2')]),
+    ]
+```
+
+### Multiple Processors
+
+Processors are applied in sequence:
+
+```python {title="multiple_history_processors.py"}
+from pydantic_ai import Agent, ModelMessage, ModelRequest
+
+
+def filter_responses(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return [msg for msg in messages if isinstance(msg, ModelRequest)]
+
+
+def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return messages[-5:]
+
+
+agent = Agent('openai:gpt-5', history_processors=[filter_responses, summarize_old_messages])
+```
+
 ## Key Types
 
 | Type | Import | Description |

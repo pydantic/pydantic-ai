@@ -209,6 +209,145 @@ logfire.instrument_pydantic_ai()
 # - Tool calls within each agent
 ```
 
+## Agentic Workflow Patterns
+
+### Router/Triage Agent Pattern
+
+A router agent classifies requests and delegates to specialists:
+
+```python {title="router_pattern.py" test="skip"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, RunContext
+
+
+class RouteDecision(BaseModel):
+    topic: str  # 'billing', 'technical', 'general'
+    confidence: float
+
+
+router_agent = Agent('openai:gpt-5', output_type=RouteDecision)
+billing_agent = Agent('openai:gpt-5', instructions='You handle billing questions.')
+technical_agent = Agent('openai:gpt-5', instructions='You handle technical questions.')
+
+
+async def handle_request(user_query: str) -> str:
+    # Router decides which specialist
+    route = await router_agent.run(f'Classify this query: {user_query}')
+
+    # Delegate to specialist
+    if route.output.topic == 'billing':
+        result = await billing_agent.run(user_query)
+    elif route.output.topic == 'technical':
+        result = await technical_agent.run(user_query)
+    else:
+        result = await Agent('openai:gpt-5').run(user_query)
+
+    return result.output
+```
+
+### Reflection/Self-Critique Pattern
+
+An agent checks and improves its own output:
+
+```python {title="reflection_pattern.py" test="skip"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+
+
+class ReviewResult(BaseModel):
+    is_good: bool
+    feedback: str
+
+
+generator_agent = Agent('openai:gpt-5')
+reviewer_agent = Agent('openai:gpt-5', output_type=ReviewResult)
+
+
+async def generate_with_reflection(prompt: str, max_iterations: int = 3) -> str:
+    result = await generator_agent.run(prompt)
+    output = result.output
+
+    for _ in range(max_iterations):
+        # Self-critique
+        review = await reviewer_agent.run(
+            f'Review this output for quality and accuracy:\n\n{output}'
+        )
+
+        if review.output.is_good:
+            break
+
+        # Improve based on feedback
+        result = await generator_agent.run(
+            f'Improve this based on feedback:\n\nOriginal: {output}\n\nFeedback: {review.output.feedback}'
+        )
+        output = result.output
+
+    return output
+```
+
+### Plan-Execute-Verify Pattern
+
+Break complex tasks into steps with verification:
+
+```python {title="plan_execute_pattern.py" test="skip"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+
+
+class Plan(BaseModel):
+    steps: list[str]
+
+
+class StepResult(BaseModel):
+    success: bool
+    output: str
+
+
+planner_agent = Agent('openai:gpt-5', output_type=Plan)
+executor_agent = Agent('openai:gpt-5', output_type=StepResult)
+verifier_agent = Agent('openai:gpt-5', output_type=bool)
+
+
+async def plan_and_execute(task: str) -> str:
+    # Plan
+    plan = await planner_agent.run(f'Create a step-by-step plan for: {task}')
+
+    results = []
+    for step in plan.output.steps:
+        # Execute
+        result = await executor_agent.run(f'Execute this step: {step}')
+        results.append(result.output)
+
+        # Verify
+        verification = await verifier_agent.run(
+            f'Did this step succeed?\nStep: {step}\nResult: {result.output}'
+        )
+        if not verification.output:
+            # Handle failure (retry, rollback, etc.)
+            break
+
+    return '\n'.join([r.output for r in results])
+```
+
+### Combining Patterns with Usage Limits
+
+```python
+from pydantic_ai import RunUsage, UsageLimits
+
+usage = RunUsage()
+limits = UsageLimits(request_limit=20, total_tokens_limit=10000)
+
+# All agents share usage tracking
+result1 = await agent1.run(prompt, usage=usage, usage_limits=limits)
+result2 = await agent2.run(prompt, usage=usage, usage_limits=limits)
+
+# Check combined usage
+print(f'Total tokens used: {usage.total_tokens}')
+```
+
 ## Key Patterns
 
 | Pattern | Use When |
@@ -217,6 +356,9 @@ logfire.instrument_pydantic_ai()
 | Output functions | Permanent hand-off |
 | Programmatic hand-off | App logic between agents |
 | Graph control | Complex state machines |
+| Router/Triage | Classify and route to specialists |
+| Reflection | Self-improvement on output |
+| Plan-Execute-Verify | Multi-step with validation |
 
 ## See Also
 
@@ -224,3 +366,4 @@ logfire.instrument_pydantic_ai()
 - [dependencies.md](dependencies.md) — Sharing dependencies
 - [output.md](output.md) — Output functions
 - [observability.md](observability.md) — Logfire tracing
+- [messages.md](messages.md) — History processors for long conversations

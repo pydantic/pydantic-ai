@@ -177,11 +177,15 @@ async def test_my_agent():
 | Get structured output | [output.md](references/output.md) |
 | Inject dependencies | [dependencies.md](references/dependencies.md) |
 | Choose or configure models | [models.md](references/models.md) |
+| Use FallbackModel for resilience | [models.md](references/models.md) |
 | Stream responses | [streaming.md](references/streaming.md) |
 | Work with messages and multimedia | [messages.md](references/messages.md) |
+| Process/filter message history | [messages.md](references/messages.md) |
+| Summarize long conversations | [messages.md](references/messages.md) |
 | Use MCP servers | [mcp.md](references/mcp.md) |
 | Build multi-step graphs | [graph.md](references/graph.md) |
 | Handle errors and retries | [exceptions.md](references/exceptions.md) |
+| Combine FallbackModel with retries | [exceptions.md](references/exceptions.md) |
 | Add observability/tracing | [observability.md](references/observability.md) |
 | Test my agent | [testing.md](references/testing.md) |
 | Enable extended thinking | [thinking.md](references/thinking.md) |
@@ -189,9 +193,11 @@ async def test_my_agent():
 | Use embeddings for RAG | [embeddings.md](references/embeddings.md) |
 | Use durable execution | [durable.md](references/durable.md) |
 | Build multi-agent systems | [multi-agent.md](references/multi-agent.md) |
+| Implement router/triage pattern | [multi-agent.md](references/multi-agent.md) |
 | Require tool approval (human-in-the-loop) | [deferred-tools.md](references/deferred-tools.md) |
 | Use images, audio, video, or documents | [input.md](references/input.md) |
 | Use advanced tool features | [tools-advanced.md](references/tools-advanced.md) |
+| Secure tools with validation/approval | [tools-advanced.md](references/tools-advanced.md) |
 | Make direct model requests | [direct.md](references/direct.md) |
 | Expose agents as HTTP servers (A2A) | [a2a.md](references/a2a.md) |
 | Handle HTTP retries and rate limits | [retries.md](references/retries.md) |
