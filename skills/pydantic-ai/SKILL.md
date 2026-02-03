@@ -171,6 +171,9 @@ async def test_my_agent():
 |---|---|
 | Create or configure agents | [agents.md](references/agents.md) |
 | Add tools to an agent | [tools.md](references/tools.md) |
+| Compose or filter toolsets | [toolsets.md](references/toolsets.md) |
+| Use web search or code execution | [builtin-tools.md](references/builtin-tools.md) |
+| Search with DuckDuckGo/Tavily/Exa | [common-tools.md](references/common-tools.md) |
 | Get structured output | [output.md](references/output.md) |
 | Inject dependencies | [dependencies.md](references/dependencies.md) |
 | Choose or configure models | [models.md](references/models.md) |
@@ -180,6 +183,10 @@ async def test_my_agent():
 | Build multi-step graphs | [graph.md](references/graph.md) |
 | Handle errors and retries | [exceptions.md](references/exceptions.md) |
 | Add observability/tracing | [observability.md](references/observability.md) |
+| Test my agent | [testing.md](references/testing.md) |
+| Enable extended thinking | [thinking.md](references/thinking.md) |
+| Evaluate agent performance | [evals.md](references/evals.md) |
+| Use embeddings for RAG | [embeddings.md](references/embeddings.md) |
 | Use durable execution | [durable.md](references/durable.md) |
 | Look up an import path | [api-reference.md](references/api-reference.md) |
 
@@ -216,6 +223,9 @@ async def test_my_agent():
 |---|---|
 | [agents.md](references/agents.md) | Agent constructor, run methods, instructions, override, WrapperAgent |
 | [tools.md](references/tools.md) | Tool decorators, RunContext, ToolPrepareFunc, ModelRetry, docstrings |
+| [toolsets.md](references/toolsets.md) | FunctionToolset, CombinedToolset, FilteredToolset, dynamic toolsets |
+| [builtin-tools.md](references/builtin-tools.md) | WebSearchTool, CodeExecutionTool, ImageGenerationTool, provider-native tools |
+| [common-tools.md](references/common-tools.md) | DuckDuckGo, Tavily, Exa search integrations |
 | [output.md](references/output.md) | Output types, validators, union outputs, StructuredDict |
 | [dependencies.md](references/dependencies.md) | Dependency injection, RunContext, testing with override |
 | [models.md](references/models.md) | Model strings, providers, ModelSettings, TestModel, FallbackModel |
@@ -225,5 +235,9 @@ async def test_my_agent():
 | [graph.md](references/graph.md) | Graph, BaseNode, End, state management, agent graph internals |
 | [exceptions.md](references/exceptions.md) | Exception hierarchy, ModelRetry, deferred tools, error handling |
 | [observability.md](references/observability.md) | Logfire integration, OpenTelemetry, InstrumentedModel |
+| [testing.md](references/testing.md) | TestModel, FunctionModel, recording, override patterns |
+| [thinking.md](references/thinking.md) | Extended thinking, ThinkingPart, provider-specific reasoning |
+| [evals.md](references/evals.md) | Evaluation framework, evaluators, LLM judges |
+| [embeddings.md](references/embeddings.md) | Embedder, embedding models, vector search patterns |
 | [durable.md](references/durable.md) | Temporal, DBOS, Prefect integration |
 | [api-reference.md](references/api-reference.md) | Condensed public API with import paths |

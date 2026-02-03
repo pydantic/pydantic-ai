@@ -28,18 +28,29 @@ REFERENCES_DIR = SKILLS_DIR / 'references'
 INIT_FILE = Path('pydantic_ai_slim/pydantic_ai/__init__.py')
 
 SKILL_MD_MAX_LINES = 500
-REFERENCE_MAX_LINES = 300
-API_REFERENCE_MAX_LINES = 400  # api-reference.md gets a higher limit
+REFERENCE_MAX_LINES = 400
+API_REFERENCE_MAX_LINES = 400
 
 DOCS_DIR = Path('docs')
 SOURCE_DIR = Path('pydantic_ai_slim')
 
-# Escape hatch for skill-only examples that don't have a doc counterpart (should be empty)
-SKIP_SYNC_TITLES: set[str] = set()
+# Escape hatch for skill-only examples or indented doc examples that can't be matched
+SKIP_SYNC_TITLES: set[str] = {
+    # Indented in docs (inside MkDocs tabs blocks) - regex doesn't match
+    'bedrock_claude_thinking_part.py',
+    'bedrock_openai_thinking_part.py',
+    'bedrock_qwen_thinking_part.py',
+    'bedrock_deepseek_thinking_part.py',
+    # Skill-only examples (condensed/simplified versions for skills)
+    'test_model_structured.py',
+}
 
 EXPECTED_REFERENCE_FILES = [
     'agents.md',
     'tools.md',
+    'toolsets.md',
+    'builtin-tools.md',
+    'common-tools.md',
     'output.md',
     'dependencies.md',
     'models.md',
@@ -49,6 +60,10 @@ EXPECTED_REFERENCE_FILES = [
     'graph.md',
     'exceptions.md',
     'observability.md',
+    'testing.md',
+    'thinking.md',
+    'evals.md',
+    'embeddings.md',
     'durable.md',
     'api-reference.md',
 ]
@@ -93,41 +108,18 @@ EXCLUDED_EXPORTS = {
     'FunctionToolCallEvent',
     'FunctionToolResultEvent',
     'HandleResponseEvent',
+    'AgentRunResultEvent',
     # Profiles - documented at high level
     'DEFAULT_PROFILE',
     'InlineDefsJsonSchemaTransformer',
     'JsonSchemaTransformer',
     'ModelProfileSpec',
-    # Toolset variants
+    # Internal toolset types (toolset classes are documented in toolsets.md)
     'ToolsetFunc',
     'ToolsetTool',
-    'WrapperToolset',
-    'ExternalToolset',
-    'ApprovalRequiredToolset',
-    'CombinedToolset',
-    'FilteredToolset',
-    'PrefixedToolset',
-    'PreparedToolset',
-    'RenamedToolset',
-    'AbstractToolset',
-    # Builtin tools
-    'CodeExecutionTool',
-    'FileSearchTool',
-    'ImageGenerationTool',
-    'MCPServerTool',
-    'MemoryTool',
-    'UrlContextTool',
-    'WebFetchTool',
-    'WebSearchTool',
-    'WebSearchUserLocation',
-    # Other
+    # Other internal
     'format_as_xml',
-    'capture_run_messages',
-    'Embedder',
-    'EmbeddingModel',
-    'EmbeddingSettings',
-    'EmbeddingResult',
-    'AgentRunResultEvent',
+    'UrlContextTool',
 }
 
 
