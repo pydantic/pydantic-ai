@@ -29,13 +29,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1555'
+      - '1554'
       content-type:
       - application/json
       openai-organization:
       - inria-20
       openai-processing-ms:
-      - '1146'
+      - '619'
       openai-project:
       - proj_RUdP6pJASnVjBKlxwK4Mb9dS
       openai-version:
@@ -48,11 +48,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1770134188
-      created_at: 1770134187
+      completed_at: 1770142166
+      created_at: 1770142165
       error: null
       frequency_penalty: 0.0
-      id: resp_06048d8543c6f4e60069821aab045081a18acb7433b5cc5315
+      id: resp_082a4bdb11d5c65400698239d5c9948193880224cdc9764899
       incomplete_details: null
       instructions: You are a helpful math assistant.
       max_output_tokens: null
@@ -64,9 +64,9 @@ interactions:
       - content:
         - annotations: []
           logprobs: []
-          text: '6.'
+          text: '6'
           type: output_text
-        id: msg_06048d8543c6f4e60069821aac0b6881a18d566d7a39802232
+        id: msg_082a4bdb11d5c65400698239d6481881938b6830983f22aa94
         role: assistant
         status: completed
         type: message
@@ -96,10 +96,10 @@ interactions:
         input_tokens: 39
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 3
+        output_tokens: 2
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 42
+        total_tokens: 41
       user: null
     status:
       code: 200
@@ -113,25 +113,22 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '272'
+      - '214'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=sBCrTfT.ARGUCcl0QKW4IRsbjSgwZgUNEc_9p_sm6NQ-1770134188-1.0.1.1-WNelio2XuNMu1W_b6Ud3S6dd7d5q3NLJQ2f0HEIdYDSZnSNqz.cFm2.dOQ9eO2G91QEZ2gD27nyWxNRN7UsSgm9FogR5m39f0IsPii72bmo;
-        _cfuvid=acARVn.eG8tlJZWU6rFqxo3qY7AuDkfVyWImVZ10B98-1770134188204-0.0.1.1-604800000
+      - __cf_bm=jjGY2ysp5XLffTs2291BY2rFvLpO2MJF90Zaol0sfg4-1770142166-1.0.1.1-_DcemTGVKKmVPJQa4kAHoYK7V325onn_JN9aGaoEcczQeov7obVgLqfRGx1XMlg5jnzf3b0jyW3L8qDbNvEiQsJU3n_PKJCuhPf6li5H6DE;
+        _cfuvid=IUJIRcEt4UsVZK0NogQWT4BuLZv1RhLs3WPViQjIHJE-1770142166466-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
     parsed_body:
       input:
-      - content: 'In this conversation, you are tasked ONLY with summing. Let''s start: 3, 3?'
-        role: user
-      - content: '6.'
-        role: assistant
       - content: 'and: 4, 4?'
         role: user
       instructions: You are a helpful math assistant.
       model: gpt-4o
+      previous_response_id: resp_082a4bdb11d5c65400698239d5c9948193880224cdc9764899
       stream: false
     uri: https://api.openai.com/v1/responses
   response:
@@ -141,13 +138,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1555'
+      - '1607'
       content-type:
       - application/json
       openai-organization:
       - inria-20
       openai-processing-ms:
-      - '784'
+      - '526'
       openai-project:
       - proj_RUdP6pJASnVjBKlxwK4Mb9dS
       openai-version:
@@ -160,11 +157,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1770134189
-      created_at: 1770134188
+      completed_at: 1770142167
+      created_at: 1770142166
       error: null
       frequency_penalty: 0.0
-      id: resp_0743347399ca97970069821aac7fcc81a385ae173c1fe1fab3
+      id: resp_082a4bdb11d5c65400698239d6d50881939b1370ffcecc72d9
       incomplete_details: null
       instructions: You are a helpful math assistant.
       max_output_tokens: null
@@ -176,15 +173,15 @@ interactions:
       - content:
         - annotations: []
           logprobs: []
-          text: '8.'
+          text: '8'
           type: output_text
-        id: msg_0743347399ca97970069821aad2a6c81a3b3b9b30b16802b07
+        id: msg_082a4bdb11d5c65400698239d739c081938e780a33b7a8b77d
         role: assistant
         status: completed
         type: message
       parallel_tool_calls: true
       presence_penalty: 0.0
-      previous_response_id: null
+      previous_response_id: resp_082a4bdb11d5c65400698239d5c9948193880224cdc9764899
       prompt_cache_key: null
       prompt_cache_retention: null
       reasoning:
@@ -205,13 +202,13 @@ interactions:
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 57
+        input_tokens: 56
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 3
+        output_tokens: 2
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 60
+        total_tokens: 58
       user: null
     status:
       code: 200
@@ -229,15 +226,15 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=sBCrTfT.ARGUCcl0QKW4IRsbjSgwZgUNEc_9p_sm6NQ-1770134188-1.0.1.1-WNelio2XuNMu1W_b6Ud3S6dd7d5q3NLJQ2f0HEIdYDSZnSNqz.cFm2.dOQ9eO2G91QEZ2gD27nyWxNRN7UsSgm9FogR5m39f0IsPii72bmo;
-        _cfuvid=acARVn.eG8tlJZWU6rFqxo3qY7AuDkfVyWImVZ10B98-1770134188204-0.0.1.1-604800000
+      - __cf_bm=jjGY2ysp5XLffTs2291BY2rFvLpO2MJF90Zaol0sfg4-1770142166-1.0.1.1-_DcemTGVKKmVPJQa4kAHoYK7V325onn_JN9aGaoEcczQeov7obVgLqfRGx1XMlg5jnzf3b0jyW3L8qDbNvEiQsJU3n_PKJCuhPf6li5H6DE;
+        _cfuvid=IUJIRcEt4UsVZK0NogQWT4BuLZv1RhLs3WPViQjIHJE-1770142166466-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
     parsed_body:
       input: []
       model: gpt-4o
-      previous_response_id: resp_0743347399ca97970069821aac7fcc81a385ae173c1fe1fab3
+      previous_response_id: resp_082a4bdb11d5c65400698239d6d50881939b1370ffcecc72d9
     uri: https://api.openai.com/v1/responses/compact
   response:
     headers:
@@ -246,13 +243,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '3646'
+      - '3558'
       content-type:
       - application/json
       openai-organization:
       - inria-20
       openai-processing-ms:
-      - '5191'
+      - '5025'
       openai-project:
       - proj_RUdP6pJASnVjBKlxwK4Mb9dS
       openai-version:
@@ -262,35 +259,35 @@ interactions:
       transfer-encoding:
       - chunked
     parsed_body:
-      created_at: 1770134194
-      id: resp_0743347399ca97970169821aad7a7081a3bb962e1b1927c196
+      created_at: 1770142172
+      id: resp_082a4bdb11d5c65401698239d79ba8819384c5b270d7ef08ff
       object: response.compaction
       output:
       - content:
         - text: 'In this conversation, you are tasked ONLY with summing. Let''s start: 3, 3?'
           type: input_text
-        id: msg_0743347399ca97970069821aac870c81a3b839b9542e3367e3
+        id: msg_082a4bdb11d5c65400698239d5d1888193856ef5ab0af99cb5
         role: user
         status: completed
         type: message
       - content:
         - text: 'and: 4, 4?'
           type: input_text
-        id: msg_0743347399ca97970069821aac873481a3b07220c5f5e96b3d
+        id: msg_082a4bdb11d5c65400698239d6d91c819395d723f19fe2e827
         role: user
         status: completed
         type: message
-      - encrypted_content: gAAAAABpghqyPKNRublAaHAATaWpE09Niflae0kR65_kNtkV64P6uLz8RnPx04240xJCXIIqjmeMzkf2bimA9eTsge5mIaSiJ79si5O8hnN5VymCXYfb_v4NfIgjUAK2UBfGmUjkBJYQWftjZGaN6W0OSRcNE4mSpeai1zyZDjtK1I3iTTCSLB6LFkdpP7o-G65K23buHnDoAPOHyQWR3Gt3exLC5DiwJdHPfF-daqD6kxwZzVev_emL505AP_wzzpKTnuf14KuzOz2_tBCC7csisi1qimMGZd1rtZ28BK-9fvLCrbfh-RQSBdG90IIbP1ZrVI1HHL9oCfkfh5ZcgERrG_Yz7BhvSr7qaUhwMMn3FvfKEg66UgtdEEWv6LNbtJeBNtUlXNMfhl1TYQDmLBkiIWO0iqLOvmOW4Ugolkm5AWXaQOwW9EZJ71kW_dPR4uttPqKSNCdBn7lyhjmnCw7mc6PKXGTJbH8Hx5bgeefJ-XXmVQ1afssW6jC5GwDcyL5llf6CqLVnz5An33l4Mm_498dUhdeoCoFnELd-JNXfqxMjwqXNaQShDs2qO9_Du-uWFRQ58NgAH1SE84hC2M5Rj-ONO4u--_4sQFJeT_NRKTS39CIny_3jNt9XAcXgQCROcKEU4yDFKVs09HGdL6MlotwJBsLRCkow58FZv-uaphkrbZZ3XZnVlOUXDcMb9-gEIaGGE3GmGKlWmMBKYl5oEZN-ptRwOhiOgJF1wnfa2ZlwpU77_M9hA8alqnP7HG-E-rmSpdyREPbUQIZXH6kDZJuhYm21A-6RgtZ7r6G3a_1nZRypk-htX5bmjRTUVlzuhhXluvQMR9vaviXd4FNZX1z10Vn0P1eetZUZ1ZZhNLDTV1NUvuiQDZLDf2iyuE9Egh7nPlF1xtqSWmjYX-1P6u6Gwr-eO1Ia4eFM-vDSTfy5Zhhoz9kDNQ8YMVtE7JAB5uxjGZ2u144ERr9AFa5eWn0Af10cdUT6hgBrHq9OXfq4KB06dnKKQ0vktfEQy-RHycGi78La_7kbitjDU4VwWci3WnxQW61KMwfIj2nSD6DawRBfOQgqFCQ6UsDS7H8skwRSazR0vqBMsUHBJHUfXvcDNx1RWvdgdwXQM7j7LMylry08DDUwM0n-RqQocHHk8jEstFDoLQImKk3pOev3DKMarN34HEYCmbsek-ZBEoFJDUZWH2GamdnVCw7FwOB9ZkNjrYS4FMN6MbvKnOqD8zS8aLnlw09q19hYTy6DdP2SSsqp3py5E22e5bmks1JfveMIz_FmEP3g0GMe8jvoD82Oj-TrmAMfAVLiK0aQguLBuXtG_hQFALCxdZpojCAB86vYmf4Bsy3k3gYvf4KdrNd6CBOVox5PeSI-PPftbcaC7cky0GFrXxUZVnDTwp3vxU9kZlIFaMtSwrOTGeEf2pfea13tlEwwe2yQW_RYKSQMV2b_GVTQIvPubGII8PbZvI1jo9WwIs3ZyfKzPCv-HFADAAPBRPkQM4vekJ53vkMBlGQ9S-2LqfGAUXXYs6pDo_SrI8L1l2MBR3zoPJ-Fo1mUKKSStl5hy8QJzPwXMo6Xj2Wh_Ww6FHswwkYqp1eS5n9ZGevjIS96WrCgvaLvWhhVwYVTSW0H9NqcItYYYbXzNBJ3sfNMuvH5XbJXwq3UsbPjXiA-O44lQmyvz0nC6cDpPpr9G8vtzkuLq_d73ue30G2_lVvgJpAuLxJoZvtiDuh0n5minX2n4rwARDkWdbkecgh3kiAZRWD9DoiKWWXNssjoOA9A193WA2wc3QuMcxopiLXyp6ovorqn862RsD1fBMGbDkzDesiPK0OpVQfXOoRBNVskcKb-c-4MNQ3OvMEGZe5q-vR-1HL4gLXR14BW4RVU2j239Tn--1WGsv8z49SiJhauDcyAhtUvnIxh5om9VUzcTjwVkc7c-ldhIxr6NLGfsdpfwhuZ1XbFum0Zi_4Jdd-o4-in35bYv8fXvvz99kS7Yi-vMmWoFMWj1XzoeGlqQ0kzo-WXHeYng2ms04CxZzQ4c9IBQjoIGvubuL3tJQ58EiyUoQRoLpW8ulT1ztgYCFPjy5J6zoFgLm9psq1MQVZr5lwh5pm-XOKo74pf5Y5jK1C9BKr5gzWX8bXhg6fP3_XK_rDR9MfRhKrWhBt7PReIy5zhE1zzCiyDDdWS748sRwp09LTyKXMPu1lHc69vkC2cBjidGClaouTowir45TwbxLHZ-muXn1O68_CnDFObWds9bPRCZsxKVi689Uy_qgmoAKhexphTme3BiJk9Sde289SwJR8SFYB0dxYx5mejnekSl_TO-GAOMyJzy6vSbIKtaWoXipTtXK9-LJUtbB9RqC7sCVvMWp4_5kurMcCzyCEQZKl4dgANyQiOm5V8h6BhgP8xmoDbCSA-5OKVetzdDoqv3NapgW6diGi-_Wj7RU7HmbmoFyAIYPh3FXN9Cddk_qEMGtlpean7uMEgoKT-OuIYvUQew9yOCes700-8XOKRR008QJa43RwrdRbf5Q==
-        id: cmp_0743347399ca97970169821aadf5fc81a3bc0492d78b8fa8cd
+      - encrypted_content: gAAAAABpgjnc57C_-CW7hUXdiloPyRHOrQe98Tp38r6-L3ueZ0rUE9QKreCZ1MgHEcBlmL1O1DY4e54DHGitYKFHAbQRmdPB1eG_Pux0rGcUCrR-wevYzeUgj3sbbT7fkYS-9oA-5La8qHCg3urgxXU0s8bpjD7onMDN0uOvc0LEL4uIatixzt2abTGuXRp-F3XzB-K_yKYD5GumHOLCb8RyhA1LguP42iVUn5SZKTZu61_Z0_Tf-6veuvgID7cbcpNkzsaOTi-tJDCHK4oQPU_MnaevdswPoQLee_AWQ_V0Ncp2GRdtKdhOgRcdTnzlkNdC0rlviQIgydE62seb1a24ZT_IJNU_FrJucm1K9kVXc1yt9V9BK2Y9RW8RtQihflZQsKYajGU_b3XPlIzG0xs9Bie8V7yUh3mk5tISA118Hj7l6qhwx8bMl9ng3eseJ4fnzk22YkzSoqNAxb-0TnpcZEXht46f4SU27-Ny_om_fNZ2wFo9AXE7b3CUMWBqgNHVKGJMu1T17_7GSkIL1NcbVRKVuz9kNJ9gFbDJplhhI5BXrkFtx5G9muKvnUql-I6-uFPttdbGO04cP-8FsljV0A1yKNZZC44tB7SyN_m5RzP6inc5_DZzHILnF5FMCsfC5wIcDxRTdNI0UK--BJd4F_YkPPM-iDeE8JQBo7Th6j-j_xgCab5pz54fHBpsl32OmjYtS7pTnr7Ev1g_bFhiGdYyj-PZfruZ7VotRaVOmhlaDNzuqiM-fy3bGgwlCPCdrlyh5ghRM80w8qFcQmV619YVR39nDfJFcRqkFF48E_S9P6PuUdXlaoCUmdAc06ZkNi1096-dRxqPv2li9LWpap2T00wXQ0osRAYImkTx4QYu34BWo09wSG8FQkmuBaeO9O01V8YfSlnqlTM6hP5obiQJDdYSeVVCzO6JLXFWP4F9Ot5YWjmleRU9atCVcaXBlPV1hvJZzNJPgCignUOINoIR97HKoyErzr52zI6qqM0RWEgvUeaTzIJRE1MA57aYT_NmoYd9RqWX53GJaN1fnbO8AYtMvR_EhhH8v3WpHJhO5qVUD8q4hlussmfsHRX2-s6u-5hz4hVi37GtUTnahuZwncp0fBF6y0MbHTiT5pFszm_meBjPKcvOX6NsjO3pLYh2qEGotwS-NVhTtuvLPPJcq6ytuF5i-ztH_12lCUCnJwT-PyY9jIvNsrMsub7IqaeUWXDI0LKStjec-MQr_Jpp3qrt57li_qgefgo13VKdDsmqVj86NwSDwgbf643BflUFeu7OQRV1irbuK5gtwwlVv34uCQBLMYmeVtBlCN8UCWFIb82lFqwt9VtJPbQxBCOkCLPkerthTGLF8Gkg9sEInBNi8zy0qHIwM4tY2vybdo3ORT-ilbkQ-jVdS19979dqaFDxO49fzYvonUeLawvRZO7gb0jb_k99Tj4v77SBUE-q9GH8fVTMBqQH-fOqXixmPXJgYQTkeO2a8_SuYee-3U9e8IftBSupeerpPEYCo2Q4ONNDQg0IWk_wIvmTki5T0_LHVrP60L_fGFC-5BXXdc4WQV1SosSZHs9zZjFb-HmmK5rCm2Oelo_hx8gDN_3ctpm4OeK5Uu3b98i_hE6yJ8A7JswW3vXGidDMPNnTJUOAwi_T7qdl53ZvcX55a3OBkohDw1RgDhqJ00gv753h9fEz6eGcznIS0wVG_2zcGvahMMOsWFA2JAhhnrl0u5DlsBxhCIrISpI1D2SAXrhldnB-63bANAqpoQAxQnRzkHy-vQTJBjetVMm4_R3MIfZePa91k2PQr_yFHxlGpmRqF1a5JETn695Ewrz64pVSt_66YP2yO0EFgBjoULqzjPkqMcNWg8LEkYinOtbUEzlwM3ixnVfEGYnXTTjruOzRUDrur83O_wykacoXWSXRY1Yx0ZCDS1mTXJLo1bqgSah4D_VIDzTGP595C1tdoT9thCRC9A0tFSGGCxtXe-sTBIKULLC95rnnzVJQ3Nm6gZTaNrsh6ymEZ_YqdQaQGgcyCO9MAehfUTSeZ7lNv_0qtBsYthFFQHA2j1o2nE8sIhx3gpxhygyJx4irmArh6-LrcOc_hHy5aNOdQ6SCyC2hYaLVYZeitSWflGUfNInNo4f43wp9wyEPwC9MmQ_bbdCIH-7CpODwjLPhfa_GxOcErvm3ILSfMBZtyLHZVUVkN-I63-qLAuw9MXvhn2uOFvQij27DwUqgfOsk2UGu3X3IkYvrOu3mY2LFMyRpVtR5Fg35aBQ7qI0o0jcjfdb1rXxk0gynN5LQ4TTc8Q-MphoDqgjx0hB98DbfJgTeMkbLLy2zDfesn37cio9u2C0IGqYFfrLlkEBQehIvtG8MJBVY5xUHZccq_mpMTmVjLDSjEoNCoWJ3eyjZkD4hNArQXRPQwWcETs1xvsuojU8zJtFtChnH4-L8
+        id: cmp_082a4bdb11d5c65401698239d862108193ae5867099c6aee7f
         type: compaction
       usage:
-        input_tokens: 145
+        input_tokens: 143
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 167
+        output_tokens: 155
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 312
+        total_tokens: 298
     status:
       code: 200
       message: OK
@@ -303,19 +300,19 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2772'
+      - '2684'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=8qyx2wtWNrdu4MY19Ypv1sGWZBNb3.SkUwqBubEIiEo-1770134194-1.0.1.1-qhCu7LmlYsKsYPT5CucyCU5w732NsTYTWBeGSKs_DfxTArwEchtRr4IatviOn5CHOVwSYe820jVjJw7jeG5IUGqV8jzMLWhwzQpv_dd8XYg;
-        _cfuvid=TWJ3.OkKKxCrsasuDLirMM3ip00V4HsDpdWOxVvhAhg-1770134194712-0.0.1.1-604800000
+      - __cf_bm=ISsBPC_XtnejDR3D8glv5x65HU72HxaFQK0BSDn.MWs-1770142172-1.0.1.1-j9FHq8uHIMcYaiXEL1_SYpHSpusMYCpdknLIV_KFGWQOfZ782LOHx4ep14GDZGuWh8f48Uj8kBk5xEe4NE9LkdyBDAQrYf7jphDZkdxM.fg;
+        _cfuvid=dUxAn8.FDJLYJBzbkWhRpFPwv6B_cRniXiwFfGIzYjs-1770142172681-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
     parsed_body:
       input:
-      - encrypted_content: gAAAAABpghqyPKNRublAaHAATaWpE09Niflae0kR65_kNtkV64P6uLz8RnPx04240xJCXIIqjmeMzkf2bimA9eTsge5mIaSiJ79si5O8hnN5VymCXYfb_v4NfIgjUAK2UBfGmUjkBJYQWftjZGaN6W0OSRcNE4mSpeai1zyZDjtK1I3iTTCSLB6LFkdpP7o-G65K23buHnDoAPOHyQWR3Gt3exLC5DiwJdHPfF-daqD6kxwZzVev_emL505AP_wzzpKTnuf14KuzOz2_tBCC7csisi1qimMGZd1rtZ28BK-9fvLCrbfh-RQSBdG90IIbP1ZrVI1HHL9oCfkfh5ZcgERrG_Yz7BhvSr7qaUhwMMn3FvfKEg66UgtdEEWv6LNbtJeBNtUlXNMfhl1TYQDmLBkiIWO0iqLOvmOW4Ugolkm5AWXaQOwW9EZJ71kW_dPR4uttPqKSNCdBn7lyhjmnCw7mc6PKXGTJbH8Hx5bgeefJ-XXmVQ1afssW6jC5GwDcyL5llf6CqLVnz5An33l4Mm_498dUhdeoCoFnELd-JNXfqxMjwqXNaQShDs2qO9_Du-uWFRQ58NgAH1SE84hC2M5Rj-ONO4u--_4sQFJeT_NRKTS39CIny_3jNt9XAcXgQCROcKEU4yDFKVs09HGdL6MlotwJBsLRCkow58FZv-uaphkrbZZ3XZnVlOUXDcMb9-gEIaGGE3GmGKlWmMBKYl5oEZN-ptRwOhiOgJF1wnfa2ZlwpU77_M9hA8alqnP7HG-E-rmSpdyREPbUQIZXH6kDZJuhYm21A-6RgtZ7r6G3a_1nZRypk-htX5bmjRTUVlzuhhXluvQMR9vaviXd4FNZX1z10Vn0P1eetZUZ1ZZhNLDTV1NUvuiQDZLDf2iyuE9Egh7nPlF1xtqSWmjYX-1P6u6Gwr-eO1Ia4eFM-vDSTfy5Zhhoz9kDNQ8YMVtE7JAB5uxjGZ2u144ERr9AFa5eWn0Af10cdUT6hgBrHq9OXfq4KB06dnKKQ0vktfEQy-RHycGi78La_7kbitjDU4VwWci3WnxQW61KMwfIj2nSD6DawRBfOQgqFCQ6UsDS7H8skwRSazR0vqBMsUHBJHUfXvcDNx1RWvdgdwXQM7j7LMylry08DDUwM0n-RqQocHHk8jEstFDoLQImKk3pOev3DKMarN34HEYCmbsek-ZBEoFJDUZWH2GamdnVCw7FwOB9ZkNjrYS4FMN6MbvKnOqD8zS8aLnlw09q19hYTy6DdP2SSsqp3py5E22e5bmks1JfveMIz_FmEP3g0GMe8jvoD82Oj-TrmAMfAVLiK0aQguLBuXtG_hQFALCxdZpojCAB86vYmf4Bsy3k3gYvf4KdrNd6CBOVox5PeSI-PPftbcaC7cky0GFrXxUZVnDTwp3vxU9kZlIFaMtSwrOTGeEf2pfea13tlEwwe2yQW_RYKSQMV2b_GVTQIvPubGII8PbZvI1jo9WwIs3ZyfKzPCv-HFADAAPBRPkQM4vekJ53vkMBlGQ9S-2LqfGAUXXYs6pDo_SrI8L1l2MBR3zoPJ-Fo1mUKKSStl5hy8QJzPwXMo6Xj2Wh_Ww6FHswwkYqp1eS5n9ZGevjIS96WrCgvaLvWhhVwYVTSW0H9NqcItYYYbXzNBJ3sfNMuvH5XbJXwq3UsbPjXiA-O44lQmyvz0nC6cDpPpr9G8vtzkuLq_d73ue30G2_lVvgJpAuLxJoZvtiDuh0n5minX2n4rwARDkWdbkecgh3kiAZRWD9DoiKWWXNssjoOA9A193WA2wc3QuMcxopiLXyp6ovorqn862RsD1fBMGbDkzDesiPK0OpVQfXOoRBNVskcKb-c-4MNQ3OvMEGZe5q-vR-1HL4gLXR14BW4RVU2j239Tn--1WGsv8z49SiJhauDcyAhtUvnIxh5om9VUzcTjwVkc7c-ldhIxr6NLGfsdpfwhuZ1XbFum0Zi_4Jdd-o4-in35bYv8fXvvz99kS7Yi-vMmWoFMWj1XzoeGlqQ0kzo-WXHeYng2ms04CxZzQ4c9IBQjoIGvubuL3tJQ58EiyUoQRoLpW8ulT1ztgYCFPjy5J6zoFgLm9psq1MQVZr5lwh5pm-XOKo74pf5Y5jK1C9BKr5gzWX8bXhg6fP3_XK_rDR9MfRhKrWhBt7PReIy5zhE1zzCiyDDdWS748sRwp09LTyKXMPu1lHc69vkC2cBjidGClaouTowir45TwbxLHZ-muXn1O68_CnDFObWds9bPRCZsxKVi689Uy_qgmoAKhexphTme3BiJk9Sde289SwJR8SFYB0dxYx5mejnekSl_TO-GAOMyJzy6vSbIKtaWoXipTtXK9-LJUtbB9RqC7sCVvMWp4_5kurMcCzyCEQZKl4dgANyQiOm5V8h6BhgP8xmoDbCSA-5OKVetzdDoqv3NapgW6diGi-_Wj7RU7HmbmoFyAIYPh3FXN9Cddk_qEMGtlpean7uMEgoKT-OuIYvUQew9yOCes700-8XOKRR008QJa43RwrdRbf5Q==
-        id: cmp_0743347399ca97970169821aadf5fc81a3bc0492d78b8fa8cd
+      - encrypted_content: gAAAAABpgjnc57C_-CW7hUXdiloPyRHOrQe98Tp38r6-L3ueZ0rUE9QKreCZ1MgHEcBlmL1O1DY4e54DHGitYKFHAbQRmdPB1eG_Pux0rGcUCrR-wevYzeUgj3sbbT7fkYS-9oA-5La8qHCg3urgxXU0s8bpjD7onMDN0uOvc0LEL4uIatixzt2abTGuXRp-F3XzB-K_yKYD5GumHOLCb8RyhA1LguP42iVUn5SZKTZu61_Z0_Tf-6veuvgID7cbcpNkzsaOTi-tJDCHK4oQPU_MnaevdswPoQLee_AWQ_V0Ncp2GRdtKdhOgRcdTnzlkNdC0rlviQIgydE62seb1a24ZT_IJNU_FrJucm1K9kVXc1yt9V9BK2Y9RW8RtQihflZQsKYajGU_b3XPlIzG0xs9Bie8V7yUh3mk5tISA118Hj7l6qhwx8bMl9ng3eseJ4fnzk22YkzSoqNAxb-0TnpcZEXht46f4SU27-Ny_om_fNZ2wFo9AXE7b3CUMWBqgNHVKGJMu1T17_7GSkIL1NcbVRKVuz9kNJ9gFbDJplhhI5BXrkFtx5G9muKvnUql-I6-uFPttdbGO04cP-8FsljV0A1yKNZZC44tB7SyN_m5RzP6inc5_DZzHILnF5FMCsfC5wIcDxRTdNI0UK--BJd4F_YkPPM-iDeE8JQBo7Th6j-j_xgCab5pz54fHBpsl32OmjYtS7pTnr7Ev1g_bFhiGdYyj-PZfruZ7VotRaVOmhlaDNzuqiM-fy3bGgwlCPCdrlyh5ghRM80w8qFcQmV619YVR39nDfJFcRqkFF48E_S9P6PuUdXlaoCUmdAc06ZkNi1096-dRxqPv2li9LWpap2T00wXQ0osRAYImkTx4QYu34BWo09wSG8FQkmuBaeO9O01V8YfSlnqlTM6hP5obiQJDdYSeVVCzO6JLXFWP4F9Ot5YWjmleRU9atCVcaXBlPV1hvJZzNJPgCignUOINoIR97HKoyErzr52zI6qqM0RWEgvUeaTzIJRE1MA57aYT_NmoYd9RqWX53GJaN1fnbO8AYtMvR_EhhH8v3WpHJhO5qVUD8q4hlussmfsHRX2-s6u-5hz4hVi37GtUTnahuZwncp0fBF6y0MbHTiT5pFszm_meBjPKcvOX6NsjO3pLYh2qEGotwS-NVhTtuvLPPJcq6ytuF5i-ztH_12lCUCnJwT-PyY9jIvNsrMsub7IqaeUWXDI0LKStjec-MQr_Jpp3qrt57li_qgefgo13VKdDsmqVj86NwSDwgbf643BflUFeu7OQRV1irbuK5gtwwlVv34uCQBLMYmeVtBlCN8UCWFIb82lFqwt9VtJPbQxBCOkCLPkerthTGLF8Gkg9sEInBNi8zy0qHIwM4tY2vybdo3ORT-ilbkQ-jVdS19979dqaFDxO49fzYvonUeLawvRZO7gb0jb_k99Tj4v77SBUE-q9GH8fVTMBqQH-fOqXixmPXJgYQTkeO2a8_SuYee-3U9e8IftBSupeerpPEYCo2Q4ONNDQg0IWk_wIvmTki5T0_LHVrP60L_fGFC-5BXXdc4WQV1SosSZHs9zZjFb-HmmK5rCm2Oelo_hx8gDN_3ctpm4OeK5Uu3b98i_hE6yJ8A7JswW3vXGidDMPNnTJUOAwi_T7qdl53ZvcX55a3OBkohDw1RgDhqJ00gv753h9fEz6eGcznIS0wVG_2zcGvahMMOsWFA2JAhhnrl0u5DlsBxhCIrISpI1D2SAXrhldnB-63bANAqpoQAxQnRzkHy-vQTJBjetVMm4_R3MIfZePa91k2PQr_yFHxlGpmRqF1a5JETn695Ewrz64pVSt_66YP2yO0EFgBjoULqzjPkqMcNWg8LEkYinOtbUEzlwM3ixnVfEGYnXTTjruOzRUDrur83O_wykacoXWSXRY1Yx0ZCDS1mTXJLo1bqgSah4D_VIDzTGP595C1tdoT9thCRC9A0tFSGGCxtXe-sTBIKULLC95rnnzVJQ3Nm6gZTaNrsh6ymEZ_YqdQaQGgcyCO9MAehfUTSeZ7lNv_0qtBsYthFFQHA2j1o2nE8sIhx3gpxhygyJx4irmArh6-LrcOc_hHy5aNOdQ6SCyC2hYaLVYZeitSWflGUfNInNo4f43wp9wyEPwC9MmQ_bbdCIH-7CpODwjLPhfa_GxOcErvm3ILSfMBZtyLHZVUVkN-I63-qLAuw9MXvhn2uOFvQij27DwUqgfOsk2UGu3X3IkYvrOu3mY2LFMyRpVtR5Fg35aBQ7qI0o0jcjfdb1rXxk0gynN5LQ4TTc8Q-MphoDqgjx0hB98DbfJgTeMkbLLy2zDfesn37cio9u2C0IGqYFfrLlkEBQehIvtG8MJBVY5xUHZccq_mpMTmVjLDSjEoNCoWJ3eyjZkD4hNArQXRPQwWcETs1xvsuojU8zJtFtChnH4-L8
+        id: cmp_082a4bdb11d5c65401698239d862108193ae5867099c6aee7f
         type: compaction
       - content: 'and: 5, 5?'
         role: user
@@ -330,13 +327,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1565'
+      - '1581'
       content-type:
       - application/json
       openai-organization:
       - inria-20
       openai-processing-ms:
-      - '610'
+      - '659'
       openai-project:
       - proj_RUdP6pJASnVjBKlxwK4Mb9dS
       openai-version:
@@ -349,11 +346,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1770134195
-      created_at: 1770134194
+      completed_at: 1770142173
+      created_at: 1770142172
       error: null
       frequency_penalty: 0.0
-      id: resp_0743347399ca97970069821ab2dc9c81a3a437cebfe1fe80d4
+      id: resp_082a4bdb11d5c65400698239dcf73c8193b564d348c3ab108a
       incomplete_details: null
       instructions: You are a helpful math assistant.
       max_output_tokens: null
@@ -365,9 +362,9 @@ interactions:
       - content:
         - annotations: []
           logprobs: []
-          text: 5 + 5 = 10
+          text: The sum of 5 and 5 is 10.
           type: output_text
-        id: msg_0743347399ca97970069821ab34c3881a3a7731d3a0a0662c1
+        id: msg_082a4bdb11d5c65400698239dd32288193bf7365968f9d8965
         role: assistant
         status: completed
         type: message
@@ -394,13 +391,13 @@ interactions:
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 273
+        input_tokens: 261
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 8
+        output_tokens: 13
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 281
+        total_tokens: 274
       user: null
     status:
       code: 200

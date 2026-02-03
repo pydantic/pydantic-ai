@@ -51,7 +51,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import openai_model_profile
-from pydantic_ai.settings import merge_model_settings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -359,20 +358,20 @@ async def test_openai_responses_compact_messages_with_previous_response_id(
         if len(messages) > 4:
             assert isinstance(ctx.model, OpenAIResponsesModel)
             assert isinstance(ctx.model_request_parameters, ModelRequestParameters)
-            model_settings = merge_model_settings(
-                ctx.model_settings,
-                OpenAIResponsesModelSettings(openai_send_reasoning_ids=True, openai_previous_response_id='auto'),
-            )
             compacted_messages = await ctx.model.compact_messages(
-                messages[:-1], model_settings=model_settings, model_request_parameters=ctx.model_request_parameters
+                messages[:-1], model_settings=ctx.model_settings, model_request_parameters=ctx.model_request_parameters
             )
             return [compacted_messages, messages[-1]]
 
         return messages
 
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    model_settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
     agent = Agent(
-        model=model, instructions='You are a helpful math assistant.', history_processors=[context_aware_processor]
+        model=model,
+        instructions='You are a helpful math assistant.',
+        history_processors=[context_aware_processor],
+        model_settings=model_settings,
     )
 
     result = await agent.run("In this conversation, you are tasked ONLY with summing. Let's start: 3, 3?")
@@ -386,8 +385,8 @@ async def test_openai_responses_compact_messages_with_previous_response_id(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={
-                    'id': 'cmp_0743347399ca97970169821aadf5fc81a3bc0492d78b8fa8cd',
-                    'encrypted_content': 'gAAAAABpghqyPKNRublAaHAATaWpE09Niflae0kR65_kNtkV64P6uLz8RnPx04240xJCXIIqjmeMzkf2bimA9eTsge5mIaSiJ79si5O8hnN5VymCXYfb_v4NfIgjUAK2UBfGmUjkBJYQWftjZGaN6W0OSRcNE4mSpeai1zyZDjtK1I3iTTCSLB6LFkdpP7o-G65K23buHnDoAPOHyQWR3Gt3exLC5DiwJdHPfF-daqD6kxwZzVev_emL505AP_wzzpKTnuf14KuzOz2_tBCC7csisi1qimMGZd1rtZ28BK-9fvLCrbfh-RQSBdG90IIbP1ZrVI1HHL9oCfkfh5ZcgERrG_Yz7BhvSr7qaUhwMMn3FvfKEg66UgtdEEWv6LNbtJeBNtUlXNMfhl1TYQDmLBkiIWO0iqLOvmOW4Ugolkm5AWXaQOwW9EZJ71kW_dPR4uttPqKSNCdBn7lyhjmnCw7mc6PKXGTJbH8Hx5bgeefJ-XXmVQ1afssW6jC5GwDcyL5llf6CqLVnz5An33l4Mm_498dUhdeoCoFnELd-JNXfqxMjwqXNaQShDs2qO9_Du-uWFRQ58NgAH1SE84hC2M5Rj-ONO4u--_4sQFJeT_NRKTS39CIny_3jNt9XAcXgQCROcKEU4yDFKVs09HGdL6MlotwJBsLRCkow58FZv-uaphkrbZZ3XZnVlOUXDcMb9-gEIaGGE3GmGKlWmMBKYl5oEZN-ptRwOhiOgJF1wnfa2ZlwpU77_M9hA8alqnP7HG-E-rmSpdyREPbUQIZXH6kDZJuhYm21A-6RgtZ7r6G3a_1nZRypk-htX5bmjRTUVlzuhhXluvQMR9vaviXd4FNZX1z10Vn0P1eetZUZ1ZZhNLDTV1NUvuiQDZLDf2iyuE9Egh7nPlF1xtqSWmjYX-1P6u6Gwr-eO1Ia4eFM-vDSTfy5Zhhoz9kDNQ8YMVtE7JAB5uxjGZ2u144ERr9AFa5eWn0Af10cdUT6hgBrHq9OXfq4KB06dnKKQ0vktfEQy-RHycGi78La_7kbitjDU4VwWci3WnxQW61KMwfIj2nSD6DawRBfOQgqFCQ6UsDS7H8skwRSazR0vqBMsUHBJHUfXvcDNx1RWvdgdwXQM7j7LMylry08DDUwM0n-RqQocHHk8jEstFDoLQImKk3pOev3DKMarN34HEYCmbsek-ZBEoFJDUZWH2GamdnVCw7FwOB9ZkNjrYS4FMN6MbvKnOqD8zS8aLnlw09q19hYTy6DdP2SSsqp3py5E22e5bmks1JfveMIz_FmEP3g0GMe8jvoD82Oj-TrmAMfAVLiK0aQguLBuXtG_hQFALCxdZpojCAB86vYmf4Bsy3k3gYvf4KdrNd6CBOVox5PeSI-PPftbcaC7cky0GFrXxUZVnDTwp3vxU9kZlIFaMtSwrOTGeEf2pfea13tlEwwe2yQW_RYKSQMV2b_GVTQIvPubGII8PbZvI1jo9WwIs3ZyfKzPCv-HFADAAPBRPkQM4vekJ53vkMBlGQ9S-2LqfGAUXXYs6pDo_SrI8L1l2MBR3zoPJ-Fo1mUKKSStl5hy8QJzPwXMo6Xj2Wh_Ww6FHswwkYqp1eS5n9ZGevjIS96WrCgvaLvWhhVwYVTSW0H9NqcItYYYbXzNBJ3sfNMuvH5XbJXwq3UsbPjXiA-O44lQmyvz0nC6cDpPpr9G8vtzkuLq_d73ue30G2_lVvgJpAuLxJoZvtiDuh0n5minX2n4rwARDkWdbkecgh3kiAZRWD9DoiKWWXNssjoOA9A193WA2wc3QuMcxopiLXyp6ovorqn862RsD1fBMGbDkzDesiPK0OpVQfXOoRBNVskcKb-c-4MNQ3OvMEGZe5q-vR-1HL4gLXR14BW4RVU2j239Tn--1WGsv8z49SiJhauDcyAhtUvnIxh5om9VUzcTjwVkc7c-ldhIxr6NLGfsdpfwhuZ1XbFum0Zi_4Jdd-o4-in35bYv8fXvvz99kS7Yi-vMmWoFMWj1XzoeGlqQ0kzo-WXHeYng2ms04CxZzQ4c9IBQjoIGvubuL3tJQ58EiyUoQRoLpW8ulT1ztgYCFPjy5J6zoFgLm9psq1MQVZr5lwh5pm-XOKo74pf5Y5jK1C9BKr5gzWX8bXhg6fP3_XK_rDR9MfRhKrWhBt7PReIy5zhE1zzCiyDDdWS748sRwp09LTyKXMPu1lHc69vkC2cBjidGClaouTowir45TwbxLHZ-muXn1O68_CnDFObWds9bPRCZsxKVi689Uy_qgmoAKhexphTme3BiJk9Sde289SwJR8SFYB0dxYx5mejnekSl_TO-GAOMyJzy6vSbIKtaWoXipTtXK9-LJUtbB9RqC7sCVvMWp4_5kurMcCzyCEQZKl4dgANyQiOm5V8h6BhgP8xmoDbCSA-5OKVetzdDoqv3NapgW6diGi-_Wj7RU7HmbmoFyAIYPh3FXN9Cddk_qEMGtlpean7uMEgoKT-OuIYvUQew9yOCes700-8XOKRR008QJa43RwrdRbf5Q==',
+                    'id': 'cmp_082a4bdb11d5c65401698239d862108193ae5867099c6aee7f',
+                    'encrypted_content': 'gAAAAABpgjnc57C_-CW7hUXdiloPyRHOrQe98Tp38r6-L3ueZ0rUE9QKreCZ1MgHEcBlmL1O1DY4e54DHGitYKFHAbQRmdPB1eG_Pux0rGcUCrR-wevYzeUgj3sbbT7fkYS-9oA-5La8qHCg3urgxXU0s8bpjD7onMDN0uOvc0LEL4uIatixzt2abTGuXRp-F3XzB-K_yKYD5GumHOLCb8RyhA1LguP42iVUn5SZKTZu61_Z0_Tf-6veuvgID7cbcpNkzsaOTi-tJDCHK4oQPU_MnaevdswPoQLee_AWQ_V0Ncp2GRdtKdhOgRcdTnzlkNdC0rlviQIgydE62seb1a24ZT_IJNU_FrJucm1K9kVXc1yt9V9BK2Y9RW8RtQihflZQsKYajGU_b3XPlIzG0xs9Bie8V7yUh3mk5tISA118Hj7l6qhwx8bMl9ng3eseJ4fnzk22YkzSoqNAxb-0TnpcZEXht46f4SU27-Ny_om_fNZ2wFo9AXE7b3CUMWBqgNHVKGJMu1T17_7GSkIL1NcbVRKVuz9kNJ9gFbDJplhhI5BXrkFtx5G9muKvnUql-I6-uFPttdbGO04cP-8FsljV0A1yKNZZC44tB7SyN_m5RzP6inc5_DZzHILnF5FMCsfC5wIcDxRTdNI0UK--BJd4F_YkPPM-iDeE8JQBo7Th6j-j_xgCab5pz54fHBpsl32OmjYtS7pTnr7Ev1g_bFhiGdYyj-PZfruZ7VotRaVOmhlaDNzuqiM-fy3bGgwlCPCdrlyh5ghRM80w8qFcQmV619YVR39nDfJFcRqkFF48E_S9P6PuUdXlaoCUmdAc06ZkNi1096-dRxqPv2li9LWpap2T00wXQ0osRAYImkTx4QYu34BWo09wSG8FQkmuBaeO9O01V8YfSlnqlTM6hP5obiQJDdYSeVVCzO6JLXFWP4F9Ot5YWjmleRU9atCVcaXBlPV1hvJZzNJPgCignUOINoIR97HKoyErzr52zI6qqM0RWEgvUeaTzIJRE1MA57aYT_NmoYd9RqWX53GJaN1fnbO8AYtMvR_EhhH8v3WpHJhO5qVUD8q4hlussmfsHRX2-s6u-5hz4hVi37GtUTnahuZwncp0fBF6y0MbHTiT5pFszm_meBjPKcvOX6NsjO3pLYh2qEGotwS-NVhTtuvLPPJcq6ytuF5i-ztH_12lCUCnJwT-PyY9jIvNsrMsub7IqaeUWXDI0LKStjec-MQr_Jpp3qrt57li_qgefgo13VKdDsmqVj86NwSDwgbf643BflUFeu7OQRV1irbuK5gtwwlVv34uCQBLMYmeVtBlCN8UCWFIb82lFqwt9VtJPbQxBCOkCLPkerthTGLF8Gkg9sEInBNi8zy0qHIwM4tY2vybdo3ORT-ilbkQ-jVdS19979dqaFDxO49fzYvonUeLawvRZO7gb0jb_k99Tj4v77SBUE-q9GH8fVTMBqQH-fOqXixmPXJgYQTkeO2a8_SuYee-3U9e8IftBSupeerpPEYCo2Q4ONNDQg0IWk_wIvmTki5T0_LHVrP60L_fGFC-5BXXdc4WQV1SosSZHs9zZjFb-HmmK5rCm2Oelo_hx8gDN_3ctpm4OeK5Uu3b98i_hE6yJ8A7JswW3vXGidDMPNnTJUOAwi_T7qdl53ZvcX55a3OBkohDw1RgDhqJ00gv753h9fEz6eGcznIS0wVG_2zcGvahMMOsWFA2JAhhnrl0u5DlsBxhCIrISpI1D2SAXrhldnB-63bANAqpoQAxQnRzkHy-vQTJBjetVMm4_R3MIfZePa91k2PQr_yFHxlGpmRqF1a5JETn695Ewrz64pVSt_66YP2yO0EFgBjoULqzjPkqMcNWg8LEkYinOtbUEzlwM3ixnVfEGYnXTTjruOzRUDrur83O_wykacoXWSXRY1Yx0ZCDS1mTXJLo1bqgSah4D_VIDzTGP595C1tdoT9thCRC9A0tFSGGCxtXe-sTBIKULLC95rnnzVJQ3Nm6gZTaNrsh6ymEZ_YqdQaQGgcyCO9MAehfUTSeZ7lNv_0qtBsYthFFQHA2j1o2nE8sIhx3gpxhygyJx4irmArh6-LrcOc_hHy5aNOdQ6SCyC2hYaLVYZeitSWflGUfNInNo4f43wp9wyEPwC9MmQ_bbdCIH-7CpODwjLPhfa_GxOcErvm3ILSfMBZtyLHZVUVkN-I63-qLAuw9MXvhn2uOFvQij27DwUqgfOsk2UGu3X3IkYvrOu3mY2LFMyRpVtR5Fg35aBQ7qI0o0jcjfdb1rXxk0gynN5LQ4TTc8Q-MphoDqgjx0hB98DbfJgTeMkbLLy2zDfesn37cio9u2C0IGqYFfrLlkEBQehIvtG8MJBVY5xUHZccq_mpMTmVjLDSjEoNCoWJ3eyjZkD4hNArQXRPQwWcETs1xvsuojU8zJtFtChnH4-L8',
                     'type': 'compaction',
                     'created_by': None,
                 },
@@ -401,18 +400,18 @@ async def test_openai_responses_compact_messages_with_previous_response_id(
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='5 + 5 = 10',
-                        id='msg_0743347399ca97970069821ab34c3881a3a7731d3a0a0662c1',
+                        content='The sum of 5 and 5 is 10.',
+                        id='msg_082a4bdb11d5c65400698239dd32288193bf7365968f9d8965',
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=273, output_tokens=8, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(input_tokens=261, output_tokens=13, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
-                provider_response_id='resp_0743347399ca97970069821ab2dc9c81a3a437cebfe1fe80d4',
+                provider_response_id='resp_082a4bdb11d5c65400698239dcf73c8193b564d348c3ab108a',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
