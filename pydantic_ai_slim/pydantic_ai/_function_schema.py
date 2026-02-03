@@ -217,27 +217,26 @@ def function_schema(  # noqa: C901
         # and set it on the tool
         description = json_schema.pop('description', None)
 
+    # Which type to generate return schema for
     return_annotation = type_hints.get('return')
     return_schema = None
-    # Check if origin of return annotation is ToolReturn which needs special handling.
+    schema_type: Any = None
+
     if return_annotation is ToolReturn:
-        # Bare ToolReturn without type parameter — inner type is Any, no schema to generate
+        # Bare ToolReturn without type parameter — no schema to generate
         pass
     elif get_origin(return_annotation) is ToolReturn:
         type_args = get_args(return_annotation)
         inner_type = type_args[0] if type_args else Any
         if inner_type is not Any:
-            try:
-                return_schema = TypeAdapter(inner_type).json_schema(
-                    schema_generator=schema_generator, mode='serialization'
-                )
-                if return_description and 'description' not in return_schema:
-                    return_schema['description'] = return_description
-            except (PydanticSchemaGenerationError, PydanticUserError):
-                pass
+            schema_type = inner_type
     elif return_annotation is not None:
+        schema_type = return_annotation
+
+    # Generate return schema if we have a type
+    if schema_type is not None:
         try:
-            return_schema = TypeAdapter(return_annotation).json_schema(
+            return_schema = TypeAdapter(schema_type).json_schema(
                 schema_generator=schema_generator, mode='serialization'
             )
             if return_description and 'description' not in return_schema:
