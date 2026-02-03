@@ -33,9 +33,9 @@ def doc_descriptions(
             * Plain text if no returns section is present
             * XML-formatted if returns section exists, including <summary> and <returns> tags
         - dict[str, str]: Dictionary mapping parameter names to their descriptions
-        - str | None: Return description string, which may be either:
-            * Plain text if no returns section is present
-            * XML-formatted if returns section exists, including <returns> tags
+        - str | None: Return description string. Always None when a returns section is present
+            (since it's embedded in the main description). Reserved for future use cases where
+            return description should go to the return schema instead of the tool description.
     """
     doc = func.__doc__
     if doc is None:
@@ -81,6 +81,10 @@ def doc_descriptions(
             main_desc = f'<summary>{main_desc}</summary>\n{return_xml}'
         else:
             main_desc = return_xml
+
+        # Return description is already embedded in main_desc as XML, don't return it separately
+        # to avoid duplication in the return schema
+        return_desc = None
 
     return main_desc, params, return_desc
 

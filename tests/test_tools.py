@@ -3707,7 +3707,7 @@ def test_tool_return_schema_with_docstring_description():
 
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
-    assert json_schema['return_schema'] == snapshot({'type': 'integer', 'description': 'The result value.'})
+    assert json_schema['return_schema'] == snapshot({'type': 'integer'})
 
 
 def test_return_schema_e2e():
