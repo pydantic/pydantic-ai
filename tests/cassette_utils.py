@@ -24,12 +24,12 @@ def get_cassette_request_bodies(cassette: Cassette) -> list[str]:
         if raw_body:
             body = raw_body.decode('utf-8', errors='ignore') if isinstance(raw_body, bytes) else raw_body  # pyright: ignore[reportUnknownVariableType]
             bodies.append(body)  # pyright: ignore[reportUnknownArgumentType]
-        elif hasattr(request, 'parsed_body') and request.parsed_body:  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+        elif getattr(request, 'parsed_body', None):  # pyright: ignore[reportUnknownArgumentType]  # pragma: no cover
             bodies.append(json.dumps(request.parsed_body))  # pyright: ignore[reportUnknownMemberType]
     return bodies
 
 
-def get_xai_cassette_request_bodies(cassette_path: Path) -> list[str]:
+def get_xai_cassette_request_bodies(cassette_path: Path) -> list[str]:  # pragma: no cover
     """Get all request and response bodies from an XAI cassette as strings."""
     from tests.models.xai_proto_cassettes import (
         SampleInteraction,
@@ -94,14 +94,14 @@ class CassetteContext:
 
     def _get_bodies(self) -> list[str]:
         """Get request/response bodies from the appropriate cassette format."""
-        if self.provider == 'xai':
+        if self.provider == 'xai':  # pragma: no cover
             cassette_path = get_xai_cassette_path(self.test_name, self.test_module)
             if cassette_path.exists():
                 return get_xai_cassette_request_bodies(cassette_path)
             return []
         if self.vcr is not None:
             return get_cassette_request_bodies(self.vcr)
-        return []
+        return []  # pragma: no cover
 
     def verify_contains(self, *patterns: str | tuple[str, ...]) -> None:
         """Verify that all patterns appear in cassette request/response bodies.

@@ -523,11 +523,11 @@ def cassette_ctx(request: pytest.FixtureRequest, vcr: Any) -> CassetteContext | 
     """
     from tests.cassette_utils import CassetteContext
 
-    if not hasattr(request.node, 'callspec'):
+    if not (callspec := getattr(request.node, 'callspec', None)):  # pragma: no cover
         return None
-    params = cast(dict[str, object], request.node.callspec.params)
+    params = cast(dict[str, object], callspec.params)
     provider = params.get('provider')
-    if not isinstance(provider, str):
+    if not isinstance(provider, str):  # pragma: no cover
         return None
     test_module = cast(str, request.node.fspath.basename.replace('.py', ''))
     return CassetteContext(

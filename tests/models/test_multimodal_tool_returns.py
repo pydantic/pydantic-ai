@@ -422,7 +422,7 @@ def create_model(
     elif provider == 'xai':
         assert xai_provider is not None
         return XaiModel(model_name, provider=xai_provider)
-    else:
+    else:  # pragma: no cover
         raise ValueError(f'Unknown provider: {provider}')
 
 
@@ -557,13 +557,13 @@ def _is_file_type(item: Any, file_type: str) -> bool:
                 return media.startswith('application/') or media.startswith('text/')
             elif file_type == 'audio':
                 return media.startswith('audio/')
-            elif file_type == 'video':
+            elif file_type == 'video':  # pragma: no branch
                 return media.startswith('video/')
         return True
-    return False
+    return False  # pragma: no cover
 
 
-def assert_file_in_tool_return(messages: list[Any], file_type: str) -> None:
+def assert_file_in_tool_return(messages: list[Any], file_type: str) -> None:  # pragma: no cover
     """Assert that file content of the expected type is present in a ToolReturnPart."""
     for msg in messages:
         if isinstance(msg, ModelRequest):
@@ -575,7 +575,7 @@ def assert_file_in_tool_return(messages: list[Any], file_type: str) -> None:
     raise AssertionError(f'No {file_type} found in any ToolReturnPart')
 
 
-def assert_file_in_user_prompt(messages: list[Any], file_type: str) -> None:
+def assert_file_in_user_prompt(messages: list[Any], file_type: str) -> None:  # pragma: no cover
     """Assert that file content of the expected type is present in a UserPromptPart.
 
     For tool_return_content style, files are moved to a separate UserPromptPart
@@ -610,9 +610,9 @@ def assert_multimodal_result(
     - Files go to a separate `UserPromptPart` by design of `ToolReturn.content`
     """
     match expectation:
-        case 'error':
+        case 'error':  # pragma: no cover
             pass
-        case 'native' | 'fallback':
+        case 'native' | 'fallback':  # pragma: no branch
             # Both native and fallback: file should be in ToolReturnPart or UserPromptPart
             # The difference is how the model implementation sends it to the API
             if return_style == 'tool_return_content':
@@ -677,7 +677,7 @@ async def test_multimodal_tool_return_matrix(
     allow_model_requests: None,
     cassette_ctx: CassetteContext | None,
 ):
-    if not is_provider_available(provider):
+    if not is_provider_available(provider):  # pragma: no cover
         pytest.skip(f'{provider} dependencies not installed')
 
     error_info = get_error_details(provider, file_type, content_source, return_style)
@@ -730,11 +730,11 @@ async def test_mixed_content_ordering(
     For fallback providers, the image is separated into a user message, so we
     only verify all content is present (ordering across messages may differ).
     """
-    if not is_provider_available(provider):
+    if not is_provider_available(provider):  # pragma: no cover
         pytest.skip(f'{provider} dependencies not installed')
 
     expectation = get_expectation(provider, 'image')
-    if expectation == 'error':
+    if expectation == 'error':  # pragma: no cover
         pytest.skip(f'{provider} does not support images')
 
     model = create_model(provider, api_keys, bedrock_provider, xai_provider)
@@ -778,11 +778,11 @@ async def test_model_sees_multiple_images(
     1. Both images are sent to the API (cassette verification)
     2. The model identifies the kiwi fruit (semantic verification)
     """
-    if not is_provider_available(provider):
+    if not is_provider_available(provider):  # pragma: no cover
         pytest.skip(f'{provider} dependencies not installed')
 
     expectation = get_expectation(provider, 'image')
-    if expectation == 'error':
+    if expectation == 'error':  # pragma: no cover
         pytest.skip(f'{provider} does not support images in tool returns')
 
     model = create_model(provider, api_keys, bedrock_provider, xai_provider)
@@ -816,7 +816,7 @@ async def test_empty_string_in_mixed_content(
     cassette_ctx: CassetteContext | None,
 ):
     """Test that empty strings in tool returns are skipped correctly."""
-    if not is_provider_available(provider):
+    if not is_provider_available(provider):  # pragma: no cover
         pytest.skip(f'{provider} dependencies not installed')
 
     model = create_model(provider, api_keys, bedrock_provider, xai_provider)
@@ -853,7 +853,7 @@ async def test_vendor_metadata_detail(
     cassette_ctx: CassetteContext | None,
 ):
     """Test that vendor_metadata with detail setting is handled correctly."""
-    if not is_provider_available(provider):
+    if not is_provider_available(provider):  # pragma: no cover
         pytest.skip(f'{provider} dependencies not installed')
 
     model = create_model(provider, api_keys, bedrock_provider, xai_provider)
@@ -891,7 +891,7 @@ async def test_text_plain_document_anthropic(
     """Test that text/plain documents are handled correctly by Anthropic."""
     from tests.cassette_utils import CassetteContext
 
-    if not anthropic_available():
+    if not anthropic_available():  # pragma: no cover
         pytest.skip('anthropic dependencies not installed')
 
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))

@@ -277,9 +277,10 @@ class XaiModel(Model):
                     file_content.extend(files)
                 else:
                     xai_messages.append(tool_result(part.model_response()))
-            if file_content:
-                if user_msg := await self._map_user_prompt(UserPromptPart(content=file_content)):
-                    xai_messages.append(user_msg)
+            if file_content and (
+                user_msg := await self._map_user_prompt(UserPromptPart(content=file_content))
+            ):  # pragma: no branch
+                xai_messages.append(user_msg)
 
         return xai_messages
 

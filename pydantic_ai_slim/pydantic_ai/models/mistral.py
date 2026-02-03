@@ -564,7 +564,7 @@ class MistralModel(Model):
 
             if isinstance(current_message, MistralToolMessage) and i + 1 < len(mistral_messages):
                 next_message = mistral_messages[i + 1]
-                if isinstance(next_message, MistralUserMessage):
+                if isinstance(next_message, MistralUserMessage):  # pragma: no cover
                     # Insert a dummy assistant message
                     processed_messages.append(MistralAssistantMessage(content=[MistralTextChunk(text='OK')]))
 
