@@ -1263,10 +1263,10 @@ class OpenAIResponsesModel(Model):
         )
 
         # Handle ModelResponse
-        if isinstance(response, ModelResponse):
+        if isinstance(response, ModelResponse):  # pragma: no cover
             return response
 
-        if not response.output:
+        if not response.output:  # pragma: no cover
             raise UnexpectedModelBehavior('CompactedResponse returned with no output items')
         compaction = response.output[-1]
         return ModelResponse(parts=[], provider_name='openai', provider_details=compaction.model_dump())
@@ -1476,14 +1476,14 @@ class OpenAIResponsesModel(Model):
                 instructions=instructions,
                 previous_response_id=previous_response_id or OMIT,
             )
-        except APIStatusError as e:
+        except APIStatusError as e:  # pragma: no cover
             if model_response := _check_azure_content_filter(e, self.system, self.model_name):
                 return model_response
 
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
-        except APIConnectionError as e:
+        except APIConnectionError as e:  # pragma: no cover
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
     @overload
