@@ -940,7 +940,7 @@ class BedrockConverseModel(Model):
                             f'Unsupported content type for Bedrock user prompts: {type(item).__name__}'
                         )
                     content.append(file_block)  # pyright: ignore[reportArgumentType]
-                elif isinstance(item, AudioUrl):  # pragma: no cover
+                elif isinstance(item, AudioUrl):
                     raise NotImplementedError('Audio is not supported yet.')
                 elif isinstance(item, CachePoint):
                     if not supports_prompt_caching:

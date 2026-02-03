@@ -2205,7 +2205,7 @@ class OpenAIResponsesModel(Model):
                                 file_url=item.url,
                             )
                         )
-                elif isinstance(item, VideoUrl):  # pragma: no cover
+                elif isinstance(item, VideoUrl):
                     raise NotImplementedError('VideoUrl is not supported for OpenAI.')
                 elif isinstance(item, CachePoint):
                     # OpenAI doesn't support prompt caching via CachePoint, so we filter it out

@@ -563,7 +563,7 @@ def _is_file_type(item: Any, file_type: str) -> bool:
     return False  # pragma: no cover
 
 
-def assert_file_in_tool_return(messages: list[Any], file_type: str) -> None:  # pragma: no cover
+def assert_file_in_tool_return(messages: list[Any], file_type: str) -> None:
     """Assert that file content of the expected type is present in a ToolReturnPart."""
     for msg in messages:
         if isinstance(msg, ModelRequest):
@@ -572,10 +572,10 @@ def assert_file_in_tool_return(messages: list[Any], file_type: str) -> None:  # 
                     for f in part.files:
                         if _is_file_type(f, file_type):
                             return
-    raise AssertionError(f'No {file_type} found in any ToolReturnPart')
+    raise AssertionError(f'No {file_type} found in any ToolReturnPart')  # pragma: no cover
 
 
-def assert_file_in_user_prompt(messages: list[Any], file_type: str) -> None:  # pragma: no cover
+def assert_file_in_user_prompt(messages: list[Any], file_type: str) -> None:
     """Assert that file content of the expected type is present in a UserPromptPart.
 
     For tool_return_content style, files are moved to a separate UserPromptPart
@@ -590,7 +590,7 @@ def assert_file_in_user_prompt(messages: list[Any], file_type: str) -> None:  # 
                         for item in content:
                             if _is_file_type(item, file_type):
                                 return
-    raise AssertionError(f'No {file_type} found in any UserPromptPart')
+    raise AssertionError(f'No {file_type} found in any UserPromptPart')  # pragma: no cover
 
 
 def assert_multimodal_result(
@@ -610,7 +610,7 @@ def assert_multimodal_result(
     - Files go to a separate `UserPromptPart` by design of `ToolReturn.content`
     """
     match expectation:
-        case 'error':  # pragma: no cover
+        case 'error':
             pass
         case 'native' | 'fallback':  # pragma: no branch
             # Both native and fallback: file should be in ToolReturnPart or UserPromptPart
@@ -891,7 +891,7 @@ async def test_text_plain_document_anthropic(
     """Test that text/plain documents are handled correctly by Anthropic."""
     from tests.cassette_utils import CassetteContext
 
-    if not anthropic_available():  # pragma: no cover
+    if not anthropic_available():
         pytest.skip('anthropic dependencies not installed')
 
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))

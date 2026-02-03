@@ -94,7 +94,7 @@ class CassetteContext:
 
     def _get_bodies(self) -> list[str]:
         """Get request/response bodies from the appropriate cassette format."""
-        if self.provider == 'xai':  # pragma: no cover
+        if self.provider == 'xai':
             cassette_path = get_xai_cassette_path(self.test_name, self.test_module)
             if cassette_path.exists():
                 return get_xai_cassette_request_bodies(cassette_path)
