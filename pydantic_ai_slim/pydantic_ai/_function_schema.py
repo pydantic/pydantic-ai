@@ -116,9 +116,7 @@ def function_schema(  # noqa: C901
     var_positional_field: str | None = None
     decorators = _decorators.DecoratorInfos()
 
-    description, field_descriptions = doc_descriptions(
-        original_func, sig, docstring_format=docstring_format
-    )
+    description, field_descriptions = doc_descriptions(original_func, sig, docstring_format=docstring_format)
     missing_param_descriptions: set[str] = set()
 
     for index, (name, p) in enumerate(sig.parameters.items()):
@@ -230,7 +228,7 @@ def function_schema(  # noqa: C901
         inner_type = type_args[0] if type_args else Any
         if inner_type is not Any:
             schema_type = inner_type
-    elif return_annotation is not None:
+    elif return_annotation is not None and return_annotation is not type(None):
         schema_type = return_annotation
 
     # Generate return schema if we have a type

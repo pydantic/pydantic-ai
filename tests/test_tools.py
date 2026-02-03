@@ -3710,6 +3710,30 @@ def test_tool_return_schema_with_docstring_description():
     assert json_schema['return_schema'] == snapshot({'type': 'integer'})
 
 
+def test_tool_none_return_annotation_no_schema():
+    """Test that tools with -> None return annotation don't generate a return schema."""
+    agent = Agent(
+        FunctionModel(
+            get_json_schema,
+            profile=ModelProfile(
+                supports_json_schema_output=True,
+                supports_json_object_output=True,
+                supports_tool_return_schema=True,
+            ),
+        ),
+        include_tool_return_schema=True,
+    )
+
+    @agent.tool_plain
+    def tool_with_none_return() -> None:
+        """A tool that returns None."""
+        pass  # pragma: no cover
+
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.output)
+    assert json_schema['return_schema'] is None
+
+
 def test_return_schema_e2e():
     """E2E: return schema flows correctly for native and non-native models."""
 
