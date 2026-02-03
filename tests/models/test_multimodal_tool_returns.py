@@ -604,8 +604,8 @@ def assert_file_in_user_prompt(messages: list[Any], file_type: str) -> None:
                 if isinstance(part, UserPromptPart):
                     content = part.content
                     if isinstance(content, list):
-                        for item in content:
-                            if _is_file_type(item, file_type):
+                        for item in content:  # pragma: no branch
+                            if _is_file_type(item, file_type):  # pragma: no branch
                                 return
     raise AssertionError(f'No {file_type} found in any UserPromptPart')  # pragma: no cover
 

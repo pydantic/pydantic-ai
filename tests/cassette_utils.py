@@ -96,7 +96,7 @@ class CassetteContext:
         """Get request/response bodies from the appropriate cassette format."""
         if self.provider == 'xai':
             cassette_path = get_xai_cassette_path(self.test_name, self.test_module)
-            if cassette_path.exists():
+            if cassette_path.exists():  # pragma: no cover
                 return get_xai_cassette_request_bodies(cassette_path)
             return []
         if self.vcr is not None:
