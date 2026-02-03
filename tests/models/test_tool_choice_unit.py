@@ -22,11 +22,19 @@ from pydantic_ai.tools import ToolDefinition
 from ..conftest import try_import
 
 with try_import() as anthropic_available:
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.models.anthropic import (
+        AnthropicModel,
+        AnthropicModelSettings,
+        _support_tool_forcing as anthropic_support_tool_forcing,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 with try_import() as bedrock_available:
-    from pydantic_ai.models.bedrock import BedrockConverseModel
+    from pydantic_ai.models.bedrock import (
+        BedrockConverseModel,
+        BedrockModelSettings,
+        _support_tool_forcing as bedrock_support_tool_forcing,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.providers.bedrock import BedrockModelProfile, BedrockProvider
 
 with try_import() as openai_available:
@@ -121,10 +129,17 @@ def test_required_without_function_tools_raises():
 
 
 def test_list_all_invalid_raises():
-    """Specifying only invalid tool names raises UserError."""
+    """Specifying only invalid tool names raises UserError with available tools shown."""
     params = ModelRequestParameters(function_tools=[make_tool('a'), make_tool('b')], allow_text_output=True)
-    with pytest.raises(UserError, match='Invalid tool names'):
+    with pytest.raises(UserError, match=r'Invalid tool names in `tool_choice`:.*Available tools:'):
         resolve_tool_choice({'tool_choice': ['x', 'y']}, params)
+
+
+def test_list_all_invalid_no_function_tools_shows_none():
+    """Error message shows 'none' when no function tools are defined."""
+    params = ModelRequestParameters(function_tools=[], allow_text_output=True)
+    with pytest.raises(UserError, match=r'Invalid tool names.*Available tools: none'):
+        resolve_tool_choice({'tool_choice': ['x']}, params)
 
 
 def test_list_exact_match_returns_required():
@@ -177,13 +192,13 @@ def test_tool_or_output_empty_function_tools_no_output_tools():
 
 
 def test_tool_or_output_all_invalid_function_tools_raises():
-    """All invalid function tools in ToolOrOutput raises UserError."""
+    """All invalid function tools in ToolOrOutput raises UserError with available tools shown."""
     params = ModelRequestParameters(
         function_tools=[make_tool('a'), make_tool('b')],
         output_tools=[make_tool('final_result')],
         allow_text_output=True,
     )
-    with pytest.raises(UserError, match='Invalid tool names'):
+    with pytest.raises(UserError, match=r'Invalid tool names in `tool_choice`:.*Available function tools:'):
         resolve_tool_choice({'tool_choice': ToolOrOutput(function_tools=['x', 'y'])}, params)
 
 
@@ -268,6 +283,24 @@ async def test_anthropic_thinking_with_forced_tool_choice_raises(tool_choice: An
         await m.request([ModelRequest.user_text_prompt('test')], settings, params)
 
 
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+@pytest.mark.parametrize(
+    'resolved_tool_choice,expected',
+    [
+        pytest.param('required', False, id='required'),
+        pytest.param(('required', {'tool_a'}), False, id='tuple_required'),
+        pytest.param(('auto', {'tool_a'}), False, id='tuple_auto'),
+        pytest.param('auto', True, id='auto'),
+        pytest.param('none', True, id='none'),
+    ],
+)
+def test_anthropic_support_tool_forcing_implicit_resolution(resolved_tool_choice: Any, expected: bool):
+    """With thinking enabled but no explicit tool_choice, returns based on resolved value."""
+    settings: AnthropicModelSettings = {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}}
+    result = anthropic_support_tool_forcing(settings, resolved_tool_choice)
+    assert result is expected
+
+
 # =============================================================================
 # Bedrock tool_choice tests (direct model.request() - blocked by Agent)
 # =============================================================================
@@ -291,6 +324,55 @@ async def test_bedrock_unsupported_profile_with_forced_tool_choice_raises(tool_c
 
     with pytest.raises(UserError, match='tool_choice=.* is not supported by model'):
         await m.request([ModelRequest.user_text_prompt('test')], {'tool_choice': tool_choice}, params)
+
+
+@pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
+@pytest.mark.parametrize(
+    'resolved_tool_choice,expected',
+    [
+        pytest.param('required', False, id='required'),
+        pytest.param(('required', {'tool_a'}), False, id='tuple_required'),
+        pytest.param(('auto', {'tool_a'}), False, id='tuple_auto'),
+        pytest.param('auto', True, id='auto'),
+        pytest.param('none', True, id='none'),
+    ],
+)
+def test_bedrock_support_tool_forcing_implicit_resolution(resolved_tool_choice: Any, expected: bool):
+    """With thinking enabled but no explicit tool_choice, returns based on resolved value."""
+    profile = BedrockModelProfile(bedrock_supports_tool_choice=True)
+    settings: BedrockModelSettings = {
+        'bedrock_additional_model_requests_fields': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}}
+    }
+    result = bedrock_support_tool_forcing('test-model', profile, settings, resolved_tool_choice)
+    assert result is expected
+
+
+@pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
+@pytest.mark.parametrize(
+    'supports_json_schema,expected_output_mode',
+    [
+        pytest.param(True, 'native', id='native'),
+        pytest.param(False, 'prompted', id='prompted'),
+    ],
+)
+def test_bedrock_prepare_request_thinking_auto_output_mode(supports_json_schema: bool, expected_output_mode: str):
+    """When thinking + output tools + auto mode, convert to native or prompted based on profile."""
+    mock_client = MagicMock()
+    provider = BedrockProvider(bedrock_client=mock_client)
+    profile = BedrockModelProfile(supports_json_schema_output=supports_json_schema)
+    m = BedrockConverseModel('test-model', provider=provider, profile=profile)
+
+    settings: BedrockModelSettings = {
+        'bedrock_additional_model_requests_fields': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}}
+    }
+    params = ModelRequestParameters(
+        output_tools=[make_tool('final_result')],
+        output_mode='auto',
+        allow_text_output=True,
+    )
+
+    _, result_params = m.prepare_request(settings, params)
+    assert result_params.output_mode == expected_output_mode
 
 
 # =============================================================================

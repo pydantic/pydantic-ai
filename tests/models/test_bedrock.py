@@ -1573,7 +1573,7 @@ async def test_bedrock_tool_choice_required_with_thinking(
 
     @agent.tool_plain
     async def get_weather(city: str) -> str:
-        return f'Weather in {city}: sunny'
+        return f'Weather in {city}: sunny'  # pragma: no cover
 
     with pytest.raises(
         UserError,

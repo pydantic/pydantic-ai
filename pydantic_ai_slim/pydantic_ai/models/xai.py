@@ -557,7 +557,7 @@ class XaiModel(Model):
         elif not tools_param:
             tool_choice = None
         elif not model_request_parameters.allow_text_output and profile.grok_supports_tool_choice_required:
-            tool_choice = 'required'
+            tool_choice = 'required'  # pragma: no cover
         else:
             tool_choice = 'auto'
 

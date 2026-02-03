@@ -54,7 +54,7 @@ def resolve_tool_choice(  # noqa: C901
 
     def _invalid_tools(chosen_tool_names: set[str], available_tools: set[str], *, available_label: str) -> None:
         invalid = chosen_tool_names - available_tools
-        if invalid:
+        if invalid:  # pragma: no branch
             raise UserError(
                 f'Invalid tool names in `tool_choice`: {invalid}. {available_label}: {available_tools or "none"}'
             )

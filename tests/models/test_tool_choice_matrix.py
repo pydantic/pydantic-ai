@@ -15,6 +15,7 @@ from typing import Any, Literal
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
+from typing_extensions import assert_never
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelRequest
@@ -465,6 +466,8 @@ async def test_tool_choice_matrix(
             model_settings=settings,
             usage_limits=UsageLimits(output_tokens_limit=5000),
         )
+    else:
+        assert_never(scenario)
 
     actual_tool_choice = get_tool_choice_from_cassette(vcr, provider, xai_provider)
     assert actual_tool_choice == expected_tool_choice

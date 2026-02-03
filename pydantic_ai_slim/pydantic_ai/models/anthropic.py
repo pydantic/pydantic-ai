@@ -1476,7 +1476,7 @@ def _support_tool_forcing(
             f"Anthropic does not support {context} with thinking mode. Disable thinking or use `tool_choice='auto'`."
         )
 
-    if resolved_tool_choice == 'required' or isinstance(resolved_tool_choice, list):
+    if resolved_tool_choice == 'required' or isinstance(resolved_tool_choice, tuple):
         return False
 
     return True
