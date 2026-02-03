@@ -850,19 +850,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         usage_attrs: dict[str, int] = usage.opentelemetry_attributes()
 
-        # Translate aggregated token attribute names for agent run spans to avoid
-        # duplicating the same attribute names used on leaf/model spans.
-        translated_usage_attrs: dict[str, str | int | float | bool] = {}
-        for key, value in usage_attrs.items():
-            if key == 'gen_ai.usage.input_tokens':
-                translated_usage_attrs['gen_ai.usage.aggregated_input_tokens'] = value
-            elif key == 'gen_ai.usage.output_tokens':
-                translated_usage_attrs['gen_ai.usage.aggregated_output_tokens'] = value
-            else:
-                translated_usage_attrs[key] = value
+        # When enabled, translate token usage attribute names for agent run spans to use
+        # `gen_ai.aggregated_usage.*` instead of `gen_ai.usage.*` to distinguish them
+        # from per-call usage on model/request spans.
+        final_usage_attrs: dict[str, str | int | float | bool] = {}
+        if settings.use_aggregated_usage_attribute_names:
+            for key, value in usage_attrs.items():
+                if key == 'gen_ai.usage.input_tokens':
+                    final_usage_attrs['gen_ai.aggregated_usage.input_tokens'] = value
+                elif key == 'gen_ai.usage.output_tokens':
+                    final_usage_attrs['gen_ai.aggregated_usage.output_tokens'] = value
+                else:
+                    final_usage_attrs[key] = value
+        else:
+            final_usage_attrs.update(usage_attrs)
 
         result: dict[str, str | int | float | bool] = {
-            **translated_usage_attrs,
+            **final_usage_attrs,
             **attrs,
             'logfire.json_schema': json.dumps(
                 {
