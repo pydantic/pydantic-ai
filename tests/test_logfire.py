@@ -1116,6 +1116,45 @@ def test_instrument_all():
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.anyio
+async def test_aggregated_usage_attribute_names(capfire: CaptureLogfire) -> None:
+    """Test that use_aggregated_usage_attribute_names changes attribute names on agent run spans."""
+    from pydantic_ai.usage import RequestUsage
+
+    def model_function(
+        messages: list[ModelRequest | ModelResponse], info: AgentInfo
+    ) -> ModelResponse:
+        # Return a response with usage that includes extra details (cache tokens)
+        # to test that non-input/output attributes are preserved
+        return ModelResponse(
+            parts=[TextPart('Hello!')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5, cache_read_tokens=2),
+        )
+
+    settings = InstrumentationSettings(use_aggregated_usage_attribute_names=True)
+    agent = Agent(model=FunctionModel(model_function), instrument=settings)
+
+    await agent.run('Hello')
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    agent_run_span = next(s for s in spans if s['name'] == 'agent run')
+
+    # Verify that agent run span uses aggregated_usage attribute names for input/output
+    assert 'gen_ai.aggregated_usage.input_tokens' in agent_run_span['attributes']
+    assert 'gen_ai.aggregated_usage.output_tokens' in agent_run_span['attributes']
+    # Verify that the standard names are NOT used on agent run spans
+    assert 'gen_ai.usage.input_tokens' not in agent_run_span['attributes']
+    assert 'gen_ai.usage.output_tokens' not in agent_run_span['attributes']
+    # Verify that other usage details are preserved with their original names
+    assert 'gen_ai.usage.details.cache_read_tokens' in agent_run_span['attributes']
+
+    # Verify that model/chat span still uses standard attribute names
+    chat_span = next(s for s in spans if 'chat' in s['name'])
+    assert 'gen_ai.usage.input_tokens' in chat_span['attributes']
+    assert 'gen_ai.usage.output_tokens' in chat_span['attributes']
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
 async def test_feedback(capfire: CaptureLogfire) -> None:
     from logfire.experimental.annotations import record_feedback
 
