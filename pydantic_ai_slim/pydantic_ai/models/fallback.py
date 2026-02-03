@@ -106,16 +106,7 @@ class FallbackModel(Model):
     def _parse_fallback_on(self, fallback_on: FallbackOn) -> None:
         """Parse the fallback_on parameter into exception and response handlers."""
         if isinstance(fallback_on, tuple):
-            if not fallback_on:
-                # Empty tuple - warn about disabled fallback
-                warnings.warn(
-                    'FallbackModel created with empty fallback_on tuple. '
-                    'All exceptions will propagate. '
-                    'Consider using fallback_on=(ModelAPIError,) for default behavior.',
-                    UserWarning,
-                    stacklevel=3,
-                )
-            else:
+            if fallback_on:
                 # Tuple of exception types (typing guarantees tuple contents are exception types)
                 self._exception_handlers.append(_exception_types_to_handler(fallback_on))  # type: ignore[arg-type]
         elif _is_exception_type(fallback_on):
@@ -134,17 +125,18 @@ class FallbackModel(Model):
                 else:
                     # Types guarantee all items are exception types or callables
                     assert_never(item)
-            # Warn if empty sequence was provided
-            if not self._exception_handlers and not self._response_handlers:
-                warnings.warn(
-                    'FallbackModel created with empty fallback_on list. '
-                    'All exceptions will propagate and all responses will be accepted. '
-                    'Consider using fallback_on=(ModelAPIError,) for default behavior.',
-                    UserWarning,
-                    stacklevel=3,
-                )
         else:
             assert_never(fallback_on)  # type: ignore[arg-type]  # pyright can't narrow str/bytes exclusion
+
+        # Warn if no handlers were registered (empty tuple, empty list, etc.)
+        if not self._exception_handlers and not self._response_handlers:
+            warnings.warn(
+                'FallbackModel created with empty fallback_on. '
+                'All exceptions will propagate and all responses will be accepted. '
+                'Consider using fallback_on=(ModelAPIError,) for default behavior.',
+                UserWarning,
+                stacklevel=3,
+            )
 
     def _add_handler(self, handler: Callable[..., Any]) -> None:
         """Add a handler, auto-detecting its type by inspecting type hints."""
