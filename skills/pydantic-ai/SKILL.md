@@ -7,41 +7,7 @@ user-invocable: true
 # PydanticAI Skill
 
 PydanticAI is a Python agent framework for building production-grade Generative AI applications.
-This skill provides patterns, architecture guidance, and tested code examples for working with the codebase.
-
-## Workspace Structure
-
-```
-pydantic_ai_slim/          # Core framework (minimal dependencies)
-  pydantic_ai/
-    agent/                 # Agent class and graph nodes
-    models/                # Model provider integrations
-    toolsets/              # Toolset abstractions
-    tools.py               # Tool decorators and definitions
-    output.py              # Output types (ToolOutput, NativeOutput, etc.)
-    messages.py            # Message types (ModelRequest, ModelResponse, etc.)
-    exceptions.py          # Exception hierarchy
-    settings.py            # ModelSettings
-    _run_context.py        # RunContext dataclass
-    mcp.py                 # MCP server integrations
-pydantic_graph/            # Graph execution engine
-pydantic_evals/            # Evaluation system
-examples/                  # Example applications
-clai/                      # CLI tool
-tests/                     # Test suite with VCR cassettes
-docs/                      # MkDocs documentation source
-```
-
-## Development Commands
-
-| Command | Description |
-|---------|-------------|
-| `make install` | Install dependencies (requires uv, pre-commit, deno) |
-| `make test` | Run full test suite (100% coverage required) |
-| `pre-commit run --all-files` | Run all checks (format, lint, typecheck) |
-| `make docs-serve` | Serve docs locally at http://localhost:8000 |
-| `uv run pytest tests/test_file.py::test_name -v` | Run a specific test |
-| `uv run pytest tests/test_file.py -v -s` | Run test file with debug output |
+This skill provides patterns, architecture guidance, and tested code examples for building applications with PydanticAI.
 
 ## Quick-Start Patterns
 
@@ -330,10 +296,6 @@ Need deterministic, fast tests?
 
 ## Key Constraints
 
-- **100% test coverage** required on all PRs
 - **Python 3.10+** compatibility required
 - **Observability**: For production systems, enable Logfire with `logfire.instrument_httpx(capture_all=True)` to see exact HTTP requests sent to model providers — invaluable for debugging tool schema errors, unexpected model behavior, and understanding what's actually being sent to the API
-- **Class renames** must include deprecation shim (see `CLAUDE.md`)
-- **Documentation references** use backtick + link format: `` [`Agent`][pydantic_ai.agent.Agent] ``
 - **Testing**: Use `TestModel` for deterministic tests, `FunctionModel` for custom logic
-- **Examples**: Code blocks in docs must use `{title="filename.py"}` format for `pytest-examples`
