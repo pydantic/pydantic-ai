@@ -167,48 +167,48 @@ async def test_my_agent():
 
 ## Task Routing Table
 
-| I want to... | Reference file |
+| I want to... | Documentation |
 |---|---|
-| Create or configure agents | [agents.md](references/agents.md) |
-| Add tools to an agent | [tools.md](references/tools.md) |
-| Compose or filter toolsets | [toolsets.md](references/toolsets.md) |
-| Use web search or code execution | [builtin-tools.md](references/builtin-tools.md) |
-| Search with DuckDuckGo/Tavily/Exa | [common-tools.md](references/common-tools.md) |
-| Get structured output | [output.md](references/output.md) |
-| Inject dependencies | [dependencies.md](references/dependencies.md) |
-| Understand RunContext fields | [run-context.md](references/run-context.md) |
-| Choose or configure models | [models.md](references/models.md) |
-| Use FallbackModel for resilience | [models.md](references/models.md) |
-| Stream responses | [streaming.md](references/streaming.md) |
-| Work with messages and multimedia | [messages.md](references/messages.md) |
-| Process/filter message history | [messages.md](references/messages.md) |
-| Summarize long conversations | [messages.md](references/messages.md) |
-| Use MCP servers | [mcp.md](references/mcp.md) |
-| Build multi-step graphs | [graph.md](references/graph.md) |
-| Handle errors and retries | [exceptions.md](references/exceptions.md) |
-| Combine FallbackModel with retries | [exceptions.md](references/exceptions.md) |
-| Add observability/tracing | [observability.md](references/observability.md) |
-| Test my agent | [testing.md](references/testing.md) |
-| Enable extended thinking | [thinking.md](references/thinking.md) |
-| Evaluate agent performance | [evals.md](references/evals.md) |
-| Use embeddings for RAG | [embeddings.md](references/embeddings.md) |
-| Use durable execution | [durable.md](references/durable.md) |
-| Build multi-agent systems | [multi-agent.md](references/multi-agent.md) |
-| Implement router/triage pattern | [multi-agent.md](references/multi-agent.md) |
-| Require tool approval (human-in-the-loop) | [deferred-tools.md](references/deferred-tools.md) |
-| Use images, audio, video, or documents | [input.md](references/input.md) |
-| Use advanced tool features | [tools-advanced.md](references/tools-advanced.md) |
-| Secure tools with validation/approval | [tools-advanced.md](references/tools-advanced.md) |
-| Make direct model requests | [direct.md](references/direct.md) |
-| Expose agents as HTTP servers (A2A) | [a2a.md](references/a2a.md) |
-| Handle HTTP retries and rate limits | [retries.md](references/retries.md) |
-| Use LangChain or ACI.dev tools | [third-party-tools.md](references/third-party-tools.md) |
-| Debug common issues | [troubleshooting.md](references/troubleshooting.md) |
-| Migrate from deprecated APIs | [migrations.md](references/migrations.md) |
-| See advanced real-world examples | [examples-advanced.md](references/examples-advanced.md) |
-| Look up an import path | [api-reference.md](references/api-reference.md) |
-| Extend framework behavior | [extensibility.md](references/extensibility.md) |
-| Build custom toolsets or models | [extensibility.md](references/extensibility.md) |
+| Create or configure agents | [Agents](https://ai.pydantic.dev/agents/) |
+| Add tools to an agent | [Tools](https://ai.pydantic.dev/tools/) |
+| Compose or filter toolsets | [Toolsets](https://ai.pydantic.dev/toolsets/) |
+| Use web search or code execution | [Built-in Tools](https://ai.pydantic.dev/builtin-tools/) |
+| Search with DuckDuckGo/Tavily/Exa | [Common Tools](https://ai.pydantic.dev/common-tools/) |
+| Get structured output | [Output](https://ai.pydantic.dev/output/) |
+| Inject dependencies | [Dependencies](https://ai.pydantic.dev/dependencies/) |
+| Understand RunContext fields | [RunContext](https://ai.pydantic.dev/tools/#runcontext) |
+| Choose or configure models | [Models](https://ai.pydantic.dev/models/) |
+| Use FallbackModel for resilience | [Models](https://ai.pydantic.dev/models/) |
+| Stream responses | [Streaming](https://ai.pydantic.dev/agents/#streaming) |
+| Work with messages and multimedia | [Message History](https://ai.pydantic.dev/message-history/) |
+| Process/filter message history | [Message History](https://ai.pydantic.dev/message-history/) |
+| Summarize long conversations | [Message History](https://ai.pydantic.dev/message-history/) |
+| Use MCP servers | [MCP](https://ai.pydantic.dev/mcp/) |
+| Build multi-step graphs | [Graph](https://ai.pydantic.dev/graph/) |
+| Handle errors and retries | [Exceptions](https://ai.pydantic.dev/api/exceptions/) |
+| Combine FallbackModel with retries | [Exceptions](https://ai.pydantic.dev/api/exceptions/) |
+| Add observability/tracing | [Logfire](https://ai.pydantic.dev/logfire/) |
+| Test my agent | [Testing](https://ai.pydantic.dev/testing/) |
+| Enable extended thinking | [Thinking](https://ai.pydantic.dev/thinking/) |
+| Evaluate agent performance | [Evals](https://ai.pydantic.dev/evals/) |
+| Use embeddings for RAG | [Embeddings](https://ai.pydantic.dev/embeddings/) |
+| Use durable execution | [Durable Execution](https://ai.pydantic.dev/durable-execution/) |
+| Build multi-agent systems | [Multi-Agent](https://ai.pydantic.dev/multi-agent-applications/) |
+| Implement router/triage pattern | [Multi-Agent](https://ai.pydantic.dev/multi-agent-applications/) |
+| Require tool approval (human-in-the-loop) | [Deferred Tools](https://ai.pydantic.dev/deferred-tools/) |
+| Use images, audio, video, or documents | [Input](https://ai.pydantic.dev/input/) |
+| Use advanced tool features | [Advanced Tools](https://ai.pydantic.dev/tools-advanced/) |
+| Secure tools with validation/approval | [Advanced Tools](https://ai.pydantic.dev/tools-advanced/) |
+| Make direct model requests | [Direct API](https://ai.pydantic.dev/direct/) |
+| Expose agents as HTTP servers (A2A) | [A2A](https://ai.pydantic.dev/a2a/) |
+| Handle HTTP retries and rate limits | [Retries](https://ai.pydantic.dev/retries/) |
+| Use LangChain or ACI.dev tools | [Third-Party Tools](https://ai.pydantic.dev/third-party-tools/) |
+| Debug common issues | [Troubleshooting](https://ai.pydantic.dev/troubleshooting/) |
+| Migrate from deprecated APIs | [Upgrade Guide](https://ai.pydantic.dev/upgrade-guide/) |
+| See advanced real-world examples | [Examples](https://ai.pydantic.dev/examples/) |
+| Look up an import path | [API Reference](https://ai.pydantic.dev/api/) |
+| Extend framework behavior | [Toolsets](https://ai.pydantic.dev/toolsets/) |
+| Build custom toolsets or models | [Toolsets](https://ai.pydantic.dev/toolsets/) |
 
 ## Decision Trees
 
@@ -337,41 +337,3 @@ Need deterministic, fast tests?
 - **Documentation references** use backtick + link format: `` [`Agent`][pydantic_ai.agent.Agent] ``
 - **Testing**: Use `TestModel` for deterministic tests, `FunctionModel` for custom logic
 - **Examples**: Code blocks in docs must use `{title="filename.py"}` format for `pytest-examples`
-
-## Reference Files
-
-| File | Description |
-|---|---|
-| [agents.md](references/agents.md) | Agent constructor, run methods, instructions, override, WrapperAgent |
-| [tools.md](references/tools.md) | Tool decorators, RunContext, ToolPrepareFunc, ModelRetry, docstrings |
-| [toolsets.md](references/toolsets.md) | FunctionToolset, CombinedToolset, FilteredToolset, dynamic toolsets |
-| [builtin-tools.md](references/builtin-tools.md) | WebSearchTool, CodeExecutionTool, ImageGenerationTool, provider-native tools |
-| [common-tools.md](references/common-tools.md) | DuckDuckGo, Tavily, Exa search integrations |
-| [output.md](references/output.md) | Output types, validators, union outputs, StructuredDict |
-| [dependencies.md](references/dependencies.md) | Dependency injection, RunContext, testing with override |
-| [run-context.md](references/run-context.md) | Complete RunContext field reference (deps, retry, tracing, etc.) |
-| [models.md](references/models.md) | Model strings, providers, ModelSettings, TestModel, FallbackModel |
-| [streaming.md](references/streaming.md) | run_stream(), StreamedRunResult, run_stream_events(), iter() |
-| [messages.md](references/messages.md) | ModelRequest/Response, parts, multimedia types, message history |
-| [mcp.md](references/mcp.md) | MCP servers (HTTP, SSE, Stdio), FastMCP, sampling, resources |
-| [graph.md](references/graph.md) | Graph, BaseNode, End, state management, agent graph internals |
-| [exceptions.md](references/exceptions.md) | Exception hierarchy, ModelRetry, deferred tools, error handling |
-| [observability.md](references/observability.md) | Logfire integration, OpenTelemetry, InstrumentedModel |
-| [testing.md](references/testing.md) | TestModel, FunctionModel, recording, override patterns |
-| [thinking.md](references/thinking.md) | Extended thinking, ThinkingPart, provider-specific reasoning |
-| [evals.md](references/evals.md) | Evaluation framework, evaluators, LLM judges |
-| [embeddings.md](references/embeddings.md) | Embedder, embedding models, vector search patterns |
-| [durable.md](references/durable.md) | Temporal, DBOS, Prefect integration |
-| [input.md](references/input.md) | ImageUrl, AudioUrl, VideoUrl, DocumentUrl, BinaryContent |
-| [deferred-tools.md](references/deferred-tools.md) | DeferredToolRequests, ApprovalRequired, CallDeferred |
-| [tools-advanced.md](references/tools-advanced.md) | ToolReturn, Tool.from_schema, ToolPrepareFunc, timeout |
-| [multi-agent.md](references/multi-agent.md) | Agent delegation, hand-off, deep agents |
-| [direct.md](references/direct.md) | model_request, model_request_sync, low-level API |
-| [a2a.md](references/a2a.md) | agent.to_a2a(), FastA2A, inter-agent communication |
-| [retries.md](references/retries.md) | AsyncTenacityTransport, RetryConfig, wait_retry_after |
-| [third-party-tools.md](references/third-party-tools.md) | LangChain tools, ACI.dev tools |
-| [troubleshooting.md](references/troubleshooting.md) | Common mistakes, anti-patterns, debugging tips |
-| [migrations.md](references/migrations.md) | Upgrade patterns from deprecated APIs |
-| [examples-advanced.md](references/examples-advanced.md) | Real-world examples: RAG, support bot, code assistant |
-| [api-reference.md](references/api-reference.md) | Condensed public API with import paths |
-| [extensibility.md](references/extensibility.md) | Wrapper patterns, extension points, building on abstractions |
