@@ -428,6 +428,11 @@ def pytest_recording_configure(config: Any, vcr: VCR):  # noqa: C901
         elif 'openrouter.ai' in uri:
             fields_to_check = ['model', 'messages', 'tools', 'stream']
             normalize_messages = True
+        elif 'jsonrpc' in body1 or 'jsonrpc' in body2:
+            # prevents MCP hang
+            if body1 != body2:
+                raise AssertionError(f'JSON-RPC body mismatch:\n  live: {body1}\n  recorded: {body2}')
+            return
 
         for field in fields_to_check:
             v1 = body1.get(field)

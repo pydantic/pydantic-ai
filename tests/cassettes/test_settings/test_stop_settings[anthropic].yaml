@@ -4,18 +4,18 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '272'
+      - '280'
       content-type:
       - application/json
       host:
       - api.anthropic.com
     method: POST
     parsed_body:
-      max_tokens: 1024
+      max_tokens: 4096
       messages:
       - content:
         - text: What is the capital of France? Give me an answer that contains the word "Paris", but is not the first word.
@@ -31,7 +31,70 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '356'
+      - '417'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content: []
+      id: msg_01VWX8B2asfNFo3GLFCoeRGK
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: stop_sequence
+      stop_sequence: Paris
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 32
+        output_tokens: 6
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '280'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the capital of France? Give me an answer that contains the word "Paris", but is not the first word.
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stop_sequences:
+      - Paris
+      stream: false
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '448'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -40,19 +103,22 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - text: 'The beautiful city of '
+      - text: The
         type: text
-      id: msg_01376yZQxHcw9pER2Ab2SvQb
+      id: msg_01QRt92AkfUmKZ516nagvvU6
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: stop_sequence
       stop_sequence: Paris
       type: message
       usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         input_tokens: 32
-        output_tokens: 5
+        output_tokens: 6
         service_tier: standard
     status:
       code: 200

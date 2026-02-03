@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '3845'
+      - '4688'
       content-type:
       - application/json
       host:
@@ -180,6 +180,15 @@ interactions:
           strict: true
         type: function
       - function:
+          description: "Get information about the connected MCP client.\n\n    Returns:\n        Dictionary with client info
+            (name, version, etc.) or None if not available.\n    "
+          name: get_client_info
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
           description: Use elicitation callback to ask the user a question.
           name: use_elicitation
           parameters:
@@ -192,6 +201,14 @@ interactions:
             type: object
           strict: true
         type: function
+      - function:
+          description: Enable the hidden tool, triggering a ToolListChangedNotification.
+          name: enable_hidden_tool
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
     uri: https://api.openai.com/v1/chat/completions
   response:
     headers:
@@ -202,15 +219,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1073'
+      - '786'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '1521'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - '416'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -231,14 +244,14 @@ interactions:
           - function:
               arguments: '{}'
               name: get_unstructured_dict
-            id: call_R0n2R7S9vL2aZOX25T9jahTd
+            id: call_UnaCPK9Z3fmc5kiMPdGjGure
             type: function
-      created: 1759264706
-      id: chatcmpl-CLbP82ODQMEznhobUKdq6Rjn9Aa12
+      created: 1770129945
+      id: chatcmpl-D5Bwv6esW9c5j67wUPo0lV2D62AWG
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_f33640a400
+      system_fingerprint: fp_fa7f5b168b
       usage:
         completion_tokens: 12
         completion_tokens_details:
@@ -246,11 +259,11 @@ interactions:
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 343
+        prompt_tokens: 400
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 355
+        total_tokens: 412
     status:
       code: 200
       message: OK
@@ -259,16 +272,16 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '4119'
+      - '4982'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=tGZk0hevqXH_kU7UScGt.EqwPxg4OTuqy4hBf.hGmwo-1759264708-1.0.1.1-dHK7SUjNTLSpKF9cvNn7RNdg6UBSqsWYbU7k7Dq5oE9NdDkkv4LRlBEYWPjFafQKjfrS_JgwrAIM5Je9qCJeucIatzS2M02wLccvrfU2c6k;
-        _cfuvid=d8Rl.NMqIC4giHLO2QsuslT6sliz_xnT6LK0PLEZEsA-1759264708042-0.0.1.1-604800000
+      - __cf_bm=61s5YbY2g0hufOEwygoWPpgfGltB6Iopbud7Y5_Gsjk-1770129945-1.0.1.1-L9UZ8f_yryuGR7fcRHIqvsgO.9Ss8ZQZRsJxpNzzW4QgEr.KENsjXFmRg.cGtHIqcDcsqoW8POfL1x.zGABrfMxns2PvIxDNNy86j0No9SQ;
+        _cfuvid=cHtgek3A2MYKRQ0nHkJkCQWP69ir0BqUIZ.umZVEc94-1770129945808-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -282,11 +295,11 @@ interactions:
         - function:
             arguments: '{}'
             name: get_unstructured_dict
-          id: call_R0n2R7S9vL2aZOX25T9jahTd
+          id: call_UnaCPK9Z3fmc5kiMPdGjGure
           type: function
       - content: '{"foo":"bar","baz":123}'
         role: tool
-        tool_call_id: call_R0n2R7S9vL2aZOX25T9jahTd
+        tool_call_id: call_UnaCPK9Z3fmc5kiMPdGjGure
       model: gpt-4o
       stream: false
       tool_choice: auto
@@ -449,6 +462,15 @@ interactions:
           strict: true
         type: function
       - function:
+          description: "Get information about the connected MCP client.\n\n    Returns:\n        Dictionary with client info
+            (name, version, etc.) or None if not available.\n    "
+          name: get_client_info
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
           description: Use elicitation callback to ask the user a question.
           name: use_elicitation
           parameters:
@@ -461,6 +483,14 @@ interactions:
             type: object
           strict: true
         type: function
+      - function:
+          description: Enable the hidden tool, triggering a ToolListChangedNotification.
+          name: enable_hidden_tool
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
     uri: https://api.openai.com/v1/chat/completions
   response:
     headers:
@@ -471,15 +501,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '833'
+      - '664'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '318'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - '240'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -496,12 +522,12 @@ interactions:
           content: '{"foo":"bar","baz":123}'
           refusal: null
           role: assistant
-      created: 1759264708
-      id: chatcmpl-CLbPAOYN3jPYdvYeD8JNOOXF5N554
+      created: 1770129946
+      id: chatcmpl-D5BwwEamFxVlOffjr99kTWIGlsaTq
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_f33640a400
+      system_fingerprint: fp_fa7f5b168b
       usage:
         completion_tokens: 10
         completion_tokens_details:
@@ -509,11 +535,11 @@ interactions:
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 374
+        prompt_tokens: 431
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 384
+        total_tokens: 441
     status:
       code: 200
       message: OK
