@@ -32,6 +32,7 @@ __all__ = (
     'ToolDefinition',
     'DeferredToolRequests',
     'DeferredToolResults',
+    'DeferredToolHandler',
     'ToolApproved',
     'ToolDenied',
 )
@@ -230,6 +231,13 @@ class DeferredToolResults:
     """Map of tool call IDs to results for tool calls that required human-in-the-loop approval."""
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     """Metadata for deferred tool calls, keyed by `tool_call_id`. Each value will be available in the tool's RunContext as `tool_call_metadata`."""
+
+
+DeferredToolHandler: TypeAlias = Callable[
+    [RunContext[AgentDepsT], DeferredToolRequests],
+    DeferredToolResults | Awaitable[DeferredToolResults],
+]
+"""Handler for deferred tool calls to resolve approvals and external calls inline."""
 
 
 A = TypeVar('A')

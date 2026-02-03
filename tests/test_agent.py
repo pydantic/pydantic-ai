@@ -6878,6 +6878,77 @@ async def test_run_with_deferred_tool_results_errors():
         )
 
 
+async def test_deferred_tool_handler_inline_approval():
+    tool_calls: list[str] = []
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='delete_file', args={'path': 'a.txt'}, tool_call_id='delete_file_call')]
+            )
+        last_request = messages[-1]
+        assert isinstance(last_request, ModelRequest)
+        tool_return = next(part for part in last_request.parts if isinstance(part, ToolReturnPart))
+        return ModelResponse(parts=[TextPart(f'Done: {tool_return.content}')])
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
+        tool_calls.append(path)
+        return f'deleted {path}'
+
+    def handler(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={requests.approvals[0].tool_call_id: True})
+
+    result = await agent.run('Delete a.txt', deferred_tool_handler=handler)
+    assert result.output == snapshot('Done: deleted a.txt')
+    assert tool_calls == ['a.txt']
+
+
+async def test_deferred_tool_handler_missing_results_error():
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='delete_file', args={'path': 'a.txt'}, tool_call_id='delete_file_call')]
+            )
+        return ModelResponse(parts=[TextPart('Done!')])
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
+        return f'deleted {path}'
+
+    def handler(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults()
+
+    with pytest.raises(UserError, match='Tool call results need to be provided for all deferred tool calls.'):
+        await agent.run('Delete a.txt', deferred_tool_handler=handler)
+
+
+async def test_deferred_tool_results_redefers():
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='delete_file', tool_call_id='delete_file_call')])
+        return ModelResponse(parts=[TextPart('Done!')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file() -> str:
+        raise CallDeferred
+
+    first = await agent.run('Delete a file')
+    assert isinstance(first.output, DeferredToolRequests)
+
+    results = DeferredToolResults(approvals={first.output.approvals[0].tool_call_id: True})
+    second = await agent.run(message_history=first.all_messages(), deferred_tool_results=results)
+
+    assert isinstance(second.output, DeferredToolRequests)
+    assert second.output.calls == [ToolCallPart(tool_name='delete_file', tool_call_id='delete_file_call')]
+
+
 async def test_user_prompt_with_deferred_tool_results():
     """Test that user_prompt can be provided alongside deferred_tool_results."""
     from pydantic_ai.exceptions import ApprovalRequired
@@ -6978,16 +7049,17 @@ async def test_user_prompt_with_deferred_tool_results():
 
 
 def test_tool_requires_approval_error():
-    agent = Agent('test')
+    agent = Agent(TestModel())
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> None:  # pragma: no cover
+        pass
 
     with pytest.raises(
         UserError,
-        match='To use tools that require approval, add `DeferredToolRequests` to the list of output types for this agent.',
+        match='A deferred tool call was present, but `DeferredToolRequests` is not among output types.',
     ):
-
-        @agent.tool_plain(requires_approval=True)
-        def delete_file(path: str) -> None:
-            pass
+        agent.run_sync('Delete a file')
 
 
 async def test_consecutive_model_responses_in_history():
