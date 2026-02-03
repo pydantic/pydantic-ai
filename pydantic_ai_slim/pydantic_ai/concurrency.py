@@ -105,6 +105,9 @@ class ConcurrencyLimiter(AbstractConcurrencyLimiter):
         self._max_queued = max_queued
         self._name = name
         self._tracer = tracer
+        # Lock and counter to atomically check and track waiting tasks for max_queued enforcement
+        self._queue_lock = anyio.Lock()
+        self._waiting_count = 0
 
     @classmethod
     def from_limit(
@@ -142,7 +145,7 @@ class ConcurrencyLimiter(AbstractConcurrencyLimiter):
     @property
     def waiting_count(self) -> int:
         """Number of operations currently waiting to acquire a slot."""
-        return self._limiter.statistics().tasks_waiting
+        return self._waiting_count
 
     @property
     def running_count(self) -> int:
@@ -180,33 +183,43 @@ class ConcurrencyLimiter(AbstractConcurrencyLimiter):
         except anyio.WouldBlock:
             pass
 
-        # We need to wait - check queue limits using statistics
-        stats = self._limiter.statistics()
-        if self._max_queued is not None and stats.tasks_waiting >= self._max_queued:
-            # Use limiter name if set, otherwise use source for error messages
+        # We need to wait - atomically check queue limits and register ourselves as waiting
+        # This prevents a race condition where multiple tasks could pass the check before
+        # any of them actually start waiting on the limiter
+        async with self._queue_lock:
+            if self._max_queued is not None and self._waiting_count >= self._max_queued:
+                # Use limiter name if set, otherwise use source for error messages
+                display_name = self._name or source
+                raise ConcurrencyLimitExceeded(
+                    f'Concurrency queue depth ({self._waiting_count + 1}) exceeds max_queued ({self._max_queued})'
+                    + (f' for {display_name}' if display_name else '')
+                )
+            # Register ourselves as waiting before releasing the lock
+            self._waiting_count += 1
+
+        # Now we're registered as waiting, proceed to wait on the limiter
+        # Use try/finally to ensure we decrement the counter even on cancellation
+        try:
+            # Create a span for observability while waiting
+            tracer = self._get_tracer()
             display_name = self._name or source
-            raise ConcurrencyLimitExceeded(
-                f'Concurrency queue depth ({stats.tasks_waiting + 1}) exceeds max_queued ({self._max_queued})'
-                + (f' for {display_name}' if display_name else '')
-            )
+            attributes: dict[str, str | int] = {
+                'source': source,
+                'waiting_count': self._waiting_count,
+                'max_running': int(self._limiter.total_tokens),
+            }
+            if self._name is not None:
+                attributes['limiter_name'] = self._name
+            if self._max_queued is not None:
+                attributes['max_queued'] = self._max_queued
 
-        # Create a span for observability while waiting
-        tracer = self._get_tracer()
-        display_name = self._name or source
-        attributes: dict[str, str | int] = {
-            'source': source,
-            'waiting_count': stats.tasks_waiting + 1,  # Include ourselves
-            'max_running': int(self._limiter.total_tokens),
-        }
-        if self._name is not None:
-            attributes['limiter_name'] = self._name
-        if self._max_queued is not None:
-            attributes['max_queued'] = self._max_queued
-
-        # Span name uses limiter name if set, otherwise source
-        span_name = f'waiting for {display_name} concurrency'
-        with tracer.start_as_current_span(span_name, attributes=attributes):
-            await self._limiter.acquire()
+            # Span name uses limiter name if set, otherwise source
+            span_name = f'waiting for {display_name} concurrency'
+            with tracer.start_as_current_span(span_name, attributes=attributes):
+                await self._limiter.acquire()
+        finally:
+            # We're no longer waiting (either we acquired or we were cancelled)
+            self._waiting_count -= 1
 
     def release(self) -> None:
         """Release a slot."""

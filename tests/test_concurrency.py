@@ -1,6 +1,6 @@
 """Tests for concurrency limiting functionality."""
 
-# pyright: reportPrivateUsage=false, reportAttributeAccessIssue=false, reportUnknownMemberType=false
+# pyright: reportPrivateUsage=false, reportAttributeAccessIssue=false, reportUnknownMemberType=false, reportUnknownVariableType=false
 from __future__ import annotations
 
 import asyncio
@@ -103,6 +103,56 @@ class TestConcurrencyLimiter:
 
         hold.set()
         await asyncio.gather(task, waiter1, waiter2)
+
+    async def test_backpressure_race_condition(self):
+        """Test that max_queued is enforced atomically under concurrent load.
+
+        This test verifies the fix for a race condition where multiple tasks could
+        simultaneously pass the max_queued check before any of them actually started
+        waiting on the limiter.
+        """
+        limiter = ConcurrencyLimiter(max_running=1, max_queued=1)
+        hold = asyncio.Event()
+        started = asyncio.Event()
+
+        async def holder():
+            async with get_concurrency_context(limiter, 'holder'):
+                started.set()
+                await hold.wait()
+
+        # Fill the running slot and wait for it to be held
+        task = asyncio.create_task(holder())
+        await started.wait()
+
+        # Now launch multiple tasks simultaneously that all try to queue.
+        # With max_queued=1, exactly one should succeed in queuing.
+        num_concurrent = 5
+        results: list[str] = []
+        barrier = asyncio.Barrier(num_concurrent)
+
+        async def try_acquire(idx: int):
+            # Use barrier to ensure all tasks try to acquire at the same time
+            await barrier.wait()
+            try:
+                async with get_concurrency_context(limiter, f'task-{idx}'):
+                    results.append(f'acquired-{idx}')
+            except ConcurrencyLimitExceeded:
+                results.append(f'rejected-{idx}')
+
+        # Launch all tasks simultaneously
+        tasks = [asyncio.create_task(try_acquire(i)) for i in range(num_concurrent)]
+        await asyncio.sleep(0.1)  # Give tasks time to hit the barrier and try to acquire
+
+        # Release the holder
+        hold.set()
+        await asyncio.gather(task, *tasks)
+
+        # Verify: exactly one task should have been allowed to queue and acquire
+        # The rest should have been rejected
+        acquired = [r for r in results if r.startswith('acquired-')]
+        rejected = [r for r in results if r.startswith('rejected-')]
+        assert len(acquired) == 1, f'Expected exactly 1 acquired, got {len(acquired)}: {acquired}'
+        assert len(rejected) == num_concurrent - 1, f'Expected {num_concurrent - 1} rejected, got {len(rejected)}'
 
     async def test_from_int_limit(self):
         """Test creating from simple int."""
