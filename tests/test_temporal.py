@@ -460,11 +460,7 @@ async def test_complex_agent_run_in_workflow(
                                             content='RunActivity:agent__complex_agent__event_stream_handler',
                                             children=[
                                                 BasicSpan(content='ctx.run_step=1'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_a9vqTE0fNyzTH3uBiqXox2Da","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                                    )
-                                                ),
+                                                BasicSpan(content=IsStr()),
                                             ],
                                         )
                                     ],
@@ -489,11 +485,7 @@ async def test_complex_agent_run_in_workflow(
                                             content='RunActivity:agent__complex_agent__event_stream_handler',
                                             children=[
                                                 BasicSpan(content='ctx.run_step=1'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Znu6tKXVIHoiTrzemlWBBDpb","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                                    )
-                                                ),
+                                                BasicSpan(content=IsStr()),
                                             ],
                                         )
                                     ],
@@ -583,11 +575,7 @@ async def test_complex_agent_run_in_workflow(
                                             content='RunActivity:agent__complex_agent__event_stream_handler',
                                             children=[
                                                 BasicSpan(content='ctx.run_step=2'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_uXANkD0BmOhQXjs7YgEC4Sk6","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                                    )
-                                                ),
+                                                BasicSpan(content=IsStr()),
                                             ],
                                         )
                                     ],

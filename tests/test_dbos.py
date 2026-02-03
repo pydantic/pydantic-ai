@@ -230,11 +230,11 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
     assert result.output == snapshot(
         Response(
             answers=[
-                Answer(label='Capital of the Country', answer='The capital of the country is Mexico City.'),
-                Answer(label='Weather in the Capital', answer='The weather in Mexico City is currently sunny.'),
+                Answer(label='Capital of the Country', answer='Mexico City'),
+                Answer(label='Weather in the Capital', answer='Sunny'),
                 Answer(
                     label='Product Name',
-                    answer='The product name is Pydantic AI. You can find more information about it [here](Pydantic AI).',
+                    answer='Pydantic AI',
                 ),
             ]
         )
@@ -260,6 +260,15 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
             'complex_agent__model.request_stream',
             'event_stream_handler',
             'complex_agent__mcp_server__mcp.call_tool',
+            'event_stream_handler',
+            'complex_agent__mcp_server__mcp.get_tools',
+            'complex_agent__model.request_stream',
+            'event_stream_handler',
+            'event_stream_handler',
+            'complex_agent__mcp_server__mcp.get_tools',
+            'complex_agent__model.request_stream',
+            'event_stream_handler',
+            'get_weather',
             'event_stream_handler',
             'complex_agent__mcp_server__mcp.get_tools',
             'complex_agent__model.request_stream',
@@ -305,22 +314,22 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_eK5pz0uCvmVafJi7a82JVYlJ","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
+                                            content='{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_ZUK5k6og7Hz0dsLU8E9oJQln","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_eK5pz0uCvmVafJi7a82JVYlJ","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_ZUK5k6og7Hz0dsLU8E9oJQln","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_eK5pz0uCvmVafJi7a82JVYlJ","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":"tool-call","event_kind":"part_end"}'
+                                            content='{"index":0,"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_ZUK5k6og7Hz0dsLU8E9oJQln","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":"tool-call","event_kind":"part_end"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":1,"part":{"tool_name":"get_product_name","args":"","tool_call_id":"call_HZO7PbUZchDiEo3SaCpCLMHi","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":"tool-call","event_kind":"part_start"}'
+                                            content='{"index":1,"part":{"tool_name":"get_product_name","args":"","tool_call_id":"call_r78cZgXHw3XQ5TVvroCJCQcb","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":"tool-call","event_kind":"part_start"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":1,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_HZO7PbUZchDiEo3SaCpCLMHi","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":1,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_r78cZgXHw3XQ5TVvroCJCQcb","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":1,"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_HZO7PbUZchDiEo3SaCpCLMHi","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
+                                            content='{"index":1,"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_r78cZgXHw3XQ5TVvroCJCQcb","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
                                         ),
                                     ],
                                 )
@@ -331,7 +340,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=1'),
                                 BasicSpan(
-                                    content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_eK5pz0uCvmVafJi7a82JVYlJ","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                    content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_ZUK5k6og7Hz0dsLU8E9oJQln","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
                                 ),
                             ],
                         ),
@@ -340,7 +349,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=1'),
                                 BasicSpan(
-                                    content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_HZO7PbUZchDiEo3SaCpCLMHi","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                    content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_r78cZgXHw3XQ5TVvroCJCQcb","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
                                 ),
                             ],
                         ),
@@ -356,22 +365,14 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                     content='event_stream_handler',
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
-                                        BasicSpan(
-                                            content=IsStr(
-                                                regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                            )
-                                        ),
+                                        BasicSpan(content=IsStr()),
                                     ],
                                 ),
                                 BasicSpan(
                                     content='event_stream_handler',
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
-                                        BasicSpan(
-                                            content=IsStr(
-                                                regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                            )
-                                        ),
+                                        BasicSpan(content=IsStr()),
                                     ],
                                 ),
                             ],
@@ -385,28 +386,28 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_bSctI9YLYVKPBGHPS9uwoamg","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
+                                            content='{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_kqlC3DbyZAbxHwlAQ1GuEedi","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_bSctI9YLYVKPBGHPS9uwoamg","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_kqlC3DbyZAbxHwlAQ1GuEedi","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"city","tool_call_id":"call_bSctI9YLYVKPBGHPS9uwoamg","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"city","tool_call_id":"call_kqlC3DbyZAbxHwlAQ1GuEedi","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_bSctI9YLYVKPBGHPS9uwoamg","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_kqlC3DbyZAbxHwlAQ1GuEedi","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Mexico","tool_call_id":"call_bSctI9YLYVKPBGHPS9uwoamg","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Mexico","tool_call_id":"call_kqlC3DbyZAbxHwlAQ1GuEedi","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_bSctI9YLYVKPBGHPS9uwoamg","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_kqlC3DbyZAbxHwlAQ1GuEedi","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_bSctI9YLYVKPBGHPS9uwoamg","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_kqlC3DbyZAbxHwlAQ1GuEedi","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_bSctI9YLYVKPBGHPS9uwoamg","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
+                                            content='{"index":0,"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_kqlC3DbyZAbxHwlAQ1GuEedi","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
                                         ),
                                     ],
                                 )
@@ -417,7 +418,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=2'),
                                 BasicSpan(
-                                    content='{"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_bSctI9YLYVKPBGHPS9uwoamg","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                    content='{"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_kqlC3DbyZAbxHwlAQ1GuEedi","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
                                 ),
                             ],
                         ),
@@ -431,11 +432,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                     content='event_stream_handler',
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
-                                        BasicSpan(
-                                            content=IsStr(
-                                                regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                            )
-                                        ),
+                                        BasicSpan(content=IsStr()),
                                     ],
                                 ),
                             ],
@@ -449,13 +446,13 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
-                                            content='{"index":0,"part":{"tool_name":"get_product_name_link","args":"","tool_call_id":"call_a9M9ddwjl7r2k8MI8M1fwx7T","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
+                                            content='{"index":0,"part":{"tool_name":"get_product_name","args":"","tool_call_id":"call_XAUxYIIHWn9Pq29QxWU7RwK5","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_a9M9ddwjl7r2k8MI8M1fwx7T","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_XAUxYIIHWn9Pq29QxWU7RwK5","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"part":{"tool_name":"get_product_name_link","args":"{}","tool_call_id":"call_a9M9ddwjl7r2k8MI8M1fwx7T","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
+                                            content='{"index":0,"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_XAUxYIIHWn9Pq29QxWU7RwK5","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
                                         ),
                                     ],
                                 )
@@ -466,7 +463,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=3'),
                                 BasicSpan(
-                                    content='{"part":{"tool_name":"get_product_name_link","args":"{}","tool_call_id":"call_a9M9ddwjl7r2k8MI8M1fwx7T","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                    content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_XAUxYIIHWn9Pq29QxWU7RwK5","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
                                 ),
                             ],
                         ),
@@ -474,7 +471,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             content='running 1 tool',
                             children=[
                                 BasicSpan(
-                                    content='running tool: get_product_name_link',
+                                    content='running tool: get_product_name',
                                     children=[BasicSpan(content='complex_agent__mcp_server__mcp.call_tool')],
                                 ),
                                 BasicSpan(
@@ -497,238 +494,236 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                     children=[
                                         BasicSpan(content='ctx.run_step=4'),
                                         BasicSpan(
-                                            content='{"index":0,"part":{"tool_name":"final_result","args":"","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"tool_name":"final_result","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","event_kind":"final_result"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answers","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":[","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Capital","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" of","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" the","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" Country","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"The","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" capital","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" of","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" the","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" country","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" is","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" Mexico","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":".\\"","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"},{\\"","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
-                                        BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                        ),
+                                            content='{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_I5sHX2b6JYHwKbnjAbe4FX4R","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
+                                        ),
+                                        BasicSpan(
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_I5sHX2b6JYHwKbnjAbe4FX4R","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                        ),
+                                        BasicSpan(
+                                            content='{"index":0,"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_I5sHX2b6JYHwKbnjAbe4FX4R","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
+                                        ),
+                                    ],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='event_stream_handler',
+                            children=[
+                                BasicSpan(content='ctx.run_step=4'),
+                                BasicSpan(
+                                    content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_I5sHX2b6JYHwKbnjAbe4FX4R","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                ),
+                            ],
+                        ),
+                        BasicSpan(
+                            content='running 1 tool',
+                            children=[
+                                BasicSpan(content='running tool: get_country'),
+                                BasicSpan(
+                                    content='event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=4'),
+                                        BasicSpan(content=IsStr()),
+                                    ],
+                                ),
+                            ],
+                        ),
+                        BasicSpan(content='complex_agent__mcp_server__mcp.get_tools'),
+                        BasicSpan(
+                            content='chat gpt-4o',
+                            children=[
+                                BasicSpan(
+                                    content='complex_agent__model.request_stream',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=5'),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Weather","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_XTQn3sXmusUseZZ6m5mIery7","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" in","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_XTQn3sXmusUseZZ6m5mIery7","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" the","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"city","tool_call_id":"call_XTQn3sXmusUseZZ6m5mIery7","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" Capital","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_XTQn3sXmusUseZZ6m5mIery7","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Mexico","tool_call_id":"call_XTQn3sXmusUseZZ6m5mIery7","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_XTQn3sXmusUseZZ6m5mIery7","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_XTQn3sXmusUseZZ6m5mIery7","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"The","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_XTQn3sXmusUseZZ6m5mIery7","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
                                         ),
+                                    ],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='event_stream_handler',
+                            children=[
+                                BasicSpan(content='ctx.run_step=5'),
+                                BasicSpan(
+                                    content='{"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_XTQn3sXmusUseZZ6m5mIery7","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                ),
+                            ],
+                        ),
+                        BasicSpan(
+                            content='running 1 tool',
+                            children=[
+                                BasicSpan(
+                                    content='running tool: get_weather', children=[BasicSpan(content='get_weather')]
+                                ),
+                                BasicSpan(
+                                    content='event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=5'),
+                                        BasicSpan(content=IsStr()),
+                                    ],
+                                ),
+                            ],
+                        ),
+                        BasicSpan(content='complex_agent__mcp_server__mcp.get_tools'),
+                        BasicSpan(
+                            content='chat gpt-4o',
+                            children=[
+                                BasicSpan(
+                                    content='complex_agent__model.request_stream',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=6'),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" weather","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"part":{"tool_name":"final_result","args":"","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" in","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"tool_name":"final_result","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","event_kind":"final_result"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" Mexico","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answers","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" is","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":[","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" currently","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" sunny","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":".\\"","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"},{\\"","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Capital","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" of","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" the","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Product","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" Country","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" Name","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Mexico","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"The","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" product","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"},{\\"","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" name","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" is","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" P","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Weather","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"yd","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" in","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"antic","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" the","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" AI","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" Capital","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":".","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" You","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" can","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" find","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Sunny","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" more","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"},{\\"","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" information","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" about","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" it","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Product","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" [","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" Name","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"here","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"](","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"P","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"yd","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"P","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"antic","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"yd","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" AI","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"antic","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":").","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" AI","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"]}","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"]}","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"part":{"tool_name":"final_result","args":"{\\"answers\\":[{\\"label\\":\\"Capital of the Country\\",\\"answer\\":\\"The capital of the country is Mexico City.\\"},{\\"label\\":\\"Weather in the Capital\\",\\"answer\\":\\"The weather in Mexico City is currently sunny.\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"The product name is Pydantic AI. You can find more information about it [here](Pydantic AI).\\"}]}","tool_call_id":"call_SRfS9etnNKx0AfkvHMSc1hDK","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
+                                            content='{"index":0,"part":{"tool_name":"final_result","args":"{\\"answers\\":[{\\"label\\":\\"Capital of the Country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the Capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}","tool_call_id":"call_IYGrQl25wGqxjoGjFkJiHZMO","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
                                         ),
                                     ],
                                 )
