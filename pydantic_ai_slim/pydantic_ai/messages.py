@@ -35,7 +35,7 @@ _mime_types = MimeTypes()
 _mime_types.read_windows_registry()
 for file in mimetypes.knownfiles:
     if os.path.isfile(file):
-        _mime_types.read(file)
+        _mime_types.read(file)  # pragma: lax no cover
 # TODO check for added mimetypes in Python 3.11 when dropping support for Python 3.10:
 # Document types
 _mime_types.add_type('application/rtf', '.rtf')
@@ -52,6 +52,7 @@ _mime_types.add_type('image/webp', '.webp')
 _mime_types.add_type('video/3gpp', '.three_gp')
 _mime_types.add_type('video/x-matroska', '.mkv')
 _mime_types.add_type('video/x-ms-wmv', '.wmv')
+_mime_types.add_type('video/x-flv', '.flv')
 
 # Audio types
 # NOTE: aac is platform specific (linux: audio/x-aac, macos: audio/aac) but x-aac is deprecated https://mimetype.io/audio/aac
@@ -67,6 +68,9 @@ _mime_types.add_type('application/yaml', '.yaml')
 _mime_types.add_type('application/yaml', '.yml')
 # TOML: RFC 9519 (https://www.rfc-editor.org/rfc/rfc9519.html)
 _mime_types.add_type('application/toml', '.toml')
+
+# XML is recognized as `text/xml` on some systems, but it needs to be `application/xml` per RFC 7303 (https://www.rfc-editor.org/rfc/rfc7303.html)
+_mime_types.add_type('application/xml', '.xml')
 
 
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac']
