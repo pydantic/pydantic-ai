@@ -45,7 +45,14 @@ from pydantic_ai import (
     UsageLimitExceeded,
     UserPromptPart,
 )
-from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
+from pydantic_ai.builtin_tools import (
+    CodeExecutionTool,
+    MCPServerTool,
+    MemoryTool,
+    TextEditorTool,
+    WebFetchTool,
+    WebSearchTool,
+)
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -7955,6 +7962,66 @@ async def test_anthropic_memory_tool(allow_model_requests: None, anthropic_api_k
 
 According to my memory, you live in **Mexico City**.\
 """)
+
+
+async def test_anthropic_text_editor_tool(allow_model_requests: None, anthropic_api_key: str):
+    anthropic_model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(api_key=anthropic_api_key),
+    )
+    agent = Agent(anthropic_model, builtin_tools=[TextEditorTool(max_characters=10_000)])
+
+    with pytest.raises(
+        UserError, match="Built-in `TextEditorTool` requires a 'str_replace_based_edit_tool' tool to be defined."
+    ):
+        await agent.run('Use the text editor tool to create hello.py with a single line: print("Hello, world!")')
+
+    file_text: str | None = None
+
+    @agent.tool_plain
+    def str_replace_based_edit_tool(**command: Any) -> Any:
+        nonlocal file_text
+        cmd = command.get('command')
+        if cmd == 'create':
+            file_text = command.get('file_text', '')
+            return 'File created: hello.py'
+        if cmd == 'str_replace':
+            assert file_text is not None
+            old_str = command.get('old_str', '')
+            new_str = command.get('new_str', '')
+            file_text = file_text.replace(old_str, new_str, 1)
+            return 'File updated: hello.py'
+        if cmd == 'insert':
+            assert file_text is not None
+            insert_line = int(command.get('insert_line', 0))
+            new_str = command.get('new_str', '')
+            lines = file_text.splitlines(keepends=True)
+            idx = max(0, min(insert_line, len(lines)))
+            lines.insert(idx, new_str)
+            file_text = ''.join(lines)
+            return f'Text inserted in hello.py at line {insert_line}'
+        if cmd == 'view':
+            assert file_text is not None
+            lines = file_text.splitlines()
+            return '\n'.join(f'{i}: {line}' for i, line in enumerate(lines, 1))
+        return 'OK'  # pragma: no cover
+
+    result = await agent.run('Use the text editor tool to create hello.py with a single line: print("Hello, world!")')
+    assert result.output == snapshot('File created: hello.py')
+
+    result = await agent.run('Use the text editor tool to change hello.py so it prints: Hello, Pydantic AI!')
+    assert result.output == snapshot('File updated: hello.py')
+
+    result = await agent.run('Use the text editor tool to insert a new string in hello.py: # Demo file')
+    assert result.output == snapshot('Text inserted in hello.py at line 0')
+
+    result = await agent.run('Use the text editor tool to view hello.py')
+    assert result.output == snapshot(
+        """\
+1: # Demo file
+2: print("Hello, Pydantic AI!")\
+"""
+    )
 
 
 async def test_anthropic_model_usage_limit_exceeded(

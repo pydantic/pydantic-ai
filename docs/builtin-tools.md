@@ -575,35 +575,69 @@ The [`TextEditorTool`][pydantic_ai.builtin_tools.TextEditorTool] enables your ag
 
 ### Usage
 
-The text editor tool is client-side, so you need to implement a handler for the supported commands: `view`, `str_replace`, `create`, and `insert`. The Anthropic docs also list an `undo_edit` command, but it is only available in older tool versions and is not supported by the `text_editor_20250728` tool used here. The tool uses the `str_replace_based_edit_tool` name and supports an optional `max_characters` parameter to limit view results.
+The text editor tool is client-side, so you need to implement a handler for the supported commands: `view`, `str_replace`, `create`, and `insert`. The tool uses the `str_replace_based_edit_tool` name.
 
-The following example uses a minimal handler that returns canned responses. The bits specific to Pydantic AI are the `TextEditorTool` built-in tool and the `str_replace_based_edit_tool` definition that forwards command payloads to your handler.
+The following example defines a minimal handler directly in the tool definition and enumerates the command shapes.
 
 ```py {title="anthropic_text_editor.py"}
-from typing import Any
+from typing import Any, Literal
 
+from pydantic import BaseModel, TypeAdapter
 from pydantic_ai import Agent, TextEditorTool
 
 
-def fake_text_editor(**command: Any) -> str:
-    if command.get('command') == 'view':
-        return '1: print("Hello, world!")'
-    elif command.get('command') == 'str_replace':
-        return 'File updated.'
-    return 'OK'
+class View(BaseModel):
+    command: Literal['view']
+    path: str
 
 
-agent = Agent('anthropic:claude-sonnet-4-5', builtin_tools=[TextEditorTool(max_characters=10_000)])
+class StrReplace(BaseModel):
+    command: Literal['str_replace']
+    path: str
+    old_str: str
+    new_str: str
+
+
+class Create(BaseModel):
+    command: Literal['create']
+    path: str
+    file_text: str
+
+
+class Insert(BaseModel):
+    command: Literal['insert']
+    path: str
+    insert_line: int
+    new_str: str
+
+
+TextEditor = View | StrReplace | Create | Insert
+_COMMAND_ADAPTER = TypeAdapter(TextEditor)
+
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-5',
+    builtin_tools=[TextEditorTool(max_characters=10_000)],  # Limits view output length.
+)
 
 
 @agent.tool_plain
-def str_replace_based_edit_tool(**command: Any) -> Any:
-    return fake_text_editor(**command)
+def str_replace_based_edit_tool(**command: Any) -> str:
+    cmd = _COMMAND_ADAPTER.validate_python(command)
+    if isinstance(cmd, View):
+        return '1: print("Hello, world!")'
+    if isinstance(cmd, StrReplace):
+        return 'File updated.'
+    if isinstance(cmd, Create):
+        return 'File created.'
+    if isinstance(cmd, Insert):
+        return 'Text inserted.'
+    raise ValueError(f'Unknown command: {command}')
 
 
-result = agent.run_sync('Update hello.py to print "Hello, world!"')
+result = agent.run_sync('Create hello.py file that prints "Hello, world!"')
 print(result.output)
-#> Updated hello.py.
+#> 'File created.'
 ```
 
 _(This example is complete, it can be run "as is")_
