@@ -641,12 +641,11 @@ class OpenAIChatModel(Model):
             model_settings.pop(setting, None)
 
         extra_body: dict[str, Any] | None = model_settings.get('extra_body')
-        if self.system == 'ollama' and response_format is not None and isinstance(response_format, dict):
-            if response_format.get('type') == 'json_schema' and 'json_schema' in response_format:
-                js = response_format['json_schema']
-                if isinstance(js, dict) and 'schema' in js:
-                    extra_body = dict(extra_body or {})
-                    extra_body['format'] = js['schema']
+        extra_body, response_format = self._customize_request_payload(
+            extra_body=extra_body,
+            response_format=response_format,
+            model_request_parameters=model_request_parameters,
+        )
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
@@ -696,6 +695,19 @@ class OpenAIChatModel(Model):
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom completion validations.
         """
         return chat.ChatCompletion.model_validate(response.model_dump())
+
+    def _customize_request_payload(
+        self,
+        *,
+        extra_body: dict[str, Any] | None,
+        response_format: chat.completion_create_params.ResponseFormat | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[dict[str, Any] | None, chat.completion_create_params.ResponseFormat | None]:
+        """Hook for subclasses to customize the request payload.
+
+        This is intended for OpenAI-compatible providers that need to map OpenAI fields into provider-specific fields.
+        """
+        return extra_body, response_format
 
     def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any] | None:
         """Hook that response content to provider details.

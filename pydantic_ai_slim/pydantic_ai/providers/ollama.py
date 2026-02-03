@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import os
-from dataclasses import replace
 
 import httpx
 from openai import AsyncOpenAI
@@ -70,8 +69,10 @@ class OllamaProvider(Provider[AsyncOpenAI]):
             openai_chat_thinking_field='reasoning',
             openai_chat_send_back_thinking_parts='tags',
             openai_supports_strict_tool_definition=False,
+            supports_json_schema_output=True,
+            supports_json_object_output=True,
         ).update(profile)
-        return replace(base, supports_json_schema_output=True)
+        return base
 
     def __init__(
         self,

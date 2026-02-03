@@ -2374,15 +2374,17 @@ def test_ollama_native_output_sends_format_in_extra_body(allow_model_requests: N
         city: str
         country: str
 
-    c = completion_message(
-        ChatCompletionMessage(content='{"city": "Paris", "country": "France"}', role='assistant'),
+    mock_client = MockOpenAI.create_mock(
+        completion_message(ChatCompletionMessage(content='{"city":"Paris","country":"France"}', role='assistant'))
     )
-    mock_client = MockOpenAI.create_mock(c)
-    model = OpenAIChatModel('llama3.2', provider=OllamaProvider(openai_client=mock_client))
+    from pydantic_ai.models.ollama import OllamaModel
+
+    model = OllamaModel('qwen3', provider=OllamaProvider(openai_client=mock_client))
     agent = Agent(model, output_type=NativeOutput(CityLocation))
 
     agent.run_sync('What is the capital of France?')
     kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
+    assert 'response_format' not in kwargs
     assert 'extra_body' in kwargs
     assert 'format' in kwargs['extra_body']
     format_schema = kwargs['extra_body']['format']
@@ -2390,6 +2392,47 @@ def test_ollama_native_output_sends_format_in_extra_body(allow_model_requests: N
     assert format_schema.get('type') == 'object'
     assert 'properties' in format_schema
     assert 'city' in format_schema['properties'] and 'country' in format_schema['properties']
+
+
+def test_ollama_json_object_output_sends_format_json_in_extra_body(allow_model_requests: None):
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    mock_client = MockOpenAI.create_mock(
+        completion_message(
+            ChatCompletionMessage(content='{"city":"Paris","country":"France"}', role='assistant'),
+        )
+    )
+    from pydantic_ai.models.ollama import OllamaModel
+
+    model = OllamaModel('qwen3', provider=OllamaProvider(openai_client=mock_client))
+    agent = Agent(model, output_type=PromptedOutput(CityLocation))
+
+    agent.run_sync('What is the capital of France?')
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
+    assert 'response_format' not in kwargs
+    assert kwargs['extra_body']['format'] == 'json'
+
+
+async def test_ollama_streaming_tools_request_sends_tools_and_stream_options(allow_model_requests: None) -> None:
+    stream = [text_chunk('hello'), chunk([])]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    from pydantic_ai.models.ollama import OllamaModel
+
+    model = OllamaModel('qwen3', provider=OllamaProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        return 'sunny'
+
+    async with agent.run_stream('What is the weather in Paris?'):
+        pass
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
+    assert kwargs['stream_options'] == {'include_usage': True}
+    assert 'tools' in kwargs
 
 
 async def test_openai_instructions(allow_model_requests: None, openai_api_key: str):
