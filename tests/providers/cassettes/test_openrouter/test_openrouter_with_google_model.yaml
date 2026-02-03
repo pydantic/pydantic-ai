@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '164'
+      - '167'
       content-type:
       - application/json
       host:
@@ -20,8 +20,7 @@ interactions:
         role: system
       - content: Tell me a joke.
         role: user
-      model: google/gemini-2.0-flash-exp:free
-      n: 1
+      model: google/gemini-3-flash-preview
       stream: false
     uri: https://openrouter.ai/api/v1/chat/completions
   response:
@@ -31,9 +30,14 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '476'
+      - '1069'
       content-type:
       - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
       transfer-encoding:
       - chunked
       vary:
@@ -44,20 +48,43 @@ interactions:
         index: 0
         logprobs: null
         message:
-          content: "Why don't scientists trust atoms? \n\nBecause they make up everything!\n"
+          annotations: []
+          content: |-
+            Why did the scarecrow win an award?
+
+            Because he was outstanding in his field!
           reasoning: null
+          reasoning_details:
+          - data: EjQKMgFyyNp8Y18VU9bW4Mnv1nldGV/9e2em/0IooWp4+Eq9KQie3UznWPl5tfRA+wmKJD+y
+            format: google-gemini-v1
+            index: 0
+            type: reasoning.encrypted
           refusal: null
           role: assistant
         native_finish_reason: STOP
-      created: 1747736401
-      id: gen-1747736401-niWjLHssb1xvyg7Ow2Nf
-      model: google/gemini-2.0-flash-exp:free
+      created: 1770087204
+      id: gen-1770087204-SCo24OMQ0XmWd7h3alsF
+      model: google/gemini-3-flash-preview
       object: chat.completion
-      provider: Google
+      provider: Google AI Studio
       usage:
-        completion_tokens: 17
-        prompt_tokens: 8
-        total_tokens: 25
+        completion_tokens: 18
+        completion_tokens_details:
+          image_tokens: 0
+          reasoning_tokens: 0
+        cost: 0
+        cost_details:
+          upstream_inference_completions_cost: 5.4e-05
+          upstream_inference_cost: 5.9e-05
+          upstream_inference_prompt_cost: 5.0e-06
+        is_byok: true
+        prompt_tokens: 10
+        prompt_tokens_details:
+          audio_tokens: 0
+          cache_write_tokens: 0
+          cached_tokens: 0
+          video_tokens: 0
+        total_tokens: 28
     status:
       code: 200
       message: OK

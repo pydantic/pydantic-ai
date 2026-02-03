@@ -293,7 +293,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'pydantic_ai': {
                         'signature': IsStr(),
                         'provider_name': 'openai',
-                        'id': 'rs_00e767404995b9950068e647f10d8c819187515d1b2517b059',
+                        'id': 'rs_05e886c212ef327f00698162436d9c81979b6efe2dc9bf9ab6',
                     }
                 },
             },
@@ -304,7 +304,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'pydantic_ai': {
                         'signature': IsStr(),
                         'provider_name': 'openai',
-                        'id': 'rs_00e767404995b9950068e647f10d8c819187515d1b2517b059',
+                        'id': 'rs_05e886c212ef327f00698162436d9c81979b6efe2dc9bf9ab6',
                     }
                 },
             },
@@ -318,15 +318,21 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"OpenTelemetry FastAPI instrumentation capture request and response body","type":"search"}',
+                'inputTextDelta': '{"query":"Pydantic Logfire FastAPI instrumentation request response body","type":"search","queries":["Pydantic Logfire FastAPI instrumentation request response body","logfire fastapi request body response body","OpenTelemetry FastAPI instrumentation include HTTP request and response body","pydantic logfire fastapi include request response"]}',
             },
             {
                 'type': 'tool-input-available',
-                'toolCallId': 'ws_00e767404995b9950068e647f909248191bfe8d05eeed67645',
+                'toolCallId': 'ws_05e886c212ef327f006981624886e08197acc9a7e700bbc8d3',
                 'toolName': 'web_search',
                 'input': {
-                    'query': 'OpenTelemetry FastAPI instrumentation capture request and response body',
+                    'query': 'Pydantic Logfire FastAPI instrumentation request response body',
                     'type': 'search',
+                    'queries': [
+                        'Pydantic Logfire FastAPI instrumentation request response body',
+                        'logfire fastapi request body response body',
+                        'OpenTelemetry FastAPI instrumentation include HTTP request and response body',
+                        'pydantic logfire fastapi include request response',
+                    ],
                 },
                 'providerExecuted': True,
                 'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
@@ -344,7 +350,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'pydantic_ai': {
                         'signature': IsStr(),
                         'provider_name': 'openai',
-                        'id': 'rs_00e767404995b9950068e647fa69e48191b6f5385a856b2948',
+                        'id': 'rs_05e886c212ef327f006981624a012c81978b466a4503b51a3b',
                     }
                 },
             },
@@ -355,7 +361,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'pydantic_ai': {
                         'signature': IsStr(),
                         'provider_name': 'openai',
-                        'id': 'rs_00e767404995b9950068e647fa69e48191b6f5385a856b2948',
+                        'id': 'rs_05e886c212ef327f006981624a012c81978b466a4503b51a3b',
                     }
                 },
             },
@@ -369,13 +375,13 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY Python","type":"search"}',
+                'inputTextDelta': '{"type":"open_page","url":"https://logfire.pydantic.dev/docs/reference/api/logfire/"}',
             },
             {
                 'type': 'tool-input-available',
-                'toolCallId': 'ws_00e767404995b9950068e647fb73c48191b0bdb147c3a0d22c',
+                'toolCallId': 'ws_05e886c212ef327f006981624cfa08819793c8e96d7b3e8c39',
                 'toolName': 'web_search',
-                'input': {'query': 'OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY Python', 'type': 'search'},
+                'input': {'type': 'open_page', 'url': 'https://logfire.pydantic.dev/docs/reference/api/logfire/'},
                 'providerExecuted': True,
                 'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
@@ -392,7 +398,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'pydantic_ai': {
                         'signature': IsStr(),
                         'provider_name': 'openai',
-                        'id': 'rs_00e767404995b9950068e647fd656081919385a27bd1162fcd',
+                        'id': 'rs_05e886c212ef327f006981624db1a08197b04f9c81ee45320e',
                     }
                 },
             },
@@ -403,7 +409,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'pydantic_ai': {
                         'signature': IsStr(),
                         'provider_name': 'openai',
-                        'id': 'rs_00e767404995b9950068e647fd656081919385a27bd1162fcd',
+                        'id': 'rs_05e886c212ef327f006981624db1a08197b04f9c81ee45320e',
                     }
                 },
             },
@@ -417,70 +423,278 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY opentelemetry python","type":"search"}',
+                'inputTextDelta': '{"type":"find_in_page","pattern":"instrument_fastapi","url":"https://logfire.pydantic.dev/docs/reference/api/logfire/"}',
             },
             {
                 'type': 'tool-input-available',
-                'toolCallId': 'ws_00e767404995b9950068e647fee97c8191919865e0c0a78bba',
-                'toolName': 'web_search',
-                'input': {'query': 'OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY opentelemetry python', 'type': 'search'},
-                'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'tool-output-available',
-                'toolCallId': IsStr(),
-                'output': {'status': 'completed'},
-                'providerExecuted': True,
-            },
-            {
-                'type': 'reasoning-start',
-                'id': IsStr(),
-                'providerMetadata': {
-                    'pydantic_ai': {
-                        'signature': IsStr(),
-                        'provider_name': 'openai',
-                        'id': 'rs_00e767404995b9950068e648022d288191a6acb6cff99dafba',
-                    }
-                },
-            },
-            {
-                'type': 'reasoning-end',
-                'id': IsStr(),
-                'providerMetadata': {
-                    'pydantic_ai': {
-                        'signature': IsStr(),
-                        'provider_name': 'openai',
-                        'id': 'rs_00e767404995b9950068e648022d288191a6acb6cff99dafba',
-                    }
-                },
-            },
-            {
-                'type': 'tool-input-start',
-                'toolCallId': IsStr(),
-                'toolName': 'web_search',
-                'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'tool-input-delta',
-                'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"site:github.com open-telemetry/opentelemetry-python-contrib OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY","type":"search"}',
-            },
-            {
-                'type': 'tool-input-available',
-                'toolCallId': 'ws_00e767404995b9950068e64803f27c81918a39ce50cb8dfbc2',
+                'toolCallId': 'ws_05e886c212ef327f006981624e0e408197b3f8fe571917c6d3',
                 'toolName': 'web_search',
                 'input': {
-                    'query': 'site:github.com open-telemetry/opentelemetry-python-contrib OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY',
+                    'type': 'find_in_page',
+                    'pattern': 'instrument_fastapi',
+                    'url': 'https://logfire.pydantic.dev/docs/reference/api/logfire/',
+                },
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': IsStr(),
+                'output': {'status': 'completed'},
+                'providerExecuted': True,
+            },
+            {
+                'type': 'reasoning-start',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': IsStr(),
+                        'provider_name': 'openai',
+                        'id': 'rs_05e886c212ef327f006981624f6b088197a3dce672745e29ff',
+                    }
+                },
+            },
+            {
+                'type': 'reasoning-end',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': IsStr(),
+                        'provider_name': 'openai',
+                        'id': 'rs_05e886c212ef327f006981624f6b088197a3dce672745e29ff',
+                    }
+                },
+            },
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
+            {
+                'type': 'tool-input-delta',
+                'toolCallId': IsStr(),
+                'inputTextDelta': '{"type":"open_page","url":"https://logfire.pydantic.dev/docs/reference/api/logfire/"}',
+            },
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'ws_05e886c212ef327f0069816250ffa0819788e1c97d69c38f5e',
+                'toolName': 'web_search',
+                'input': {'type': 'open_page', 'url': 'https://logfire.pydantic.dev/docs/reference/api/logfire/'},
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': IsStr(),
+                'output': {'status': 'completed'},
+                'providerExecuted': True,
+            },
+            {
+                'type': 'reasoning-start',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': IsStr(),
+                        'provider_name': 'openai',
+                        'id': 'rs_05e886c212ef327f0069816251ec048197a3ce18626fd3566c',
+                    }
+                },
+            },
+            {
+                'type': 'reasoning-end',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': IsStr(),
+                        'provider_name': 'openai',
+                        'id': 'rs_05e886c212ef327f0069816251ec048197a3ce18626fd3566c',
+                    }
+                },
+            },
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
+            {
+                'type': 'tool-input-delta',
+                'toolCallId': IsStr(),
+                'inputTextDelta': '{"type":"find_in_page","pattern":"Instrument a FastAPI app","url":"https://logfire.pydantic.dev/docs/reference/api/logfire/"}',
+            },
+            {
+                'type': 'tool-input-available',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+                'input': {
+                    'type': 'find_in_page',
+                    'pattern': 'Instrument a FastAPI app',
+                    'url': 'https://logfire.pydantic.dev/docs/reference/api/logfire/',
+                },
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': IsStr(),
+                'output': {'status': 'completed'},
+                'providerExecuted': True,
+            },
+            {
+                'type': 'reasoning-start',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': IsStr(),
+                        'provider_name': 'openai',
+                        'id': 'rs_05e886c212ef327f006981625427d48197a698cb6e5f560e7f',
+                    }
+                },
+            },
+            {
+                'type': 'reasoning-end',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': IsStr(),
+                        'provider_name': 'openai',
+                        'id': 'rs_05e886c212ef327f006981625427d48197a698cb6e5f560e7f',
+                    }
+                },
+            },
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
+            {
+                'type': 'tool-input-delta',
+                'toolCallId': IsStr(),
+                'inputTextDelta': '{"type":"open_page","url":"https://logfire.pydantic.dev/docs/integrations/web-frameworks/"}',
+            },
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'ws_05e886c212ef327f00698162594bcc8197a5d4997541f2337d',
+                'toolName': 'web_search',
+                'input': {'type': 'open_page', 'url': 'https://logfire.pydantic.dev/docs/integrations/web-frameworks/'},
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': IsStr(),
+                'output': {'status': 'completed'},
+                'providerExecuted': True,
+            },
+            {
+                'type': 'reasoning-start',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': IsStr(),
+                        'provider_name': 'openai',
+                        'id': 'rs_05e886c212ef327f006981625a48d08197a51c9da2fd313226',
+                    }
+                },
+            },
+            {
+                'type': 'reasoning-end',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'signature': IsStr(),
+                        'provider_name': 'openai',
+                        'id': 'rs_05e886c212ef327f006981625a48d08197a51c9da2fd313226',
+                    }
+                },
+            },
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
+            {
+                'type': 'tool-input-delta',
+                'toolCallId': IsStr(),
+                'inputTextDelta': '{"type":"open_page","url":"https://logfire.pydantic.dev/docs/integrations/web-frameworks/fastapi/"}',
+            },
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'ws_05e886c212ef327f006981625ae2a0819793471c15e396ffef',
+                'toolName': 'web_search',
+                'input': {
+                    'type': 'open_page',
+                    'url': 'https://logfire.pydantic.dev/docs/integrations/web-frameworks/fastapi/',
+                },
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': IsStr(),
+                'output': {'status': 'completed'},
+                'providerExecuted': True,
+            },
+            {
+                'type': 'reasoning-start',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'rs_05e886c212ef327f006981625c36288197b801af8443b37fc6',
+                        'signature': 'gAAAAABpgWJi1r4wu-LMSDcYO-5OHX2tu81pjFz5wNqaTcU9bOq54w9uXOJeFqd2C0HM6rxK1oyNvqvrGWhKHI53MI6Isv-FxMgTPpY5V5y8CX4uNTm8SyB0rAOHJCoyjoA5cDfLNkCcWyMi2tZeU5HEChTw0rMm6DoiOfx4Lqvak5EhTp4IFC9KDs2iu85x1zvPk8NMTLdL4657QVyzVvXppd1DTwhLM7P0DzFjNW2LPvd0fpyOPurY3ZpBXurAT_Uvxll12B1zsghQmbE3Lgr94pUFgq_3xqTUVH2VtxFu28aOIxJzydIbjARfdkJQke21cDBk2gjcg8yhe8UipnpcrT_aGgmRqRxXRqaSLxJKwAsA9-coqP3ICrbp4VQTqaIfnNnYdQIJHAV4PWZdou0LSTVsH-aHwFVrEfH3u_nLkFS6HBmQDRMhrk2bAWOKSkuO8HKGCReU9oO28J2TVtuXMxeBtGYfuvEpQjliJAC66jUroHTJ2Lm6b5cs41dFYn6WTd6m1bIgML5JHjORoZxGP84hM_CmPgeBwwsVAHr6WnlEjbjXF-Pw0LNwGTXSfYZawCp0hiSKfy2-8r_YbVyPm963l4zTQgLuO0-UoKDePxktoYQ1ZkDe73hMfnBNOfhUrCk5csf-6DoEPo6l4-nSokd4plhIWxKWkueZ1WBtazHDLfqiE_q_50ist2MV51VD75TgXr96mY6KtYHxNIoVP4A38Xw-Ldwdy7xZXBFHoSuR-9mKhL7mktKopcbQ97GWC2uz9gKZXWFp2EHkVzDGDZV1k9SuDtpQdwiIGHom_IVyeiMbBINYeJTCXktN4SC3TXQg2dCTPJWCP7dnczVXDfJJr1FCGLlT04jr7Y4culFYW75x4_qeEQTFhWuKm-kCvnsG4N5EcoCGM9thiiGKBwTjZZ_aob4RQsdH9FA-S_ZkeNBNQgEW5iUyK8LUNDvujExYwLWdTGzY3-DB7HprKEgv8augkagOkHxjMYZcKFc88xhxfxtbifQHG5sP_hPwIF55-QtWVBYp6Zq0BoRedjvKRuB7K7EjynnCwgeTBn0wfEJ6vWXkYrncsnpnBWV33fgbEx_Pj3rkXxsO-L5sjm4eWHOXx1QTiEXejJ0EvphTurCBZ-SYVqgQno7sDTbnIWb1rCoL2aNX6hX9DmjRNm3iAamuTW5GtAJ366gHzWjO3eLv3Oiqr76fovZm-p5cFL5Tf9_6WeQzhyu37lEN_N27gdJeDxmZioIM6lnP017C_V5bqR28vjxysn6qvngYzf90zVmI13MYodV-zTEiWG_V338w8FnPZyJjkkXwpBg4X4Yr0SuH2REOcYyG5N8j4kzvPLW2-koNL2Kniu0kz9f36cmQpFXDLNs0g2c5cecluUSxHOLSV9C8MoW_GTh3JCJnMF1RU3xd4SaWzy0GZtiQb8HmDs-_2TMaJ0bSc1HN85g5__DTYJM2dBoRBZuMbszwcesz-kEmxGrZ2TcQq3yJCOduW-5YUupek97mwqDDmbd1kbQfTVfLCVLLitU0DUcAFMmEYW3BOlebC4T9yRU03yx9CWJE24kzsVR_4H55b51N96anWpJySX0Q62cv24kaVXl_1m2QNr0kmYLJ2EK-ZZYQ5djLPU9B8otyLVcM1sicdgdM0IMDJ1rGwlZHbhXZBEgveplpUebtTaRPT6ThHKiYaCMJd48Ufud6vyGmr4-_tglsN7EiyFLUiobcQo4IksaYEr4gP1-Oq2q6LFp40hWtdJf8oNyy_Lih31ALBSACsrv2bn3j9o48VVtLnY7FD8s_i6k3YJU8Is5YisXXMtTrfKXxNUE6JR3H-Mrn7RzBc1OVaqQfgyQkHOmCutww1ksMxFZwAfVGBiqywEplVEo8Lmn8T0xdQ4cslvJOfgeD0FEiWxdW75UGPZ4CZfKQvILoQT7Nie1XShB0FHsL1-Zh1M24x3kSk9S9rRzHQQbBlJ_GtqRE3obeRKjlZj8E5WSxl9kAqKFEtTzZsomQ6x3MqOUsz1hYGf2p-QiJTIqMfbpUV1R3i-JJe3b4xn9Ngq8sh3sPI6rt0bFVL2xwp3KDkQbqLVTpSRwuTg_gXbkIfGKhzz14yd0WZb6W4eTmxR1i8YVc6gEVi-ex5DJTsXw-LYLekQFi8MHoCfaMIWkaQ4RjrXXAsIAqhyNpzfa18H6MHGpNFb98fecDKt9luhoXufls2Ef_7qovAuW53ztaJGL61sbkngTe-TCPHqWkrSMxZ7mraSRC76z7QNRJqRk1OG_plITjRZJSEStfzVjeVvX5rT0WcMEaENQqWcnh6bperF2qXRs6yY9q36lqcrnJUnKWsVGL4OxmtRLpBwH42uI8A0aY1gP07ZH7wvIF8Y1jhXiwJd4a9NhAGHWka9zZTuFntRKzRRzvQFLDLziBjU6KpCPyNi07KI1qISrU7n698AXNItqBV9G4J1saQv613mXnps62rZozYssA2j_3N_glejFb7IV5wWDVSdinC7kAPmFVBpmiPrK9_Fyd-xkBYLujpgZKBI8Ng32dlkz419LFAFSy_rJUx-g2aVROVuPJfKF1PwOPdbXZrizPvaU4_lnPa5wDl7kWIkp0o6LVCf1s3HHRGmxvj5UkGs2aNEIvJoFzsmU20mdi2Y8emPR8QuqzX2Gr3Kf85TPqSFuYj5X2q3p5I4M8KIxdn_1NClkWHblsZmnNWZUL511Pif8dx7NaW1t0mBhaNBa1FVfaeDgoa9Lo6ZWPP3JM3-CkvfsjBH26wn2uK3p2RLNwqOMk1hER-JP9mFMlExPNsetVK0ih7MqI8dcRzmU4Ak6WUWdlVgSPlcIarsufvbg6RF-a7m_zUmm6WdMWLtybpMYrYOm1Al9RC-cAVJVCB1d_hmkDIMQ3px5QSia8gKOEkouT-B43Bm8irRG7vm3o-ksLKxehLLa89nZPqOOv2sbFQ0Rt7_C-DWxQqsYBX9tFpIzIo7cI7Y58XfACvhzBzslS0Xdl9iRIHIe9NFyKdw66PynGs0c7KOmXw89v3h0srlXK4UIa9gpYsAGPTcwLPBug_T0eh8wLQpA0OEpRuDecWOG5FEoRHHK2La5Ou97URAqQp5HqVfrPVvZJDydYRqBWGUS6Bqr6Xt3eDB6-BekYy352WaxrN1TrmB3gRce5c1lywwsw831V-nlmCgTiFwcWbv4cfaMe8klX8gG7h0JlsYztMz0J8FEDSzGV4tUjd7W6zd-SGfZCuMiDYCCJ7neQXNux8J8Gafo84TmRlBCjgSoG4rmcOxNLTz0R6fmxy_FD8TepP1Xr8gObKkZS26209VZFKDhSSEZHPXhLjNh4Xh9N_oXX2mxx926TAd2dp_WVnQor0DHo3SnkZnY0Ozz9g1P6xeYTNVE30ZzH-c2vwUIU1wRX-7Dy_KZueCMe4rMS_mDazIQxWxm161WakvlHxI-9PEafLQUHXE6JIX28efJ-64Bt9KBBa2n0CNav3YcFZ-Kwh7rV4h8YpfrXtsPQRM6y6UtY-KqoWYakyeScHgY7ydgzNRQiE2ZtOeXvLGHgfgejwZoPxgv_l8oNPFb1NPEBuEZ1MBUxiA620sh8G5MZjZgogiSBp9NjJpG6o-apxcX330sXGZuf25f9z2E8qcU3dE8dHBsSJjtO1zKIs2OP168i9c6i1_Px0ggXpwMHqLVfeHbz9AIyhkK7p9wQcojwdKRk0tSGx3d3q4mg3t-S5d1F1MqjfYQ_jSZtu0iCmz4zSH75uZ5GQJYWsWMAvAYsubKn1oouuCxhKJaJ7f-PwUj8_0d2sADUQEteNegTegKp6uEJy3KESoowBzdrykO0wV4vBXObytkzyVm9_FaDO7klFG2E7-r03GfgJFeauiKSp-M9uBB3o3hY9yrvKAsBEkcpP4CkS3eevV2krzWWjmceeqVmJ9p4A0qGLWdNTUEhPNzHBqPsNwTvvy4HFK2mlCEr808J1BnixM2v1sBTQcYE9zTwhmzDpqaJev9qU_WjjUs69LjMsoRXZpAKPMtVFliHIFgtslivwXabzOz_EvtmQdKx86Wi66RHhxK6NS-c2SYgw952TGmfrLjWQCR9s4_WTiKYugHeYVgZksvRBQxIHN7A3NxW8WYxSUAQ3kLdrClaMHPwYQdy3RPgz9Ybj9ikGGe6_q_uk7llMS113dntcJDLZIbhAsZo8epwrhnBPAns57TXy48VwKBDWR1YnSzqi6zerPhzCgRIiVUFoPkvBYb2ct82p0aZXuMjB-ekok6VQP2t_8-dDD2R0HrdhwStB_DB_h-_2RxDu-z30_ObwyHB7kNDPaOKzKGbZdxr9ZmNA2OFlIhZ3jYBe8AMITv-VDxS8d9kvJurpwgrXz7uC0SgFyM_wqBbtvQtWOsDyxBkXDyy1hiI5J0podI1H4cqXxxf31foaHzqR7bJF3wBXwg3_JVNGHnOb1Hrj4GF6UaS7NjjHZES94zvxeIQ_J0B06-wZ9F_92eXWoKe_X74-HyK7XpEwUwyuDzlQR0dLN4BtUyWzFv51dY9EN4=',
+                        'provider_name': 'openai',
+                    }
+                },
+            },
+            {
+                'type': 'reasoning-end',
+                'id': IsStr(),
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'rs_05e886c212ef327f006981625c36288197b801af8443b37fc6',
+                        'signature': 'gAAAAABpgWJi1r4wu-LMSDcYO-5OHX2tu81pjFz5wNqaTcU9bOq54w9uXOJeFqd2C0HM6rxK1oyNvqvrGWhKHI53MI6Isv-FxMgTPpY5V5y8CX4uNTm8SyB0rAOHJCoyjoA5cDfLNkCcWyMi2tZeU5HEChTw0rMm6DoiOfx4Lqvak5EhTp4IFC9KDs2iu85x1zvPk8NMTLdL4657QVyzVvXppd1DTwhLM7P0DzFjNW2LPvd0fpyOPurY3ZpBXurAT_Uvxll12B1zsghQmbE3Lgr94pUFgq_3xqTUVH2VtxFu28aOIxJzydIbjARfdkJQke21cDBk2gjcg8yhe8UipnpcrT_aGgmRqRxXRqaSLxJKwAsA9-coqP3ICrbp4VQTqaIfnNnYdQIJHAV4PWZdou0LSTVsH-aHwFVrEfH3u_nLkFS6HBmQDRMhrk2bAWOKSkuO8HKGCReU9oO28J2TVtuXMxeBtGYfuvEpQjliJAC66jUroHTJ2Lm6b5cs41dFYn6WTd6m1bIgML5JHjORoZxGP84hM_CmPgeBwwsVAHr6WnlEjbjXF-Pw0LNwGTXSfYZawCp0hiSKfy2-8r_YbVyPm963l4zTQgLuO0-UoKDePxktoYQ1ZkDe73hMfnBNOfhUrCk5csf-6DoEPo6l4-nSokd4plhIWxKWkueZ1WBtazHDLfqiE_q_50ist2MV51VD75TgXr96mY6KtYHxNIoVP4A38Xw-Ldwdy7xZXBFHoSuR-9mKhL7mktKopcbQ97GWC2uz9gKZXWFp2EHkVzDGDZV1k9SuDtpQdwiIGHom_IVyeiMbBINYeJTCXktN4SC3TXQg2dCTPJWCP7dnczVXDfJJr1FCGLlT04jr7Y4culFYW75x4_qeEQTFhWuKm-kCvnsG4N5EcoCGM9thiiGKBwTjZZ_aob4RQsdH9FA-S_ZkeNBNQgEW5iUyK8LUNDvujExYwLWdTGzY3-DB7HprKEgv8augkagOkHxjMYZcKFc88xhxfxtbifQHG5sP_hPwIF55-QtWVBYp6Zq0BoRedjvKRuB7K7EjynnCwgeTBn0wfEJ6vWXkYrncsnpnBWV33fgbEx_Pj3rkXxsO-L5sjm4eWHOXx1QTiEXejJ0EvphTurCBZ-SYVqgQno7sDTbnIWb1rCoL2aNX6hX9DmjRNm3iAamuTW5GtAJ366gHzWjO3eLv3Oiqr76fovZm-p5cFL5Tf9_6WeQzhyu37lEN_N27gdJeDxmZioIM6lnP017C_V5bqR28vjxysn6qvngYzf90zVmI13MYodV-zTEiWG_V338w8FnPZyJjkkXwpBg4X4Yr0SuH2REOcYyG5N8j4kzvPLW2-koNL2Kniu0kz9f36cmQpFXDLNs0g2c5cecluUSxHOLSV9C8MoW_GTh3JCJnMF1RU3xd4SaWzy0GZtiQb8HmDs-_2TMaJ0bSc1HN85g5__DTYJM2dBoRBZuMbszwcesz-kEmxGrZ2TcQq3yJCOduW-5YUupek97mwqDDmbd1kbQfTVfLCVLLitU0DUcAFMmEYW3BOlebC4T9yRU03yx9CWJE24kzsVR_4H55b51N96anWpJySX0Q62cv24kaVXl_1m2QNr0kmYLJ2EK-ZZYQ5djLPU9B8otyLVcM1sicdgdM0IMDJ1rGwlZHbhXZBEgveplpUebtTaRPT6ThHKiYaCMJd48Ufud6vyGmr4-_tglsN7EiyFLUiobcQo4IksaYEr4gP1-Oq2q6LFp40hWtdJf8oNyy_Lih31ALBSACsrv2bn3j9o48VVtLnY7FD8s_i6k3YJU8Is5YisXXMtTrfKXxNUE6JR3H-Mrn7RzBc1OVaqQfgyQkHOmCutww1ksMxFZwAfVGBiqywEplVEo8Lmn8T0xdQ4cslvJOfgeD0FEiWxdW75UGPZ4CZfKQvILoQT7Nie1XShB0FHsL1-Zh1M24x3kSk9S9rRzHQQbBlJ_GtqRE3obeRKjlZj8E5WSxl9kAqKFEtTzZsomQ6x3MqOUsz1hYGf2p-QiJTIqMfbpUV1R3i-JJe3b4xn9Ngq8sh3sPI6rt0bFVL2xwp3KDkQbqLVTpSRwuTg_gXbkIfGKhzz14yd0WZb6W4eTmxR1i8YVc6gEVi-ex5DJTsXw-LYLekQFi8MHoCfaMIWkaQ4RjrXXAsIAqhyNpzfa18H6MHGpNFb98fecDKt9luhoXufls2Ef_7qovAuW53ztaJGL61sbkngTe-TCPHqWkrSMxZ7mraSRC76z7QNRJqRk1OG_plITjRZJSEStfzVjeVvX5rT0WcMEaENQqWcnh6bperF2qXRs6yY9q36lqcrnJUnKWsVGL4OxmtRLpBwH42uI8A0aY1gP07ZH7wvIF8Y1jhXiwJd4a9NhAGHWka9zZTuFntRKzRRzvQFLDLziBjU6KpCPyNi07KI1qISrU7n698AXNItqBV9G4J1saQv613mXnps62rZozYssA2j_3N_glejFb7IV5wWDVSdinC7kAPmFVBpmiPrK9_Fyd-xkBYLujpgZKBI8Ng32dlkz419LFAFSy_rJUx-g2aVROVuPJfKF1PwOPdbXZrizPvaU4_lnPa5wDl7kWIkp0o6LVCf1s3HHRGmxvj5UkGs2aNEIvJoFzsmU20mdi2Y8emPR8QuqzX2Gr3Kf85TPqSFuYj5X2q3p5I4M8KIxdn_1NClkWHblsZmnNWZUL511Pif8dx7NaW1t0mBhaNBa1FVfaeDgoa9Lo6ZWPP3JM3-CkvfsjBH26wn2uK3p2RLNwqOMk1hER-JP9mFMlExPNsetVK0ih7MqI8dcRzmU4Ak6WUWdlVgSPlcIarsufvbg6RF-a7m_zUmm6WdMWLtybpMYrYOm1Al9RC-cAVJVCB1d_hmkDIMQ3px5QSia8gKOEkouT-B43Bm8irRG7vm3o-ksLKxehLLa89nZPqOOv2sbFQ0Rt7_C-DWxQqsYBX9tFpIzIo7cI7Y58XfACvhzBzslS0Xdl9iRIHIe9NFyKdw66PynGs0c7KOmXw89v3h0srlXK4UIa9gpYsAGPTcwLPBug_T0eh8wLQpA0OEpRuDecWOG5FEoRHHK2La5Ou97URAqQp5HqVfrPVvZJDydYRqBWGUS6Bqr6Xt3eDB6-BekYy352WaxrN1TrmB3gRce5c1lywwsw831V-nlmCgTiFwcWbv4cfaMe8klX8gG7h0JlsYztMz0J8FEDSzGV4tUjd7W6zd-SGfZCuMiDYCCJ7neQXNux8J8Gafo84TmRlBCjgSoG4rmcOxNLTz0R6fmxy_FD8TepP1Xr8gObKkZS26209VZFKDhSSEZHPXhLjNh4Xh9N_oXX2mxx926TAd2dp_WVnQor0DHo3SnkZnY0Ozz9g1P6xeYTNVE30ZzH-c2vwUIU1wRX-7Dy_KZueCMe4rMS_mDazIQxWxm161WakvlHxI-9PEafLQUHXE6JIX28efJ-64Bt9KBBa2n0CNav3YcFZ-Kwh7rV4h8YpfrXtsPQRM6y6UtY-KqoWYakyeScHgY7ydgzNRQiE2ZtOeXvLGHgfgejwZoPxgv_l8oNPFb1NPEBuEZ1MBUxiA620sh8G5MZjZgogiSBp9NjJpG6o-apxcX330sXGZuf25f9z2E8qcU3dE8dHBsSJjtO1zKIs2OP168i9c6i1_Px0ggXpwMHqLVfeHbz9AIyhkK7p9wQcojwdKRk0tSGx3d3q4mg3t-S5d1F1MqjfYQ_jSZtu0iCmz4zSH75uZ5GQJYWsWMAvAYsubKn1oouuCxhKJaJ7f-PwUj8_0d2sADUQEteNegTegKp6uEJy3KESoowBzdrykO0wV4vBXObytkzyVm9_FaDO7klFG2E7-r03GfgJFeauiKSp-M9uBB3o3hY9yrvKAsBEkcpP4CkS3eevV2krzWWjmceeqVmJ9p4A0qGLWdNTUEhPNzHBqPsNwTvvy4HFK2mlCEr808J1BnixM2v1sBTQcYE9zTwhmzDpqaJev9qU_WjjUs69LjMsoRXZpAKPMtVFliHIFgtslivwXabzOz_EvtmQdKx86Wi66RHhxK6NS-c2SYgw952TGmfrLjWQCR9s4_WTiKYugHeYVgZksvRBQxIHN7A3NxW8WYxSUAQ3kLdrClaMHPwYQdy3RPgz9Ybj9ikGGe6_q_uk7llMS113dntcJDLZIbhAsZo8epwrhnBPAns57TXy48VwKBDWR1YnSzqi6zerPhzCgRIiVUFoPkvBYb2ct82p0aZXuMjB-ekok6VQP2t_8-dDD2R0HrdhwStB_DB_h-_2RxDu-z30_ObwyHB7kNDPaOKzKGbZdxr9ZmNA2OFlIhZ3jYBe8AMITv-VDxS8d9kvJurpwgrXz7uC0SgFyM_wqBbtvQtWOsDyxBkXDyy1hiI5J0podI1H4cqXxxf31foaHzqR7bJF3wBXwg3_JVNGHnOb1Hrj4GF6UaS7NjjHZES94zvxeIQ_J0B06-wZ9F_92eXWoKe_X74-HyK7XpEwUwyuDzlQR0dLN4BtUyWzFv51dY9EN4=',
+                        'provider_name': 'openai',
+                    }
+                },
+            },
+            {
+                'type': 'tool-input-start',
+                'toolCallId': 'ws_05e886c212ef327f0069816262e2e08197b0c8810fbf3185a6',
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
+            {
+                'type': 'tool-input-delta',
+                'toolCallId': 'ws_05e886c212ef327f0069816262e2e08197b0c8810fbf3185a6',
+                'inputTextDelta': '{"query":"OpenTelemetry ASGI instrumentation capture request body","type":"search","queries":["OpenTelemetry ASGI instrumentation capture request body","opentelemetry-python asgi record request body response body","opentelemetry fastapi capture request body response body server"]}',
+            },
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'ws_05e886c212ef327f0069816262e2e08197b0c8810fbf3185a6',
+                'toolName': 'web_search',
+                'input': {
+                    'query': 'OpenTelemetry ASGI instrumentation capture request body',
                     'type': 'search',
+                    'queries': [
+                        'OpenTelemetry ASGI instrumentation capture request body',
+                        'opentelemetry-python asgi record request body response body',
+                        'opentelemetry fastapi capture request body response body server',
+                    ],
                 },
                 'providerExecuted': True,
                 'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
             {
                 'type': 'tool-output-available',
-                'toolCallId': IsStr(),
+                'toolCallId': 'ws_05e886c212ef327f0069816262e2e08197b0c8810fbf3185a6',
                 'output': {'status': 'completed'},
                 'providerExecuted': True,
             },
@@ -489,9 +703,9 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'id': IsStr(),
                 'providerMetadata': {
                     'pydantic_ai': {
-                        'signature': IsStr(),
+                        'id': 'rs_05e886c212ef327f0069816264ea688197a1592f1e2522be6a',
+                        'signature': 'gAAAAABpgWJv4-1BjKoolKEKUXGywODUguprX6RungEeXdgyuPIiNzA0lxhJFkYUS9ouBXoZ6oLgvmLe9HoOQTNzYIlIZS7JIBPem1oLG5434XPg7xxI_jagJUZ5YD3ZRQcvwaYvu6WgRc4p7UrScPU24eHoYwqqb__iwMZCw8P8hRJBaBQ-LDsKxEoAWnqGLvDI4WJbcsgA-Q-EHJzSw_3uYh-zz7Ptx7ebhfGhs8Jm7scUf7aRskf951771_U6XbnOa_ZvyeRQ7lOAJTl0N-rJpg6HKFGcssWhQCS4Q-P3ffctA1J3EV2axaVzj3su7n552d2bHXo7G5MfR3s80-WTa6_rmputW2uk5o5icddPtfCL0l0VWyCtPx8vgazNfK1eKOuF7XgPVgxMQ6EppY6ZKt3n7EDZs8W-z_ns88XPtmmtodIExFApnlV3OSuRShWCHywzz4WSZF7jafw4p8jV2WWBCHnPsK1yOyqVq65cGBdjqx28icjtsegOwfx3jX9xdtk9eax7hMUkz8hYXitPTLvqbz-C3Or6qcTz7X_bElKTaZDIWopjYXMZM6mbBIgKlgENzvhGs4-GYIQuKtTAuIz8_Tv1oB21h9DUJw50QZjriEkCJU7bA3EBKEzpzdSVyG7ZRdAm1rPNp0-k8dZ9XAqEOtYFxXfUwIF606UDZBhhFuIY7AGUG8aJ4vul3CZ7lzOms6ayPMmkZkgDNc4y3Us14Rr66bhTQKYHo-uh4i7hTasbpN_Ioy1YXBXAhEgLXtDtxg5YNZUPfCKdSYi2K8PTdwO_7B9qgeLj76wvGAuC34Tbjv0UHTAbrA-bk8A6LTDFd4KOrSZw8aOoq7wq_i53TN-r0eiic_6PuZZqkHYMktWPXiBzoQUwM3Dr47gH1kK9amMz0VoRNabRp4QTfQSkVYuhAMbBGMI0YeVDvU9ndiYNvuRrrrreHF4U-p0AHONRts9WRv9IeOJxKuMsFp1phUz84pCx-p_MAfglGk_8yp6VU7aEwknWBE6S1rwE2CWNoGSiObDMYHqCJTMjwUgwUyATj441nniubCsQTPsh4mFKMZROunreBTxTCyb1CFhT7Q7ijnb4PRoCBjcSLd1yfu7maju50YEeCUVSANQDnxQkAeNWzIJom8btd77bPWoxGbqDyKvGmbcdDgwf9V5lhorUS6Fo-o7QwECqSdOz-duyc3xcANUe-S9demcsL6U01TQ-ZOeYoJ6D3mEN1_-brVu-n2P3nSC-TPw_yKzGi_QX7-A29hUIOCv0sw3Ojj_rvYRkumsY8rQFzkm7beuTduNhOidKcIM-_zFOH57g60peJ-Y42IHDYLldvSqKeALeI4-mL7wSzpQSr-ui6h7WimXP6PnPe3XFMjuQRc20w5W5KQZ9-rdfVr6F1RUD9dB4JkWJs_q8lPvCDCIC2qZ2pzfnyHx9QlXR-A_B0sbkaw7hxuxNSYWxKJFJ_AwCj9aNloovscBCV6Z1Z-BYkqg26e_3mYvSf0dnkn79EnFKjH8HD30BnAoMKNLQPieiR1ix5xEDihh1UM5gZaFzRiZvGJlhpLU5Btpv2gqjTpwZpBtxRzvMod_EgrdcfKcTfve5T6glAEBoWIrW3KZUKsRdxtkED44ewi6PXEqyJj-Dn3ikvnUdcNkZ8Yv1RSHaEKRbfIfuc9KmW7XWuwx4Fpb6g17OTnQF9Wsb0hSro-XA_HAUNYEN5WtPKkvcbAzLw88eVmuJnakx545F2LbdQUKx-Bq6qAaDgl7zhRogLDRSrJWzaeF_ITESg6FVR9B_efG4QPpUk7NhJNgOuzLj68TdxoYZnAdoyzi326fQYC3u3X0BpJBgLQmBoGCXORNXUe0C77QsTlnX__bLiwiaCu_v6snpjgJLgGb8aoDCGbRCN-yfsUTJ9ShP4Leptgz1jViHr_vBDs8pefnKW79DcakPsGC4Zha-644aIHtb2DhPaTVElPofz3VzA643YBo1hR3fAAYyYa_oEmyPDXeD6jaFNdDmLnCNyg1TAxiZXXm_QWRIwKANWZFSjYLYBHBcMLxDofAxPTsUYVz9eSO1w3Ic7jSH-8g94VAVIF5442hq057lCe8Sr9fGg4vAOiG3Hmxi0jU3tMkz5Jo5r4Pnl4ZEDKv1Y9ZUeiFk--RtEtaLEA3SVeiNBAuyFKjE4nCIXBFksbk3vJZdvY9moStJ4fLMkp2Iyx5_w6S7bFOhXvkzGCls_t8AAXHyR-fNgImu4Bll7uUeUakLd1akoe5WuSot4TpRS90IcYRDTwqhH8BXfyG2FOc3yLTOksEnZ2wKrkIQ_80-FYPRI8L1mkCr3LlUHikbtncfGRyXdxLBkXwNQXu6iYVsQ5SH4m5ajKAe7uIaOR9DnOBSWpw8C3qxpT4gIm8B9bOGnhXCMBDEgSL6VEtGNLJx0gtdMq1mWR0j3xyU4BQdnSlqeP2brChne3WHxRlchf3mA0NZVDzRzJN-hmjU1THChI_M66U79-KgB-_laq0QBXsIqw4J3le_GIXlKDNq9__b08KH7BaBnueu7jrmywsSQV_oupmJ7Ne6XCsv81DKtNBWJ-QFYksoeo2jgU2XXudCi9d_N4LsikjCuWtFfczdHOUna-ppw1JaHmrsKYu_Gqem6ek-AjLyTDkSveQ1rHxiuZoVzlohj3mDe702gXrtoS0SEmSFPrQdZP6NN-w-H6XOsVK7idvniBTS-RkohGvvGA7f9EkXb08LS6YtM3YMvdOwdkDxpF8S8EreuTc8D5L4A5whCoEe8Ynw0aImUiNcSduhr7vqioAwi486eCOQBGPWyM0zjzXM7IiOq2O9q-h_PUxLk_As6ly5rR4yWDLw98Ph4j8l2DxDMXQ_Ds734QDBqsHgYLvcq-urACqlhXbwUFS9HKi8QUhizP0mLBsq4kh1oRZ9Clvi8GgiHKH3W9dhPVZGb0NU_CUo-B_YZS7cGwMwkeuC0Cd5KgnhVsjElAegOFnHx4mq-kTFuI0_9rpZJZd5Xg3gobVkC2gr54lsluXfoHHe3ZRNOs89q8df2w9JyLr6nJVc8trVkC41-TkO3FZ4qqtPkD3HRg6UIZUIDE7LhSi0sAmcIvc6viUC6iAIxTtZ5cPhcqEOXndrAitTia3qEqohBO_86-Kh7EEqDHekqfAvi2JTj08SqtoTksfS5GoATm_vFIrkTy-EwlfkmIvA_WYa5oFbZzIFtSY9JG8ouYDBC88BXyrOp2k-wQYBCfPFrIUURmS_mf8n-osza5Y29VoBDl0ZPndXoqOO1KiENowCyPiu82vB1Vg2pOZ-LQ1BPaQwoAXPJt8G6fBdf--nRZEcY7N5NQxPKMBE4gYvUwJBS-uvAR6ofVqRn9w-6wtstoSRPl6s4Skz2iD-UOw8djmcWqeiqoEpu9TG25zow6uEdnbzLnajCrsTXjDcFsF7E92BhADBIP5_RmS6d3_i0vvFcCYdky0CRHyDelT03hY29FGjbl0El7yKeps_x1gh_8Nt-LFsZcsQV-mbDfjuxp8IMZLs1wjzD7H4Q61p5wdFiGdFGLnzNFKh7bt9mdlLnuvE0Cbf3wpFeRFM6pMjq9LtMB5EGHOp4Sky7nvvGdi0AhYqvYSoOLuy2QJV4gp_qhFwUWYJkKo-RvoW_yr_3qEUtLXKIeUFW_YPaOheqI6eOVBn1BX8AzKwFI-9X7pfsJ1Hc9aaClfM4kYvOMOtz4vQR4bnCSYhwQlUoc5Xcwma3JCL8jo6FLcEqqj7J4fht7ifv9_neUJCThs42RKWtRJuYDbiWiPjc1X5upTJaZv2Bp-LBR2YBq8gEuytNmLEldw_OVEfzl8JYpZfaHH1xaGMcflD0s-B7lqCWsUxd-wK6sWH-yPVvU2lhDRiD6UO0YuVMVRJsK9iJLcl-JvE0TLwWAeEKrFhSUA-YWrSNUGwLRrcHMewlXVyNjLbYDc_duG88-gfzSG-OZmJw1BZ9AxBvA7ogJt_tUd_lvNfcQzMOapZFavAcHCBRBN4DO0D5VKmA0BtYXfXMwRXzrF2kkJKN9F0wS3U0zg0PK3fVLFwb2zn8wOskArz5bpCuai0Mml04GJ2rJkskLT3ElATa8iJ4fMtUS5FcGgOnQXryP57jmgcVzUBF_hZad3uyTlJb-jRZ4kAN5bAVFKCyBzj33w-lzPo7qdALLvC5rqfaisqlDzR9AwxoSDD3zTCpiil-fniVojJ7ZWs1D-JaRzwoL6QCv8IU72NpIg-IwK7XD9ER09SulqlvYfrt3A7YMaWvmrG4kIhVK9BrKgEq_vhPizWre-DC3amAoR0DS5hOmvGkQR7ujfg0e1D6gEdXaC-z3AlMl1Z3U7IVQGGLERNta9rGPLMBDfV-cPGChwZ_Fk0EC-PtkNP1I9rb0eS0R6hCvLiwTcDe0sRkUeBgiTemlUy55IdqfzkdKL0BwCR74qrSSFCa688I-MqCUXKuPkeXvsVUJfyxfwDE_Rhas1xXj3ANddmE0I4a1FHiJJ6ZHkkwGahGnoGGXzRzfeRwKlNUBgxXWYeVe1FhJuLDiCmeaHQfHNqkguG5ZsjElRbhbWVMig31DMntnxWkhBHpyi-mrKoTO9RjReQa-jFP3ZIg0FfN9CbDsJi4jto5gdmb3YVUI1ol6ab2WdX2FkOjIIaDFptMw7NsDX42w-df229NGkYM_Y8BVNNAMJRkhpYrU47B-2I-3kpWef9_369Me6Q7rLj8lcp2vKviOA5_CVNsf-9H-CRwMKPLxufWm-msnPnuxOnK_W2vhLQ8T_-cMv6IlJfLiu3CnS4RgXcp9SUPiYUnIJEpZdOrxTRXLH5M3YjhwmA-5o9mP1XsrWlWvNJvfnYx12piakdSbWblUXz-KVPLtG0htXQBoZR-szK3g-NstfacvD__noCcngtmsZvx-fErxgMp1QtAYk4lZFH1eNM7ENnj3QJ0zVTCQYo3XMgGLRi791QODq_1jkcSRfOrwUcGtT3KhG5xCjxJfEth9nkBSytDHULwwS_0HhriOx4Akwmyyl4PcMiyBZWlNo5dCiayUD0Cr5A4S_xJ6HNlOo5dolcHMlUsVzkAC1AITINoPmaRv89u0HhJ-MJn2L1q7fN4-f3oDCM7_i8lBhNHyQ91N4Wv2W9b1gblSPF0DodcZyj279n6e92Z_VYZw4Pj1N0fGaCSDiGfovXiHO-9DzyoE3ZwwanN3Q_5t3LWnoh-AJJ1SrsuX37TknjFc0uiw0_wYrbPoQX8I5GPEzaIOR9T6Cmnpsz_Vxr4pbJLj8t58la273wCOB-4IjhjY4a_ynFIuWmb4cbJki3vWkfQ47zYcLwFXPc2Gkquy-f4b64Ti1Z7m1C2OPnN1p46nK3zIQcQg-f5u9hcrj5oYMR5Y4n5OErMSXgKtZceVs3ozQj4nNw0KWPghqcBwrASK_3XqTZRakKKhovgNnDucEN5NFZPVbonJHVwrPaDAv-qwe9vZAocbtWH6WVlV26NHxm0d7obIVXGkPTW5fn8PvXx1DYNazRmRQ3ES-bvp79iIIFzqDitTYgbICKf8UJM5xarcb3OL9jTAKgmFV3bDaEhlaCMhohIKECPenFPwLGOLM2-3BBMtErqJtfPFjgyWakOdud5HmQiLaSmvMsupEkbJC7pfNZRdszkDDmK7Rv2zrdd7xnqC5JViUIAj227D30xkfd0gzMTgZm7LCjhx623BjVkfhF7esd9vLwORocWco5al_QlhgWKjqGzuNl_K_Ln50YV6khdHeWs-PQv2HA1DvBqT_mBWPAKndAf2ZFb3IigULfpYZbCimQxshYJJrsTyaEZZ7Nk56xZjrhy41b5ICNPziUIIHPVs7mywpypan4zsVwOGTF5R639wHLfdyLXT3J1PF5Ukz66OlfD-QlFR8RlpOa0i9NN3wAykXShph5ms5xGwtSGrMsVHwkfP2R-QHRWunbtH4183W8EksHwYxm9eVyTSObqZka4tYHcf6vsCDD-Jhv88dIoQwMocln16pVcrHKfjBa8YD4zm-K735g0sMHhJbZzZBS1GjeLdLJR4BwTnSe5O28CrJHO81jWupvUsaQ9p2B2YJ288BYicjd142PafyIe5r6zcMYOD-gDM5z28n6cEKn5UeDrrFSTJ4fUpIxWUiGBgazwlOxtF1SA5WJeqGSGGLDUe9t2jzdmz9A2GMPjRS75CKS8168xyBKl0xD0JhPefKVr_RGahfeU4Q14bKzDX3odtbcYA46JpzA2HNnxL69bvNOZvCMBdQUBubtW6XJUGZy0KqSXgoiYvru5qZayhCpq3x6XcOsbWsjLze2e87UQmzff7scGDm2uEZEWkbxAmF_-BPuY45Y077QWzK5igcKEDYX-KMwZk8K9aK3xdlh0gPjtkfLifrhMbj0Oqh_xGQoPuR1YDtpE_OLW5TUilWCjSR8MTUj69-C27mn_6h-fJvBj9cr9TRlFQl9BurYhd31AFouzvOv3qO3sLMiNROi19m3EJ8iOy-PprI-_T1bAuGqszVZ1eqFU3ACWG6u9VqzfAIFxJuKJ4GgqObayQ_dm8b1MUYvVLRMRYlQyRFDjWj_QrFB6kd-oxSE62PLywkGLaSfiuOG6nBxKJUt6ejxrULoUZaCxgo8YL5nSoBhsIzIqrvPz4VgyOekGNtttij34OIuAKbajhypJxG0',
                         'provider_name': 'openai',
-                        'id': 'rs_00e767404995b9950068e648060b088191974c790f06b8ea8e',
                     }
                 },
             },
@@ -500,153 +714,9 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'id': IsStr(),
                 'providerMetadata': {
                     'pydantic_ai': {
-                        'signature': IsStr(),
+                        'id': 'rs_05e886c212ef327f0069816264ea688197a1592f1e2522be6a',
+                        'signature': 'gAAAAABpgWJv4-1BjKoolKEKUXGywODUguprX6RungEeXdgyuPIiNzA0lxhJFkYUS9ouBXoZ6oLgvmLe9HoOQTNzYIlIZS7JIBPem1oLG5434XPg7xxI_jagJUZ5YD3ZRQcvwaYvu6WgRc4p7UrScPU24eHoYwqqb__iwMZCw8P8hRJBaBQ-LDsKxEoAWnqGLvDI4WJbcsgA-Q-EHJzSw_3uYh-zz7Ptx7ebhfGhs8Jm7scUf7aRskf951771_U6XbnOa_ZvyeRQ7lOAJTl0N-rJpg6HKFGcssWhQCS4Q-P3ffctA1J3EV2axaVzj3su7n552d2bHXo7G5MfR3s80-WTa6_rmputW2uk5o5icddPtfCL0l0VWyCtPx8vgazNfK1eKOuF7XgPVgxMQ6EppY6ZKt3n7EDZs8W-z_ns88XPtmmtodIExFApnlV3OSuRShWCHywzz4WSZF7jafw4p8jV2WWBCHnPsK1yOyqVq65cGBdjqx28icjtsegOwfx3jX9xdtk9eax7hMUkz8hYXitPTLvqbz-C3Or6qcTz7X_bElKTaZDIWopjYXMZM6mbBIgKlgENzvhGs4-GYIQuKtTAuIz8_Tv1oB21h9DUJw50QZjriEkCJU7bA3EBKEzpzdSVyG7ZRdAm1rPNp0-k8dZ9XAqEOtYFxXfUwIF606UDZBhhFuIY7AGUG8aJ4vul3CZ7lzOms6ayPMmkZkgDNc4y3Us14Rr66bhTQKYHo-uh4i7hTasbpN_Ioy1YXBXAhEgLXtDtxg5YNZUPfCKdSYi2K8PTdwO_7B9qgeLj76wvGAuC34Tbjv0UHTAbrA-bk8A6LTDFd4KOrSZw8aOoq7wq_i53TN-r0eiic_6PuZZqkHYMktWPXiBzoQUwM3Dr47gH1kK9amMz0VoRNabRp4QTfQSkVYuhAMbBGMI0YeVDvU9ndiYNvuRrrrreHF4U-p0AHONRts9WRv9IeOJxKuMsFp1phUz84pCx-p_MAfglGk_8yp6VU7aEwknWBE6S1rwE2CWNoGSiObDMYHqCJTMjwUgwUyATj441nniubCsQTPsh4mFKMZROunreBTxTCyb1CFhT7Q7ijnb4PRoCBjcSLd1yfu7maju50YEeCUVSANQDnxQkAeNWzIJom8btd77bPWoxGbqDyKvGmbcdDgwf9V5lhorUS6Fo-o7QwECqSdOz-duyc3xcANUe-S9demcsL6U01TQ-ZOeYoJ6D3mEN1_-brVu-n2P3nSC-TPw_yKzGi_QX7-A29hUIOCv0sw3Ojj_rvYRkumsY8rQFzkm7beuTduNhOidKcIM-_zFOH57g60peJ-Y42IHDYLldvSqKeALeI4-mL7wSzpQSr-ui6h7WimXP6PnPe3XFMjuQRc20w5W5KQZ9-rdfVr6F1RUD9dB4JkWJs_q8lPvCDCIC2qZ2pzfnyHx9QlXR-A_B0sbkaw7hxuxNSYWxKJFJ_AwCj9aNloovscBCV6Z1Z-BYkqg26e_3mYvSf0dnkn79EnFKjH8HD30BnAoMKNLQPieiR1ix5xEDihh1UM5gZaFzRiZvGJlhpLU5Btpv2gqjTpwZpBtxRzvMod_EgrdcfKcTfve5T6glAEBoWIrW3KZUKsRdxtkED44ewi6PXEqyJj-Dn3ikvnUdcNkZ8Yv1RSHaEKRbfIfuc9KmW7XWuwx4Fpb6g17OTnQF9Wsb0hSro-XA_HAUNYEN5WtPKkvcbAzLw88eVmuJnakx545F2LbdQUKx-Bq6qAaDgl7zhRogLDRSrJWzaeF_ITESg6FVR9B_efG4QPpUk7NhJNgOuzLj68TdxoYZnAdoyzi326fQYC3u3X0BpJBgLQmBoGCXORNXUe0C77QsTlnX__bLiwiaCu_v6snpjgJLgGb8aoDCGbRCN-yfsUTJ9ShP4Leptgz1jViHr_vBDs8pefnKW79DcakPsGC4Zha-644aIHtb2DhPaTVElPofz3VzA643YBo1hR3fAAYyYa_oEmyPDXeD6jaFNdDmLnCNyg1TAxiZXXm_QWRIwKANWZFSjYLYBHBcMLxDofAxPTsUYVz9eSO1w3Ic7jSH-8g94VAVIF5442hq057lCe8Sr9fGg4vAOiG3Hmxi0jU3tMkz5Jo5r4Pnl4ZEDKv1Y9ZUeiFk--RtEtaLEA3SVeiNBAuyFKjE4nCIXBFksbk3vJZdvY9moStJ4fLMkp2Iyx5_w6S7bFOhXvkzGCls_t8AAXHyR-fNgImu4Bll7uUeUakLd1akoe5WuSot4TpRS90IcYRDTwqhH8BXfyG2FOc3yLTOksEnZ2wKrkIQ_80-FYPRI8L1mkCr3LlUHikbtncfGRyXdxLBkXwNQXu6iYVsQ5SH4m5ajKAe7uIaOR9DnOBSWpw8C3qxpT4gIm8B9bOGnhXCMBDEgSL6VEtGNLJx0gtdMq1mWR0j3xyU4BQdnSlqeP2brChne3WHxRlchf3mA0NZVDzRzJN-hmjU1THChI_M66U79-KgB-_laq0QBXsIqw4J3le_GIXlKDNq9__b08KH7BaBnueu7jrmywsSQV_oupmJ7Ne6XCsv81DKtNBWJ-QFYksoeo2jgU2XXudCi9d_N4LsikjCuWtFfczdHOUna-ppw1JaHmrsKYu_Gqem6ek-AjLyTDkSveQ1rHxiuZoVzlohj3mDe702gXrtoS0SEmSFPrQdZP6NN-w-H6XOsVK7idvniBTS-RkohGvvGA7f9EkXb08LS6YtM3YMvdOwdkDxpF8S8EreuTc8D5L4A5whCoEe8Ynw0aImUiNcSduhr7vqioAwi486eCOQBGPWyM0zjzXM7IiOq2O9q-h_PUxLk_As6ly5rR4yWDLw98Ph4j8l2DxDMXQ_Ds734QDBqsHgYLvcq-urACqlhXbwUFS9HKi8QUhizP0mLBsq4kh1oRZ9Clvi8GgiHKH3W9dhPVZGb0NU_CUo-B_YZS7cGwMwkeuC0Cd5KgnhVsjElAegOFnHx4mq-kTFuI0_9rpZJZd5Xg3gobVkC2gr54lsluXfoHHe3ZRNOs89q8df2w9JyLr6nJVc8trVkC41-TkO3FZ4qqtPkD3HRg6UIZUIDE7LhSi0sAmcIvc6viUC6iAIxTtZ5cPhcqEOXndrAitTia3qEqohBO_86-Kh7EEqDHekqfAvi2JTj08SqtoTksfS5GoATm_vFIrkTy-EwlfkmIvA_WYa5oFbZzIFtSY9JG8ouYDBC88BXyrOp2k-wQYBCfPFrIUURmS_mf8n-osza5Y29VoBDl0ZPndXoqOO1KiENowCyPiu82vB1Vg2pOZ-LQ1BPaQwoAXPJt8G6fBdf--nRZEcY7N5NQxPKMBE4gYvUwJBS-uvAR6ofVqRn9w-6wtstoSRPl6s4Skz2iD-UOw8djmcWqeiqoEpu9TG25zow6uEdnbzLnajCrsTXjDcFsF7E92BhADBIP5_RmS6d3_i0vvFcCYdky0CRHyDelT03hY29FGjbl0El7yKeps_x1gh_8Nt-LFsZcsQV-mbDfjuxp8IMZLs1wjzD7H4Q61p5wdFiGdFGLnzNFKh7bt9mdlLnuvE0Cbf3wpFeRFM6pMjq9LtMB5EGHOp4Sky7nvvGdi0AhYqvYSoOLuy2QJV4gp_qhFwUWYJkKo-RvoW_yr_3qEUtLXKIeUFW_YPaOheqI6eOVBn1BX8AzKwFI-9X7pfsJ1Hc9aaClfM4kYvOMOtz4vQR4bnCSYhwQlUoc5Xcwma3JCL8jo6FLcEqqj7J4fht7ifv9_neUJCThs42RKWtRJuYDbiWiPjc1X5upTJaZv2Bp-LBR2YBq8gEuytNmLEldw_OVEfzl8JYpZfaHH1xaGMcflD0s-B7lqCWsUxd-wK6sWH-yPVvU2lhDRiD6UO0YuVMVRJsK9iJLcl-JvE0TLwWAeEKrFhSUA-YWrSNUGwLRrcHMewlXVyNjLbYDc_duG88-gfzSG-OZmJw1BZ9AxBvA7ogJt_tUd_lvNfcQzMOapZFavAcHCBRBN4DO0D5VKmA0BtYXfXMwRXzrF2kkJKN9F0wS3U0zg0PK3fVLFwb2zn8wOskArz5bpCuai0Mml04GJ2rJkskLT3ElATa8iJ4fMtUS5FcGgOnQXryP57jmgcVzUBF_hZad3uyTlJb-jRZ4kAN5bAVFKCyBzj33w-lzPo7qdALLvC5rqfaisqlDzR9AwxoSDD3zTCpiil-fniVojJ7ZWs1D-JaRzwoL6QCv8IU72NpIg-IwK7XD9ER09SulqlvYfrt3A7YMaWvmrG4kIhVK9BrKgEq_vhPizWre-DC3amAoR0DS5hOmvGkQR7ujfg0e1D6gEdXaC-z3AlMl1Z3U7IVQGGLERNta9rGPLMBDfV-cPGChwZ_Fk0EC-PtkNP1I9rb0eS0R6hCvLiwTcDe0sRkUeBgiTemlUy55IdqfzkdKL0BwCR74qrSSFCa688I-MqCUXKuPkeXvsVUJfyxfwDE_Rhas1xXj3ANddmE0I4a1FHiJJ6ZHkkwGahGnoGGXzRzfeRwKlNUBgxXWYeVe1FhJuLDiCmeaHQfHNqkguG5ZsjElRbhbWVMig31DMntnxWkhBHpyi-mrKoTO9RjReQa-jFP3ZIg0FfN9CbDsJi4jto5gdmb3YVUI1ol6ab2WdX2FkOjIIaDFptMw7NsDX42w-df229NGkYM_Y8BVNNAMJRkhpYrU47B-2I-3kpWef9_369Me6Q7rLj8lcp2vKviOA5_CVNsf-9H-CRwMKPLxufWm-msnPnuxOnK_W2vhLQ8T_-cMv6IlJfLiu3CnS4RgXcp9SUPiYUnIJEpZdOrxTRXLH5M3YjhwmA-5o9mP1XsrWlWvNJvfnYx12piakdSbWblUXz-KVPLtG0htXQBoZR-szK3g-NstfacvD__noCcngtmsZvx-fErxgMp1QtAYk4lZFH1eNM7ENnj3QJ0zVTCQYo3XMgGLRi791QODq_1jkcSRfOrwUcGtT3KhG5xCjxJfEth9nkBSytDHULwwS_0HhriOx4Akwmyyl4PcMiyBZWlNo5dCiayUD0Cr5A4S_xJ6HNlOo5dolcHMlUsVzkAC1AITINoPmaRv89u0HhJ-MJn2L1q7fN4-f3oDCM7_i8lBhNHyQ91N4Wv2W9b1gblSPF0DodcZyj279n6e92Z_VYZw4Pj1N0fGaCSDiGfovXiHO-9DzyoE3ZwwanN3Q_5t3LWnoh-AJJ1SrsuX37TknjFc0uiw0_wYrbPoQX8I5GPEzaIOR9T6Cmnpsz_Vxr4pbJLj8t58la273wCOB-4IjhjY4a_ynFIuWmb4cbJki3vWkfQ47zYcLwFXPc2Gkquy-f4b64Ti1Z7m1C2OPnN1p46nK3zIQcQg-f5u9hcrj5oYMR5Y4n5OErMSXgKtZceVs3ozQj4nNw0KWPghqcBwrASK_3XqTZRakKKhovgNnDucEN5NFZPVbonJHVwrPaDAv-qwe9vZAocbtWH6WVlV26NHxm0d7obIVXGkPTW5fn8PvXx1DYNazRmRQ3ES-bvp79iIIFzqDitTYgbICKf8UJM5xarcb3OL9jTAKgmFV3bDaEhlaCMhohIKECPenFPwLGOLM2-3BBMtErqJtfPFjgyWakOdud5HmQiLaSmvMsupEkbJC7pfNZRdszkDDmK7Rv2zrdd7xnqC5JViUIAj227D30xkfd0gzMTgZm7LCjhx623BjVkfhF7esd9vLwORocWco5al_QlhgWKjqGzuNl_K_Ln50YV6khdHeWs-PQv2HA1DvBqT_mBWPAKndAf2ZFb3IigULfpYZbCimQxshYJJrsTyaEZZ7Nk56xZjrhy41b5ICNPziUIIHPVs7mywpypan4zsVwOGTF5R639wHLfdyLXT3J1PF5Ukz66OlfD-QlFR8RlpOa0i9NN3wAykXShph5ms5xGwtSGrMsVHwkfP2R-QHRWunbtH4183W8EksHwYxm9eVyTSObqZka4tYHcf6vsCDD-Jhv88dIoQwMocln16pVcrHKfjBa8YD4zm-K735g0sMHhJbZzZBS1GjeLdLJR4BwTnSe5O28CrJHO81jWupvUsaQ9p2B2YJ288BYicjd142PafyIe5r6zcMYOD-gDM5z28n6cEKn5UeDrrFSTJ4fUpIxWUiGBgazwlOxtF1SA5WJeqGSGGLDUe9t2jzdmz9A2GMPjRS75CKS8168xyBKl0xD0JhPefKVr_RGahfeU4Q14bKzDX3odtbcYA46JpzA2HNnxL69bvNOZvCMBdQUBubtW6XJUGZy0KqSXgoiYvru5qZayhCpq3x6XcOsbWsjLze2e87UQmzff7scGDm2uEZEWkbxAmF_-BPuY45Y077QWzK5igcKEDYX-KMwZk8K9aK3xdlh0gPjtkfLifrhMbj0Oqh_xGQoPuR1YDtpE_OLW5TUilWCjSR8MTUj69-C27mn_6h-fJvBj9cr9TRlFQl9BurYhd31AFouzvOv3qO3sLMiNROi19m3EJ8iOy-PprI-_T1bAuGqszVZ1eqFU3ACWG6u9VqzfAIFxJuKJ4GgqObayQ_dm8b1MUYvVLRMRYlQyRFDjWj_QrFB6kd-oxSE62PLywkGLaSfiuOG6nBxKJUt6ejxrULoUZaCxgo8YL5nSoBhsIzIqrvPz4VgyOekGNtttij34OIuAKbajhypJxG0',
                         'provider_name': 'openai',
-                        'id': 'rs_00e767404995b9950068e648060b088191974c790f06b8ea8e',
-                    }
-                },
-            },
-            {
-                'type': 'tool-input-start',
-                'toolCallId': IsStr(),
-                'toolName': 'web_search',
-                'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'tool-input-delta',
-                'toolCallId': IsStr(),
-                'inputTextDelta': '{"type":"search"}',
-            },
-            {
-                'type': 'tool-input-available',
-                'toolCallId': IsStr(),
-                'toolName': 'web_search',
-                'input': {'type': 'search'},
-                'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'tool-output-available',
-                'toolCallId': IsStr(),
-                'output': {'status': 'completed'},
-                'providerExecuted': True,
-            },
-            {
-                'type': 'reasoning-start',
-                'id': IsStr(),
-                'providerMetadata': {
-                    'pydantic_ai': {
-                        'signature': IsStr(),
-                        'provider_name': 'openai',
-                        'id': 'rs_00e767404995b9950068e6480bbd348191b11aa4762de66297',
-                    }
-                },
-            },
-            {
-                'type': 'reasoning-end',
-                'id': IsStr(),
-                'providerMetadata': {
-                    'pydantic_ai': {
-                        'signature': IsStr(),
-                        'provider_name': 'openai',
-                        'id': 'rs_00e767404995b9950068e6480bbd348191b11aa4762de66297',
-                    }
-                },
-            },
-            {
-                'type': 'tool-input-start',
-                'toolCallId': IsStr(),
-                'toolName': 'web_search',
-                'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'tool-input-delta',
-                'toolCallId': IsStr(),
-                'inputTextDelta': '{"type":"search"}',
-            },
-            {
-                'type': 'tool-input-available',
-                'toolCallId': 'ws_00e767404995b9950068e6480e11208191834104e1aaab1148',
-                'toolName': 'web_search',
-                'input': {'type': 'search'},
-                'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'tool-output-available',
-                'toolCallId': IsStr(),
-                'output': {'status': 'completed'},
-                'providerExecuted': True,
-            },
-            {
-                'type': 'reasoning-start',
-                'id': IsStr(),
-                'providerMetadata': {
-                    'pydantic_ai': {
-                        'signature': IsStr(),
-                        'provider_name': 'openai',
-                        'id': 'rs_00e767404995b9950068e6480f16f08191beaad2936e3d3195',
-                    }
-                },
-            },
-            {
-                'type': 'reasoning-end',
-                'id': IsStr(),
-                'providerMetadata': {
-                    'pydantic_ai': {
-                        'signature': IsStr(),
-                        'provider_name': 'openai',
-                        'id': 'rs_00e767404995b9950068e6480f16f08191beaad2936e3d3195',
-                    }
-                },
-            },
-            {
-                'type': 'tool-input-start',
-                'toolCallId': IsStr(),
-                'toolName': 'web_search',
-                'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'tool-input-delta',
-                'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"OTEL_PYTHON_LOG_CORRELATION environment variable","type":"search"}',
-            },
-            {
-                'type': 'tool-input-available',
-                'toolCallId': 'ws_00e767404995b9950068e648118bf88191aa7f804637c45b32',
-                'toolName': 'web_search',
-                'input': {'query': 'OTEL_PYTHON_LOG_CORRELATION environment variable', 'type': 'search'},
-                'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
-            },
-            {
-                'type': 'tool-output-available',
-                'toolCallId': IsStr(),
-                'output': {'status': 'completed'},
-                'providerExecuted': True,
-            },
-            {
-                'type': 'reasoning-start',
-                'id': IsStr(),
-                'providerMetadata': {
-                    'pydantic_ai': {
-                        'signature': IsStr(),
-                        'provider_name': 'openai',
-                        'id': 'rs_00e767404995b9950068e648130f0481918dc71103fbd6a486',
-                    }
-                },
-            },
-            {
-                'type': 'reasoning-end',
-                'id': IsStr(),
-                'providerMetadata': {
-                    'pydantic_ai': {
-                        'signature': IsStr(),
-                        'provider_name': 'openai',
-                        'id': 'rs_00e767404995b9950068e648130f0481918dc71103fbd6a486',
                     }
                 },
             },
@@ -655,7 +725,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'id': IsStr(),
                 'providerMetadata': {
                     'pydantic_ai': {
-                        'id': 'msg_00e767404995b9950068e6482f25e0819181582a15cdd9207f',
+                        'id': 'msg_05e886c212ef327f006981626f4c3081978caf5fccb3dc6361',
                         'provider_name': 'openai',
                     }
                 },
@@ -664,427 +734,221 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'type': 'text-delta',
                 'delta': """\
 Short answer:
-- Default\
+- Headers\
 """,
                 'id': IsStr(),
                 'providerMetadata': {
                     'pydantic_ai': {
-                        'id': 'msg_00e767404995b9950068e6482f25e0819181582a15cdd9207f',
+                        'id': 'msg_05e886c212ef327f006981626f4c3081978caf5fccb3dc6361',
                         'provider_name': 'openai',
                     }
                 },
             },
-            {'type': 'text-delta', 'delta': ' FastAPI/OpenTelemetry', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' instrumentation already records method', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '/route/status', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': IsStr(), 'id': IsStr()},
+            {'type': 'text-delta', 'delta': IsStr(), 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': ' FastAPI instrumentation, or',
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' pass the OpenTelemetry', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' header-capture options', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
 .
-- To also\
+- Bodies: FastAPI\
 """,
                 'id': IsStr(),
             },
-            {'type': 'text-delta', 'delta': ' include HTTP headers', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ', set', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' the capture-', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': 'headers env', 'id': IsStr()},
             {
                 'type': 'text-delta',
-                'delta': """\
- vars.
--\
-""",
+                'delta': ' server instrumentation does not',
                 'id': IsStr(),
             },
-            {'type': 'text-delta', 'delta': ' To include request', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '/response bodies', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ', use the', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' FastAPI', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '/ASGI', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' request/response', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' hooks and add', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' the', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' payload to', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' the span yourself', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' (with red', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': 'action/size', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' record request/response', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': ' bodies by default. You can capture validated inputs',
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': IsStr(), 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' integration, or add', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' custom middleware. For', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' outbound calls (httpx', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '), Logfire can', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
- limits).
+ capture bodies.
 
 How\
 """,
                 'id': IsStr(),
             },
-            {'type': 'text-delta', 'delta': ' to do it', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': ' to include HTTP request/response details',
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' with Logfire + Fast', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
+API
+
+1) Capture\
+""",
+                'id': IsStr(),
+            },
+            {
+                'type': 'text-delta',
+                'delta': ' request and response headers\n',
+                'id': IsStr(),
+            },
+            {
+                'type': 'text-delta',
+                'delta': """\
+- Easiest:
+  log\
+""",
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': 'fire.instrument_fastapi', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '(app, capture_headers', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
+=True)
+  This records all\
+""",
+                'id': IsStr(),
+            },
+            {
+                'type': 'text-delta',
+                'delta': ' request and response headers',
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' on the span', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '. ', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
+([logfire.pydantic.dev](https://logfire.pydantic.dev/docs/reference/api/logfire/))
+
+- Fine\
+""",
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': '‑grained (two', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
+ equivalent ways):
+  a\
+""",
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ') Environment variables:', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
 
-
-1)\
+     OTEL_IN\
 """,
                 'id': IsStr(),
             },
-            {'type': 'text-delta', 'delta': ' Enable header capture', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' (server side', 'id': IsStr()},
             {
                 'type': 'text-delta',
-                'delta': """\
-)
-- Choose\
-""",
+                'delta': 'STRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_REQUEST=".*',
                 'id': IsStr(),
             },
-            {'type': 'text-delta', 'delta': ' just the', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' headers you need; avoid', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' sensitive ones or sanitize', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': """\
- them.
-
-export OTEL\
-""",
-                'id': IsStr(),
-            },
-            {'type': 'text-delta', 'delta': '_INSTRUMENTATION_HTTP_CAPTURE', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '_HEADERS_SERVER_REQUEST="content', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '-type,user', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '-agent"\n', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': 'export OTEL_INSTRUMENTATION', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '_HTTP_CAPTURE_HEADERS', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '_SERVER_RESPONSE="content-type"\n', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': 'export OTEL_INSTRUMENTATION_HTTP', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': """\
-_CAPTURE_HEADERS_SANITIZE_FIELDS="authorization,set-cookie"
-
-This makes headers appear on spans as http.request.header.* and http.response.header.*. ([opentelemetry-python-contrib.readthedocs.io](https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/fastapi/fastapi.html))
-
-2)\
-""",
-                'id': IsStr(),
-            },
-            {'type': 'text-delta', 'delta': ' Add hooks to capture request', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '/response bodies', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': """\
-
-Note:\
-""",
-                'id': IsStr(),
-            },
-            {'type': 'text-delta', 'delta': IsStr(), 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' a built-in Python', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' env', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' var to', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' auto-capture', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' HTTP bodies for Fast', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': 'API/AS', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': 'GI. Use', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' hooks to look at', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' ASGI receive', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '/send events and', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' attach (tr', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': 'uncated) bodies', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' as span attributes', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': """\
-.
-
-from\
-""",
-                'id': IsStr(),
-            },
-            {'type': 'text-delta', 'delta': ' fastapi import', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' FastAPI', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': """\
-
-from opente\
-""",
-                'id': IsStr(),
-            },
-            {'type': 'text-delta', 'delta': 'lemetry.trace', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' import Span', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': """\
-
-from opente\
-""",
-                'id': IsStr(),
-            },
-            {'type': 'text-delta', 'delta': 'lemetry.instrument', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': 'ation.fastapi import', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' FastAPIInstrument', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': """\
-or
-
-MAX\
-""",
-                'id': IsStr(),
-            },
-            {'type': 'text-delta', 'delta': '_BYTES = ', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '2048 ', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' # keep this', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' small in prod', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': """\
-
-
-def client\
-""",
-                'id': IsStr(),
-            },
-            {'type': 'text-delta', 'delta': '_request_hook(span', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ': Span,', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' scope: dict', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ', message:', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': """\
- dict):
-   \
-""",
-                'id': IsStr(),
-            },
-            {'type': 'text-delta', 'delta': ' if span and', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' span.is_record', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': 'ing() and', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' message.get("', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': 'type") ==', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' "http.request', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': """\
-":
-        body\
-""",
-                'id': IsStr(),
-            },
-            {'type': 'text-delta', 'delta': ' = message.get', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '("body")', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' or b"', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
 "
-        if\
+     OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER\
 """,
                 'id': IsStr(),
             },
             {
                 'type': 'text-delta',
                 'delta': """\
- body:
-           \
-""",
-                'id': IsStr(),
-            },
-            {'type': 'text-delta', 'delta': ' span.set_attribute', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': """\
-(
-                "\
-""",
-                'id': IsStr(),
-            },
-            {'type': 'text-delta', 'delta': 'http.request.body', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': """\
-",
-                body\
-""",
-                'id': IsStr(),
-            },
-            {'type': 'text-delta', 'delta': '[:MAX_BYTES', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '].decode("', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': 'utf-8', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '", "replace', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': """\
-"),
-            )
+_RESPONSE=".*"
+     OTEL_IN\
 """,
                 'id': IsStr(),
             },
             {
                 'type': 'text-delta',
-                'delta': """\
-
-def client_response\
-""",
-                'id': IsStr(),
-            },
-            {'type': 'text-delta', 'delta': '_hook(span:', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' Span, scope', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ': dict,', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' message: dict', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': """\
-):
-    if\
-""",
-                'id': IsStr(),
-            },
-            {'type': 'text-delta', 'delta': ' span and span', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '.is_recording', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '() and message', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '.get("type', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '") == "', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': 'http.response.body', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': """\
-":
-        body\
-""",
-                'id': IsStr(),
-            },
-            {'type': 'text-delta', 'delta': ' = message.get', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '("body")', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' or b"', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': """\
-"
-        if\
-""",
+                'delta': 'STRUMENTATION_HTTP_CAPTURE_HEADERS_SANITIZE_FIELDS="Authorization',
                 'id': IsStr(),
             },
             {
                 'type': 'text-delta',
                 'delta': """\
- body:
-           \
+"
+     These control\
 """,
                 'id': IsStr(),
             },
-            {'type': 'text-delta', 'delta': ' span.set_attribute', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': ' which headers are added and',
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' which are redacted.', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' ', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
-(
-                "\
+([logfire.pydantic.dev](https://logfire.pydantic.dev/docs/integrations/web-frameworks/))
+  b) Keyword args passed\
 """,
                 'id': IsStr(),
             },
-            {'type': 'text-delta', 'delta': 'http.response.body', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': """\
-",
-                body\
-""",
-                'id': IsStr(),
-            },
-            {'type': 'text-delta', 'delta': '[:MAX_BYTES', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '].decode("', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': 'utf-8', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '", "replace', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': """\
-"),
-            )
-""",
-                'id': IsStr(),
-            },
+            {'type': 'text-delta', 'delta': ' through to OpenTelemetry', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' via Logfire:', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
 
-app = Fast\
+     logfire.instrument_fastapi(
+        \
 """,
                 'id': IsStr(),
             },
             {
                 'type': 'text-delta',
                 'delta': """\
-API()
-Fast\
-""",
-                'id': IsStr(),
-            },
-            {'type': 'text-delta', 'delta': 'APIInstrumentor', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '.instrument_app(', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': """\
-
-    app,\
+ app,
+         http_capture\
 """,
                 'id': IsStr(),
             },
             {
                 'type': 'text-delta',
                 'delta': """\
-
-    client_request\
-""",
-                'id': IsStr(),
-            },
-            {'type': 'text-delta', 'delta': '_hook=client', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': """\
-_request_hook,
-   \
-""",
-                'id': IsStr(),
-            },
-            {'type': 'text-delta', 'delta': ' client_response_hook', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '=client_response', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': """\
-_hook,
-)
+_headers_server_request=".*",
+         http_capture_headers_server\
 """,
                 'id': IsStr(),
             },
             {
                 'type': 'text-delta',
                 'delta': """\
-
-- The hooks\
+_response=".*",
+     )
+     Log\
 """,
                 'id': IsStr(),
             },
-            {'type': 'text-delta', 'delta': ' receive the AS', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': 'GI event dict', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': 's: http', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '.request (with', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' body/more', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '_body) and', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' http.response.body', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '. If your', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' bodies can be', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' chunked,', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' you may need', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' to accumulate across', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' calls when message', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '.get("more', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '_body") is', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' True. ', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'fire forwards extra kwargs', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' to FastAPIInstrumentor', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '.instrument_app(). ', 'id': IsStr()},
             {
                 'type': 'text-delta',
-                'delta': '([opentelemetry-python-contrib.readthedocs.io](https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/fastapi/fastapi.html)',
+                'delta': '([logfire.pydantic.dev](https://logfire.pydantic.dev/docs/integrations/web-frameworks/fastapi/)',
                 'id': IsStr(),
             },
             {'type': 'text-delta', 'delta': ')', 'id': IsStr()},
@@ -1093,132 +957,166 @@ _hook,
                 'delta': """\
 
 
-3)\
+2) What about the\
 """,
                 'id': IsStr(),
             },
-            {'type': 'text-delta', 'delta': ' Be careful with', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' PII and', 'id': IsStr()},
             {
                 'type': 'text-delta',
                 'delta': """\
- size
+ body?
+- Inbound\
+""",
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': IsStr(), 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' no built‑in flag', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': ' to automatically record HTTP bodies',
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' in FastAPI server spans', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '. Logfire does record', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' parsed/validated endpoint', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': ' arguments and any validation',
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' errors; you can customize', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' what gets logged via', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': ' request_attributes_mapper.',
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' ', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
+([logfire.pydantic.dev](https://logfire.pydantic.dev/docs/integrations/web-frameworks/fastapi/))
+- If you truly need\
+""",
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' raw bodies, add', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' a small FastAPI/', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': 'Starlette middleware to read',
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' and log them (be', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' careful with PII/se', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'crets), or enable AS', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'GI send/receive spans', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' for low‑level', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' I/O details:', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
+
+  logfire.instrument\
+""",
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': '_fastapi(app, record', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
+_send_receive=True)
+  (creates\
+""",
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' debug‑level send', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '/receive spans; not the', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' actual body contents).', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' ', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
+([logfire.pydantic.dev](https://logfire.pydantic.dev/docs/reference/api/logfire/))
+
+3) Outbound\
+""",
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' HTTP bodies (if', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
+ that's what you meant)
 -\
 """,
                 'id': IsStr(),
             },
-            {'type': 'text-delta', 'delta': ' Always limit size', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' and consider redaction', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' before putting payloads', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' For httpx clients, Log', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': 'fire can capture headers and',
+                'id': IsStr(),
+            },
             {
                 'type': 'text-delta',
                 'delta': """\
- on spans.
--\
+ bodies:
+  log\
 """,
                 'id': IsStr(),
             },
-            {'type': 'text-delta', 'delta': ' Use the sanitize', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' env var above', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' for sensitive headers', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '. ', 'id': IsStr()},
             {
                 'type': 'text-delta',
-                'delta': '([opentelemetry-python-contrib.readthedocs.io](https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/fastapi/fastapi.html))\n',
+                'delta': """\
+fire.instrument_httpx(
+      capture_headers=True\
+""",
                 'id': IsStr(),
             },
             {
                 'type': 'text-delta',
                 'delta': """\
+,
+      capture_request_body=True,
+      capture_response_body=True\
+""",
+                'id': IsStr(),
+            },
+            {
+                'type': 'text-delta',
+                'delta': """\
+,
+  )
+  \
+""",
+                'id': IsStr(),
+            },
+            {
+                'type': 'text-delta',
+                'delta': """\
+([logfire.pydantic.dev](https://logfire.pydantic.dev/docs/reference/api/logfire/))
 
-Optional: correlate logs\
+Would you like a minimal\
 """,
                 'id': IsStr(),
             },
             {
                 'type': 'text-delta',
-                'delta': """\
- with traces
--\
-""",
-                'id': IsStr(),
-            },
-            {'type': 'text-delta', 'delta': ' If you also want', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' request/response', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' details in logs with', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' trace IDs, enable', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' Python log correlation:\n', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': """\
-
-export OTEL_P\
-""",
-                'id': IsStr(),
-            },
-            {'type': 'text-delta', 'delta': 'YTHON_LOG_COR', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': 'RELATION=true', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': """\
-
-
-or programmatically\
-""",
+                'delta': ' FastAPI middleware example to',
                 'id': IsStr(),
             },
             {
                 'type': 'text-delta',
-                'delta': """\
-:
-from opente\
-""",
+                'delta': ' log request/response bodies with',
                 'id': IsStr(),
             },
-            {'type': 'text-delta', 'delta': 'lemetry.instrumentation', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '.logging import LoggingInstrument', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' scrubbing, or are', 'id': IsStr()},
             {
                 'type': 'text-delta',
-                'delta': """\
-or
-LoggingInstrument\
-""",
+                'delta': ' headers/validated arguments sufficient?',
                 'id': IsStr(),
             },
-            {'type': 'text-delta', 'delta': 'or().instrument(set', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': '_logging_format=True)\n', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': """\
-
-This injects trace\
-""",
-                'id': IsStr(),
-            },
-            {'type': 'text-delta', 'delta': '_id/span_id into', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' log records so you', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' can line up logs', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' with the span that', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' carries the HTTP payload', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' attributes. ', 'id': IsStr()},
-            {
-                'type': 'text-delta',
-                'delta': '([opentelemetry-python-contrib.readthedocs.io](https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/logging/logging.html?utm_source=openai))\n',
-                'id': IsStr(),
-            },
-            {
-                'type': 'text-delta',
-                'delta': """\
-
-Want me to tailor\
-""",
-                'id': IsStr(),
-            },
-            {'type': 'text-delta', 'delta': ' the hook to only', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' capture JSON bodies,', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' skip binary content,', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' or accumulate chunked', 'id': IsStr()},
-            {'type': 'text-delta', 'delta': ' bodies safely?', 'id': IsStr()},
             {
                 'type': 'text-end',
                 'id': IsStr(),

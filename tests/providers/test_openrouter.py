@@ -83,13 +83,13 @@ def test_openrouter_pass_openai_client() -> None:
 
 async def test_openrouter_with_google_model(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.5-flash:free', provider=provider)
+    model = OpenRouterModel('google/gemini-3-flash-preview', provider=provider)
     agent = Agent(model, instructions='Be helpful.')
     response = await agent.run('Tell me a joke.')
     assert response.output == snapshot("""\
-Why don't scientists trust atoms? \n\
+Why did the scarecrow win an award?
 
-Because they make up everything!
+Because he was outstanding in his field!\
 """)
 
 
