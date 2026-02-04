@@ -2128,14 +2128,12 @@ HandleResponseEvent = Annotated[
 AgentStreamEvent = Annotated[ModelResponseStreamEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')]
 """An event in the agent stream: model response stream events and response-handling events."""
 
-_RequestPartT = TypeVar(
-    '_RequestPartT',
-    bound=SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart
-)
+_RequestPartT = TypeVar('_RequestPartT', bound=SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart)
 _ResponsePartT = TypeVar(
     '_ResponsePartT',
-    bound=TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart
+    bound=TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart,
 )
+
 
 @overload
 def iter_message_parts(
@@ -2144,12 +2142,14 @@ def iter_message_parts(
     part_type: type[_RequestPartT],
 ) -> Iterator[_RequestPartT]: ...
 
+
 @overload
 def iter_message_parts(
     messages: Sequence[ModelMessage],
     message_type: type[ModelResponse],
     part_type: type[_ResponsePartT],
 ) -> Iterator[_ResponsePartT]: ...
+
 
 def iter_message_parts(
     messages: Sequence[ModelMessage],
