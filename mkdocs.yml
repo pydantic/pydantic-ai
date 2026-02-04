@@ -135,6 +135,7 @@ nav:
           - api/agent.md
           - api/builtin_tools.md
           - api/common_tools.md
+          - api/concurrency.md
           - api/direct.md
           - api/durable_exec.md
           - api/embeddings.md
