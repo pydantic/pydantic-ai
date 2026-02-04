@@ -439,41 +439,52 @@ uv add 'pydantic-ai-slim[json-repair]'
 Once installed, JSON repair is applied automatically when:
 
 1. **Validation fails** on the original JSON from the model
-2. **Not in streaming/partial mode** — repair is only attempted on final (complete) tool calls to avoid interfering with streaming behavior
-3. **The repair changes the JSON** — if the repaired JSON is identical to the original, the original validation error is re-raised
+2. **The repair changes the JSON** — if the repaired JSON is identical to the original, the original validation error is re-raised
 
-This works for both [tool arguments](#tool-retries) and [structured outputs](output.md#tool-output).
+JSON repair works for both [tool arguments](#tool-retries) and [structured outputs](output.md#tool-output), and is also applied during streaming/partial validation.
 
 !!! note "Python 3.11+ only"
     The `fast-json-repair` package requires Python 3.11 or later.
 
 ### Example
 
-Here's an example showing JSON repair in action:
+Here's an example showing JSON repair in action using a `FunctionModel` that intentionally returns malformed JSON:
 
-```python {title="json_repair_example.py" test="skip"}
+```python {title="json_repair_example.py" requires="fast_json_repair"}
+from pydantic import BaseModel
+
 from pydantic_ai import Agent
-
-agent = Agent('openai:gpt-4o')
-
-
-@agent.tool_plain
-def get_user_info(name: str, age: int) -> str:
-    return f'{name} is {age} years old'
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 
-# Even if the model returns malformed JSON like:
-#   {"name": "Alice", "age": 30   <-- missing closing brace
-# or:
-#   {"name": "Alice", "age": 30,}  <-- trailing comma
-# or:
-#   {'name': 'Alice', 'age': 30}   <-- single quotes
-#
-# Pydantic AI will automatically repair it before validation
-# (when fast-json-repair is installed)
+class UserInfo(BaseModel):
+    name: str
+    age: int
 
+
+def malformed_json_model(
+    messages: list[ModelMessage], agent_info: AgentInfo
+) -> ModelResponse:
+    """A model that returns malformed JSON with single quotes."""
+    assert agent_info.output_tools is not None
+    output_tool_name = agent_info.output_tools[0].name
+
+    # This JSON has single quotes instead of double quotes - invalid JSON!
+    malformed_args = "{'name': 'Alice', 'age': 30}"
+    return ModelResponse(
+        parts=[ToolCallPart(tool_name=output_tool_name, args=malformed_args)]
+    )
+
+
+# Using output_type makes the model return structured data via an output tool
+agent = Agent(FunctionModel(malformed_json_model), output_type=UserInfo)
+
+# Even though the model returns malformed JSON with single quotes,
+# Pydantic AI automatically repairs it before validation
 result = agent.run_sync('Get info for Alice who is 30')
 print(result.output)
+#> name='Alice' age=30
 ```
 
 ## See Also

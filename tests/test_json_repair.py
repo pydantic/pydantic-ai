@@ -276,7 +276,7 @@ def test_object_output_processor_repair_partial_json():
 
 
 def test_validate_json_with_repair_partial():
-    """Test that _validate_json_with_repair works with allow_partial=True.
+    """Test that validate_json_with_repair works with allow_partial=True.
 
     This tests the streaming scenario where tool arguments arrive with syntax
     errors but need to be validated incrementally. Previously, repair was skipped
@@ -286,7 +286,7 @@ def test_validate_json_with_repair_partial():
 
     from pydantic import BaseModel, TypeAdapter
 
-    from pydantic_ai._tool_manager import _validate_json_with_repair
+    from pydantic_ai._utils import validate_json_with_repair
 
     class WhaleArgs(BaseModel):
         name: str
@@ -300,7 +300,7 @@ def test_validate_json_with_repair_partial():
     malformed_partial = '{"name": \'orca\', "description": "Also known as killer'
 
     # Validate as partial (streaming mode) - this should now work with repair!
-    result = _validate_json_with_repair(
+    result = validate_json_with_repair(
         validator=validator,
         json_str=malformed_partial,
         allow_partial=True,

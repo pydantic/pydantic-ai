@@ -17,7 +17,7 @@ from pydantic_ai._instrumentation import InstrumentationNames
 
 from . import _function_schema, _utils, messages as _messages
 from ._run_context import AgentDepsT, RunContext
-from ._utils import maybe_repair_json
+from ._utils import validate_json_with_repair
 from .exceptions import ModelRetry, ToolRetryError, UserError
 from .output import (
     DeferredToolRequests,
@@ -644,29 +644,15 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         allow_partial: bool = False,
         validation_context: Any | None = None,
     ) -> dict[str, Any]:
-        pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
         if isinstance(data, str):
-            json_str = data or '{}'
-            try:
-                return self.validator.validate_json(
-                    json_str, allow_partial=pyd_allow_partial, context=validation_context
-                )
-            except ValidationError as original_error:
-                # Attempt JSON repair - this works for both partial (streaming) and final calls.
-                # fast_json_repair preserves partial string values while fixing syntax errors
-                # like single quotes, trailing commas, etc.
-                repaired = maybe_repair_json(json_str)
-                if repaired == json_str:
-                    # Repair didn't change anything, re-raise original error
-                    raise
-                try:
-                    return self.validator.validate_json(
-                        repaired, allow_partial=pyd_allow_partial, context=validation_context
-                    )
-                except ValidationError:
-                    # Repair didn't help, re-raise the original error for consistent behavior
-                    raise original_error from None
+            return validate_json_with_repair(
+                self.validator,
+                data or '{}',
+                allow_partial=allow_partial,
+                validation_context=validation_context,
+            )
         else:
+            pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
             return self.validator.validate_python(
                 data or {}, allow_partial=pyd_allow_partial, context=validation_context
             )
