@@ -25,9 +25,19 @@ from pydantic_graph import BaseNode, GraphRunContext
 from pydantic_graph.beta import Graph, GraphBuilder
 from pydantic_graph.nodes import End, NodeRunEndT
 
-from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from . import (
+    _output,
+    _system_prompt,
+    exceptions,
+    guardrails as _guardrails,
+    messages as _messages,
+    models,
+    result,
+    usage as _usage,
+)
 from ._run_context import set_current_run_context
 from .exceptions import ToolRetryError
+from .guardrails import InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
 from .tools import (
@@ -151,6 +161,12 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     tracer: Tracer
     instrumentation_settings: InstrumentationSettings | None
+
+    # Guardrails
+    input_guardrails: list[_guardrails.InputGuardrail[DepsT, Any]] = dataclasses.field(default_factory=list)
+    output_guardrails: list[_guardrails.OutputGuardrail[DepsT, OutputDataT, Any]] = dataclasses.field(
+        default_factory=list
+    )
 
 
 class AgentNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
@@ -282,6 +298,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         if not messages and not next_message.parts and not next_message.instructions:
             raise exceptions.UserError('No message history, user prompt, or instructions provided')
 
+        # Run input guardrails before making the model request
+        await self._run_input_guardrails(ctx, run_context)
+
         return ModelRequestNode[DepsT, NodeRunEndT](request=next_message)
 
     async def _handle_deferred_tool_results(  # noqa: C901
@@ -385,6 +404,37 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 # omit empty system prompts
                 messages.append(_messages.SystemPromptPart(prompt))
         return messages
+
+    async def _run_input_guardrails(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        run_context: RunContext[DepsT],
+    ) -> None:
+        """Run input guardrails and raise exception if any are triggered.
+
+        Blocking guardrails run first sequentially.
+        Non-blocking guardrails run concurrently with each other.
+        """
+        if not ctx.deps.input_guardrails:
+            return
+
+        prompt = ctx.deps.prompt
+        if prompt is None:  # pragma: no cover
+            return
+
+        blocking = [g for g in ctx.deps.input_guardrails if g.blocking]
+        non_blocking = [g for g in ctx.deps.input_guardrails if not g.blocking]
+
+        for guardrail in blocking:
+            result = await guardrail.run(prompt, run_context)
+            if result.tripwire_triggered:
+                raise InputGuardrailTripwireTriggered(guardrail.name or 'input_guardrail', result)
+
+        if non_blocking:
+            results = await asyncio.gather(*[g.run(prompt, run_context) for g in non_blocking])
+            for guardrail, result in zip(non_blocking, results):
+                if result.tripwire_triggered:
+                    raise InputGuardrailTripwireTriggered(guardrail.name or 'input_guardrail', result)
 
     __repr__ = dataclasses_no_defaults_repr
 
@@ -771,7 +821,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         if output_final_result:
             final_result = output_final_result[0]
-            self._next_node = self._handle_final_result(ctx, final_result, output_parts)
+            self._next_node = await self._handle_final_result(ctx, final_result, output_parts)
         else:
             # Add user prompt if provided, after all tool return parts
             if self.user_prompt is not None:
@@ -799,7 +849,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         for validator in ctx.deps.output_validators:
             result_data = await validator.validate(result_data, run_context)
-        return self._handle_final_result(ctx, result.FinalResult(result_data), [])
+        return await self._handle_final_result(ctx, result.FinalResult(result_data), [])
 
     async def _handle_image_response(
         self,
@@ -807,9 +857,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         image: _messages.BinaryImage,
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
         result_data = cast(NodeRunEndT, image)
-        return self._handle_final_result(ctx, result.FinalResult(result_data), [])
+        return await self._handle_final_result(ctx, result.FinalResult(result_data), [])
 
-    def _handle_final_result(
+    async def _handle_final_result(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         final_result: result.FinalResult[NodeRunEndT],
@@ -822,7 +872,26 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         if tool_responses:
             messages.append(_messages.ModelRequest(parts=tool_responses, run_id=ctx.state.run_id, timestamp=now_utc()))
 
+        # Run output guardrails before returning the final result
+        await self._run_output_guardrails(ctx, final_result.output)
+
         return End(final_result)
+
+    async def _run_output_guardrails(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        output: Any,
+    ) -> None:
+        """Run output guardrails and raise exception if any are triggered."""
+        if not ctx.deps.output_guardrails:
+            return
+
+        run_context = build_run_context(ctx)
+
+        for guardrail in ctx.deps.output_guardrails:
+            result = await guardrail.run(output, run_context)
+            if result.tripwire_triggered:
+                raise OutputGuardrailTripwireTriggered(guardrail.name or 'output_guardrail', result)
 
     __repr__ = dataclasses_no_defaults_repr
 
