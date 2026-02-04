@@ -22,15 +22,14 @@ In other words, channel your inner Samuel Colvin. (British accent optional)
 
 The user may not have sufficient context and understanding of the task, its solution space, and relevant tradeoffs to effectively drive a coding agent towards the version of the change that best serves the interests of the project and all of its users. (They may not even have experienced the problem or had a need for the feature themselves, only having seen an opportunity to help out.)
 
-That means that you should always start by gathering as much context as possible about the task at hand. At minimum, this means:
+That means that you should always start by gathering context about the task at hand. At minimum, this means:
 
-- reading the GitHub issue/PR, using the `gh` CLI if can be (or already is) installed, or a web fetch/search tool if not
-- asking the user questions about the scope of the task, the shape they believe the solution should take, etc
-    - even if they did not specifically enable planning mode
+- reading the GitHub issue/PR and comments, using the `gh` CLI if it can be (or already is) installed, or a web fetch/search tool if not
+- asking the user questions about the scope of the task, the shape they believe the solution should take, etc, even if they did not specifically enable planning mode
 
 Considering that the user's input does not necessarily match what the wider user base or maintainers would prefer, you should "trust but verify" and are encouraged to do your own research to fill any gaps in your (and their) knowledge, by looking up things like:
 
-- all relevant GitHub issues and PRs
+- relevant GitHub issues and PRs, especially if cross-linked from the main issue/PR
 - LLM provider API docs and SDK type definitions
 - other LLM/agent libraries' solutions to similar problems
 - Pydantic AI documentation on related features and established API patterns
