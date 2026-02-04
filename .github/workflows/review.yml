@@ -1,7 +1,7 @@
 name: Auto Review
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened, synchronize, labeled]
 
 env:
   UV_PYTHON: 3.13
@@ -10,6 +10,7 @@ env:
 jobs:
 
   review:
+    if: contains(github.event.pull_request.labels.*.name, 'auto-review')
     runs-on: ubuntu-latest
     permissions:
       contents: read
