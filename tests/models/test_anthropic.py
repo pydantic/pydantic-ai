@@ -307,6 +307,45 @@ async def test_pause_turn_continues_run(allow_model_requests: None):
     assert content_blocks[0]['text'] == 'paused'
 
 
+async def test_pause_turn_web_search_vcr(allow_model_requests: None, anthropic_api_key: str):
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 4096}, max_tokens=15000)
+    agent = Agent(model, builtin_tools=[WebSearchTool()], model_settings=settings)
+
+    prompt = (
+        'Run a series of web searches to gather up-to-date context. '
+        'Do 6 separate searches, one at a time, and do not answer until all searches are complete. '
+        'Queries: '
+        '1) "San Francisco weather today", '
+        '2) "San Francisco sunrise time today", '
+        '3) "Golden Gate Bridge traffic today", '
+        '4) "San Francisco air quality today", '
+        '5) "San Francisco events this week", '
+        '6) "San Francisco ferry schedule today". '
+        '7) "prevailing information on quantum computing today", '
+        '8) "latest news on the stock market today", '
+        '9) "latest news on the weather in San Francisco today", '
+        '10) "latest news on the traffic in San Francisco today", '
+        '11) "latest news on the air quality in San Francisco today", '
+        '12) "latest news on the events in San Francisco this week", '
+        '13) "latest news on the ferry schedule in San Francisco today", '
+        '14) "latest news on the quantum computing in San Francisco today", '
+        '15) "latest news on the stock market in San Francisco today", '
+        'After the searches, provide a concise summary.'
+        'you can return a pause_turn response if you need to wait for the searches to complete.'
+    )
+
+    result = await agent.run(prompt)
+
+    pause_responses = [
+        m
+        for m in result.all_messages()
+        if isinstance(m, ModelResponse) and (m.provider_details or {}).get('finish_reason') == 'pause_turn'
+    ]
+    assert pause_responses, 'Expected a pause_turn response to be recorded in this cassette.'
+    assert all(r.finish_reason == 'incomplete' for r in pause_responses)
+
+
 async def test_async_request_prompt_caching(allow_model_requests: None):
     c = completion_message(
         [BetaTextBlock(text='world', type='text')],
