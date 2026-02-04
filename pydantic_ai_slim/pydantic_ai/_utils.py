@@ -549,8 +549,9 @@ def get_event_loop():
 
 # Optional JSON repair functionality
 try:
-    # fast_json_repair doesn't have type stubs, so pyright can't infer the type
-    from fast_json_repair import repair_json  # pyright: ignore[reportUnknownVariableType]
+    # fast_json_repair lacks py.typed marker, so we suppress the type warning on import
+    # and provide our own typed wrapper below
+    from fast_json_repair import repair_json as _repair_json  # pyright: ignore[reportUnknownVariableType]
 
     def maybe_repair_json(json_string: str) -> str:
         """Attempt to repair malformed JSON using fast_json_repair.
@@ -564,9 +565,8 @@ try:
         Returns:
             The repaired JSON string if repairs were made, otherwise the original string.
         """
-        result = repair_json(json_string, return_objects=False)
-        # repair_json returns str when return_objects=False
-        return str(result)
+        result: str = _repair_json(json_string, return_objects=False)
+        return result
 
 except ImportError as _import_error:
 
