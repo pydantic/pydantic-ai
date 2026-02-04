@@ -3356,7 +3356,6 @@ def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> Non
     assert result['data_converter'].payload_codec is codec
 
 
-
 def test_temporal_model_profile_with_no_provider_prefix() -> None:
     """Test TemporalModel uses DEFAULT_PROFILE when model string has no inferable provider."""
 
@@ -3373,7 +3372,6 @@ def test_temporal_model_profile_with_no_provider_prefix() -> None:
         assert temporal_model.profile is DEFAULT_PROFILE
 
 
-
 def test_temporal_model_profile_with_unknown_provider() -> None:
     """Test TemporalModel uses DEFAULT_PROFILE when provider is unknown."""
 
@@ -3388,7 +3386,6 @@ def test_temporal_model_profile_with_unknown_provider() -> None:
     # An unknown provider should return DEFAULT_PROFILE
     with temporal_model.using_model('unknown-provider:some-model'):
         assert temporal_model.profile is DEFAULT_PROFILE
-
 
 
 def test_temporal_model_prepare_request_with_unregistered_model_string() -> None:
