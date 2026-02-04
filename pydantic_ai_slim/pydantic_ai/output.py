@@ -218,7 +218,7 @@ class PromptedOutput(Generic[OutputDataT]):
     #> Device(name='MacBook', kind='laptop')
 
     agent = Agent(
-        'openai:gpt-5',
+        'openai:gpt-5.2',
         output_type=PromptedOutput(
             [Vehicle, Device],
             template='Gimme some JSON: {schema}'
@@ -280,7 +280,7 @@ class TextOutput(Generic[OutputDataT]):
 
 
     agent = Agent(
-        'openai:gpt-5',
+        'openai:gpt-5.2',
         output_type=TextOutput(split_into_words),
     )
     result = agent.run_sync('Who was Albert Einstein?')
@@ -316,7 +316,7 @@ def StructuredDict(
         'required': ['name', 'age']
     }
 
-    agent = Agent('openai:gpt-5', output_type=StructuredDict(schema))
+    agent = Agent('openai:gpt-5.2', output_type=StructuredDict(schema))
     result = agent.run_sync('Create a person')
     print(result.output)
     #> {'name': 'John Doe', 'age': 30}
