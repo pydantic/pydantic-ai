@@ -24,6 +24,7 @@ from pydantic_ai import (
     ThinkingPart,
     ThinkingPartDelta,
     ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
     VideoUrl,
 )
@@ -749,7 +750,6 @@ def test_tool_return_content_with_url_field_not_coerced_to_image_url():
     match any dict containing a 'url' key against ImageUrl (first union member),
     causing data loss.
     """
-    from pydantic_ai.messages import ToolReturnPart
 
     serialized_history = r"""[
       {
