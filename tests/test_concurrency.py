@@ -3,10 +3,10 @@
 # pyright: reportPrivateUsage=false, reportAttributeAccessIssue=false, reportUnknownMemberType=false, reportUnknownVariableType=false
 from __future__ import annotations
 
-import asyncio
 import importlib.util
 from typing import TYPE_CHECKING, Any
 
+import anyio
 import pytest
 
 from pydantic_ai import Agent, ConcurrencyLimit, ConcurrencyLimiter, ConcurrencyLimitExceeded
@@ -21,6 +21,23 @@ logfire_installed = importlib.util.find_spec('logfire') is not None
 pytestmark = pytest.mark.anyio
 
 
+class AsyncBarrier:
+    """A simple asyncio.Barrier-like implementation compatible with Python 3.10 using anyio."""
+
+    def __init__(self, parties: int):
+        self._parties = parties
+        self._count = 0
+        self._lock = anyio.Lock()
+        self._event = anyio.Event()
+
+    async def wait(self) -> None:
+        async with self._lock:
+            self._count += 1
+            if self._count >= self._parties:
+                self._event.set()
+        await self._event.wait()
+
+
 class TestConcurrencyLimiter:
     """Tests for the ConcurrencyLimiter class."""
 
@@ -32,13 +49,14 @@ class TestConcurrencyLimiter:
         async def acquire_and_hold(id: int, hold_time: float):
             async with get_concurrency_context(limiter, 'test'):
                 acquired.append(id)
-                await asyncio.sleep(hold_time)
+                await anyio.sleep(hold_time)
 
         # Start 3 tasks with limit of 2
-        tasks = [asyncio.create_task(acquire_and_hold(i, 0.1)) for i in range(3)]
-        await asyncio.sleep(0.05)
-        assert len(acquired) == 2  # Only 2 can proceed
-        await asyncio.gather(*tasks)
+        async with anyio.create_task_group() as tg:
+            for i in range(3):
+                tg.start_soon(acquire_and_hold, i, 0.1)
+            await anyio.sleep(0.05)
+            assert len(acquired) == 2  # Only 2 can proceed
         assert len(acquired) == 3
 
     async def test_nowait_acquisition(self):
@@ -51,58 +69,58 @@ class TestConcurrencyLimiter:
     async def test_waiting_count_tracking(self):
         """Test that waiting_count is accurately tracked."""
         limiter = ConcurrencyLimiter(max_running=1)
-        started = asyncio.Event()
-        release = asyncio.Event()
+        started = anyio.Event()
+        release = anyio.Event()
 
         async def holder():
             async with get_concurrency_context(limiter, 'test'):
                 started.set()
                 await release.wait()
 
-        task = asyncio.create_task(holder())
-        await started.wait()
-
-        # Now limiter is held, check waiting count as we add waiters
-        assert limiter.waiting_count == 0
-
         async def waiter():
             async with get_concurrency_context(limiter, 'test'):
                 pass
 
-        waiter_tasks = [asyncio.create_task(waiter()) for _ in range(3)]
-        await asyncio.sleep(0.01)
-        assert limiter.waiting_count == 3
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(holder)
+            await started.wait()
 
-        release.set()
-        await task
-        await asyncio.gather(*waiter_tasks)
+            # Now limiter is held, check waiting count as we add waiters
+            assert limiter.waiting_count == 0
+
+            for _ in range(3):
+                tg.start_soon(waiter)
+            await anyio.sleep(0.01)
+            assert limiter.waiting_count == 3
+
+            release.set()
         assert limiter.waiting_count == 0
 
     async def test_backpressure_raises(self):
         """Test that exceeding max_queued raises ConcurrencyLimitExceeded."""
         limiter = ConcurrencyLimiter(max_running=1, max_queued=2)
-        hold = asyncio.Event()
+        hold = anyio.Event()
 
         async def holder():
             async with get_concurrency_context(limiter, 'test'):
                 await hold.wait()
 
-        # Fill the running slot
-        task = asyncio.create_task(holder())
-        await asyncio.sleep(0.01)
+        async with anyio.create_task_group() as tg:
+            # Fill the running slot
+            tg.start_soon(holder)
+            await anyio.sleep(0.01)
 
-        # Fill the queue (2 allowed)
-        waiter1 = asyncio.create_task(holder())
-        waiter2 = asyncio.create_task(holder())
-        await asyncio.sleep(0.01)
+            # Fill the queue (2 allowed)
+            tg.start_soon(holder)
+            tg.start_soon(holder)
+            await anyio.sleep(0.01)
 
-        # This should raise - queue is full
-        with pytest.raises(ConcurrencyLimitExceeded):
-            async with get_concurrency_context(limiter, 'test'):
-                pass
+            # This should raise - queue is full
+            with pytest.raises(ConcurrencyLimitExceeded):
+                async with get_concurrency_context(limiter, 'test'):
+                    pass
 
-        hold.set()
-        await asyncio.gather(task, waiter1, waiter2)
+            hold.set()
 
     async def test_backpressure_race_condition(self):
         """Test that max_queued is enforced atomically under concurrent load.
@@ -112,23 +130,19 @@ class TestConcurrencyLimiter:
         waiting on the limiter.
         """
         limiter = ConcurrencyLimiter(max_running=1, max_queued=1)
-        hold = asyncio.Event()
-        started = asyncio.Event()
+        hold = anyio.Event()
+        started = anyio.Event()
 
         async def holder():
             async with get_concurrency_context(limiter, 'holder'):
                 started.set()
                 await hold.wait()
 
-        # Fill the running slot and wait for it to be held
-        task = asyncio.create_task(holder())
-        await started.wait()
-
         # Now launch multiple tasks simultaneously that all try to queue.
         # With max_queued=1, exactly one should succeed in queuing.
         num_concurrent = 5
         results: list[str] = []
-        barrier = asyncio.Barrier(num_concurrent)
+        barrier = AsyncBarrier(num_concurrent)
 
         async def try_acquire(idx: int):
             # Use barrier to ensure all tasks try to acquire at the same time
@@ -139,13 +153,18 @@ class TestConcurrencyLimiter:
             except ConcurrencyLimitExceeded:
                 results.append(f'rejected-{idx}')
 
-        # Launch all tasks simultaneously
-        tasks = [asyncio.create_task(try_acquire(i)) for i in range(num_concurrent)]
-        await asyncio.sleep(0.1)  # Give tasks time to hit the barrier and try to acquire
+        async with anyio.create_task_group() as tg:
+            # Fill the running slot and wait for it to be held
+            tg.start_soon(holder)
+            await started.wait()
 
-        # Release the holder
-        hold.set()
-        await asyncio.gather(task, *tasks)
+            # Launch all tasks simultaneously
+            for i in range(num_concurrent):
+                tg.start_soon(try_acquire, i)
+            await anyio.sleep(0.1)  # Give tasks time to hit the barrier and try to acquire
+
+            # Release the holder
+            hold.set()
 
         # Verify: exactly one task should have been allowed to queue and acquire
         # The rest should have been rejected
@@ -208,7 +227,7 @@ class TestAgentConcurrency:
         agent = Agent(TestModel(), max_concurrency=2)
         running = 0
         max_running = 0
-        lock = asyncio.Lock()
+        lock = anyio.Lock()
 
         @agent.tool_plain
         async def slow_tool() -> str:
@@ -216,14 +235,20 @@ class TestAgentConcurrency:
             async with lock:
                 running += 1
                 max_running = max(max_running, running)
-            await asyncio.sleep(0.1)
+            await anyio.sleep(0.1)
             async with lock:
                 running -= 1
             return 'done'
 
-        results = await asyncio.gather(
-            *[agent.run('call slow_tool', model=TestModel(call_tools=['slow_tool'])) for _ in range(5)]
-        )
+        results: list[Any] = []
+
+        async def run_agent():
+            result = await agent.run('call slow_tool', model=TestModel(call_tools=['slow_tool']))
+            results.append(result)
+
+        async with anyio.create_task_group() as tg:
+            for _ in range(5):
+                tg.start_soon(run_agent)
 
         assert max_running <= 2
         assert len(results) == 5
@@ -231,24 +256,27 @@ class TestAgentConcurrency:
     async def test_agent_concurrency_backpressure(self):
         """Test that agent raises when queue exceeds max_queued."""
         agent = Agent(TestModel(), max_concurrency=ConcurrencyLimit(max_running=1, max_queued=1))
-        hold = asyncio.Event()
+        hold = anyio.Event()
 
         @agent.tool_plain
         async def hold_tool() -> str:
             await hold.wait()
             return 'done'
 
-        # Start 2 runs (1 running + 1 queued = at limit)
-        task1 = asyncio.create_task(agent.run('x', model=TestModel(call_tools=['hold_tool'])))
-        task2 = asyncio.create_task(agent.run('x', model=TestModel(call_tools=['hold_tool'])))
-        await asyncio.sleep(0.05)
-
-        # Third should raise
-        with pytest.raises(ConcurrencyLimitExceeded):
+        async def run_agent():
             await agent.run('x', model=TestModel(call_tools=['hold_tool']))
 
-        hold.set()
-        await asyncio.gather(task1, task2)
+        async with anyio.create_task_group() as tg:
+            # Start 2 runs (1 running + 1 queued = at limit)
+            tg.start_soon(run_agent)
+            tg.start_soon(run_agent)
+            await anyio.sleep(0.05)
+
+            # Third should raise
+            with pytest.raises(ConcurrencyLimitExceeded):
+                await agent.run('x', model=TestModel(call_tools=['hold_tool']))
+
+            hold.set()
 
     async def test_agent_no_limit_by_default(self):
         """Test that agents have no concurrency limit by default."""
@@ -279,7 +307,7 @@ class TestConcurrencyLimitedModel:
 
         request_count = 0
         max_concurrent = 0
-        lock = asyncio.Lock()
+        lock = anyio.Lock()
 
         base_model = TestModel()
         original_request = TestModel.request.__get__(base_model)
@@ -290,7 +318,7 @@ class TestConcurrencyLimitedModel:
                 request_count += 1
                 max_concurrent = max(max_concurrent, request_count)
             try:
-                await asyncio.sleep(0.1)  # Simulate slow request
+                await anyio.sleep(0.1)  # Simulate slow request
                 return await original_request(*args, **kwargs)
             finally:
                 async with lock:
@@ -301,7 +329,9 @@ class TestConcurrencyLimitedModel:
         model = ConcurrencyLimitedModel(base_model, limiter=2)
         agent = Agent(model)
 
-        await asyncio.gather(*[agent.run(f'prompt {i}') for i in range(5)])
+        async with anyio.create_task_group() as tg:
+            for i in range(5):
+                tg.start_soon(agent.run, f'prompt {i}')
 
         assert max_concurrent <= 2
 
@@ -339,7 +369,7 @@ class TestConcurrencyLimitedModel:
 
         request_count = 0
         max_concurrent = 0
-        lock = asyncio.Lock()
+        lock = anyio.Lock()
 
         shared_limiter = ConcurrencyLimiter(max_running=2)
 
@@ -353,7 +383,7 @@ class TestConcurrencyLimitedModel:
                     request_count += 1
                     max_concurrent = max(max_concurrent, request_count)
                 try:
-                    await asyncio.sleep(0.1)
+                    await anyio.sleep(0.1)
                     return await original_request(*args, **kwargs)
                 finally:
                     async with lock:
@@ -369,10 +399,11 @@ class TestConcurrencyLimitedModel:
         agent2 = Agent(model2)
 
         # Run 3 requests on each agent (6 total), but limit is 2
-        await asyncio.gather(
-            *[agent1.run(f'prompt {i}') for i in range(3)],
-            *[agent2.run(f'prompt {i}') for i in range(3)],
-        )
+        async with anyio.create_task_group() as tg:
+            for i in range(3):
+                tg.start_soon(agent1.run, f'prompt {i}')
+            for i in range(3):
+                tg.start_soon(agent2.run, f'prompt {i}')
 
         # Should never exceed 2 concurrent requests across both models
         assert max_concurrent <= 2
@@ -442,27 +473,26 @@ class TestConcurrencyLimiterName:
     async def test_named_limiter_waiting_adds_limiter_name_attribute(self, capfire: CaptureLogfire):
         """Test that waiting with a named limiter adds limiter_name to span attributes."""
         limiter = ConcurrencyLimiter(max_running=1, name='test-pool')
-        hold = asyncio.Event()
+        hold = anyio.Event()
 
         async def holder():
             async with get_concurrency_context(limiter, 'test-source'):
                 await hold.wait()
-
-        # Start holder to occupy the slot
-        task = asyncio.create_task(holder())
-        await asyncio.sleep(0.01)
 
         # Start a waiter - this will trigger the span with limiter_name attribute
         async def waiter():
             async with get_concurrency_context(limiter, 'test-source'):
                 pass
 
-        waiter_task = asyncio.create_task(waiter())
-        await asyncio.sleep(0.01)
+        async with anyio.create_task_group() as tg:
+            # Start holder to occupy the slot
+            tg.start_soon(holder)
+            await anyio.sleep(0.01)
 
-        hold.set()
-        await task
-        await waiter_task
+            tg.start_soon(waiter)
+            await anyio.sleep(0.01)
+
+            hold.set()
 
         # Verify span was created with the correct attributes
         spans = capfire.exporter.exported_spans_as_dict()
@@ -479,25 +509,24 @@ class TestConcurrencyLimiterName:
     async def test_unnamed_limiter_waiting_uses_source_in_span_name(self, capfire: CaptureLogfire):
         """Test that waiting without a limiter name uses source for span name."""
         limiter = ConcurrencyLimiter(max_running=1)  # No name
-        hold = asyncio.Event()
+        hold = anyio.Event()
 
         async def holder():
             async with get_concurrency_context(limiter, 'model:gpt-4'):
                 await hold.wait()
 
-        task = asyncio.create_task(holder())
-        await asyncio.sleep(0.01)
-
         async def waiter():
             async with get_concurrency_context(limiter, 'model:gpt-4'):
                 pass
 
-        waiter_task = asyncio.create_task(waiter())
-        await asyncio.sleep(0.01)
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(holder)
+            await anyio.sleep(0.01)
 
-        hold.set()
-        await task
-        await waiter_task
+            tg.start_soon(waiter)
+            await anyio.sleep(0.01)
+
+            hold.set()
 
         # Verify span uses source in name when limiter has no name
         spans = capfire.exporter.exported_spans_as_dict()
@@ -513,25 +542,24 @@ class TestConcurrencyLimiterName:
     async def test_limiter_with_max_queued_includes_attribute_in_span(self, capfire: CaptureLogfire):
         """Test that max_queued is included in span attributes when set."""
         limiter = ConcurrencyLimiter(max_running=1, max_queued=5, name='queued-pool')
-        hold = asyncio.Event()
+        hold = anyio.Event()
 
         async def holder():
             async with get_concurrency_context(limiter, 'test'):
                 await hold.wait()
 
-        task = asyncio.create_task(holder())
-        await asyncio.sleep(0.01)
-
         async def waiter():
             async with get_concurrency_context(limiter, 'test'):
                 pass
 
-        waiter_task = asyncio.create_task(waiter())
-        await asyncio.sleep(0.01)
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(holder)
+            await anyio.sleep(0.01)
 
-        hold.set()
-        await task
-        await waiter_task
+            tg.start_soon(waiter)
+            await anyio.sleep(0.01)
+
+            hold.set()
 
         # Verify max_queued is in span attributes
         spans = capfire.exporter.exported_spans_as_dict()
