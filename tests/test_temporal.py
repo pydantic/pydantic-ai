@@ -10,13 +10,16 @@ from datetime import timedelta
 from typing import Any, Literal
 
 import pytest
+from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
     AgentRunResultEvent,
     AgentStreamEvent,
+    BinaryContent,
     BinaryImage,
+    DocumentUrl,
     ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -26,6 +29,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelSettings,
+    MultiModalContent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -318,7 +322,7 @@ class ComplexAgentWorkflow:
 @dataclass
 class BasicSpan:
     content: str
-    children: list[BasicSpan] = field(default_factory=list)
+    children: list[BasicSpan] = field(default_factory=list['BasicSpan'])
     parent_id: int | None = field(repr=False, compare=False, default=None)
 
 
@@ -394,22 +398,22 @@ async def test_complex_agent_run_in_workflow(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=1'),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","id":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","id":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":"tool-call","event_kind":"part_end"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":"tool-call","event_kind":"part_end"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","id":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":"tool-call","event_kind":"part_start"}'
+                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":"tool-call","event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":1,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":1,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","id":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
+                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
                                                 ),
                                             ],
                                         )
@@ -425,7 +429,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","id":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                            content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -439,7 +443,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","id":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                            content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -513,28 +517,28 @@ async def test_complex_agent_run_in_workflow(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=2'),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","id":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"city","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"city","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Mexico","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Mexico","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","id":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
                                                 ),
                                             ],
                                         )
@@ -550,7 +554,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","id":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                            content='{"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -607,133 +611,133 @@ async def test_complex_agent_run_in_workflow(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=3'),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","id":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
+                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"tool_name":"final_result","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","event_kind":"final_result"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answers","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answers","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":[","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":[","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Capital","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Capital","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" of","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" of","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" the","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" the","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" country","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" country","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Mexico","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Mexico","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"},{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"},{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Weather","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Weather","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" in","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" in","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" the","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" the","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" capital","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" capital","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Sunny","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Sunny","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"},{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"},{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Product","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Product","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" Name","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" Name","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"P","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"P","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"yd","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"yd","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"antic","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"antic","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" AI","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" AI","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"]}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"]}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","id":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
+                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
                                                 ),
                                             ],
                                         )
@@ -2374,6 +2378,52 @@ async def test_image_agent(allow_model_requests: None, client: Client):
             )
 
 
+# ============================================================================
+# DocumentUrl Serialization Test - Verifies that DocumentUrl with custom
+# media_type is properly serialized through Temporal activities
+# ============================================================================
+
+document_url_agent = Agent(
+    TestModel(custom_output_args={'url': 'https://example.com/doc/12345', 'media_type': 'application/pdf'}),
+    name='document_url_agent',
+    output_type=DocumentUrl,
+)
+
+document_url_temporal_agent = TemporalAgent(document_url_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class DocumentUrlAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> DocumentUrl:
+        result = await document_url_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_document_url_serialization_preserves_media_type(allow_model_requests: None, client: Client):
+    """Test that `DocumentUrl` with custom `media_type` is preserved through Temporal serialization.
+
+    This is a regression test for https://github.com/pydantic/pydantic-ai/issues/3949
+    where `DocumentUrl.media_type` (a computed field) was lost during Temporal activity
+    serialization because the backing field `_media_type` was excluded from serialization.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DocumentUrlAgentWorkflow],
+        plugins=[AgentPlugin(document_url_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            DocumentUrlAgentWorkflow.run,
+            args=['Return a document'],
+            id=DocumentUrlAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot(
+            DocumentUrl(url='https://example.com/doc/12345', _media_type='application/pdf', _identifier='eb8998')
+        )
+
+
 # Can't use the `openai_api_key` fixture here because the workflow needs to be defined at the top level of the file.
 web_search_model = OpenAIResponsesModel(
     'gpt-5',
@@ -2526,7 +2576,7 @@ async def test_fastmcp_toolset(allow_model_requests: None, client: Client):
 class GraphState:
     """State for the graph execution test."""
 
-    values: list[int] = field(default_factory=list)
+    values: list[int] = field(default_factory=list[int])
 
 
 # Create a graph with parallel execution using the beta API
@@ -3103,3 +3153,151 @@ def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> Non
         result = plugin.configure_client(config)  # type: ignore[arg-type]
     assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
     assert result['data_converter'].payload_codec is codec
+
+
+# Tests for BinaryContent and DocumentUrl serialization in Temporal
+# This is a regression test for #3702 (BinaryContent) and verifies that FileUrl
+# instances (like DocumentUrl) with explicit media_type are properly preserved.
+
+
+multimodal_content_agent = Agent(TestModel(), name='multimodal_content_agent')
+
+
+@multimodal_content_agent.tool
+def get_multimodal_content(ctx: RunContext[None]) -> list[str | MultiModalContent]:
+    """Return a list with text, BinaryContent, and DocumentUrl."""
+    return [
+        'test',
+        BinaryImage(data=b'\x89PNG', media_type='image/png'),
+        # URL doesn't hint at media type, so media_type must be specified explicitly
+        DocumentUrl(url='https://example.com/doc/12345', media_type='application/pdf'),
+    ]
+
+
+multimodal_content_temporal_agent = TemporalAgent(multimodal_content_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class MultiModalContentWorkflow:
+    @workflow.run
+    async def run(self, prompt: list[str | MultiModalContent]) -> list[ModelMessage]:
+        result = await multimodal_content_temporal_agent.run(prompt)
+        return result.all_messages()
+
+
+async def test_multimodal_content_serialization_in_workflow(client: Client):
+    """Test that BinaryContent and DocumentUrl survive Temporal serialization.
+
+    This tests both:
+    1. Passing BinaryContent and DocumentUrl as input to agent.run (workflow→activity)
+    2. Returning BinaryContent and DocumentUrl from a tool (activity→workflow)
+
+    BinaryContent is serialized with base64 encoding. DocumentUrl requires explicit
+    media_type since it cannot be inferred from the URL.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MultiModalContentWorkflow],
+        plugins=[AgentPlugin(multimodal_content_temporal_agent)],
+    ):
+        # Pass both BinaryContent and DocumentUrl as input
+        prompt: list[str | MultiModalContent] = [
+            'Process these files and call the tool',
+            BinaryImage(data=b'\x89PNG', media_type='image/png'),
+            DocumentUrl(url='https://example.com/doc/12345', media_type='application/pdf'),
+        ]
+        messages = await client.execute_workflow(
+            MultiModalContentWorkflow.run,
+            args=[prompt],
+            id='test_multimodal_content_serialization',
+            task_queue=TASK_QUEUE,
+        )
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content=[
+                                'Process these files and call the tool',
+                                BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'),
+                                DocumentUrl(
+                                    url='https://example.com/doc/12345',
+                                    _media_type='application/pdf',
+                                    _identifier='eb8998',
+                                ),
+                            ],
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_multimodal_content',
+                            args={},
+                            tool_call_id='pyd_ai_tool_call_id__get_multimodal_content',
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=61, output_tokens=2),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='get_multimodal_content',
+                            content=['test', 'See file 4effda', 'See file eb8998'],
+                            tool_call_id='pyd_ai_tool_call_id__get_multimodal_content',
+                            timestamp=IsDatetime(),
+                        ),
+                        UserPromptPart(
+                            content=[
+                                'This is file 4effda:',
+                                BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'),
+                                'This is file eb8998:',
+                                DocumentUrl(
+                                    url='https://example.com/doc/12345',
+                                    _media_type='application/pdf',
+                                    _identifier='eb8998',
+                                ),
+                            ],
+                            timestamp=IsDatetime(),
+                        ),
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"get_multimodal_content":["test","See file 4effda","See file eb8998"]}')],
+                    usage=RequestUsage(input_tokens=84, output_tokens=13),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+        # Explicitly verify that media_type is preserved through serialization for both
+        # BinaryContent and DocumentUrl. This is important because _media_type has compare=False
+        # on DocumentUrl, so the snapshot comparison doesn't actually verify it. The media_type
+        # cannot be inferred from the URL, so if serialization loses it, accessing media_type
+        # would raise an error.
+        media_types = [
+            (type(content).__name__, content.media_type)
+            for message in messages
+            for part in message.parts
+            if isinstance(part, UserPromptPart)
+            for content in part.content
+            if isinstance(content, (BinaryContent, DocumentUrl))
+        ]
+        # Should have 4 items: 2 BinaryContent (input + tool return) and 2 DocumentUrl (input + tool return)
+        assert media_types == [
+            ('BinaryContent', 'image/png'),
+            ('DocumentUrl', 'application/pdf'),
+            ('BinaryContent', 'image/png'),
+            ('DocumentUrl', 'application/pdf'),
+        ]

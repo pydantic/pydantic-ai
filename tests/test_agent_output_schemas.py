@@ -236,8 +236,9 @@ async def test_image_output_json_schema():
     agent = Agent('test', output_type=BinaryImage)
     assert agent.output_json_schema() == snapshot(
         {
+            'description': "Binary content that's guaranteed to be an image.",
             'properties': {
-                'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
+                'data': {'format': 'base64url', 'title': 'Data', 'type': 'string'},
                 'media_type': {
                     'anyOf': [
                         {
@@ -302,8 +303,9 @@ distinguish multiple files.\
                 {'type': 'string'},
                 {'type': 'boolean'},
                 {
+                    'description': "Binary content that's guaranteed to be an image.",
                     'properties': {
-                        'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
+                        'data': {'format': 'base64url', 'title': 'Data', 'type': 'string'},
                         'media_type': {
                             'anyOf': [
                                 {
@@ -413,6 +415,11 @@ async def test_deferred_output_json_schema():
                         },
                         'tool_call_id': {'title': 'Tool Call Id', 'type': 'string'},
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Id'},
+                        'provider_name': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Provider Name',
+                        },
                         'provider_details': {
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
@@ -439,8 +446,9 @@ async def test_deferred_output_json_schema():
         {
             'anyOf': [
                 {
+                    'description': "Binary content that's guaranteed to be an image.",
                     'properties': {
-                        'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
+                        'data': {'format': 'base64url', 'title': 'Data', 'type': 'string'},
                         'media_type': {
                             'anyOf': [
                                 {
@@ -532,6 +540,11 @@ distinguish multiple files.\
                         },
                         'tool_call_id': {'title': 'Tool Call Id', 'type': 'string'},
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Id'},
+                        'provider_name': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Provider Name',
+                        },
                         'provider_details': {
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,

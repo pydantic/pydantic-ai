@@ -3,10 +3,11 @@ from __future__ import annotations as _annotations
 import os
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, overload
 
 from pydantic_ai import ModelProfile
+from pydantic_ai.builtin_tools import CodeExecutionTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
@@ -46,12 +47,16 @@ class BedrockModelProfile(ModelProfile):
 
 def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Amazon model used via Bedrock."""
-    profile = amazon_model_profile(model_name)
+    profile = _without_builtin_tools(amazon_model_profile(model_name))
     if 'nova' in model_name:
-        return BedrockModelProfile(
+        profile = BedrockModelProfile(
             bedrock_supports_tool_choice=True,
             bedrock_supports_prompt_caching=True,
         ).update(profile)
+
+    if 'nova-2' in model_name:
+        profile.supported_builtin_tools = frozenset({CodeExecutionTool})
+
     return profile
 
 
@@ -65,6 +70,26 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
 
 # Known geo prefixes for cross-region inference profile IDs
 BEDROCK_GEO_PREFIXES: tuple[str, ...] = ('us', 'eu', 'apac', 'jp', 'au', 'ca', 'global', 'us-gov')
+
+
+def remove_bedrock_geo_prefix(model_name: str) -> str:
+    """Remove inference geographic prefix from model ID if present.
+
+    Bedrock supports cross-region inference using geographic prefixes like
+    'us.', 'eu.', 'apac.', etc. This function strips those prefixes.
+
+    Example:
+        'us.amazon.titan-embed-text-v2:0' -> 'amazon.titan-embed-text-v2:0'
+        'amazon.titan-embed-text-v2:0' -> 'amazon.titan-embed-text-v2:0'
+    """
+    for prefix in BEDROCK_GEO_PREFIXES:
+        if model_name.startswith(f'{prefix}.'):
+            return model_name.removeprefix(f'{prefix}.')
+    return model_name
+
+
+def _without_builtin_tools(profile: ModelProfile | None) -> ModelProfile:
+    return replace(profile or BedrockModelProfile(), supported_builtin_tools=frozenset())
 
 
 class BedrockProvider(Provider[BaseClient]):
@@ -89,14 +114,14 @@ class BedrockProvider(Provider[BaseClient]):
                 bedrock_send_back_thinking_parts=True,
                 bedrock_supports_prompt_caching=True,
                 bedrock_supports_tool_caching=True,
-            ).update(anthropic_model_profile(model_name)),
+            ).update(_without_builtin_tools(anthropic_model_profile(model_name))),
             'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json').update(
-                mistral_model_profile(model_name)
+                _without_builtin_tools(mistral_model_profile(model_name))
             ),
-            'cohere': cohere_model_profile,
+            'cohere': lambda model_name: _without_builtin_tools(cohere_model_profile(model_name)),
             'amazon': bedrock_amazon_model_profile,
-            'meta': meta_model_profile,
-            'deepseek': bedrock_deepseek_model_profile,
+            'meta': lambda model_name: _without_builtin_tools(meta_model_profile(model_name)),
+            'deepseek': lambda model_name: _without_builtin_tools(bedrock_deepseek_model_profile(model_name)),
         }
 
         # Split the model name into parts
@@ -200,7 +225,7 @@ class BedrockProvider(Provider[BaseClient]):
                         profile_name=profile_name,
                     )
                     config['signature_version'] = 'bearer'
-                else:
+                else:  # pragma: lax no cover
                     session = boto3.Session(
                         aws_access_key_id=aws_access_key_id,
                         aws_secret_access_key=aws_secret_access_key,

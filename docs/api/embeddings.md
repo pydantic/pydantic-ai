@@ -12,6 +12,12 @@
 
 ::: pydantic_ai.embeddings.cohere
 
+::: pydantic_ai.embeddings.google
+
+::: pydantic_ai.embeddings.bedrock
+
+::: pydantic_ai.embeddings.voyageai
+
 ::: pydantic_ai.embeddings.sentence_transformers
 
 ::: pydantic_ai.embeddings.test
