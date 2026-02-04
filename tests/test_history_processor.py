@@ -19,7 +19,6 @@ from pydantic_ai import (
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
 
@@ -145,6 +144,7 @@ async def test_history_processor_run_replaces_message_history(
             ModelRequest(
                 parts=[SystemPromptPart(content='Processed answer', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -155,7 +155,7 @@ async def test_history_processor_run_replaces_message_history(
             ),
         ]
     )
-    assert result.new_messages() == result.all_messages()[-2:]
+    assert result.new_messages() == result.all_messages()
 
 
 async def test_history_processor_streaming_replaces_message_history(
@@ -209,6 +209,7 @@ async def test_history_processor_streaming_replaces_message_history(
             ModelRequest(
                 parts=[SystemPromptPart(content='Processed answer', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='hello')],
@@ -219,7 +220,7 @@ async def test_history_processor_streaming_replaces_message_history(
             ),
         ]
     )
-    assert result.new_messages() == result.all_messages()[-2:]
+    assert result.new_messages() == result.all_messages()
 
 
 async def test_history_processor_messages_sent_to_provider(
@@ -326,6 +327,7 @@ async def test_multiple_history_processors(function_model: FunctionModel, receiv
             ModelRequest(
                 parts=[UserPromptPart(content='[SECOND] [FIRST] New question', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -352,6 +354,7 @@ async def test_multiple_history_processors(function_model: FunctionModel, receiv
                     )
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -536,6 +539,7 @@ async def test_history_processor_with_context(function_model: FunctionModel, rec
                     )
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             )
         ]
     )
@@ -550,6 +554,7 @@ async def test_history_processor_with_context(function_model: FunctionModel, rec
                     )
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -695,6 +700,7 @@ async def test_history_processor_mixed_signatures(function_model: FunctionModel,
                     )
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -735,6 +741,7 @@ async def test_history_processor_replace_messages(function_model: FunctionModel,
                     )
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             )
         ]
     )
@@ -749,6 +756,7 @@ async def test_history_processor_replace_messages(function_model: FunctionModel,
                     )
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -884,7 +892,6 @@ async def test_callable_class_history_processor_with_ctx_no_op(
     assert result.new_messages() == result.all_messages()[-2:]
 
 
-@pytest.mark.xfail(reason='See https://github.com/pydantic/pydantic-ai/issues/3983')
 async def test_new_messages_index_during_iter_with_pruning():
     """
     Test flow:
@@ -897,7 +904,18 @@ async def test_new_messages_index_during_iter_with_pruning():
     def keep_last_2(messages: list[ModelMessage]) -> list[ModelMessage]:
         return messages[-2:] if len(messages) > 2 else messages
 
-    agent = Agent(model=TestModel(custom_output_text='done'), history_processors=[keep_last_2])
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='tool_call_1')],
+            )
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(model=FunctionModel(model_function, model_name='test'), history_processors=[keep_last_2])
 
     @agent.tool
     async def my_tool(ctx: RunContext[None]) -> str:
@@ -948,7 +966,6 @@ async def test_new_messages_index_during_iter_with_pruning():
     assert result.new_messages() == result.all_messages()
 
 
-@pytest.mark.xfail(reason='See https://github.com/pydantic/pydantic-ai/issues/3983')
 async def test_new_messages_index_during_iter_with_pruning_and_history():
     """
     Test flow with history:
@@ -962,7 +979,18 @@ async def test_new_messages_index_during_iter_with_pruning_and_history():
     def keep_last_2(messages: list[ModelMessage]) -> list[ModelMessage]:
         return messages[-2:] if len(messages) > 2 else messages
 
-    agent = Agent(model=TestModel(custom_output_text='done'), history_processors=[keep_last_2])
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='tool_call_1')],
+            )
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(model=FunctionModel(model_function, model_name='test'), history_processors=[keep_last_2])
 
     @agent.tool
     async def my_tool(ctx: RunContext[None]) -> str:
@@ -989,7 +1017,7 @@ async def test_new_messages_index_during_iter_with_pruning_and_history():
         [
             ModelResponse(
                 parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -1018,7 +1046,6 @@ async def test_new_messages_index_during_iter_with_pruning_and_history():
     assert result.new_messages() == result.all_messages()
 
 
-@pytest.mark.xfail(reason='See https://github.com/pydantic/pydantic-ai/issues/3983')
 async def test_history_processor_reorder_old_new(function_model: FunctionModel, received_messages: list[ModelMessage]):
     """
     Test flow:
@@ -1070,6 +1097,7 @@ async def test_history_processor_reorder_old_new(function_model: FunctionModel, 
                     UserPromptPart(content='Old question', timestamp=IsDatetime()),
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -1097,6 +1125,7 @@ async def test_history_processor_reorder_old_new(function_model: FunctionModel, 
                     UserPromptPart(content='Old question', timestamp=IsDatetime()),
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -1109,7 +1138,6 @@ async def test_history_processor_reorder_old_new(function_model: FunctionModel, 
     )
 
 
-@pytest.mark.xfail(reason='See https://github.com/pydantic/pydantic-ai/issues/3983')
 async def test_history_processor_injects_into_new_stream(
     function_model: FunctionModel, received_messages: list[ModelMessage]
 ):
@@ -1117,13 +1145,17 @@ async def test_history_processor_injects_into_new_stream(
     Test flow:
     1. Start with history: [ModelRequest('Old')]
     2. User adds: 'New question' -> Internal history: [ModelRequest('Old'), ModelRequest('New')]
-    3. Processor `inject_middle` inserts 'Inserted' before the last message -> Internal history: [ModelRequest('Old'), ModelRequest('Inserted'), ModelRequest('New')]
+    3. Processor `inject_middle` inserts 'Inserted' before the last message(which is the first message of current run) -> Internal history: [ModelRequest('Old'), ModelRequest('Inserted'), ModelRequest('New')]
     4. Model generates response -> Final history: [ModelRequest('Old'), ModelRequest('Inserted'), ModelRequest('New'), ModelResponse('Provider response')]
     5. `new_messages()` should return messages from this run. [ModelRequest('Inserted'), ModelRequest('New'), ModelResponse('Provider response')]
     """
 
-    def inject_middle(messages: list[ModelMessage]) -> list[ModelMessage]:
-        return messages[:-1] + [ModelRequest(parts=[UserPromptPart(content='Inserted')])] + messages[-1:]
+    def inject_middle(ctx: RunContext[Any], messages: list[ModelMessage]) -> list[ModelMessage]:
+        return (
+            messages[:-1]
+            + [ModelRequest(parts=[UserPromptPart(content='Inserted')], run_id=ctx.run_id)]
+            + messages[-1:]
+        )
 
     agent = Agent(function_model, history_processors=[inject_middle])
 
@@ -1151,13 +1183,13 @@ async def test_history_processor_injects_into_new_stream(
             ModelRequest(
                 parts=[
                     UserPromptPart(content='Old', timestamp=IsDatetime()),
-                ],
-                timestamp=IsDatetime(),
+                ]
             ),
             ModelRequest(
                 parts=[
                     UserPromptPart(content='Inserted', timestamp=IsDatetime()),
                 ],
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1177,7 +1209,7 @@ async def test_history_processor_injects_into_new_stream(
     )
 
     new_msgs = result.new_messages()
-    # Expected behavior: Messages injected by history processor during THIS run should be included
+    # Expected behavior: Messages injected by history processor before the first message of the current run should always have a run_id
     # 'Inserted' was injected by the processor, 'New question' is from this run
     assert new_msgs == snapshot(
         [
@@ -1185,6 +1217,7 @@ async def test_history_processor_injects_into_new_stream(
                 parts=[
                     UserPromptPart(content='Inserted', timestamp=IsDatetime()),
                 ],
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
