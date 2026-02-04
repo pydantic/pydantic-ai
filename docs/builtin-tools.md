@@ -40,7 +40,7 @@ async def prepared_web_search(ctx: RunContext[dict]) -> WebSearchTool | None:
     )
 
 agent = Agent(
-    'openai-responses:gpt-5',
+    'openai-responses:gpt-5.2',
     builtin_tools=[prepared_web_search],
     deps_type=dict,
 )
@@ -88,7 +88,7 @@ making it ideal for queries that require up-to-date data.
 ```py {title="web_search_anthropic.py"}
 from pydantic_ai import Agent, WebSearchTool
 
-agent = Agent('anthropic:claude-sonnet-4-0', builtin_tools=[WebSearchTool()])
+agent = Agent('anthropic:claude-sonnet-4-5', builtin_tools=[WebSearchTool()])
 
 result = agent.run_sync('Give me a sentence with the biggest news in AI this week.')
 print(result.output)
@@ -102,7 +102,7 @@ With OpenAI, you must use their Responses API to access the web search tool.
 ```py {title="web_search_openai.py"}
 from pydantic_ai import Agent, WebSearchTool
 
-agent = Agent('openai-responses:gpt-5', builtin_tools=[WebSearchTool()])
+agent = Agent('openai-responses:gpt-5.2', builtin_tools=[WebSearchTool()])
 
 result = agent.run_sync('Give me a sentence with the biggest news in AI this week.')
 print(result.output)
@@ -119,7 +119,7 @@ The `WebSearchTool` supports several configuration parameters:
 from pydantic_ai import Agent, WebSearchTool, WebSearchUserLocation
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-0',
+    'anthropic:claude-sonnet-4-5',
     builtin_tools=[
         WebSearchTool(
             search_context_size='high',
@@ -181,7 +181,7 @@ in a secure environment, making it perfect for computational tasks, data analysi
 ```py {title="code_execution_basic.py"}
 from pydantic_ai import Agent, CodeExecutionTool
 
-agent = Agent('anthropic:claude-sonnet-4-0', builtin_tools=[CodeExecutionTool()])
+agent = Agent('anthropic:claude-sonnet-4-5', builtin_tools=[CodeExecutionTool()])
 
 result = agent.run_sync('Calculate the factorial of 15.')
 print(result.output)
@@ -225,7 +225,7 @@ from pydantic_ai import Agent, BinaryImage, CodeExecutionTool
 from pydantic_ai.models.openai import OpenAIResponsesModelSettings
 
 agent = Agent(
-    'openai-responses:gpt-5',
+    'openai-responses:gpt-5.2',
     builtin_tools=[CodeExecutionTool()],
     output_type=BinaryImage,
     model_settings=OpenAIResponsesModelSettings(openai_include_code_execution_outputs=True),
@@ -245,8 +245,8 @@ The [`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool] enabl
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| OpenAI Responses | ✅ | Full feature support. Only supported by models newer than `gpt-5`. Metadata about the generated image, like the [`revised_prompt`](https://platform.openai.com/docs/guides/tools-image-generation#revised-prompt) sent to the underlying image model, is available on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] that's available via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls]. |
-| Google | ✅ | Limited parameter support. Only supported by [image generation models](https://ai.google.dev/gemini-api/docs/image-generation) like `gemini-2.5-flash-image` and `gemini-3-pro-image-preview`. These models do not support [function tools](tools.md) and will always have the option of generating images, even if this built-in tool is not explicitly specified. |
+| OpenAI Responses | ✅ | Full feature support. Only supported by models newer than `gpt-5.2`. Metadata about the generated image, like the [`revised_prompt`](https://platform.openai.com/docs/guides/tools-image-generation#revised-prompt) sent to the underlying image model, is available on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] that's available via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls]. |
+| Google | ✅ | Limited parameter support. Only supported by [image generation models](https://ai.google.dev/gemini-api/docs/image-generation) like `gemini-3-pro-image-preview` and `gemini-3-pro-image-preview`. These models do not support [function tools](tools.md) and will always have the option of generating images, even if this built-in tool is not explicitly specified. |
 | Anthropic | ❌ | |
 | xAI | ❌ | |
 | Groq | ❌ | |
@@ -262,7 +262,7 @@ Generated images are available on [`ModelResponse.images`][pydantic_ai.messages.
 ```py {title="image_generation_openai.py"}
 from pydantic_ai import Agent, BinaryImage, ImageGenerationTool
 
-agent = Agent('openai-responses:gpt-5', builtin_tools=[ImageGenerationTool()])
+agent = Agent('openai-responses:gpt-5.2', builtin_tools=[ImageGenerationTool()])
 
 result = agent.run_sync('Tell me a two-sentence story about an axolotl with an illustration.')
 print(result.output)
@@ -280,7 +280,7 @@ Image generation with Google [image generation models](https://ai.google.dev/gem
 ```py {title="image_generation_google.py"}
 from pydantic_ai import Agent, BinaryImage
 
-agent = Agent('google-gla:gemini-2.5-flash-image')
+agent = Agent('google-gla:gemini-3-pro-image-preview')
 
 result = agent.run_sync('Tell me a two-sentence story about an axolotl with an illustration.')
 print(result.output)
@@ -298,7 +298,7 @@ The `ImageGenerationTool` can be used together with `output_type=BinaryImage` to
 ```py {title="image_generation_output.py"}
 from pydantic_ai import Agent, BinaryImage
 
-agent = Agent('openai-responses:gpt-5', output_type=BinaryImage)
+agent = Agent('openai-responses:gpt-5.2', output_type=BinaryImage)
 
 result = agent.run_sync('Generate an image of an axolotl.')
 assert isinstance(result.output, BinaryImage)
@@ -314,7 +314,7 @@ The `ImageGenerationTool` supports several configuration parameters:
 from pydantic_ai import Agent, BinaryImage, ImageGenerationTool
 
 agent = Agent(
-    'openai-responses:gpt-5',
+    'openai-responses:gpt-5.2',
     builtin_tools=[
         ImageGenerationTool(
             background='transparent',
@@ -346,7 +346,7 @@ To control the aspect ratio when using Gemini image models, include the `ImageGe
 from pydantic_ai import Agent, BinaryImage, ImageGenerationTool
 
 agent = Agent(
-    'google-gla:gemini-2.5-flash-image',
+    'google-gla:gemini-3-pro-image-preview',
     builtin_tools=[ImageGenerationTool(aspect_ratio='16:9')],
     output_type=BinaryImage,
 )
@@ -419,7 +419,7 @@ allowing it to pull up-to-date information from the web.
 ```py {title="web_fetch_basic.py"}
 from pydantic_ai import Agent, WebFetchTool
 
-agent = Agent('google-gla:gemini-2.5-flash', builtin_tools=[WebFetchTool()])
+agent = Agent('google-gla:gemini-3-flash-preview', builtin_tools=[WebFetchTool()])
 
 result = agent.run_sync('What is this? https://ai.pydantic.dev')
 print(result.output)
@@ -436,7 +436,7 @@ The `WebFetchTool` supports several configuration parameters:
 from pydantic_ai import Agent, WebFetchTool
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-0',
+    'anthropic:claude-sonnet-4-5',
     builtin_tools=[
         WebFetchTool(
             allowed_domains=['ai.pydantic.dev', 'docs.pydantic.dev'],
@@ -609,7 +609,7 @@ With OpenAI, you must use their Responses API to access the MCP server tool:
 from pydantic_ai import Agent, MCPServerTool
 
 agent = Agent(
-    'openai-responses:gpt-5',
+    'openai-responses:gpt-5.2',
     builtin_tools=[
         MCPServerTool(
             id='deepwiki',
@@ -639,7 +639,7 @@ import os
 from pydantic_ai import Agent, MCPServerTool
 
 agent = Agent(
-    'openai-responses:gpt-5',
+    'openai-responses:gpt-5.2',
     builtin_tools=[
         MCPServerTool(
             id='github',
@@ -671,7 +671,7 @@ import os
 from pydantic_ai import Agent, MCPServerTool
 
 agent = Agent(
-    'openai-responses:gpt-5',
+    'openai-responses:gpt-5.2',
     builtin_tools=[
         MCPServerTool(
             id='google-calendar',
@@ -733,7 +733,7 @@ from pydantic_ai.models.openai import OpenAIResponsesModel
 
 
 async def main():
-    model = OpenAIResponsesModel('gpt-5')
+    model = OpenAIResponsesModel('gpt-5.2')
 
     with open('my_document.txt', 'rb') as f:
         file = await model.client.files.create(file=f, purpose='assistants')
@@ -768,7 +768,7 @@ from pydantic_ai.models.google import GoogleModel
 
 
 async def main():
-    model = GoogleModel('gemini-2.5-flash')
+    model = GoogleModel('gemini-3-flash-preview')
 
     store = await model.client.aio.file_search_stores.create(
         config={'display_name': 'my-docs'}

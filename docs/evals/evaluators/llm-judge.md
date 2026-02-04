@@ -646,7 +646,7 @@ def my_task(inputs: str) -> str:
 
 
 judges = [
-    LLMJudge(rubric='Response is clear', model='openai:gpt-5'),
+    LLMJudge(rubric='Response is clear', model='openai:gpt-5.2'),
     LLMJudge(rubric='Response is clear', model='anthropic:claude-sonnet-4-5'),
     LLMJudge(rubric='Response is clear', model='openai:gpt-5-mini'),
 ]

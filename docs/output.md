@@ -19,7 +19,7 @@ class CityLocation(BaseModel):
     country: str
 
 
-agent = Agent('google-gla:gemini-2.5-flash', output_type=CityLocation)
+agent = Agent('google-gla:gemini-3-flash-preview', output_type=CityLocation)
 result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.output)
 #> city='London' country='United Kingdom'
@@ -176,7 +176,7 @@ def run_sql_query(query: str) -> list[Row]:
 
 
 sql_agent = Agent[None, list[Row] | SQLFailure](
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     output_type=[run_sql_query, SQLFailure],
     instructions='You are a SQL agent that can run SQL queries on a database.',
 )
@@ -208,7 +208,7 @@ class RouterFailure(BaseModel):
 
 
 router_agent = Agent[None, list[Row] | RouterFailure](
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     output_type=[hand_off_to_sql_agent, RouterFailure],
     instructions='You are a router to other agents. Never try to solve a problem yourself, just pass it on.',
 )
@@ -252,7 +252,7 @@ def split_into_words(text: str) -> list[str]:
 
 
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     output_type=TextOutput(split_into_words),
 )
 result = agent.run_sync('Who was Albert Einstein?')
@@ -294,7 +294,7 @@ def save_to_database(ctx: RunContext, record: DatabaseRecord) -> DatabaseRecord:
     return record
 
 
-agent = Agent('openai:gpt-5', output_type=save_to_database)
+agent = Agent('openai:gpt-5.2', output_type=save_to_database)
 
 
 async def main():
@@ -340,7 +340,7 @@ class Vehicle(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     output_type=[ # (1)!
         ToolOutput(Fruit, name='return_fruit'),
         ToolOutput(Vehicle, name='return_vehicle'),
@@ -382,7 +382,7 @@ from pydantic_ai import Agent, NativeOutput
 from tool_output import Fruit, Vehicle
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5.2',
     output_type=NativeOutput(
         [Fruit, Vehicle], # (1)!
         name='Fruit_or_vehicle',
@@ -422,7 +422,7 @@ class Device(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     output_type=PromptedOutput(
         [Vehicle, Device], # (1)!
         name='Vehicle or device',
@@ -434,7 +434,7 @@ print(repr(result.output))
 #> Device(name='MacBook', kind='laptop')
 
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     output_type=PromptedOutput(
         [Vehicle, Device],
         template='Gimme some JSON: {schema}'
@@ -475,7 +475,7 @@ HumanDict = StructuredDict(
     description='A human with a name and age',
 )
 
-agent = Agent('openai:gpt-5', output_type=HumanDict)
+agent = Agent('openai:gpt-5.2', output_type=HumanDict)
 result = agent.run_sync('Create a person')
 #> {'name': 'John Doe', 'age': 30}
 ```
@@ -509,7 +509,7 @@ class Value(BaseModel):
 
 
 agent = Agent(
-    'google-gla:gemini-2.5-flash',
+    'google-gla:gemini-3-flash-preview',
     output_type=Value,
     validation_context=10,
 )
@@ -524,7 +524,7 @@ class Deps:
 
 
 agent = Agent(
-    'google-gla:gemini-2.5-flash',
+    'google-gla:gemini-3-flash-preview',
     output_type=Value,
     deps_type=Deps,
     validation_context=lambda ctx: ctx.deps.increment,
@@ -562,7 +562,7 @@ class InvalidRequest(BaseModel):
 
 Output = Success | InvalidRequest
 agent = Agent[DatabaseConn, Output](
-    'google-gla:gemini-2.5-flash',
+    'google-gla:gemini-3-flash-preview',
     output_type=Output,  # type: ignore
     deps_type=DatabaseConn,
     instructions='Generate PostgreSQL flavored SQL queries based on user input.',
@@ -602,7 +602,7 @@ For all [other run methods](agents.md#running-agents), `partial_output` is alway
 ```python {title="partial_validation_streaming.py" line_length="120"}
 from pydantic_ai import Agent, ModelRetry, RunContext
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 
 
 @agent.output_validator
@@ -639,7 +639,7 @@ To use the generated image as the output of the agent run, you can set `output_t
 ```py {title="image_output.py"}
 from pydantic_ai import Agent, BinaryImage
 
-agent = Agent('openai-responses:gpt-5', output_type=BinaryImage)
+agent = Agent('openai-responses:gpt-5.2', output_type=BinaryImage)
 
 result = agent.run_sync('Generate an image of an axolotl.')
 assert isinstance(result.output, BinaryImage)
@@ -652,7 +652,7 @@ If an agent does not need to always generate an image, you can use a union of `B
 ```py {title="image_output_union.py"}
 from pydantic_ai import Agent, BinaryImage
 
-agent = Agent('openai-responses:gpt-5', output_type=BinaryImage | str)
+agent = Agent('openai-responses:gpt-5.2', output_type=BinaryImage | str)
 
 result = agent.run_sync('Tell me a two-sentence story about an axolotl, no image please.')
 print(result.output)
@@ -689,7 +689,7 @@ Example of streamed text output:
 ```python {title="streamed_hello_world.py" line_length="120"}
 from pydantic_ai import Agent
 
-agent = Agent('google-gla:gemini-2.5-flash')  # (1)!
+agent = Agent('google-gla:gemini-3-flash-preview')  # (1)!
 
 
 async def main():
@@ -715,7 +715,7 @@ We can also stream text as deltas rather than the entire text in each item:
 ```python {title="streamed_delta_hello_world.py"}
 from pydantic_ai import Agent
 
-agent = Agent('google-gla:gemini-2.5-flash')
+agent = Agent('google-gla:gemini-3-flash-preview')
 
 
 async def main():
@@ -757,7 +757,7 @@ class UserProfile(TypedDict):
 
 
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     output_type=UserProfile,
     instructions='Extract a user profile from the input',
 )
@@ -800,7 +800,7 @@ class UserProfile(TypedDict, total=False):
     bio: str
 
 
-agent = Agent('openai:gpt-5', output_type=UserProfile)
+agent = Agent('openai:gpt-5.2', output_type=UserProfile)
 
 
 async def main():
