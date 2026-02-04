@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
@@ -42,7 +42,6 @@ from ._utils import dump_provider_metadata, load_provider_metadata
 from .request_types import (
     DataUIPart,
     DynamicToolInputAvailablePart,
-    DynamicToolInputStreamingPart,
     DynamicToolOutputAvailablePart,
     DynamicToolOutputErrorPart,
     DynamicToolUIPart,
@@ -55,7 +54,6 @@ from .request_types import (
     StepStartUIPart,
     TextUIPart,
     ToolInputAvailablePart,
-    ToolInputStreamingPart,
     ToolOutputAvailablePart,
     ToolOutputErrorPart,
     ToolUIPart,
@@ -77,6 +75,10 @@ request_data_ta: TypeAdapter[RequestData] = TypeAdapter(RequestData)
 class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, OutputDataT]):
     """UI adapter for the Vercel AI protocol."""
 
+    _: KW_ONLY
+    sdk_version: Literal[5, 6] = 5
+    """Vercel AI SDK version to target. Default is 5 for backwards compatibility."""
+
     @classmethod
     def build_run_input(cls, body: bytes) -> RequestData:
         """Build a Vercel AI run input object from the request body."""
@@ -84,7 +86,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
     def build_event_stream(self) -> UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
         """Build a Vercel AI event stream transformer."""
-        return VercelAIEventStream(self.run_input, accept=self.accept)
+        return VercelAIEventStream(self.run_input, accept=self.accept, sdk_version=self.sdk_version)
 
     @cached_property
     def messages(self) -> list[ModelMessage]:
@@ -195,13 +197,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         else:
                             assert_never(args)
 
-                        provider_meta = {}
-                        part_id = provider_name = provider_details = None
-                        if not isinstance(part, (DynamicToolInputStreamingPart, ToolInputStreamingPart)):
-                            provider_meta = load_provider_metadata(part.call_provider_metadata)
-                            part_id = provider_meta.get('id')
-                            provider_name = provider_meta.get('provider_name')
-                            provider_details = provider_meta.get('provider_details')
+                        provider_meta = load_provider_metadata(part.call_provider_metadata)
+                        part_id = provider_meta.get('id')
+                        provider_name = provider_meta.get('provider_name')
+                        provider_details = provider_meta.get('provider_details')
 
                         if builtin_tool:
                             # For builtin tools, we need to create 2 parts (BuiltinToolCall & BuiltinToolReturn) for a single Vercel ToolOutput
