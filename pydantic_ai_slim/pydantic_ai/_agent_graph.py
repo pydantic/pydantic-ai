@@ -14,7 +14,6 @@ from dataclasses import field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
 from opentelemetry.trace import Tracer
-from pydantic_ai.runtime.abstract import CodeInterruptedError
 from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore

@@ -4,7 +4,7 @@ from .approval_required import ApprovalRequiredToolset
 from .code_mode import (
     CodeModeToolset,
     DescriptionHandler,
-    SignatureResult,
+    Signature,
     build_code_mode_prompt,
     signature_from_function,
     signature_from_schema,
@@ -34,7 +34,7 @@ __all__ = (
     'RenamedToolset',
     'PreparedToolset',
     'ReturnSchemaToolset',
-    'SignatureResult',
+    'Signature',
     'WrapperToolset',
     'ApprovalRequiredToolset',
     'build_code_mode_prompt',

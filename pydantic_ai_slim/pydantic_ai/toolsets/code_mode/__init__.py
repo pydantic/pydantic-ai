@@ -29,7 +29,7 @@ from ..abstract import SchemaValidatorProt, ToolsetTool
 from ..function import FunctionToolset, FunctionToolsetTool
 from ..wrapper import WrapperToolset
 from .sanitization import ToolNameMapping
-from .signature import SignatureResult, signature_from_function, signature_from_schema
+from .signature import Signature, signature_from_function, signature_from_schema
 
 # Type alias for description handler callback
 # Takes (description, tool_definition) and returns processed description
@@ -38,10 +38,12 @@ DescriptionHandler = Callable[[str, ToolDefinition], str]
 __all__ = (
     'CodeModeToolset',
     'DescriptionHandler',
-    'SignatureResult',
+    'Signature',
     'build_code_mode_prompt',
     'signature_from_function',
     'signature_from_schema',
+    'ApprovalRequired',
+    'CallDeferred',
 )
 
 
@@ -152,8 +154,8 @@ def _get_tool_signature(
     tool: ToolsetTool[Any],
     name_override: str | None = None,
     description_handler: DescriptionHandler | None = None,
-) -> str:
-    """Get a Python signature string for a tool.
+) -> Signature:
+    """Get a Signature object for a tool.
 
     For native function tools, uses the original function's signature (including return type).
     For external tools (MCP, etc.), converts the JSON schema to a signature.
@@ -164,20 +166,12 @@ def _get_tool_signature(
             Used to show sanitized names (valid Python identifiers) to the LLM.
         description_handler: Optional callback to process/truncate tool descriptions.
 
+    Returns:
+        A Signature object. Use str(sig) for type checking, sig.with_typeddicts('...') for LLM.
+
     Note: Code mode always includes return types because the model needs to know
     what structure each function returns to write correct code.
     """
-    # Code mode MUST show return types - without them the model can't know
-    # that get_weather() returns a dict with 'temperature' key vs just a number.
-    # We ignore tool.include_return_schema here because code mode has different needs
-    # than traditional tool calling.
-    # TODO: For native function tools, we call signature_from_function which uses
-    # inspect.signature() and get_type_hints() every time get_tools() is called.
-    # This re-inspection is needed to filter out RunContext params and format the signature,
-    # but could be cached/precomputed when the tool is registered. This becomes non-optimal
-    # when: (1) get_tools() is called frequently during an agent run, (2) there are many
-    # tools in the toolset, (3) the toolset is reused across multiple agent runs.
-    # Consider storing the formatted signature string on FunctionToolsetTool at registration time.
     signature_name = name_override or tool.tool_def.name
 
     # Process description through handler if provided
@@ -189,28 +183,21 @@ def _get_tool_signature(
         tool_name = tool.tool_def.name
         if tool_name in tool.toolset.tools:
             original_tool = tool.toolset.tools[tool_name]
-            result = signature_from_function(
+            return signature_from_function(
                 original_tool.function,
                 name=signature_name,
                 description=description,
                 include_return_type=True,  # Always show return types in code mode
             )
-            if result.typeddict_defs:
-                return '\n\n'.join(result.typeddict_defs) + '\n\n' + result.signature
-            return result.signature
 
     # For external tools (MCP, etc.), convert JSON schema to signature
-    result = signature_from_schema(
+    return signature_from_schema(
         name=signature_name,
         parameters_json_schema=tool.tool_def.parameters_json_schema,
         description=description,
         return_json_schema=tool.tool_def.return_schema,  # Always include if available
         namespace_defs=True,
     )
-
-    if result.typeddict_defs:
-        return '\n\n'.join(result.typeddict_defs) + '\n\n' + result.signature
-    return result.signature
 
 
 @dataclass(kw_only=True)
@@ -259,15 +246,20 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         sanitized_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         available_functions: list[str] = []
 
+        llm_signatures: list[str] = []
+
         for original_name, tool in wrapped_tools.items():
             sanitized_name = self._name_mapping.add(original_name)
             sanitized_tools[sanitized_name] = tool
-            signature = _get_tool_signature(
+            sig = _get_tool_signature(
                 tool,
                 name_override=sanitized_name,
                 description_handler=self.description_handler,
             )
-            available_functions.append(signature)
+            # For type checking: use `raise NotImplementedError()` body
+            available_functions.append(sig.with_typeddicts())
+            # For LLM display: use `...` body
+            llm_signatures.append(sig.with_typeddicts('...'))
 
         self._cached_signatures = available_functions
 
@@ -276,7 +268,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # defeating the progressive-disclosure approach described in code-mode references.
         # Consider: progressive discovery (list tool names first, fetch signatures on demand).
         # David to look into this
-        llm_signatures = [sig.replace('raise NotImplementedError()', '...') for sig in available_functions]
         description = self.prompt_builder(signatures=llm_signatures)
         # TODO: Ideally we'd use kind='output' to make the code result be the final answer
         # without a second LLM call. However, output tools are treated differently by models -
