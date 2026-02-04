@@ -2406,12 +2406,12 @@ async def test_adapter_dump_messages_with_tools():
                 'parts': [
                     {'type': 'text', 'text': 'Let me search for that.', 'state': 'done', 'provider_metadata': None},
                     {
-                        'type': 'dynamic-tool',
-                        'tool_name': 'web_search',
+                        'type': 'tool-web_search',
                         'tool_call_id': 'tool_123',
                         'state': 'output-available',
-                        'input': '{"query":"test query"}',
-                        'output': '{"results":["result1","result2"]}',
+                        'input': {'query': 'test query'},
+                        'provider_executed': False,
+                        'output': {'results': ['result1', 'result2']},
                         'call_provider_metadata': None,
                         'preliminary': None,
                     },
@@ -2473,8 +2473,8 @@ async def test_adapter_dump_messages_with_builtin_tools():
                         'type': 'tool-web_search',
                         'tool_call_id': 'tool_456',
                         'state': 'output-available',
-                        'input': '{"query":"test"}',
-                        'output': '{"status":"completed"}',
+                        'input': {'query': 'test'},
+                        'output': {'status': 'completed'},
                         'provider_executed': True,
                         'call_provider_metadata': {
                             'pydantic_ai': {
@@ -2532,7 +2532,7 @@ async def test_adapter_dump_messages_with_builtin_tool_without_return():
                         'type': 'tool-web_search',
                         'tool_call_id': 'orphan_tool_id',
                         'state': 'input-available',
-                        'input': '{"query":"orphan query"}',
+                        'input': {'query': 'orphan query'},
                         'provider_executed': True,
                         'call_provider_metadata': {
                             'pydantic_ai': {'provider_name': 'openai'}
@@ -2692,11 +2692,12 @@ async def test_adapter_dump_messages_with_retry():
                 'metadata': None,
                 'parts': [
                     {
-                        'type': 'dynamic-tool',
-                        'tool_name': 'my_tool',
+                        'type': 'tool-my_tool',
                         'tool_call_id': 'tool_789',
                         'state': 'output-error',
-                        'input': '{"arg":"value"}',
+                        'raw_input': None,
+                        'input': {'arg': 'value'},
+                        'provider_executed': False,
                         'error_text': """\
 Tool failed with error
 
@@ -2880,7 +2881,7 @@ async def test_adapter_dump_messages_text_with_interruption():
                         'type': 'tool-test',
                         'tool_call_id': 't1',
                         'state': 'output-available',
-                        'input': '{}',
+                        'input': {},
                         'output': 'result',
                         'provider_executed': True,
                         'call_provider_metadata': {
@@ -3032,11 +3033,11 @@ async def test_adapter_dump_messages_tool_call_without_return():
                 'metadata': None,
                 'parts': [
                     {
-                        'type': 'dynamic-tool',
-                        'tool_name': 'get_weather',
+                        'type': 'tool-get_weather',
                         'tool_call_id': 'tool_abc',
                         'state': 'input-available',
-                        'input': '{"city":"New York"}',
+                        'provider_executed': False,
+                        'input': {'city': 'New York'},
                         'call_provider_metadata': None,
                     }
                 ],
@@ -3066,11 +3067,11 @@ async def test_adapter_dump_messages_assistant_starts_with_tool():
                 'metadata': None,
                 'parts': [
                     {
-                        'type': 'dynamic-tool',
-                        'tool_name': 't',
+                        'type': 'tool-t',
                         'tool_call_id': 'tc1',
                         'state': 'input-available',
-                        'input': '{}',
+                        'provider_executed': False,
+                        'input': {},
                         'call_provider_metadata': None,
                     },
                     {
@@ -3406,11 +3407,11 @@ async def test_adapter_tool_call_part_with_provider_metadata():
                 'metadata': None,
                 'parts': [
                     {
-                        'type': 'dynamic-tool',
-                        'tool_name': 'my_tool',
+                        'type': 'tool-my_tool',
                         'tool_call_id': 'tool_abc',
                         'state': 'output-available',
-                        'input': '{"arg":"value"}',
+                        'input': {'arg': 'value'},
+                        'provider_executed': False,
                         'output': 'result',
                         'call_provider_metadata': {
                             'pydantic_ai': {
@@ -3612,7 +3613,7 @@ async def test_adapter_builtin_tool_part_with_provider_metadata():
                         'type': 'tool-web_search',
                         'tool_call_id': 'bt_123',
                         'state': 'output-available',
-                        'input': '{"query":"test"}',
+                        'input': {'query': 'test'},
                         'output': '{"results":[]}',
                         'provider_executed': True,
                         'call_provider_metadata': {
@@ -3686,7 +3687,7 @@ async def test_adapter_builtin_tool_error_part_with_provider_metadata():
                         'type': 'tool-web_search',
                         'tool_call_id': 'bt_err_123',
                         'state': 'output-error',
-                        'input': '{"query":"test"}',
+                        'input': {'query': 'test'},
                         'raw_input': None,
                         'error_text': 'Search failed: rate limit exceeded',
                         'provider_executed': True,
@@ -3944,11 +3945,12 @@ async def test_adapter_dump_messages_tool_error_with_provider_metadata():
                 'metadata': None,
                 'parts': [
                     {
-                        'type': 'dynamic-tool',
-                        'tool_name': 'failing_tool',
+                        'type': 'tool-failing_tool',
                         'tool_call_id': 'tc_fail',
                         'state': 'output-error',
-                        'input': '{"x":1}',
+                        'raw_input': None,
+                        'input': {'x': 1},
+                        'provider_executed': False,
                         'error_text': """\
 Tool execution failed
 
