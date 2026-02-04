@@ -109,106 +109,63 @@ Also see directory-specific guidelines:
 
 ## Code Style
 
-<!-- rule:3 -->
 - Extract helpers at 2-3+ call sites, inline single-use helpers unless they reduce significant complexity — Reduces duplication without premature abstraction; keeps code maintainable and readable by avoiding unnecessary indirection
-<!-- rule:32 -->
 - Remove comments that restate the code — explain WHY, not WHAT — Code should be self-documenting through naming and structure; comments add value by explaining rationale, non-obvious behavior, or design decisions that aren't evident from the implementation itself
-<!-- rule:30 -->
 - Simplify nested conditionals: use `and`/`or` for compound conditions, `elif` for mutual exclusion — Reduces nesting and cognitive load, making control flow easier to understand and maintain
-<!-- rule:73 -->
 - Extract shared logic into helper methods instead of duplicating inline — especially between method variants like streaming/non-streaming — Reduces maintenance burden and prevents divergence bugs when one copy is updated but others aren't
-<!-- rule:58 -->
 - Remove unreachable code branches—let impossible cases fail explicitly rather than silently handle them — Eliminates dead code that obscures logic and prevents detection of actual bugs when "impossible" conditions do occur
-<!-- rule:125 -->
 - Use tuple syntax for `isinstance()` checks, not `|` union — tuples are faster at runtime — Runtime performance: tuple syntax in `isinstance()` is optimized at the C level, while union types incur extra overhead
-<!-- rule:47 -->
 - Prefer list comprehensions over empty list + loop append — More Pythonic, concise, and often faster than initializing empty lists and appending in loops
-<!-- rule:19 -->
 - Place model profiles in `profiles/{company}.py`, provider routing in `providers/` — separates model metadata from provider-specific logic — Keeps architectural boundaries clear: model characteristics are company-specific facts, while routing/fallback logic is provider implementation detail
-<!-- rule:20 -->
 - Extract profile logic to `profiles/` only when shared across providers — inline provider-specific logic in `model_profile()` methods — Avoids unnecessary indirection and keeps code close to usage when there's no reuse, while enabling consistency when multiple providers support the same model family
-<!-- rule:134 -->
 - Use `set` for unique collections; convert to `list` only for API boundaries — Prevents accidental duplicates, makes membership checks O(1), and clarifies intent when order doesn't matter
-<!-- rule:40 -->
 - Eliminate duplicate validation logic — extract repeated checks into shared helpers or reuse existing parent/utility validations — Prevents inconsistencies when validation logic changes and reduces maintenance burden by keeping validation logic in one place (DRY principle)
-<!-- rule:39 -->
 - Use walrus operator (`:=`) to combine assignment with conditional checks — reduces redundancy and keeps related logic together — Eliminates separate assignment lines when values are immediately tested, improving code clarity and reducing variable scope leakage
-<!-- rule:119 -->
 - Use `else` instead of `elif` when remaining cases are exhaustively covered — Reduces redundancy and makes code intent clearer by avoiding unnecessary explicit conditions that are logically implied
-<!-- rule:63 -->
 - Use `any()` with generator expressions instead of `for` loops with `break` for existence checks — More concise, idiomatic Python that clearly expresses intent and avoids mutable flag variables
 
 ## Documentation
 
-<!-- rule:13 -->
 - Document provider features in 3 places: `Supported by:` in docstrings (IDE hints), compatibility notes in generic docs (selection), detailed provider sections with links to official docs (deep dive) — Coordinated multi-location documentation ensures users discover limitations early (docstrings), choose the right provider (feature docs), and find authoritative details without duplication (provider docs with external links)
-<!-- rule:14 -->
 - Sync provider docs with implementation in same PR — verify features against official API docs — Prevents documentation drift and false claims about provider capabilities that would mislead users and cause integration failures.
-<!-- rule:8 -->
 - Use consistent terminology across code, docs, APIs, and errors — avoid synonyms for the same concept — Prevents confusion and cognitive load when developers encounter multiple terms for the same concept across different parts of the system
-<!-- rule:33 -->
 - Use latest stable model versions in docs and examples (e.g., `openai:gpt-5.2` not `gpt-4o`) — Outdated models in documentation confuse users and make examples less relevant; fictional future models break code when users copy-paste.
-<!-- rule:7 -->
 - Wrap all code elements in backticks in docstrings, docs, and error messages — improves readability and distinguishes code from prose — Backticks create visual distinction between code identifiers and natural language, making documentation scannable and reducing ambiguity about what's a code reference versus plain text.
-<!-- rule:60 -->
 - Update `README.md`, `docs/index.md`, `docs/models/overview.md`, and `docs/api/providers.md` when adding a provider — Keeps provider listings consistent across all documentation surfaces so users can discover new providers
-<!-- rule:28 -->
 - Register new doc pages in `mkdocs.yml` nav — undiscoverable pages won't appear in site navigation — Without registration, new documentation pages exist but are invisible to users browsing the site
-<!-- rule:142 -->
 - Write docs from user perspective — describe what users can do, not internal mechanics — Users need to understand capabilities and behavior, not implementation details; keeps docs maintainable when internals change
-<!-- rule:78 -->
 - Update or remove docstrings/comments when code changes — stale docs mislead maintainers and cause bugs — Outdated documentation creates confusion, wastes debugging time, and leads to incorrect assumptions about behavior
-<!-- rule:72 -->
 - Match documentation depth and style across related API elements — prevents user confusion and signals equal importance — Consistent documentation patterns help users understand that similar parameters/methods have equal status and provide predictable learning across the API surface
-<!-- rule:31 -->
 - Comment non-obvious implementation choices — explain why the code deviates from simpler/intuitive approaches — Helps maintainers understand tradeoffs and prevents "why not just..." refactorings that reintroduce bugs or performance issues
-<!-- rule:141 -->
 - Update API reference pages when adding cross-reference links in docs — prevents broken links and incomplete documentation — Cross-references create dependencies between narrative docs and API references; updating both together prevents broken links that frustrate users
 
 ## API Design
 
-<!-- rule:34 -->
 - Prefix internal helpers with `_` — prevents accidental public API surface expansion — Functions, classes, and modules not intended for external use should be marked private to prevent users from depending on implementation details that may change
-<!-- rule:10 -->
 - Use `*` to make optional params keyword-only — keeps 1-2 essential args positional, rest keyword-only — Prevents breakage when reordering parameters and makes call sites self-documenting
-<!-- rule:96 -->
 - Use dedicated typed fields for provider settings, not generic dicts like `extra_body` — Provides type safety, autocomplete, and prevents merge conflicts when multiple providers extend the same base class
-<!-- rule:122 -->
 - Keep provider-specific features inside provider classes, not in generic interfaces — Prevents leaking implementation details into the public API, maintains clean abstractions, and avoids coupling generic code to specific provider quirks
-<!-- rule:71 -->
 - Don't pass data separately if it's already in a context object — reduces redundancy and prevents sync issues — Avoids parameter duplication, prevents caller/callee inconsistencies when context attributes change, and keeps function signatures cleaner
-<!-- rule:95 -->
 - Remove provider-specific settings fields when equivalent exists in base `ModelSettings`/`EmbeddingSettings` — Prevents duplication and inconsistency between base and provider classes, ensuring settings are defined once and inherited uniformly across all providers
-<!-- rule:53 -->
 - Implement new provider features for ≥2 providers upfront — validates abstraction is provider-agnostic — Prevents designing APIs that are accidentally coupled to one provider's specifics, catching abstraction issues early before they become breaking changes
-<!-- rule:91 -->
 - Use provider-agnostic terminology in public APIs and messages — reserve vendor terms only for direct provider interactions — Prevents vendor lock-in, keeps the API portable across providers, and maintains consistent user-facing terminology (e.g., `file_store_ids` not `vector_store_ids`, `thinking` not `reasoning`)
 
 ## Type System
 
-<!-- rule:87 -->
 - Use `assert_never()` in `else` clause when handling union types — catches unhandled variants at type-check time — Ensures exhaustive handling of union types so new variants added later will trigger type errors rather than silent bugs
-<!-- rule:46 -->
 - Use `TypedDict` instead of `dict[str, Any]` for structured data with known fields — Enables static type checking of dict keys/values and prevents runtime `cast()` workarounds
-<!-- rule:103 -->
 - Remove `# type: ignore` comments once underlying type issues are fixed — Stale ignore comments hide real type errors and prevent type-checker from catching new bugs
-<!-- rule:156 -->
 - Use `TYPE_CHECKING` imports for optional deps instead of `Any` — preserves type safety without runtime import errors — Enables precise type hints for optional dependencies while avoiding import failures at runtime, giving users better IDE support without requiring all extras to be installed.
 
 ## Error Handling
 
-<!-- rule:18 -->
 - Raise explicit errors for unsupported inputs/parameters — prevents silent failures and makes contract violations obvious — Explicit failures expose bugs immediately instead of allowing invalid data to propagate through the system silently
-<!-- rule:62 -->
 - Catch specific exception types, not broad `Exception` — identifies actual failure modes and prevents masking unexpected errors — Broad exception handlers hide bugs by catching unexpected errors (like `KeyboardInterrupt` or `SystemExit`) and make debugging harder by obscuring the actual failure type
 
 ## General
 
-<!-- rule:37 -->
 - Place imports at module level; use inline imports only for circular dependencies or optional deps wrapped in `try`/`except ImportError` with install instructions — Follows PEP 8, improves readability, and graceful optional dependency handling prevents cryptic errors by directing users to install the right extras group
-<!-- rule:25 -->
 - Write tests for reachable code; reserve `pragma: no cover` only for untestable branches (platform-specific, type-constrained, defensive unreachable) — Coverage pragmas hide gaps in test suites — conditional logic and public APIs need real tests to prevent regressions
-<!-- rule:0 -->
 - Omit redundant context from names when clear from class/module/types/call site — Reduces noise and improves readability—`URL._infer_media_type()` is clearer than `URL._infer_url_media_type()` since the URL context is already obvious
 
 <!-- /braindump -->
