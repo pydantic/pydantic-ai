@@ -106,30 +106,30 @@ class Contains(Evaluator[object, object, object]):
             if isinstance(ctx.output, dict) or output_is_model_like:
                 if output_is_model_like:
                     adapter: TypeAdapter[Any] = TypeAdapter(output_type)
-                    output = adapter.dump_python(ctx.output, exclude_defaults=True)  # pyright: ignore[reportUnknownMemberType]
+                    output_dict = adapter.dump_python(ctx.output, exclude_defaults=True)  # pyright: ignore[reportUnknownMemberType]
                 else:
                     # Cast to Any to avoid type checking issues
-                    output = cast(dict[Any, Any], ctx.output)  # pyright: ignore[reportUnknownMemberType]
+                    output_dict = cast(dict[Any, Any], ctx.output)  # pyright: ignore[reportUnknownMemberType]
 
                 if isinstance(self.value, dict):
                     # Cast to Any to avoid type checking issues
                     expected_dict = cast(dict[Any, Any], self.value)  # pyright: ignore[reportUnknownMemberType]
                     for k in expected_dict:
-                        if k not in output:
+                        if k not in output_dict:
                             k_trunc = _truncated_repr(k, max_length=30)
                             failure_reason = f'Output does not contain expected key {k_trunc}'
                             break
-                        elif output[k] != expected_dict[k]:
+                        elif output_dict[k] != expected_dict[k]:
                             k_trunc = _truncated_repr(k, max_length=30)
-                            output_v_trunc = _truncated_repr(output[k], max_length=100)
+                            output_v_trunc = _truncated_repr(output_dict[k], max_length=100)
                             expected_v_trunc = _truncated_repr(expected_dict[k], max_length=100)
                             failure_reason = (
                                 f'Output has different value for key {k_trunc}: {output_v_trunc} != {expected_v_trunc}'
                             )
                             break
                 else:
-                    if self.value not in output:
-                        output_trunc = _truncated_repr(output, max_length=200)
+                    if self.value not in output_dict:
+                        output_trunc = _truncated_repr(output_dict, max_length=200)
                         failure_reason = f'Output {output_trunc} does not contain provided value as a key'
             elif self.value not in ctx.output:  # pyright: ignore[reportOperatorIssue]  # will be handled by except block
                 output_trunc = _truncated_repr(ctx.output, max_length=200)
