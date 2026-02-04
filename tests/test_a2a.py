@@ -1061,8 +1061,12 @@ async def test_a2a_with_deps_multiple_runs():
             )
             response1 = await a2a_client.send_message(message=message1)
             assert 'error' not in response1
-            task1_id = response1['result']['id']
-            context_id = response1['result']['context_id']
+            assert 'result' in response1
+            result1 = response1['result']
+            assert result1['kind'] == 'task'
+
+            task1_id: str = result1['id']
+            context_id: str = result1['context_id']
 
             # Wait for first task to complete
             while task := await a2a_client.get_task(task1_id):  # pragma: no branch
@@ -1080,7 +1084,11 @@ async def test_a2a_with_deps_multiple_runs():
             )
             response2 = await a2a_client.send_message(message=message2)
             assert 'error' not in response2
-            task2_id = response2['result']['id']
+            assert 'result' in response2
+            result2 = response2['result']
+            assert result2['kind'] == 'task'
+
+            task2_id = result2['id']
 
             # Wait for second task to complete
             while task := await a2a_client.get_task(task2_id):  # pragma: no branch
@@ -1133,6 +1141,8 @@ async def test_a2a_with_none_deps():
                 await anyio.sleep(0.1)
 
             assert 'result' in task
-            assert task['result']['status']['state'] == 'completed'
-            assert task['result']['artifacts'][0]['parts'][0]['kind'] == 'text'
-            assert task['result']['artifacts'][0]['parts'][0]['text'] == 'no deps needed'
+            task_result = task['result']
+            assert task_result['status']['state'] == 'completed'
+            assert 'artifacts' in task_result
+            assert task_result['artifacts'][0]['parts'][0]['kind'] == 'text'
+            assert task_result['artifacts'][0]['parts'][0]['text'] == 'no deps needed'
