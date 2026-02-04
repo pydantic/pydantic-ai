@@ -107,9 +107,14 @@ FinishReason: TypeAlias = Literal[
     'length',
     'content_filter',
     'tool_call',
+    'incomplete',
     'error',
 ]
-"""Reason the model finished generating the response, normalized to OpenTelemetry values."""
+"""Reason the model finished generating the response.
+
+Normalized to OpenTelemetry values where possible; `incomplete` indicates the provider paused the turn and
+expects the client to continue with a follow-up request.
+"""
 
 ProviderDetailsDelta: TypeAlias = dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None
 """Type for provider_details input: can be a static dict, a callback to update existing details, or None."""

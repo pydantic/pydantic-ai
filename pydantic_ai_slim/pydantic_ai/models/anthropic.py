@@ -56,7 +56,7 @@ _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
     'max_tokens': 'length',
     'stop_sequence': 'stop',
     'tool_use': 'tool_call',
-    'pause_turn': 'stop',
+    'pause_turn': 'incomplete',
     'refusal': 'content_filter',
 }
 

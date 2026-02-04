@@ -616,6 +616,16 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             output_schema = ctx.deps.output_schema
 
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
+                if self.model_response.finish_reason == 'incomplete':
+                    # Some providers (e.g. Anthropic pause_turn) pause mid-turn and expect us to continue.
+                    # We re-issue a request with the same history and no new parts, without counting a retry.
+                    run_context = build_run_context(ctx)
+                    instructions = await ctx.deps.get_instructions(run_context)
+                    self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
+                        _messages.ModelRequest(parts=[], instructions=instructions)
+                    )
+                    return
+
                 if not self.model_response.parts:
                     # Don't retry if the model returned an empty response because the token limit was exceeded, possibly during thinking.
                     if self.model_response.finish_reason == 'length':
