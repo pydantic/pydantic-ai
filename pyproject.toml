@@ -250,6 +250,12 @@ filterwarnings = [
     # random resource warnings; I suspect these are coming from vendor SDKs when running examples..
     "ignore:unclosed <socket:ResourceWarning",
     "ignore:unclosed event loop:ResourceWarning",
+    # This is because of cohere.
+    "ignore: 'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:cohere",
+    # This is because of google.
+    "ignore: '_UnionGenericAlias' is deprecated and slated for removal:DeprecationWarning:google.genai",
+    # TODO(Marcelo): Drop this once we drop support for Python 3.14, or we bumped voyageai enough.
+    "ignore: Core Pydantic V1 functionality:UserWarning"
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
