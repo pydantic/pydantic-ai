@@ -905,6 +905,7 @@ class OpenAIChatModel(Model):
         openai_profile = OpenAIModelProfile.from_profile(self.profile)
 
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        tool_defs = model_request_parameters.tool_defs
 
         tool_choice: ChatCompletionToolChoiceOptionParam
         if resolved_tool_choice in ('auto', 'none'):
@@ -917,13 +918,13 @@ class OpenAIChatModel(Model):
             if len(tool_names) == 1:
                 tool_choice = {'type': 'function', 'function': {'name': next(iter(tool_names))}}
             else:
+                # Breaks caching, but OpenAI Chat doesn't support limiting tools via API arg
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                 tool_choice = tool_choice_mode
         else:
             assert_never(resolved_tool_choice)
 
-        tools: list[chat.ChatCompletionToolParam] = [
-            self._map_tool_definition(t) for t in model_request_parameters.tool_defs.values()
-        ]
+        tools: list[chat.ChatCompletionToolParam] = [self._map_tool_definition(t) for t in tool_defs.values()]
         if not tools:
             return tools, None
 

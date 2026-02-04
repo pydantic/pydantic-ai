@@ -331,6 +331,7 @@ class BedrockConverseModel(Model):
                 raise UserError(
                     f'Bedrock does not support thinking and output tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
                 )
+        # Pass unmerged model_settings; base class does its own merge
         return super().prepare_request(model_settings, model_request_parameters)
 
     async def request(
