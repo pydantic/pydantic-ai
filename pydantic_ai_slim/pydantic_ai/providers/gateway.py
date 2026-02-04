@@ -241,7 +241,7 @@ def normalize_gateway_provider(provider: str) -> str:
 # TODO(Marcelo): We should deprecate this, and remove it in v2.
 GATEWAY_BASE_URL = 'https://gateway.pydantic.dev/proxy'
 
-_PYDANTIC_TOKEN_PATTERN = re.compile(r'^pylf_v(?P<version>[0-9]+)_(?P<region>[a-z]+)_[a-zA-Z0-9]+$')
+_PYDANTIC_TOKEN_PATTERN = re.compile(r'^pylf_v(?P<version>[0-9]+)_(?P<region>[a-z]+)_[a-zA-Z0-9-_]+$')
 
 
 def _infer_base_url(api_key: str) -> str:
