@@ -40,7 +40,6 @@ __all__ = (
     'ClientWithHandler',
     'try_import',
     'SNAPSHOT_BYTES_COLLAPSE_THRESHOLD',
-    'normalize_schema_for_pydantic_version',
 )
 
 # Configure VCR logger to WARNING as it is too verbose by default
@@ -669,23 +668,3 @@ def mock_snapshot_id(mocker: MockerFixture):
         return f'{node_id}:{i}'
 
     return mocker.patch('pydantic_graph.nodes.generate_snapshot_id', side_effect=generate_snapshot_id)
-
-
-def normalize_schema_for_pydantic_version(schema: Any) -> Any:
-    """Normalize schema by removing `description` fields for cross-version comparison.
-
-    Pydantic 2.12+ omits `description` fields in some JSON schema outputs, while
-    2.11 includes them. This function removes `description` from the actual result
-    so that a snapshot without descriptions works across both versions.
-
-    Use as: `assert normalize_schema_for_pydantic_version(actual) == snapshot({...})`
-    """
-
-    def _remove_description(obj: Any) -> Any:
-        if isinstance(obj, dict):
-            return {k: _remove_description(v) for k, v in obj.items() if k != 'description'}  # pyright: ignore[reportUnknownVariableType]
-        elif isinstance(obj, list):
-            return [_remove_description(item) for item in obj]  # pyright: ignore[reportUnknownVariableType]
-        return obj
-
-    return _remove_description(schema)
