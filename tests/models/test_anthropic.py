@@ -276,6 +276,37 @@ async def test_sync_request_text_response(allow_model_requests: None):
     )
 
 
+async def test_pause_turn_continues_run(allow_model_requests: None):
+    c1 = completion_message([BetaTextBlock(text='paused', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    c1.stop_reason = 'pause_turn'
+    c2 = completion_message([BetaTextBlock(text='final', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+
+    mock_client = MockAnthropic.create_mock([c1, c2])
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model)
+
+    result = await agent.run('test prompt')
+
+    assert result.output == 'final'
+
+    pause_response = next(
+        m
+        for m in result.all_messages()
+        if isinstance(m, ModelResponse) and (m.provider_details or {}).get('finish_reason') == 'pause_turn'
+    )
+    assert pause_response.finish_reason == 'incomplete'
+
+    all_kwargs = get_mock_chat_completion_kwargs(mock_client)
+    assert len(all_kwargs) == 2
+    messages_2 = all_kwargs[1]['messages']
+    assert len(messages_2) == 2
+    assert messages_2[1]['role'] == 'assistant'
+    content_blocks = messages_2[1]['content']
+    assert isinstance(content_blocks, list)
+    assert content_blocks[0]['type'] == 'text'
+    assert content_blocks[0]['text'] == 'paused'
+
+
 async def test_async_request_prompt_caching(allow_model_requests: None):
     c = completion_message(
         [BetaTextBlock(text='world', type='text')],
