@@ -132,7 +132,7 @@ LLMJudge(
 # Premium option for nuanced evaluation
 LLMJudge(
     rubric='Response demonstrates deep understanding of quantum mechanics',
-    model='anthropic:claude-opus-4-20250514',
+    model='anthropic:claude-opus-4-5',
 )
 ```
 
