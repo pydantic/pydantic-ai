@@ -8288,7 +8288,7 @@ async def test_anthropic_beta_headers_with_examples(allow_model_requests: None):
 
     @agent.tool_plain(examples=examples)
     def my_tool(x: int) -> int:
-        return x
+        return x  # pragma: no cover
 
     await agent.run('hi')
 

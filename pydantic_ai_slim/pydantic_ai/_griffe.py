@@ -72,7 +72,7 @@ def doc_descriptions(
         for source, output in examples.value:
             # In some cases (e.g. Google style), griffe puts the SectionKind enum in the source.
             # We must detect this and only use the output in that case.
-            if source is DocstringSectionKind.examples:
+            if isinstance(source, DocstringSectionKind):
                 examples_content.append(output)
             elif output:
                 examples_content.append(f'{source}\n{output}')

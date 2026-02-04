@@ -957,10 +957,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             # Append examples to description so they are visible to models that don't support input_examples
             if examples:
                 examples_str = json.dumps(examples, indent=2)
-                if description:
-                    description = f'{description}\n\nExamples:\n{examples_str}'
-                else:
-                    description = f'Examples:\n{examples_str}'
+                description = f'{description}\n\nExamples:\n{examples_str}'
 
             tool_def = ToolDefinition(
                 name=name,

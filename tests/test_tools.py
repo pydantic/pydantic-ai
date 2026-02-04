@@ -2798,7 +2798,7 @@ def test_agent_tool_timeout_passed_to_toolset():
 
 def test_tool_examples_init():
     def my_tool(x: int) -> int:
-        return x
+        return x  # pragma: no cover
 
     examples = [{'x': 1}]
     tool = Tool(my_tool, examples=examples)
@@ -2808,7 +2808,7 @@ def test_tool_examples_init():
 
 def test_tool_from_schema_examples():
     def my_tool(x: int) -> int:
-        return x
+        return x  # pragma: no cover
 
     examples = [{'x': 1}]
     tool = Tool.from_schema(
@@ -2828,11 +2828,11 @@ def test_agent_tool_decorators_examples():
 
     @agent.tool(examples=examples)
     def tool_ctx(ctx: RunContext[None], x: int) -> int:
-        return x
+        return x  # pragma: no cover
 
     @agent.tool_plain(examples=examples)
     def tool_plain(x: int) -> int:
-        return x
+        return x  # pragma: no cover
 
     assert agent._function_toolset.tools['tool_ctx'].examples == examples
     assert agent._function_toolset.tools['tool_plain'].examples == examples
@@ -2857,7 +2857,7 @@ def test_tool_examples_flattening():
         x: int
 
     def my_tool(arg: MyModel) -> int:
-        return arg.x
+        return arg.x  # pragma: no cover
 
     # User provides examples matching the python signature
     examples = [{'arg': {'x': 1}}, {'arg': {'x': 2}}]
@@ -2881,7 +2881,7 @@ def test_tool_docstring_examples():
             >>> my_tool(1)
             1
         """
-        return x
+        return x  # pragma: no cover
 
     tool = Tool(my_tool)
 
@@ -2892,6 +2892,78 @@ My tool description.
 Examples:
     >>> my_tool(1)
     1\
+"""
+    )
+
+
+def test_tool_output_flattening():
+    class MyModel(BaseModel):
+        x: int
+
+    def output_func(arg: MyModel) -> int:
+        return arg.x  # pragma: no cover
+
+    # Function takes a model, so schema is flattened to the model
+    examples = [{'arg': {'x': 1}}]
+    tool_output = ToolOutput(output_func, examples=examples)
+
+    agent = Agent('test', output_type=tool_output)
+    assert agent._output_toolset is not None
+    tool_def = agent._output_toolset._tool_defs[0]
+
+    # Should be flattened (arg removed) -> [{'x': 1}]
+    assert tool_def.examples == [{'x': 1}]
+
+
+def test_tool_output_model_examples():
+    class MyModel(BaseModel):
+        x: int
+
+    # ToolOutput using a model directly
+    examples = [MyModel(x=1)]
+    tool_output = ToolOutput(MyModel, examples=examples)
+
+    agent = Agent('test', output_type=tool_output)
+    assert agent._output_toolset is not None
+    tool_def = agent._output_toolset._tool_defs[0]
+
+    # Model output -> outer_typed_dict_key is None
+    # No wrapping should happen
+    assert tool_def.examples == [{'x': 1}]
+
+
+def test_docstring_no_description():
+    def my_tool(x: int) -> int:
+        """
+        Examples:
+            >>> my_tool(1)
+            1
+        """
+        return x  # pragma: no cover
+
+    tool = Tool(my_tool)
+    assert tool.description == snapshot(
+        """\
+Examples:
+    >>> my_tool(1)
+    1\
+"""
+    )
+
+
+def test_docstring_text_example():
+    def my_tool(x: int) -> int:
+        """
+        Examples:
+            Just some text
+        """
+        return x  # pragma: no cover
+
+    tool = Tool(my_tool)
+    assert tool.description == snapshot(
+        """\
+Examples:
+    Just some text\
 """
     )
 
