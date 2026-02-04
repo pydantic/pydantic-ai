@@ -90,7 +90,7 @@ jobs:
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
