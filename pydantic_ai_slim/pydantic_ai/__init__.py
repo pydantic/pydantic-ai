@@ -41,6 +41,7 @@ from .exceptions import (
 )
 from .format_prompt import format_as_xml
 from .messages import (
+    MULTI_MODAL_CONTENT_TYPES,
     AgentStreamEvent,
     AudioFormat,
     AudioMediaType,
@@ -180,6 +181,7 @@ __all__ = (
     'ModelResponsePart',
     'ModelResponsePartDelta',
     'ModelResponseStreamEvent',
+    'MULTI_MODAL_CONTENT_TYPES',
     'MultiModalContent',
     'PartDeltaEvent',
     'PartEndEvent',
