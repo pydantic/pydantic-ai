@@ -227,8 +227,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         sanitized_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         available_functions: list[str] = []
 
-        llm_signatures: list[str] = []
-
         for original_name, tool in wrapped_tools.items():
             sanitized_name = self._name_mapping.add(original_name)
             sanitized_tools[sanitized_name] = tool
@@ -237,10 +235,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 name_override=sanitized_name,
                 description_handler=self.description_handler,
             )
-            # For type checking: use `raise NotImplementedError()` body
+            # Use `...` body for both LLM display and type checking
+            # (Monty converts to `raise NotImplementedError()` internally for ty compatibility)
             available_functions.append(sig.with_typeddicts())
-            # For LLM display: use `...` body
-            llm_signatures.append(sig.with_typeddicts('...'))
 
         self._cached_signatures = available_functions
 
@@ -249,7 +246,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # defeating the progressive-disclosure approach described in code-mode references.
         # Consider: progressive discovery (list tool names first, fetch signatures on demand).
         # David to look into this
-        description = self.prompt_builder(signatures=llm_signatures)
+        description = self.prompt_builder(signatures=available_functions)
         # TODO: Ideally we'd use kind='output' to make the code result be the final answer
         # without a second LLM call. However, output tools are treated differently by models -
         # they expect to provide structured output directly, not execute code. We need a way

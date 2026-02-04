@@ -73,14 +73,14 @@ class Signature:
     """Whether to generate 'async def' (True) or 'def' (False)."""
 
     def __str__(self) -> str:
-        """Render with `raise NotImplementedError()` body."""
-        return self._render('raise NotImplementedError()')
+        """Render with `...` body."""
+        return self._render('...')
 
     def with_ellipsis(self) -> str:
         """Render with `...` body (for LLM display)."""
         return self._render('...')
 
-    def with_typeddicts(self, body: str = 'raise NotImplementedError()') -> str:
+    def with_typeddicts(self, body: str = '...') -> str:
         """Render with TypedDict definitions prepended."""
         sig = self._render(body)
         if not self.typeddicts:

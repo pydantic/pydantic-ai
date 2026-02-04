@@ -154,8 +154,8 @@ async def add(x: int, y: int) -> int:
     m.type_check(prefix_code=prefix)  # Should not raise
 
 
-async def test_llm_sees_ellipsis_but_type_check_has_not_implemented():
-    """LLM-facing signatures use '...' but type-check prefix uses 'raise NotImplementedError()'."""
+async def test_signatures_use_ellipsis_monty_converts_for_type_check():
+    """Signatures use '...' body; Monty converts to 'raise NotImplementedError()' for type checking."""
     toolset: FunctionToolset[None] = FunctionToolset()
     toolset.add_function(add, takes_ctx=False)
 
@@ -168,8 +168,14 @@ async def test_llm_sees_ellipsis_but_type_check_has_not_implemented():
     assert '...' in description
     assert 'raise NotImplementedError()' not in description
 
-    # Type-check prefix should still have 'raise NotImplementedError()'
-    assert any('raise NotImplementedError()' in sig for sig in code_mode._cached_signatures)  # pyright: ignore[reportPrivateUsage]
+    # Cached signatures should also have '...' (not NotImplementedError)
+    assert all('...' in sig for sig in code_mode._cached_signatures)  # pyright: ignore[reportPrivateUsage]
+    assert not any('raise NotImplementedError()' in sig for sig in code_mode._cached_signatures)  # pyright: ignore[reportPrivateUsage]
+
+    # But when Monty builds the type-check prefix, it converts to 'raise NotImplementedError()'
+    prefix = _build_type_check_prefix(code_mode._cached_signatures)  # pyright: ignore[reportPrivateUsage]
+    assert 'raise NotImplementedError()' in prefix
+    assert '    ...' not in prefix
 
     assert description == snapshot('''\
 ALWAYS use run_code to solve the ENTIRE task in a single code block. Do not call tools individually - write one comprehensive Python script that fetches all data, processes it, and returns the complete answer.

@@ -34,6 +34,10 @@ def _build_type_check_prefix(signatures: list[str]) -> str:
     Combines standard typing imports with tool signatures to create the
     prefix that Monty uses for type-checking LLM-generated code.
 
+    Note: Signatures use `...` as the body by default, but ty/Monty requires
+    `raise NotImplementedError()` for valid function stubs. See:
+    https://github.com/astral-sh/ty/issues/1922
+
     Args:
         signatures: List of Python function signatures for available tools.
 
@@ -41,7 +45,10 @@ def _build_type_check_prefix(signatures: list[str]) -> str:
         Complete prefix code string with imports and signatures.
     """
     imports = 'from typing import Any, TypedDict, NotRequired, Literal\n\n'
-    return imports + '\n\n'.join(signatures)
+    # Convert `...` body to `raise NotImplementedError()` for ty/Monty compatibility
+    # The body is always on its own line with 4-space indent at the end of the function
+    converted = [sig.replace('\n    ...', '\n    raise NotImplementedError()') for sig in signatures]
+    return imports + '\n\n'.join(converted)
 
 
 class MontyRuntime(CodeRuntime):
