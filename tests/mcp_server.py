@@ -267,6 +267,18 @@ async def enable_hidden_tool(ctx: Context[ServerSession, None]) -> str:
     return 'Hidden tool enabled'
 
 
+@mcp.prompt()
+def simple_prompt() -> str:
+    """A simple prompt template."""
+    return 'This is a simple prompt'
+
+
+@mcp.prompt()
+def parameterized_prompt(name: str, topic: str) -> str:
+    """A prompt template with parameters."""
+    return f"Hello {name}, let's talk about {topic}!"
+
+
 @mcp._mcp_server.set_logging_level()  # pyright: ignore[reportPrivateUsage]
 async def set_logging_level(level: str) -> None:
     global log_level
