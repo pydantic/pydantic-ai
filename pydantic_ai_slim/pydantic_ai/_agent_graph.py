@@ -1254,7 +1254,7 @@ async def _call_tool(
                     f'The return value of tool {tool_call.tool_name!r} contains invalid nested `ToolReturn` objects. '
                     f'`ToolReturn` should be used directly.'
                 )
-            elif isinstance(content, _messages.MultiModalContent):
+            elif isinstance(content, _messages.MULTI_MODAL_CONTENT_TYPES):
                 identifier = content.identifier
 
                 return_values.append(f'See file {identifier}')
@@ -1268,10 +1268,10 @@ async def _call_tool(
         )
 
     if (
-        isinstance(tool_return.return_value, _messages.MultiModalContent)
+        isinstance(tool_return.return_value, _messages.MULTI_MODAL_CONTENT_TYPES)
         or isinstance(tool_return.return_value, list)
         and any(
-            isinstance(content, _messages.MultiModalContent)
+            isinstance(content, _messages.MULTI_MODAL_CONTENT_TYPES)
             for content in tool_return.return_value  # type: ignore
         )
     ):
