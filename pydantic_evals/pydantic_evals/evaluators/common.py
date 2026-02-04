@@ -102,8 +102,9 @@ class Contains(Evaluator[object, object, object]):
         try:
             # Handle different collection types
             output_type = type(ctx.output)
-            if isinstance(ctx.output, dict) or is_model_like(output_type):
-                if is_model_like(output_type):
+            output_is_model_like = is_model_like(output_type)
+            if isinstance(ctx.output, dict) or output_is_model_like:
+                if output_is_model_like:
                     adapter: TypeAdapter[Any] = TypeAdapter(output_type)
                     output = adapter.dump_python(ctx.output, exclude_defaults=True)  # pyright: ignore[reportUnknownMemberType]
                 else:
