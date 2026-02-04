@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, MutableMapping
 from typing import Any, cast
+from unittest.mock import Mock
 
 import pytest
 from inline_snapshot import snapshot
@@ -30,6 +31,7 @@ from pydantic_ai.messages import (
     TextPart,
     TextPartDelta,
     ThinkingPart,
+    ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -3121,15 +3123,7 @@ async def test_adapter_dump_load_roundtrip_without_timestamps():
     ui_messages = VercelAIAdapter.dump_messages(original_messages)
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
 
-    def sync_timestamps(original: list[ModelRequest | ModelResponse], new: list[ModelRequest | ModelResponse]) -> None:
-        for orig_msg, new_msg in zip(original, new):
-            for orig_part, new_part in zip(orig_msg.parts, new_msg.parts):
-                if hasattr(orig_part, 'timestamp') and hasattr(new_part, 'timestamp'):
-                    new_part.timestamp = orig_part.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-            if hasattr(orig_msg, 'timestamp') and hasattr(new_msg, 'timestamp'):
-                new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue]
-
-    sync_timestamps(original_messages, reloaded_messages)
+    _sync_timestamps(original_messages, reloaded_messages)
 
     for msg in reloaded_messages:
         if hasattr(msg, 'timestamp'):  # pragma: no branch
@@ -4472,7 +4466,6 @@ async def test_event_stream_builtin_tool_call_end_with_provider_metadata_v6():
 
 async def test_event_stream_thinking_delta_with_provider_metadata():
     """Test that thinking delta events include provider_metadata."""
-    from pydantic_ai.messages import ThinkingPartDelta
 
     async def event_generator():
         part = ThinkingPart(
@@ -4566,7 +4559,7 @@ def _sync_timestamps(original: list[ModelMessage], new: list[ModelMessage]) -> N
         for orig_part, new_part in zip(orig_msg.parts, new_msg.parts):
             if hasattr(orig_part, 'timestamp') and hasattr(new_part, 'timestamp'):
                 new_part.timestamp = orig_part.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-        if hasattr(orig_msg, 'timestamp') and hasattr(new_msg, 'timestamp'):  # pragma: no branch
+        if hasattr(orig_msg, 'timestamp') and hasattr(new_msg, 'timestamp'):
             new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue]
 
 
@@ -4692,3 +4685,41 @@ class TestSdkVersion:
             e for e in events_v6 if isinstance(e, dict) and e.get('type') == 'tool-input-start'
         )
         assert 'providerMetadata' in tool_input_start_v6
+
+
+@pytest.mark.parametrize(
+    'model_response,files,expected',
+    [
+        pytest.param(
+            {'return_value': 'hello'},
+            [BinaryContent(data=b'x', media_type='image/png')],
+            'hello\n[File: image/png]',
+            id='string_with_files',
+        ),
+        pytest.param(
+            {'return_value': None},
+            [BinaryContent(data=b'x', media_type='audio/wav')],
+            '[File: audio/wav]',
+            id='falsy_with_files',
+        ),
+        pytest.param(
+            {'return_value': 42},
+            [BinaryContent(data=b'x', media_type='video/mp4')],
+            42,
+            id='truthy_non_container_with_files',
+        ),
+    ],
+)
+def test_tool_return_output_edge_cases(model_response: dict[str, Any], files: list[BinaryContent], expected: Any):
+    """Test _tool_return_output branches unreachable through normal tool execution flows."""
+    request = SubmitMessage(
+        id='test',
+        messages=[UIMessage(id='test', role='user', parts=[TextUIPart(text='Test')])],
+    )
+    stream = VercelAIEventStream(run_input=request)
+    mock_part = Mock()
+    mock_part.model_response_object.return_value = model_response
+    mock_part.files = files
+
+    result = stream._tool_return_output(mock_part)  # pyright: ignore[reportPrivateUsage]
+    assert result == expected
