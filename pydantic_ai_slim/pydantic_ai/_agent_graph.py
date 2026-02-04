@@ -223,6 +223,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             return await self._handle_deferred_tool_results(self.deferred_tool_results, messages, ctx)
 
         next_message: _messages.ModelRequest | None = None
+        reuse_history_request = False
 
         run_context: RunContext[DepsT] | None = None
         instructions: str | None = None
@@ -232,6 +233,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 # Drop last message from history and reuse its parts
                 messages.pop()
                 next_message = _messages.ModelRequest(parts=last_message.parts)
+                reuse_history_request = True
 
                 # Extract `UserPromptPart` content from the popped message and add to `ctx.deps.prompt`
                 user_prompt_parts = [part for part in last_message.parts if isinstance(part, _messages.UserPromptPart)]
@@ -282,7 +284,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         if not messages and not next_message.parts and not next_message.instructions:
             raise exceptions.UserError('No message history, user prompt, or instructions provided')
 
-        return ModelRequestNode[DepsT, NodeRunEndT](request=next_message)
+        return ModelRequestNode[DepsT, NodeRunEndT](request=next_message, reuse_history_request=reuse_history_request)
 
     async def _handle_deferred_tool_results(  # noqa: C901
         self,
@@ -438,6 +440,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that makes a request to the model using the last message in state.message_history."""
 
     request: _messages.ModelRequest
+    reuse_history_request: bool = False
 
     _result: CallToolsNode[DepsT, NodeRunEndT] | None = field(repr=False, init=False, default=None)
     _did_stream: bool = field(repr=False, init=False, default=False)
@@ -524,7 +527,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
         ctx.state.message_history[:] = message_history
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
-        ctx.deps.new_message_index = _first_run_id_index(message_history, ctx.state.run_id)
+        ctx.deps.new_message_index = (
+            len(message_history)
+            if self.reuse_history_request
+            else _first_run_id_index(message_history, ctx.state.run_id)
+        )
 
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
         # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.
