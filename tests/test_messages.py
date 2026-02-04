@@ -743,7 +743,7 @@ def test_binary_content_from_path(tmp_path: Path):
 def test_tool_return_content_with_url_field_not_coerced_to_image_url():
     """Test that dicts with 'url' keys are not incorrectly coerced to ImageUrl.
 
-    Regression test for: https://github.com/pydantic/pydantic-ai/issues/XXXX
+    Regression test for: https://github.com/pydantic/pydantic-ai/issues/4190
 
     Without a discriminator on MultiModalContent union, Pydantic would incorrectly
     match any dict containing a 'url' key against ImageUrl (first union member),
