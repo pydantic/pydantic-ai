@@ -52,7 +52,7 @@ def _create_model(case: Case) -> Model:
             )
         else:
             raise ValueError(f'Unknown model: {case.model_name}')  # pragma: no cover
-    except ImportError:  # pragma: no cover
+    except ImportError:
         pytest.skip(f'{case.model_name.split(":")[0]} is not installed')
 
 
