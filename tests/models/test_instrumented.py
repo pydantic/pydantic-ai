@@ -1104,11 +1104,9 @@ async def test_missing_token_usage_not_recorded(capfire: CaptureLogfire):
         ),
     )
 
-    try:
-        # metrics_reader.get_metrics_data() will return None
+    with pytest.raises(AttributeError):
+        # metrics_reader.get_metrics_data() will return None, causing an AttirubteError to be raised
         capfire.get_collected_metrics()
-    except AttributeError:
-        pass
 
 
 def test_messages_to_otel_events_serialization_errors():
