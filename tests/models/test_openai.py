@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-from dirty_equals import IsPartialDict
 from inline_snapshot import snapshot
 from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag
 from typing_extensions import NotRequired, TypedDict
@@ -2069,8 +2068,9 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
         (
             tool_with_typed_kwargs,
             None,
-            IsPartialDict(
+            snapshot(
                 {
+                    'additionalProperties': {'type': 'integer'},
                     'properties': {'x': {'type': 'integer'}},
                     'required': ['x'],
                     'type': 'object',
