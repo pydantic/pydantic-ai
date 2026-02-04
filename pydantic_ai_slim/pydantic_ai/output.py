@@ -144,7 +144,7 @@ class NativeOutput(Generic[OutputDataT]):
     from tool_output import Fruit, Vehicle
 
     agent = Agent(
-        'openai:gpt-4.1',
+        'openai:gpt-4o',
         output_type=NativeOutput(
             [Fruit, Vehicle],
             name='Fruit or vehicle',
