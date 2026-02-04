@@ -20,7 +20,7 @@ __all__ = (
 )
 
 
-_default_model: models.Model | models.KnownModelName = 'openai:gpt-4o'
+_default_model: models.Model | models.KnownModelName = 'openai:gpt-5.2'
 
 
 class GradingOutput(BaseModel, populate_by_name=True):
@@ -60,7 +60,7 @@ async def judge_output(
 ) -> GradingOutput:
     """Judge the output of a model based on a rubric.
 
-    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
+    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-5.2',
     but this can be changed using the `set_default_judge_model` function.
     """
     user_prompt = _build_prompt(output=output, rubric=rubric)
@@ -101,7 +101,7 @@ async def judge_input_output(
 ) -> GradingOutput:
     """Judge the output of a model based on the inputs and a rubric.
 
-    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
+    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-5.2',
     but this can be changed using the `set_default_judge_model` function.
     """
     user_prompt = _build_prompt(inputs=inputs, output=output, rubric=rubric)
@@ -146,7 +146,7 @@ async def judge_input_output_expected(
 ) -> GradingOutput:
     """Judge the output of a model based on the inputs and a rubric.
 
-    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
+    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-5.2',
     but this can be changed using the `set_default_judge_model` function.
     """
     user_prompt = _build_prompt(inputs=inputs, output=output, rubric=rubric, expected_output=expected_output)
@@ -190,7 +190,7 @@ async def judge_output_expected(
 ) -> GradingOutput:
     """Judge the output of a model based on the expected output, output, and a rubric.
 
-    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
+    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-5.2',
     but this can be changed using the `set_default_judge_model` function.
     """
     user_prompt = _build_prompt(output=output, rubric=rubric, expected_output=expected_output)

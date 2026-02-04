@@ -35,7 +35,7 @@ async def generate_dataset(
     dataset_type: type[Dataset[InputsT, OutputT, MetadataT]],
     path: Path | str | None = None,
     custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
-    model: models.Model | models.KnownModelName = 'openai:gpt-4o',
+    model: models.Model | models.KnownModelName = 'openai:gpt-5.2',
     n_examples: int = 3,
     extra_instructions: str | None = None,
 ) -> Dataset[InputsT, OutputT, MetadataT]:
@@ -48,7 +48,7 @@ async def generate_dataset(
         path: Optional path to save the generated dataset. If provided, the dataset will be saved to this location.
         dataset_type: The type of dataset to generate, with the desired input, output, and metadata types.
         custom_evaluator_types: Optional sequence of custom evaluator classes to include in the schema.
-        model: The Pydantic AI model to use for generation. Defaults to 'gpt-4o'.
+        model: The Pydantic AI model to use for generation. Defaults to 'openai:gpt-5.2'.
         n_examples: Number of examples to generate. Defaults to 3.
         extra_instructions: Optional additional instructions to provide to the LLM.
 
