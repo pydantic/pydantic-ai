@@ -794,7 +794,14 @@ class UploadedFile(_MediaTypeMixin):
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent | UploadedFile
+MULTI_MODAL_CONTENT_TYPES = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent, UploadedFile)
+"""Tuple of multi-modal content types for use with isinstance() checks."""
+
+MultiModalContent = Annotated[
+    ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent | UploadedFile, pydantic.Discriminator('kind')
+]
+"""Union of all multi-modal content types with a discriminator for Pydantic validation."""
+
 UserContent: TypeAlias = str | MultiModalContent | CachePoint
 
 
