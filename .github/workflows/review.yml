@@ -1,0 +1,61 @@
+name: Auto Review
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+env:
+  UV_PYTHON: 3.13
+  UV_FROZEN: "1"
+
+jobs:
+
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-suffix: claude-code
+
+      - run: uv tool install pre-commit
+
+      - run: make install
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          settings: .claude/settings.json
+          additional_permissions: |
+            actions: read
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Please review this pull request with a focus on:
+            - the considerations, requirements, and rules laid out in AGENTS.md
+            - alignment with maintainer guidance in the issue (and if applicable, earlier review comments)
+            - architecture, design decisions (behaviors and APIs), tradeoffs, and edge cases
+
+            (Another agent (Devin) is responsible for thoroughly reviewing the code for bugs.)
+
+            Don't limit yourself to only calling out "confirmed problems":
+            - If you think that a design decision could be correct but needs explicit consideration, discussion, or maintainer approval, flag it.
+            - If you have a suggestion for improvement, make it, using a GitHub suggestion code snippet if appropriate.
+            - Use your best judgment to steer the PR towards a good outcome for the project.
+
+            Note: The PR branch is already checked out in the current working directory, and all dependencies are installed.
+
+            Whenever possible, use `mcp__github_inline_comment__create_inline_comment` to attach feedback to a specific line of code.
+            Use `gh pr comment` only for top-level feedback.
+            Only post GitHub comments - don't submit review text as messages.
