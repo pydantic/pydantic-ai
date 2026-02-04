@@ -66,8 +66,8 @@ class TestTavilySearchTool:
         assert len(results) == 2
         assert results[0]['title'] == 'Test Result 1'
 
-    async def test_search_with_include_domains_at_call_time(self, mock_async_tavily_client: AsyncMock):
-        """Test search with include_domains specified at call time."""
+    async def test_search_with_include_domains(self, mock_async_tavily_client: AsyncMock):
+        """Test search with include_domains specified."""
         tool = TavilySearchTool(client=mock_async_tavily_client)
         await tool('test query', include_domains=['arxiv.org', 'github.com'])
 
@@ -80,8 +80,8 @@ class TestTavilySearchTool:
             exclude_domains=None,
         )
 
-    async def test_search_with_exclude_domains_at_call_time(self, mock_async_tavily_client: AsyncMock):
-        """Test search with exclude_domains specified at call time."""
+    async def test_search_with_exclude_domains(self, mock_async_tavily_client: AsyncMock):
+        """Test search with exclude_domains specified."""
         tool = TavilySearchTool(client=mock_async_tavily_client)
         await tool('test query', exclude_domains=['medium.com'])
 
@@ -92,46 +92,6 @@ class TestTavilySearchTool:
             time_range=None,
             include_domains=None,
             exclude_domains=['medium.com'],
-        )
-
-    async def test_search_with_default_domains(self, mock_async_tavily_client: AsyncMock):
-        """Test search with default domains set at initialization."""
-        tool = TavilySearchTool(
-            client=mock_async_tavily_client,
-            include_domains=['docs.python.org'],
-            exclude_domains=['stackoverflow.com'],
-        )
-        await tool('test query')
-
-        mock_async_tavily_client.search.assert_called_once_with(
-            'test query',
-            search_depth='basic',
-            topic='general',
-            time_range=None,
-            include_domains=['docs.python.org'],
-            exclude_domains=['stackoverflow.com'],
-        )
-
-    async def test_call_time_domains_override_defaults(self, mock_async_tavily_client: AsyncMock):
-        """Test that call-time domain parameters override defaults."""
-        tool = TavilySearchTool(
-            client=mock_async_tavily_client,
-            include_domains=['default.com'],
-            exclude_domains=['default-exclude.com'],
-        )
-        await tool(
-            'test query',
-            include_domains=['override.com'],
-            exclude_domains=['override-exclude.com'],
-        )
-
-        mock_async_tavily_client.search.assert_called_once_with(
-            'test query',
-            search_depth='basic',
-            topic='general',
-            time_range=None,
-            include_domains=['override.com'],
-            exclude_domains=['override-exclude.com'],
         )
 
     async def test_search_with_all_parameters(self, mock_async_tavily_client: AsyncMock):
@@ -155,29 +115,6 @@ class TestTavilySearchTool:
             exclude_domains=['spam.com'],
         )
 
-    async def test_empty_list_clears_default_domains(self, mock_async_tavily_client: AsyncMock):
-        """Test that passing empty list clears the default domain filtering.
-
-        This is distinct from passing None (which uses the default).
-        Empty list means "explicitly no domain filtering for this call".
-        """
-        tool = TavilySearchTool(
-            client=mock_async_tavily_client,
-            include_domains=['default.com'],
-            exclude_domains=['default-exclude.com'],
-        )
-        # Pass empty lists to explicitly clear domain filtering for this call
-        await tool('test query', include_domains=[], exclude_domains=[])
-
-        mock_async_tavily_client.search.assert_called_once_with(
-            'test query',
-            search_depth='basic',
-            topic='general',
-            time_range=None,
-            include_domains=[],
-            exclude_domains=[],
-        )
-
 
 class TestTavilySearchToolFactory:
     """Tests for tavily_search_tool factory function."""
@@ -190,18 +127,6 @@ class TestTavilySearchToolFactory:
             mock_client_class.assert_called_once_with('test-api-key')
             assert tool.name == 'tavily_search'
 
-    def test_creates_tool_with_default_domains(self):
-        """Test that tavily_search_tool accepts domain parameters."""
-        with patch('pydantic_ai.common_tools.tavily.AsyncTavilyClient') as mock_client_class:
-            tool = tavily_search_tool(
-                'test-api-key',
-                include_domains=['arxiv.org'],
-                exclude_domains=['medium.com'],
-            )
-
-            mock_client_class.assert_called_once_with('test-api-key')
-            assert tool.name == 'tavily_search'
-
 
 class TestTavilySearchToolIntegration:
     """Integration tests for Tavily tool with Agent."""
@@ -209,7 +134,7 @@ class TestTavilySearchToolIntegration:
     def test_tool_with_agent(self, mock_async_tavily_client: AsyncMock):
         """Test that the tool integrates correctly with an Agent."""
         with patch('pydantic_ai.common_tools.tavily.AsyncTavilyClient', return_value=mock_async_tavily_client):
-            tool = tavily_search_tool('test-api-key', include_domains=['example.com'])
+            tool = tavily_search_tool('test-api-key')
 
             agent = Agent(
                 TestModel(),
@@ -218,24 +143,3 @@ class TestTavilySearchToolIntegration:
 
             # Verify the tool is properly registered
             assert 'tavily_search' in agent._function_toolset.tools  # pyright: ignore[reportPrivateUsage]
-
-    async def test_factory_domains_pass_through(self, mock_async_tavily_client: AsyncMock):
-        """Test that domain parameters from the factory are used when the tool is called."""
-        with patch('pydantic_ai.common_tools.tavily.AsyncTavilyClient', return_value=mock_async_tavily_client):
-            tool = tavily_search_tool(
-                'test-api-key',
-                include_domains=['arxiv.org'],
-                exclude_domains=['spam.com'],
-            )
-
-            # Call the tool's underlying function directly to verify domains pass through
-            await tool.function('test query')  # pyright: ignore[reportArgumentType]
-
-            mock_async_tavily_client.search.assert_called_once_with(
-                'test query',
-                search_depth='basic',
-                topic='general',
-                time_range=None,
-                include_domains=['arxiv.org'],
-                exclude_domains=['spam.com'],
-            )

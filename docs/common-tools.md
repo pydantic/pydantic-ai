@@ -141,7 +141,7 @@ Feel free to click on the links to dive deeper into each story!
 
 ### Domain Filtering
 
-You can filter search results to include or exclude specific domains using the `include_domains` and `exclude_domains` parameters:
+The Tavily search tool exposes `include_domains` and `exclude_domains` parameters that the LLM can use to filter search results. When you instruct the agent appropriately, it will use these parameters:
 
 ```py {title="tavily_domain_filtering.py"}
 import os
@@ -152,17 +152,13 @@ from pydantic_ai.common_tools.tavily import tavily_search_tool
 api_key = os.getenv('TAVILY_API_KEY')
 assert api_key is not None
 
-# Only search within specific domains
 agent = Agent(
     'openai:o3-mini',
-    tools=[
-        tavily_search_tool(
-            api_key,
-            include_domains=['arxiv.org', 'github.com'],
-            exclude_domains=['medium.com'],
-        )
-    ],
-    instructions='Search for information and return the results.',
+    tools=[tavily_search_tool(api_key)],
+    instructions=(
+        'Search for information and return the results. '
+        'When searching for academic content, use include_domains to limit results to arxiv.org.'
+    ),
 )
 
 result = agent.run_sync(
