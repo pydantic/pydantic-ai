@@ -55,25 +55,6 @@ _CODE_ADAPTER = TypeAdapter(_CodeToolArguments)
 _CODE_MODE_TOOL_NAME = 'run_code'
 
 
-# We will attempt to remove all restrictions
-# CRITICAL Syntax restrictions (the runtime uses a restricted Python subset):
-# - No imports - use only the provided functions and builtins (len, sum, str, etc.)
-# - No while loops - use for loops instead
-# - No comprehensions (list/dict/set) or generator expressions - use explicit for loops
-# - No lambdas - define logic inline
-# - No tuple unpacking (e.g., `a, b = 1, 2`) - assign variables separately
-# - No list indexing or slicing (e.g., `lst[0]`, `lst[:10]`) - use for loops to iterate
-# - No break or continue statements - use conditional logic instead
-# - No string methods (.join, .split, .upper, etc.) - return data structures, not formatted strings
-
-# What DOES work:
-# - Dict assignment: `d["key"] = value`
-# - Dict methods: `.get()`, `.keys()`, `.values()`, `.items()`
-# - List methods: `.append()`
-# - F-strings: `f"value is {{x}}"`
-# - Builtins: `len()`, `sum()`, `str()`, `list()`, `range()`
-
-
 def build_code_mode_prompt(*, signatures: list[str]) -> str:
     """Build the default code mode prompt with the given tool signatures.
 
