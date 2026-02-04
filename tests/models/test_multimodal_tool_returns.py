@@ -572,9 +572,9 @@ def _is_file_type(item: Any, file_type: str) -> bool:
             # Audio/video binary content errors for all models before reaching assertions
             if file_type == 'document':  # pragma: no branch
                 return media.startswith('application/')
-            elif file_type == 'audio':  # pragma: no cover
+            elif file_type == 'audio':
                 return media.startswith('audio/')
-            elif file_type == 'video':  # pragma: no cover
+            elif file_type == 'video':
                 return media.startswith('video/')
         return True
     return False  # pragma: no cover
