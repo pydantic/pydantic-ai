@@ -10,14 +10,17 @@ from datetime import timedelta
 from typing import Any, Literal
 
 import pytest
+from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
     AgentRunResultEvent,
     AgentStreamEvent,
+    BinaryContent,
     BinaryImage,
     CodeExecutionTool,
+    DocumentUrl,
     ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -27,6 +30,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelSettings,
+    MultiModalContent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -2378,6 +2382,52 @@ async def test_image_agent(allow_model_requests: None, client: Client):
             )
 
 
+# ============================================================================
+# DocumentUrl Serialization Test - Verifies that DocumentUrl with custom
+# media_type is properly serialized through Temporal activities
+# ============================================================================
+
+document_url_agent = Agent(
+    TestModel(custom_output_args={'url': 'https://example.com/doc/12345', 'media_type': 'application/pdf'}),
+    name='document_url_agent',
+    output_type=DocumentUrl,
+)
+
+document_url_temporal_agent = TemporalAgent(document_url_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class DocumentUrlAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> DocumentUrl:
+        result = await document_url_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_document_url_serialization_preserves_media_type(allow_model_requests: None, client: Client):
+    """Test that `DocumentUrl` with custom `media_type` is preserved through Temporal serialization.
+
+    This is a regression test for https://github.com/pydantic/pydantic-ai/issues/3949
+    where `DocumentUrl.media_type` (a computed field) was lost during Temporal activity
+    serialization because the backing field `_media_type` was excluded from serialization.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DocumentUrlAgentWorkflow],
+        plugins=[AgentPlugin(document_url_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            DocumentUrlAgentWorkflow.run,
+            args=['Return a document'],
+            id=DocumentUrlAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot(
+            DocumentUrl(url='https://example.com/doc/12345', _media_type='application/pdf', _identifier='eb8998')
+        )
+
+
 # Can't use the `openai_api_key` fixture here because the workflow needs to be defined at the top level of the file.
 web_search_model = OpenAIResponsesModel(
     'gpt-5',
@@ -3315,6 +3365,7 @@ def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> Non
     assert result['data_converter'].payload_codec is codec
 
 
+
 def test_temporal_model_profile_with_no_provider_prefix() -> None:
     """Test TemporalModel uses DEFAULT_PROFILE when model string has no inferable provider."""
 
@@ -3331,6 +3382,7 @@ def test_temporal_model_profile_with_no_provider_prefix() -> None:
         assert temporal_model.profile is DEFAULT_PROFILE
 
 
+
 def test_temporal_model_profile_with_unknown_provider() -> None:
     """Test TemporalModel uses DEFAULT_PROFILE when provider is unknown."""
 
@@ -3345,6 +3397,7 @@ def test_temporal_model_profile_with_unknown_provider() -> None:
     # An unknown provider should return DEFAULT_PROFILE
     with temporal_model.using_model('unknown-provider:some-model'):
         assert temporal_model.profile is DEFAULT_PROFILE
+
 
 
 def test_temporal_model_prepare_request_with_unregistered_model_string() -> None:
@@ -3373,3 +3426,152 @@ def test_temporal_model_prepare_request_with_unregistered_model_string() -> None
         # The call should succeed and return valid parameters
         assert params is not None
         assert params.output_mode == 'text'
+
+
+# Tests for BinaryContent and DocumentUrl serialization in Temporal
+# This is a regression test for #3702 (BinaryContent) and verifies that FileUrl
+# instances (like DocumentUrl) with explicit media_type are properly preserved.
+
+
+multimodal_content_agent = Agent(TestModel(), name='multimodal_content_agent')
+
+
+@multimodal_content_agent.tool
+def get_multimodal_content(ctx: RunContext[None]) -> list[str | MultiModalContent]:
+    """Return a list with text, BinaryContent, and DocumentUrl."""
+    return [
+        'test',
+        BinaryImage(data=b'PNG', media_type='image/png'),
+        # URL doesn't hint at media type, so media_type must be specified explicitly
+        DocumentUrl(url='https://example.com/doc/12345', media_type='application/pdf'),
+    ]
+
+
+multimodal_content_temporal_agent = TemporalAgent(multimodal_content_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class MultiModalContentWorkflow:
+    @workflow.run
+    async def run(self, prompt: list[str | MultiModalContent]) -> list[ModelMessage]:
+        result = await multimodal_content_temporal_agent.run(prompt)
+        return result.all_messages()
+
+
+async def test_multimodal_content_serialization_in_workflow(client: Client):
+    """Test that BinaryContent and DocumentUrl survive Temporal serialization.
+
+    This tests both:
+    1. Passing BinaryContent and DocumentUrl as input to agent.run (workflow→activity)
+    2. Returning BinaryContent and DocumentUrl from a tool (activity→workflow)
+
+    BinaryContent is serialized with base64 encoding. DocumentUrl requires explicit
+    media_type since it cannot be inferred from the URL.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MultiModalContentWorkflow],
+        plugins=[AgentPlugin(multimodal_content_temporal_agent)],
+    ):
+        # Pass both BinaryContent and DocumentUrl as input
+        prompt: list[str | MultiModalContent] = [
+            'Process these files and call the tool',
+            BinaryImage(data=b'PNG', media_type='image/png'),
+            DocumentUrl(url='https://example.com/doc/12345', media_type='application/pdf'),
+        ]
+        messages = await client.execute_workflow(
+            MultiModalContentWorkflow.run,
+            args=[prompt],
+            id='test_multimodal_content_serialization',
+            task_queue=TASK_QUEUE,
+        )
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content=[
+                                'Process these files and call the tool',
+                                BinaryContent(data=b'PNG', media_type='image/png', _identifier='4effda'),
+                                DocumentUrl(
+                                    url='https://example.com/doc/12345',
+                                    _media_type='application/pdf',
+                                    _identifier='eb8998',
+                                ),
+                            ],
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_multimodal_content',
+                            args={},
+                            tool_call_id='pyd_ai_tool_call_id__get_multimodal_content',
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=61, output_tokens=2),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='get_multimodal_content',
+                            content=['test', 'See file 4effda', 'See file eb8998'],
+                            tool_call_id='pyd_ai_tool_call_id__get_multimodal_content',
+                            timestamp=IsDatetime(),
+                        ),
+                        UserPromptPart(
+                            content=[
+                                'This is file 4effda:',
+                                BinaryContent(data=b'PNG', media_type='image/png', _identifier='4effda'),
+                                'This is file eb8998:',
+                                DocumentUrl(
+                                    url='https://example.com/doc/12345',
+                                    _media_type='application/pdf',
+                                    _identifier='eb8998',
+                                ),
+                            ],
+                            timestamp=IsDatetime(),
+                        ),
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"get_multimodal_content":["test","See file 4effda","See file eb8998"]}')],
+                    usage=RequestUsage(input_tokens=84, output_tokens=13),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+        # Explicitly verify that media_type is preserved through serialization for both
+        # BinaryContent and DocumentUrl. This is important because _media_type has compare=False
+        # on DocumentUrl, so the snapshot comparison doesn't actually verify it. The media_type
+        # cannot be inferred from the URL, so if serialization loses it, accessing media_type
+        # would raise an error.
+        media_types = [
+            (type(content).__name__, content.media_type)
+            for message in messages
+            for part in message.parts
+            if isinstance(part, UserPromptPart)
+            for content in part.content
+            if isinstance(content, (BinaryContent, DocumentUrl))
+        ]
+        # Should have 4 items: 2 BinaryContent (input + tool return) and 2 DocumentUrl (input + tool return)
+        assert media_types == [
+            ('BinaryContent', 'image/png'),
+            ('DocumentUrl', 'application/pdf'),
+            ('BinaryContent', 'image/png'),
+            ('DocumentUrl', 'application/pdf'),
+        ]
+

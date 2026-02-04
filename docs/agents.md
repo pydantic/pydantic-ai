@@ -758,6 +758,43 @@ print(result.metadata)
 #> {'tenant': 'tenant-123', 'num_requests': 1}
 ```
 
+#### Concurrency Limiting
+
+You can limit the number of concurrent agent runs using the `max_concurrency` parameter.
+This is useful when you want to prevent overwhelming external resources or enforce rate limits when running many agent instances in parallel.
+
+```python {title="agent_concurrency.py"}
+import asyncio
+
+from pydantic_ai import Agent, ConcurrencyLimit
+
+# Simple limit: allow up to 10 concurrent runs
+agent = Agent('openai:gpt-5', max_concurrency=10)
+
+
+# With backpressure: limit concurrent runs and queue depth
+agent_with_backpressure = Agent(
+    'openai:gpt-5',
+    max_concurrency=ConcurrencyLimit(max_running=10, max_queued=100),
+)
+
+
+async def main():
+    # These will be rate-limited to 10 concurrent runs
+    results = await asyncio.gather(
+        *[agent.run(f'Question {i}') for i in range(20)]
+    )
+    print(len(results))
+    #> 20
+```
+
+When the concurrency limit is reached, additional calls to [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] or [`agent.iter()`][pydantic_ai.agent.Agent.iter]
+will wait until a slot becomes available. If you configure `max_queued` and the queue fills up,
+a [`ConcurrencyLimitExceeded`][pydantic_ai.exceptions.ConcurrencyLimitExceeded] exception is raised.
+
+When instrumentation is enabled, waiting operations appear as "waiting for concurrency" spans
+with attributes showing queue depth and limits.
+
 ### Model specific settings
 
 If you wish to further customize model behavior, you can use a subclass of [`ModelSettings`][pydantic_ai.settings.ModelSettings], like
@@ -1011,7 +1048,7 @@ Validation errors from both function tool parameter validation and [structured o
 You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [tool](tools.md) or [output function](output.md#output-functions) to tell the model it should retry generating a response.
 
 - The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.agent.Agent.__init__], a [specific tool][pydantic_ai.agent.Agent.tool], or [outputs][pydantic_ai.agent.Agent.__init__].
-- You can access the current retry count from within a tool or output function via [`ctx.retry`][pydantic_ai.tools.RunContext].
+- You can access the current retry count from within a tool, output validator, or output function via [`ctx.retry`][pydantic_ai.tools.RunContext.retry].
 
 Here's an example:
 
