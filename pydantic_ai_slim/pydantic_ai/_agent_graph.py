@@ -789,6 +789,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         text_processor: _output.BaseOutputProcessor[NodeRunEndT],
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
         run_context = build_run_context(ctx)
+        run_context = replace(
+            run_context,
+            retry=ctx.state.retries,
+            max_retries=ctx.deps.max_result_retries,
+        )
 
         result_data = await text_processor.process(text, run_context=run_context)
 
@@ -1239,7 +1244,7 @@ async def _call_tool(
                     f'The return value of tool {tool_call.tool_name!r} contains invalid nested `ToolReturn` objects. '
                     f'`ToolReturn` should be used directly.'
                 )
-            elif isinstance(content, _messages.MultiModalContent):
+            elif isinstance(content, _messages.MULTI_MODAL_CONTENT_TYPES):
                 identifier = content.identifier
 
                 return_values.append(f'See file {identifier}')
@@ -1253,10 +1258,10 @@ async def _call_tool(
         )
 
     if (
-        isinstance(tool_return.return_value, _messages.MultiModalContent)
+        isinstance(tool_return.return_value, _messages.MULTI_MODAL_CONTENT_TYPES)
         or isinstance(tool_return.return_value, list)
         and any(
-            isinstance(content, _messages.MultiModalContent)
+            isinstance(content, _messages.MULTI_MODAL_CONTENT_TYPES)
             for content in tool_return.return_value  # type: ignore
         )
     ):

@@ -12,7 +12,7 @@ pip/uv-add "pydantic-ai-slim[xai]"
 
 To use xAI models from [xAI](https://x.ai/api) through their API, go to [console.x.ai](https://console.x.ai/team/default/api-keys) to create an API key.
 
-[docs.x.ai][https://docs.x.ai/docs/models] contains a list of available xAI models.
+[docs.x.ai](https://docs.x.ai/docs/models) contains a list of available xAI models.
 
 ## Environment variable
 
