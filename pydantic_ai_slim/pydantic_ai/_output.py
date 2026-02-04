@@ -652,10 +652,9 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                     json_str, allow_partial=pyd_allow_partial, context=validation_context
                 )
             except ValidationError as original_error:
-                # Only attempt JSON repair on final (non-partial) calls,
-                # as repairing partial JSON can interfere with streaming behavior
-                if allow_partial:
-                    raise
+                # Attempt JSON repair - this works for both partial (streaming) and final calls.
+                # fast_json_repair preserves partial string values while fixing syntax errors
+                # like single quotes, trailing commas, etc.
                 repaired = maybe_repair_json(json_str)
                 if repaired == json_str:
                     # Repair didn't change anything, re-raise original error

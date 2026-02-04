@@ -240,3 +240,72 @@ def test_object_output_processor_repair_trailing_comma():
     # validate returns a model instance when passed a BaseModel
     assert isinstance(result, MyOutput)
     assert result.value == 'test'
+
+
+def test_object_output_processor_repair_partial_json():
+    """Test that ObjectOutputProcessor.validate repairs partial JSON during streaming.
+
+    This tests that JSON repair works with allow_partial=True, which is used during
+    streaming. The repair should fix syntax errors (like single quotes) while
+    preserving partial string values.
+    """
+    pytest.importorskip('fast_json_repair')
+
+    from pydantic import BaseModel
+
+    from pydantic_ai._output import ObjectOutputProcessor
+
+    class Whale(BaseModel):
+        name: str
+        description: str | None = None
+
+    processor = ObjectOutputProcessor(Whale)
+
+    # Malformed partial JSON: single quotes + incomplete string value
+    # This simulates streaming where the model outputs broken JSON mid-stream
+    malformed_partial = '{"name": \'blue whale\', "description": "The blue whale is the lar'
+
+    # Without repair, this would fail because Pydantic can't handle single quotes
+    # With repair, the single quotes are fixed AND the partial string is preserved
+    result = processor.validate(malformed_partial, allow_partial=True)
+
+    assert isinstance(result, Whale)
+    assert result.name == 'blue whale'
+    # The partial description should be preserved (not truncated to None)
+    assert result.description == 'The blue whale is the lar'
+
+
+def test_validate_json_with_repair_partial():
+    """Test that _validate_json_with_repair works with allow_partial=True.
+
+    This tests the streaming scenario where tool arguments arrive with syntax
+    errors but need to be validated incrementally. Previously, repair was skipped
+    for partial validation, but now it should work.
+    """
+    pytest.importorskip('fast_json_repair')
+
+    from pydantic import BaseModel, TypeAdapter
+
+    from pydantic_ai._tool_manager import _validate_json_with_repair
+
+    class WhaleArgs(BaseModel):
+        name: str
+        description: str | None = None
+
+    adapter = TypeAdapter(WhaleArgs)
+    validator = adapter.validator
+
+    # Malformed partial JSON with single quotes - simulates Claude's fine-grained
+    # tool streaming which can produce invalid JSON mid-stream
+    malformed_partial = '{"name": \'orca\', "description": "Also known as killer'
+
+    # Validate as partial (streaming mode) - this should now work with repair!
+    result = _validate_json_with_repair(
+        validator=validator,
+        json_str=malformed_partial,
+        allow_partial=True,
+        validation_context=None,
+    )
+
+    assert result.name == 'orca'
+    assert result.description == 'Also known as killer'
