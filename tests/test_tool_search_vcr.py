@@ -52,7 +52,7 @@ def _create_model(case: Case) -> Model:
             )
         else:
             raise ValueError(f'Unknown model: {case.model_name}')  # pragma: no cover
-    except ImportError:
+    except ImportError:  # pragma: no cover
         pytest.skip(f'{case.model_name.split(":")[0]} is not installed')
 
 
@@ -111,7 +111,7 @@ async def test_tool_search_discovers_and_uses_tool(allow_model_requests: None, c
     agent: Agent[None, str] = Agent(model)
 
     @agent.tool_plain
-    def get_weather(city: str) -> str:
+    def get_weather(city: str) -> str:  # pragma: no cover
         """Get the current weather for a city."""
         return f'The weather in {city} is sunny and 72°F.'
 
@@ -121,7 +121,7 @@ async def test_tool_search_discovers_and_uses_tool(allow_model_requests: None, c
         monthly_rate = rate / 12 / 100
         num_payments = years * 12
         if monthly_rate == 0:
-            payment = principal / num_payments
+            payment = principal / num_payments  # pragma: no cover
         else:
             payment = (
                 principal
@@ -131,7 +131,7 @@ async def test_tool_search_discovers_and_uses_tool(allow_model_requests: None, c
         return f'Monthly payment: ${payment:.2f}'
 
     @agent.tool_plain(defer_loading=True)
-    def stock_lookup(symbol: str) -> str:
+    def stock_lookup(symbol: str) -> str:  # pragma: no cover
         """Look up stock price by ticker symbol."""
         return f'Stock {symbol}: $150.00'
 

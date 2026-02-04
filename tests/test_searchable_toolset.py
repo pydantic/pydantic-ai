@@ -36,27 +36,27 @@ def create_function_toolset() -> FunctionToolset[None]:
     toolset: FunctionToolset[None] = FunctionToolset()
 
     @toolset.tool
-    def get_weather(city: str) -> str:
+    def get_weather(city: str) -> str:  # pragma: no cover
         """Get the current weather for a city."""
         return f'Weather in {city}'
 
     @toolset.tool
-    def get_time(timezone: str) -> str:
+    def get_time(timezone: str) -> str:  # pragma: no cover
         """Get the current time in a timezone."""
         return f'Time in {timezone}'
 
     @toolset.tool(defer_loading=True)
-    def calculate_mortgage(principal: float, rate: float, years: int) -> str:
+    def calculate_mortgage(principal: float, rate: float, years: int) -> str:  # pragma: no cover
         """Calculate monthly mortgage payment for a loan."""
         return 'Mortgage calculated'
 
     @toolset.tool(defer_loading=True)
-    def stock_price(symbol: str) -> str:
+    def stock_price(symbol: str) -> str:  # pragma: no cover
         """Get the current stock price for a symbol."""
         return f'Stock price for {symbol}'
 
     @toolset.tool(defer_loading=True)
-    def crypto_price(coin: str) -> str:
+    def crypto_price(coin: str) -> str:  # pragma: no cover
         """Get the current cryptocurrency price."""
         return f'Crypto price for {coin}'
 
@@ -193,7 +193,7 @@ async def test_searchable_toolset_reserved_name_collision():
     toolset: FunctionToolset[None] = FunctionToolset()
 
     @toolset.tool
-    def search_tools(query: str) -> str:
+    def search_tools(query: str) -> str:  # pragma: no cover
         """Search for tools."""
         return 'search result'
 
@@ -209,12 +209,12 @@ async def test_searchable_toolset_no_deferred_tools_returns_all():
     toolset: FunctionToolset[None] = FunctionToolset()
 
     @toolset.tool
-    def get_weather(city: str) -> str:
+    def get_weather(city: str) -> str:  # pragma: no cover
         """Get the current weather for a city."""
         return f'Weather in {city}'
 
     @toolset.tool
-    def get_time(timezone: str) -> str:
+    def get_time(timezone: str) -> str:  # pragma: no cover
         """Get the current time in a timezone."""
         return f'Time in {timezone}'
 
@@ -237,7 +237,7 @@ async def test_searchable_toolset_has_deferred_tools():
     toolset_without_deferred: FunctionToolset[None] = FunctionToolset()
 
     @toolset_without_deferred.tool
-    def normal_tool() -> str:
+    def normal_tool() -> str:  # pragma: no cover
         return 'normal'
 
     searchable_without_deferred = SearchableToolset(wrapped=toolset_without_deferred)
@@ -249,12 +249,12 @@ async def test_agent_auto_injects_searchable_toolset():
     agent = Agent('test')
 
     @agent.tool_plain
-    def get_weather(city: str) -> str:
+    def get_weather(city: str) -> str:  # pragma: no cover
         """Get the current weather for a city."""
         return f'Weather in {city}'
 
     @agent.tool_plain(defer_loading=True)
-    def calculate_mortgage(principal: float) -> str:
+    def calculate_mortgage(principal: float) -> str:  # pragma: no cover
         """Calculate mortgage payment."""
         return 'Calculated'
 
@@ -267,7 +267,7 @@ async def test_agent_does_not_inject_searchable_without_deferred():
     agent = Agent('test')
 
     @agent.tool_plain
-    def get_weather(city: str) -> str:
+    def get_weather(city: str) -> str:  # pragma: no cover
         """Get the current weather for a city."""
         return f'Weather in {city}'
 
@@ -298,7 +298,7 @@ async def test_searchable_toolset_tool_with_none_description():
     toolset: FunctionToolset[None] = FunctionToolset()
 
     @toolset.tool(defer_loading=True)
-    def no_desc_tool() -> str:
+    def no_desc_tool() -> str:  # pragma: no cover
         return 'no description'
 
     searchable = SearchableToolset(wrapped=toolset)
@@ -354,24 +354,25 @@ async def test_searchable_toolset_multiple_searches_accumulate():
 
 async def test_tool_search_config_max_results_propagates():
     """Test that ToolSearchTool max_results config propagates to SearchableToolset."""
-    from pydantic_ai.builtin_tools import ToolSearchTool
+    from pydantic_ai.builtin_tools import ToolSearchTool, WebSearchTool
 
-    agent: Agent[None, str] = Agent('test', builtin_tools=[ToolSearchTool(max_results=3)])
+    # WebSearchTool first ensures we test the loop iteration branch in _get_tool_search_config
+    agent: Agent[None, str] = Agent('test', builtin_tools=[WebSearchTool(), ToolSearchTool(max_results=3)])
 
     @agent.tool_plain(defer_loading=True)
-    def tool1() -> str:
+    def tool1() -> str:  # pragma: no cover
         return 'tool1'
 
     @agent.tool_plain(defer_loading=True)
-    def tool2() -> str:
+    def tool2() -> str:  # pragma: no cover
         return 'tool2'
 
     @agent.tool_plain(defer_loading=True)
-    def tool3() -> str:
+    def tool3() -> str:  # pragma: no cover
         return 'tool3'
 
     @agent.tool_plain(defer_loading=True)
-    def tool4() -> str:
+    def tool4() -> str:  # pragma: no cover
         return 'tool4'
 
     tool_search_config = agent._get_tool_search_config()  # pyright: ignore[reportPrivateUsage]
@@ -384,12 +385,12 @@ async def test_function_toolset_all_deferred():
     toolset: FunctionToolset[None] = FunctionToolset()
 
     @toolset.tool(defer_loading=True)
-    def deferred_tool1() -> str:
+    def deferred_tool1() -> str:  # pragma: no cover
         """First deferred tool."""
         return 'result1'
 
     @toolset.tool(defer_loading=True)
-    def deferred_tool2() -> str:
+    def deferred_tool2() -> str:  # pragma: no cover
         """Second deferred tool."""
         return 'result2'
 
@@ -402,3 +403,68 @@ async def test_function_toolset_all_deferred():
     assert tool_names == snapshot(['search_tools'])
     assert 'deferred_tool1' not in tool_names
     assert 'deferred_tool2' not in tool_names
+
+
+async def test_searchable_toolset_search_no_deferred_tools():
+    """Test search when no deferred tools exist."""
+    toolset: FunctionToolset[None] = FunctionToolset()
+
+    @toolset.tool
+    def normal_tool() -> str:  # pragma: no cover
+        """A normal non-deferred tool."""
+        return 'normal'
+
+    searchable = SearchableToolset(wrapped=toolset)
+    ctx = build_run_context(None)
+    result = await searchable._search_tools({'query': 'anything'}, ctx)  # pyright: ignore[reportPrivateUsage]
+    assert result == snapshot({'message': 'No searchable tools available.', 'tools': []})
+
+
+async def test_searchable_toolset_malformed_search_results():
+    """Test that malformed search results in message history don't break discovery."""
+    toolset = create_function_toolset()
+    searchable = SearchableToolset(wrapped=toolset)
+
+    malformed_messages: list[ModelMessage] = [
+        # Missing 'tools' key
+        ModelRequest(parts=[ToolReturnPart(tool_name=SEARCH_TOOLS_NAME, content={'message': 'hi'})]),
+        # tools is not a list
+        ModelRequest(parts=[ToolReturnPart(tool_name=SEARCH_TOOLS_NAME, content={'tools': 'not a list'})]),
+        # tool_info is not a dict
+        ModelRequest(parts=[ToolReturnPart(tool_name=SEARCH_TOOLS_NAME, content={'tools': ['string']})]),
+        # missing 'name' key
+        ModelRequest(parts=[ToolReturnPart(tool_name=SEARCH_TOOLS_NAME, content={'tools': [{'desc': 'x'}]})]),
+        # name is not a string
+        ModelRequest(parts=[ToolReturnPart(tool_name=SEARCH_TOOLS_NAME, content={'tools': [{'name': 123}]})]),
+    ]
+    ctx = build_run_context(None, messages=malformed_messages)
+
+    tools = await searchable.get_tools(ctx)
+    # Should not crash, and no deferred tools should be discovered from malformed data
+    assert 'calculate_mortgage' not in tools
+    assert 'stock_price' not in tools
+    assert 'crypto_price' not in tools
+
+
+async def test_function_toolset_has_deferred_tools_via_tools():
+    """Test has_deferred_tools returns True when individual tools have defer_loading."""
+    toolset: FunctionToolset[None] = FunctionToolset()  # defer_loading=False by default
+
+    @toolset.tool(defer_loading=True)
+    def deferred() -> str:  # pragma: no cover
+        """A deferred tool."""
+        return 'x'
+
+    assert toolset.has_deferred_tools() is True
+
+
+async def test_function_toolset_has_deferred_tools_via_toolset_flag():
+    """Test has_deferred_tools returns True when toolset has defer_loading=True."""
+    toolset: FunctionToolset[None] = FunctionToolset(defer_loading=True)
+
+    @toolset.tool
+    def not_individually_deferred() -> str:  # pragma: no cover
+        """A tool without individual defer_loading."""
+        return 'x'
+
+    assert toolset.has_deferred_tools() is True
