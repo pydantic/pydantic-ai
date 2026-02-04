@@ -1,4 +1,5 @@
 import uuid
+import base64
 from datetime import timezone
 
 import anyio
@@ -333,7 +334,7 @@ async def test_a2a_file_message_with_file():
             )
 
 
-async def test_a2a_file_message_with_file_content():
+async def test_a2a_file_message_with_file_content(image_content):
     agent = Agent(model=model, output_type=tuple[str, str])
     app = agent.to_a2a()
 
@@ -342,14 +343,13 @@ async def test_a2a_file_message_with_file_content():
         async with httpx.AsyncClient(transport=transport) as http_client:
             a2a_client = A2AClient(http_client=http_client)
 
-            # Test with base64-encoded data (this is a 1x1 pixel PNG)
-            base64_image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+            base64_image = base64_image = base64.b64encode(image_content.data).decode('utf-8')
             
             message = Message(
                 role='user',
                 parts=[
                     FilePart(
-                        file={'bytes': base64_image, 'mime_type': 'image/png'},
+                        file={'bytes': base64_image, 'mime_type': image_content.media_type},
                         kind='file'
                     ),
                 ],
