@@ -1,6 +1,6 @@
 ---
 name: building-pydantic-ai-agents
-description: Provides patterns for building Python AI agents using the PydanticAI framework with type-safe tools, structured outputs, and dependency injection. Use when creating LLM agents, adding tools to agents, configuring model providers, implementing structured output with Pydantic models, testing with TestModel, or building multi-agent systems. Includes patterns for Agent creation, tool registration (@agent.tool, @agent.tool_plain), RunContext usage, streaming, message history, and observability with Logfire.
+description: Provides patterns for building Python AI agents with PydanticAI featuring type-safe tools, structured outputs, and dependency injection. Activates when the user creates LLM agents, adds tools to agents, configures model providers, implements structured output with Pydantic models, tests with TestModel, or builds multi-agent systems. Covers Agent creation, tool registration (@agent.tool, @agent.tool_plain), RunContext usage, streaming, message history, and Logfire observability.
 license: MIT
 compatibility: Designed for Coding Agents such as Claude Code
 metadata:

@@ -31,12 +31,7 @@ curl -o ~/.claude/skills/building-pydantic-ai-agents/SKILL.md \
 
 ### Other AI Coding Assistants
 
-Agent Skills follow an open specification and work with any compatible assistant. Check your assistant's documentation for the skill directory location:
-
-| Assistant | Skill Directory |
-|-----------|----------------|
-| Claude Code | `~/.claude/skills/` |
-| Other agents | Consult assistant documentation |
+Agent Skills follow an open specification and work with any compatible assistant. For Claude Code, skills are stored in `~/.claude/skills/`. For other AI coding assistants, consult the assistant's documentation for the skill directory location.
 
 ## What the PydanticAI Skill Provides
 
