@@ -54,8 +54,8 @@ async def test_type_error_raises_model_retry():
 
     assert str(exc_info.value) == snapshot("""\
 Type error in generated code:
-main.py:1:5: error[invalid-argument-type] Argument to function `add` is incorrect: Expected `int`, found `Literal["hello"]`
-main.py:1:14: error[invalid-argument-type] Argument to function `add` is incorrect: Expected `int`, found `Literal["world"]`
+main.py:6:5: error[invalid-argument-type] Argument to function `add` is incorrect: Expected `int`, found `Literal["hello"]`
+main.py:6:14: error[invalid-argument-type] Argument to function `add` is incorrect: Expected `int`, found `Literal["world"]`
 """)
 
 
@@ -184,8 +184,16 @@ CRITICAL Syntax restrictions (the runtime uses a restricted Python subset):
 - No imports - use only the provided functions and builtins (len, sum, str, etc.) or write your own functions.
 
 How to write effective code:
-- ALWAYS use `await` when calling external functions (e.g., `items = await get_items()`)
-- ALWAYS use keyword arguments when calling functions (e.g., `get_user(id=123)` not `get_user(123)`)
+- External functions return coroutines - use `await` to get results
+- For sequential execution: `items = await get_items()`
+- For parallel execution of independent calls, fire first then await:
+  ```python
+  future_items = get_items()   # Fire (no await)
+  future_users = get_users()   # Fire (no await)
+  items = await future_items   # Both execute in parallel
+  users = await future_users
+  ```
+- ALWAYS use keyword arguments (e.g., `get_user(id=123)` not `get_user(123)`)
 - Use for loops to handle multiple items
 - NEVER return raw tool results - always extract/filter to only what you need
 - The last expression evaluated becomes the return value - make it a processed summary, not raw data
@@ -198,12 +206,17 @@ async def add(x: int, y: int) -> int:
     ...
 ```
 
-Example - fetching, filtering, and summarizing in one execution:
+Example - parallel fetching, then sequential processing:
 ```python
-# Fetch data
-items = await get_items(category="electronics")
+# PARALLEL: Fire independent calls first (no await yet)
+future_items = get_items(category="electronics")
+future_users = get_users(status="active")
 
-# Process immediately - extract only needed fields
+# Await results - both calls execute in parallel
+items = await future_items
+users = await future_users
+
+# SEQUENTIAL: Process items (each depends on previous result)
 results = []
 total = 0
 for item in items:
@@ -213,6 +226,6 @@ for item in items:
         results.append({"name": item["name"], "price": details["price"]})
 
 # Return processed summary, NOT raw data
-{"total": total, "count": len(results), "items": results}
+{"total": total, "count": len(results), "items": results, "user_count": len(users)}
 ```\
 ''')
