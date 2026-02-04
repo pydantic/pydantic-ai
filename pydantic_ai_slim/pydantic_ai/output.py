@@ -94,7 +94,7 @@ class ToolOutput(Generic[OutputDataT]):
 
 
     agent = Agent(
-        'openai:gpt-5',
+        'openai:gpt-5.2',
         output_type=[
             ToolOutput(Fruit, name='return_fruit'),
             ToolOutput(Vehicle, name='return_vehicle'),
@@ -144,7 +144,7 @@ class NativeOutput(Generic[OutputDataT]):
     from tool_output import Fruit, Vehicle
 
     agent = Agent(
-        'openai:gpt-5',
+        'openai:gpt-5.2',
         output_type=NativeOutput(
             [Fruit, Vehicle],
             name='Fruit or vehicle',
@@ -206,7 +206,7 @@ class PromptedOutput(Generic[OutputDataT]):
 
 
     agent = Agent(
-        'openai:gpt-5',
+        'openai:gpt-5.2',
         output_type=PromptedOutput(
             [Vehicle, Device],
             name='Vehicle or device',

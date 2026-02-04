@@ -57,6 +57,23 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
+### Interleaved Thinking
+
+To enable [interleaved thinking](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#interleaved-thinking), you need to include the beta header in your model settings:
+
+```python {title="anthropic_interleaved_thinking.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+
+model = AnthropicModel('claude-sonnet-4-5')
+settings = AnthropicModelSettings(
+    anthropic_thinking={'type': 'enabled', 'budget_tokens': 10000},
+    extra_headers={'anthropic-beta': 'interleaved-thinking-2025-05-14'},
+)
+agent = Agent(model, model_settings=settings)
+...
+```
+
 ## Google
 
 To enable thinking, use the [`GoogleModelSettings.google_thinking_config`][pydantic_ai.models.google.GoogleModelSettings.google_thinking_config] [model setting](agents.md#model-run-settings).
