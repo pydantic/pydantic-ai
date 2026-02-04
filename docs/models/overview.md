@@ -79,6 +79,74 @@ The best place to start is to review the source code for existing implementation
 
 For details on when we'll accept contributions adding new models to Pydantic AI, see the [contributing guidelines](../contributing.md#new-model-rules).
 
+## HTTP Request Concurrency
+
+You can limit the number of concurrent HTTP requests to a model using the
+[`ConcurrencyLimitedModel`][pydantic_ai.ConcurrencyLimitedModel] wrapper.
+This is useful for respecting rate limits or managing resource usage when running many agents in parallel.
+
+```python {title="model_concurrency.py"}
+import asyncio
+
+from pydantic_ai import Agent, ConcurrencyLimitedModel
+
+# Wrap a model with concurrency limiting
+model = ConcurrencyLimitedModel('openai:gpt-4o', limiter=5)
+
+# Multiple agents can share this rate-limited model
+agent = Agent(model)
+
+
+async def main():
+    # These will be rate-limited to 5 concurrent HTTP requests
+    results = await asyncio.gather(
+        *[agent.run(f'Question {i}') for i in range(20)]
+    )
+    print(len(results))
+    #> 20
+```
+
+The `limiter` parameter accepts:
+
+- An integer for simple limiting (e.g., `limiter=5`)
+- A [`ConcurrencyLimit`][pydantic_ai.ConcurrencyLimit] for advanced configuration with backpressure control
+- A [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for sharing limits across multiple models
+
+### Shared Concurrency Limits
+
+To share a concurrency limit across multiple models (e.g., different models from the same provider),
+you can create a [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] and pass it to
+multiple `ConcurrencyLimitedModel` instances:
+
+```python {title="shared_concurrency.py"}
+import asyncio
+
+from pydantic_ai import Agent, ConcurrencyLimitedModel, ConcurrencyLimiter
+
+# Create a shared limiter with a descriptive name
+shared_limiter = ConcurrencyLimiter(max_running=10, name='openai-pool')
+
+# Both models share the same concurrency limit
+model1 = ConcurrencyLimitedModel('openai:gpt-4o', limiter=shared_limiter)
+model2 = ConcurrencyLimitedModel('openai:gpt-4o-mini', limiter=shared_limiter)
+
+agent1 = Agent(model1)
+agent2 = Agent(model2)
+
+
+async def main():
+    # Total concurrent requests across both agents limited to 10
+    results = await asyncio.gather(
+        *[agent1.run(f'Question {i}') for i in range(10)],
+        *[agent2.run(f'Question {i}') for i in range(10)],
+    )
+    print(len(results))
+    #> 20
+```
+
+When instrumentation is enabled, requests waiting for a concurrency slot appear as spans with
+attributes showing the queue depth and configured limits. The `name` parameter on
+`ConcurrencyLimiter` helps identify shared limiters in traces.
 
 <!-- TODO(Marcelo): We need to create a section in the docs about reliability. -->
 
