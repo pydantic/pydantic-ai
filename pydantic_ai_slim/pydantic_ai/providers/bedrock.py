@@ -225,7 +225,7 @@ class BedrockProvider(Provider[BaseClient]):
                         profile_name=profile_name,
                     )
                     config['signature_version'] = 'bearer'
-                else:
+                else:  # pragma: lax no cover
                     session = boto3.Session(
                         aws_access_key_id=aws_access_key_id,
                         aws_secret_access_key=aws_secret_access_key,
