@@ -24,6 +24,7 @@ from pydantic_ai import (
     ThinkingPart,
     ThinkingPartDelta,
     ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
     VideoUrl,
 )
@@ -738,3 +739,158 @@ def test_binary_content_from_path(tmp_path: Path):
     test_toml_file.write_text('[project]\nname = "test"', encoding='utf-8')
     binary_content = BinaryContent.from_path(test_toml_file)
     assert binary_content == snapshot(BinaryContent(data=b'[project]\nname = "test"', media_type='application/toml'))
+
+
+def test_tool_return_content_with_url_field_not_coerced_to_image_url():
+    """Test that dicts with 'url' keys are not incorrectly coerced to ImageUrl.
+
+    Regression test for: https://github.com/pydantic/pydantic-ai/issues/4190
+
+    Without a discriminator on MultiModalContent union, Pydantic would incorrectly
+    match any dict containing a 'url' key against ImageUrl (first union member),
+    causing data loss.
+    """
+
+    serialized_history = r"""[
+      {
+        "parts": [{"content": "Hello", "timestamp": "2026-02-03T22:25:50Z", "part_kind": "user-prompt"}],
+        "kind": "request"
+      },
+      {
+        "parts": [{"tool_name": "my_tool", "args": "{}", "tool_call_id": "call_1", "part_kind": "tool-call"}],
+        "model_name": "test",
+        "timestamp": "2026-02-03T22:26:39Z",
+        "kind": "response"
+      },
+      {
+        "parts": [
+          {
+            "tool_name": "my_tool",
+            "content": {
+              "items": [{"name": "Example", "url": "/some/path/12345"}]
+            },
+            "tool_call_id": "call_1",
+            "timestamp": "2026-02-03T22:27:32Z",
+            "part_kind": "tool-return"
+          }
+        ],
+        "kind": "request"
+      }
+    ]
+    """
+
+    # Deserialize - the dict with 'url' should remain as a dict, not become ImageUrl
+    deserialized = ModelMessagesTypeAdapter.validate_json(serialized_history)
+
+    tool_return_part = deserialized[2].parts[0]
+    assert isinstance(tool_return_part, ToolReturnPart)
+
+    # The content should be preserved as a dict, not coerced to ImageUrl
+    expected_content = {'items': [{'name': 'Example', 'url': '/some/path/12345'}]}
+    assert tool_return_part.content == expected_content
+
+    # Round-trip should work without errors
+    reserialized = ModelMessagesTypeAdapter.dump_json(deserialized)
+    reloaded = ModelMessagesTypeAdapter.validate_json(reserialized)
+
+    reloaded_tool_return = reloaded[2].parts[0]
+    assert isinstance(reloaded_tool_return, ToolReturnPart)
+    assert reloaded_tool_return.content == expected_content
+
+
+def test_tool_return_content_with_explicit_image_url():
+    """Test that ImageUrl with explicit 'kind' discriminator is correctly deserialized."""
+    from pydantic_ai.messages import ToolReturnPart
+
+    serialized_history = r"""[
+      {
+        "parts": [{"content": "Hello", "timestamp": "2026-02-03T22:25:50Z", "part_kind": "user-prompt"}],
+        "kind": "request"
+      },
+      {
+        "parts": [
+          {
+            "tool_name": "image_tool",
+            "content": {
+              "url": "https://example.com/image.png",
+              "kind": "image-url"
+            },
+            "tool_call_id": "call_1",
+            "timestamp": "2026-02-03T22:27:32Z",
+            "part_kind": "tool-return"
+          }
+        ],
+        "kind": "request"
+      }
+    ]
+    """
+
+    deserialized = ModelMessagesTypeAdapter.validate_json(serialized_history)
+
+    tool_return_part = deserialized[1].parts[0]
+    assert isinstance(tool_return_part, ToolReturnPart)
+
+    # Content with explicit kind: "image-url" should become ImageUrl
+    assert isinstance(tool_return_part.content, ImageUrl)
+    assert tool_return_part.content.url == 'https://example.com/image.png'
+
+
+def test_tool_return_content_nested_multimodal():
+    """Test that nested MultiModalContent types with explicit discriminators work."""
+    from pydantic_ai.messages import ToolReturnPart
+
+    serialized_history = r"""[
+      {
+        "parts": [
+          {
+            "tool_name": "mixed_tool",
+            "content": {
+              "images": [
+                {"url": "https://example.com/img1.jpg", "kind": "image-url"},
+                {"url": "https://example.com/img2.png", "kind": "image-url"}
+              ],
+              "documents": [
+                {"url": "https://example.com/doc.pdf", "kind": "document-url"}
+              ],
+              "regular_data": [
+                {"url": "/api/path", "id": 123, "name": "test"}
+              ]
+            },
+            "tool_call_id": "call_1",
+            "timestamp": "2026-02-03T22:27:32Z",
+            "part_kind": "tool-return"
+          }
+        ],
+        "kind": "request"
+      }
+    ]
+    """
+
+    deserialized = ModelMessagesTypeAdapter.validate_json(serialized_history)
+    tool_return_part = deserialized[0].parts[0]
+    assert isinstance(tool_return_part, ToolReturnPart)
+
+    content = tool_return_part.content
+    assert isinstance(content, dict)
+
+    # Items with kind: "image-url" should be ImageUrl
+    assert isinstance(content['images'][0], ImageUrl)
+    assert isinstance(content['images'][1], ImageUrl)
+
+    # Items with kind: "document-url" should be DocumentUrl
+    assert isinstance(content['documents'][0], DocumentUrl)
+
+    # Items without kind should remain as dicts
+    assert content['regular_data'] == [{'url': '/api/path', 'id': 123, 'name': 'test'}]
+
+    # Round-trip should preserve types
+    reserialized = ModelMessagesTypeAdapter.dump_json(deserialized)
+    reloaded = ModelMessagesTypeAdapter.validate_json(reserialized)
+    reloaded_tool_return = reloaded[0].parts[0]
+    assert isinstance(reloaded_tool_return, ToolReturnPart)
+    reloaded_content = reloaded_tool_return.content
+    assert isinstance(reloaded_content, dict)
+
+    assert isinstance(reloaded_content['images'][0], ImageUrl)
+    assert isinstance(reloaded_content['documents'][0], DocumentUrl)
+    assert reloaded_content['regular_data'] == [{'url': '/api/path', 'id': 123, 'name': 'test'}]
