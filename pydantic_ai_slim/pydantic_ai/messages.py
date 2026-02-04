@@ -5,13 +5,13 @@ import hashlib
 import mimetypes
 import os
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, TypeGuard, cast, get_args, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, TypeGuard, TypeVar, cast, get_args, overload
 from urllib.parse import urlparse
 
 import pydantic
@@ -2127,3 +2127,38 @@ HandleResponseEvent = Annotated[
 
 AgentStreamEvent = Annotated[ModelResponseStreamEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')]
 """An event in the agent stream: model response stream events and response-handling events."""
+
+_RequestPartT = TypeVar(
+    '_RequestPartT',
+    bound=SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart
+)
+_ResponsePartT = TypeVar(
+    '_ResponsePartT',
+    bound=TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart
+)
+
+@overload
+def iter_message_parts(
+    messages: Sequence[ModelMessage],
+    message_type: type[ModelRequest],
+    part_type: type[_RequestPartT],
+) -> Iterator[_RequestPartT]: ...
+
+@overload
+def iter_message_parts(
+    messages: Sequence[ModelMessage],
+    message_type: type[ModelResponse],
+    part_type: type[_ResponsePartT],
+) -> Iterator[_ResponsePartT]: ...
+
+def iter_message_parts(
+    messages: Sequence[ModelMessage],
+    message_type: type[ModelRequest] | type[ModelResponse],
+    part_type: type[_RequestPartT] | type[_ResponsePartT],
+) -> Iterator[_RequestPartT | _ResponsePartT]:
+    """Iterate over all parts of a given type in messages of a given type."""
+    for msg in messages:
+        if isinstance(msg, message_type):
+            for part in msg.parts:
+                if isinstance(part, part_type):
+                    yield part

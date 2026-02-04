@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import pytest
+from typing_extensions import assert_never
 
 if TYPE_CHECKING:
     from vcr.cassette import Cassette
@@ -33,11 +34,13 @@ from pydantic_ai.messages import (
     AudioUrl,
     DocumentUrl,
     ImageUrl,
+    ModelMessage,
     ModelRequest,
     ToolReturn,
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
+    iter_message_parts,
 )
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
@@ -111,13 +114,15 @@ SUPPORT_MATRIX: dict[tuple[str, str], Expectation] = {
     ('groq', 'video'): 'error',
 }
 
+FileTypeType = Literal['image', 'document', 'audio', 'video']
+
 
 @dataclass
 class ExpectError:
     """Expected error for a provider/file_type/content_source/return_style combination."""
 
     provider: str
-    file_type: str
+    file_type: FileTypeType
     content_source: str | None = None
     return_style: str | None = None
     error_type: type[Exception] = RuntimeError
@@ -377,7 +382,9 @@ ERROR_DETAILS: list[ExpectError] = [
 ]
 
 
-def get_error_details(provider: str, file_type: str, content_source: str, return_style: str) -> ExpectError | None:
+def get_error_details(
+    provider: str, file_type: FileTypeType, content_source: str, return_style: str
+) -> ExpectError | None:
     for e in ERROR_DETAILS:
         if e.provider != provider or e.file_type != file_type:
             continue
@@ -462,7 +469,7 @@ XAI_CASSETTE_PATTERNS: dict[tuple[str, str], str | tuple[str, ...]] = {
 }
 
 
-def get_cassette_pattern(provider: str, file_type: str, content_source: str) -> str | tuple[str, ...] | None:
+def get_cassette_pattern(provider: str, file_type: FileTypeType, content_source: str) -> str | tuple[str, ...] | None:
     """Get the cassette pattern for a provider/file_type/content_source combination."""
     if provider == 'xai':
         return XAI_CASSETTE_PATTERNS.get((file_type, content_source))
@@ -551,7 +558,7 @@ CONTENT_FACTORIES: dict[tuple[str, str], Any] = {
 }
 
 
-def get_expectation(provider: str, file_type: str) -> Expectation:
+def get_expectation(provider: str, file_type: FileTypeType) -> Expectation:
     return SUPPORT_MATRIX[(provider, file_type)]
 
 
@@ -563,57 +570,52 @@ FILE_TYPE_CLASSES: dict[str, tuple[type, ...]] = {
 }
 
 
-def _is_file_type(item: Any, file_type: str) -> bool:
+def _is_file_type(item: Any, file_type: FileTypeType) -> bool:
     """Check if item matches the expected file type."""
     expected_classes = FILE_TYPE_CLASSES[file_type]
-    if isinstance(item, expected_classes):
-        if isinstance(item, BinaryContent) and not isinstance(item, BinaryImage):
-            media = item.media_type
-            # Audio/video binary content errors for all models before reaching assertions
-            if file_type == 'document':  # pragma: no branch
-                return media.startswith('application/')
-            elif file_type == 'audio':
-                return media.startswith('audio/')
-            elif file_type == 'video':
-                return media.startswith('video/')
-        return True
+    if isinstance(item, expected_classes) and isinstance(item, BinaryContent) and not isinstance(item, BinaryImage):
+        media = item.media_type
+        # Audio/video binary content errors for all models before reaching assertions
+        if file_type == 'document':  # pragma: no branch
+            return media.startswith('application/')
+        elif file_type == 'audio':
+            return media.startswith('audio/')
+        elif file_type == 'video':
+            return media.startswith('video/')
+        elif file_type == 'image':
+            return media.startswith('image/')
+        else:
+            assert_never(file_type)
     return False  # pragma: no cover
 
 
-def assert_file_in_tool_return(messages: list[Any], file_type: str) -> None:
+def assert_file_in_tool_return(messages: list[ModelMessage], file_type: FileTypeType) -> None:
     """Assert that file content of the expected type is present in a ToolReturnPart."""
-    for msg in messages:
-        if isinstance(msg, ModelRequest):
-            for part in msg.parts:
-                if isinstance(part, ToolReturnPart):
-                    for f in part.files:  # pragma: no branch
-                        if _is_file_type(f, file_type):  # pragma: no branch
-                            return
+    for trp in iter_message_parts(messages, ModelRequest, ToolReturnPart):
+        for f in trp.files:  # pragma: no branch
+            if _is_file_type(f, file_type):  # pragma: no branch
+                return
     raise AssertionError(f'No {file_type} found in any ToolReturnPart')  # pragma: no cover
 
 
-def assert_file_in_user_prompt(messages: list[Any], file_type: str) -> None:
+def assert_file_in_user_prompt(messages: list[ModelMessage], file_type: FileTypeType) -> None:
     """Assert that file content of the expected type is present in a UserPromptPart.
 
     For tool_return_content style, files are moved to a separate UserPromptPart
     by design of ToolReturn.content. This verifies files ended up in user messages.
     """
-    for msg in messages:
-        if isinstance(msg, ModelRequest):
-            for part in msg.parts:
-                if isinstance(part, UserPromptPart):
-                    content = part.content
-                    if isinstance(content, list):
-                        for item in content:  # pragma: no branch
-                            if _is_file_type(item, file_type):  # pragma: no branch
-                                return
+    for upp in iter_message_parts(messages, ModelRequest, UserPromptPart):
+        if isinstance(upp.content, list):
+            for item in upp.content:  # pragma: no branch
+                if _is_file_type(item, file_type):  # pragma: no branch
+                    return
     raise AssertionError(f'No {file_type} found in any UserPromptPart')  # pragma: no cover
 
 
 def assert_multimodal_result(
-    messages: list[Any],
+    messages: list[ModelMessage],
     expectation: Expectation,
-    file_type: str,
+    file_type: FileTypeType,
     return_style: ReturnStyle = 'direct',
 ) -> None:
     """Assert that multimodal content was handled correctly based on expectation.
@@ -684,7 +686,7 @@ RETURN_STYLES = [
 @pytest.mark.parametrize('return_style', RETURN_STYLES)
 async def test_multimodal_tool_return_matrix(
     provider: str,
-    file_type: str,
+    file_type: FileTypeType,
     content_source: str,
     return_style: ReturnStyle,
     api_keys: dict[str, str],
