@@ -269,7 +269,7 @@ from pydantic_evals.evaluators import LLMJudge
 
 LLMJudge(
     rubric='Response is accurate and helpful',
-    model='openai:gpt-5',
+    model='openai:gpt-4o',
     include_input=False,
     include_expected_output=False,
     model_settings=None,

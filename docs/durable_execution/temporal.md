@@ -260,7 +260,7 @@ class MultiModelWorkflow:
             result = await temporal_agent.run(prompt, model=fast_model)
         else:
             # Or pass a model string (uses provider_factory if set)
-            result = await temporal_agent.run(prompt, model='openai:gpt-4.1-mini')
+            result = await temporal_agent.run(prompt, model='openai:gpt-5-mini')
         return result.output
 ```
 
