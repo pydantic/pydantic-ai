@@ -1237,3 +1237,31 @@ async def test_history_processor_injects_into_new_stream(
             ),
         ]
     )
+
+
+async def test_history_processor_overrides_run_id_uses_response_as_new_messages(function_model: FunctionModel):
+    """
+    If a history processor overwrites all run_id values, `_first_run_id_index` should fall back to `len(messages)`,
+    meaning `new_messages()` only includes messages appended after processing (the model response).
+    """
+
+    def override_run_id(ctx: RunContext[Any], messages: list[ModelMessage]) -> list[ModelMessage]:
+        override = f'{ctx.run_id}-override'
+        for message in messages:
+            message.run_id = override
+        return messages
+
+    agent = Agent(function_model, history_processors=[override_run_id])
+
+    message_history = [ModelRequest(parts=[UserPromptPart(content='Old')])]
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run('New question', message_history=message_history)
+
+    assert captured_messages == result.all_messages()
+
+    response_run_id = result.all_messages()[-1].run_id
+    assert response_run_id is not None
+    assert all(getattr(message, 'run_id', None) != response_run_id for message in result.all_messages()[:-1])
+
+    assert result.new_messages() == result.all_messages()[-1:]
