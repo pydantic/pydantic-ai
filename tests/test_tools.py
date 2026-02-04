@@ -8,7 +8,7 @@ import pydantic_core
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, TypeAdapter, WithJsonSchema
-from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
+from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 from pytest import LogCaptureFixture
 from typing_extensions import TypedDict
@@ -35,10 +35,17 @@ from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, U
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
+from pydantic_ai.tools import (
+    DeferredToolRequests,
+    DeferredToolResults,
+    GenerateToolJsonSchema,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+)
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsStr, normalize_schema_for_version
+from .conftest import IsDatetime, IsStr
 
 
 def test_tool_no_ctx():
@@ -410,11 +417,11 @@ def test_docstring_unknown():
 
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
-    assert normalize_schema_for_version(json_schema) == snapshot(
+    assert json_schema == snapshot(
         {
             'name': 'unknown_docstring',
             'description': 'Unknown style docstring.',
-            'parameters_json_schema': {'properties': {}, 'type': 'object'},
+            'parameters_json_schema': {'additionalProperties': {'type': 'integer'}, 'properties': {}, 'type': 'object'},
             'outer_typed_dict_key': None,
             'strict': None,
             'kind': 'function',
@@ -1058,7 +1065,7 @@ def test_call_tool_without_unrequired_parameters():
 
 
 def test_schema_generator():
-    class MyGenerateJsonSchema(GenerateJsonSchema):
+    class MyGenerateJsonSchema(GenerateToolJsonSchema):
         def typed_dict_schema(self, schema: core_schema.TypedDictSchema) -> JsonSchemaValue:
             # Add useless property titles just to show we can
             s = super().typed_dict_schema(schema)
@@ -1076,13 +1083,14 @@ def test_schema_generator():
 
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
-    assert normalize_schema_for_version(json_schema) == snapshot(
+    assert json_schema == snapshot(
         [
             {
                 'description': None,
                 'name': 'my_tool_1',
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
+                    'additionalProperties': True,
                     'properties': {'x': {'default': None, 'type': 'string'}},
                     'type': 'object',
                 },
@@ -1097,7 +1105,8 @@ def test_schema_generator():
                 'name': 'my_tool_2',
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
-                    'properties': {'x': {'default': None, 'type': 'string', 'title': 'X title'}},
+                    'additionalProperties': True,
+                    'properties': {'x': {'default': None, 'type': 'string', 'title': 'None title'}},
                     'type': 'object',
                 },
                 'strict': None,

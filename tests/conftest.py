@@ -40,7 +40,7 @@ __all__ = (
     'ClientWithHandler',
     'try_import',
     'SNAPSHOT_BYTES_COLLAPSE_THRESHOLD',
-    'normalize_schema_for_version',
+    'normalize_schema_for_pydantic_version',
 )
 
 # Configure VCR logger to WARNING as it is too verbose by default
@@ -671,32 +671,21 @@ def mock_snapshot_id(mocker: MockerFixture):
     return mocker.patch('pydantic_graph.nodes.generate_snapshot_id', side_effect=generate_snapshot_id)
 
 
-# TODO: remove this utility and its call sites when vllm relaxes their pydantic pin
-def normalize_schema_for_version(schema: Any, *, remove_description: bool = False) -> Any:
-    """Recursively normalize schema to handle pydantic version differences.
+def normalize_schema_for_pydantic_version(schema: Any) -> Any:
+    """Normalize schema by removing `description` fields for cross-version comparison.
 
-    vLLM 0.15.0 pins pydantic 2.12.5 for Python <3.12, which produces different schemas:
-    - pydantic 2.12.5: `additionalProperties: True` for typed **kwargs
-    - pydantic 2.11.7: `additionalProperties: {'type': ...}` or omits it
-    - pydantic 2.12.5: omits `description` field in some cases
+    Pydantic 2.12+ omits `description` fields in some JSON schema outputs, while
+    2.11 includes them. This function removes `description` from the actual result
+    so that a snapshot without descriptions works across both versions.
 
-    Args:
-        schema: The schema to normalize.
-        remove_description: If True, also removes `description` fields.
+    Use as: `assert normalize_schema_for_pydantic_version(actual) == snapshot({...})`
     """
-    keys_to_remove = {'additionalProperties'}
-    if remove_description:
-        keys_to_remove.add('description')
 
-    if isinstance(schema, dict):
-        schema = cast(dict[str, Any], schema)
-        result: dict[str, Any] = {}
-        for key, value in schema.items():
-            if key in keys_to_remove:
-                continue
-            result[key] = normalize_schema_for_version(value, remove_description=remove_description)
-        return result
-    elif isinstance(schema, list):
-        schema = cast(list[Any], schema)
-        return [normalize_schema_for_version(item, remove_description=remove_description) for item in schema]
-    return schema
+    def _remove_description(obj: Any) -> Any:
+        if isinstance(obj, dict):
+            return {k: _remove_description(v) for k, v in obj.items() if k != 'description'}  # pyright: ignore[reportUnknownVariableType]
+        elif isinstance(obj, list):
+            return [_remove_description(item) for item in obj]  # pyright: ignore[reportUnknownVariableType]
+        return obj
+
+    return _remove_description(schema)

@@ -13,7 +13,7 @@ from pydantic_ai import (
     ToolOutput,
 )
 
-from .conftest import normalize_schema_for_version
+from .conftest import normalize_schema_for_pydantic_version
 
 pytestmark = pytest.mark.anyio
 
@@ -383,15 +383,20 @@ async def test_override_output_json_schema():
 
 async def test_deferred_output_json_schema():
     agent = Agent('test', output_type=[str, DeferredToolRequests])
-    assert normalize_schema_for_version(agent.output_json_schema(), remove_description=True) == snapshot(
+    assert normalize_schema_for_pydantic_version(agent.output_json_schema()) == snapshot(
         {
             'anyOf': [
                 {'type': 'string'},
                 {
                     'properties': {
                         'calls': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Calls', 'type': 'array'},
-                        'approvals': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Approvals', 'type': 'array'},
+                        'approvals': {
+                            'items': {'$ref': '#/$defs/ToolCallPart'},
+                            'title': 'Approvals',
+                            'type': 'array',
+                        },
                         'metadata': {
+                            'additionalProperties': {'additionalProperties': True, 'type': 'object'},
                             'title': 'Metadata',
                             'type': 'object',
                         },
@@ -407,7 +412,7 @@ async def test_deferred_output_json_schema():
                         'args': {
                             'anyOf': [
                                 {'type': 'string'},
-                                {'type': 'object'},
+                                {'additionalProperties': True, 'type': 'object'},
                                 {'type': 'null'},
                             ],
                             'default': None,
@@ -421,7 +426,7 @@ async def test_deferred_output_json_schema():
                             'title': 'Provider Name',
                         },
                         'provider_details': {
-                            'anyOf': [{'type': 'object'}, {'type': 'null'}],
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Provider Details',
                         },
@@ -442,7 +447,7 @@ async def test_deferred_output_json_schema():
 
     # special case of only BinaryImage and DeferredToolRequests
     agent = Agent('test', output_type=[BinaryImage, DeferredToolRequests])
-    assert normalize_schema_for_version(agent.output_json_schema(), remove_description=True) == snapshot(
+    assert normalize_schema_for_pydantic_version(agent.output_json_schema()) == snapshot(
         {
             'anyOf': [
                 {
@@ -481,7 +486,7 @@ async def test_deferred_output_json_schema():
                             'title': 'Media Type',
                         },
                         'vendor_metadata': {
-                            'anyOf': [{'type': 'object'}, {'type': 'null'}],
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Vendor Metadata',
                         },
@@ -499,8 +504,13 @@ async def test_deferred_output_json_schema():
                 {
                     'properties': {
                         'calls': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Calls', 'type': 'array'},
-                        'approvals': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Approvals', 'type': 'array'},
+                        'approvals': {
+                            'items': {'$ref': '#/$defs/ToolCallPart'},
+                            'title': 'Approvals',
+                            'type': 'array',
+                        },
                         'metadata': {
+                            'additionalProperties': {'additionalProperties': True, 'type': 'object'},
                             'title': 'Metadata',
                             'type': 'object',
                         },
@@ -516,7 +526,7 @@ async def test_deferred_output_json_schema():
                         'args': {
                             'anyOf': [
                                 {'type': 'string'},
-                                {'type': 'object'},
+                                {'additionalProperties': True, 'type': 'object'},
                                 {'type': 'null'},
                             ],
                             'default': None,
@@ -530,7 +540,7 @@ async def test_deferred_output_json_schema():
                             'title': 'Provider Name',
                         },
                         'provider_details': {
-                            'anyOf': [{'type': 'object'}, {'type': 'null'}],
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Provider Details',
                         },
