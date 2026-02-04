@@ -120,7 +120,7 @@ class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]
     """A worker that uses an agent to execute tasks."""
 
     agent: AbstractAgent[AgentDepsT, WorkerOutputT]
-    deps: AgentDepsT = None
+    deps: AgentDepsT | None = None
 
     async def run_task(self, params: TaskSendParams) -> None:
         task = await self.storage.load_task(params['id'])
