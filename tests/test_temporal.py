@@ -49,11 +49,10 @@ from pydantic_ai import (
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
-from pydantic_ai.models import Model, ModelRequestParameters, cached_async_http_client
+from pydantic_ai.models import Model, ModelRequestParameters, cached_async_http_client, infer_model_profile
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import DEFAULT_PROFILE
-from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -2767,26 +2766,16 @@ class MultiModelWorkflow:
         return result.output
 
 
-class _BuiltinToolModel(Model):
+class _BuiltinToolModel(TestModel):
     SUPPORTED_TOOLS: frozenset[type[AbstractBuiltinTool]] = frozenset()
 
     def __init__(self, *, response_text: str, model_name: str) -> None:
         self._response_text = response_text
-        self._model_name = model_name
-        self.last_model_request_parameters: ModelRequestParameters | None = None
-        super().__init__()
+        super().__init__(custom_output_text=response_text, model_name=model_name)
 
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         return cls.SUPPORTED_TOOLS
-
-    @property
-    def model_name(self) -> str:
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        return 'test'
 
     async def request(
         self,
@@ -2796,7 +2785,7 @@ class _BuiltinToolModel(Model):
     ) -> ModelResponse:
         model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
         self.last_model_request_parameters = model_request_parameters
-        return ModelResponse(parts=[TextPart(self._response_text)], model_name=self._model_name)
+        return ModelResponse(parts=[TextPart(self._response_text)], model_name=self.model_name)
 
 
 class _WebSearchOnlyModel(_BuiltinToolModel):
@@ -3163,25 +3152,27 @@ def test_temporal_model_profile_for_raw_strings():
     with temporal_model.using_model('openai:gpt-5'):
         assert temporal_model.model_name == 'gpt-5'
         assert temporal_model.system == 'openai'
-        expected_profile = openai_model_profile('gpt-5')
-        assert temporal_model.profile.supports_json_schema_output == expected_profile.supports_json_schema_output
+        assert temporal_model.profile == infer_model_profile('openai:gpt-5')
 
     # Anthropic profile inference includes WebSearchTool support
     with temporal_model.using_model('anthropic:claude-sonnet-4-5'):
         assert temporal_model.model_name == 'claude-sonnet-4-5'
         assert temporal_model.system == 'anthropic'
-        assert WebSearchTool in temporal_model.profile.supported_builtin_tools
+        assert temporal_model.profile == infer_model_profile('anthropic:claude-sonnet-4-5')
 
     # Registered models work correctly for all properties
+    alt_model = TestModel(custom_output_text='alt', model_name='alt-model')
     temporal_model_with_registry = TemporalModel(
         default_model,
         activity_name_prefix='test__profile_registry',
         activity_config={'start_to_close_timeout': timedelta(seconds=60)},
         deps_type=type(None),
-        models={'alt': TestModel(custom_output_text='alt', model_name='alt-model')},
+        models={'alt': alt_model},
     )
     with temporal_model_with_registry.using_model('alt'):
         assert temporal_model_with_registry.model_name == 'alt-model'
+        assert temporal_model_with_registry.system == alt_model.system
+        assert temporal_model_with_registry.profile == alt_model.profile
 
 
 async def test_temporal_model_request_outside_workflow():
@@ -3441,7 +3432,7 @@ def get_multimodal_content(ctx: RunContext[None]) -> list[str | MultiModalConten
     """Return a list with text, BinaryContent, and DocumentUrl."""
     return [
         'test',
-        BinaryImage(data=b'PNG', media_type='image/png'),
+        BinaryImage(data=b'\x89PNG', media_type='image/png'),
         # URL doesn't hint at media type, so media_type must be specified explicitly
         DocumentUrl(url='https://example.com/doc/12345', media_type='application/pdf'),
     ]
@@ -3462,8 +3453,8 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
     """Test that BinaryContent and DocumentUrl survive Temporal serialization.
 
     This tests both:
-    1. Passing BinaryContent and DocumentUrl as input to agent.run (workflow→activity)
-    2. Returning BinaryContent and DocumentUrl from a tool (activity→workflow)
+    1. Passing BinaryContent and DocumentUrl as input to agent.run (workflow->activity)
+    2. Returning BinaryContent and DocumentUrl from a tool (activity->workflow)
 
     BinaryContent is serialized with base64 encoding. DocumentUrl requires explicit
     media_type since it cannot be inferred from the URL.
@@ -3477,7 +3468,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
         # Pass both BinaryContent and DocumentUrl as input
         prompt: list[str | MultiModalContent] = [
             'Process these files and call the tool',
-            BinaryImage(data=b'PNG', media_type='image/png'),
+            BinaryImage(data=b'\x89PNG', media_type='image/png'),
             DocumentUrl(url='https://example.com/doc/12345', media_type='application/pdf'),
         ]
         messages = await client.execute_workflow(
@@ -3493,7 +3484,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                         UserPromptPart(
                             content=[
                                 'Process these files and call the tool',
-                                BinaryContent(data=b'PNG', media_type='image/png', _identifier='4effda'),
+                                BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'),
                                 DocumentUrl(
                                     url='https://example.com/doc/12345',
                                     _media_type='application/pdf',
@@ -3530,7 +3521,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                         UserPromptPart(
                             content=[
                                 'This is file 4effda:',
-                                BinaryContent(data=b'PNG', media_type='image/png', _identifier='4effda'),
+                                BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'),
                                 'This is file eb8998:',
                                 DocumentUrl(
                                     url='https://example.com/doc/12345',
@@ -3574,4 +3565,3 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
             ('BinaryContent', 'image/png'),
             ('DocumentUrl', 'application/pdf'),
         ]
-

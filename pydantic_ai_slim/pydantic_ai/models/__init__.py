@@ -47,7 +47,7 @@ from ..messages import (
 )
 from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
-from ..providers import Provider, infer_provider
+from ..providers import Provider, infer_provider, infer_provider_class
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -1091,7 +1091,7 @@ def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
         ALLOW_MODEL_REQUESTS = old_value  # pyright: ignore[reportConstantRedefinition]
 
 
-LEGACY_MODEL_PREFIXES: dict[str, str] = {
+_LEGACY_MODEL_PREFIXES: dict[str, str] = {
     'gpt': 'openai',
     'o1': 'openai',
     'o3': 'openai',
@@ -1105,22 +1105,39 @@ For example, `gpt-4` is equivalent to `openai:gpt-4`.
 """
 
 
-def parse_model_string(model: str) -> tuple[str | None, str]:
-    """Parse a model string into (provider_name, model_name).
+def parse_model_id(model: str) -> tuple[str | None, str]:
+    """Parse a model id into (provider_name, model_name).
 
     Handles both the modern `provider:model` format and legacy model names
-    that start with known prefixes (e.g., `gpt-4`, `claude-3`).
+    that start with known prefixes (e.g., `gpt-4`, `claude-3`). If the
+    provider can't be inferred, returns `(None, model)` so callers can decide
+    how to handle unknown providers.
     """
     if ':' in model:
         provider_name, model_name = model.split(':', maxsplit=1)
         return provider_name, model_name
 
     # Legacy model names without provider prefix
-    for prefix, provider_name in LEGACY_MODEL_PREFIXES.items():
+    for prefix, provider_name in _LEGACY_MODEL_PREFIXES.items():
         if model.startswith(prefix):
             return provider_name, model
 
+    # Unknown prefix: let callers decide how to handle this case.
     return None, model
+
+
+def infer_model_profile(model: str) -> ModelProfile:
+    """Infer the model profile without constructing a provider."""
+    provider, model_name = parse_model_id(model)
+    if provider is None:
+        return DEFAULT_PROFILE
+
+    try:
+        provider_class = infer_provider_class(provider)
+    except ValueError:
+        return DEFAULT_PROFILE
+
+    return provider_class.model_profile(model_name) or DEFAULT_PROFILE
 
 
 def infer_model(  # noqa: C901
@@ -1141,7 +1158,7 @@ def infer_model(  # noqa: C901
 
         return TestModel()
 
-    provider_name, model_name = parse_model_string(model)
+    provider_name, model_name = parse_model_id(model)
     if provider_name is None:
         raise UserError(f'Unknown model: {model}')
 
