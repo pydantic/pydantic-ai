@@ -252,10 +252,10 @@ def _infer_base_url(api_key: str) -> str:
     """
     if match := _PYDANTIC_TOKEN_PATTERN.match(api_key):
         region = match.group('region')
+        assert isinstance(region, str)
 
-        if region:
-            if region.startswith('staging'):
-                return 'https://gateway.pydantic.info/proxy'
-            return f'https://gateway-{region}.pydantic.dev/proxy'
+        if region.startswith('staging'):
+            return 'https://gateway.pydantic.info/proxy'
+        return f'https://gateway-{region}.pydantic.dev/proxy'
 
     return GATEWAY_BASE_URL
