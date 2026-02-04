@@ -923,7 +923,7 @@ async def test_new_messages_index_during_iter_with_pruning():
 
     with capture_run_messages() as captured_messages:
         async with agent.iter('start') as run:
-            async for node in run:
+            async for _ in run:
                 idx = run.ctx.deps.new_message_index
                 assert idx >= 0, (
                     f'BUG: new_message_index became negative: {idx}. all_messages count: {len(run.all_messages())}'
@@ -1003,7 +1003,7 @@ async def test_new_messages_index_during_iter_with_pruning_and_history():
 
     with capture_run_messages() as captured_messages:
         async with agent.iter('start', message_history=history) as run:
-            async for node in run:
+            async for _ in run:
                 idx = run.ctx.deps.new_message_index
                 assert idx >= 0, (
                     f'BUG: new_message_index became negative: {idx}. all_messages count: {len(run.all_messages())}'
@@ -1060,6 +1060,8 @@ async def test_history_processor_reorder_old_new(function_model: FunctionModel, 
         if len(messages) >= 2:
             return messages[:-2] + [messages[-1], messages[-2]]
         return messages
+
+    assert swap_last_two([]) == []
 
     agent = Agent(function_model, history_processors=[swap_last_two])
 
