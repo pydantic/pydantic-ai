@@ -3,6 +3,8 @@ name: PR Auto-Label
 on:
   pull_request:
     types: [opened, synchronize]
+  pull_request_target:
+    types: [opened]
   issue_comment:
     types: [created]
 
@@ -76,7 +78,7 @@ jobs:
 
   category-label:
     name: Set Category Label
-    if: github.event_name == 'pull_request' && github.event.action == 'opened'
+    if: github.event_name == 'pull_request_target' && github.event.action == 'opened'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -102,12 +104,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Checkout repository
-        if: steps.check-label.outputs.has_label == 'false'
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
       - name: Determine category label with Claude Code
         if: steps.check-label.outputs.has_label == 'false'
         uses: anthropics/claude-code-action@beta
@@ -115,7 +111,13 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           timeout_minutes: "5"
           direct_prompt: |
-            Analyze this PR and classify it into exactly ONE of these categories by adding the appropriate label:
+            Analyze PR #${{ github.event.pull_request.number }} in ${{ github.repository }} and classify it.
+
+            First, fetch the PR details and diff:
+            - Use `gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }}` to see PR title/description
+            - Use `gh pr diff ${{ github.event.pull_request.number }} --repo ${{ github.repository }}` to see the changes
+
+            Then classify into exactly ONE category by adding the appropriate label:
 
             - `bug`: Fixes something that isn't working correctly
             - `feature`: Adds new functionality or capabilities
