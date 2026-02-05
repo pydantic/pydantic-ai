@@ -5598,7 +5598,7 @@ def test_google_provider_respects_custom_http_client_timeout(gemini_api_key: str
 async def test_google_splits_tool_return_from_user_prompt(google_provider: GoogleProvider):
     """Test that ToolReturnPart and UserPromptPart are split into separate content objects.
 
-    TODO: Remove workaround when https://github.com/pydantic/pydantic-ai/issues/3763 is resolved
+    TODO: Remove workaround when https://github.com/pydantic/pydantic-ai/issues/4210 is resolved
     """
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
 

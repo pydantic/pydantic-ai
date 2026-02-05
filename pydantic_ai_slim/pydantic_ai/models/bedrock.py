@@ -181,6 +181,7 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'end_turn': 'stop',
     'guardrail_intervened': 'content_filter',
     'max_tokens': 'length',
+    'model_context_window_exceeded': 'length',
     'stop_sequence': 'stop',
     'tool_use': 'tool_call',
 }
