@@ -294,79 +294,43 @@ async def run_code_mode(toolset: FunctionToolset[None]) -> RunMetrics:
 # =============================================================================
 
 
-def print_metrics(metrics: RunMetrics) -> None:
-    """Print metrics in formatted table."""
-    print(f'  LLM Requests:  {metrics.request_count}')
-    print(f'  Input Tokens:  {metrics.input_tokens:,}')
-    print(f'  Output Tokens: {metrics.output_tokens:,}')
-    print(f'  Total Tokens:  {metrics.total_tokens:,}')
-    print(f'  Retries:       {metrics.retry_count}')
-    print(
-        f'\n  Output:\n  {metrics.output[:600]}...' if len(metrics.output) > 600 else f'\n  Output:\n  {metrics.output}'
+def log_metrics(metrics: RunMetrics) -> None:
+    """Log metrics to logfire."""
+    logfire.info(
+        '{mode} completed: {requests} requests, {tokens} tokens',
+        mode=metrics.mode,
+        requests=metrics.request_count,
+        tokens=metrics.total_tokens,
+        input_tokens=metrics.input_tokens,
+        output_tokens=metrics.output_tokens,
+        retries=metrics.retry_count,
     )
 
 
 async def main() -> None:
-    # Configure Logfire
     logfire.configure(service_name='code-mode-expense-demo')
     logfire.instrument_pydantic_ai()
 
-    print('=' * 70)
-    print('CodeMode Demo: Team Expense Analysis')
-    print('=' * 70)
-    print(f'\nModel: {MODEL}')
-    print('Task: Analyze Q3 travel expenses for 5 team members')
-    print('      (50+ expense line items to process)')
+    print(f'CodeMode Demo: Expense Analysis | Model: {MODEL}')
 
     toolset = create_toolset()
 
-    # Run Tool Calling
-    print('\n' + '-' * 70)
-    print('Running TOOL CALLING mode...')
-    print('(All expense data flows through LLM context)')
-    print('-' * 70)
-
+    print('Running tool calling mode...')
     with logfire.span('demo_tool_calling'):
         trad = await run_tool_calling(toolset)
-    print_metrics(trad)
+    log_metrics(trad)
 
-    # Run CodeMode
-    print('\n' + '-' * 70)
-    print('Running CODE MODE tool calling...')
-    print('(Aggregation in code - only summaries returned)')
-    print('-' * 70)
-
+    print('Running code mode...')
     with logfire.span('demo_code_mode'):
         code = await run_code_mode(toolset)
-    print_metrics(code)
-
-    # Comparison Summary
-    print('\n' + '=' * 70)
-    print('COMPARISON SUMMARY')
-    print('=' * 70)
+    log_metrics(code)
 
     request_reduction = trad.request_count - code.request_count
-    if trad.request_count > 0:
-        request_pct = request_reduction / trad.request_count * 100
-    else:
-        request_pct = 0
-
     token_diff = trad.total_tokens - code.total_tokens
-    token_pct = (token_diff / trad.total_tokens * 100) if trad.total_tokens > 0 else 0
 
-    print(
-        f'\n  LLM Requests: {trad.request_count} → {code.request_count} ({request_reduction} fewer, {request_pct:.0f}% reduction)'
-    )
-    print(
-        f'  Total Tokens: {trad.total_tokens:,} → {code.total_tokens:,} ({token_pct:+.1f}% {"savings" if token_diff > 0 else "increase"})'
-    )
-
-    print('\n  Key Insight: Tool calling mode returns ALL expense line items to the LLM.')
-    print('               Code mode sums them up in code, returning only totals.')
-
-    print('\n' + '=' * 70)
-    print('View detailed traces: https://logfire.pydantic.dev')
-    print('=' * 70)
+    print(f'Results: {trad.request_count} → {code.request_count} requests ({request_reduction} fewer)')
+    print(f'Tokens: {trad.total_tokens:,} → {code.total_tokens:,} ({token_diff:+,} difference)')
+    print('View traces: https://logfire.pydantic.dev')
 
 
 if __name__ == '__main__':

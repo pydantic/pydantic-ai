@@ -212,73 +212,43 @@ async def run_code_mode(toolset: FunctionToolset[None]) -> RunMetrics:
 # =============================================================================
 
 
-def print_metrics(metrics: RunMetrics) -> None:
-    """Print metrics in formatted table."""
-    print(f'  LLM Requests:  {metrics.request_count}')
-    print(f'  Input Tokens:  {metrics.input_tokens:,}')
-    print(f'  Output Tokens: {metrics.output_tokens:,}')
-    print(f'  Total Tokens:  {metrics.total_tokens:,}')
-    print(f'  Retries:       {metrics.retry_count}')
-    print(f'\n  Output:\n  {metrics.output[:600]}...' if len(metrics.output) > 600 else f'\n  Output:\n  {metrics.output}')
+def log_metrics(metrics: RunMetrics) -> None:
+    """Log metrics to logfire."""
+    logfire.info(
+        '{mode} completed: {requests} requests, {tokens} tokens',
+        mode=metrics.mode,
+        requests=metrics.request_count,
+        tokens=metrics.total_tokens,
+        input_tokens=metrics.input_tokens,
+        output_tokens=metrics.output_tokens,
+        retries=metrics.retry_count,
+    )
 
 
 async def main() -> None:
-    # Configure Logfire
     logfire.configure(service_name='code-mode-files-demo')
     logfire.instrument_pydantic_ai()
 
-    print('=' * 70)
-    print('CodeMode Demo: File Processing with Loops')
-    print('=' * 70)
-    print(f'\nModel: {MODEL}')
-    print('Task: List .txt files, read each, compute stats')
-    print('      (Unknown file count - requires dynamic looping)')
+    print(f'CodeMode Demo: File Processing | Model: {MODEL}')
 
     toolset = create_toolset()
 
-    # Run Tool Calling
-    print('\n' + '-' * 70)
-    print('Running TOOL CALLING mode...')
-    print('(1 list + N reads = 7+ roundtrips)')
-    print('-' * 70)
-
+    print('Running tool calling mode...')
     with logfire.span('demo_tool_calling'):
         trad = await run_tool_calling(toolset)
-    print_metrics(trad)
+    log_metrics(trad)
 
-    # Run CodeMode
-    print('\n' + '-' * 70)
-    print('Running CODE MODE tool calling...')
-    print('(1 roundtrip - loop handles all file reads)')
-    print('-' * 70)
-
+    print('Running code mode...')
     with logfire.span('demo_code_mode'):
         code = await run_code_mode(toolset)
-    print_metrics(code)
-
-    # Comparison Summary
-    print('\n' + '=' * 70)
-    print('COMPARISON SUMMARY')
-    print('=' * 70)
+    log_metrics(code)
 
     request_reduction = trad.request_count - code.request_count
-    if trad.request_count > 0:
-        request_pct = request_reduction / trad.request_count * 100
-    else:
-        request_pct = 0
-
     token_diff = trad.total_tokens - code.total_tokens
-    token_pct = (token_diff / trad.total_tokens * 100) if trad.total_tokens > 0 else 0
 
-    print(f'\n  LLM Requests: {trad.request_count} → {code.request_count} ({request_reduction} fewer, {request_pct:.0f}% reduction)')
-    print(f'  Total Tokens: {trad.total_tokens:,} → {code.total_tokens:,} ({token_pct:+.1f}% {"savings" if token_diff > 0 else "increase"})')
-
-    print('\n  Key Insight: The number of .txt files is unknown upfront.')
-    print('               Code mode handles this naturally with a for loop.')
-
-    print('\n' + '=' * 70)
-    print('View detailed traces: https://logfire.pydantic.dev')
-    print('=' * 70)
+    print(f'Results: {trad.request_count} → {code.request_count} requests ({request_reduction} fewer)')
+    print(f'Tokens: {trad.total_tokens:,} → {code.total_tokens:,} ({token_diff:+,} difference)')
+    print('View traces: https://logfire.pydantic.dev')
 
 
 if __name__ == '__main__':

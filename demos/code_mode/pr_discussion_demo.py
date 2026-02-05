@@ -171,71 +171,44 @@ async def run_code_mode(github: MCPServerStreamableHTTP) -> RunMetrics:
 # =============================================================================
 
 
-def print_metrics(metrics: RunMetrics) -> None:
-    """Print metrics in formatted table."""
-    print(f'  LLM Requests:  {metrics.request_count}')
-    print(f'  Input Tokens:  {metrics.input_tokens:,}')
-    print(f'  Output Tokens: {metrics.output_tokens:,}')
-    print(f'  Total Tokens:  {metrics.total_tokens:,}')
-    print(f'  Retries:       {metrics.retry_count}')
-    print(f'\n  Output (truncated):\n  {metrics.output[:400]}...')
+def log_metrics(metrics: RunMetrics) -> None:
+    """Log metrics to logfire."""
+    logfire.info(
+        '{mode} completed: {requests} requests, {tokens} tokens',
+        mode=metrics.mode,
+        requests=metrics.request_count,
+        tokens=metrics.total_tokens,
+        input_tokens=metrics.input_tokens,
+        output_tokens=metrics.output_tokens,
+        retries=metrics.retry_count,
+    )
 
 
 async def main() -> None:
-    # Configure Logfire
     logfire.configure(service_name='code-mode-demo')
     logfire.instrument_pydantic_ai()
 
-    print('=' * 70)
-    print('CodeMode Demo: GitHub PR Discussion Intensity Analysis')
-    print('=' * 70)
-    print(f'\nModel: {MODEL}')
-    print('Task: Analyze 5 closed PRs from pydantic/pydantic')
+    print(f'CodeMode Demo: PR Discussion | Model: {MODEL}')
 
     github = create_github_mcp()
 
     async with github:
-        # Run Tool Calling
-        print('\n' + '-' * 70)
-        print('Running TOOL CALLING mode...')
-        print('(Expect 20+ LLM roundtrips - one per tool call)')
-        print('-' * 70)
-
+        print('Running tool calling mode...')
         with logfire.span('demo_tool_calling'):
             trad = await run_tool_calling(github)
-        print_metrics(trad)
+        log_metrics(trad)
 
-        # Run CodeMode
-        print('\n' + '-' * 70)
-        print('Running CODE MODE tool calling...')
-        print('(Expect 2-3 LLM roundtrips - all tool calls in generated code)')
-        print('-' * 70)
-
+        print('Running code mode...')
         with logfire.span('demo_code_mode'):
             code = await run_code_mode(github)
-        print_metrics(code)
-
-    # Comparison Summary
-    print('\n' + '=' * 70)
-    print('COMPARISON SUMMARY')
-    print('=' * 70)
+        log_metrics(code)
 
     request_reduction = trad.request_count - code.request_count
     token_diff = trad.total_tokens - code.total_tokens
-    token_pct = (token_diff / trad.total_tokens * 100) if trad.total_tokens > 0 else 0
 
-    print(
-        f'\n  LLM Requests: {trad.request_count} → {code.request_count} '
-        f'({request_reduction} fewer, {request_reduction / trad.request_count * 100:.0f}% reduction)'
-    )
-    print(
-        f'  Total Tokens: {trad.total_tokens:,} → {code.total_tokens:,} '
-        f'({token_pct:+.1f}% {"savings" if token_diff > 0 else "increase"})'
-    )
-
-    print('\n' + '=' * 70)
-    print('View detailed traces: https://logfire.pydantic.dev')
-    print('=' * 70)
+    print(f'Results: {trad.request_count} → {code.request_count} requests ({request_reduction} fewer)')
+    print(f'Tokens: {trad.total_tokens:,} → {code.total_tokens:,} ({token_diff:+,} difference)')
+    print('View traces: https://logfire.pydantic.dev')
 
 
 if __name__ == '__main__':
