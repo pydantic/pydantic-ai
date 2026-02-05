@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass, field
 from inspect import FrameInfo
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -616,6 +616,9 @@ async def model_logic(  # noqa: C901
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'reason': '-', 'pass': True, 'score': 1.0})]
             )
+        elif m.content.startswith('Question '):
+            # Handle concurrency example prompts like "Question 0", "Question 1", etc.
+            return ModelResponse(parts=[TextPart(f'Answer to {m.content}')])
         elif m.content == 'What time is it?':
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='get_current_time', args={}, tool_call_id='pyd_ai_tool_call_id')]
@@ -768,6 +771,7 @@ async def model_logic(  # noqa: C901
             parts=[ToolCallPart(tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id')]
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_player_name':
+        m.content = cast(str, m.content)
         if 'Anne' in m.content:
             return ModelResponse(parts=[TextPart("Congratulations Anne, you guessed correctly! You're a winner!")])
         elif 'Yashar' in m.content:
@@ -828,7 +832,7 @@ async def model_logic(  # noqa: C901
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_user':
         return ModelResponse(parts=[TextPart("The user's name is John.")])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_weather_forecast':
-        return ModelResponse(parts=[TextPart(m.content)])
+        return ModelResponse(parts=[TextPart(cast(str, m.content))])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_company_logo':
         return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_document':
@@ -928,7 +932,7 @@ async def model_logic(  # noqa: C901
                 )
             ],
         )
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'update_file' and 'README.md.bak' in m.content:
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'update_file' and 'README.md.bak' in cast(str, m.content):
         return ModelResponse(
             parts=[
                 TextPart(

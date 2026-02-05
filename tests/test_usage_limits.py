@@ -255,6 +255,35 @@ def test_add_usages():
     assert RunUsage() + RunUsage() == RunUsage()
 
 
+def test_add_usages_with_none_detail_value():
+    """Test that None values in details are skipped when incrementing usage."""
+    usage = RunUsage(
+        requests=1,
+        input_tokens=10,
+        output_tokens=20,
+        details={'reasoning_tokens': 5},
+    )
+
+    # Create a usage with None in details (simulating model response with missing detail)
+    incr_usage = RunUsage(
+        requests=1,
+        input_tokens=5,
+        output_tokens=10,
+    )
+    # Manually set a None value in details to simulate edge case from model responses
+    incr_usage.details = {'reasoning_tokens': None, 'other_tokens': 10}  # type: ignore[dict-item]
+
+    result = usage + incr_usage
+    assert result == snapshot(
+        RunUsage(
+            requests=2,
+            input_tokens=15,
+            output_tokens=30,
+            details={'reasoning_tokens': 5, 'other_tokens': 10},
+        )
+    )
+
+
 async def test_tool_call_limit() -> None:
     test_agent = Agent(TestModel())
 

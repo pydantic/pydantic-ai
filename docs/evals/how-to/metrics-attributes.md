@@ -62,7 +62,7 @@ def process(inputs: str) -> str:
 
 def my_task(inputs: str) -> str:
     # Record which model was used
-    set_eval_attribute('model', 'gpt-5')
+    set_eval_attribute('model', 'gpt-5.2')
 
     # Record feature flags
     set_eval_attribute('used_cache', True)
@@ -168,7 +168,7 @@ from pydantic_ai import Agent
 
 logfire.configure(send_to_logfire='if-token-present')
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 
 
 async def ai_task(inputs: str) -> str:
@@ -279,7 +279,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_evals import increment_eval_metric, set_eval_attribute
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 
 
 def search(query: str) -> str:
@@ -444,7 +444,7 @@ async def main():
     report = await dataset.evaluate(
         task,
         metadata={
-            'model': 'gpt-4o',
+            'model': 'gpt-5.2',
             'prompt_version': 'v2.1',
             'temperature': 0.7,
         },
@@ -452,7 +452,7 @@ async def main():
 
     # Access experiment metadata in the report
     print(report.experiment_metadata)
-    #> {'model': 'gpt-4o', 'prompt_version': 'v2.1', 'temperature': 0.7}
+    #> {'model': 'gpt-5.2', 'prompt_version': 'v2.1', 'temperature': 0.7}
 ```
 
 ### When to Use Experiment Metadata
@@ -486,13 +486,13 @@ async def task(text: str) -> str:
 async def main():
     report = await dataset.evaluate(
         task,
-        metadata={'model': 'gpt-4o', 'version': 'v1.0'},
+        metadata={'model': 'gpt-5.2', 'version': 'v1.0'},
     )
 
     print(report.render())
     """
     ╭─ Evaluation Summary: task ─╮
-    │ model: gpt-4o              │
+    │ model: gpt-5.2             │
     │ version: v1.0              │
     ╰────────────────────────────╯
     ┏━━━━━━━━━━┳━━━━━━━━━━┓
@@ -684,7 +684,7 @@ dataset = Dataset(cases=[case])
 async def task(inputs):
     # These are recorded during execution for each case
     increment_eval_metric('tokens', 100)
-    set_eval_attribute('model', 'gpt-5')
+    set_eval_attribute('model', 'gpt-5.2')
     return f'Result: {inputs}'
 
 
