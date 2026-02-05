@@ -2788,21 +2788,22 @@ The key is to be visible, alert, and predictable in your movements. Always prior
 
 
 @pytest.mark.parametrize(
-    'model_settings, has_thinking',
-    [
-        pytest.param(AnthropicModelSettings(), False, id='basic'),
-        pytest.param(AnthropicModelSettings(anthropic_effort='low'), False, id='effort'),
-        pytest.param(AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'}), True, id='adaptive-thinking'),
-    ],
+    'case_id',
+    ['basic', 'effort', 'adaptive-thinking'],
 )
 async def test_anthropic_opus_46_features(
     allow_model_requests: None,
     anthropic_api_key: str,
-    model_settings: AnthropicModelSettings,
-    has_thinking: bool,
+    case_id: str,
 ):
+    settings_map: dict[str, AnthropicModelSettings] = {
+        'basic': AnthropicModelSettings(),
+        'effort': AnthropicModelSettings(anthropic_effort='low'),
+        'adaptive-thinking': AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'}),
+    }
+    has_thinking = case_id == 'adaptive-thinking'
     m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m, model_settings=model_settings)
+    agent = Agent(m, model_settings=settings_map[case_id])
 
     result = await agent.run('What is 2+2?')
     response = result.all_messages()[-1]
