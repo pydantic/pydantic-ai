@@ -20,7 +20,7 @@ from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved
-from pydantic_ai.toolsets.code_mode import CodeModeToolset
+from pydantic_ai.toolsets.code_mode import CodeModeContext, CodeModeToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 
 pytestmark = pytest.mark.anyio
@@ -75,26 +75,28 @@ r2 = await f2
 
     # Context contains checkpoint and nested call details (not metadata!)
     assert run_code_call_id in result.output.context
-    ctx = result.output.context[run_code_call_id]
+    # Use CodeModeContext for type-safe access to context fields
+    ctx: CodeModeContext = result.output.context[run_code_call_id]  # type: ignore[assignment]
     assert 'checkpoint' in ctx
     assert 'interrupted_calls' in ctx
     assert len(ctx['interrupted_calls']) == 2
 
-    # Build results for nested calls
-    nested_results = {}
+    # Build results for nested calls - type-safe access to interrupted_calls
+    nested_results: dict[str, object] = {}
     for ic in ctx['interrupted_calls']:
         if ic['type'] == 'approval':
             nested_results[ic['call_id']] = ToolApproved()
         else:
             nested_results[ic['call_id']] = 'ext_result'
 
-    # Build resume context: original context + results
-    resume_context = {
-        run_code_call_id: {
-            **ctx,  # Include original checkpoint and interrupted_calls
-            'results': nested_results,
-        }
+    # Build resume context: original context + results (type-safe)
+    resume_ctx: CodeModeContext = {
+        'checkpoint': ctx['checkpoint'],
+        'interrupted_calls': ctx['interrupted_calls'],
+        'results': nested_results,
     }
+    # No cast needed - Mapping accepts TypedDict
+    resume_context = {run_code_call_id: resume_ctx}
 
     # Run 2: Resume with approval and nested results
     async with code_toolset:

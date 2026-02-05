@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from pydantic import TypeAdapter
-from typing_extensions import TypedDict
+from typing_extensions import NotRequired, TypedDict
 
 from pydantic_ai.runtime.abstract import (
     CodeInterruptedError,
@@ -36,6 +36,64 @@ from .signature import Signature, signature_from_function, signature_from_schema
 # Takes (description, tool_definition) and returns processed description
 DescriptionHandler = Callable[[str, ToolDefinition], str]
 
+
+class InterruptedCall(TypedDict):
+    """Details of a nested tool call that was interrupted during code execution.
+
+    Attributes:
+        call_id: Unique identifier for this interrupted call.
+        tool_name: The name of the tool that was called.
+        args: Positional arguments passed to the tool.
+        kwargs: Keyword arguments passed to the tool.
+        type: Whether this call needs 'approval' or 'external' execution.
+    """
+
+    call_id: str
+    tool_name: str
+    args: tuple[Any, ...]
+    kwargs: dict[str, Any]
+    type: Literal['approval', 'external']
+
+
+class CodeModeContext(TypedDict):
+    """Context for code mode tool calls (run_code).
+
+    This TypedDict defines the structure of context passed between code mode interruption
+    and resumption. Use this type for compile-time checking of required fields.
+
+    When code execution is interrupted (ApprovalRequired/CallDeferred), this context
+    is returned in `DeferredToolRequests.context[tool_call_id]`.
+
+    When resuming, pass this context back in `DeferredToolResults.context[tool_call_id]`
+    with the added `results` field.
+
+    Attributes:
+        checkpoint: Monty runtime checkpoint for resuming execution.
+        interrupted_calls: List of nested tool calls that were interrupted.
+        results: Map of call_id to result for each interrupted call. Required when resuming.
+            Values can be: ToolApproved(), ToolDenied(message=...), or any external result.
+
+    Example:
+        ```python
+        # Receiving context from DeferredToolRequests
+        ctx: CodeModeContext = result.output.context[tool_call_id]
+        checkpoint = ctx['checkpoint']  # bytes
+        interrupted = ctx['interrupted_calls']  # list[InterruptedCall]
+
+        # Building resume context with results
+        resume_ctx: CodeModeContext = {
+            'checkpoint': ctx['checkpoint'],
+            'interrupted_calls': ctx['interrupted_calls'],
+            'results': {ic['call_id']: ToolApproved() for ic in interrupted},
+        }
+        ```
+    """
+
+    checkpoint: bytes
+    interrupted_calls: list[InterruptedCall]
+    results: NotRequired[dict[str, Any]]
+
+
 __all__ = (
     'CodeModeToolset',
     'DescriptionHandler',
@@ -45,6 +103,8 @@ __all__ = (
     'signature_from_schema',
     'ApprovalRequired',
     'CallDeferred',
+    'CodeModeContext',
+    'InterruptedCall',
 )
 
 
@@ -351,7 +411,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         """Handle resumption from a checkpoint after approval/external results are provided.
 
         Args:
-            ctx: The run context with tool_call_context containing checkpoint and results.
+            ctx: The run context with tool_call_context containing CodeModeContext with checkpoint and results.
             tool: The code mode tool.
             code_mode_tool_manager: ToolManager for executing nested tool calls.
             sanitized_to_original: Mapping from sanitized names to original tool names.
@@ -363,24 +423,24 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             UserError: If context is missing required data (checkpoint, results).
             ModelRetry: If code execution fails after resume.
         """
-        context = ctx.tool_call_context
-
-        if context is None:
+        raw_context = ctx.tool_call_context
+        if raw_context is None:
             raise exceptions.UserError(
                 'Code mode resume requires context with checkpoint. '
                 'Pass back the original DeferredToolRequests.context[tool_call_id] '
                 'with an added "results" key mapping call_id to ToolApproved(), ToolDenied(), or external result.'
             )
 
-        checkpoint = context.get('checkpoint')
+        checkpoint = raw_context.get('checkpoint')
         if checkpoint is None:
             raise exceptions.UserError(
                 'Code mode resume requires checkpoint in context. '
                 'The checkpoint should be preserved from the original DeferredToolRequests.context.'
             )
 
-        interrupted_calls: list[dict[str, Any]] = context.get('interrupted_calls', [])
-
+        # After validation, we can safely treat this as CodeModeContext
+        context = cast(CodeModeContext, raw_context)
+        interrupted_calls = context.get('interrupted_calls', [])
         results_map = context.get('results')
 
         # GUARD: Validate results are provided
@@ -409,7 +469,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         callback = self._make_tool_callback(tool, code_mode_tool_manager, sanitized_to_original, results_map)
 
         try:
-            return await self.runtime.resume(checkpoint, callback, interrupted_calls)
+            # Cast to list[dict[str, Any]] for runtime.resume signature compatibility
+            return await self.runtime.resume(
+                checkpoint, callback, cast(list[dict[str, Any]], interrupted_calls)
+            )
         except CodeRuntimeError as e:
             raise ModelRetry(f'Runtime error in generated code:\n{e.message}')
 
@@ -455,18 +518,18 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # This ensures ToolApproved flows through correctly on resume
             # The context contains checkpoint and interrupted_calls info
             # We use context (not metadata) because this data is REQUIRED for resumption
-            raise ApprovalRequired(
-                context={
-                    'checkpoint': e.checkpoint,
-                    'interrupted_calls': [
-                        {
-                            'call_id': ic.call.call_id,
-                            'tool_name': ic.call.function_name,
-                            'args': ic.call.args,
-                            'kwargs': ic.call.kwargs,
-                            'type': 'approval' if isinstance(ic.type, ApprovalRequired) else 'external',
-                        }
-                        for ic in e.interrupted_calls
-                    ],
+            interrupted_calls: list[InterruptedCall] = [
+                {
+                    'call_id': ic.call.call_id,
+                    'tool_name': ic.call.function_name,
+                    'args': ic.call.args,
+                    'kwargs': ic.call.kwargs,
+                    'type': 'approval' if isinstance(ic.type, ApprovalRequired) else 'external',
                 }
-            )
+                for ic in e.interrupted_calls
+            ]
+            code_mode_context: CodeModeContext = {
+                'checkpoint': e.checkpoint,
+                'interrupted_calls': interrupted_calls,
+            }
+            raise ApprovalRequired(context=cast(dict[str, Any], code_mode_context))

@@ -6,7 +6,7 @@ import inspect
 import uuid
 from asyncio import Task
 from collections import defaultdict, deque
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
@@ -571,7 +571,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None = None
     tool_call_metadata: dict[str, dict[str, Any]] | None = None
     """Metadata for deferred tool calls, keyed by `tool_call_id`."""
-    tool_call_context: dict[str, dict[str, Any]] | None = None
+    tool_call_context: Mapping[str, Mapping[str, Any]] | None = None
     user_prompt: str | Sequence[_messages.UserContent] | None = None
     """Optional user prompt to include alongside tool call results.
 
@@ -874,7 +874,7 @@ async def process_tool_calls(  # noqa: C901
     tool_calls: list[_messages.ToolCallPart],
     tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None,
     tool_call_metadata: dict[str, dict[str, Any]] | None,
-    tool_call_context: dict[str, dict[str, Any]] | None,
+    tool_call_context: Mapping[str, Mapping[str, Any]] | None,
     final_result: result.FinalResult[NodeRunEndT] | None,
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     output_parts: list[_messages.ModelRequestPart],
@@ -1065,7 +1065,7 @@ async def _call_tools(  # noqa: C901
     tool_calls: list[_messages.ToolCallPart],
     tool_call_results: dict[str, DeferredToolResult],
     tool_call_metadata: dict[str, dict[str, Any]] | None,
-    tool_call_context: dict[str, dict[str, Any]] | None,
+    tool_call_context: Mapping[str, Mapping[str, Any]] | None,
     tracer: Tracer,
     usage: _usage.RunUsage,
     usage_limits: _usage.UsageLimits,
@@ -1215,7 +1215,7 @@ async def _call_tool(
     tool_call: _messages.ToolCallPart,
     tool_call_result: DeferredToolResult | None,
     tool_call_metadata: dict[str, dict[str, Any]] | None,
-    tool_call_context: dict[str, dict[str, Any]] | None,
+    tool_call_context: Mapping[str, Mapping[str, Any]] | None,
 ) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]:
     try:
         if tool_call_result is None:

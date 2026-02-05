@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cast
 
@@ -243,7 +243,7 @@ class DeferredToolResults:
     """Map of tool call IDs to results for tool calls that required human-in-the-loop approval."""
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
     """Metadata for deferred tool calls, keyed by `tool_call_id`. Each value will be available in the tool's RunContext as `tool_call_metadata`."""
-    context: dict[str, dict[str, Any]] = field(default_factory=dict)
+    context: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     """Context to pass back for deferred tool calls, keyed by `tool_call_id`.
 
     For code mode, pass back the original context from DeferredToolRequests with an added 'results' key:

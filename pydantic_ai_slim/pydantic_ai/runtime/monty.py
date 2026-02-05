@@ -205,18 +205,12 @@ class MontyRuntime(CodeRuntime):
                     )
                     tasks[call_id_int] = asyncio.ensure_future(call_tool(call))
 
-            # If we have interrupted calls but pending_ids is empty, something is wrong
-            # with the checkpoint. Try to continue by firing all interrupted calls.
+            # Fail fast if checkpoint state doesn't match interrupted calls
             if interrupted_calls and not tasks:
-                for ic in interrupted_calls:
-                    call_id_int = int(ic['call_id'])
-                    call = FunctionCall(
-                        call_id=ic['call_id'],
-                        function_name=ic['tool_name'],
-                        args=tuple(ic.get('args', ())),
-                        kwargs=ic.get('kwargs', {}),
-                    )
-                    tasks[call_id_int] = asyncio.ensure_future(call_tool(call))
+                interrupted_ids = [ic['call_id'] for ic in interrupted_calls]
+                raise CodeRuntimeError(
+                    f'Checkpoint mismatch: interrupted_calls={interrupted_ids} but pending_call_ids={pending_ids}'
+                )
 
             monty_state = await MontyRuntime._execution_loop(monty_state, tasks, call_tool)
 
