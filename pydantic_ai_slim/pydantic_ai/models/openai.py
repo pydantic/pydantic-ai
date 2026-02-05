@@ -2909,7 +2909,7 @@ def _map_usage(
         api_flavor = 'responses'
 
         if getattr(response_usage, 'output_tokens_details', None) is not None:
-            details['reasoning_tokens'] = response_usage.output_tokens_details.reasoning_tokens
+            details['reasoning_tokens'] = getattr(response_usage.output_tokens_details, 'reasoning_tokens', 0)
         else:
             details['reasoning_tokens'] = 0
     else:

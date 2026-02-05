@@ -11,7 +11,7 @@ from datetime import datetime
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, TypeGuard, TypeVar, cast, get_args, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, TypeGuard, TypeVar, cast, overload
 from urllib.parse import urlparse
 
 import pydantic
@@ -655,8 +655,13 @@ class CachePoint:
     * Anthropic (automatically omitted for Bedrock, as it does not support explicit TTL). See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
 
 
-MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
-MULTI_MODAL_CONTENT_TYPES: tuple[type, ...] = get_args(MultiModalContent)
+MULTI_MODAL_CONTENT_TYPES = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent)
+"""Tuple of multi-modal content types for use with isinstance() checks."""
+
+MultiModalContent = Annotated[
+    ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent, pydantic.Discriminator('kind')
+]
+"""Union of all multi-modal content types with a discriminator for Pydantic validation."""
 
 
 def is_multi_modal_content(obj: Any) -> TypeGuard[MultiModalContent]:

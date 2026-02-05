@@ -7,7 +7,8 @@ from typing import Any
 from pydantic import BaseModel, Field
 from pydantic_core import to_json
 
-from pydantic_ai import Agent, MultiModalContent, UserContent, models
+from pydantic_ai import Agent, UserContent, models
+from pydantic_ai.messages import MULTI_MODAL_CONTENT_TYPES
 from pydantic_ai.settings import ModelSettings
 
 __all__ = (
@@ -238,7 +239,7 @@ def _make_section(content: Any, tag: str) -> list[str | UserContent]:
 
     sections.append(f'<{tag}>')
     for item in items:
-        sections.append(item if isinstance(item, str | MultiModalContent) else _stringify(item))
+        sections.append(item if isinstance(item, (str, *MULTI_MODAL_CONTENT_TYPES)) else _stringify(item))
     sections.append(f'</{tag}>')
     return sections
 
