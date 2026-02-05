@@ -1,0 +1,108 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Collect name Alice with extra fields."}]}], "system": [],
+      "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "collect_fields", "inputSchema": {"json": {"additionalProperties":
+      {"type": "string"}, "properties": {"name": {"type": "string"}}, "required": ["name"], "type": "object"}}}}], "toolChoice":
+      {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MTNiZDlmZGQtZjZiYS00NjRmLWFkODItOTRjMDlmZTU1YTQ1
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '385'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '465'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 1950
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                name: Alice
+              name: collect_fields
+              toolUseId: tooluse_Oi3CujWOFTP9Yxu2j9Y083
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 566
+        outputTokens: 53
+        serverToolUsage: {}
+        totalTokens: 619
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Collect name Alice with extra fields."}]}, {"role": "assistant",
+      "content": [{"toolUse": {"toolUseId": "tooluse_Oi3CujWOFTP9Yxu2j9Y083", "name": "collect_fields", "input": {"name":
+      "Alice"}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_Oi3CujWOFTP9Yxu2j9Y083", "content":
+      [{"text": "Collected Alice with 0 extras"}], "status": "success"}}]}], "system": [], "inferenceConfig": {}, "toolConfig":
+      {"tools": [{"toolSpec": {"name": "collect_fields", "inputSchema": {"json": {"additionalProperties": {"type": "string"},
+      "properties": {"name": {"type": "string"}}, "required": ["name"], "type": "object"}}}}], "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        YjAxYzI3MTItYWY4ZC00ZTFiLWFjYTgtZDgwZjAyZGExZjcz
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '710'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '689'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 3447
+      output:
+        message:
+          content:
+          - text: 'I''ve collected the name "Alice". However, no extra fields were provided. The function accepts additional
+              fields beyond just the name. If you''d like to include extra fields, please let me know what additional information
+              you''d like to collect (for example: age, email, address, phone, etc.) and their values, and I''ll add them
+              to the collection.'
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 640
+        outputTokens: 77
+        serverToolUsage: {}
+        totalTokens: 717
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,50 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Give me the IP address 192.168.1.1."}]}], "system": [], "inferenceConfig":
+      {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure": {"jsonSchema": {"schema": "{\"properties\":
+      {\"value\": {\"format\": \"ipv4\", \"type\": \"string\"}}, \"required\": [\"value\"], \"type\": \"object\", \"additionalProperties\":
+      false}", "name": "FormatIPv4"}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZWZhZDgwNmQtM2Y5Ni00NDI5LWE1Y2MtM2VjMmRiMGYzOGRj
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '412'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '370'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 2088
+      output:
+        message:
+          content:
+          - text: '{"value":"192.168.1.1"}'
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 171
+        outputTokens: 14
+        serverToolUsage: {}
+        totalTokens: 185
+    status:
+      code: 200
+      message: OK
+version: 1

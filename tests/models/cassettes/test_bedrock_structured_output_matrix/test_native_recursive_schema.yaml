@@ -1,0 +1,167 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Create a tree: root with children A and B, where A has child
+      C."}]}], "system": [], "inferenceConfig": {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure": {"jsonSchema":
+      {"schema": "{\"$ref\": \"#/$defs/TreeNode\", \"$defs\": {\"TreeNode\": {\"properties\": {\"value\": {\"type\": \"string\"},
+      \"children\": {\"default\": [], \"items\": {\"$ref\": \"#/$defs/TreeNode\"}, \"type\": \"array\"}}, \"required\": [\"value\"],
+      \"type\": \"object\", \"additionalProperties\": false}}}", "name": "TreeNode"}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        Y2ExOTc5ZDgtNWFjNC00MTY1LWI1MmMtN2JkNzY3NDdmNjFk
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '576'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '100'
+      content-type:
+      - application/json
+    parsed_body:
+      message: The system encountered an unexpected error during processing. Try your request again.
+    status:
+      code: 500
+      message: Internal Server Error
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Create a tree: root with children A and B, where A has child
+      C."}]}], "system": [], "inferenceConfig": {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure": {"jsonSchema":
+      {"schema": "{\"$ref\": \"#/$defs/TreeNode\", \"$defs\": {\"TreeNode\": {\"properties\": {\"value\": {\"type\": \"string\"},
+      \"children\": {\"default\": [], \"items\": {\"$ref\": \"#/$defs/TreeNode\"}, \"type\": \"array\"}}, \"required\": [\"value\"],
+      \"type\": \"object\", \"additionalProperties\": false}}}", "name": "TreeNode"}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        Y2ExOTc5ZDgtNWFjNC00MTY1LWI1MmMtN2JkNzY3NDdmNjFk
+      amz-sdk-request:
+      - !!binary |
+        dHRsPTIwMjYwMjA2VDA5Mjc1Nlo7IGF0dGVtcHQ9MjsgbWF4PTU=
+      content-length:
+      - '576'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '100'
+      content-type:
+      - application/json
+    parsed_body:
+      message: The system encountered an unexpected error during processing. Try your request again.
+    status:
+      code: 500
+      message: Internal Server Error
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Create a tree: root with children A and B, where A has child
+      C."}]}], "system": [], "inferenceConfig": {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure": {"jsonSchema":
+      {"schema": "{\"$ref\": \"#/$defs/TreeNode\", \"$defs\": {\"TreeNode\": {\"properties\": {\"value\": {\"type\": \"string\"},
+      \"children\": {\"default\": [], \"items\": {\"$ref\": \"#/$defs/TreeNode\"}, \"type\": \"array\"}}, \"required\": [\"value\"],
+      \"type\": \"object\", \"additionalProperties\": false}}}", "name": "TreeNode"}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        Y2ExOTc5ZDgtNWFjNC00MTY1LWI1MmMtN2JkNzY3NDdmNjFk
+      amz-sdk-request:
+      - !!binary |
+        dHRsPTIwMjYwMjA2VDA5Mjc1N1o7IGF0dGVtcHQ9MzsgbWF4PTU=
+      content-length:
+      - '576'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '100'
+      content-type:
+      - application/json
+    parsed_body:
+      message: The system encountered an unexpected error during processing. Try your request again.
+    status:
+      code: 500
+      message: Internal Server Error
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Create a tree: root with children A and B, where A has child
+      C."}]}], "system": [], "inferenceConfig": {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure": {"jsonSchema":
+      {"schema": "{\"$ref\": \"#/$defs/TreeNode\", \"$defs\": {\"TreeNode\": {\"properties\": {\"value\": {\"type\": \"string\"},
+      \"children\": {\"default\": [], \"items\": {\"$ref\": \"#/$defs/TreeNode\"}, \"type\": \"array\"}}, \"required\": [\"value\"],
+      \"type\": \"object\", \"additionalProperties\": false}}}", "name": "TreeNode"}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        Y2ExOTc5ZDgtNWFjNC00MTY1LWI1MmMtN2JkNzY3NDdmNjFk
+      amz-sdk-request:
+      - !!binary |
+        dHRsPTIwMjYwMjA2VDA5Mjc1OVo7IGF0dGVtcHQ9NDsgbWF4PTU=
+      content-length:
+      - '576'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '100'
+      content-type:
+      - application/json
+    parsed_body:
+      message: The system encountered an unexpected error during processing. Try your request again.
+    status:
+      code: 500
+      message: Internal Server Error
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Create a tree: root with children A and B, where A has child
+      C."}]}], "system": [], "inferenceConfig": {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure": {"jsonSchema":
+      {"schema": "{\"$ref\": \"#/$defs/TreeNode\", \"$defs\": {\"TreeNode\": {\"properties\": {\"value\": {\"type\": \"string\"},
+      \"children\": {\"default\": [], \"items\": {\"$ref\": \"#/$defs/TreeNode\"}, \"type\": \"array\"}}, \"required\": [\"value\"],
+      \"type\": \"object\", \"additionalProperties\": false}}}", "name": "TreeNode"}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        Y2ExOTc5ZDgtNWFjNC00MTY1LWI1MmMtN2JkNzY3NDdmNjFk
+      amz-sdk-request:
+      - !!binary |
+        dHRsPTIwMjYwMjA2VDA5MjgwMFo7IGF0dGVtcHQ9NTsgbWF4PTU=
+      content-length:
+      - '576'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '100'
+      content-type:
+      - application/json
+    parsed_body:
+      message: The system encountered an unexpected error during processing. Try your request again.
+    status:
+      code: 500
+      message: Internal Server Error
+version: 1
