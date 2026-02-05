@@ -78,6 +78,7 @@ try:
         FunctionCallingConfigMode,
         FunctionDeclarationDict,
         FunctionResponseBlobDict,
+        FunctionResponseDict,
         FunctionResponseFileDataDict,
         FunctionResponsePartDict,
         GenerateContentConfigDict,
@@ -713,16 +714,15 @@ class GoogleModel(Model):
                     file_part = await self._map_file_to_part(item)
                     fallback_parts.append(file_part)
 
-        result: list[PartDict] = [
-            {
-                'function_response': {
-                    'name': part.tool_name,
-                    'response': part.model_response_object(),
-                    'id': part.tool_call_id,
-                    'parts': function_response_parts or None,
-                }
-            }
-        ]
+        function_response_dict: FunctionResponseDict = {
+            'name': part.tool_name,
+            'response': part.model_response_object(),
+            'id': part.tool_call_id,
+        }
+        if function_response_parts:
+            function_response_dict['parts'] = function_response_parts
+
+        result: list[PartDict] = [{'function_response': function_response_dict}]
         result.extend(fallback_parts)
 
         return result
