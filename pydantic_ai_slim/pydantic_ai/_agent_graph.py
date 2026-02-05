@@ -1102,8 +1102,8 @@ async def process_tool_calls(  # noqa: C901
                     else:
                         deferred_calls['unapproved'].append(call)
                 else:
-                    # Validation failed - execute to create trace span and get error
-                    ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.deps.model_settings)
+                    # Validation failed - execute to create trace span and get error.
+                    # Tool-specific retries are already tracked by validate_tool_call() via failed_tools.
                     include_content = (
                         ctx.deps.instrumentation_settings is not None
                         and ctx.deps.instrumentation_settings.include_content
