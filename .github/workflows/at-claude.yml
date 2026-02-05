@@ -27,6 +27,7 @@ jobs:
         github.event.review.author_association ||
         github.event.issue.author_association)
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: write
       pull-requests: write
@@ -35,10 +36,11 @@ jobs:
       actions: read
     steps:
       - name: Get PR info for fork support
-        if: github.event.issue.pull_request
+        if: github.event.issue.pull_request || github.event.pull_request
         id: pr-info
         run: |
-          PR_DATA=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.issue.number }})
+          PR_NUMBER=${{ github.event.pull_request.number || github.event.issue.number }}
+          PR_DATA=$(gh api repos/${{ github.repository }}/pulls/${PR_NUMBER})
           echo "pr_head_repo=$(echo "$PR_DATA" | jq -r '.head.repo.full_name')" >> $GITHUB_OUTPUT
           echo "pr_head_ref=$(echo "$PR_DATA" | jq -r '.head.ref')" >> $GITHUB_OUTPUT
           echo "is_fork=$(echo "$PR_DATA" | jq -r '.head.repo.fork')" >> $GITHUB_OUTPUT
@@ -64,8 +66,7 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          settings: .claude/settings.json
           additional_permissions: |
             actions: read
           claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr list:*),Bash(gh pr create:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh run view:*),Bash(gh run list:*),Bash(git log:*),Bash(git diff:*),Bash(git grep:*),Bash(git show:*),Bash(git status:*),Bash(git add:*),Bash(git checkout:*),Bash(git commit:*),Bash(git push:*),Bash(rg:*),Bash(ls:*),Bash(tree:*),Bash(grep:*),Bash(uv run:*),Bash(make:*)"
