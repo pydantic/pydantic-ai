@@ -457,3 +457,28 @@ async def test_parallel_tool_calls_limit_enforced():
 
 def test_usage_unknown_provider():
     assert RequestUsage.extract({}, provider='unknown', provider_url='', provider_fallback='') == RequestUsage()
+
+
+def test_usage_limits_preserves_explicit_zero():
+    """Test that explicit 0 token limits are preserved and not replaced by deprecated fallbacks."""
+    # When new arg is 0 and deprecated arg is non-zero, should use 0 (not fallback)
+    limits = UsageLimits(input_tokens_limit=0, request_tokens_limit=123)
+    assert limits.input_tokens_limit == 0
+
+    limits = UsageLimits(output_tokens_limit=0, response_tokens_limit=456)
+    assert limits.output_tokens_limit == 0
+
+    # When new arg is None, should use deprecated fallback
+    limits = UsageLimits(input_tokens_limit=None, request_tokens_limit=123)
+    assert limits.input_tokens_limit == 123
+
+    limits = UsageLimits(output_tokens_limit=None, response_tokens_limit=456)
+    assert limits.output_tokens_limit == 456
+
+    # When both are None, should be None
+    limits = UsageLimits(input_tokens_limit=None, request_tokens_limit=None)
+    assert limits.input_tokens_limit is None
+
+    # When only new arg is set, should use it
+    limits = UsageLimits(input_tokens_limit=100)
+    assert limits.input_tokens_limit == 100
