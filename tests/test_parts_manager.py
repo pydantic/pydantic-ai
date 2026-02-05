@@ -869,3 +869,15 @@ class TestExcludeIncompleteToolCalls:
         assert len(parts) == 1
         assert isinstance(parts[0], TextPart)
         assert parts[0].content == 'Hello world'
+
+
+def test_get_part_by_vendor_id():
+    manager = ModelResponsePartsManager()
+
+    event = next(manager.handle_text_delta(vendor_part_id='content', content='hello'))
+    assert isinstance(event, PartStartEvent)
+
+    part = manager.get_part_by_vendor_id('content')
+    assert part == snapshot(TextPart(content='hello', part_kind='text'))
+
+    assert manager.get_part_by_vendor_id('missing') is None

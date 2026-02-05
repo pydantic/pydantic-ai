@@ -10,13 +10,14 @@ from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
 import anyio
 from pydantic import TypeAdapter
-from typing_extensions import Self, TypeIs, TypeVar
+from typing_extensions import Self, TypeIs, TypeVar, deprecated
 
 from pydantic_graph import End
 
 from .. import (
     _agent_graph,
     _system_prompt,
+    _tool_manager,
     _utils,
     exceptions,
     messages as _messages,
@@ -1177,9 +1178,24 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     @staticmethod
     @contextmanager
+    def parallel_tool_call_execution_mode(mode: _tool_manager.ParallelExecutionMode = 'parallel') -> Iterator[None]:
+        """Set the parallel execution mode during the context.
+
+        Args:
+            mode: The execution mode for tool calls:
+                - 'parallel': Run tool calls in parallel, yielding events as they complete (default).
+                - 'sequential': Run tool calls one at a time in order.
+                - 'parallel_ordered_events': Run tool calls in parallel, but events are emitted in order, after all calls complete.
+        """
+        with ToolManager.parallel_execution_mode(mode):
+            yield
+
+    @staticmethod
+    @contextmanager
+    @deprecated('Use `parallel_execution_mode("sequential")` instead.')
     def sequential_tool_calls() -> Iterator[None]:
         """Run tool calls sequentially during the context."""
-        with ToolManager.sequential_tool_calls():
+        with ToolManager.parallel_execution_mode('sequential'):
             yield
 
     @staticmethod
@@ -1401,6 +1417,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         prog_name: str = 'pydantic-ai',
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
     ) -> None:
         """Run the agent in a CLI chat interface.
 
@@ -1408,6 +1426,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deps: The dependencies to pass to the agent.
             prog_name: The name of the program to use for the CLI. Defaults to 'pydantic-ai'.
             message_history: History of the conversation so far.
+            model_settings: Optional settings to use for this model's request.
+            usage_limits: Optional limits on model request count or token usage.
 
         Example:
         ```python {title="agent_to_cli.py" test="skip"}
@@ -1431,6 +1451,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             code_theme='monokai',
             prog_name=prog_name,
             message_history=message_history,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
         )
 
     def to_cli_sync(
@@ -1438,6 +1460,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         prog_name: str = 'pydantic-ai',
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
     ) -> None:
         """Run the agent in a CLI chat interface with the non-async interface.
 
@@ -1445,6 +1469,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deps: The dependencies to pass to the agent.
             prog_name: The name of the program to use for the CLI. Defaults to 'pydantic-ai'.
             message_history: History of the conversation so far.
+            model_settings: Optional settings to use for this model's request.
+            usage_limits: Optional limits on model request count or token usage.
 
         ```python {title="agent_to_cli_sync.py" test="skip"}
         from pydantic_ai import Agent
@@ -1455,5 +1481,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```
         """
         return _utils.get_event_loop().run_until_complete(
-            self.to_cli(deps=deps, prog_name=prog_name, message_history=message_history)
+            self.to_cli(
+                deps=deps,
+                prog_name=prog_name,
+                message_history=message_history,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+            )
         )

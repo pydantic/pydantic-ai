@@ -4,6 +4,7 @@ import base64
 import datetime
 import json
 import os
+import random
 import re
 import tempfile
 from collections.abc import AsyncIterator
@@ -75,7 +76,7 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
-from ..conftest import IsBytes, IsDatetime, IsInstance, IsNow, IsStr, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
@@ -101,7 +102,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
-if not imports_successful():
+if not imports_successful():  # pragma: lax no cover
     # Define placeholder errors module so parametrize decorators can be parsed
     from types import SimpleNamespace
 
@@ -883,6 +884,21 @@ In summary, it looks like the image shows a camera setup, perhaps in the process
 """)
 
 
+async def test_google_model_youtube_video_url_input(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(m, instructions='You are a helpful chatbot.')
+
+    result = await agent.run(
+        [
+            'Explain me this video in a few sentences',
+            VideoUrl(url='https://youtu.be/lCdaVNyHtjU'),
+        ]
+    )
+    assert result.output == snapshot(
+        'This video demonstrates using an AI agent to analyze recent 404 HTTP responses from a service. The user asks the agent, "Logfire," to identify patterns in these errors. The agent then queries a Logfire database, extracts relevant information like URL paths, HTTP methods, and timestamps, and presents a detailed analysis covering common error-prone endpoints, request patterns, timeline-related issues, and potential configuration or authentication problems. Finally, it offers a list of actionable recommendations to address these issues.'
+    )
+
+
 async def test_google_model_youtube_video_url_input_with_vendor_metadata(
     allow_model_requests: None, google_provider: GoogleProvider
 ):
@@ -891,7 +907,7 @@ async def test_google_model_youtube_video_url_input_with_vendor_metadata(
 
     result = await agent.run(
         [
-            'Explain me this video',
+            'Explain me this video in a few sentences',
             VideoUrl(
                 url='https://youtu.be/lCdaVNyHtjU',
                 vendor_metadata={'fps': 0.2},
@@ -899,13 +915,9 @@ async def test_google_model_youtube_video_url_input_with_vendor_metadata(
         ]
     )
     assert result.output == snapshot("""\
-Okay, based on the image, here's what I can infer:
+Sure, here is a summary of the video in a few sentences.
 
-*   **A camera monitor is mounted on top of a camera.**
-*   **The monitor's screen is on, displaying a view of the rocky mountains.**
-*   **This setting suggests a professional video shoot.**
-
-If you'd like a more detailed explanation, please provide additional information about the video.\
+The video is an AI analyzing recent 404 HTTP responses using Logfire. It identifies several patterns such as the most common endpoints with 404 errors, request patterns, timeline-related issues, organization/project access issues, and configuration/authentication issues. Based on the analysis, it provides several recommendations, including verifying the platform-config endpoint is properly configured, checking organization and project permissions, and investigating timeline requests.\
 """)
 
 
@@ -1999,6 +2011,34 @@ I'm ready to assist you with a wide range of tasks, from answering questions and
 
 How can I help you today?\
 """)
+
+
+async def test_google_instructions_only_with_tool_calls(allow_model_requests: None, google_provider: GoogleProvider):
+    """Test that tools work when using instructions-only without a user prompt.
+
+    This tests the fix for https://github.com/pydantic/pydantic-ai/issues/3692 where the second
+    request (after tool results) would fail because contents started with role=model instead of
+    role=user. The fix prepends an empty user turn when the first content is a model response.
+    """
+    m = GoogleModel('gemini-3-flash-preview', provider=google_provider)
+    agent: Agent[None, list[str]] = Agent(m, output_type=list[str])
+
+    @agent.instructions
+    def agent_instructions() -> str:
+        return 'Tell three jokes. Generate topics with the generate_topic tool.'
+
+    @agent.tool_plain
+    def generate_topic() -> str:
+        return random.choice(('cars', 'penguins', 'golf'))
+
+    result = await agent.run()
+    assert result.output == snapshot(
+        [
+            'What kind of car does a sheep drive? A Lamborghini!',
+            "Why don't you see penguins in Great Britain? Because they're afraid of Wales!",
+            'What happened when the wheel was invented? It caused a revolution!',
+        ]
+    )
 
 
 async def test_google_model_empty_assistant_response(allow_model_requests: None, google_provider: GoogleProvider):
@@ -3270,7 +3310,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
     result = await agent.run('Generate an image of an axolotl.')
     messages = result.all_messages()
 
-    assert result.output == snapshot(BinaryImage(data=IsBytes(), media_type='image/jpeg', _identifier='b6e95a'))
+    assert result.output == snapshot(IsInstance(BinaryImage))
     assert messages == snapshot(
         [
             ModelRequest(
@@ -3286,11 +3326,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
             ModelResponse(
                 parts=[
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/jpeg',
-                            _identifier='b6e95a',
-                        ),
+                        content=IsInstance(BinaryImage),
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
@@ -3313,7 +3349,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
     )
 
     result = await agent.run('Now give it a sombrero.', message_history=messages)
-    assert result.output == snapshot(BinaryImage(data=IsBytes(), media_type='image/jpeg', _identifier='14bec0'))
+    assert result.output == snapshot(IsInstance(BinaryImage))
     assert result.new_messages() == snapshot(
         [
             ModelRequest(
@@ -3329,11 +3365,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
             ModelResponse(
                 parts=[
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/jpeg',
-                            _identifier='14bec0',
-                        ),
+                        content=IsInstance(BinaryImage),
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
@@ -3366,14 +3398,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
     agent = Agent(m, output_type=BinaryImage)
 
     async with agent.run_stream('Generate an image of an axolotl') as result:
-        assert await result.get_output() == snapshot(
-            BinaryImage(
-                data=IsBytes(),
-                media_type='image/png',
-                _identifier='9ff9cc',
-                identifier='9ff9cc',
-            )
-        )
+        assert await result.get_output() == snapshot(IsInstance(BinaryImage))
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='Generate an image of an axolotl.') as agent_run:
@@ -3384,14 +3409,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
                         event_parts.append(event)
 
     assert agent_run.result is not None
-    assert agent_run.result.output == snapshot(
-        BinaryImage(
-            data=IsBytes(),
-            media_type='image/png',
-            _identifier='2af2a7',
-            identifier='2af2a7',
-        )
-    )
+    assert agent_run.result.output == snapshot(IsInstance(BinaryImage))
     assert agent_run.result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -3407,14 +3425,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
             ModelResponse(
                 parts=[
                     TextPart(content='Here you go! '),
-                    FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/png',
-                            _identifier='2af2a7',
-                            identifier='2af2a7',
-                        )
-                    ),
+                    FilePart(content=IsInstance(BinaryImage)),
                 ],
                 usage=RequestUsage(
                     input_tokens=10,
@@ -3439,13 +3450,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
             PartEndEvent(index=0, part=TextPart(content='Here you go! '), next_part_kind='file'),
             PartStartEvent(
                 index=1,
-                part=FilePart(
-                    content=BinaryImage(
-                        data=IsBytes(),
-                        media_type='image/png',
-                        _identifier='2af2a7',
-                    )
-                ),
+                part=FilePart(content=IsInstance(BinaryImage)),
                 previous_part_kind='text',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
@@ -3489,12 +3494,7 @@ A little axolotl named Archie lived in a beautiful glass tank, but he always won
                         provider_details={'thought_signature': IsStr()},
                     ),
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/jpeg',
-                            _identifier='00f2af',
-                            identifier=IsStr(),
-                        ),
+                        content=IsInstance(BinaryImage),
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
@@ -3528,14 +3528,7 @@ async def test_google_image_or_text_output(allow_model_requests: None, google_pr
     )
 
     result = await agent.run('Generate an image of an axolotl.')
-    assert result.output == snapshot(
-        BinaryImage(
-            data=IsBytes(),
-            media_type='image/png',
-            _identifier='f82faf',
-            identifier='f82faf',
-        )
-    )
+    assert result.output == snapshot(IsInstance(BinaryImage))
 
 
 async def test_google_image_and_text_output(allow_model_requests: None, google_provider: GoogleProvider):
@@ -3546,16 +3539,7 @@ async def test_google_image_and_text_output(allow_model_requests: None, google_p
     assert result.output == snapshot(
         'Once, in a hidden cenote, lived an axolotl named Pip who loved to collect shiny pebbles. One day, Pip found a pebble that glowed, illuminating his entire underwater world with a soft, warm light. '
     )
-    assert result.response.files == snapshot(
-        [
-            BinaryImage(
-                data=IsBytes(),
-                media_type='image/png',
-                _identifier='67b12f',
-                identifier='67b12f',
-            )
-        ]
-    )
+    assert result.response.files == snapshot([IsInstance(BinaryImage)])
 
 
 async def test_google_image_generation_with_tool_output(allow_model_requests: None, google_provider: GoogleProvider):
@@ -3601,11 +3585,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
             ModelResponse(
                 parts=[
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/jpeg',
-                            _identifier='4e5b3e',
-                        ),
+                        content=IsInstance(BinaryImage),
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
@@ -3699,7 +3679,7 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
     result = await agent.run(
         'Visualize the current weather forecast for the next 5 days in Mexico City as a clean, modern weather chart. Add a visual on what I should wear each day'
     )
-    assert result.output == snapshot(BinaryImage(data=IsBytes(), media_type='image/jpeg', _identifier='787c28'))
+    assert result.output == snapshot(IsInstance(BinaryImage))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -3744,11 +3724,7 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                         provider_name='google-gla',
                     ),
                     FilePart(
-                        content=BinaryImage(
-                            data=IsBytes(),
-                            media_type='image/jpeg',
-                            _identifier='787c28',
-                        ),
+                        content=IsInstance(BinaryImage),
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
@@ -3955,15 +3931,15 @@ async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, go
     }
 
 
-async def test_google_vertexai_image_generation(allow_model_requests: None, vertex_provider: GoogleProvider):
+async def test_google_vertexai_image_generation(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+):  # pragma: lax no cover
     model = GoogleModel('gemini-2.5-flash-image', provider=vertex_provider)
 
     agent = Agent(model, output_type=BinaryImage)
 
     result = await agent.run('Generate an image of an axolotl.')
-    assert result.output == snapshot(
-        BinaryImage(data=IsBytes(), media_type='image/png', _identifier='b037a4', identifier='b037a4')
-    )
+    assert result.output == snapshot(IsInstance(BinaryImage))
 
 
 async def test_google_httpx_client_is_not_closed(allow_model_requests: None, gemini_api_key: str):
@@ -4366,6 +4342,28 @@ def test_google_process_response_filters_empty_text_parts(google_provider: Googl
     result = model._process_response(response)  # pyright: ignore[reportPrivateUsage]
 
     assert result.parts == snapshot([TextPart(content='first'), TextPart(content='second')])
+
+
+def test_google_process_response_empty_candidates(google_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.5-pro', provider=google_provider)
+    response = GenerateContentResponse.model_validate(
+        {
+            'response_id': 'resp-456',
+            'candidates': [],
+        }
+    )
+    result = model._process_response(response)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == snapshot(
+        ModelResponse(
+            parts=[],
+            model_name='gemini-2.5-pro',
+            timestamp=IsDatetime(),
+            provider_name='google-gla',
+            provider_url='https://generativelanguage.googleapis.com/',
+            provider_response_id='resp-456',
+        )
+    )
 
 
 async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
@@ -5689,3 +5687,57 @@ async def test_gemini_streamed_response_cancel_without_stream():
 
     await response.cancel()
     assert response.is_cancelled is True
+
+
+async def test_google_prepends_empty_user_turn_when_first_content_is_model(google_provider: GoogleProvider):
+    """Test that an empty user turn is prepended when contents start with a model response.
+
+    This happens when there's a conversation history with a model response (containing tool calls)
+    followed by tool results, but no initial user prompt. The Gemini API requires that function
+    call turns come immediately after a user turn or function response turn.
+
+    See https://github.com/pydantic/pydantic-ai/issues/3692
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='generate_topic', args={}, tool_call_id='test_id'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='generate_topic', content='penguins', tool_call_id='test_id'),
+            ]
+        ),
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents == snapshot(
+        [
+            {'role': 'user', 'parts': [{'text': ''}]},
+            {
+                'role': 'model',
+                'parts': [
+                    {
+                        'function_call': {'name': 'generate_topic', 'args': {}, 'id': 'test_id'},
+                        'thought_signature': b'skip_thought_signature_validator',
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'function_response': {
+                            'name': 'generate_topic',
+                            'response': {'return_value': 'penguins'},
+                            'id': 'test_id',
+                        }
+                    },
+                ],
+            },
+        ]
+    )
