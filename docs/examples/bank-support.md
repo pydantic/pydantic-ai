@@ -2,7 +2,7 @@ Small but complete example of using Pydantic AI to build a support agent for a b
 
 Demonstrates:
 
-- [dynamic system prompt](../agents.md#system-prompts)
+- [dynamic system prompt](../agent.md#system-prompts)
 - [structured `output_type`](../output.md#structured-output)
 - [tools](../tools.md)
 
