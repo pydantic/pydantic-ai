@@ -102,7 +102,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
-if not imports_successful():
+if not imports_successful():  # pragma: lax no cover
     # Define placeholder errors module so parametrize decorators can be parsed
     from types import SimpleNamespace
 
@@ -884,6 +884,21 @@ In summary, it looks like the image shows a camera setup, perhaps in the process
 """)
 
 
+async def test_google_model_youtube_video_url_input(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(m, instructions='You are a helpful chatbot.')
+
+    result = await agent.run(
+        [
+            'Explain me this video in a few sentences',
+            VideoUrl(url='https://youtu.be/lCdaVNyHtjU'),
+        ]
+    )
+    assert result.output == snapshot(
+        'This video demonstrates using an AI agent to analyze recent 404 HTTP responses from a service. The user asks the agent, "Logfire," to identify patterns in these errors. The agent then queries a Logfire database, extracts relevant information like URL paths, HTTP methods, and timestamps, and presents a detailed analysis covering common error-prone endpoints, request patterns, timeline-related issues, and potential configuration or authentication problems. Finally, it offers a list of actionable recommendations to address these issues.'
+    )
+
+
 async def test_google_model_youtube_video_url_input_with_vendor_metadata(
     allow_model_requests: None, google_provider: GoogleProvider
 ):
@@ -892,7 +907,7 @@ async def test_google_model_youtube_video_url_input_with_vendor_metadata(
 
     result = await agent.run(
         [
-            'Explain me this video',
+            'Explain me this video in a few sentences',
             VideoUrl(
                 url='https://youtu.be/lCdaVNyHtjU',
                 vendor_metadata={'fps': 0.2},
@@ -900,13 +915,9 @@ async def test_google_model_youtube_video_url_input_with_vendor_metadata(
         ]
     )
     assert result.output == snapshot("""\
-Okay, based on the image, here's what I can infer:
+Sure, here is a summary of the video in a few sentences.
 
-*   **A camera monitor is mounted on top of a camera.**
-*   **The monitor's screen is on, displaying a view of the rocky mountains.**
-*   **This setting suggests a professional video shoot.**
-
-If you'd like a more detailed explanation, please provide additional information about the video.\
+The video is an AI analyzing recent 404 HTTP responses using Logfire. It identifies several patterns such as the most common endpoints with 404 errors, request patterns, timeline-related issues, organization/project access issues, and configuration/authentication issues. Based on the analysis, it provides several recommendations, including verifying the platform-config endpoint is properly configured, checking organization and project permissions, and investigating timeline requests.\
 """)
 
 
@@ -3919,7 +3930,9 @@ async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, go
     }
 
 
-async def test_google_vertexai_image_generation(allow_model_requests: None, vertex_provider: GoogleProvider):
+async def test_google_vertexai_image_generation(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+):  # pragma: lax no cover
     model = GoogleModel('gemini-2.5-flash-image', provider=vertex_provider)
 
     agent = Agent(model, output_type=BinaryImage)
