@@ -156,7 +156,7 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     def _restate_overrides(self) -> Iterator[None]:
         with (
             super().override(model=self._model, toolsets=self._toolsets, tools=[]),
-            self.sequential_tool_calls(),
+            self.parallel_tool_call_execution_mode('sequential'),
         ):
             yield
 
