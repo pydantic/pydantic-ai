@@ -7,7 +7,7 @@ With code mode, aggregation happens in code and only summaries are returned.
 Inspired by Anthropic's Programmatic Tool Calling example.
 
 Run:
-    uv run python demos/code_mode/expense_analysis_demo.py
+    uv run -m pydantic_ai_examples.code_mode.expense_analysis_demo
 """
 
 from __future__ import annotations

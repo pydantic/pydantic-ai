@@ -1,16 +1,20 @@
-"""CodeMode Demo: Batch Calendar Event Creation.
+"""CodeMode Demo: Regional Sales SQL Analysis.
 
-This demo shows how code mode reduces LLM roundtrips when creating multiple
-calendar events. With traditional tool calling, each event requires a separate
-roundtrip. With code mode, the LLM writes a loop that creates all events in one go.
+This demo shows how code mode reduces context bloat when processing large datasets.
+With 400+ sales records across 4 regions, traditional mode must send all data through
+the LLM context. Code mode processes it in a loop, returning only summaries.
+
+Traditional mode: All 400+ records flow through LLM context
+Code mode: Loop processes records, returns only totals
 
 Run:
-    uv run python demos/code_mode/batch_operations_demo.py
+    uv run -m pydantic_ai_examples.code_mode.sql_analysis_demo
 """
 
 from __future__ import annotations
 
 import asyncio
+import random
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,56 +32,129 @@ from pydantic_ai.toolsets.code_mode import CodeModeToolset
 # =============================================================================
 
 PROMPT = """
-Create calendar events for a daily standup meeting at 9:00 AM for every day
-in the first week of January 2025 (January 1-7).
+Analyze Q4 2024 sales across all regions.
 
-Return a summary with:
-- Total events created
-- List of all event dates
+Steps:
+1. Get all regions
+2. For each region, query Q4 sales
+3. Calculate total revenue by summing all transaction amounts
+4. Count transactions
+5. If revenue > 50000, check bonus rules
+6. Append each region's summary to a results list
+7. Return total revenue and the results list
 """
 
 MODEL = 'gateway/anthropic:claude-sonnet-4-5'
 MAX_RETRIES = 3
 
 # =============================================================================
-# Mock Calendar Tools
+# Mock SQL Database - Large Dataset
 # =============================================================================
 
-# Simulated calendar storage
-_calendar_events: list[dict[str, Any]] = []
+_regions = ['West', 'East', 'North', 'South']
+
+# Bonus rules (only some regions have them)
+_bonus_rules = {
+    'West': {'threshold': 50000, 'bonus_pct': 0.05},
+    'East': {'threshold': 50000, 'bonus_pct': 0.04},
+}
 
 
-def create_calendar_event(title: str, date: str, time: str) -> dict[str, Any]:
-    """Create a calendar event.
+def _generate_sales_data() -> dict[str, list[dict[str, Any]]]:
+    """Generate large sales dataset - 100+ records per region."""
+    random.seed(42)
+    sales: dict[str, list[dict[str, Any]]] = {}
+
+    # Revenue targets to ensure interesting results
+    revenue_targets: dict[str, int] = {'West': 65000, 'East': 55000, 'North': 45000, 'South': 70000}
+
+    for region in _regions:
+        region_sales: list[dict[str, Any]] = []
+        target = revenue_targets[region]
+        current_total: float = 0
+        sale_id = 1
+
+        # Generate 100+ sales per region to bloat traditional mode context
+        while len(region_sales) < 100 or current_total < target * 0.95:
+            amount = round(random.uniform(100, 2000), 2)
+
+            region_sales.append(
+                {
+                    'id': f'{region[0]}{sale_id:04d}',
+                    'amount': amount,
+                    'date': f'2024-{random.randint(10, 12):02d}-{random.randint(1, 28):02d}',
+                }
+            )
+
+            current_total += amount
+            sale_id += 1
+
+        sales[region] = region_sales
+
+    return sales
+
+
+_sales = _generate_sales_data()
+
+
+# =============================================================================
+# Tools
+# =============================================================================
+
+
+def get_regions() -> list[str]:
+    """Get list of all sales regions.
+
+    Returns:
+        List of region names.
+    """
+    return _regions.copy()
+
+
+def query_sales(region: str, quarter: str) -> dict[str, Any]:
+    """Query sales transactions for a region and quarter.
 
     Args:
-        title: The title of the event.
-        date: The date of the event in YYYY-MM-DD format.
-        time: The time of the event in HH:MM format.
+        region: The region name.
+        quarter: The quarter (e.g., "Q4").
 
     Returns:
-        The created event with its ID.
+        Dictionary with transaction records. Each has: id, amount, date.
     """
-    event_id = len(_calendar_events) + 1
-    event = {'id': event_id, 'title': title, 'date': date, 'time': time}
-    _calendar_events.append(event)
-    return {'success': True, 'event_id': event_id, 'event': event}
+    if region not in _sales:
+        return {'error': f'Unknown region: {region}', 'transactions': []}
+
+    quarter_months = {
+        'Q1': ['01', '02', '03'],
+        'Q2': ['04', '05', '06'],
+        'Q3': ['07', '08', '09'],
+        'Q4': ['10', '11', '12'],
+    }
+
+    months = quarter_months.get(quarter, [])
+    transactions = [s for s in _sales[region] if s['date'][5:7] in months]
+
+    return {'region': region, 'quarter': quarter, 'transactions': transactions}
 
 
-def list_calendar_events() -> list[dict[str, Any]]:
-    """List all calendar events.
+def get_bonus_rules(region: str) -> dict[str, Any] | None:
+    """Get bonus eligibility rules for a region.
+
+    Args:
+        region: The region name.
 
     Returns:
-        List of all calendar events.
+        Bonus rules (threshold and bonus_pct) or None if no rules exist.
     """
-    return _calendar_events.copy()
+    return _bonus_rules.get(region)
 
 
 def create_toolset() -> FunctionToolset[None]:
-    """Create the calendar toolset."""
+    """Create the SQL analysis toolset."""
     toolset: FunctionToolset[None] = FunctionToolset()
-    toolset.add_function(create_calendar_event)
-    toolset.add_function(list_calendar_events)
+    toolset.add_function(get_regions)
+    toolset.add_function(query_sales)
+    toolset.add_function(get_bonus_rules)
     return toolset
 
 
@@ -91,7 +168,7 @@ def create_tool_calling_agent(toolset: FunctionToolset[None]) -> Agent[None, str
     return Agent(
         MODEL,
         toolsets=[toolset],
-        system_prompt='You are a calendar assistant. Use the available tools to manage calendar events.',
+        system_prompt='You are a sales analyst. Use the available tools to analyze regional sales data.',
     )
 
 
@@ -106,7 +183,7 @@ def create_code_mode_agent(toolset: FunctionToolset[None]) -> Agent[None, str]:
     return Agent(
         MODEL,
         toolsets=[code_toolset],
-        system_prompt='You are a calendar assistant. Use the available tools to manage calendar events.',
+        system_prompt='You are a sales analyst. Use the available tools to analyze regional sales data.',
     )
 
 
@@ -165,9 +242,6 @@ def extract_metrics(result: AgentRunResult[str], mode: str) -> RunMetrics:
 
 async def run_tool_calling(toolset: FunctionToolset[None]) -> RunMetrics:
     """Run with standard tool calling."""
-    global _calendar_events
-    _calendar_events = []  # Reset calendar
-
     with logfire.span('tool_calling'):
         agent = create_tool_calling_agent(toolset)
         result = await agent.run(PROMPT)
@@ -176,9 +250,6 @@ async def run_tool_calling(toolset: FunctionToolset[None]) -> RunMetrics:
 
 async def run_code_mode(toolset: FunctionToolset[None]) -> RunMetrics:
     """Run with CodeMode tool calling."""
-    global _calendar_events
-    _calendar_events = []  # Reset calendar
-
     with logfire.span('code_mode_tool_calling'):
         agent = create_code_mode_agent(toolset)
         code_toolset = agent.toolsets[0]
@@ -206,7 +277,8 @@ def log_metrics(metrics: RunMetrics) -> None:
 
 
 async def main() -> None:
-    logfire.configure(service_name='code-mode-batch-demo')
+    """Run the demo."""
+    logfire.configure(service_name='code-mode-sql-demo')
     logfire.instrument_pydantic_ai()
 
     toolset = create_toolset()

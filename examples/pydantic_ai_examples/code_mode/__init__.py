@@ -11,7 +11,7 @@ Available Demos:
     - sql_analysis_demo.py: Regional sales SQL analysis with N+1 pattern (no external deps)
 
 Run any demo:
-    uv run python demos/code_mode/<demo_name>.py
+    uv run -m pydantic_ai_examples.code_mode.<demo_name>
 
 Key Benefits Demonstrated:
     1. Batch Operations: Code mode uses loops to batch multiple tool calls

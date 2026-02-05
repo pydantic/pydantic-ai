@@ -5,7 +5,7 @@ know upfront how many files exist, but code mode can write a loop that processes
 whatever it finds. Traditional tool calling requires multiple roundtrips.
 
 Run:
-    uv run python demos/code_mode/file_processing_demo.py
+    uv run -m pydantic_ai_examples.code_mode.file_processing_demo
 """
 
 from __future__ import annotations
