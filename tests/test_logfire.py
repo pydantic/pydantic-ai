@@ -554,6 +554,7 @@ def test_logfire(
                                 'strict': None,
                                 'sequential': False,
                                 'kind': 'function',
+                                'examples': None,
                                 'metadata': None,
                                 'timeout': None,
                             }
@@ -1038,6 +1039,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'strict': None,
                                 'sequential': False,
                                 'kind': 'output',
+                                'examples': None,
                                 'metadata': None,
                                 'timeout': None,
                             }
