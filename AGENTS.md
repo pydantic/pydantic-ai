@@ -87,10 +87,10 @@ The project uses:
 - `pre-commit`, can be installed with `uv tool install pre-commit`
 - `ruff` via `make lint` and `make format`
 - `pyright` via `make typecheck`
-- `pytest` in `/tests`, via `make test`, with:
+- `pytest` in `tests/`, via `make test`, with:
     - `inline-snapshot` for inline assertions
     - `pytest-recording` and `vcrpy` for recording and playing back requests to model APIs
-- `mkdocs` in `/docs`, via `make docs` and `make docs-serve`, served at <https://ai.pydantic.dev>, with:
+- `mkdocs` in `docs/`, via `make docs` and `make docs-serve`, served at <https://ai.pydantic.dev>, with:
     - `mkdocstrings-python` to generate API docs from docstrings and types
     - `mkdocs-material` to theme the docs
     - `tests/test_examples.py` to test all code examples in the docs (including docstrings)
