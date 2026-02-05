@@ -246,7 +246,6 @@ The `json_body_serializer.py` handles:
 
 - **Don't** create provider-specific test files for new features - centralize in feature files
 - **Don't** write snapshot contents manually - let tests fill them
-- **Don't** use `-v` when recording cassettes
 - **Don't** use unit tests when VCR can cover the logic
 - **Don't** instantiate providers inline - use fixtures
 - **Don't** skip `allow_model_requests` fixture for tests hitting APIs
