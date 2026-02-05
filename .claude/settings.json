@@ -5,6 +5,8 @@
       "Bash(ls:*)",
       "Bash(tree:*)",
       "Bash(grep:*)",
+      "Bash(git -C * diff:*)",
+      "Bash(git -C * log:*)",
       "Bash(git log:*)",
       "Bash(git diff:*)",
       "Bash(git grep:*)",
@@ -25,6 +27,7 @@
       "Bash(git add:*)",
       "Bash(git checkout:*)",
       "Bash(git commit:*)",
+      "Bash(git -C * commit:*)",
       "Bash(git push:*)",
       "Bash(gh pr create:*)"
     ]
