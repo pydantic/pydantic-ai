@@ -94,7 +94,7 @@ class ToolOutput(Generic[OutputDataT]):
 
 
     agent = Agent(
-        'openai:gpt-4o',
+        'openai:gpt-5.2',
         output_type=[
             ToolOutput(Fruit, name='return_fruit'),
             ToolOutput(Vehicle, name='return_vehicle'),
@@ -144,7 +144,7 @@ class NativeOutput(Generic[OutputDataT]):
     from tool_output import Fruit, Vehicle
 
     agent = Agent(
-        'openai:gpt-4o',
+        'openai:gpt-5.2',
         output_type=NativeOutput(
             [Fruit, Vehicle],
             name='Fruit or vehicle',
@@ -206,7 +206,7 @@ class PromptedOutput(Generic[OutputDataT]):
 
 
     agent = Agent(
-        'openai:gpt-4o',
+        'openai:gpt-5.2',
         output_type=PromptedOutput(
             [Vehicle, Device],
             name='Vehicle or device',
@@ -218,7 +218,7 @@ class PromptedOutput(Generic[OutputDataT]):
     #> Device(name='MacBook', kind='laptop')
 
     agent = Agent(
-        'openai:gpt-4o',
+        'openai:gpt-5.2',
         output_type=PromptedOutput(
             [Vehicle, Device],
             template='Gimme some JSON: {schema}'
@@ -280,7 +280,7 @@ class TextOutput(Generic[OutputDataT]):
 
 
     agent = Agent(
-        'openai:gpt-4o',
+        'openai:gpt-5.2',
         output_type=TextOutput(split_into_words),
     )
     result = agent.run_sync('Who was Albert Einstein?')
@@ -316,7 +316,7 @@ def StructuredDict(
         'required': ['name', 'age']
     }
 
-    agent = Agent('openai:gpt-4o', output_type=StructuredDict(schema))
+    agent = Agent('openai:gpt-5.2', output_type=StructuredDict(schema))
     result = agent.run_sync('Create a person')
     print(result.output)
     #> {'name': 'John Doe', 'age': 30}
