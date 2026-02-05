@@ -125,7 +125,7 @@ def sanitize_filename(name: str, max_len: int) -> str:
 
 
 @customize_repr
-def _(value: bytes):
+def _(value: bytes):  # pragma: no cover
     """Use IsBytes() for large byte sequences in snapshots."""
     if len(value) > SNAPSHOT_BYTES_COLLAPSE_THRESHOLD:
         return 'IsBytes()'
@@ -499,15 +499,11 @@ def xai_api_key() -> str:
 
 
 @pytest.fixture(scope='function')  # Needs to be function scoped to get the request node name
-def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider | None]:
+def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider]:
     """xAI provider fixture backed by protobuf cassettes.
 
     Mirrors the `bedrock_provider` pattern: yields a provider, and callers can use `provider.client`.
-    Returns None for non-xAI tests to avoid loading cassettes unnecessarily.
     """
-    if 'xai' not in request.node.name:
-        yield None
-        return
 
     try:
         from pydantic_ai.providers.xai import XaiProvider
@@ -516,8 +512,7 @@ def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider | None]
         pytest.skip('xai_sdk not installed')
 
     cassette_name = sanitize_filename(request.node.name, 240)
-    test_module = cast(str, request.node.fspath.basename.replace('.py', ''))
-    cassette_path = Path(__file__).parent / 'models' / 'cassettes' / test_module / f'{cassette_name}.xai.yaml'
+    cassette_path = Path(__file__).parent / 'models' / 'cassettes' / 'test_xai' / f'{cassette_name}.xai.yaml'
     record_mode: str | None
     try:
         # Provided by `pytest-recording` as `--record-mode=...` (dest is typically `record_mode`).
