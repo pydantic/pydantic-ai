@@ -1425,6 +1425,10 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
             for part in message.parts:
                 if isinstance(part, _messages.ToolReturnPart) and part.tool_call_id:
                     processed_tool_call_ids.add(part.tool_call_id)
+        elif isinstance(message, _messages.ModelResponse):
+            for part in message.parts:
+                if isinstance(part, _messages.BuiltinToolReturnPart) and part.tool_call_id:
+                    processed_tool_call_ids.add(part.tool_call_id)
 
     clean_messages: list[_messages.ModelMessage] = []
     for message in messages:

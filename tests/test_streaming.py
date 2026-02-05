@@ -22,6 +22,7 @@ from pydantic_ai import (
     AgentRunResultEvent,
     AgentStreamEvent,
     BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -3958,6 +3959,49 @@ class TestCleanMessageHistoryFiltersIncomplete:
         # Third response (incomplete) - all unprocessed tool calls filtered, empty parts
         assert isinstance(cleaned[5], ModelResponse)
         assert len(cleaned[5].parts) == 0
+
+    def test_clean_message_history_preserves_builtin_tool_calls_with_results(self):
+        """_clean_message_history should preserve BuiltinToolCallPart when matching BuiltinToolReturnPart exists.
+
+        Built-in tools (like web_search, code_execution) have both call and return parts
+        in the same ModelResponse. When filtering incomplete responses, we must check
+        BuiltinToolReturnPart (in ModelResponse) not just ToolReturnPart (in ModelRequest).
+        """
+        messages = [
+            ModelRequest(parts=[UserPromptPart(content='Search for something')]),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Let me search for that'),
+                    # Built-in tool call and its result in the same response
+                    BuiltinToolCallPart(tool_name='web_search', args={'query': 'test'}, tool_call_id='builtin_tc1'),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content={'results': ['result1', 'result2']},
+                        tool_call_id='builtin_tc1',
+                    ),
+                    # Regular tool call without result - should be filtered
+                    ToolCallPart(tool_name='regular_tool', args='{"data": true}', tool_call_id='tc2'),
+                ],
+                incomplete=True,
+            ),
+        ]
+
+        cleaned = _clean_message_history(messages)
+
+        # Should have 2 messages
+        assert len(cleaned) == 2
+        response = cleaned[1]
+        assert isinstance(response, ModelResponse)
+
+        # BuiltinToolCallPart should be preserved (has matching BuiltinToolReturnPart)
+        # BuiltinToolReturnPart should be preserved (not a tool call)
+        # Regular ToolCallPart should be filtered (no matching result)
+        assert len(response.parts) == 3
+        assert isinstance(response.parts[0], TextPart)
+        assert isinstance(response.parts[1], BuiltinToolCallPart)
+        assert response.parts[1].tool_call_id == 'builtin_tc1'
+        assert isinstance(response.parts[2], BuiltinToolReturnPart)
+        assert response.parts[2].tool_call_id == 'builtin_tc1'
 
 
 class TestIncompleteToolCallsNotSentToApi:
