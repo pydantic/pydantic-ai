@@ -1,15 +1,15 @@
 interactions:
 - request:
-    body: assertion=eyJ0eXAiOiAiSldUIiwgImFsZyI6ICJSUzI1NiIsICJraWQiOiAiNjc4MmViNzhmMGU0MmIwMjRkNjExNjY2MTg0NWZhZTdkOTdiMDY3NyJ9.eyJpYXQiOiAxNzU1MTIyMTU5LCAiZXhwIjogMTc1NTEyNTc1OSwgImlzcyI6ICJweWRhbnRpYy1haS12ZXJ0ZXgtYWktZGV2QHB5ZGFudGljLWFpLWRldi5pYW0uZ3NlcnZpY2VhY2NvdW50LmNvbSIsICJhdWQiOiAiaHR0cHM6Ly9vYXV0aDIuZ29vZ2xlYXBpcy5jb20vdG9rZW4iLCAic2NvcGUiOiAiaHR0cHM6Ly93d3cuZ29vZ2xlYXBpcy5jb20vYXV0aC9jbG91ZC1wbGF0Zm9ybSJ9.pnrHg7uMo_ow8OctKf4GM7Oe28kUhvzKewq0xCeaJz88bSeorgyd5ZLRtRdRhgZwiznSCevAahorDTxCVeCxenJp88UHf_5tuN6Jo7e7dcrzjA3Ta3DbQgBc_N58cGWc75JgJpE6GwDtHjehLVtIlo_qpux-FqLZL5N745-ECeKnyKmMTdkuVVArMyU96CGOss9L3xiWKukRIv-h8_uCmsoPVWQmyGEfQQOv--EIC4ERUOfwed1I-4ZyF5Z8w3dymKTHtJoRSL-fg8tn12acytLptC1eEZ2OzkZJI4UJWHmmtAy8HrZ-PqjwUiO83sC5iZcLICmCxXWUxJce5j-d_Q&grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer
+    body: grant_type=%5B%27refresh_token%27%5D&client_id=%5B%27scrubbed%27%5D&client_secret=%5B%27scrubbed%27%5D&refresh_token=%5B%27scrubbed%27%5D
     headers:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '819'
+      - '268'
       content-type:
       - application/x-www-form-urlencoded
     method: POST
@@ -18,10 +18,16 @@ interactions:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      cache-control:
+      - no-cache, no-store, max-age=0, must-revalidate
       content-length:
-      - '1083'
+      - '258'
       content-type:
-      - application/json; charset=UTF-8
+      - application/json; charset=utf-8
+      expires:
+      - Mon, 01 Jan 1990 00:00:00 GMT
+      pragma:
+      - no-cache
       transfer-encoding:
       - chunked
       vary:
@@ -31,22 +37,34 @@ interactions:
     parsed_body:
       access_token: scrubbed
       expires_in: 3599
+      id_token: scrubbed
+      scope: https://www.googleapis.com/auth/userinfo.email openid https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/sqlservice.login
       token_type: Bearer
     status:
       code: 200
       message: OK
 - request:
     headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '476'
       content-type:
       - application/json
-    method: post
+      host:
+      - aiplatform.googleapis.com
+    method: POST
     parsed_body:
       contents:
       - parts:
         - text: What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.
         role: user
       generationConfig:
-        max_output_tokens: 100
+        maxOutputTokens: 100
       systemInstruction:
         parts:
         - text: You are a chatbot.
@@ -55,16 +73,17 @@ interactions:
       - functionDeclarations:
         - description: ''
           name: get_user_country
-          parameters:
+          parametersJsonSchema:
+            additionalProperties: false
             properties: {}
-            type: OBJECT
-    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-2.0-flash:countTokens
+            type: object
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/publishers/google/models/gemini-3-flash-preview:countTokens
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '151'
+      - '116'
       content-type:
       - application/json; charset=UTF-8
       transfer-encoding:
@@ -76,9 +95,9 @@ interactions:
     parsed_body:
       promptTokensDetails:
       - modality: TEXT
-        tokenCount: 36
-      totalBillableCharacters: 123
-      totalTokens: 36
+        tokenCount: 35
+      totalBillableCharacters: 168
+      totalTokens: 35
     status:
       code: 200
       message: OK

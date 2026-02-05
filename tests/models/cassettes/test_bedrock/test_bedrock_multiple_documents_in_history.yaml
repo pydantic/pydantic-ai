@@ -9,7 +9,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        NjNjMWFiZTUtMjVhMS00M2Y0LWE3ZWQtZjE3MmYwODllNWFl
+        YzI3M2VjZmQtYjE3Zi00NTZjLThlMjgtZWQ0MDNmY2U0N2Yx
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -25,17 +25,19 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '506'
+      - '748'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1820
+        latencyMs: 3024
       output:
         message:
           content:
-          - text: Based on the documents you've shared, both Document 1.pdf and Document 2.pdf contain the text "Dummy PDF
-              file". These appear to be placeholder or sample PDF documents rather than files with substantial content.
+          - text: |-
+              I apologize for my previous unhelpful responses. Looking at the two PDF documents you've shared:
+
+              Both documents appear to be identical, simple placeholder PDF files. Each contains just the text "Dummy PDF file" centered near the top of the page, with the rest of the page being blank. These are likely sample or test PDFs that are used as placeholders when testing document handling systems or demonstrating PDF functionality.
           role: assistant
       stopReason: end_turn
       usage:
@@ -43,9 +45,10 @@ interactions:
         cacheReadInputTokens: 0
         cacheWriteInputTokenCount: 0
         cacheWriteInputTokens: 0
-        inputTokens: 145
-        outputTokens: 48
-        totalTokens: 193
+        inputTokens: 3269
+        outputTokens: 90
+        serverToolUsage: {}
+        totalTokens: 3359
     status:
       code: 200
       message: OK

@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '212'
+      - '244'
       content-type:
       - application/json
       host:
@@ -20,22 +20,24 @@ interactions:
         - text: What is the capital of France?
         role: user
       generationConfig:
+        responseModalities:
+        - TEXT
         topP: 0.5
       systemInstruction:
         parts:
         - text: You are a helpful chatbot.
         role: user
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '680'
+      - '576'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=482
+      - gfet4t7; dur=1081
       transfer-encoding:
       - chunked
       vary:
@@ -44,25 +46,22 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.00010893134458456188
-        content:
+      - content:
           parts:
-          - text: |
-              The capital of France is Paris.
+          - text: The capital of France is **Paris**.
           role: model
         finishReason: STOP
-      modelVersion: gemini-1.5-flash
-      responseId: z1peaLH-Ff__698Pv8HGgAg
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: cTZ8aai3B5-pqtsPhovV6QM
       usageMetadata:
         candidatesTokenCount: 8
-        candidatesTokensDetails:
-        - modality: TEXT
-          tokenCount: 8
-        promptTokenCount: 13
+        promptTokenCount: 15
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 13
-        totalTokenCount: 21
+          tokenCount: 15
+        thoughtsTokenCount: 16
+        totalTokenCount: 39
     status:
       code: 200
       message: OK

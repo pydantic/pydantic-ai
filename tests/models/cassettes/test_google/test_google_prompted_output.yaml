@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '533'
+      - '569'
       content-type:
       - application/json
       host:
@@ -21,12 +21,15 @@ interactions:
         role: user
       generationConfig:
         responseMimeType: application/json
+        responseModalities:
+        - TEXT
       systemInstruction:
         parts:
-        - text: |-
+        - text: |2
+
             Always respond with a JSON object that's compatible with this schema:
 
-            {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+            {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object", "title": "CityLocation"}
 
             Don't include any text or Markdown fencing before or after.
         role: user
@@ -36,11 +39,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '699'
+      - '701'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=270
+      - gfet4t7; dur=580
       transfer-encoding:
       - chunked
       vary:
@@ -49,24 +52,24 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.08075933273021992
+      - avgLogprobs: -0.0002502406266732858
         content:
           parts:
           - text: '{"city": "Mexico City", "country": "Mexico"}'
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: P1teaNPqC5Tf1PIPmJOW8AE
+      responseId: nTR8acn5Fv6tz7IP37eN4A8
       usageMetadata:
         candidatesTokenCount: 13
         candidatesTokensDetails:
         - modality: TEXT
           tokenCount: 13
-        promptTokenCount: 80
+        promptTokenCount: 83
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 80
-        totalTokenCount: 93
+          tokenCount: 83
+        totalTokenCount: 96
     status:
       code: 200
       message: OK

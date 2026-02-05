@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '1379'
+      - '1358'
       content-type:
       - application/json
       host:
@@ -77,7 +77,6 @@ interactions:
             required:
             - name
             - pages
-            title: TopModel
             type: object
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
   response:
@@ -85,11 +84,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '2943'
+      - '3259'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2257
+      - gfet4t7; dur=3077
       transfer-encoding:
       - chunked
       vary:
@@ -102,36 +101,36 @@ interactions:
           parts:
           - functionCall:
               args:
-                name: Example Collection
+                name: My Collection
                 pages:
                 - items:
-                  - name: Item A
-                    value: 1
-                  - name: Item B
-                    value: 2
+                  - name: Item A1
+                    value: 10
+                  - name: Item B1
+                    value: 20
                   title: Page 1
                 - items:
-                  - name: Item C
-                    value: 3
-                  - name: Item D
-                    value: 4
+                  - name: Item A2
+                    value: 30
+                  - name: Item B2
+                    value: 40
                   title: Page 2
               name: final_result
-            thoughtSignature: Cu0HAdHtim/Us0P5TwBWE7yYzcsEdZQ1lCnTajHuXXzYUQcnrY+KXPclwqZ8upv3qmjNgTs8ahVMRiGHhHxGJ0qSjCtlo2HepWcH270aSkdkuIh2krevTqiKPXG7u5g30Jl/pvyHDKq6xkcxfzLfglyhArnCFbh16y89vfGiWC+K2QYjL23p/rjntkxCCZ3TMmsrudi/98HFOYu48hXuoG6YpFJ9C+ibgsxEhcffoEFaeQs4UqzfHhcz/dSr/wSinaA7QpRFPczmDRHphB8R7rrSSA5pV7ymRnkpE0SORjOlpUQwFDD5jFlXgTGy1CQt/FUYnXAPyRJawbaEbsc9HCs6J81hZZPOdxZN8tR5E7+nGpJJR0xmT02L60B9IXGXIiFb0QpUymk6E0L6jOVQBIHN5PaNrZC25YOrWqOGNLqaIukgnnF7nsqMP3mb/qOwUyKgcZ0O89OMcI6V9fSPz/df2m+PQvoNOM0qNtMKrVR0XDYqaZdhmK6Sv1uEWiQxS4mqra+f+SrQjskytlmxAAIoEeGx0jQC1x+avU68LtllwvXk6pJ3PddP0b3osNLokKxuv1VLfach+bNECqTmDD/LdLY/JMEof2hZSagqtDDfRbxBQB2WK2QPDs37Pg/LU4xXpj/FkTSs/Bxu0/GHylxY1/m0eR6RpAdq4XDctajLL3Y5IWLEQCJkSBtq67+InVpFFxQXAKx+WtAWshjTJzgkRbHxIVonrpG5aV2dysoQ73+GPkJfcXFGsY3aduc+xaViMfaqLuzh0IbtEQ2r+NWSePEfhmPOqztIwQuxgscEmHER6D1NdnwO8sv2GyHvxSzq5mjBtLg7bghK3UwLX2SPZ/COB71hcD4sYQ88RHv5OTAmI+0nKEHCD6fiAsRmCRspwLaAElkdCSIUPl8grfu9W9MP9w/eFW2tkcVW37TDO2dpY+Kn+qN8pPoDB0L2mcHUBt+TBL2xbgsiFnul1REQcZALB7tYbjMyLPqKx/ci1Eo6xAv/YOzX8Zbv4VNdjuT40X7+zXFrsgj0tXpga9/ymmZgynbVPUz0Ll+BAFXMmoVrqnVrEjCPxLuZFUFov7+DY88f8m1/ZWdNncj3Je74Oes7Aw5Ms/ynsY7VnzcnbyKOyLrT+Eg9CkB0COHvEMrOsJNceebAoESym/eCDtlDRrvcM9CCzV4NVH+2nvlEXYrEts6SV5iaztophBU74/dNWzAy9DlnihfIrYxRNTCgOJMXwSquViyKeeQk9eH61QvK2MF052bA68VkBGfgne0FHtG4n0bvpLO73KTH8aGcrvb0zIIpu13pT7GFACQDl5cR/R/y9sWDuoyh6LBG
+            thoughtSignature: __BINARY_TRUNCATED__:len=1656:sha256=8603cbf1b4675773
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: X94eaezvBLO1vdIP6brwoQc
+      responseId: yFh8adfINqPkqtsPmOnX0QI
       usageMetadata:
-        candidatesTokenCount: 93
+        candidatesTokenCount: 101
         promptTokenCount: 219
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 219
-        thoughtsTokenCount: 323
-        totalTokenCount: 635
+        thoughtsTokenCount: 423
+        totalTokenCount: 743
     status:
       code: 200
       message: OK

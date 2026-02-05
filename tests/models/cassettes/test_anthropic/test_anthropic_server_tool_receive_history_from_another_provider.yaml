@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '137'
+      - '167'
       content-type:
       - application/json
       host:
@@ -19,7 +19,9 @@ interactions:
       - parts:
         - text: How much is 3 * 12390?
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       tools:
       - codeExecution: {}
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
@@ -28,11 +30,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1070'
+      - '2393'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=7214
+      - gfet4t7; dur=3019
       transfer-encoding:
       - chunked
       vary:
@@ -48,29 +50,62 @@ interactions:
                 print(3 * 12390)
               language: PYTHON
           - codeExecutionResult:
-              outcome: OUTCOME_OK
-              output: |
-                37170
+              outcome: OUTCOME_FAILED
+              output: |+
+                1:1: "foo(" must be followed by )
+
+                stderr output:
+
           - text: |
-              3 * 12390 is 37170.
+              I apologize, I seem to have encountered an error in the previous attempt to use the tool. I will try a different approach.
+          - executableCode:
+              code: |
+                print(3 * 12390)
+              language: PYTHON
+          - codeExecutionResult:
+              outcome: OUTCOME_FAILED
+              output: |+
+                1:1: "foo(" must be followed by )
+
+                stderr output:
+
+          - text: |
+              I apologize for the repeated errors. It seems I'm having trouble using the tool correctly. I will try once more, making sure the syntax is correct.
+          - executableCode:
+              code: |
+                print(3 * 12390)
+              language: PYTHON
+          - codeExecutionResult:
+              outcome: OUTCOME_FAILED
+              output: |+
+                1:1: "foo(" must be followed by )
+
+                stderr output:
+
+          - text: |
+              I apologize for the continued errors. I seem to be having difficulty with the tool. I will resort to manual calculation.
+
+              3 * 12390 = 3 * (12000 + 390) = 36000 + 1170 = 37170
+
+              Therefore, 3 * 12390 = 37170
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: CMqdaODAKteEm9IPwI2-4Ac
+      responseId: XTZ8aazDOpGKqtsPvvuEqAw
       usageMetadata:
-        candidatesTokenCount: 35
+        candidatesTokenCount: 236
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 35
+          tokenCount: 236
         promptTokenCount: 13
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 13
-        toolUsePromptTokenCount: 31
+        toolUsePromptTokenCount: 300
         toolUsePromptTokensDetails:
         - modality: TEXT
-          tokenCount: 31
-        totalTokenCount: 79
+          tokenCount: 300
+        totalTokenCount: 549
     status:
       code: 200
       message: OK
@@ -79,11 +114,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '403'
+      - '917'
       content-type:
       - application/json
       host:
@@ -98,7 +133,17 @@ interactions:
         role: user
       - content:
         - text: |
-            3 * 12390 is 37170.
+            I apologize, I seem to have encountered an error in the previous attempt to use the tool. I will try a different approach.
+          type: text
+        - text: |
+            I apologize for the repeated errors. It seems I'm having trouble using the tool correctly. I will try once more, making sure the syntax is correct.
+          type: text
+        - text: |
+            I apologize for the continued errors. I seem to be having difficulty with the tool. I will resort to manual calculation.
+
+            3 * 12390 = 3 * (12000 + 390) = 36000 + 1170 = 37170
+
+            Therefore, 3 * 12390 = 37170
           type: text
         role: assistant
       - content:
@@ -118,7 +163,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1005'
+      - '1526'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -127,29 +174,41 @@ interactions:
       - chunked
     parsed_body:
       container:
-        expires_at: '2025-08-14T12:35:50.841325Z'
-        id: container_011CS7Xs5srnPx31UK6NgWbF
+        expires_at: '2026-01-30T05:41:12.047957Z'
+        id: container_011CXcwwxdgeF1wgj3MaVHK3
       content:
-      - id: srvtoolu_01Loj5X7MicSSd1NAveX5s18
+      - text: "I need to clarify what you'd like me to multiply by 12390. From our previous conversation, we calculated that
+          3 * 12390 = 37170. \n\nAre you asking me to multiply 37170 by 12390? Or would you like me to multiply some other
+          number by 12390?"
+        type: text
+      - id: srvtoolu_01DK4FXrsFLgLcTsQPptzc2G
         input:
           code: |-
-            # Calculate 37170 * 12390
+            # If you want 37170 * 12390
             result = 37170 * 12390
             print(f"37170 * 12390 = {result}")
+
+            # Or if you want to see the original calculation again
+            original = 3 * 12390
+            print(f"3 * 12390 = {original}")
         name: code_execution
         type: server_tool_use
       - content:
           content: []
           return_code: 0
           stderr: ''
-          stdout: |
+          stdout: |-
             37170 * 12390 = 460536300
+            3 * 12390 = 37170
           type: code_execution_result
-        tool_use_id: srvtoolu_01Loj5X7MicSSd1NAveX5s18
+        tool_use_id: srvtoolu_01DK4FXrsFLgLcTsQPptzc2G
         type: code_execution_tool_result
-      - text: 37170 multiplied by 12390 equals 460,536,300.
+      - text: |-
+          If you meant 37170 * 12390, the answer is **460,536,300**.
+
+          If you meant something else, please let me know what specific number you'd like me to multiply by 12390!
         type: text
-      id: msg_01Dnx2rrdKpiaUQ5gDuuf6E6
+      id: msg_01CYKmWkNrkAgsa8NgQ7Jrcv
       model: claude-sonnet-4-20250514
       role: assistant
       stop_reason: end_turn
@@ -161,8 +220,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 1683
-        output_tokens: 113
+        input_tokens: 2050
+        output_tokens: 253
         server_tool_use:
           web_search_requests: 0
         service_tier: standard

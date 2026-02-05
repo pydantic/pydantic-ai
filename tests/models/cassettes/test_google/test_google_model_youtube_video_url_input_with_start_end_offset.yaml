@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '325'
+      - '406'
       content-type:
       - application/json
       host:
@@ -17,7 +17,13 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.
+        - text: What happens in this specific part of the video? Be brief.
+        - fileData:
+            fileUri: https://youtu.be/lCdaVNyHtjU
+            mimeType: video/mp4
+          videoMetadata:
+            end_offset: 80s
+            start_offset: 40s
         role: user
       generationConfig:
         responseModalities:
@@ -26,19 +32,17 @@ interactions:
         parts:
         - text: You are a helpful chatbot.
         role: user
-      tools:
-      - urlContext: {}
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '975'
+      - '623'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1943
+      - gfet4t7; dur=8151
       transfer-encoding:
       - chunked
       vary:
@@ -49,39 +53,25 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: Join us at the inaugural PyAI Conf in San Francisco on March 10th!
+          - text: At 00:40, the user scrolls through the "Recommendations" section in the chat interface, highlighting various
+              points related to configuration and authentication.
           role: model
         finishReason: STOP
-        groundingMetadata:
-          groundingChunks:
-          - web:
-              title: Pydantic AI - Pydantic AI
-              uri: https://ai.pydantic.dev
-          groundingSupports:
-          - groundingChunkIndices:
-            - 0
-            segment:
-              endIndex: 66
-              text: Join us at the inaugural PyAI Conf in San Francisco on March 10th!
         index: 0
-        urlContextMetadata:
-          urlMetadata:
-          - retrievedUrl: https://ai.pydantic.dev
-            urlRetrievalStatus: URL_RETRIEVAL_STATUS_SUCCESS
       modelVersion: gemini-2.5-flash
-      responseId: UCuCadvHC9LBqtsP1JivyQc
+      responseId: Pf2AaaafEO_sz7IPjZehuQs
       usageMetadata:
-        candidatesTokenCount: 34
-        promptTokenCount: 32
+        candidatesTokenCount: 31
+        promptTokenCount: 5918
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 32
-        thoughtsTokenCount: 35
-        toolUsePromptTokenCount: 4677
-        toolUsePromptTokensDetails:
-        - modality: TEXT
-          tokenCount: 4677
-        totalTokenCount: 4778
+          tokenCount: 21
+        - modality: VIDEO
+          tokenCount: 5260
+        - modality: AUDIO
+          tokenCount: 637
+        thoughtsTokenCount: 157
+        totalTokenCount: 6106
     status:
       code: 200
       message: OK

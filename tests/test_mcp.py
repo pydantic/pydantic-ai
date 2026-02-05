@@ -236,12 +236,12 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                         ToolCallPart(
                             tool_name='celsius_to_fahrenheit',
                             args='{"celsius":0}',
-                            tool_call_id='call_QssdxTGkPblTYHmyVES1tKBj',
+                            tool_call_id='call_MFlCP1Yh7M7b7P0JBWs41oSJ',
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=195,
-                        output_tokens=19,
+                        input_tokens=398,
+                        output_tokens=18,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -257,7 +257,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                         'finish_reason': 'tool_calls',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BRlnvvqIPFofAtKqtQKMWZkgXhzlT',
+                    provider_response_id='chatcmpl-D5BwCzirr3bC4UUedFbukClggNGAm',
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -266,7 +266,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                         ToolReturnPart(
                             tool_name='celsius_to_fahrenheit',
                             content=32.0,
-                            tool_call_id='call_QssdxTGkPblTYHmyVES1tKBj',
+                            tool_call_id='call_MFlCP1Yh7M7b7P0JBWs41oSJ',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -276,8 +276,8 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                 ModelResponse(
                     parts=[TextPart(content='0 degrees Celsius is equal to 32 degrees Fahrenheit.')],
                     usage=RequestUsage(
-                        input_tokens=227,
-                        output_tokens=13,
+                        input_tokens=430,
+                        output_tokens=12,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -293,7 +293,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                         'finish_reason': 'stop',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BRlnyjUo5wlyqvdNdM5I8vIWjo1qF',
+                    provider_response_id='chatcmpl-D5BwE1pXC5arpviBwYNFFAaZjPjO6',
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -338,7 +338,7 @@ async def test_agent_with_prefix_tool_name(openai_api_key: str):
 
 async def test_agent_with_server_not_running(agent: Agent, allow_model_requests: None):
     result = await agent.run('What is 0 degrees Celsius in Fahrenheit?')
-    assert result.output == snapshot('0 degrees Celsius is 32.0 degrees Fahrenheit.')
+    assert result.output == snapshot('0 degrees Celsius is equivalent to 32.0 degrees Fahrenheit.')
 
 
 async def test_log_level_unset(run_context: RunContext[int]):
@@ -396,7 +396,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
     async with agent:
         result = await agent.run('What is the weather in Mexico City?')
         assert result.output == snapshot(
-            'The weather in Mexico City is currently sunny with a temperature of 26 degrees Celsius.'
+            'The weather in Mexico City is sunny, with a temperature of 26 degrees Celsius.'
         )
         assert result.all_messages() == snapshot(
             [
@@ -415,12 +415,12 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                         ToolCallPart(
                             tool_name='get_weather_forecast',
                             args='{"location":"Mexico City"}',
-                            tool_call_id='call_m9goNwaHBbU926w47V7RtWPt',
+                            tool_call_id='call_hs45n1eUTneg5ukckueIopbO',
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=194,
-                        output_tokens=18,
+                        input_tokens=397,
+                        output_tokens=17,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -436,7 +436,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                         'finish_reason': 'tool_calls',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BRlo3e1Ud2lnvkddMilmwC7LAemiy',
+                    provider_response_id='chatcmpl-D5BwOdSng6tgCsFqFaCOM7EDtWpBy',
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -445,7 +445,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                         ToolReturnPart(
                             tool_name='get_weather_forecast',
                             content='The weather in Mexico City is sunny and 26 degrees Celsius.',
-                            tool_call_id='call_m9goNwaHBbU926w47V7RtWPt',
+                            tool_call_id='call_hs45n1eUTneg5ukckueIopbO',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -455,12 +455,12 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                 ModelResponse(
                     parts=[
                         TextPart(
-                            content='The weather in Mexico City is currently sunny with a temperature of 26 degrees Celsius.'
+                            content='The weather in Mexico City is sunny, with a temperature of 26 degrees Celsius.'
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=234,
-                        output_tokens=19,
+                        input_tokens=437,
+                        output_tokens=18,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -476,7 +476,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                         'finish_reason': 'stop',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BRlo41LxqBYgGKWgGrQn67fQacOLp',
+                    provider_response_id='chatcmpl-D5BwQUoOYUShONFr1zg4NLTZOllN7',
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -505,12 +505,12 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                         ToolCallPart(
                             tool_name='get_product_name',
                             args='{}',
-                            tool_call_id='call_LaiWltzI39sdquflqeuF0EyE',
+                            tool_call_id='call_dH9Fufz9xeARPFFyNdeBhR3x',
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=200,
-                        output_tokens=12,
+                        input_tokens=394,
+                        output_tokens=11,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -526,7 +526,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                         'finish_reason': 'tool_calls',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BRmhyweJVYonarb7s9ckIMSHf2vHo',
+                    provider_response_id='chatcmpl-D5BwTJtvbcgz65yzUmlAZnilmrjl9',
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -535,7 +535,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                         ToolReturnPart(
                             tool_name='get_product_name',
                             content='Pydantic AI',
-                            tool_call_id='call_LaiWltzI39sdquflqeuF0EyE',
+                            tool_call_id='call_dH9Fufz9xeARPFFyNdeBhR3x',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -545,8 +545,8 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                 ModelResponse(
                     parts=[TextPart(content='The product name is "Pydantic AI".')],
                     usage=RequestUsage(
-                        input_tokens=224,
-                        output_tokens=12,
+                        input_tokens=418,
+                        output_tokens=11,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -562,7 +562,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                         'finish_reason': 'stop',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BRmhzqXFObpYwSzREMpJvX9kbDikR',
+                    provider_response_id='chatcmpl-D5BwUQO7U7a7rXXjr189V2jY3NPgp',
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -573,7 +573,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
 async def test_tool_returning_text_resource_link(allow_model_requests: None, agent: Agent):
     async with agent:
         result = await agent.run('Get me the product name via get_product_name_link')
-        assert result.output == snapshot('The product name is "Pydantic AI".')
+        assert result.output == snapshot('The product name retrieved via the `get_product_name_link` is "Pydantic AI".')
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
@@ -591,11 +591,11 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                         ToolCallPart(
                             tool_name='get_product_name_link',
                             args='{}',
-                            tool_call_id='call_qi5GtBeIEyT7Y3yJvVFIi062',
+                            tool_call_id='call_gNC6mijxj5SIGlnng58PUTcT',
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=305,
+                        input_tokens=399,
                         output_tokens=12,
                         details={
                             'accepted_prediction_tokens': 0,
@@ -612,7 +612,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                         'finish_reason': 'tool_calls',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BwdHSFe0EykAOpf0LWZzsWAodIQzb',
+                    provider_response_id='chatcmpl-D5BwWeauLrMW5jaJMEJjWO8YvUtbK',
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -621,7 +621,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                         ToolReturnPart(
                             tool_name='get_product_name_link',
                             content='Pydantic AI\n',
-                            tool_call_id='call_qi5GtBeIEyT7Y3yJvVFIi062',
+                            tool_call_id='call_gNC6mijxj5SIGlnng58PUTcT',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -629,10 +629,12 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     run_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[TextPart(content='The product name is "Pydantic AI".')],
+                    parts=[
+                        TextPart(content='The product name retrieved via the `get_product_name_link` is "Pydantic AI".')
+                    ],
                     usage=RequestUsage(
-                        input_tokens=332,
-                        output_tokens=11,
+                        input_tokens=426,
+                        output_tokens=20,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -648,7 +650,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                         'finish_reason': 'stop',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BwdHTIlBZWzXJPBR8VTOdC4O57ZQA',
+                    provider_response_id='chatcmpl-D5BwXvJV4iDPP4boU9DvdQ60sQq5p',
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -659,9 +661,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
 async def test_tool_returning_image_resource(allow_model_requests: None, agent: Agent, image_content: BinaryContent):
     async with agent:
         result = await agent.run('Get me the image resource')
-        assert result.output == snapshot(
-            'This is an image of a sliced kiwi with a vibrant green interior and black seeds.'
-        )
+        assert result.output == snapshot('Here is an image of a sliced kiwi. Let me know if you need more information!')
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
@@ -679,12 +679,12 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                         ToolCallPart(
                             tool_name='get_image_resource',
                             args='{}',
-                            tool_call_id='call_nFsDHYDZigO0rOHqmChZ3pmt',
+                            tool_call_id='call_bCKOT6qEjaso1t30nXnWA53B',
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=191,
-                        output_tokens=12,
+                        input_tokens=394,
+                        output_tokens=11,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -700,7 +700,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                         'finish_reason': 'tool_calls',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BRlo7KYJVXuNZ5lLLdYcKZDsX2CHb',
+                    provider_response_id='chatcmpl-D5BwYNmptmHWFI7m8UJ3xxqCiVJSk',
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -709,7 +709,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                         ToolReturnPart(
                             tool_name='get_image_resource',
                             content='See file 241a70',
-                            tool_call_id='call_nFsDHYDZigO0rOHqmChZ3pmt',
+                            tool_call_id='call_bCKOT6qEjaso1t30nXnWA53B',
                             timestamp=IsDatetime(),
                         ),
                         UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
@@ -719,12 +719,10 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                 ),
                 ModelResponse(
                     parts=[
-                        TextPart(
-                            content='This is an image of a sliced kiwi with a vibrant green interior and black seeds.'
-                        )
+                        TextPart(content='Here is an image of a sliced kiwi. Let me know if you need more information!')
                     ],
                     usage=RequestUsage(
-                        input_tokens=1332,
+                        input_tokens=1197,
                         output_tokens=19,
                         details={
                             'accepted_prediction_tokens': 0,
@@ -741,7 +739,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                         'finish_reason': 'stop',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BRloBGHh27w3fQKwxq4fX2cPuZJa9',
+                    provider_response_id='chatcmpl-D5BwZvzW1mRahSDLWu5RDtaftF1v4',
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -755,7 +753,7 @@ async def test_tool_returning_image_resource_link(
     async with agent:
         result = await agent.run('Get me the image resource via get_image_resource_link')
         assert result.output == snapshot(
-            'This is an image of a sliced kiwi fruit. It shows the green, seed-speckled interior with fuzzy brown skin around the edges.'
+            'This is an image of a sliced kiwi fruit. The vibrant green interior is highlighted with small black seeds arranged around a lighter core.'
         )
         assert result.all_messages() == snapshot(
             [
@@ -774,11 +772,11 @@ async def test_tool_returning_image_resource_link(
                         ToolCallPart(
                             tool_name='get_image_resource_link',
                             args='{}',
-                            tool_call_id='call_eVFgn54V9Nuh8Y4zvuzkYjUp',
+                            tool_call_id='call_uRUV4kFwT6ikfrvCL7gcTiCZ',
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=305,
+                        input_tokens=399,
                         output_tokens=12,
                         details={
                             'accepted_prediction_tokens': 0,
@@ -795,7 +793,7 @@ async def test_tool_returning_image_resource_link(
                         'finish_reason': 'tool_calls',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BwdHygYePH1mZgHo2Xxzib0Y7sId7',
+                    provider_response_id='chatcmpl-D5BwcevlaRTZddEX7xMqcn9J1yWLb',
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -804,7 +802,7 @@ async def test_tool_returning_image_resource_link(
                         ToolReturnPart(
                             tool_name='get_image_resource_link',
                             content='See file 241a70',
-                            tool_call_id='call_eVFgn54V9Nuh8Y4zvuzkYjUp',
+                            tool_call_id='call_uRUV4kFwT6ikfrvCL7gcTiCZ',
                             timestamp=IsDatetime(),
                         ),
                         UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
@@ -815,12 +813,12 @@ async def test_tool_returning_image_resource_link(
                 ModelResponse(
                     parts=[
                         TextPart(
-                            content='This is an image of a sliced kiwi fruit. It shows the green, seed-speckled interior with fuzzy brown skin around the edges.'
+                            content='This is an image of a sliced kiwi fruit. The vibrant green interior is highlighted with small black seeds arranged around a lighter core.'
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=1452,
-                        output_tokens=29,
+                        input_tokens=1204,
+                        output_tokens=27,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -836,7 +834,7 @@ async def test_tool_returning_image_resource_link(
                         'finish_reason': 'stop',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BwdI2D2r9dvqq3pbsA0qgwKDEdTtD',
+                    provider_response_id='chatcmpl-D5BwdyCdMAcqjPOURQ1vUuuXL3FDQ',
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -847,10 +845,12 @@ async def test_tool_returning_image_resource_link(
 async def test_tool_returning_audio_resource(
     allow_model_requests: None, agent: Agent, audio_content: BinaryContent, gemini_api_key: str
 ):
-    model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=GoogleProvider(api_key=gemini_api_key))
+    model = GoogleModel('gemini-2.5-pro', provider=GoogleProvider(api_key=gemini_api_key))
     async with agent:
         result = await agent.run("What's the content of the audio resource?", model=model)
-        assert result.output == snapshot('The audio resource contains a voice saying "Hello, my name is Marcelo."')
+        assert result.output == snapshot(
+            'I can get the content of an audio resource, but I need to know which one. Can you tell me the name of the audio resource?'
+        )
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
@@ -859,46 +859,24 @@ async def test_tool_returning_audio_resource(
                     run_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='get_audio_resource', args={}, tool_call_id=IsStr())],
-                    usage=RequestUsage(
-                        input_tokens=383, output_tokens=137, details={'thoughts_tokens': 125, 'text_prompt_tokens': 383}
-                    ),
-                    model_name='models/gemini-2.5-pro-preview-05-06',
-                    timestamp=IsDatetime(),
-                    provider_name='google-gla',
-                    provider_url='https://generativelanguage.googleapis.com/',
-                    provider_details={'finish_reason': 'STOP'},
-                    provider_response_id=IsStr(),
-                    finish_reason='stop',
-                    run_id=IsStr(),
-                ),
-                ModelRequest(
                     parts=[
-                        ToolReturnPart(
-                            tool_name='get_audio_resource',
-                            content='See file 2d36ae',
-                            tool_call_id=IsStr(),
-                            timestamp=IsDatetime(),
-                        ),
-                        UserPromptPart(content=['This is file 2d36ae:', audio_content], timestamp=IsDatetime()),
+                        TextPart(
+                            content='I can get the content of an audio resource, but I need to know which one. Can you tell me the name of the audio resource?',
+                            provider_name='google-gla',
+                            provider_details={
+                                'thought_signature': 'CogGAXLI2nzpRhtHjQVYP+NBBHisTiT4B8DwwARpeR/Y0UjH96HYuYU/vlqjvSsWY/P24VaY700Cl2qxwsPk4w78l68G+x+FEBwqFA5xNfs3DC9Jy1kMJRwJ1VOQfvkzlrO9KAUfh5FpPAaPJJ0Cwstu/ZmVVsk6oWaL0/Ny/9+CYGePCvRbqSQfAQTlVcI64gq+HSBdc8bEkmKvj0V/CQ6GFq8ptIdQFMAv2PMivJJxHW/qrVwnDiRvz/d15MTG5p/WPpM2rfLry+CXvdWViirQ7q8WT2PTN/XO7WIAtgUFjXMLPmHX1t7fWwrXmF11sdgEskho/hWGxELD4FWFKeUqOMuT7j02p/LI3hqA9ZegT3Eh4vB/o705s3illBWdL1CeBpIELZ7jblCzN093F7JNlbXBtjHpQq66sxNbDBhIzrNdpx/oPz/ZMkmIUdlQHo4bGKEns/9HAp3wxL0umW59Z+pSxP1yD7Q7lp29U4VH+9imNwP8n9BF5zdwusmFsoGRgQYn71u2SoEmtjPSwk1YgPgJLyB/gmTKDlh411CE1J/PcbWexT1pW/gbnDzEfcXFCMNXX+uV0aIhyyvQrkMO9nqnoa2oJk50jq9Yni5B1SvNDr7Uvr2WIV6ihnL46aEBoK+nQPnJDfXzFdr3KnLBy3gp/nZ+YsMcWRsRFrNd0kKQan9Xh//NpbhZD5zsK+a1vo8e98qa5+e3t+ENV3jMsT9nW7PXl/5dg18iPCjThDszUYUfHLwYwhsGU+5eEUSs2RDNxVhAcF7R//Zk4sdPlRYPbB7GUTr0HMyNEGYxFGZtpUka3mR4mvUz3MIy8HTrkO+8lOvsG9BLdQYdZZhwgzztgk7mSuyFOZrkzZH7cI3MJNGvaLX2FxUqcVpsw0jAiZbDtBuYgMlYVtlla95i3jD+Esy79fVGOtktJTNvAStRjSS/3xE2kZTB1HfIUmLoY6a54j16G/q4e8yXG5oMBZitirn8UWQM5SZdNLIZmcX9rEEoUph7O606tsEqIsTU3znFP9Jbd0k='
+                            },
+                        )
                     ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='The audio resource contains a voice saying "Hello, my name is Marcelo."')],
                     usage=RequestUsage(
-                        input_tokens=575,
-                        output_tokens=15,
-                        input_audio_tokens=144,
-                        details={'text_prompt_tokens': 431, 'audio_prompt_tokens': 144},
+                        input_tokens=712, output_tokens=197, details={'thoughts_tokens': 168, 'text_prompt_tokens': 712}
                     ),
-                    model_name='models/gemini-2.5-pro-preview-05-06',
+                    model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id=IsStr(),
+                    provider_response_id='DwqCac_4Ao2fqtsP-OvnwAY',
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -912,7 +890,9 @@ async def test_tool_returning_audio_resource_link(
     model = GoogleModel('gemini-2.5-pro', provider=GoogleProvider(api_key=gemini_api_key))
     async with agent:
         result = await agent.run("What's the content of the audio resource via get_audio_resource_link?", model=model)
-        assert result.output == snapshot('00:05')
+        assert result.output == snapshot(
+            'I am sorry, but I cannot directly access the content of the audio resource. The function `get_audio_resource_link` returns a link to the audio resource, not the content of the resource itself. I do not have the ability to access URLs.'
+        )
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
@@ -927,59 +907,23 @@ async def test_tool_returning_audio_resource_link(
                 ),
                 ModelResponse(
                     parts=[
-                        ToolCallPart(
-                            tool_name='get_audio_resource_link',
-                            args={},
-                            tool_call_id=IsStr(),
+                        TextPart(
+                            content='I am sorry, but I cannot directly access the content of the audio resource. The function `get_audio_resource_link` returns a link to the audio resource, not the content of the resource itself. I do not have the ability to access URLs.',
                             provider_name='google-gla',
-                            provider_details={'thought_signature': IsStr()},
+                            provider_details={
+                                'thought_signature': 'CqgGAXLI2nyl8+fK5lEQpoGJayoL25iZz170wORFRD5hqQz81InrMODGuLpmS0yzH4fKePoP21rLRv4G4unbAPaSTvClw9g3cv8xZrFdQi1EzFzjPx/1QhQmeVTOojycQuYJxrHwU8000cWygiUh6tTJuf4yUEeFAPIT2AyFm2q3B/LbRoBXxp3vutrK5P9Cw1T0ERpvRVUagoDB1rFOK7ulJ0zoXBiDdpkBNReNbo7K4TGXFw8ZFoyKSRcARd4s+SHtpahLljLinYnIRL/WwWB45ThXNiF8oDbkuSDrwk3Rii9RnGGu3vdCXcZzR1fugg94pMUH7kz2rZ3uGl/aKbVBWU+bWJCRNxy2cE0qFbICfjuqHrA2JF1QrTtOsK/jNz86LF7G1EMHsb4NNNWSzsM0tdw3jVfcH+r627tSOaMxbpRWGILgChLTncW0TmN7qEK0iHiHRj+R9dW1pCvJDqS5uGjwucB7K8/UKKtBTnQWeiOhJm3YEfUveTbGGgkbWgq67wm+6hzAxFVY9CsIfzfdzzqe5O4v2nLsG5SinXVwQIwn8j+1ZIT/gr9gQ8IxDZa/AnZQkXJzlGWshLKCNue32z0X1c7KV09Kh/8TM+p5E8CTO+9GrJ6ZBkpgZDiqff/oWUwtOjBv3V8RCn4KX4Wf61l//qALWUwNpMb/tEOVC1EUIutNQhOh0GyRDcgRIMKw7u8uI6GOzZ12184M/c8Tzs4vclhamL2EqLq8PLTSvIOdJp3iiaNG7NQvv5JgxQ4mfwb0F4rzH+06XGcoyy3Sqr0rqTCVnIbEVNKuAPcCGTknk3bGb9KHntDdZ3VLQLrw6NQCcSRZYbYgJ94JInP6Hk+hXOni54QCDtN20aWTH3ggDro3SxKigCZb8bMIwQXW8o9cjcHBr6LYjkRH7VZQhaUkdZff6L9Ro+Pg2lf5Kl9xO5uojUGfQO84RIA+fiU5S5kcUAu1kizJoqhxNyiZiNrvbnSJQq548fljwMnDKStybNhveUtM0yxUs6T1u9wkV93bDNdKUUVF8JUBN8YcU11kJ9Koa9RwVctnoA2RNHled0rctNVN1Q=='
+                            },
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=605, output_tokens=168, details={'thoughts_tokens': 154, 'text_prompt_tokens': 605}
+                        input_tokens=720, output_tokens=240, details={'thoughts_tokens': 187, 'text_prompt_tokens': 720}
                     ),
                     model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id='Pe_BaJGqOKSdz7IP0NqogA8',
-                    finish_reason='stop',
-                    run_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='get_audio_resource_link',
-                            content='See file 2d36ae',
-                            tool_call_id=IsStr(),
-                            timestamp=IsDatetime(),
-                        ),
-                        UserPromptPart(
-                            content=[
-                                'This is file 2d36ae:',
-                                audio_content,
-                            ],
-                            timestamp=IsDatetime(),
-                        ),
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='00:05')],
-                    usage=RequestUsage(
-                        input_tokens=801,
-                        output_tokens=5,
-                        input_audio_tokens=144,
-                        details={'text_prompt_tokens': 657, 'audio_prompt_tokens': 144},
-                    ),
-                    model_name='gemini-2.5-pro',
-                    timestamp=IsDatetime(),
-                    provider_name='google-gla',
-                    provider_url='https://generativelanguage.googleapis.com/',
-                    provider_details={'finish_reason': 'STOP'},
-                    provider_response_id='QO_BaLC6AozQz7IPh5Kj4Q4',
+                    provider_response_id='FAqCafv5G9q2qtsP4Zru2AM',
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -1100,10 +1044,10 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     run_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='get_dict', args='{}', tool_call_id='call_oqKviITBj8PwpQjGyUu4Zu5x')],
+                    parts=[ToolCallPart(tool_name='get_dict', args='{}', tool_call_id='call_cXJib9FCSx62sjQMgSpBI7QI')],
                     usage=RequestUsage(
-                        input_tokens=195,
-                        output_tokens=11,
+                        input_tokens=398,
+                        output_tokens=10,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -1119,7 +1063,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                         'finish_reason': 'tool_calls',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BRloOs7Bb2tq8wJyy9Rv7SQ7L65a7',
+                    provider_response_id='chatcmpl-D5BwsJgFSdLf0SIZk9QnitVcnV5VO',
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -1128,7 +1072,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                         ToolReturnPart(
                             tool_name='get_dict',
                             content={'foo': 'bar', 'baz': 123},
-                            tool_call_id='call_oqKviITBj8PwpQjGyUu4Zu5x',
+                            tool_call_id='call_cXJib9FCSx62sjQMgSpBI7QI',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -1138,8 +1082,8 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                 ModelResponse(
                     parts=[TextPart(content='{"foo":"bar","baz":123}')],
                     usage=RequestUsage(
-                        input_tokens=222,
-                        output_tokens=11,
+                        input_tokens=425,
+                        output_tokens=10,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -1155,7 +1099,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                         'finish_reason': 'stop',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BRloPczU1HSCWnreyo21DdNtdOM7L',
+                    provider_response_id='chatcmpl-D5BwuZ9yD1UXJVQmZVtT510yamCyC',
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -1182,11 +1126,11 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='get_unstructured_dict', args='{}', tool_call_id='call_R0n2R7S9vL2aZOX25T9jahTd'
+                            tool_name='get_unstructured_dict', args='{}', tool_call_id='call_UnaCPK9Z3fmc5kiMPdGjGure'
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=343,
+                        input_tokens=400,
                         output_tokens=12,
                         details={
                             'accepted_prediction_tokens': 0,
@@ -1203,7 +1147,7 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                         'finish_reason': 'tool_calls',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-CLbP82ODQMEznhobUKdq6Rjn9Aa12',
+                    provider_response_id='chatcmpl-D5Bwv6esW9c5j67wUPo0lV2D62AWG',
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -1212,7 +1156,7 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                         ToolReturnPart(
                             tool_name='get_unstructured_dict',
                             content={'foo': 'bar', 'baz': 123},
-                            tool_call_id='call_R0n2R7S9vL2aZOX25T9jahTd',
+                            tool_call_id='call_UnaCPK9Z3fmc5kiMPdGjGure',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -1222,7 +1166,7 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                 ModelResponse(
                     parts=[TextPart(content='{"foo":"bar","baz":123}')],
                     usage=RequestUsage(
-                        input_tokens=374,
+                        input_tokens=431,
                         output_tokens=10,
                         details={
                             'accepted_prediction_tokens': 0,
@@ -1239,7 +1183,7 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                         'finish_reason': 'stop',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-CLbPAOYN3jPYdvYeD8JNOOXF5N554',
+                    provider_response_id='chatcmpl-D5BwwEamFxVlOffjr99kTWIGlsaTq',
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -1251,7 +1195,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
     async with agent:
         result = await agent.run('Get me an error, pass False as a value, unless the tool tells you otherwise')
         assert result.output == snapshot(
-            'I called the tool with the correct parameter, and it returned: "This is not an error."'
+            'The tool executed successfully without any error when called with the value `True`.'
         )
         assert result.all_messages() == snapshot(
             [
@@ -1270,12 +1214,12 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                         ToolCallPart(
                             tool_name='get_error',
                             args='{"value":false}',
-                            tool_call_id='call_rETXZWddAGZSHyVHAxptPGgc',
+                            tool_call_id='call_JZyzgj6Ym0iVJAIY9j3H5eBE',
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=203,
-                        output_tokens=15,
+                        input_tokens=406,
+                        output_tokens=14,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -1291,7 +1235,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                         'finish_reason': 'tool_calls',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BRloSNg7aGSp1rXDkhInjMIUHKd7A',
+                    provider_response_id='chatcmpl-D5Bwx5EWgG1MlRrUlWIq2DEU1vdQG',
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -1300,7 +1244,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                         RetryPromptPart(
                             content='Error executing tool get_error: This is an error. Call the tool with True instead',
                             tool_name='get_error',
-                            tool_call_id='call_rETXZWddAGZSHyVHAxptPGgc',
+                            tool_call_id='call_JZyzgj6Ym0iVJAIY9j3H5eBE',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -1312,12 +1256,12 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                         ToolCallPart(
                             tool_name='get_error',
                             args='{"value":true}',
-                            tool_call_id='call_4xGyvdghYKHN8x19KWkRtA5N',
+                            tool_call_id='call_G2Ba1EAdU8VJftQ5R2a7fnE9',
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=250,
-                        output_tokens=15,
+                        input_tokens=453,
+                        output_tokens=14,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -1333,7 +1277,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                         'finish_reason': 'tool_calls',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BRloTvSkFeX4DZKQLqfH9KbQkWlpt',
+                    provider_response_id='chatcmpl-D5BwygLJa34FiqIHwCSMIMhlsAAoz',
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -1342,7 +1286,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                         ToolReturnPart(
                             tool_name='get_error',
                             content='This is not an error',
-                            tool_call_id='call_4xGyvdghYKHN8x19KWkRtA5N',
+                            tool_call_id='call_G2Ba1EAdU8VJftQ5R2a7fnE9',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -1352,12 +1296,12 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                 ModelResponse(
                     parts=[
                         TextPart(
-                            content='I called the tool with the correct parameter, and it returned: "This is not an error."'
+                            content='The tool executed successfully without any error when called with the value `True`.'
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=277,
-                        output_tokens=22,
+                        input_tokens=480,
+                        output_tokens=16,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -1373,7 +1317,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                         'finish_reason': 'stop',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BRloU3MhnqNEqujs28a3ofRbs7VPF',
+                    provider_response_id='chatcmpl-D5BwzxjUf5S4M1LgRaT5uIxQ1GMJv',
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -1398,10 +1342,10 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     run_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='get_none', args='{}', tool_call_id='call_mJTuQ2Cl5SaHPTJbIILEUhJC')],
+                    parts=[ToolCallPart(tool_name='get_none', args='{}', tool_call_id='call_nArBd6keB4xU67dSnbfJx1y6')],
                     usage=RequestUsage(
-                        input_tokens=193,
-                        output_tokens=11,
+                        input_tokens=396,
+                        output_tokens=10,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -1417,7 +1361,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                         'finish_reason': 'tool_calls',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BRloX2RokWc9j9PAXAuNXGR73WNqY',
+                    provider_response_id='chatcmpl-D5Bx1AZO7C5HLj23hp3LoDfa5sjZL',
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -1426,7 +1370,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                         ToolReturnPart(
                             tool_name='get_none',
                             content=[],
-                            tool_call_id='call_mJTuQ2Cl5SaHPTJbIILEUhJC',
+                            tool_call_id='call_nArBd6keB4xU67dSnbfJx1y6',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -1436,8 +1380,8 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                 ModelResponse(
                     parts=[TextPart(content='Hello! How can I assist you today?')],
                     usage=RequestUsage(
-                        input_tokens=212,
-                        output_tokens=11,
+                        input_tokens=415,
+                        output_tokens=10,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -1453,7 +1397,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                         'finish_reason': 'stop',
                         'timestamp': IsDatetime(),
                     },
-                    provider_response_id='chatcmpl-BRloYWGujk8yE94gfVSsM1T1Ol2Ej',
+                    provider_response_id='chatcmpl-D5Bx1qyScOArFuLWx9gHvY7XiVkeH',
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -2236,7 +2180,7 @@ async def test_agent_run_stream_with_mcp_server_http(allow_model_requests: None,
     async with agent.run_stream('Summarize the pydantic/pydantic-ai repo in one sentence') as result:
         output = await result.get_output()
     assert output == snapshot(
-        'The `pydantic/pydantic-ai` repository is a Python agent framework designed to facilitate the development of production-grade Generative AI applications and workflows with a focus on type-safety and an ergonomic developer experience.'
+        "The `pydantic/pydantic-ai` repository is a Python agent framework designed to build production-grade Generative AI applications and workflows, leveraging Pydantic's type-safety and ergonomic design, supporting various LLM providers, and offering features like structured outputs, observability, and durable execution."
     )
 
 

@@ -4,7 +4,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
@@ -34,7 +34,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '920'
+      - '992'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -43,12 +45,12 @@ interactions:
       - chunked
     parsed_body:
       container:
-        expires_at: '2025-08-07T12:34:48.926660+00:00'
-        id: container_011CRtH8FB5LEPVqMkqupkTy
+        expires_at: '2026-01-30T05:33:27.754752Z'
+        id: container_011CXcwMtRyam9d4ieKzFCie
       content:
       - text: I'll calculate 3 * 12390 for you.
         type: text
-      - id: srvtoolu_01PxRfGz768wdcfze4RwVAjw
+      - id: srvtoolu_01U5jzrGYTipBh2JpiXEhUQz
         input:
           code: |-
             result = 3 * 12390
@@ -59,23 +61,25 @@ interactions:
           content: []
           return_code: 0
           stderr: ''
-          stdout: |
-            3 * 12390 = 37170
+          stdout: 3 * 12390 = 37170
           type: code_execution_result
-        tool_use_id: srvtoolu_01PxRfGz768wdcfze4RwVAjw
+        tool_use_id: srvtoolu_01U5jzrGYTipBh2JpiXEhUQz
         type: code_execution_tool_result
       - text: 3 * 12390 = 37,170
         type: text
-      id: msg_017vUE35gAsm2NEEH2fNLDAx
+      id: msg_01NaK5VRqhQzrgswyuZ9ukhQ
       model: claude-sonnet-4-20250514
       role: assistant
       stop_reason: end_turn
       stop_sequence: null
       type: message
       usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 1630
+        input_tokens: 1629
         output_tokens: 109
         server_tool_use:
           web_search_requests: 0
@@ -88,11 +92,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '308'
+      - '338'
       content-type:
       - application/json
       host:
@@ -110,7 +114,9 @@ interactions:
       - parts:
         - text: Multiplied by 12390
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       tools:
       - codeExecution: {}
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
@@ -119,11 +125,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1378'
+      - '2549'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=7224
+      - gfet4t7; dur=3247
       transfer-encoding:
       - chunked
       vary:
@@ -135,7 +141,7 @@ interactions:
       - content:
           parts:
           - text: |+
-              Okay, I understand. You want to calculate the result of 3 * 12390, and then multiply that result by 12390 again.  In other words, you want to calculate (3 * 12390) * 12390. I'll calculate that for you.
+              Okay, so you want me to calculate (3 * 12390) * 12390. I'll do that now.
 
           - executableCode:
               code: |
@@ -143,29 +149,66 @@ interactions:
                 print(result)
               language: PYTHON
           - codeExecutionResult:
-              outcome: OUTCOME_OK
-              output: |
-                460536300
+              outcome: OUTCOME_FAILED
+              output: |+
+                1:10: a command can only contain words and redirects; encountered (
+
+                stderr output:
+
           - text: |
-              So, (3 * 12390) * 12390 = 460,536,300.
+              I apologize, I seem to be having some trouble with the calculation using a single line. I will perform the calculation in stages.
+          - executableCode:
+              code: |
+                first_part = 3 * 12390
+                print(first_part)
+              language: PYTHON
+          - codeExecutionResult:
+              outcome: OUTCOME_FAILED
+              output: |+
+                2:1: "foo(" must be followed by )
+
+                stderr output:
+
+          - text: |
+              I apologize for the errors. Let me correct that.
+          - executableCode:
+              code: |
+                import sympy
+                result = 3 * 12390 * 12390
+                print(result)
+              language: PYTHON
+          - codeExecutionResult:
+              outcome: OUTCOME_FAILED
+              output: |+
+                3:1: "foo(" must be followed by )
+
+                stderr output:
+
+          - text: |
+              I apologize for the repeated errors. I'm having difficulty getting the code to work correctly. I'll just calculate this directly.
+
+              3 * 12390 = 37170
+              37170 * 12390 = 460536300
+
+              So the answer is 460,536,300
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: Wo-UaOCoENSLqsMPw_iTgAw
+      responseId: mTR8aaf0OMDVz7IPh4DK-AM
       usageMetadata:
-        candidatesTokenCount: 141
+        candidatesTokenCount: 286
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 141
+          tokenCount: 286
         promptTokenCount: 54
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 54
-        toolUsePromptTokenCount: 161
+        toolUsePromptTokenCount: 588
         toolUsePromptTokensDetails:
         - modality: TEXT
-          tokenCount: 161
-        totalTokenCount: 356
+          tokenCount: 588
+        totalTokenCount: 928
     status:
       code: 200
       message: OK

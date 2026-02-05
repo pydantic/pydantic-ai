@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '585'
+      - '555'
       content-type:
       - application/json
       host:
@@ -42,7 +42,6 @@ interactions:
           required:
           - city
           - country
-          title: CityLocation
           type: object
         name: final_result
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -52,6 +51,8 @@ interactions:
       - keep-alive
       content-length:
       - '476'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -60,11 +61,11 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - id: toolu_01X9wcHKKAZD9tBC711xipPa
+      - id: toolu_01ECaF1WRmnTui1BpXZXyBds
         input: {}
         name: get_user_country
         type: tool_use
-      id: msg_012TXW181edhmR5JCsQRsBKx
+      id: msg_014qNMmxefjUvuPTSkMMHjWE
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -76,7 +77,7 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 445
+        input_tokens: 711
         output_tokens: 23
         service_tier: standard
     status:
@@ -87,11 +88,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '847'
+      - '817'
       content-type:
       - application/json
       host:
@@ -105,7 +106,7 @@ interactions:
           type: text
         role: user
       - content:
-        - id: toolu_01X9wcHKKAZD9tBC711xipPa
+        - id: toolu_01ECaF1WRmnTui1BpXZXyBds
           input: {}
           name: get_user_country
           type: tool_use
@@ -113,7 +114,7 @@ interactions:
       - content:
         - content: Mexico
           is_error: false
-          tool_use_id: toolu_01X9wcHKKAZD9tBC711xipPa
+          tool_use_id: toolu_01ECaF1WRmnTui1BpXZXyBds
           type: tool_result
         role: user
       model: claude-sonnet-4-5
@@ -137,7 +138,6 @@ interactions:
           required:
           - city
           - country
-          title: CityLocation
           type: object
         name: final_result
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -147,6 +147,8 @@ interactions:
       - keep-alive
       content-length:
       - '511'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -155,13 +157,13 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - id: toolu_01LZABsgreMefH2Go8D5PQbW
+      - id: toolu_01UKDf4fk894G2BEpiPSwL6s
         input:
           city: Mexico City
           country: Mexico
         name: final_result
         type: tool_use
-      id: msg_01K4Fzcf1bhiyLzHpwLdrefj
+      id: msg_01M5PoMWEjyV6vzXYve8Vgyw
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -173,7 +175,7 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 497
+        input_tokens: 762
         output_tokens: 56
         service_tier: standard
     status:

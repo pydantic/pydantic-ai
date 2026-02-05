@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '219'
+      - '251'
       content-type:
       - application/json
       host:
@@ -20,24 +20,20 @@ interactions:
         - text: What is the capital of France?
         role: user
       generationConfig:
+        responseModalities:
+        - TEXT
         temperature: 0.0
       systemInstruction:
         parts:
         - text: You are a helpful chatbot.
         role: user
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:streamGenerateContent?alt=sse
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse
   response:
     body:
-      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"The\"}],\"role\": \"model\"}}],\"usageMetadata\":
-        {\"promptTokenCount\": 15,\"totalTokenCount\": 15,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        15}]},\"modelVersion\": \"gemini-2.0-flash-exp\",\"responseId\": \"w1peaMz6INOvnvgPgYfPiQY\"}\r\n\r\ndata: {\"candidates\":
-        [{\"content\": {\"parts\": [{\"text\": \" capital of France\"}],\"role\": \"model\"}}],\"usageMetadata\": {\"promptTokenCount\":
-        15,\"totalTokenCount\": 15,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}]},\"modelVersion\":
-        \"gemini-2.0-flash-exp\",\"responseId\": \"w1peaMz6INOvnvgPgYfPiQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\":
-        {\"parts\": [{\"text\": \" is Paris.\\n\"}],\"role\": \"model\"},\"finishReason\": \"STOP\"}],\"usageMetadata\": {\"promptTokenCount\":
-        13,\"candidatesTokenCount\": 8,\"totalTokenCount\": 21,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        13}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 8}]},\"modelVersion\": \"gemini-2.0-flash-exp\",\"responseId\":
-        \"w1peaMz6INOvnvgPgYfPiQY\"}\r\n\r\n"
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"The capital of France is **Paris**.\"}],\"role\":
+        \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\":
+        8,\"totalTokenCount\": 39,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\":
+        16},\"modelVersion\": \"gemini-2.5-flash\",\"responseId\": \"ezh8aaKTCYSnqtsP-qXkqQI\"}\r\n\r\n"
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -46,7 +42,7 @@ interactions:
       content-type:
       - text/event-stream
       server-timing:
-      - gfet4t7; dur=379
+      - gfet4t7; dur=962
       transfer-encoding:
       - chunked
       vary:

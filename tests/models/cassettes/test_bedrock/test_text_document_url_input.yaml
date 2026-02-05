@@ -5,7 +5,7 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       host:
@@ -49,9 +49,11 @@ interactions:
       etag:
       - W/"61efea10-a0e"
       expires:
-      - Thu, 20 Mar 2025 09:43:37 GMT
+      - Fri, 06 Feb 2026 06:31:13 GMT
       last-modified:
       - Tue, 25 Jan 2022 12:16:16 GMT
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains
       transfer-encoding:
       - chunked
       vary:
@@ -66,7 +68,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        Zjk2NzA2Y2UtOGVjZC00MTVkLWI1NTYtZGJmMDhjY2M0ZDYx
+        YTgzYzU2NzMtODZiNS00YzMxLWI0ZjUtNDQyZjcwMGRmMjZi
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -76,31 +78,44 @@ interactions:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-v2/converse
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-20250514-v1%3A0/converse
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '890'
+      - '1609'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 5791
+        latencyMs: 6741
       output:
         message:
           content:
-          - text: |-
-              Based on the text in the <document_content> tag, the main content of this document appears to be:
-
-              An example text describing the use of "John Doe" as a placeholder name in legal cases, hospitals, and other contexts where a party's real identity is unknown or needs to be withheld. It provides background on how "John Doe" and "Jane Doe" are commonly used in the United States and Canada for this purpose, in contrast to other English speaking countries that use names like "Joe Bloggs". The text gives examples of using John/Jane Doe for legal cases, unidentified corpses, and as generic names on forms. It also mentions how "Baby Doe" and "Precious Doe" are used for unidentified children.
+          - text: "Based on the document, the main content is an explanation of placeholder names used in legal and other
+              contexts, specifically focusing on \"John Doe\" and related names. \n\nThe document explains:\n\n1. **Legal
+              placeholder names**: How names like \"John Doe\" (for males), \"Jane Doe/Jane Roe\" (for females), and \"Jonnie/Janie
+              Doe\" (for children) are used when someone's true identity is unknown or must be kept confidential in legal
+              proceedings\n\n2. **Medical/forensic use**: How these names are applied to unidentified corpses or hospital
+              patients\n\n3. **Geographic usage**: The practice is common in the US and Canada, but less common in other English-speaking
+              countries like the UK, Australia, and New Zealand, which use alternatives like \"Joe Bloggs\" or \"John Smith\"\n\n4.
+              **Other contexts**: How \"John Doe\" is used as a typical male reference (similar to \"John Q. Public\") in
+              forms, examples, and popular culture\n\n5. **Variations and extensions**: Examples of related names like \"Baby
+              Doe\" for unidentified children, and how multiple anonymous parties are handled in legal cases (e.g., \"John
+              Doe #1, #2\" etc.)\n\nThe document appears to be a sample text file demonstrating the TXT file format, with
+              content sourced from Wikipedia about the John Doe naming convention."
           role: assistant
       stopReason: end_turn
       usage:
-        inputTokens: 681
-        outputTokens: 157
-        totalTokens: 838
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 729
+        outputTokens: 306
+        serverToolUsage: {}
+        totalTokens: 1035
     status:
       code: 200
       message: OK

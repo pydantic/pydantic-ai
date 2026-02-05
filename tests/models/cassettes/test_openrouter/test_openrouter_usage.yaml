@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '147'
+      - '159'
       content-type:
       - application/json
       host:
@@ -30,7 +30,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '15782'
+      - '17107'
       content-type:
       - application/json
       permissions-policy:
@@ -49,125 +49,111 @@ interactions:
         logprobs: null
         message:
           content: |-
-            Brief summary
-            - Venus is the second planet from the Sun and is similar to Earth in size and mass, but has a hostile, runaway-greenhouse climate. It is often called Earth's "sister" or "twin" because of its comparable radius and composition, but its surface conditions are extreme.
+            Here's a clear overview of Venus -- the planet, why it's interesting, and what we've learned from missions.
 
-            Key facts (numbers)
-            - Distance from Sun: ~0.72 AU (about 108 million km).
-            - Diameter: ~12,104 km (≈0.95 Earth’s diameter).
-            - Mass: ≈0.815 Earth masses.
-            - Surface gravity: ≈0.9 g.
-            - Orbital period (year): ≈224.7 Earth days.
-            - Rotation: very slow and retrograde — one sidereal day ≈243 Earth days; the solar day (noon-to-noon) ≈117 Earth days.
-            - Mean surface temperature: ≈460–470 °C (≈730–740 K).
-            - Surface pressure: ≈92 bar (about 92 times Earth’s sea‑level pressure).
+            Basic facts
+            - Position: 2nd planet from the Sun (inside Earth's orbit), semimajor axis ≈ 0.723 AU.
+            - Size & mass: radius ≈ 0.95 Earth radii, mass ≈ 0.815 Earth masses, surface gravity ≈ 0.9 g.
+            - Orbit & day: orbital period ≈ 224.7 Earth days. Sidereal rotation ≈ 243 Earth days and is retrograde (it spins opposite most planets). A solar day (noon-to-noon) is ≈ 117 Earth days.
+            - Brightness: brightest planet in the sky; often called the "Morning Star" or "Evening Star."
 
             Atmosphere and climate
-            - Dominated by carbon dioxide (~96–97%) with nitrogen making up most of the rest and trace gases (sulfur compounds, water vapor).
-            - Thick cloud deck of sulfuric acid droplets, which reflect sunlight and give Venus its high albedo.
-            - Intense greenhouse effect traps heat; surface temperatures are hot enough to melt lead.
-            - Upper atmosphere exhibits "super-rotation": winds can circle the planet in a few Earth days, much faster than the planet’s rotation.
+            - Composition: ~96.5% carbon dioxide (CO2), ~3.5% nitrogen (N2), with traces of SO2, H2O, CO, HCl, HF and other gases.
+            - Pressure & temperature: surface pressure ≈ 92 bar (≈ 92 times Earth sea-level), surface temperatures around 735 K (≈ 462 °C / 863 °F) -- hot enough to melt lead.
+            - Clouds: thick clouds of concentrated sulfuric acid (H2SO4) between about 45-70 km altitude. These clouds reflect much sunlight (high albedo) and hide the surface in visible light.
+            - Greenhouse runaway: dense CO2 atmosphere produces an extreme greenhouse effect that makes the surface extremely hot despite Venus receiving similar sunlight to Earth.
 
-            Surface and geology
-            - Surface is mostly basaltic plains with many volcanoes and vast lava flows; evidence suggests extensive volcanic resurfacing in the past few hundred million years.
-            - Few impact craters (sparse compared with other rocky bodies), indicating a relatively young surface.
-            - Highlands called “tesserae” are highly deformed regions thought to be among the oldest crust.
-            - Venus likely lacks Earth-style plate tectonics; heat is probably released through volcanic and regional tectonic processes.
+            Atmospheric dynamics & magnetism
+            - Super-rotation: the upper atmosphere circles the planet much faster than the surface (cloud-top winds ~60-120 m/s), so the atmosphere "super-rotates."
+            - Magnetic field: Venus has no significant intrinsic global magnetic field; interaction with the solar wind produces an induced magnetosphere.
 
-            Magnetic field and interior
-            - Venus has a similar size and density to Earth, implying a metallic core, but it lacks a strong global magnetic field. A very weak induced magnetosphere forms from interactions with the solar wind, likely because slow rotation prevents an Earth-like dynamo.
+            Surface & geology
+            - Surface is rocky with basaltic composition, many volcanic features; no clear plate-tectonics like Earth.
+            - Surface features: highland regions (Ishtar Terra in the north with Maxwell Montes, Aphrodite Terra near the equator), large volcanic plains, coronae, pancake domes, and extensively deformed tessera terrain thought to be old, complex crust.
+            - Age & resurfacing: crater counts suggest the surface was largely resurfaced hundreds of millions of years ago (no widespread ancient crater record), implying episodes of intense volcanic activity or global resurfacing.
 
-            Potential for life
-            - The surface is too hot and high‑pressure for known life. Some scientists have proposed that the temperate cloud layers (50–60 km altitude) might be more hospitable and could conceivably host microbial life, but this is speculative.
-            - A claimed detection of phosphine in Venus’ clouds (2020) sparked interest but remains highly debated and unconfirmed.
+            Observational appearance
+            - Because it orbits inside Earth's orbit, Venus shows phases (crescent to full) when observed through a telescope.
+            - Very bright and easy to spot with naked eye when visible; typically near sunrise or sunset.
 
-            Exploration history
-            - First successful flyby: Mariner 2 (1962).
-            - Soviet Venera program: multiple atmospheric probes and several landers that returned the first surface data and images (e.g., Venera 13 and 14 in 1982).
-            - NASA Pioneer Venus and Magellan missions mapped Venus (Magellan used radar mapping in the early 1990s).
-            - More recent orbiters include ESA’s Venus Express (2006–2014) and JAXA’s Akatsuki (arrived 2015), which study atmosphere and weather.
-            - Upcoming/planned missions: NASA’s DAVINCI+ and VERITAS, and ESA’s EnVision, aimed at studying atmosphere composition, geology, and high-resolution mapping.
+            Exploration history (selected)
+            - Early flybys & orbiters: Mariner missions, Soviet Venera program (landers), NASA's Pioneer Venus, ESA's Venus Express (orbiter, 2006-2014), JAXA's Akatsuki (orbiter, arrived 2015).
+            - Surface landers: Soviet Venera landers were first to return images and data from the surface; harsh conditions limited survival -- some lasted on the order of tens of minutes to a few hours (e.g., Venera 13 operated for ~127 minutes).
+            - Radar mapping: NASA's Magellan orbiter (1990s) produced high-resolution radar maps of the surface.
 
-            Why it matters
-            - Venus is a natural laboratory for studying greenhouse effects, planetary evolution, and why two similar planets (Earth and Venus) can end up so different. Understanding Venus also informs exoplanet studies and the conditions that make a planet habitable.
+            Recent & planned missions
+            - Interest has resurged: NASA selected DAVINCI+ and VERITAS, and ESA selected EnVision; other proposals and studies (balloons, descent probes, surface missions) are under consideration. These missions target the 2020s-2030s for detailed atmospheric composition studies, high-resolution radar mapping, and probes to study geology and evolution.
 
-            If you’d like, I can:
-            - Compare Venus and Earth in more detail,
-            - Summarize major missions and their discoveries,
-            - Explain theories for the retrograde rotation,
-            - Or go deeper into atmospheric chemistry and cloud-layer habitability. Which would you prefer?
-          reasoning: "**Exploring Venus**\n\nThe user wants a concise yet informative overview of Venus, including its physical
-            characteristics and exploration history. I'll cover key points such as its orbit, rotation, and atmosphere. Important
-            numbers to include are: it's about 0.72 AU from the Sun, has a length of day of 243 Earth days (retrograde), a
-            year of 224.7 Earth days, a radius of 6052 km (0.949 times Earth's), and a mass of 0.815 Earth. \n\nThe atmosphere
-            is roughly 96.5% CO2, with a mean surface temperature around 465 °C (735 K). Lastly, its rotation is retrograde
-            and slow, moving west-to-east.**Understanding Venus's Rotation and Surface**\n\nRetrograde means that Venus rotates
-            in the opposite direction to most planets, specifically east to west, while Earth spins west to east. Venus has
-            a long rotation period of 243 Earth days, which is longer than its year. Its solar day is around 116.75 Earth
-            days. The surface consists of basaltic plains and highland tesserae with few impact craters due to a relatively
-            young surface, about 300-800 million years old, and no plate tectonics. \n\nVolcanism is widespread, and the density
-            is similar to Earth at 5.24 g/cm³. Venus has a weak magnetic field and cloud droplets of sulfuric acid, with atmospheric
-            super-rotation causing winds up to 360 km/h that circle the planet every four Earth days. The greenhouse effect
-            is extreme due to high CO2 levels and a lack of water.**Exploring Venus's History and Characteristics**\n\nI'll
-            summarize Venus exploration, starting with Mariner 2's flyby in 1962. The Venera series were significant as they
-            landed probes that provided the first atmospheric data and surface images from Venus, particularly Venera 13 and
-            14 in 1982. Pioneer Venus followed in 1978, while the Magellan mission in the 1990s mapped the surface using radar.\n\nIn
-            recent years, missions like Venus Express (2005–2014) and the Akatsuki orbiter since 2015 have continued to expand
-            our understanding. Upcoming missions include NASA's VERITAS and DAVINCI+ and ESA's EnVision, set for launch between
-            2028 and 2031. \n\nI should mention the challenges of surface operations due to harsh conditions and the possibility
-            of life in clouds, with some scientists hypothesizing microbial life in temperate cloud layers. The 2020 detection
-            of phosphine sparked controversy, leading to ongoing debates.\n\nInterestingly, Venus is often called Earth's
-            twin in size, but the environments are vastly different. Being an inferior planet, Venus exhibits phases like
-            the Moon when viewed from Earth, and its retrograde rotation may result from a giant impact or tidal interactions
-            with its dense atmosphere. I'll keep the summary concise while providing key numbers and facts."
+            Astrobiology & the clouds
+            - Surface is considered uninhabitable by known life due to extreme heat and pressure. However, the temperate upper cloud layer (around 50-60 km altitude) has been discussed as a potential niche for microbial life because temperatures and pressures there are much milder -- though the clouds are highly acidic.
+            - A reported detection of phosphine in 2020 sparked interest but remains controversial after follow-up analyses; chemical explanations are actively studied.
+
+            Why Venus matters
+            - Planetary evolution: Venus is Earth-sized but has evolved very differently. Studying it helps us understand greenhouse processes, planetary atmospheres, volcanism, and why Earth and Venus diverged.
+            - Exoplanet analog: Venus-like planets may be common around other stars; Venus provides a nearby laboratory for interpreting exoplanet observations.
+            - Comparative planetology: learning why similar size and composition bodies can end up so different improves our understanding of climate stability and habitability.
+
+            If you want, I can:
+            - Go deeper into its atmosphere or surface geology,
+            - Summarize the history of a specific mission (e.g., Venera, Magellan, Venus Express),
+            - Explain how Venus compares to Earth in more detail, or
+            - Give an updated list of current/planned missions with expected dates. Which would you like?
+          reasoning: |-
+            **Exploring Venus**
+
+            The user asked about Venus, which gives me a lot to cover! I should provide an overview about its size, orbit, atmosphere, surface conditions, temperature, geology, and even observations and missions exploring it. Venus has some interesting features, like a retrograde rotation and high surface pressure! Its temperatures reach around 737 K (464°C), and there are notable surface features. Recent missions like NASA's DAVINCI+ and VERITAS, with planned launches in the early 2030s, are also worth mentioning!**Reviewing Venus missions**
+
+            I need to recall that NASA selected DAVINCI+ and VERITAS for launches in the 2020s, with VERITAS expected in 2028 and DAVINCI+ in 2029. ESA's EnVision is set for around 2031. Japan's Akatsuki, which has been operational since its 2010 launch, is also worth mentioning. I'll include some historical missions like the Venera landers and Magellan's radar mapping. Venus has a thick, CO2-dominated atmosphere, and there's recent controversy around potential signs of life!**Summarizing Venus features**
+
+            I'm looking into Venus's magnetic field. It doesn't have a global magnetic field but has an induced magnetosphere due to solar wind. The surface includes features like Aphrodite Terra and Maxwell Montes in Ishtar Terra. I need to highlight its slow, retrograde rotation resulting in a long day-night cycle. Venus is the brightest planet, reaching a magnitude of -4.6 and showing phases through a telescope. Exploration has been challenging with landers like Venera 13 lasting only about 127 minutes. I should organize my findings into sections for clarity!**Detailing Venus's features**
+
+            I need to clarify mission dates to avoid uncertainty. As of 2024, the planned launch for VERITAS is said to be 2028, but to be safe, I'll just mention upcoming NASA missions like DAVINCI+ and VERITAS, along with ESA's EnVision, set for the 2020s-2030s.
+
+            I should include some extreme surface conditions, such as high temperatures, sulfuric acid clouds, and super-rotation winds around 100 m/s at cloud tops. I'll provide numbers, like surface gravity at 0.904 g and Venus's mass as 4.87e24 kg, 95% of Earth's radius. I want to note that Venus is the "morning star" and is named after the Roman goddess of love and beauty, previously called Aphrodite.
           reasoning_details:
           - format: openai-responses-v1
             index: 0
-            summary: "**Exploring Venus**\n\nThe user wants a concise yet informative overview of Venus, including its physical
-              characteristics and exploration history. I'll cover key points such as its orbit, rotation, and atmosphere.
-              Important numbers to include are: it's about 0.72 AU from the Sun, has a length of day of 243 Earth days (retrograde),
-              a year of 224.7 Earth days, a radius of 6052 km (0.949 times Earth's), and a mass of 0.815 Earth. \n\nThe atmosphere
-              is roughly 96.5% CO2, with a mean surface temperature around 465 °C (735 K). Lastly, its rotation is retrograde
-              and slow, moving west-to-east.**Understanding Venus's Rotation and Surface**\n\nRetrograde means that Venus
-              rotates in the opposite direction to most planets, specifically east to west, while Earth spins west to east.
-              Venus has a long rotation period of 243 Earth days, which is longer than its year. Its solar day is around 116.75
-              Earth days. The surface consists of basaltic plains and highland tesserae with few impact craters due to a relatively
-              young surface, about 300-800 million years old, and no plate tectonics. \n\nVolcanism is widespread, and the
-              density is similar to Earth at 5.24 g/cm³. Venus has a weak magnetic field and cloud droplets of sulfuric acid,
-              with atmospheric super-rotation causing winds up to 360 km/h that circle the planet every four Earth days. The
-              greenhouse effect is extreme due to high CO2 levels and a lack of water.**Exploring Venus's History and Characteristics**\n\nI'll
-              summarize Venus exploration, starting with Mariner 2's flyby in 1962. The Venera series were significant as
-              they landed probes that provided the first atmospheric data and surface images from Venus, particularly Venera
-              13 and 14 in 1982. Pioneer Venus followed in 1978, while the Magellan mission in the 1990s mapped the surface
-              using radar.\n\nIn recent years, missions like Venus Express (2005–2014) and the Akatsuki orbiter since 2015
-              have continued to expand our understanding. Upcoming missions include NASA's VERITAS and DAVINCI+ and ESA's
-              EnVision, set for launch between 2028 and 2031. \n\nI should mention the challenges of surface operations due
-              to harsh conditions and the possibility of life in clouds, with some scientists hypothesizing microbial life
-              in temperate cloud layers. The 2020 detection of phosphine sparked controversy, leading to ongoing debates.\n\nInterestingly,
-              Venus is often called Earth's twin in size, but the environments are vastly different. Being an inferior planet,
-              Venus exhibits phases like the Moon when viewed from Earth, and its retrograde rotation may result from a giant
-              impact or tidal interactions with its dense atmosphere. I'll keep the summary concise while providing key numbers
-              and facts."
+            summary: |-
+              **Exploring Venus**
+
+              The user asked about Venus, which gives me a lot to cover! I should provide an overview about its size, orbit, atmosphere, surface conditions, temperature, geology, and even observations and missions exploring it. Venus has some interesting features, like a retrograde rotation and high surface pressure! Its temperatures reach around 737 K (464°C), and there are notable surface features. Recent missions like NASA's DAVINCI+ and VERITAS, with planned launches in the early 2030s, are also worth mentioning!**Reviewing Venus missions**
+
+              I need to recall that NASA selected DAVINCI+ and VERITAS for launches in the 2020s, with VERITAS expected in 2028 and DAVINCI+ in 2029. ESA's EnVision is set for around 2031. Japan's Akatsuki, which has been operational since its 2010 launch, is also worth mentioning. I'll include some historical missions like the Venera landers and Magellan's radar mapping. Venus has a thick, CO2-dominated atmosphere, and there's recent controversy around potential signs of life!**Summarizing Venus features**
+
+              I'm looking into Venus's magnetic field. It doesn't have a global magnetic field but has an induced magnetosphere due to solar wind. The surface includes features like Aphrodite Terra and Maxwell Montes in Ishtar Terra. I need to highlight its slow, retrograde rotation resulting in a long day-night cycle. Venus is the brightest planet, reaching a magnitude of -4.6 and showing phases through a telescope. Exploration has been challenging with landers like Venera 13 lasting only about 127 minutes. I should organize my findings into sections for clarity!**Detailing Venus's features**
+
+              I need to clarify mission dates to avoid uncertainty. As of 2024, the planned launch for VERITAS is said to be 2028, but to be safe, I'll just mention upcoming NASA missions like DAVINCI+ and VERITAS, along with ESA's EnVision, set for the 2020s-2030s.
+
+              I should include some extreme surface conditions, such as high temperatures, sulfuric acid clouds, and super-rotation winds around 100 m/s at cloud tops. I'll provide numbers, like surface gravity at 0.904 g and Venus's mass as 4.87e24 kg, 95% of Earth's radius. I want to note that Venus is the "morning star" and is named after the Roman goddess of love and beauty, previously called Aphrodite.
             type: reasoning.summary
-          - data: gAAAAABpEglaDlqr6W69WezzCt54Qx62tf-AJZM0xE2p63O61dV-B1dp9CxhGAuKNLQui7lSKVAxUrWc1RQtKJ8FXKGjvIYioRrozYZhpuZAVXBc4ONZoXRaLwgfu2p-jAY22fyUxiNN26GisZDzA0AjOwwSZyo_YbLXp9oiRVEU_JV6uHkHBmSl5Pqdk0i2SaHrcGOC-5193H16HPxIalH4NNUsWfuUCgmRTrhkvz2SZqDTYk1XtPlwgWpDOkMDosVSXFkXhUC7m0b_QXNnmw2jqD0c4v4CfVb-vgkb7WcxPi019InLIZFUOkUG4bComrTdZFXlT08nOGEiNo8oIkyM1FjKuTzbWMgc91r0IZ4jDp8jSEiNdlSS-Tt8_I6_AWtIDZc0JDgFa0YEwgF2s8dq6Fppnj_BcG6tUBoR9S1YH4lVw_ztwGFnX4kkNbDLUAqWDOG5VqSv_5knlkLNk_tA26Ps4sq89nuv-6YYWOU6VHtxxiYbrTpbo_5IbgNEX2o135Fp0ajpMR2EikDa8JByJAcmejo8I7CG1i6NxDch6yLP93o1nhMjd0nw5AfQEuqM6qW71BIZcE9DTlxOCI8qaAZAIEq8AyQLhYefqtWfycBMTFzC4uhqzrwZZ6DE-jy8WM9Wr4jU4sj8MsyvyUh-lJFkwL159jeZXGw3kzKwPYgsWgtqKdgcej7jc7SZp8IxPYt3jucwG3zONL4liBUs6Lm7Fh6XUuOb0YB6_Bsxv1UdVK7_IplOofxPiPeoz2IYS1W7SF0aq54bwXMR0XAlfQX-43gKSZfBaOvs8icDH4rgslGvsV-JRL14078hl04HgnFLZUTjYSqxJSuqs-IFQfN7RVfeQDbQgaQkvv9Gup5Oom0R5r1TUcH5DnyRY7smTXcLEVWQlmoi0wYPGAgYZj747bxLCNCKT5Bmas6EmI5stIw5HHnb-m2hBdBLRfChVBjouVHanmrsimTy6gHXRBe190h6PZWF9rmL5V6ln4hrsemjXePqnYf0APgDZz3zQPLu6Gxfk3Blf6-sO_1xG7xOnnZkpwsxJG8xcJM9iX9nsvQ_lOUFHfLO2vhNimH7__Xw_XSb1_0gAEovwxRe-Q8hfpiKaLmxNW_f4i3DrxSMzA0vkzzymKj2GjYBbmzl0Q5-lN_UJrGfszszll2DuO2Lx7ItvxeoOSCA3uvuuiJttu8PBpY8RdZnCetwLzuiurVOeVhBSJXiwe2gLHFqCPc5oyO99VAXVjePUpXQHdE9vEd-PAE1GxDWYtyeiXO28xlDrb4FeMhvwr3zu7TturMs0x6R15c8vjhmFN-21jE6tBkqXhG3abLaXXwWAWT3pB1WtWlH1DYOfcR72z63eSPWaQ7TSG4WgL-r2WfxHBOB6rFntvJ71AGnRUKJQiFM74VZUx0_gvuLuNDlOmFayWeGyHn7Rpqdbpu7xqwt3dIedPXEzd0Rn8hRPbm7YShtEcDqs4O3vrw3DCAqSFxD4Ec3HklMghTJNoAijQCVvSXvWpnvmoODLPNdoAfNXjQ_lRnALCscz0OEITRPp2J8nO12thLoy33rgRxpZxjXubnu9bhjlwSvmhE4nVTkdUIgLZQ4RyiS3AOCNuFVem2X3Sf1z_tNhTWEtA0lMDCNR4u6C7cQBnb0nc5dsxBD8rJVTbUYdOcbbHXGQy6BnKfYuwBJQs5FyNlXkik4LRIhvNNJJ213rEnQ37pgAIMC3e6kKb3e3yZzaCyxa1vrZ2RvBjs7U3CR91LoUJASso8reeTsLeb9iKPUHVKxDtAiMDFttpZvF-hAorL4aknJxZKm3EtIWwLdVgIjFL_fjOU_bNSRgU-OlomQ6cZ4q3CrD3njZc5Cc63qIO9OXmHWuR4Kj_8UKqhZfCFrxzKVLx33NiePLaUBQ947tl4yDYqDPtn_lbLaZxvqwYYCns439lhuD3RfvmxneN6DND1LC1NkqrFDJBOeWdfNyLMpi-qOZMC1QJO-ngE0ddpJTum1XX9jW4b8ZBBrUdNfLPyHrWTf3aWaraBVn-QJquvWK74OLr4EZu006SWILtAQ9ZuELbvlE6wg1EyGReABwHelXaZHAb34z2OUHEI5jdISCcBqVfHo06emrZpbqr6gFqMOpHqJf2TvE3NxtxU5dEGKqN3w5wsWNvWiG1WTzds3pWJdkMcInV1dLQuR6n7vMask4eBu4Cc441L5f31bevBc6i0Tf8mTRkiFa97kXcRQ5ClGzAFF1ELaSwq3pJ5zDn-E7o5f8lMQQ2GY9NKJ5_lYT1TfDh-ebj-RBoWZuzkM-DuGt40XYEg48ATRen07rFQhym_gUl2-qHc7fmKyqCkvowLq2Z75bDd1HevMRKcnHMZAP3W4AIm-gM8AIi2G_Bshky9lx11Nbb0Q86l_LX8sCyBSv_4v7txvfXgb57MAhgv6zVGJFPMTTffYl8YqCArOzpwV-SsXM5JmZD3UqN0qC_FAnYhtotTc0DZogLmHjFSmCtu6LbCKqop3RAjDbeT10zCrYD93rHlt4NFZwmubjuUR0XbHP-YSVqm9NSIuIP2IFNtNAAI6ou1aP4yHWm3tPHPkSU6kyugDntZ5Yzk7S6MB2CHtY5_EkI0MefAklWE7METa6Nf7mBSK8cMJaWekJdwCfgJ_QQIWTU02EY1ZGXHy_FXvRrHMMear6Evi92hYiX7O0XwziP2-QU-py8wUYkAFeiM81K1EeRtHyN4_zDMYV3QAMAPkXqC9iUMi0vNL6KvLst54ZJxf06qO9OucPbGQUd8wGHLazIfEBphBr7-3hIz5pb4FIopaf1jDTL2tg36dsVK_AVCU7pNCjNUeqTTQH_TmCeghlW5D0_5Jk1Tn4FlyeQWp99PHr1Ymd6ezTl_6Y4n97dRh-KXwXKQEuLpmNDCN59LBVED1FNCy1MkPhqtFx7YVwuuD0dmL7WNsptX8-KTfdp2R2nYX7yHT_SqOXLo-tnU_p1gwj38vdy8OS2uLeXbi7y54e3QCM9dJjLQwYfgci1Trf6JDF7b7jZZ7Qx_bsT8QqdzNvfT7jSRYYvU-NydeAMsc7yp8FxGwizIO0odGu6ywbwRz3Rc8kh_XsWf2W0NNm9u_lpXvFnI3DlYBo2bzHCVjbpacpD7jTWEjPCEcCj_HuTTbeKTX7GU6HZ3QvNwSMHMBnJrV-fgTPWPb1TNxqFO5LwSqIA781CtGKho5U3kMlkgucDcMvngVF9rI3Q3l-2LDoLtnKREs3F7qvuwAJlceXpV8FunaftKNP7B7BkWSbj_Ic9Ph-R2T4wLvFh71Inqe3zGWDko6botJYL-NVuwxNe_S1L7fOZff0Ng0l0d0DkqHSRxRHx9qK6_mRJMXXdcTAxHF0Pmfqg4KBxV9kkIPQBTyHiVDxgr5t-k9MV52XtvMnhOUGIQtxy10qRm-LhRiUD5XReZwvm9tuqUCIgDkYw_lr-3BLQev3Q9vWhUAxpzMD3zxmTq4nLxlF3EnmXAozPkMpArhEfqz3H9M2vX5fN5AgBKSnaJezr5bz0oF5eZrXK8nCrPYnovRV_e9oAnPjIvRQVWmFygup-N_wDi_Dzbxt3d_amPZFi_JVJeleq6Qd05TvwG-t1EVYHA_GS2Ms0K7oJtm5V_faJcALcxt8preCVb6o4k7M3Y-WjfMe62drQS8qIlqD1jLjXG0b-KUoG917jZlMcEsN5HFnxN0gW7eq7AGJ-NiQz7aeVZGUxaiz9L66IiDGoX731q5M5gaVYffWH1o_jA33RQ2H6YTae5HOCZ5Qv22jBl5IcHT66-b9eVFc4vIu8fLxvAlH_UbzI8GSczd3OLMldZs0WOiOE8tWj6eWzzvYPjT1DvIiCOkAU56FMSZRdV8-ee_sey_mFeR5qj0vtqgD08443dFGyvqCY9yPYcauv-Tjn-7LJ-UMHEDAmcBsk8pGhS4k2Xn0g1EilMhHzKPeMC8y0K4hHdO5GdMi-ZUPutVWxJqgOSsJ6Csb1NMKKbb5XqmBg0NcKlQxFcd8CIDS0ZmQx4OlnNg_iqI_NHEWMFNdJbJvMHDNah9IHRhdSfD2oEcJxrM9yUMwmf5aDVSnjHpGTp-LJ_LcA3XyzjEAHc1k03Eg1keqphvK0PGUlEKv8t7zD0-5hfAXQItsvDC_ed055QnxFU16m0V2bhKdqsldUOT5Tax3KoFbhdE78kV6dK20TkbsKuaQ4j-FysBcQw0o0KPjR6D-Haz3N5dE9ilgAp4R-gGTcFQK2EzBUCa5nglSxVNCaWmWke7jeb4DJmBYIXd59n9jlcuHj1Vhu2tNOm6kMvt6ZlHF1FNU8mnvIk1v_XWnavmwjzhskYBMbc6R1jua2VEB53EBxuzMqqx1bnvqbZJZKDzoIgGt61B4WBZJyjfWXslCJELo4d3t4Koa0SYcEQ2IxrrgFJlHLNBHgOTrnKCVwEbe8tY_EJ7unjrHnN4NYKVo8fYRs1QasREwae-faD4Prcmfh1murWWnbuo4JPD5S38AxZDLjJjB0t_6Q1-YLF5X36uOIxIMJ0ZOM2kX_jkkMfMbfcqHXijRkwrOA7cCe1pcExJVoPJjxHGNG4l2HjOeEsWzrC5pNEWlM5jpp4nUXugawpoZ1-EY-uoFDTrhnOuCS-q6HPLd0GpCR09uVR14tXtXKAHUU6RWB2vYOutz_CQJGtYpsyeW7jU8sfkvUs6QWFc_Xr8RnRgbyQ9CgeUjhhDQHu-gRFqR2d-_b3aKy0KYlbo6ny53atw8q2vvdwj9KS4V856tUn6mT9egwIE3qvVF3F67YiT_VAX5KUVs_YLJQCJ8WrhLJ0FWHklIfFanJT2D3fZywx74lSDHPP4F6kywgGiDTeVivhBDApyWZO13AwLD1cWxyPy_u2I-7Mx_cwhJ3iZIEAFfKRoMmZmI-HOogVHFdgm9ibWqRPXpXDR5MEC_oO3iPJ1gujCIfeY00MWL-1dS_w3ZjA5v1luG6IMkpLUIRekIDY=
+          - data: gAAAAABpgLsfnLT6UrW16MIHBwBxM8RQl4LeXc92Nd0kZFyvIAsv1uqH8_mcSxAlfJKWQSII7fZnMyjV5at0eP6QypMxTpNBN2NaIr4eg2sItwYT1G16Qg2uR5nltEzUPnEtIh89OXfVRnDAhHNenI_dsgjGonYyyXrwsZgw-bw-i6t2bjeLtPICBDswpEX3ZoBFrisXKcXxv5zTEuuLwXBe2v4Ieldc4dFte3LNBI1VUvC9TzJZxKraM99XLxfXiAUvPf9Q5IEsCQD6EYeew0q-dDiYDTkWmB97mRUf9gM7FeqJAHInmBM-T7kSW5owMwuo8Pqri9dKIOYzYQnnLERp0zkC212rLI7uQTqVjkI_quM4bzt1ESyF6X_usN74rhY_7Ij0-dZKQEfMwOaRpkUg-yXmXo7-UnyD_bxBd_nfX85PTMUFCbTHFz7ozp6np-2iUdkeml3_jmVwdrkzg3K_mCpjfrwfBfFeSilzpukpr2OF1cSonXQbFkiO0ZRIozOpCNszptbQv_Pe8eufmrkGmIL8Nv0EZzwshPxix1dL0AxT_H6qx4I57gENFY4C8b0PkCy6mggmiSP0NpkJKcG59yPZnpnZnPJoS42Nl6i7v5q2NuYFa0hR_qHIiIFiWQfX-OANxYubYh_U5SseUpOhxM17m-A19-TLPwcgaHPh5H8nrMyg7gfJ5s6V-uN_B0jCJxURg7jJ6yo2MetFxehVaXFmrB0pQI-PYImnopmAjZkChmhzH6nakZoOO-OGTUz7gBpYlmO7TU85zG9t-_bRcylKC3SLRmkPztlbKRB95V8OUniMX-Xe_6-XB-GS-6R-jDWN3wAYBAZRMDIISCEBClyzP4zqD8-voE0IedJW77LxUysVzrDYAcib5SMEQ_U9EjCbAedvNTHTWE-qqqRC8Tl8d7YKJn-pzMn3HFoxRDxhf2QtmEGHdluRbJyvy9Z13YuteNV4SvkxFohhIxYsQU37ErqJVSTaQd_H2hqBZ24SNKpf5LFsMjZXOQ7B4WFaZFOJqaKWj35Ubzm1TU3aQkh9vEd2TZ25UODzQxQFV0Z9GoAiAFqLlT0wDL0PFubb8Nwy6Nrl-GYPFjOBqqVP2Gw1mLYvuAY_r00igtlxYUualwMYPhMlwHP0oymBp0J5RXh8T73mhdludNEoQg0MSVpj4j7bUbQnuTqr1p23a6x6aVoNzNK-LyGbnLLNwkBX1jTH757CFPSFXhy9Sa8aJ4L1jmblb32dWd-_2iuMDYj4U08SCz6mBgVX2jjmGgATJYJCwkt3DxWV6f2-Jr7knx_JA6qm-cSKo-I8rUzLdRz-Hq3HUI9qrB_RIlNX6pOzqFYb6fypZmGl9a7V9YINY-5oN_KiDptBFc2eFTK63MnRCauAqqJP3DaFMuKUAQmj6l5sln8bniOKv9BPf7jokWjDOz6oRHtmil9Ns8vMrDHEho7ummYjf4Yw8_p0lDx0sTzpuFVVad6v9fIPe0WfpU7hFNWK5TfLJ3Cl2aj9h35FX6DawpJgXj3PA-py637p8WLClSqoJJAfrZJot5rwP6M_EUBZulu-NZ2svlPNZvf330RF1eyQoVyhgtJWDeZrir2Oemld7sIEhX_nwpoXcpcM-9m8N5ftJZKSilNUk7jlmS7UjhBnXouYeJ3zRIN7yS-9PB1hHOyUWTmhAjpEmOyZaGHuj0UiWCYGADS4PYK13SFtg152iRTbh4Nkv1DwUgc5YtGUoq69KyCqKQqRyysASi4R7gKPMoOm1_2OGlb2G7N87IevoaIZY00ss05c52hFjAqwTQt-pql3bEltp3OLQoVddU8eMfrr4_D44RPwis7l_1LjdniDqwJJ-jF-Cq14XOqmWiEDRat9iiNxtErgOZar7r1_H2iAJwLNkTnNvBIgFafVIuJriY-ubd00NR-WlBUD-ZqsmKFiTHAI0Lpo63Xw1YtdhZyMNtZLRyzYZvLKTK6MqAJ0jKQC0bQnyTh-WEj1erAQme-Jo85USUB3EwO9XmsQUlQkWck_Cjg6agJx4wDl44toUYlwuqjWsHZHBCzdEGtxFGlcnIJ1-cSujq11VVODTS8rJgcMeRA2vJnC79ops_XIG_1jEXQhnuy84sOa3MW-6BFUIPdLIWWyE39Oc8bT9ThgKT_1R2Vv4lRghdntHUFrnlp3nVCcRgzWLvHKbA6YKwU5ZHSihOOr883EpU59AQn5E1OszMZol5zrRffVQ4s3GamxHCLSNdeY1DsAUDpu9C3IUKHhH_p7i521eDinP97AJgDFfzC9PSsiV-a_x9jlEFsV2HHBPU31f6c55TBIX0BS5dt0uZzpHhmOIaeZqKyn7VSHs2IpfTMOzfAWMxHqmf7KhBsh-Ahp3GeBH9uEGAx7KQnSbKegqbzvW2ZhFYY1ux7dZe110ol6tsZVRiBk0ZGqVk4iTy3hpTjlEo7owuEwnCWGOBkCvg31eqR9SMIG-Oq0HTI2ROfTolLoB12GJz54mbMcO-fDqZ-aFP1rsy_zbvo8PrplyveFUon1rJyR8Au5EDLTembPezdPSPaBeS1lt7jPLC3f8Udw_qLm1nM3G-2bqsBs9B28PHNZ0AoSvAJv5HExZ5b-y5h_44C2FZFGLWZUOCMpGhrKke6pkvFgzj9IQOGYcZOcApUDztkNN2aXZutFa8lloIHUo3YDq5u-R938WQU73x82Q7rngzC5hdfFMra5wBGEV4FUtgfemnF8vz9F8KApmz-qdziuskO5DZ0g2PMzeehIfnPGDwCvIC3FKQ3iKakeARJxUKXaMZ1k3zKKl8UNY0Y2OVVFVXXSshckuf19Z6sWWT5xd4ZAoLAr6THYCwBKJxJn-_lM9QpaGMZeqxh0hDGHq3f0zAmKISztid8hxpgJroGfX9pi-5vZN21QTuUAR6H1X0PyKuSzeYGxm3ZBWooMm5z9b3cOCnBo3mVacafNkd_sBUParvyIq0bK9VYYe7WgWu6hxFfq-GcfzEdgCEAQ4cFYRY7Jg6eyGNqS63oI3yms93wI3Y5CPGceGVLkKm_xK3RpWhxyj7zFrSWARbFjdbUneg8lSV041REGGrpmgYXSZcM0oKHuLI_s_vxm0vJrWMvvHxfDOzM5UIY9cdKaIKcB2MF8FQBj6ZVw0e5GSj1yzkqHpcMO9MGfFxeJdI2BUVg62MJ5CbFE14XxmuaVZP0Y4r3QVx_z2Jb5ZJdb7gbXS9LqFwZ769fbu8F5OJ5HPANNtBFo4a3VvARq_YzxLq6RRrNOpXdsALn5hqUHpXqTJHkp2xqdhJmtCIWd1IwQjviSrkqjynmF3r-AIJJI5dPo7NBGt7Hieyt1QCNRPwOXcJWaRqv_2h-3ptsVZ0LNPxaJvDzW9PkTiEJGhwMsrD0pdZ1ogoNCf7VPsGpfVcrrDE52Wzja-83xKkxKOlh3df2Lg3i-ZPBZ9RwxE_4HuQJ3F3COV5FIEh169i-mYOd9zH8krQ2IbORidvQlPMwGi109U1-zfef9-hsFwALvehVOc8s4CvRNbTu6hUVjE3OtTL1lkV6rACi04eql6rQfkL2uP1wn1QEycUUZVcmKnCnxDw-a4Bl1HY9Sq2XCllzs9qp6CfIHGrIMpphvSsHnSNm9R4aV_18eT78kMc2EzNZrMBN7udGggMa_wMiy7X31liubZehbMqs78A6YNdnIsR19B2cOP6J_7Q3PDN0JA7Ey8JA5BbwDgvDn_dzwbslxCGjSLz0_T3oPdySlRxzrumhXzyxqIzjAVwl7xojMHaiBxRHuw9_0r9Q681TfSlLJk2Wg9xHXhSm_zp2Eq0MkpNgcpDJhSa1Nt-9sPUtUAGxb5f9u0arGTis9hTAdhnE5WiYL0WKf9w3x8tW1sMlX9Rs6zo2nnww9NnYn_g4L57HolAuLo5DDI1syFbH2iPfFSMm-6c3OP6omEH3j-2ZRXJmZpjv1C0B1oJxSieUtivUX7efrhrHomCBCQ0L1gi8WuhLO2YfyrMWd2ZEPl-olnr2TiMhXLWt5lajzQ1mnhAMmso7qCjw6xX9czkiT-45YGj9qcTEiIk8GIdTZ920OlAGjoWoBV8i5LuE3jqHrxUT6pqBvtdZ3M3NNtaJFALpWYrZ438dw-RM6TpA67V6mvjl60eKal5PF4y91RyIX4O88btk2ngR2hqofuDWmNiiIB6h8txpiNTtNS1QMFsknvE-Vk1-LJOhxv6v-ObYR3BJcoaUvvswhO49GRsXF7vujBmZXepJ1446fPi5-R99C4cmlmU_7q7l7qatL_ZpwAh7f_Z-bDe8Q769oQFkGa1oRODYuPtTvxrAWl-uYSLyfOsnCTa_egmufGuGI3l9lnZDumWj83_BsUiMeUXeQh3YWXtOkxSu83FjVbxD6KmGXeeL-cfyChZwvlcBTnmmWvt52EFb4GR0sRojbJQ8P-o5xi1YLRGVfnUOGPQscltVKaF9osZJGF4e5-rufUfzkRpXckPL1ULAUQBzQVeE2AMvr4L5trL4LoQZyNJMH01CYbrEpA7ChuY9O0l2aq-1eP3_Bm_k_zLnN1FrKSGtdayHLr9iHW4IEpGWbTtAt6L449jlyqrQk2ahxdnmBL7WbvdHv7Lbt2rPN6OoVGf7uOwJk0tbCIXVy0UqkH4FpnnNrFEDJa777w1ob8U-7jJV_g95-kNASYWWckFIUg68rl5lL10Uza_i5td9YMebP_wr5mt86SNmBFH4H_bLzcntSu8VuTlgwQqd4vTnHMJEJRWkAHOhI49gezQNjsQjcAfvgfZtrAOudYWGtPvnCzwefzJpOSQgPcmOnlD4_KtRCMwl-A4z9WKUew92_IM4soONgGtClNdBNOBcw7MtrYnmNpLMq2Ndxj72woYOd1rZXSwWCqovA4kl-mT1f-JN7kYn9FnCDHgqETM38V9LDrTBhB_tMWnkbgEu5ucLn_hp0tmoG_ztirO9pl8E6Dy5DZAY8X-v40YEmfDbZ3tVbzvs0Wr0YlN2rJcvgYhwDNEng4yQekDFmiuWVi-K3_n-vVy-mTgQSxVBzKJjd8d_f34yB2JQ7Rf58eH8JCqwad0yQXEHipRSMGlFOrZzvyJ5OO0Qby3v2R7D1RF9K6fePN2m4mGGPkVnHL2sjSMs3G-YUxfpTJB-EIQQjoO6xdvuHOgvl3lBx0dJjlJPRDksiN89ZL_RfATZFVGQ7uQDVOks6qwXk-sILZhOqJoT1k-vehC1_lhVkeL6t1YOW0lxf-5DaOE09ntjli4ecgDLpyVHI7eeSw7jZHsooDGBa-rTJwvaHGCCqbwwpDRgO0KpE87vGJ4rNKqwi91U7a-30vaAg66wDbAFwd3LFXcRWVbOiWhlJvihqN8hFIYiO76ARTW00LS72L7RmktBlB-7BGeEVZ4Grw52ODIjog7OV6dskL_pdrDZORa_nzVguCK8r3P3Xaa0sBZvWxN1RT0fv0AYL5a6zymFofcwOOnzgfv9QRHQ-_5M8sducxcNWf1IrdaAWhV-krdGbwyLxugCix02jg0M4KT9CisJOddfaSkbsi0iBMKXb9hnqNb2kLrJLH21yU3gn8JGXP0tv8awm5LzjIZBg-XzWEKr4x4pi-HIitrmpDvdLmFXEpyt4s-oB_ZNDqnwOg6KolsRvHOydrUtZuC30j_lx_lQRDoPMqeiPylW_sLr0e7D1pDZxnCag-X_ne2tOpZ9zuSoekQeZY9nmqmOcZL3r56CJDomdWmoHYCEs9CEckS3QsTqUjQaK7uNDYholW141sjKsPL5Z69MqH3TimAgLzgd8nkhs3mSw579gIvrjBF3aK1g_FlccHeJ5DO9bXITlJtvFVbVThOaNRB7Dqfxasq_L18ouOHJHqYOzz_WgykGguJdRvFgqYsPNiVbAeXehsKzPDQX5vVMasBJRUzYfSXUDDvyYRAwDZjQGVbpObVS0499n31AGXUNElGjrUueT-UXYgHutOCpXzBaLZstjerJK2AiycFHjqSxl5j-D82H0lSG2qSI5-d5GarXsBydiA9t-DOj3N9FKXpG6nHQR0r2Ppm6XaVHS_d6bZmKr1flEhnCXFIylZnA4vsY4l7wVmsrCu7OXi8AarL3CfrsmlV1UPsaOX5yAoss-9vLA2TrJL0wOcsqpUbMCwSq2SDIzviBwwRPU0e7oxJ1R0fWBo8GaWXn_3rXM5ZliXbw623FQRtVwQt9lV-CW1pXg7gDkGUPm0hoec7fqyYEbzK-HHq62XwY5Ew8cjX1ObinGH5TF63AiePocr6hgqcvQaKm0fve3qW0GjOfUpJepqepqjgGRamvQElAsubuDbyUUAxltDnX6-_sJTIlh6re6nIbLFxiYDruC748z_c1wVW3Uhii5r6M5QNYxj1G9l4y40GA-SmDPgcnaIfXcGhCMm6GwSUCnO1TRgdev_1YkN8RpGLdSo7kfSOetXhFD9UaRQtSiWP4p7T6gIvrZAYayAiKbg36MliYrQtVm257KFsMlIrDsL35cjz-Wza0HjgvPraj6c7UTCY07ggn3L-geyqq90171OrAb1w7MGsJRvlaDgI_SgIELfXOLWJHDsd2IAcrAULsHtnNMnpai2apHuMrdP9XxUazn_UekZvDoqG3qnQJ-hGFsUDeNxk8rzWsCDTfNQkNQ-dDBLmZLCpqOIutcKNbgTERLW1xr1HTxrns9aex5coFJLMyCmjKgg3z3XEiJkAEc2JNRoQE=
             format: openai-responses-v1
-            id: rs_0f2864c6e4889623016912094071dc81979635e33414ef8729
+            id: rs_0c3111719e768777016980bb030ba881948fa1337f321e620b
             index: 0
             type: reasoning.encrypted
           refusal: null
           role: assistant
         native_finish_reason: completed
-      created: 1762789695
-      id: gen-1762789695-8IngOktYUifJqeBs0mwc
+      created: 1770044162
+      id: gen-1770044162-619aHOGFrhGu35iTPVa8
       model: openai/gpt-5-mini
       object: chat.completion
       provider: OpenAI
       usage:
-        completion_tokens: 1515
+        completion_tokens: 2117
         completion_tokens_details:
-          reasoning_tokens: 704
+          image_tokens: 0
+          reasoning_tokens: 1024
+        cost: 0.00423825
+        cost_details:
+          upstream_inference_completions_cost: 0.004234
+          upstream_inference_cost: 0.00423825
+          upstream_inference_prompt_cost: 4.25e-06
+        is_byok: false
         prompt_tokens: 17
-        total_tokens: 1532
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 2134
     status:
       code: 200
       message: OK
@@ -176,11 +162,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '171'
+      - '186'
       content-type:
       - application/json
       host:
@@ -204,7 +190,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '18631'
+      - '15201'
       content-type:
       - application/json
       permissions-policy:
@@ -223,123 +209,105 @@ interactions:
         logprobs: null
         message:
           content: |-
-            Here’s a concise but thorough overview of Mars — the fourth planet from the Sun and Earth’s most studied neighbor.
+            Brief overview
+            - Mars is the fourth planet from the Sun and the most Earth‐like planet in our solar system.
+            - Diameter ~6,779 km (about half Earth's), mass ~0.11 Earth, surface gravity ~0.38 g.
+            - A day (sol) is ~24.6 hours; a year is ~687 Earth days.
+            - Thin atmosphere (~95% CO2) with surface pressure around 0.6% of Earth's.
+            - Surface temperature typically −125°C to +20°C (varies with season and latitude).
 
-            Quick facts
-            - Distance from Sun: ~1.52 AU (about 228 million km on average)
-            - Diameter: ~6,780 km (about 0.53 Earth’s diameter)
-            - Mass: ~0.11 Earth masses
-            - Surface gravity: ~3.71 m/s² (~0.38 g)
-            - Day length: ~24.6 hours
-            - Year: ~687 Earth days
-            - Axial tilt: ~25.2°, so Mars has seasons similar in character to Earth’s
-            - Average surface temperature: roughly −60°C (range from about −125°C to +20°C)
-            - Atmosphere: very thin, ≈0.6% of Earth’s surface pressure; ~95% carbon dioxide, small amounts of nitrogen and argon, trace oxygen and water vapor
+            Surface and geology
+            - Color and appearance: iron‐rich dust gives Mars its red/orange color.
+            - Major features: Olympus Mons (largest volcano in the solar system, ~21 km high) and Valles Marineris (huge canyon system, ~4,000 km long).
+            - Polar caps: seasonal CO2 ice and year‐round water ice; mid‐latitude and polar ground ice is widespread.
+            - Evidence of past liquid water: ancient river valleys, deltas, lakebeds, and minerals (clays, sulfates) that form in water, indicating Mars was warmer and wetter billions of years ago.
+            - No global magnetic field today, but remnant crustal magnetism exists in some regions.
 
-            Surface, geology and major features
-            - Rocky planet with basaltic crust and iron-rich regolith; iron gives much of the surface its reddish color.
-            - Volcanoes: home to the largest volcano in the Solar System, Olympus Mons (~21–22 km high).
-            - Canyons: Valles Marineris is a vast canyon system ~4,000 km long and up to ~7 km deep.
-            - Impact craters are widespread; some regions are heavily cratered and ancient, others are younger and smoother.
-            - Evidence of extensive past erosion by flowing water: ancient river valleys, deltas, and layered sedimentary rocks. Many minerals (clays, sulfates) point to long-term interactions with liquid water in the past.
+            Atmosphere and climate
+            - Very thin, cold atmosphere dominated by carbon dioxide; little oxygen.
+            - Weather includes dust storms (regional to global), dust devils, and seasonal CO2 frost.
+            - Atmospheric loss: much of Mars' ancient atmosphere was stripped away by the solar wind after its global magnetic field died--an important reason it changed from wetter to drier.
 
-            Water and climate history
-            - Today liquid water is not stable on the surface except perhaps transiently in brines; most water exists as ice (polar caps and subsurface permafrost) and as vapor in the atmosphere.
-            - Polar caps: layered deposits of water ice and seasonal carbon dioxide ice.
-            - Strong evidence that early Mars was warmer and wetter, with lakes and possibly large-scale oceans in its first billion years. The climate transitioned to the cold, arid planet we see now.
-            - Active processes: seasonal CO2 frost, dust storms (sometimes global), dust devils, and recurring surface changes indicate Mars is still geologically active in some ways.
-
-            Atmosphere and magnetic field
-            - Thin CO2-dominated atmosphere yields low surface pressure (~6–7 millibars) and weak greenhouse warming.
-            - No global magnetic field today; there are localized remnant magnetic fields in the crust. Lack of a strong magnetosphere made Mars vulnerable to atmospheric loss from the solar wind over time.
-            - Trace gases like methane have been detected intermittently; their source (geological, subsurface chemical, or biological) is not yet settled.
+            Water and potential for life
+            - Today most water is frozen in the polar caps and as subsurface ice; small amounts of water vapor seasonally enter the atmosphere.
+            - Past conditions were more favorable for life (liquid water, thicker atmosphere). Whether life ever arose is unknown and a major scientific goal.
+            - Methane detections are sporadic and debated; if real and not geological contamination, seasonal methane variations could suggest active subsurface processes (biological or geological).
 
             Moons
-            - Two small moons: Phobos (mean radius ~11 km) and Deimos (~6 km). Likely captured asteroids or formed from debris after an impact. Phobos orbits very close to Mars and is slowly spiraling inward.
+            - Phobos and Deimos are small, irregular moons probably captured asteroids. Phobos orbits very close and is slowly spiraling inward; Deimos is farther out.
 
-            Exploration history (highlights)
-            - Early flybys and orbiters: Mariner, Viking, Mariner 9 (first to map Mars), and many subsequent orbiters (Mars Global Surveyor, Mars Odyssey, Mars Express, Mars Reconnaissance Orbiter, MAVEN, etc.).
-            - First successful landers: Viking 1 and 2 (1976).
-            - Rovers: Sojourner (1997), Spirit and Opportunity (2004), Curiosity (2012), Perseverance (2021). Perseverance carries instruments for astrobiology and caches rock cores for planned sample return; it deployed the Ingenuity helicopter (first powered flight on another planet).
-            - Landers studying interior: Phoenix (2008) studied polar ice, InSight (2018) measured seismic activity and interior structure.
-            - International missions: ESA’s Mars Express and ExoMars program, India’s Mars Orbiter Mission (Mangalyaan), China’s Tianwen-1 (orbiter + lander + Zhurong rover), UAE’s Hope mission.
-            - Mars Sample Return is planned by NASA/ESA to retrieve Perseverance samples within the 2020s–2030s timeframe.
+            Exploration (highlights)
+            - Early flybys/landers: Mariner missions, Viking 1 & 2 (1976 landers).
+            - Rovers and orbiters: Mars Global Surveyor, Mars Odyssey, Mars Express (ESA), Mars Reconnaissance Orbiter (MRO), Spirit and Opportunity (MER), Phoenix lander, Curiosity (MSL), InSight (seismic), MAVEN (atmospheric loss).
+            - Recent milestones: Perseverance rover (landed 2021 in Jezero Crater) is caching samples for future return; Ingenuity helicopter demonstrated powered flight on another planet; China's Tianwen‐1 orbiter/lander/rover (Zhurong) and the UAE's Hope orbiter reached Mars in 2021.
+            - Mars Sample Return: international plans to retrieve Perseverance's cached samples in the late 2020s-2030s.
+            - Goals: search for biosignatures, study past habitability, sample return, understand climate and geology, and prepare for human missions.
 
-            Potential for life and habitability
-            - Current surface conditions are harsh for known Earth life (radiation, cold, dryness, low pressure), but subsurface habitats (protected from radiation, warmer, with ice/water) remain plausible refuges for microbial life.
-            - Ancient habitable environments are well documented in the rock record; search for past biosignatures is a major goal.
-            - Methane detections and seasonal changes spark interest, but sources remain uncertain.
+            Human exploration -- prospects and challenges
+            - Attractions: Mars has accessible resources (water ice, CO2 for fuel/oxygen), a 24.6‐hour day, and scientific value.
+            - Major challenges: low atmospheric pressure, long transit times (months), radiation exposure, dust, life‐support and entry/landing engineering, and planetary protection concerns.
+            - Timelines for crewed missions are speculative; agencies and private groups discuss 2030s or later.
 
-            Human exploration and resources
-            - Human missions are technically plausible but challenging: long transit times, radiation exposure, life-support and entry/descent/landing of large payloads.
-            - In-situ resource utilization (ISRU) prospects: abundant CO2 for making oxygen/fuel, widespread water ice as a water and hydrogen source, regolith for shielding and construction.
-            - Several agencies and private companies have long-term plans or concepts for crewed missions (2030s–2040s timeframes are frequently discussed).
-
-            Interesting facts and practical notes
-            - A Martian “solar day” (sol) is ~24 hours 39 minutes — useful for rover operations.
-            - Global dust storms can darken solar panels and affect surface operations for months.
-            - Mars’ thin atmosphere makes atmospheric entry and landing more difficult than for Earth; aerobraking helps for orbiters but landing large payloads is still hard.
-            - Cultural note: named after the Roman god of war; long inspired human imagination and science fiction.
+            Why Mars matters
+            - It's the best place to study planetary climate change, the limits of habitability, and whether life can arise on other worlds.
+            - Discoveries on Mars inform understanding of Earth's history and help develop technologies needed for future human exploration of deep space.
 
             If you want, I can:
-            - Summarize the most important missions and their discoveries,
-            - Explain what living on Mars would require (habitats, food, radiation protection),
-            - Dive deeper into the geology or evidence for ancient water,
-            - Or provide a timeline of exploration and planned missions.
+            - Summarize current missions and which instruments are on them.
+            - Explain the evidence for ancient water in more detail.
+            - Compare living on Mars vs the Moon for a hypothetical human mission. Which of these would you like?
           reasoning: |-
             **Exploring Mars Overview**
 
-            The user wants a comprehensive overview of Mars, covering physical properties, its orbit, atmosphere, geology, and surface features like Olympus Mons and Valles Marineris. I should include information on seasons, climate, and any evidence of water or past habitability. I’ll mention its moons, Phobos and Deimos, and summarize exploration history, including various missions, plus human exploration prospects. It’s essential to keep the language accessible while adding key numbers like radius (about 3390 km) and gravity (3.71 m/s²). Cultural aspects and controversies about water and potential biosignatures need to be noted too!**Describing Mars' Atmosphere and Conditions**
+            The user asked for information about Mars, which is a broad topic. I should include basic facts like its physical characteristics, atmosphere, climate, and surface features such as polar caps and Olympus Mons. I'll also touch on water evidence, past and present missions like Curiosity and Perseverance, and human missions in the planning stages. Additionally, I'll mention the challenges of habitability, Mars' day and year length, gravity, and its two moons, Phobos and Deimos. There's so much to cover!**Discussing Mars Challenges**
 
-            Mars has an axial tilt of about 25.2 degrees, making its seasons similar to Earth's. The atmosphere is composed mostly of carbon dioxide (about 95.32%), with smaller amounts of nitrogen (2.7%), argon (1.6%), oxygen (0.13%), and carbon monoxide (0.07%). Surface pressure is roughly 0.6% of Earth’s at an average of around 6 mbar. Temperatures can range from -125°C at the poles in winter to +20°C at the equator in summer. Mars has polar ice caps, evidence of ancient water, and two moons, Phobos and Deimos, which may be captured asteroids.**Highlighting Mars' Surface Features and Exploration**
+            I'm focusing on human exploration of Mars and the challenges involved, like in-situ resource utilization, which includes finding water ice and using CO2 for fuel. Exploring Mars' geology is important, especially studying craters like Gale and Jezero, where ancient lakes might be. I should create a timeline of key missions, including upcoming ones like Mars Sample Return and ExoMars, while keeping the information digestible with sections on basics, environment, exploration, and potential human missions. I'll present key numbers, but will avoid making sweeping claims about unknowns like life.**Summarizing Mars Facts**
 
-            Mars features the tallest volcano, Olympus Mons, standing around 21.9 km high, and Valles Marineris, a canyon system about 4,000 km long and up to 7 km deep. The thin atmosphere limits liquid water stability, but brines could be possible. I should mention frequent dust storms, including global ones, and the timeline of exploration missions such as Mariner flybys, Viking landers in 1976, and others like Curiosity and Perseverance, which landed in 2012 and 2021, respectively. Future plans include Mars Sample Return and potential human missions, while habitability remains uncertain, especially on the surface.**Discussing Mars and Its Exploration Needs**
+            Mars has a day length of about 24.6 hours and a year that lasts 687 Earth days. Its surface gravity is 3.71 m/s2, which is about 0.38 times that of Earth. The atmosphere consists of 95% CO2 and has a surface pressure of roughly 0.6% of Earth's. Temperatures can range from -125°C to +20°C. Features like Olympus Mons and Valles Marineris are impressive, and there's evidence of water ice and ancient river valleys. Methane variations and brines add complexity to the search for life.**Listing Mars Missions**
 
-            I need to address several aspects of Mars, focusing on the need for pressurized habitats due to radiation concerns from its thin atmosphere and weak magnetosphere. Resources like water ice, regolith for building, and CO2 for oxygen and fuel are essential for In-Situ Resource Utilization (ISRU). I should include basic facts, environmental elements like dust devils, seasonal differences due to orbital eccentricity, and the average distance from the Sun at about 1.52 AU. My approach will be a structured overview touching on all these topics.
+            I need to outline major Mars missions by year. Starting with Mariner 4 (1965), then Viking landers 1 and 2 (1976), followed by Mariner 9 (1971) and Mars Global Surveyor (1997). I'll include Pathfinder (1997), Spirit and Opportunity (2004), Mars Express (2003), and the MER rovers (2004), along with Phoenix (2008) and MRO (2006). Curiosity (2012) and MAVEN (2014) are essential too, plus InSight (2018) and Perseverance (2021), featuring Ingenuity. I'll mention the sample return plans and conclusions on atmospheric loss, seasons, and dust storms, pointing toward future human exploration and scientific aims.
           reasoning_details:
           - format: openai-responses-v1
             index: 0
             summary: |-
               **Exploring Mars Overview**
 
-              The user wants a comprehensive overview of Mars, covering physical properties, its orbit, atmosphere, geology, and surface features like Olympus Mons and Valles Marineris. I should include information on seasons, climate, and any evidence of water or past habitability. I’ll mention its moons, Phobos and Deimos, and summarize exploration history, including various missions, plus human exploration prospects. It’s essential to keep the language accessible while adding key numbers like radius (about 3390 km) and gravity (3.71 m/s²). Cultural aspects and controversies about water and potential biosignatures need to be noted too!**Describing Mars' Atmosphere and Conditions**
+              The user asked for information about Mars, which is a broad topic. I should include basic facts like its physical characteristics, atmosphere, climate, and surface features such as polar caps and Olympus Mons. I'll also touch on water evidence, past and present missions like Curiosity and Perseverance, and human missions in the planning stages. Additionally, I'll mention the challenges of habitability, Mars' day and year length, gravity, and its two moons, Phobos and Deimos. There's so much to cover!**Discussing Mars Challenges**
 
-              Mars has an axial tilt of about 25.2 degrees, making its seasons similar to Earth's. The atmosphere is composed mostly of carbon dioxide (about 95.32%), with smaller amounts of nitrogen (2.7%), argon (1.6%), oxygen (0.13%), and carbon monoxide (0.07%). Surface pressure is roughly 0.6% of Earth’s at an average of around 6 mbar. Temperatures can range from -125°C at the poles in winter to +20°C at the equator in summer. Mars has polar ice caps, evidence of ancient water, and two moons, Phobos and Deimos, which may be captured asteroids.**Highlighting Mars' Surface Features and Exploration**
+              I'm focusing on human exploration of Mars and the challenges involved, like in-situ resource utilization, which includes finding water ice and using CO2 for fuel. Exploring Mars' geology is important, especially studying craters like Gale and Jezero, where ancient lakes might be. I should create a timeline of key missions, including upcoming ones like Mars Sample Return and ExoMars, while keeping the information digestible with sections on basics, environment, exploration, and potential human missions. I'll present key numbers, but will avoid making sweeping claims about unknowns like life.**Summarizing Mars Facts**
 
-              Mars features the tallest volcano, Olympus Mons, standing around 21.9 km high, and Valles Marineris, a canyon system about 4,000 km long and up to 7 km deep. The thin atmosphere limits liquid water stability, but brines could be possible. I should mention frequent dust storms, including global ones, and the timeline of exploration missions such as Mariner flybys, Viking landers in 1976, and others like Curiosity and Perseverance, which landed in 2012 and 2021, respectively. Future plans include Mars Sample Return and potential human missions, while habitability remains uncertain, especially on the surface.**Discussing Mars and Its Exploration Needs**
+              Mars has a day length of about 24.6 hours and a year that lasts 687 Earth days. Its surface gravity is 3.71 m/s2, which is about 0.38 times that of Earth. The atmosphere consists of 95% CO2 and has a surface pressure of roughly 0.6% of Earth's. Temperatures can range from -125°C to +20°C. Features like Olympus Mons and Valles Marineris are impressive, and there's evidence of water ice and ancient river valleys. Methane variations and brines add complexity to the search for life.**Listing Mars Missions**
 
-              I need to address several aspects of Mars, focusing on the need for pressurized habitats due to radiation concerns from its thin atmosphere and weak magnetosphere. Resources like water ice, regolith for building, and CO2 for oxygen and fuel are essential for In-Situ Resource Utilization (ISRU). I should include basic facts, environmental elements like dust devils, seasonal differences due to orbital eccentricity, and the average distance from the Sun at about 1.52 AU. My approach will be a structured overview touching on all these topics.
+              I need to outline major Mars missions by year. Starting with Mariner 4 (1965), then Viking landers 1 and 2 (1976), followed by Mariner 9 (1971) and Mars Global Surveyor (1997). I'll include Pathfinder (1997), Spirit and Opportunity (2004), Mars Express (2003), and the MER rovers (2004), along with Phoenix (2008) and MRO (2006). Curiosity (2012) and MAVEN (2014) are essential too, plus InSight (2018) and Perseverance (2021), featuring Ingenuity. I'll mention the sample return plans and conclusions on atmospheric loss, seasons, and dust storms, pointing toward future human exploration and scientific aims.
             type: reasoning.summary
-          - data: gAAAAABpEgl8ot_t1C45G8kTxU_Ea0ea-6M2Azibgi8FPFCsAoNtOggfC3TgXL9ALIYcezYnUEcr4RUR_F7SAPYABUNE825K3Vx_b4fKXYqVoXYmlauV6gR4tPgvSM_MUnSxKqvynqEnJb7uPPfy61nmxumItX8FOlfxvxLXsNHHx3G1-1GigM11XfG2wGEkKZd437w6vBc89gGmQho56wdQtwpbedTtvyP4KlEcPCYNADeSUi0RJEMBNFjUUAJ6u4No2KUgkBSElE8Ksn_I2nwzONf6z5oxg3LgA5O9HrnN3SSxdPImCG8UZ1ORbUTZ4LpPJRkys60Wt1ARKbx4ig_uedId0tF3TvQY_5fepg2Z4tJVdj5-7ZA_g6EZ0L8Z-bxxhw7ONnQe-AyenXTStLikDwQSrNexoNU9ckVh4T_bcHu4ugvNhVx0DqQz6MjzqfHDSS1dOiCuFk5EZt9A7oDnMUYFyZLOfhhxyYV7xQ0puOZzxeriYyU_PyqeM5cOw0kIHvNnPAqs8RXWDJzFzN8z46RpyWoS0IX62O5Ggb4ENw1yo4uoBvpJRf-Zuty846zZ0s8--gL5ECH4m-0UQnXpCaUkhoT_fiLAVnNpiKkClg0eQawTGqVeHVS4hSNzh9TYUPySa2o7e2GlJiMFS2T5bMXuWRdmWiy_XaCLrWd_b3Ev8KTQK91wvF5CWJA-0lXlKrgKAabu9kKieomwvKnXUZ0o6WT1k0SDHCbAu08jh_xrBfnOT1hL5J7_kedkfIjT2jxZmr4lhZmcUZ3aosI8HrmEdIUtfzbW8aKX1QH49DTgZuZxfZOmq_4ZGhX9QGBHj5iiq5SbGJa6lud61x5XIMpqlWZ2OJRmX0RcVl9tuJ10cK_qSOvANnHHRORYV9M2HAZqytk5Hv3As21Wxb-lQpiRPoAHO8rggWpvFjkzXJGgs6kNMiGMKf3PF85uZ0ALIBZn_ufzblUvmt6DMHb0OL2U99xt5Q1xYovx4rrNVJpm49sTQZglJcfba_Q6O_4BQOfb_IDKdti4X8xcZWfqHTlE-xxVEgioskSAVVJuWlCaRzGdcayHOFShskkp28_xFcikxUv6F8kxXdr-EiJQP9B6QZfdteyoXu2S304DfyUCD05gVDoc8GvYYmJ6pK6bvQuv33EnF47_vRi20GY87FSDRPSD2tbxLGpf0stknE2h07QOmNBCbFjojSoYsDP88QjaXFOeHDO5lQv35rDgns_-sX_lt-Arjx3QQDDtl2VO2nrxNx6cbQ675-RUMWV8qUTP931nhB9Pn2d4FPMLiU02yZvE2clGCYXFNUYutSQWK2t8A7nJITzqd2sYc2Dywdh1JBTemI5ErnWnJEbKKd3XBuoq2PP2ZrIVE2-ps-uS79Bgz1WerIj5wfm0aiRv2EK2y3fE5jLAuxtLLt0K6ZyzcTpfPvDeqi78LFS3Iz7d8c79yjHaDB277kLOiOmbOrUTuj7FsxYwtSAPRRb7Lfo9SHA2BAkaA0wFTSgiKGKARJiUtsOge7WYNn2hYg3gEmgkcCP13W636kerFQxZHDP_Ix6NqeCPGk8fYXysJnDZNlsKE9a_Su3LoHjAUcu8Jk8EzfPpx87p4pAME-iRPquA6C4PwVvZ2AtUHafcpCfxlUY29R8Tw1U_hASW3PqJU895ckZfzxoWpd1jd7kjeZt77xWYAYFBpUSKHeY9Z2wNDOI9_1i47KuyJ-ybULLKsPBooEvk8ih6Hc0_JFf4tsBq_XkSJurqd2OeH4owS2M5LFujf_vCoQyaPidH7yXiNJszHPJatvt7RhAsHHzXuObcekvC66z4myld7g6PCQFl_vMV77wwHK27StoLhaZBaJVl67C8jwIVgwOMQTyQyS-DW8Gmzwx_hL6kAxVCkPHZGKAATEKs0Id4PqjfHE0QQVpAZvhQais49JxDYXXnmsheRkWIx5I9fm4EJsA5DDSFz02Q4o5seNqrJ3GUqBTF7aVitb9XExsPqqKm6KZZdNqhzgEzn4wy_hM4wDhtiI_q_gvjkCXGvyBwHVvmhAuKCzuxVEVIeWZpH75SxUCHDoUKMYuf_BEru-F0OKNyH1bMCR_hSutgFZXfhkziv4cMevzUhf8Bo3pV8C3T0L-q7a2GiOUONojsluqa5C0imRbLG2DrYWgNm7excL-aLctoZ1S9wjgNSPTc8YI_KV7_rSpnb7hkQkTbcrZh7wl9iD1jKPHvvrB3LVBed7iu5retyeLhFxvy7YYWOMK-OzukqWKXPufJtZUbUVq1K0tYAYVqc1PgIrQmDUqyXhWAWGlaM0qJ7BAssfsvhyrGWEE0zKGxQf9aacREVBPNlsTX0pyJtnIWTzdognZBQ4nVKjIE2N7IVprhDflsSywzTviU54uFF8bf4rpCX4SxaOC8RG7vTyZYC1ZMkRdk6nJopY-n3nw3KcVnNqT_n9BAO8CJTDmX4hft--yVvpfkLIkjMTNjg9alrLTeT8aMAnCbJYwEmEFsCFbiOZeVHVqeUXkjsYhjz9d3ABi6gkU4CEIElFim9BwKM1Ml0AMHkbzaZP6whliRkV2j8ClX2pP3_LC8imeYeR_Vpcf_OGOAkORcMfJw--SQaWB4b8rpH4k9tuFHLiwOMXUvxXGHjWNf645Bfx_jJ--kBYIOQFnilfIAMaswQsYynjyO9uK6q5CVh4bPRV0_cP8v6hPNctr7ETCz6PCuaLVzYiFOify9S1kHUDgYRXLkXEunCp3U2_sDKU4T-tePoaRemoDkfmZznX7B8a_ID8ku_rV_6iAiaXABifW2jzX7by4gh0TmKliKAbERL1bFSBJWi7rVr9Y43hEnuy1aCPpG1bB15_LHNsb6faz5uzcBiUJOdNiDRLrw4OG07_Hs7UqTlR9QmqNQzHjsFaCD6h_eh_kqHI6a8887DyCaZ2nMxV2Z3lP_9BmhtEHq_yDQll1cvZP_sWdsY9Zdcr_PdUzVoQkrW0eD6A3SgjJ63HL1ppaXfxBwPLJViHpGqj9ahvYt27mf1fIbJC9qqJU4WCT5YGm_dGUNrsVSrxhWqOeRm2ocgantqFdMlSivEz91DLHvTLFMtYrPOmA6ei8uHau5HwB4T2lwWjpc4eUp4urLnYKkiHxqutocE4bHS3xkb4rNk4Yd8j9HeO25Ek-zMJB76JM3XM6L4xaGUvC8-l7FWwNhFG-bo79unc2ULPYSJOq8PR0RR94XrnV2BRn-0njRZXOS3ehyEj05Y0cf0IChdFIgx2T2gDcBhGp0IsujFY-cBcYq2Nds3tTOh_v2krGlc-XMgU1omQd3gpnHGwz-dyTJwOoUGlAQepNEMr3aL0g6LxyGKeLYFXPCuARtxjFqONX__W7g6L_SY3HUzK_3vVrMoTVVlZXSSfx1ptzeyx1c3Dj0OrP0yIQem3CFDqs-AH2eev864EveUL2-VPigNOUekA4He6baNaxIj-oe1IqrZYczKw4bu1LYCHAiD1I32_h_uyBOfQtTQkVdfC84vYWn56YRrihZrF2474cK4F8eL7olxswVgvMn3RE9n6-G4Qf8f9wkelq9uv8lUbywvPhGjqzJbsxoheqDdQnVyTezZpYi6t5rsCbXYRrdbfoHDkRvbHS_Wg0bblevsZ7lqJFfPlmq53PzlEpOfy3XLsNqVA-mX2h9s9cUMmr34BtfjhSHJYf67g9NzCoQcVEMMjhgXcKCEb69Zpx2FFTv62CGtQXXzoKGIXrWjNXYH5Np4hfknxaM9MtrhZPGd2qq66OKggsXeZUIE5kZZYJ-1qbPwCjL-_pR47FHqjNDBwSCwccYQxZ74tLpi2O4g9e4UhCmIW1v73dyh_xs4VqU6EeYd_sp-cnjh4DgIO7pRE_XyEU-RKvaiZ_7vfY_n9fvzNedahRkiz0ebdGK2DjNtX2uzfhN5-HQfNRxwwbExFCsgq9y0RoJOJnYnuFIiT6P_frlzoQdP8JBlwU7piPaVh4uAQKcEsvAcB7Uhsms5twfeqm4LXvJ1gXXhtinswl7JSt3UGBGpziPjYcsxrJQF07CuCDmp1TBUf1j0h6AvETy_ERHv_3ra7f74ZpNr3ff-G-SDG_x3maznxSbQy4VMop3-RfLH89cVtyGZzZhwb8L8mlpcJHXXlFb5Lwz8-q5avF1fXHN75NeOLjGvas7Ecjtmnup7oESwfIFrfql1IfD3vV18kBCDfZblcPmZzzT1rO8BvZqJfpynpoSYE9mmGKPiD2NsfYPWKnIinAPyot8LC9UfGsEPVLEtsvh9kGIEZ3HxlSHq3Uf-RSLDxvgMNz05-G45rohNaZEAXCFDIOM0EIZq5wHlvTuHM1w1FbY_nVnBJdxTgpMJbHEtlWzLaQHjim9pW6ZZFrm3oZ8-3XtljodSX6mc7_h5oYwXtMwNclPizEBA08mJ2RvsSTQUJWx1F2ac2MQhoEqTez_9gdlvhWTzuh_0M686Sg6wbCjxYfcVg_1kTp0vMOczNYYhyZ-VIfzZo45IlgOfKDK23Rb8kUenPNtCbYGwu4A64cN5XJEUYK4mD64La6fa4Hd7OXhlELPUhXJtSdjJ3KmrRNe6MY8hN2hwHuuqazI7uzu6IEpj3u9lGK8egCPheqGBCM65UmozPPVdku0vRpHP7xvd7ozqo7QsuPUgfdJpGQG4H64DoTYRLLB5tVXcDaA8O9o-B6fsj4PGA_bwnT-cZW48WVeswu7vXTvSsWgmhM1syvVIPT5uAVli-m9y1r5Ca423y7OAa1P6S8h6QhlygUYGE4BFs8Uslcd0cz8CdptdGF8kUvCryTm1MzFiWs9SyMOMw6vCNNKuPxl4FrdE3mEiGb-NSlLaw1DxI6Dy3ubDAYVC9U1I8jiIvbiddkSWMA40402rDhi8DfRThmBFPLOGcCM34fpKOLp7vO_3U9YLgnXVAJjNIgEOTRi6m0gIPiKMa1ScE6Qov0x4alElBxS9Syx9-GqPltMlyzvRaM1TO6VeGARvwc7qA66hMQ9FLd2exDRAlvkVM2A1rQJbWHGs-_VSoiC92_g3xJz3c3ZrUKjePJmyQ0xr2Lg-PpDSBEvMhFinb2nQSQGV15e2oyC6VpGuxl_bYbDLOEtlf1XbMhRK_iJB2K_liXQr4BtLMm6CuXugPoTFpVJ7xrxOhnNbO3ELPgB6kHAjdwnHi8xc9zE1IKwZafKLSlnkDdlRIEbscIRPS81RjL-xpqZ4KppEVUtAgP9aSyaIrohsEus4aRSDOOfpScWp91Q4UMeG7K8hTIkQEFn-uSgTm5zzOd34K-abNKdctfwlYm44srnGwOhFSmP-cW_iYo4mm3z4SNXv8kiMBzvndFN6h06CT-lxI5waEIPaBojrktVvft3hWgCD6YtYw2E9uU1dvDWBxG2qXSLInIBMzXLuLjkfyCZbdS7-252_Z7mWRnhtE4uIGmltagUV4XXF6FONdbrbTKUJgLhnt5Vol-xntlN6FOAg0IN7blJ6BliCQr0MH0PFRMRPcnX-AT2rEdO4fU8oKdLT950Wt6EA5zEwVfiLf2r1mQGeBHkty5ixE1FDxd9OQ7KYfhDmJvDCCcrgUjsusWAAb71kTIcyYdbN1RABQlKm6D4CJJZcipcf559CXgiWyHS2SWVPX_2qq9vl-SCMrEVsgai7Nkr9Kx18aiPTRacC5zaM3mIM39vYILH-POy39d1n7__ezcVoW9dXEb_g04xLRopTedEfrF4gSeM-bWCKDzGMWmzB6cAHc5YY2s8JJbP8CRK8EjDDstJr5NhVq35N80aLcwzgkOn511Acr1GOukyitSoBo05hKJsyHrQv-T56g6iNkPCD3MFRUuvvDJC_UUzomG6rrix5yNxbzro7EiSLSckTJoIJEHxaYO2AyrgcTxJhqJ21rjNTtduB4Iv7CHY8RVrjZIpJNmfqQXmU_4T4u16EWK2M5miKytzOJYNui7sr9ezhDFf7O2igxLlES1q7VBw6RBitxA9-GF83hGljEHcYl2L-o0kgjq4MrWdlWWtYm8mfAG_Iybu2luvNIPRh9O-2HvKH1FIv5ozulaUvR6zlBI8PXkLqAF9Gm_ShmIE43U4ki-16yfZwoCf9m-PGjb_o9GcAzz7usKvFPk-M8cIHoalhGXZCwxKyhTGjZnCHqcZsOVegcZMsr9cotbt9VGxTzlFz2itGv15uM80wYNhYdeQDuWMxSr88R0=
+          - data: gAAAAABpgLtBgLx3gbfmhPU1WXQ6pGsWb-czX6o9zh_oX7cWDweacvXWmChqFsC9fgVi74M0CxecWDDcWvx5pQ7CO6v4_DDElL3gK-QYre5__m1203KTF0822xKEQfLy-83yglg1aaKvGyL5NneeoDPhkFoxOaTtB6gyttYxgm8oa6fhG-gSFt2MjCB6CaCxQYOvKLQLoux_QPnT6R3pIhFrmROiWU11ARk-BsDHtHddb7RuZ7FCYyVXOUqdo4B-qVw1aR2cJ7UE_k5GR8VXDfmeJFa216c2FwNccIv1GJvxhWAxA149RhZbu7EgwAWedSD4nc2frFbaBcn7YTqDG86ZWKW47X-jY10-6dmlooXVpYrBTYb51X7-GeCoCCiqLrgmLLvSSPyRmDS22SCjEKmjeghkk6Ca89DDcQRCDh8zU2QX5V8dPRM1hEIVfeSWjZKGUfpb_EElV_N5APSL6jfmGShSX2Nl-cRKKp-jPRYkDhoZ93IDfWXf3FT2XzsxLoQYLH2ikvbJIbd4NiU6uG5bmeTsXLMZj5l_8pAqNj0JeKcE6tjcW_y1jQjiY7y9wGsDbXpKVXoWudnN2-Kdvo_zLte1PxwRCGY4Fzl5rVwRnNhd8wrp6ko9woQdhWpN7ZSi4rbY8z727zc-S1eDLFnS8ZjIHgzm21gVRxAMcmSNQbi3URvTmZ6Foo3xnaqluzEofkweW69IVg5MZSm3Wy7MdzJAJH8YMq-hB9nNgD4T1ROlugXe1NHtiSTYPPz53FLG44MlNsv6jTOr8AQI2a1yPOO-PrggUTgEaAqxt9LKBeWZ6K1aOZJHHAxPu_W5tmTfB7LW07MgtDQD7Swnmut3QATlm0Ji1b5qCpqyMnWMnLYdvCys3YZVunKsvcQV2I2RaB2oL4LPSx2n-IrL5ztMGWAD70i6DahyzpB6yPIKtrqAwJRsz5b7QQJKaqEtsiTxjpUWy3Cdqzfn1u8iMOTH61O0aiNcg7DGYzZB-r-axkcgKed26K9DZtEd9pG6uK_x_cfcRJaH4U3uAndRpCZSAkoVUfofNBfzm0E5GSo_1z5TwsE7l3WRwmegKvd4O86aNZeBSVyXrNQvVT8mKZgh8x031f6Hqt0uIKn_19FJCPYOgmg1XDCqXgm7sUKYwtz1W5Fuh3p2MyXF-DX75bwcqEivzMK_EcwDQNfxaxRGR0gmpiGDSCaMq7QJZEPuBxENg4pB0CD1hawNErf-DXCtCtodbk4WqAheEFwYXNFe11DIIa-j67Co7XQUe3adx_8CviKh0d_DaJdtPMjbqOZmJlrgfeeBY0s2cCVJd3I4eh7voZSoGg5xrJzQjfifX_EHxFexlFy1kTK97rSWgPeALr3S_S-z07SSQoeE0KuLyp52EEEl0woHiu7dsBKqkh3oRXwzIvJd_1OUXgqlzITecXH-EEBBT5jQq_2Tp2Apy9QTyyk1oMKyVKo2lCp-Aojj0PNIbHHL-h5YVMdwJUp1kZqps-wB1LnpBPxbzs42ASZrM4IYP9gnfukhNn4qNUM6ohcgE_Bo7O67espnVYaSOM1dG3Ss4vyc2Q-OT8q3SD5YuSoCUAow3oIqLc9nRP5IteqVPThTQQS6fu6rXUnhf0hAuBuGSjw-10Ra1FfL8pvuIJe30mWRUmpBztoAF2IkxqQhfn01YV3Y2G8JorTVwUtzX9Q-g9py4t1PLLq7nNwUcEyMLgfbaLAwusHg2Q7o_a5rWO9BlMuOhBslZeFZyAUamJB_yrGc4dzEbD3hgSUNNDBH5j40QGwQkg_fH26TWCg92AyZIxtL6OYu_3LpXD-fF1CRMK-Zs08iO5R60xGlqAtatpfEYkWgIaIVTXHE88CBqjvYNqwqEb6f0ZEryWzQOWDm8GLUD_FjEiVW8jPn4AulaBcvk2iUPF4ogfWO8URcMfiSyhHIqJQWaEGnuPy3Y0iVn5yBY9kCiHjtt_ELEW-Dpzv5Abu4njClGVsfqwuJwhqdlLV2C3DyXJJHKYrqUmh3pK9z8pN0mOB5VPLgoe7i5yRaI1oh6xdANffwvh8J-dAg6GaqqJksqVBWWhjuL6fjGLrapkYz55rTNWoZtPB0PPqUwQQJXUs1i9BiUZNr61do_Y7D5FNz2svOGN_x7HinWoG_PqylcY1_Ey_33UYSe_q-VqTuaWyaSzaLtc-gQufOUJamDDwlvErcDIsA_03DUOpT2HiPCttMO_kgHtPTOD2veUbvGvPx6ywx5vV19slY2Q8Wmly5Enb6NGNTTg8hr6kMfn7UicDkCBRWV-OR-8ToXrHiqnNy2uymmyFJaVD5KDFQZWwcATP2504CPWun8uvUqbGUpJMY0k1OjBD9MzIhYycnBB3RaQPz0yyVkd7E_oKZ9mnrGmNhYOGOpScx5y-wZKX0FJPN536fcrqoYY5aBTAhoyuxAiFQ9QPJS7-ux7p36hW5JmBul-3ZaWGi2PEaoku6A4sxlLWiXvf2hAjUk_9EAmkDyQt5kAY1JsUJizpA3tw5mWsTkRFlgtqMjhWqYtrV3w5BpEFHw1tJeyJ3RZdub59EmV_R6NVFQ1kldydOfjBrBC1pRp2z4qfN_Q4PcAqj2843fBqU1nq8rc11vBzh9DofxeUf_xvuCv37DPrn3NaQhhi9-MlwFDvlauizE1x6Rn2x85J3O19nssoxRg2d-LsU0z7itrdUdbP9pGiEuqZ8mmxB69spJzA3qcfTckl1f7c76BtBWAF18QD1kNIic_Wut3P78fk1RZleeoMGM7orNxTLEZRaPSNZ7-VsHr4tFSnHessH3aDBRbxvIfB-IJdU_oe3m2LoUaJbwvguIfzexSIDIrZc6VPZuO46OBVdfttPFi_IzV5lnZzABEIRnjdscH99FYW9JyUe89BV72UVGkf-fFr5Cd1yXL2qghgAbxibDmGXA19IEqcPVKqpywK6hMFzBWB2IwQJNj9PKKFSbwnaw9VZBwnINwjN_QSdCDWX6Q_CoFkSkAUuNdebJTfJWvYWKt9bkbX-_lj_d7BDHcrEBjH_h52iBnQNszHxAjTi6kXCqMceYDMZsWl9UVPYoYREfc6jhDMudPhHYcQh3slhstr8HWX06-QU0Fc2qUoguxgPhU0xA1Py2bi-EQPQhdvITx3RweIpF3CtZVcHJrmtC_VfnVPDNtG6LIMT1V5uQ69D4J3ddvy9hwAA0wxiuLMdqgNeCBwVAF93I2YtDltKgXM7xwqWj-WPrvDqpiXgofkqyjBhMiAC0wlTu6tzZrJmQwH0TzF2b3KklZWTc0soIb8Hrw0K0cV4V_s6nVtg2Kl2vN94YUF33TgrgEweYHxPJSv6Lm7JeXnSPkBGfLjokAn93fYKEsNDhVPxx5Nad22VHBMZtkYkHsH6x013LbPQJyDuS9dUNHr56Rk0YxTxoimBWCoECoUxb5EGRWD5noQQ-cU5A2seKWe4S3AfOcFb7imqEnEcztTc4bb8V6qUF-yKmZ-myJ2bvrtpCzojDlIuLy-YzPPtZbKT1fF-mM6RVMe8UwEScmcXWOo2LItmJo90L5vRpNBqMmRnvta7aI54HeUR3vGUT6IfkbJkZkM9koD60P2Gz-xss7xVxz_hAksyFk31S8ACAhWveAVa6bTeYBrPQAiVoXhjZTqhfIE46ei78bEOjWZhEn5lU7p9p2xoAKrQCE9XPzWlbtDgB0hJ-A4juAOuszKctzzHLjwinVEtMVc43pMwjyqlRA1pO-H5jUPb1cykQZV6-TaCwvMwyqP8WnYAEfs5eHsKwPjAVBho7YjuJIGLBUYZJFm61T3N2igg9TVf13YNKp6X8aIl_G7VNj4r6HSOM6fTNYoAkGibOe-Ed0HxrxxTk1gjp2GsRAw_nJGsA9RvLtCiGbuHWFQJIGq_F_9GxHK_9EycGYZbPuWTQkX3f-3DMV723ZhG5iIXuaTeW8PIUvWZZB880aX5xyqoLDPR9EdhfO1DjRcy13pE3ZvDiIgL77WyLNdw_z0B8mPCUaSZMD0n9LPaXFvB_ulW6uLyBw-NF1z-sS0erCMs_8d72mCxM-Jnax-kRE_wEloZ-gJoHA7kH_H28Q426f0Xaw_bogRSW010edUIy-MWtbBcrnEOdpLzHq1K0JLOQFbolyfcpb6PAvv0XbLikZSR1n_kNh3TzN0RqQYCFMybABnNkmn1wPvG5jhPt8YRX5kpdfJ_FrUtJzG7TL3Xlwl3Q74ZKj-TnQvoIQUtS_w5k3e_MS38U0hwHt57KPfQ4DZFL4UIqeAEsEDHxTo-QcvHB8brvhCJm25UnGKPvl_zEwqPRcqoYYgI1mLHj1XJI4xf7ke_rXWhQfdL1-ymgQEpIkVUwTpzWWpAm1_Wyx8f8NVEiGYoeYVole13O0IqU5p4Edr4EesIfMlePAsac28VhCNI3c1cTVbVEq5jYlLRwuNg5YOoZt-nT3EBEOhIzhBIiG3NOlNlRnch8s2RtC21_jV1ba58pwCMcisKd35phXTJwx7TNU5HZzMg6CySN4lJIfItpq4uG6C99yoRrxRCOYZKMSzYay14snkEFDfbBzQpyzAW1Zix9fAppJy_Rk-UZkwZMkpu4LaoNf4Wi9GVKwk87cNeFMIXgAA5ipArHNHO6KcV9vEAG6NKasdVC9GCHvN_Z57YrK705YJrxoGYdXmOn0oBjG3-w3LzMQmgwBYaV8Vu1tV4cSPtspf-whtMhGrQXuBlgf8EElfNvD2qlKyes9aBKhivuOawyHgY42WMZl83avRQ9gmy2Q5klvxeXA4-3mavWHX5oC4Ea10sJrl4bkwP01heVoYI0u8OZGnuqQQ8MjDR3aIhf2EQIO5xS5c96kQJHmGmcTBzI1xsWmpkmAlcvxLWVF0MsWUPHCObGYlThpWTZEKzUB2Qnscqg7yFM1l4kFtyB4s4a47XcQ23w8Xlo2ObNSYerkiRSVByfW0rKXDsmEF6WmXTKhSdKNtvapGGnSMX_SXkPl2gS3bTCTP4VBEDzuDbOpQo37EyWhfiSDPyZtSy_o5YEoLqDFq6Wc28Subh8X34RmJpQL2cg0HCHPap1NBoQD3fadXAiRLCLcvjHT5VlxkiWhb2PpRXw686GhR1J8UaMXSXJnXvmDkLdgaP3Vctiz6j2i32FnbbgdLrQ1cwMJX1mrxLiTIL80X_zPv9L0EtZgn48Wf4h87DtvOwZ2eSt02hOYQW_26HTlmC84r_DCvH8u6C2kSra2wK5lyQxbIl9SknkeeH6pt8tqNULjiaISv8wp04iPyv3pmI3dtzfxxJHkemzeu322IHnvd08lDEulNaoMSm80wtPXpeMTSl_9MHHj4EFfm8CI8f-pA5z3Vm_XGifeDRFJLAir45AaSTsKLc2oSfsS_Wg7lk8O2GbRBQ4pAZ8cGqbiPCHxekKKPW7-o5rRMXMT30fy_abCE1SgxIhPNYBjGsOgp4-7YesJmTcqmuvjfI9X_lDmJIme0adca7_MAK8IuiB_7orYOEeEjKWljEZy_3Voumt7qTBDjcemiZsKLsILOvQzn_vMc1nXZrGcKJ4WFMJxR_a_JTjwyg2SPqRaV1dKujQcsgPpPH
             format: openai-responses-v1
-            id: rs_029b1b33873fe02b0169120967d9a88197af3d9f4db7a92055
+            id: rs_0ab3230f4eb5b762016980bb2761348194a88c19c28bfbc933
             index: 0
             type: reasoning.encrypted
           refusal: null
           role: assistant
         native_finish_reason: completed
-      created: 1762789734
-      id: gen-1762789734-sxYWfPfn343ZvBkw9zV9
+      created: 1770044198
+      id: gen-1770044198-ZwI7uQKLVslWOkgYLHP1
       model: openai/gpt-5-mini
       object: chat.completion
       provider: OpenAI
       usage:
-        completion_tokens: 2177
+        completion_tokens: 1763
         completion_tokens_details:
           image_tokens: 0
-          reasoning_tokens: 960
-        cost: 0.00435825
+          reasoning_tokens: 832
+        cost: 0.00353025
         cost_details:
-          upstream_inference_completions_cost: 0.004354
-          upstream_inference_cost: null
+          upstream_inference_completions_cost: 0.003526
+          upstream_inference_cost: 0.00353025
           upstream_inference_prompt_cost: 4.25e-06
         is_byok: false
         prompt_tokens: 17
         prompt_tokens_details:
-          audio_tokens: 0
           cached_tokens: 0
-          video_tokens: 0
-        total_tokens: 2194
+        total_tokens: 1780
     status:
       code: 200
       message: OK

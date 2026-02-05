@@ -48,7 +48,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        Y2RmYWJiOGYtYjM0MC00NzY4LTgwZTEtMDI5NzZiZDdiZjVm
+        Mjc4MzhjMTAtNDAzNC00MWY3LTkzNGQtNjY3MWUxY2EwNGVm
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -64,12 +64,12 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '321'
+      - '370'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 2015
+        latencyMs: 1512
       output:
         message:
           content:
@@ -77,11 +77,14 @@ interactions:
           role: assistant
       stopReason: end_turn
       usage:
+        cacheDetails:
+        - inputTokens: 1504
+          ttl: 5m
         cacheReadInputTokenCount: 0
         cacheReadInputTokens: 0
-        cacheWriteInputTokenCount: 1503
-        cacheWriteInputTokens: 1503
-        inputTokens: 14
+        cacheWriteInputTokenCount: 1504
+        cacheWriteInputTokens: 1504
+        inputTokens: 13
         outputTokens: 5
         serverToolUsage: {}
         totalTokens: 1522

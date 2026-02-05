@@ -181,7 +181,7 @@ async def test_model_provider_argument():
     model = GroqModel('llama-3.3-70b-versatile', provider='gateway')
     assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
 
-    model = GoogleModel('gemini-1.5-flash', provider='gateway')
+    model = GoogleModel('gemini-2.5-flash', provider='gateway')
     assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
 
     model = AnthropicModel('claude-sonnet-4-5', provider='gateway')

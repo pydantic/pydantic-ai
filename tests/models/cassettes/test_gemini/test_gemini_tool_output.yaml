@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '511'
+      - '611'
       content-type:
       - application/json
       host:
@@ -29,9 +29,13 @@ interactions:
         functionDeclarations:
         - description: ''
           name: get_user_country
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
         - description: The final response which ends this conversation
           name: final_result
-          parameters:
+          parameters_json_schema:
             properties:
               city:
                 type: string
@@ -47,11 +51,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '733'
+      - '734'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=591
+      - gfet4t7; dur=950
       transfer-encoding:
       - chunked
       vary:
@@ -60,7 +64,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: 5.670217797160149e-06
+      - avgLogprobs: 2.9133632779121397e-06
         content:
           parts:
           - functionCall:
@@ -69,17 +73,17 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: SDxIaMqaGOS9nvgPzP-Y2QE
+      responseId: uDR8adveKbTgz7IPsaKysQg
       usageMetadata:
         candidatesTokenCount: 5
         candidatesTokensDetails:
         - modality: TEXT
           tokenCount: 5
-        promptTokenCount: 32
+        promptTokenCount: 25
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 32
-        totalTokenCount: 37
+          tokenCount: 25
+        totalTokenCount: 30
     status:
       code: 200
       message: OK
@@ -88,11 +92,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '705'
+      - '859'
       content-type:
       - application/json
       host:
@@ -107,6 +111,7 @@ interactions:
         - functionCall:
             args: {}
             name: get_user_country
+          thoughtSignature: skip_thought_signature_validator
         role: model
       - parts:
         - functionResponse:
@@ -124,9 +129,13 @@ interactions:
         functionDeclarations:
         - description: ''
           name: get_user_country
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
         - description: The final response which ends this conversation
           name: final_result
-          parameters:
+          parameters_json_schema:
             properties:
               city:
                 type: string
@@ -142,11 +151,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '821'
+      - '820'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=613
+      - gfet4t7; dur=975
       transfer-encoding:
       - chunked
       vary:
@@ -155,7 +164,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -3.3069271012209356e-05
+      - avgLogprobs: -0.0020243048202246428
         content:
           parts:
           - functionCall:
@@ -166,17 +175,17 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: SDxIaNHrNcy3nvgPm5DhwQo
+      responseId: uTR8aaeNL_ODz7IP3Zr4wAM
       usageMetadata:
         candidatesTokenCount: 8
         candidatesTokensDetails:
         - modality: TEXT
           tokenCount: 8
-        promptTokenCount: 46
+        promptTokenCount: 39
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 46
-        totalTokenCount: 54
+          tokenCount: 39
+        totalTokenCount: 47
     status:
       code: 200
       message: OK

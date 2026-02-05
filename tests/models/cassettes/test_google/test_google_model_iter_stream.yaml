@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '685'
+      - '801'
       content-type:
       - application/json
       host:
@@ -19,7 +19,9 @@ interactions:
       - parts:
         - text: What is the temperature of the capital of France?
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       systemInstruction:
         parts:
         - text: You are a helpful chatbot.
@@ -28,32 +30,34 @@ interactions:
       - functionDeclarations:
         - description: Get the capital of a country.
           name: get_capital
-          parameters:
+          parameters_json_schema:
+            additionalProperties: false
             properties:
               country:
                 description: The country name.
-                type: STRING
+                type: string
             required:
             - country
-            type: OBJECT
+            type: object
         - description: Get the temperature in a city.
           name: get_temperature
-          parameters:
+          parameters_json_schema:
+            additionalProperties: false
             properties:
               city:
                 description: The city name.
-                type: STRING
+                type: string
             required:
             - city
-            type: OBJECT
+            type: object
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse
   response:
     body:
       string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"functionCall\": {\"name\": \"get_capital\",\"args\":
         {\"country\": \"France\"}}}],\"role\": \"model\"},\"finishReason\": \"STOP\"}],\"usageMetadata\": {\"promptTokenCount\":
-        52,\"candidatesTokenCount\": 5,\"totalTokenCount\": 57,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        52}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 5}]},\"modelVersion\": \"gemini-2.0-flash\",\"responseId\":
-        \"1lpeaMTxIpW1nvgP-O3vwQY\"}\r\n\r\n"
+        36,\"candidatesTokenCount\": 5,\"totalTokenCount\": 41,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        36}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 5}]},\"modelVersion\": \"gemini-2.0-flash\",\"responseId\":
+        \"yFR8aYewE4mK6MEPo8qkyQU\"}\r\n\r\n"
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -62,7 +66,7 @@ interactions:
       content-type:
       - text/event-stream
       server-timing:
-      - gfet4t7; dur=477
+      - gfet4t7; dur=1091
       transfer-encoding:
       - chunked
       vary:
@@ -77,11 +81,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '1002'
+      - '1186'
       content-type:
       - application/json
       host:
@@ -96,17 +100,20 @@ interactions:
         - functionCall:
             args:
               country: France
-            id: pyd_ai_0e1a07b3c2b64d2ab3ad2efbe18e1b97
+            id: pyd_ai_cf4fd9bbf902480aa715df8d4104e4d0
             name: get_capital
+          thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_0e1a07b3c2b64d2ab3ad2efbe18e1b97
+            id: pyd_ai_cf4fd9bbf902480aa715df8d4104e4d0
             name: get_capital
             response:
               return_value: Paris
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       systemInstruction:
         parts:
         - text: You are a helpful chatbot.
@@ -115,32 +122,34 @@ interactions:
       - functionDeclarations:
         - description: Get the capital of a country.
           name: get_capital
-          parameters:
+          parameters_json_schema:
+            additionalProperties: false
             properties:
               country:
                 description: The country name.
-                type: STRING
+                type: string
             required:
             - country
-            type: OBJECT
+            type: object
         - description: Get the temperature in a city.
           name: get_temperature
-          parameters:
+          parameters_json_schema:
+            additionalProperties: false
             properties:
               city:
                 description: The city name.
-                type: STRING
+                type: string
             required:
             - city
-            type: OBJECT
+            type: object
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse
   response:
     body:
       string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"functionCall\": {\"name\": \"get_temperature\",\"args\":
         {\"city\": \"Paris\"}}}],\"role\": \"model\"},\"finishReason\": \"STOP\"}],\"usageMetadata\": {\"promptTokenCount\":
-        64,\"candidatesTokenCount\": 5,\"totalTokenCount\": 69,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        64}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 5}]},\"modelVersion\": \"gemini-2.0-flash\",\"responseId\":
-        \"11peaOXwBPH_2PgPh_z--AY\"}\r\n\r\n"
+        48,\"candidatesTokenCount\": 5,\"totalTokenCount\": 53,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        48}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 5}]},\"modelVersion\": \"gemini-2.0-flash\",\"responseId\":
+        \"yVR8adiuG4mK6MEPo8qkyQU\"}\r\n\r\n"
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -149,7 +158,7 @@ interactions:
       content-type:
       - text/event-stream
       server-timing:
-      - gfet4t7; dur=493
+      - gfet4t7; dur=1066
       transfer-encoding:
       - chunked
       vary:
@@ -164,11 +173,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '1327'
+      - '1579'
       content-type:
       - application/json
       host:
@@ -183,12 +192,13 @@ interactions:
         - functionCall:
             args:
               country: France
-            id: pyd_ai_0e1a07b3c2b64d2ab3ad2efbe18e1b97
+            id: pyd_ai_cf4fd9bbf902480aa715df8d4104e4d0
             name: get_capital
+          thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_0e1a07b3c2b64d2ab3ad2efbe18e1b97
+            id: pyd_ai_cf4fd9bbf902480aa715df8d4104e4d0
             name: get_capital
             response:
               return_value: Paris
@@ -197,17 +207,20 @@ interactions:
         - functionCall:
             args:
               city: Paris
-            id: pyd_ai_98b25d994c5648df82f683188629229d
+            id: pyd_ai_dce06312fc194feb8bce2f7f7370d35f
             name: get_temperature
+          thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_98b25d994c5648df82f683188629229d
+            id: pyd_ai_dce06312fc194feb8bce2f7f7370d35f
             name: get_temperature
             response:
               return_value: 30°C
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       systemInstruction:
         parts:
         - text: You are a helpful chatbot.
@@ -216,34 +229,36 @@ interactions:
       - functionDeclarations:
         - description: Get the capital of a country.
           name: get_capital
-          parameters:
+          parameters_json_schema:
+            additionalProperties: false
             properties:
               country:
                 description: The country name.
-                type: STRING
+                type: string
             required:
             - country
-            type: OBJECT
+            type: object
         - description: Get the temperature in a city.
           name: get_temperature
-          parameters:
+          parameters_json_schema:
+            additionalProperties: false
             properties:
               city:
                 description: The city name.
-                type: STRING
+                type: string
             required:
             - city
-            type: OBJECT
+            type: object
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse
   response:
     body:
-      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"The temperature in Paris\"}],\"role\": \"model\"}}],\"usageMetadata\":
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"The temperature in\"}],\"role\": \"model\"}}],\"usageMetadata\":
         {\"promptTokenCount\": 169,\"totalTokenCount\": 169,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        169}]},\"modelVersion\": \"gemini-2.0-flash\",\"responseId\": \"11peaI_ZJLq3nvgP0vasuQk\"}\r\n\r\ndata: {\"candidates\":
-        [{\"content\": {\"parts\": [{\"text\": \" is 30°C.\\n\"}],\"role\": \"model\"},\"finishReason\": \"STOP\"}],\"usageMetadata\":
-        {\"promptTokenCount\": 79,\"candidatesTokenCount\": 12,\"totalTokenCount\": 91,\"promptTokensDetails\": [{\"modality\":
-        \"TEXT\",\"tokenCount\": 79}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 12}]},\"modelVersion\":
-        \"gemini-2.0-flash\",\"responseId\": \"11peaI_ZJLq3nvgP0vasuQk\"}\r\n\r\n"
+        169}]},\"modelVersion\": \"gemini-2.0-flash\",\"responseId\": \"ylR8adSIJtii6MEP8OKEyQM\"}\r\n\r\ndata: {\"candidates\":
+        [{\"content\": {\"parts\": [{\"text\": \" Paris is 30°C.\"}],\"role\": \"model\"},\"finishReason\": \"STOP\"}],\"usageMetadata\":
+        {\"promptTokenCount\": 63,\"candidatesTokenCount\": 11,\"totalTokenCount\": 74,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 63}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 11}]},\"modelVersion\":
+        \"gemini-2.0-flash\",\"responseId\": \"ylR8adSIJtii6MEP8OKEyQM\"}\r\n\r\n"
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -252,7 +267,7 @@ interactions:
       content-type:
       - text/event-stream
       server-timing:
-      - gfet4t7; dur=404
+      - gfet4t7; dur=980
       transfer-encoding:
       - chunked
       vary:

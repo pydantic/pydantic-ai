@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '349'
+      - '348'
       content-type:
       - application/json
       host:
@@ -18,11 +18,11 @@ interactions:
       input:
       - content: What is the location of Londos and London?
         role: user
-      instructions: ''
       model: gpt-4o
+      stream: false
       tool_choice: auto
       tools:
-      - description: ''
+      - description: null
         name: get_location
         parameters:
           additionalProperties: false
@@ -42,13 +42,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1760'
+      - '2109'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '937'
+      - '1347'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -56,39 +54,51 @@ interactions:
       transfer-encoding:
       - chunked
     parsed_body:
-      created_at: 1743079364
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1769786528
+      created_at: 1769786527
       error: null
-      id: resp_67e547c48c9481918c5c4394464ce0c60ae6111e84dd5c08
+      frequency_penalty: 0.0
+      id: resp_0a4779586464cbd900697ccc9f35388195b56656b6141ff1cf
       incomplete_details: null
-      instructions: ''
+      instructions: null
       max_output_tokens: null
+      max_tool_calls: null
       metadata: {}
       model: gpt-4o-2024-08-06
       object: response
       output:
       - arguments: '{"loc_name":"Londos"}'
-        call_id: call_LWVp74L5HaH2KNvgVz9PJsrj
-        id: fc_67e547c540648191bc7505ac667e023f0ae6111e84dd5c08
+        call_id: call_8b62trAHmINdlPZmlMeMfFWF
+        id: fc_0a4779586464cbd900697ccca057908195ae0f71a641babecf
         name: get_location
         status: completed
         type: function_call
       - arguments: '{"loc_name":"London"}'
-        call_id: call_YnRAWeTyxI91m5uNa5bxXwVO
-        id: fc_67e547c55c3081919da7a3f7fe81a1030ae6111e84dd5c08
+        call_id: call_WwN2wkgN4Rd3KNJZDj2nMXuO
+        id: fc_0a4779586464cbd900697ccca05de88195ae0972ae4dd26603
         name: get_location
         status: completed
         type: function_call
       parallel_tool_calls: true
+      presence_penalty: 0.0
       previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
       reasoning:
         effort: null
-        generate_summary: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
       status: completed
       store: true
       temperature: 1.0
       text:
         format:
           type: text
+        verbosity: medium
       tool_choice: auto
       tools:
       - description: null
@@ -103,16 +113,17 @@ interactions:
           type: object
         strict: true
         type: function
+      top_logprobs: 0
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 0
+        input_tokens: 21
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 0
+        output_tokens: 48
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 0
+        total_tokens: 69
       user: null
     status:
       code: 200
@@ -122,16 +133,16 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '916'
+      - '881'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=FXiExTqEtHZ9VYYE34bz9rrvBGk.F9NXeKOkrkz_BXM-1743079365-1.0.1.1-GhZiYx3yzKmVPAJ41yRB9OsIRpAGxFRIIjSdIKFwy.KS4xfngHKZN9IPfG.HBRW9QMukS0aZXyZq4FsyVima3YcS_xxRN_NYEtrgREmaYok;
-        _cfuvid=BOWqVzNGDS.nJOHLSo8azK4r0Y28bwI2njGAEVa7T.o-1743079365513-0.0.1.1-604800000
+      - __cf_bm=TKnRgJPCWgyBGY0ODOGEm3IgUh1dn_p2aVXVR1AkW6I-1769786528-1.0.1.1-KQ6nhjNhDWp0o8x4clN9OGq3YaE.j2Jn0QhT1x2qMAxey1gY3g.bqJk5o0GwlW86PuB3uNPIgKtmmD1mPFPNxHR69BsYVSZPzztGVTXQC00;
+        _cfuvid=NmIdf8rN3hqCPL1caWN70KKrohg0nJ5Wx0yHMxqe0fA-1769786528594-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -139,30 +150,28 @@ interactions:
       input:
       - content: What is the location of Londos and London?
         role: user
-      - content: ''
-        role: assistant
       - arguments: '{"loc_name":"Londos"}'
-        call_id: call_LWVp74L5HaH2KNvgVz9PJsrj
+        call_id: call_8b62trAHmINdlPZmlMeMfFWF
         name: get_location
         type: function_call
       - arguments: '{"loc_name":"London"}'
-        call_id: call_YnRAWeTyxI91m5uNa5bxXwVO
+        call_id: call_WwN2wkgN4Rd3KNJZDj2nMXuO
         name: get_location
         type: function_call
-      - call_id: call_LWVp74L5HaH2KNvgVz9PJsrj
+      - call_id: call_8b62trAHmINdlPZmlMeMfFWF
         output: |-
           Wrong location, I only know about "London".
 
           Fix the errors and try again.
         type: function_call_output
-      - call_id: call_YnRAWeTyxI91m5uNa5bxXwVO
+      - call_id: call_WwN2wkgN4Rd3KNJZDj2nMXuO
         output: '{"lat": 51, "lng": 0}'
         type: function_call_output
-      instructions: ''
       model: gpt-4o
+      stream: false
       tool_choice: auto
       tools:
-      - description: ''
+      - description: null
         name: get_location
         parameters:
           additionalProperties: false
@@ -182,13 +191,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1712'
+      - '2038'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '1209'
+      - '1255'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -196,38 +203,51 @@ interactions:
       transfer-encoding:
       - chunked
     parsed_body:
-      created_at: 1743079365
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1769786529
+      created_at: 1769786528
       error: null
-      id: resp_67e547c5a2f08191802a1f43620f348503a2086afed73b47
+      frequency_penalty: 0.0
+      id: resp_0d7ae142b967b8f500697ccca0b9948197bc26a3697805a4aa
       incomplete_details: null
-      instructions: ''
+      instructions: null
       max_output_tokens: null
+      max_tool_calls: null
       metadata: {}
       model: gpt-4o-2024-08-06
       object: response
       output:
       - content:
         - annotations: []
+          logprobs: []
           text: |-
-            It seems "Londos" might be incorrect or unknown. If you meant something else, please clarify.
+            I was unable to find a location named "Londos," but here's the information for London:
 
-            For **London**, it's located at approximately latitude 51° N and longitude 0° W.
+            - **London**: Located at latitude 51 and longitude 0.
           type: output_text
-        id: msg_67e547c615ec81918d6671a184f82a1803a2086afed73b47
+        id: msg_0d7ae142b967b8f500697ccca13aa88197b285c8cf2e5b3d9f
         role: assistant
         status: completed
         type: message
       parallel_tool_calls: true
+      presence_penalty: 0.0
       previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
       reasoning:
         effort: null
-        generate_summary: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
       status: completed
       store: true
       temperature: 1.0
       text:
         format:
           type: text
+        verbosity: medium
       tool_choice: auto
       tools:
       - description: null
@@ -242,16 +262,17 @@ interactions:
           type: object
         strict: true
         type: function
+      top_logprobs: 0
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 335
+        input_tokens: 115
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 44
+        output_tokens: 37
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 379
+        total_tokens: 152
       user: null
     status:
       code: 200

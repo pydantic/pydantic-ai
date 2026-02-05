@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '319'
+      - '291'
       content-type:
       - application/json
       host:
@@ -19,7 +19,6 @@ interactions:
       - content: What is the meaning of life?
         role: user
       model: gpt-4.1
-      previous_response_id: null
       stream: false
       tool_choice: auto
       tools:
@@ -39,15 +38,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1582'
+      - '1705'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '1079'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - '497'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -58,9 +53,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      created_at: 1758220197
+      completed_at: 1769786580
+      created_at: 1769786580
       error: null
-      id: resp_68cc4fa5603481958e2143685133fe530548824120ffcf74
+      frequency_penalty: 0.0
+      id: resp_03b12740d1d3962e00697cccd48a04819ea4edd6cdda5957ae
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -70,14 +67,16 @@ interactions:
       object: response
       output:
       - arguments: '{}'
-        call_id: call_3WCunBU7lCG1HHaLmnnRJn8I
-        id: fc_68cc4fa649ac8195b0c6c239cd2c14470548824120ffcf74
+        call_id: call_otDUd1BvDW9o3wOIccaWfU5S
+        id: fc_03b12740d1d3962e00697cccd4ea5c819ea3cdfdafadcdc2d2
         name: get_meaning_of_life
         status: completed
         type: function_call
       parallel_tool_calls: true
+      presence_penalty: 0.0
       previous_response_id: null
       prompt_cache_key: null
+      prompt_cache_retention: null
       reasoning:
         effort: null
         summary: null
@@ -120,16 +119,16 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '520'
+      - '492'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=YI5In51XbQNZpt_mBtyMc6O0Pci8G.hkbqZFEWO.3.k-1758220198-1.0.1.1-p4O2urDd35HLxqyMaRXCKX4sikzWXueCzd2uwA2ParH1KuPQ0ERMIioAUS0Uxwl_q2RTDvgwus77kTI_np9kW2zRrsCQvIEetlQmf8IuH5E;
-        _cfuvid=DfgGpWxEPtt9KaLYpGJqErHQ81Ow1nzWn1Ap_w4r.NM-1758220198467-0.0.1.1-604800000
+      - __cf_bm=aLqKIGKnFggav.DHW6LEglGNb4CwKy4xc_H0e3DHjAU-1769786581-1.0.1.1-hXxCIl5tw_hFXy1I9vihP3PzcLFbDVw7DOAs6JKHfuJYLvnBlWKxV7qZ7bl_VJMVu4bd9XX5deU956CCkiP.cLmNVFpUjZRJ01FUi4TnAck;
+        _cfuvid=bwJZ_x3l74hmF9jYb61MHr5CmwlZk7fB0MowrTE6afQ-1769786581075-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -138,14 +137,13 @@ interactions:
       - content: What is the meaning of life?
         role: user
       - arguments: '{}'
-        call_id: call_3WCunBU7lCG1HHaLmnnRJn8I
+        call_id: call_otDUd1BvDW9o3wOIccaWfU5S
         name: get_meaning_of_life
         type: function_call
-      - call_id: call_3WCunBU7lCG1HHaLmnnRJn8I
+      - call_id: call_otDUd1BvDW9o3wOIccaWfU5S
         output: '42'
         type: function_call_output
       model: gpt-4.1
-      previous_response_id: null
       stream: false
       tool_choice: auto
       tools:
@@ -165,15 +163,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1908'
+      - '2043'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '1327'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - '1598'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -184,9 +178,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      created_at: 1758220198
+      completed_at: 1769786582
+      created_at: 1769786581
       error: null
-      id: resp_68cc4fa6a8a881a187b0fe1603057bff0307c6d4d2ee5985
+      frequency_penalty: 0.0
+      id: resp_024fab3cae04892000697cccd53470819699bfc0debde05e0e
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -198,18 +194,19 @@ interactions:
       - content:
         - annotations: []
           logprobs: []
-          text: |-
-            The meaning of life, according to popular culture and famously in Douglas Adams' "The Hitchhiker's Guide to the Galaxy," is 42!
-
-            If you're looking for a deeper or philosophical answer, let me know your perspective or context, and I can elaborate further.
+          text: The meaning of life, according to Douglas Adams' famous novel "The Hitchhiker's Guide to the Galaxy," is 42.
+            This has become a humorous and philosophical answer, often cited in popular culture. If you're looking for a deeper
+            or different perspective, feel free to ask!
           type: output_text
-        id: msg_68cc4fa7693081a184ff6f32e5209ab00307c6d4d2ee5985
+        id: msg_024fab3cae04892000697cccd5a488819683ce43e6d5f621ef
         role: assistant
         status: completed
         type: message
       parallel_tool_calls: true
+      presence_penalty: 0.0
       previous_response_id: null
       prompt_cache_key: null
+      prompt_cache_retention: null
       reasoning:
         effort: null
         summary: null
@@ -239,10 +236,10 @@ interactions:
         input_tokens: 61
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 56
+        output_tokens: 59
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 117
+        total_tokens: 120
       user: null
     status:
       code: 200

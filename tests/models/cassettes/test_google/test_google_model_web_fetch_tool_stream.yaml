@@ -4,7 +4,7 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
@@ -31,18 +31,26 @@ interactions:
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse
   response:
     body:
-      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"Pydantic AI\"}],\"role\": \"model\"},\"index\":
-        0,\"groundingMetadata\": {},\"urlContextMetadata\": {\"urlMetadata\": [{\"retrievedUrl\": \"https://ai.pydantic.dev\",\"urlRetrievalStatus\":
-        \"URL_RETRIEVAL_STATUS_SUCCESS\"}]}}],\"usageMetadata\": {\"promptTokenCount\": 32,\"candidatesTokenCount\": 20,\"totalTokenCount\":
-        4699,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 32}],\"toolUsePromptTokenCount\": 4610,\"toolUsePromptTokensDetails\":
-        [{\"modality\": \"TEXT\",\"tokenCount\": 4610}],\"thoughtsTokenCount\": 37},\"modelVersion\": \"gemini-2.5-flash\",\"responseId\":
-        \"oRIhaZOoA8L-jrEPzfDTmQc\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" Gateway is now
-        available!\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0,\"groundingMetadata\": {\"groundingChunks\":
-        [{\"web\": {\"uri\": \"https://ai.pydantic.dev\",\"title\": \"Pydantic AI\"}}],\"groundingSupports\": [{\"segment\":
-        {\"endIndex\": 37,\"text\": \"Pydantic AI Gateway is now available!\"},\"groundingChunkIndices\": [0]}]}}],\"usageMetadata\":
-        {\"promptTokenCount\": 32,\"candidatesTokenCount\": 25,\"totalTokenCount\": 4704,\"promptTokensDetails\": [{\"modality\":
-        \"TEXT\",\"tokenCount\": 32}],\"toolUsePromptTokenCount\": 4610,\"toolUsePromptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        4610}],\"thoughtsTokenCount\": 37},\"modelVersion\": \"gemini-2.5-flash\",\"responseId\": \"oRIhaZOoA8L-jrEPzfDTmQc\"}\r\n\r\n"
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"The first sentence on the page is \\\"Join
+        us at the inaugural PyAI Conf in\"}],\"role\": \"model\"},\"index\": 0,\"groundingMetadata\": {},\"urlContextMetadata\":
+        {\"urlMetadata\": [{\"retrievedUrl\": \"https://ai.pydantic.dev\",\"urlRetrievalStatus\": \"URL_RETRIEVAL_STATUS_SUCCESS\"}]}}],\"usageMetadata\":
+        {\"promptTokenCount\": 32,\"candidatesTokenCount\": 33,\"totalTokenCount\": 4797,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 32}],\"toolUsePromptTokenCount\": 4687,\"toolUsePromptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        4687}],\"thoughtsTokenCount\": 45},\"modelVersion\": \"gemini-2.5-flash\",\"responseId\": \"gSuCabnHAvmUmtkP1cvCsQQ\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" San Francisco on March 10th!\\\"\"}],\"role\": \"model\"},\"index\":
+        0,\"groundingMetadata\": {}}],\"usageMetadata\": {\"promptTokenCount\": 32,\"candidatesTokenCount\": 42,\"totalTokenCount\":
+        4806,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 32}],\"toolUsePromptTokenCount\": 4687,\"toolUsePromptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 4687}],\"thoughtsTokenCount\": 45},\"modelVersion\": \"gemini-2.5-flash\",\"responseId\":
+        \"gSuCabnHAvmUmtkP1cvCsQQ\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"Join us at the
+        inaugural PyAI Conf in San Francisco on March 10th!\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\":
+        0,\"groundingMetadata\": {\"groundingChunks\": [{\"web\": {\"uri\": \"https://ai.pydantic.dev\",\"title\": \"Pydantic
+        AI - Pydantic AI\"}}],\"groundingSupports\": [{\"segment\": {\"startIndex\": 1,\"endIndex\": 102,\"text\": \"The first
+        sentence on the page is \\\"Join us at the inaugural PyAI Conf in San Francisco on March 10th!\"},\"groundingChunkIndices\":
+        [0]},{\"segment\": {\"startIndex\": 102,\"endIndex\": 169,\"text\": \"\\\"Join us at the inaugural PyAI Conf in San
+        Francisco on March 10th!\"},\"groundingChunkIndices\": [0]}]}}],\"usageMetadata\": {\"promptTokenCount\": 32,\"candidatesTokenCount\":
+        60,\"totalTokenCount\": 4824,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 32}],\"toolUsePromptTokenCount\":
+        4687,\"toolUsePromptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 4687}],\"thoughtsTokenCount\": 45},\"modelVersion\":
+        \"gemini-2.5-flash\",\"responseId\": \"gSuCabnHAvmUmtkP1cvCsQQ\"}\r\n\r\n"
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -51,7 +59,7 @@ interactions:
       content-type:
       - text/event-stream
       server-timing:
-      - gfet4t7; dur=1144
+      - gfet4t7; dur=1465
       transfer-encoding:
       - chunked
       vary:

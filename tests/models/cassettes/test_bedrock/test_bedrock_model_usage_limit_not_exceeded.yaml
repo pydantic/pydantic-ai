@@ -5,7 +5,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        OWQ3NzFhZmItYTkwYi00N2E4LWFkNjMtZmI5OTJhZDEyN2E4
+        ZDE1ODllM2ItN2I4My00NWNlLTg4OTQtYTlmMjI2ZmM2OGI0
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -35,7 +35,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        MWMwNDdlYWEtOWIxMy00YjAyLWI3ZjMtMjZkNjQ2MDEzOTY2
+        NTIzMjFkMDctNzM0OS00N2Q0LWFkZTEtMDRmNWUzNzFlNzNi
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -51,16 +51,21 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '785'
+      - '746'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 2333
+        latencyMs: 2630
       output:
         message:
           content:
-          - text: "I notice there's a small typo in your message - it should be \"lazy dog\" (two words) rather than \"lazydog.\"\n\nThe corrected version is: \"The quick brown fox jumps over the lazy dog.\"\n\nThis is a famous pangram - a sentence that contains every letter of the English alphabet at least once. It's commonly used for testing typewriters, keyboards, fonts, and other applications where you want to display all the letters.\n\nIs there something specific you'd like to know about this phrase, or were you perhaps testing something?"
+          - text: |-
+              I notice there's a small typo in your message - it should be "lazy dog" (two words) rather than "lazydog" (one word).
+
+              The corrected pangram is: "The quick brown fox jumps over the lazy dog."
+
+              This is a famous sentence used to test fonts and keyboards because it contains every letter of the English alphabet at least once. Is there something specific you'd like to know about this sentence or were you testing something?
           role: assistant
       stopReason: end_turn
       usage:
@@ -69,9 +74,9 @@ interactions:
         cacheWriteInputTokenCount: 0
         cacheWriteInputTokens: 0
         inputTokens: 19
-        outputTokens: 108
+        outputTokens: 100
         serverToolUsage: {}
-        totalTokens: 127
+        totalTokens: 119
     status:
       code: 200
       message: OK

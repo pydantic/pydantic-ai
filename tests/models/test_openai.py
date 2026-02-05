@@ -853,37 +853,30 @@ async def test_system_prompt_role(
     ]
 
 
-async def test_system_prompt_role_o1_mini(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIChatModel('o1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_system_prompt_role_o4_mini(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIChatModel('o4-mini-2025-04-16', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model, system_prompt='You are a helpful assistant.')
 
     result = await agent.run("What's the capital of France?")
-    assert result.output == snapshot('The capital of France is **Paris**.')
+    assert result.output == snapshot('The capital of France is Paris.')
 
 
 async def test_openai_pass_custom_system_prompt_role(allow_model_requests: None, openai_api_key: str):
     profile = ModelProfile(supports_tools=False)
     model = OpenAIChatModel(  # type: ignore[reportDeprecated]
-        'o1-mini', profile=profile, provider=OpenAIProvider(api_key=openai_api_key), system_prompt_role='user'
+        'o4-mini-2025-04-16',
+        profile=profile,
+        provider=OpenAIProvider(api_key=openai_api_key),
+        system_prompt_role='user',
     )
     profile = OpenAIModelProfile.from_profile(model.profile)
     assert profile.openai_system_prompt_role == 'user'
     assert profile.supports_tools is False
 
 
-@pytest.mark.parametrize('system_prompt_role', ['system', 'developer'])
-async def test_openai_o1_mini_system_role(
-    allow_model_requests: None,
-    system_prompt_role: Literal['system', 'developer'],
-    openai_api_key: str,
-) -> None:
-    model = OpenAIChatModel(  # type: ignore[reportDeprecated]
-        'o1-mini', provider=OpenAIProvider(api_key=openai_api_key), system_prompt_role=system_prompt_role
-    )
-    agent = Agent(model=model, system_prompt='You are a helpful assistant.')
-
-    with pytest.raises(ModelHTTPError, match=r".*Unsupported value: 'messages\[0\]\.role' does not support.*"):
-        await agent.run('Hello')
+# deleted test_openai_o4_mini_system_role
+# because 1. o1 now produces a 404 and the test doesn't fail any more (o4 supports system and developer roles)
+# also we should never have been testing this
 
 
 @pytest.mark.parametrize('parallel_tool_calls', [True, False])
@@ -1013,7 +1006,7 @@ async def test_document_url_input(allow_model_requests: None, openai_api_key: st
     document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
 
     result = await agent.run(['What is the main content on this document?', document_url])
-    assert result.output == snapshot('The document contains the text "Dummy PDF file" on its single page.')
+    assert result.output == snapshot('The document contains the text "Dummy PDF file."')
 
 
 async def test_document_url_input_response_api(allow_model_requests: None, openai_api_key: str):
@@ -1219,10 +1212,10 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_4hrT4QP9jfojtK69vGiFCFjG')],
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_SY4nJzPqIcu9XbctxNUfIwyo')],
                 usage=RequestUsage(
                     input_tokens=46,
-                    output_tokens=11,
+                    output_tokens=10,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1236,9 +1229,9 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
-                    'timestamp': datetime(2025, 4, 29, 21, 7, 59, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='chatcmpl-BRmTHlrARTzAHK1na9s80xDlQGYPX',
+                provider_response_id='chatcmpl-D3aUqx3YiskrICrf7swAgr2n7NLZA',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -1247,7 +1240,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                     ToolReturnPart(
                         tool_name='get_image',
                         content='See file bd38f5',
-                        tool_call_id='call_4hrT4QP9jfojtK69vGiFCFjG',
+                        tool_call_id='call_SY4nJzPqIcu9XbctxNUfIwyo',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
@@ -1267,8 +1260,8 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
             ModelResponse(
                 parts=[TextPart(content='The image shows a potato.')],
                 usage=RequestUsage(
-                    input_tokens=503,
-                    output_tokens=8,
+                    input_tokens=507,
+                    output_tokens=7,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1282,9 +1275,9 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 4, 29, 21, 8, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='chatcmpl-BRmTI0Y2zmkGw27kLarhsmiFQTGxR',
+                provider_response_id='chatcmpl-D3aUrGddW9RgVv2IVcN1sQaHSQUzW',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1518,7 +1511,7 @@ async def test_max_completion_tokens(allow_model_requests: None, model_name: str
 
 
 async def test_multiple_agent_tool_calls(allow_model_requests: None, gemini_api_key: str, openai_api_key: str):
-    gemini_model = GoogleModel('gemini-2.0-flash-exp', provider=GoogleProvider(api_key=gemini_api_key))
+    gemini_model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
     openai_model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
 
     agent = Agent(model=gemini_model)
@@ -1538,7 +1531,7 @@ async def test_multiple_agent_tool_calls(allow_model_requests: None, gemini_api_
             raise ValueError(f'Country {country} not supported.')  # pragma: no cover
 
     result = await agent.run('What is the capital of France?')
-    assert result.output == snapshot('The capital of France is Paris.\n')
+    assert result.output == snapshot('The capital of France is Paris.')
 
     result = await agent.run(
         'What is the capital of England?', model=openai_model, message_history=result.all_messages()
@@ -2472,7 +2465,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 parts=[ToolCallPart(tool_name='get_temperature', args='{"city":"Tokyo"}', tool_call_id=IsStr())],
                 usage=RequestUsage(
                     input_tokens=50,
-                    output_tokens=15,
+                    output_tokens=14,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -2486,9 +2479,9 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
-                    'timestamp': datetime(2025, 4, 16, 13, 37, 14, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq',
+                provider_response_id='chatcmpl-D3aUpw3LGODCj1iFU0xNtPGRELKj8',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -2506,7 +2499,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 parts=[TextPart(content='The temperature in Tokyo is currently 20.0 degrees Celsius.')],
                 usage=RequestUsage(
                     input_tokens=75,
-                    output_tokens=15,
+                    output_tokens=14,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -2520,9 +2513,9 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 4, 16, 13, 37, 15, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP',
+                provider_response_id='chatcmpl-D3aUrpqsGh5GhoEyeDg759SbQHr2O',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2857,7 +2850,7 @@ async def test_compatible_api_with_tool_calls_without_id(allow_model_requests: N
         )
     )
 
-    model = OpenAIChatModel('gemini-2.5-pro-preview-05-06', provider=provider)
+    model = OpenAIChatModel('gemini-2.5-pro', provider=provider)
 
     agent = Agent(model)
 
@@ -2867,7 +2860,7 @@ async def test_compatible_api_with_tool_calls_without_id(allow_model_requests: N
         return 'Noon'
 
     response = await agent.run('What is the current time?')
-    assert response.output == snapshot('The current time is Noon.')
+    assert response.output == snapshot('The current time is Noon. \n')
 
 
 def test_openai_response_timestamp_milliseconds(allow_model_requests: None):
@@ -2923,7 +2916,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
                 usage=RequestUsage(
                     input_tokens=68,
-                    output_tokens=12,
+                    output_tokens=11,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -2937,9 +2930,9 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
-                    'timestamp': datetime(2025, 5, 1, 23, 36, 24, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='chatcmpl-BSXk0dWkG4hfPt0lph4oFO35iT73I',
+                provider_response_id='chatcmpl-D3aUtEhMCiguYuWihRuozlPfUWEdi',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -2965,7 +2958,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 ],
                 usage=RequestUsage(
                     input_tokens=89,
-                    output_tokens=36,
+                    output_tokens=35,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -2979,9 +2972,9 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
-                    'timestamp': datetime(2025, 5, 1, 23, 36, 25, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='chatcmpl-BSXk1xGHYzbhXgUkSutK08bdoNv5s',
+                provider_response_id='chatcmpl-D3aUusCTbtcO6CY2qNKQFaMYZFnoG',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -3030,7 +3023,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_J1YabdC7G7kzEZNbbZopwenH')
+                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_v9ptDd3BVaua00Xt7oW46Sg2')
                 ],
                 usage=RequestUsage(
                     input_tokens=42,
@@ -3048,9 +3041,9 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
-                    'timestamp': datetime(2025, 6, 9, 21, 20, 53, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='chatcmpl-BgeDFS85bfHosRFEEAvq8reaCPCZ8',
+                provider_response_id='chatcmpl-D3aUvVvHRshEAiBBrd3hhfKDS1Rdx',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -3059,7 +3052,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_J1YabdC7G7kzEZNbbZopwenH',
+                        tool_call_id='call_v9ptDd3BVaua00Xt7oW46Sg2',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -3084,9 +3077,9 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 6, 9, 21, 20, 54, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='chatcmpl-BgeDGX9eDyVrEI56aP2vtIHahBzFH',
+                provider_response_id='chatcmpl-D3aUw3pwBQtl64q4PCIp4MDpDqIcy',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -3126,11 +3119,11 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_PkRGedQNRFUzJp2R7dO7avWR')
+                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_tkOuQT3mf2fpSYORlhv2Ov0R')
                 ],
                 usage=RequestUsage(
-                    input_tokens=71,
-                    output_tokens=12,
+                    input_tokens=79,
+                    output_tokens=11,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -3144,9 +3137,9 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
-                    'timestamp': datetime(2025, 5, 1, 23, 36, 22, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='chatcmpl-BSXjyBwGuZrtuuSzNCeaWMpGv2MZ3',
+                provider_response_id='chatcmpl-D3aUuc1P1eWoEau1U5jW3HYNvXnM3',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -3155,7 +3148,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_PkRGedQNRFUzJp2R7dO7avWR',
+                        tool_call_id='call_tkOuQT3mf2fpSYORlhv2Ov0R',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -3165,7 +3158,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
             ModelResponse(
                 parts=[TextPart(content='{"city":"Mexico City","country":"Mexico"}')],
                 usage=RequestUsage(
-                    input_tokens=92,
+                    input_tokens=100,
                     output_tokens=15,
                     details={
                         'accepted_prediction_tokens': 0,
@@ -3180,9 +3173,9 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 5, 1, 23, 36, 23, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='chatcmpl-BSXjzYGu67dhTy5r8KmjJvQ4HhDVO',
+                provider_response_id='chatcmpl-D3aUuDsTkxAQqfZcsYn1iN3EZraNP',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -3224,10 +3217,10 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_SIttSeiOistt33Htj4oiHOOX')
+                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_HJuUk3tpX7boihkm3daFrKJK')
                 ],
                 usage=RequestUsage(
-                    input_tokens=160,
+                    input_tokens=148,
                     output_tokens=11,
                     details={
                         'accepted_prediction_tokens': 0,
@@ -3242,9 +3235,9 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
-                    'timestamp': datetime(2025, 6, 9, 23, 21, 26, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='chatcmpl-Bgg5utuCSXMQ38j0n2qgfdQKcR9VD',
+                provider_response_id='chatcmpl-D3aUvZugOAfmewsSXgtCB26WjfgvE',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -3253,7 +3246,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_SIttSeiOistt33Htj4oiHOOX',
+                        tool_call_id='call_HJuUk3tpX7boihkm3daFrKJK',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -3267,7 +3260,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=181,
+                    input_tokens=169,
                     output_tokens=25,
                     details={
                         'accepted_prediction_tokens': 0,
@@ -3282,9 +3275,9 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 6, 9, 23, 21, 27, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='chatcmpl-Bgg5vrxUtCDlvgMreoxYxPaKxANmd',
+                provider_response_id='chatcmpl-D3aUwJ11bZh2MPSwRnrblA5MfXgEo',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -3322,10 +3315,10 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_s7oT9jaLAsEqTgvxZTmFh0wB')
+                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_SUET4fjkXl4ifcKgpxy2wOtK')
                 ],
                 usage=RequestUsage(
-                    input_tokens=109,
+                    input_tokens=116,
                     output_tokens=11,
                     details={
                         'accepted_prediction_tokens': 0,
@@ -3340,9 +3333,9 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
-                    'timestamp': datetime(2025, 6, 10, 0, 21, 35, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='chatcmpl-Bgh27PeOaFW6qmF04qC5uI2H9mviw',
+                provider_response_id='chatcmpl-D3aUu105VFdWaDZqk3CQH1TOCltvN',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -3351,7 +3344,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_s7oT9jaLAsEqTgvxZTmFh0wB',
+                        tool_call_id='call_SUET4fjkXl4ifcKgpxy2wOtK',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -3361,7 +3354,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
             ModelResponse(
                 parts=[TextPart(content='{"city":"Mexico City","country":"Mexico"}')],
                 usage=RequestUsage(
-                    input_tokens=130,
+                    input_tokens=137,
                     output_tokens=11,
                     details={
                         'accepted_prediction_tokens': 0,
@@ -3376,9 +3369,9 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 6, 10, 0, 21, 36, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='chatcmpl-Bgh28advCSFhGHPnzUevVS6g6Uwg0',
+                provider_response_id='chatcmpl-D3aUudjA6OC7iLnZeyltJcY5xFUOT',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -3420,10 +3413,10 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_wJD14IyJ4KKVtjCrGyNCHO09')
+                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_MFe0RdBQSM9qbQMWcuIAjhAW')
                 ],
                 usage=RequestUsage(
-                    input_tokens=273,
+                    input_tokens=268,
                     output_tokens=11,
                     details={
                         'accepted_prediction_tokens': 0,
@@ -3438,9 +3431,9 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
-                    'timestamp': datetime(2025, 6, 10, 0, 21, 38, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='chatcmpl-Bgh2AW2NXGgMc7iS639MJXNRgtatR',
+                provider_response_id='chatcmpl-D3aUwOYVFd4VXd0tzrA44OBpgY26l',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -3449,7 +3442,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_wJD14IyJ4KKVtjCrGyNCHO09',
+                        tool_call_id='call_MFe0RdBQSM9qbQMWcuIAjhAW',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -3463,7 +3456,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=294,
+                    input_tokens=289,
                     output_tokens=21,
                     details={
                         'accepted_prediction_tokens': 0,
@@ -3478,9 +3471,9 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 6, 10, 0, 21, 39, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='chatcmpl-Bgh2BthuopRnSqCuUgMbBnOqgkDHC',
+                provider_response_id='chatcmpl-D3aUxsdHafpet2y6DFHn2ZpbfT6Cn',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -3655,7 +3648,7 @@ async def test_openai_model_cerebras_provider_qwen_3_coder(allow_model_requests:
         city: str
         country: str
 
-    m = OpenAIChatModel('qwen-3-coder-480b', provider=CerebrasProvider(api_key=cerebras_api_key))
+    m = OpenAIChatModel('qwen-3-32b', provider=CerebrasProvider(api_key=cerebras_api_key))
     agent = Agent(m, output_type=Location)
 
     result = await agent.run('What is the capital of France?')

@@ -1,6 +1,8 @@
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
 import gzip
+import hashlib
 import json
+import re
 import unicodedata
 import urllib.parse
 import zlib
@@ -56,7 +58,18 @@ else:
         from yaml import Dumper, SafeLoader
 
 FILTERED_HEADER_PREFIXES = ['anthropic-', 'cf-', 'x-']
-FILTERED_HEADERS = {'authorization', 'date', 'request-id', 'server', 'user-agent', 'via', 'set-cookie', 'api-key'}
+FILTERED_HEADERS = {
+    'authorization',
+    'date',
+    'request-id',
+    'server',
+    'user-agent',
+    'via',
+    'set-cookie',
+    'api-key',
+    'openai-organization',
+    'openai-project',
+}
 ALLOWED_HEADER_PREFIXES = {
     # required by huggingface_hub.file_download used by test_embeddings.py::TestSentenceTransformers
     'x-xet-',
@@ -91,12 +104,62 @@ def str_presenter(dumper: Dumper, data: str):
 LiteralDumper.add_representer(str, str_presenter)
 
 
+SENSITIVE_BODY_FIELDS = {'access_token', 'id_token'}
+BINARY_TRUNCATE_THRESHOLD = 1024
+BASE64_PATTERN = re.compile(r'^[A-Za-z0-9+/=]{100,}$')
+
+
+def looks_like_base64(s: str) -> bool:
+    if len(s) < 100:
+        return False
+    sample = s[:200].replace('\n', '').replace('\r', '')
+    return bool(BASE64_PATTERN.match(sample))
+
+
+def scrub_sensitive_fields(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {k: 'scrubbed' if k in SENSITIVE_BODY_FIELDS else scrub_sensitive_fields(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [scrub_sensitive_fields(item) for item in obj]
+    return obj
+
+
+PRESERVE_BINARY_KEYS = {'redactedContent', 'signature', 'thoughtSignature'}
+
+
+def truncate_binary_data(obj: Any, threshold: int = BINARY_TRUNCATE_THRESHOLD) -> Any:
+    if isinstance(obj, str):
+        if len(obj) > threshold and looks_like_base64(obj):
+            hash_prefix = hashlib.sha256(obj.encode()).hexdigest()[:16]
+            return f'__BINARY_TRUNCATED__:len={len(obj)}:sha256={hash_prefix}'
+        return obj
+    elif isinstance(obj, dict):
+        return {k: (v if k in PRESERVE_BINARY_KEYS else truncate_binary_data(v, threshold)) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [truncate_binary_data(item, threshold) for item in obj]
+    return obj
+
+
+def restore_truncated_binary(obj: Any) -> Any:
+    """Convert truncated binary placeholders to valid base64 for SDK validation."""
+    import base64
+
+    if isinstance(obj, str) and obj.startswith('__BINARY_TRUNCATED__'):
+        return base64.b64encode(obj.encode()).decode()
+    elif isinstance(obj, dict):
+        return {k: restore_truncated_binary(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [restore_truncated_binary(item) for item in obj]
+    return obj
+
+
 def deserialize(cassette_string: str):
     cassette_dict = yaml.load(cassette_string, Loader=SafeLoader)
     for interaction in cassette_dict['interactions']:
         for kind, data in interaction.items():
             parsed_body = data.pop('parsed_body', None)
             if parsed_body is not None:
+                parsed_body = restore_truncated_binary(parsed_body)
                 dumped_body = json.dumps(parsed_body)
                 data['body'] = {'string': dumped_body} if kind == 'response' else dumped_body
     return cassette_dict
@@ -122,7 +185,11 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
             data['headers'] = headers
 
             content_type = headers.get('content-type', [])
-            if any(isinstance(header, str) and header.startswith('application/json') for header in content_type):
+            # Handle both string and binary (base64-decoded) content-type headers
+            content_type_strs = [
+                h.decode('utf-8') if isinstance(h, bytes) else h for h in content_type if isinstance(h, (str, bytes))
+            ]
+            if any(ct.startswith('application/json') for ct in content_type_strs):
                 # Parse the body as JSON
                 body = data.get('body', None)
                 assert body is not None, data
@@ -147,8 +214,8 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
                     parsed = json.loads(body)  # pyright: ignore[reportUnknownArgumentType]
                     # Normalize smart quotes and special characters
                     data['parsed_body'] = normalize_body(parsed)
-                    if 'access_token' in data['parsed_body']:
-                        data['parsed_body']['access_token'] = 'scrubbed'
+                    data['parsed_body'] = scrub_sensitive_fields(data['parsed_body'])
+                    data['parsed_body'] = truncate_binary_data(data['parsed_body'])
                     del data['body']
                     # Update content-length to match the body that will be produced during deserialize.
                     # This is necessary because decompression changes the body size, and botocore

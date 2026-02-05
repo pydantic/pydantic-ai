@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '1143'
+      - '1084'
       content-type:
       - application/json
       host:
@@ -29,7 +29,6 @@ interactions:
               result:
                 anyOf:
                 - additionalProperties: false
-                  description: CityLocation
                   properties:
                     data:
                       additionalProperties: false
@@ -50,121 +49,6 @@ interactions:
                   - data
                   type: object
                 - additionalProperties: false
-                  description: CountryLanguage
-                  properties:
-                    data:
-                      additionalProperties: false
-                      properties:
-                        country:
-                          type: string
-                        language:
-                          type: string
-                      required:
-                      - country
-                      - language
-                      type: object
-                    kind:
-                      const: CountryLanguage
-                      type: string
-                  required:
-                  - kind
-                  - data
-                  type: object
-            required:
-            - result
-            type: object
-          strict: true
-          type: json_schema
-      tool_choice: auto
-      tools:
-      - description: ''
-        name: get_user_country
-        parameters:
-          additionalProperties: false
-          properties: {}
-          type: object
-        strict: false
-        type: function
-    uri: https://api.openai.com/v1/responses
-  response:
-    headers:
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-length:
-      - '3657'
-      content-type:
-      - application/json
-      openai-organization:
-      - pydantic-28gund
-      openai-processing-ms:
-      - '562'
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    parsed_body:
-      background: false
-      created_at: 1749516048
-      error: null
-      id: resp_68477f10f2d081a39b3438f413b3bafc0dd57d732903c563
-      incomplete_details: null
-      instructions: null
-      max_output_tokens: null
-      metadata: {}
-      model: gpt-4o-2024-08-06
-      object: response
-      output:
-      - arguments: '{}'
-        call_id: call_UaLahjOtaM2tTyYZLxTCbOaP
-        id: fc_68477f1168a081a3981e847cd94275080dd57d732903c563
-        name: get_user_country
-        status: completed
-        type: function_call
-      parallel_tool_calls: true
-      previous_response_id: null
-      reasoning:
-        effort: null
-        summary: null
-      service_tier: default
-      status: completed
-      store: true
-      temperature: 1.0
-      text:
-        format:
-          description: null
-          name: final_result
-          schema:
-            additionalProperties: false
-            properties:
-              result:
-                anyOf:
-                - additionalProperties: false
-                  description: CityLocation
-                  properties:
-                    data:
-                      additionalProperties: false
-                      properties:
-                        city:
-                          type: string
-                        country:
-                          type: string
-                      required:
-                      - city
-                      - country
-                      type: object
-                    kind:
-                      const: CityLocation
-                      type: string
-                  required:
-                  - kind
-                  - data
-                  type: object
-                - additionalProperties: false
-                  description: CountryLanguage
                   properties:
                     data:
                       additionalProperties: false
@@ -199,16 +83,137 @@ interactions:
           type: object
         strict: false
         type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3859'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '563'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1769786535
+      created_at: 1769786535
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0194c6208474c48c00697ccca7009481938b922cc028479565
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - arguments: '{}'
+        call_id: call_UgLxgDyY8kJc9hTrnXN8CWXd
+        id: fc_0194c6208474c48c00697ccca7642c8193847d79b96145e416
+        name: get_user_country
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          description: null
+          name: final_result
+          schema:
+            additionalProperties: false
+            properties:
+              result:
+                anyOf:
+                - additionalProperties: false
+                  properties:
+                    data:
+                      additionalProperties: false
+                      properties:
+                        city:
+                          type: string
+                        country:
+                          type: string
+                      required:
+                      - city
+                      - country
+                      type: object
+                    kind:
+                      const: CityLocation
+                      type: string
+                  required:
+                  - kind
+                  - data
+                  type: object
+                - additionalProperties: false
+                  properties:
+                    data:
+                      additionalProperties: false
+                      properties:
+                        country:
+                          type: string
+                        language:
+                          type: string
+                      required:
+                      - country
+                      - language
+                      type: object
+                    kind:
+                      const: CountryLanguage
+                      type: string
+                  required:
+                  - kind
+                  - data
+                  type: object
+            required:
+            - result
+            type: object
+          strict: true
+          type: json_schema
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_user_country
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_logprobs: 0
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 153
+        input_tokens: 142
         input_tokens_details:
           cached_tokens: 0
         output_tokens: 12
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 165
+        total_tokens: 154
       user: null
     status:
       code: 200
@@ -218,16 +223,16 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '1379'
+      - '1286'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=3Nl1ERbtfVAI.dGjzCYYN1u71YD5eEoLU0iCrvPPPL0-1749516049-1.0.1.1-LnI7tJwKr.C_wA15Shsl8pcGd32zrRqqv_9u4S84nXtNCopx1iBIKYDsyMg3u1Z3lJ_1Cd1YVM8uKAMjiKmgoqS8GFQ3Z_vV_Mahvqbi4KA;
-        _cfuvid=oc_k9l86fnMo2ml.0aop6a3eVJEvjxB0lnxWK0_kJq8-1749516049524-0.0.1.1-604800000
+      - __cf_bm=aB3rQ7osybqDlq8IPtSDbMkZvYOLyzVfsfj5YouRoTM-1769786535-1.0.1.1-wGQxcXOjx.Cxe6zx47GFO_G907qa9hgG_CBmauNPbSVW7IYgKFPQgEAOP3Ukcx8N4UfwzrZ4cwGj3DgJUpEnj3k9n7eS0.s6MSUaUmKYTzI;
+        _cfuvid=gnaliHnLItFMAFW4Wl.oCOvAp34A37AuieL2xty6W1w-1769786535604-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -235,13 +240,11 @@ interactions:
       input:
       - content: What is the largest city in the user country?
         role: user
-      - content: ''
-        role: assistant
       - arguments: '{}'
-        call_id: call_UaLahjOtaM2tTyYZLxTCbOaP
+        call_id: call_UgLxgDyY8kJc9hTrnXN8CWXd
         name: get_user_country
         type: function_call
-      - call_id: call_UaLahjOtaM2tTyYZLxTCbOaP
+      - call_id: call_UgLxgDyY8kJc9hTrnXN8CWXd
         output: Mexico
         type: function_call_output
       model: gpt-4o
@@ -255,7 +258,6 @@ interactions:
               result:
                 anyOf:
                 - additionalProperties: false
-                  description: CityLocation
                   properties:
                     data:
                       additionalProperties: false
@@ -276,123 +278,6 @@ interactions:
                   - data
                   type: object
                 - additionalProperties: false
-                  description: CountryLanguage
-                  properties:
-                    data:
-                      additionalProperties: false
-                      properties:
-                        country:
-                          type: string
-                        language:
-                          type: string
-                      required:
-                      - country
-                      - language
-                      type: object
-                    kind:
-                      const: CountryLanguage
-                      type: string
-                  required:
-                  - kind
-                  - data
-                  type: object
-            required:
-            - result
-            type: object
-          strict: true
-          type: json_schema
-      tool_choice: auto
-      tools:
-      - description: ''
-        name: get_user_country
-        parameters:
-          additionalProperties: false
-          properties: {}
-          type: object
-        strict: false
-        type: function
-    uri: https://api.openai.com/v1/responses
-  response:
-    headers:
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-length:
-      - '3800'
-      content-type:
-      - application/json
-      openai-organization:
-      - pydantic-28gund
-      openai-processing-ms:
-      - '1042'
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    parsed_body:
-      background: false
-      created_at: 1749516049
-      error: null
-      id: resp_68477f119830819da162aa6e10552035061ad97e2eef7871
-      incomplete_details: null
-      instructions: null
-      max_output_tokens: null
-      metadata: {}
-      model: gpt-4o-2024-08-06
-      object: response
-      output:
-      - content:
-        - annotations: []
-          text: '{"result":{"kind":"CityLocation","data":{"city":"Mexico City","country":"Mexico"}}}'
-          type: output_text
-        id: msg_68477f1235b8819d898adc64709c7ebf061ad97e2eef7871
-        role: assistant
-        status: completed
-        type: message
-      parallel_tool_calls: true
-      previous_response_id: null
-      reasoning:
-        effort: null
-        summary: null
-      service_tier: default
-      status: completed
-      store: true
-      temperature: 1.0
-      text:
-        format:
-          description: null
-          name: final_result
-          schema:
-            additionalProperties: false
-            properties:
-              result:
-                anyOf:
-                - additionalProperties: false
-                  description: CityLocation
-                  properties:
-                    data:
-                      additionalProperties: false
-                      properties:
-                        city:
-                          type: string
-                        country:
-                          type: string
-                      required:
-                      - city
-                      - country
-                      type: object
-                    kind:
-                      const: CityLocation
-                      type: string
-                  required:
-                  - kind
-                  - data
-                  type: object
-                - additionalProperties: false
-                  description: CountryLanguage
                   properties:
                     data:
                       additionalProperties: false
@@ -427,16 +312,140 @@ interactions:
           type: object
         strict: false
         type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '4028'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '1005'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1769786536
+      created_at: 1769786535
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0ee8ed22d03afdd500697ccca7b7ec819ebea5ece5c562b17e
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: '{"result":{"kind":"CityLocation","data":{"city":"Mexico City","country":"Mexico"}}}'
+          type: output_text
+        id: msg_0ee8ed22d03afdd500697ccca83440819ead369b6ce161efba
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          description: null
+          name: final_result
+          schema:
+            additionalProperties: false
+            properties:
+              result:
+                anyOf:
+                - additionalProperties: false
+                  properties:
+                    data:
+                      additionalProperties: false
+                      properties:
+                        city:
+                          type: string
+                        country:
+                          type: string
+                      required:
+                      - city
+                      - country
+                      type: object
+                    kind:
+                      const: CityLocation
+                      type: string
+                  required:
+                  - kind
+                  - data
+                  type: object
+                - additionalProperties: false
+                  properties:
+                    data:
+                      additionalProperties: false
+                      properties:
+                        country:
+                          type: string
+                        language:
+                          type: string
+                      required:
+                      - country
+                      - language
+                      type: object
+                    kind:
+                      const: CountryLanguage
+                      type: string
+                  required:
+                  - kind
+                  - data
+                  type: object
+            required:
+            - result
+            type: object
+          strict: true
+          type: json_schema
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_user_country
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_logprobs: 0
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 176
+        input_tokens: 161
         input_tokens_details:
           cached_tokens: 0
         output_tokens: 26
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 202
+        total_tokens: 187
       user: null
     status:
       code: 200

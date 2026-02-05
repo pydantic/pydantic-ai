@@ -545,3 +545,8 @@ def get_event_loop():
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
     return event_loop
+
+
+def filter_str_dicts(items: list[Any]) -> list[dict[str, Any]]:
+    """Filter list to only dict items, with proper typing."""
+    return [item for item in items if isinstance(item, dict)]

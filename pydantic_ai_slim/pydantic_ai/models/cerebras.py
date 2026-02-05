@@ -30,7 +30,7 @@ LatestCerebrasModelNames = Literal[
     'llama3.1-8b',
     'qwen-3-235b-a22b-instruct-2507',
     'qwen-3-32b',
-    'zai-glm-4.6',
+    'zai-glm-4.7',
 ]
 
 CerebrasModelName = str | LatestCerebrasModelNames
@@ -52,7 +52,7 @@ class CerebrasModelSettings(ModelSettings, total=False):
     cerebras_disable_reasoning: bool
     """Disable reasoning for the model.
 
-    This setting is only supported on reasoning models: `zai-glm-4.6` and `gpt-oss-120b`.
+    This setting is only supported on reasoning models: `zai-glm-4.7` and `gpt-oss-120b`.
 
     See [the Cerebras docs](https://inference-docs.cerebras.ai/resources/openai#passing-non-standard-parameters) for more details.
     """

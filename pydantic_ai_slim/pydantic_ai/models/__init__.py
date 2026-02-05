@@ -143,7 +143,7 @@ KnownModelName = TypeAliasType(
         'cerebras:llama3.1-8b',
         'cerebras:qwen-3-235b-a22b-instruct-2507',
         'cerebras:qwen-3-32b',
-        'cerebras:zai-glm-4.6',
+        'cerebras:zai-glm-4.7',
         'cohere:c4ai-aya-expanse-32b',
         'cohere:c4ai-aya-expanse-8b',
         'cohere:command-nightly',

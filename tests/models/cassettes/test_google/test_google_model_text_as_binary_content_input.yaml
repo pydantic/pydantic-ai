@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '301'
+      - '331'
       content-type:
       - application/json
       host:
@@ -22,7 +22,9 @@ interactions:
             data: VGhpcyBpcyBhIHRlc3QgZG9jdW1lbnQu
             mimeType: text/plain
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       systemInstruction:
         parts:
         - text: You are a helpful chatbot.
@@ -33,11 +35,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '710'
+      - '711'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=571
+      - gfet4t7; dur=989
       transfer-encoding:
       - chunked
       vary:
@@ -46,7 +48,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.2041482448577881
+      - avgLogprobs: -0.01401758889357249
         content:
           parts:
           - text: |
@@ -54,7 +56,7 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: 9ofNaNqNKNWDmtkPs-nsqAU
+      responseId: ijR8aZq2E_6hz7IP8f_E6Qg
       usageMetadata:
         candidatesTokenCount: 15
         candidatesTokensDetails:

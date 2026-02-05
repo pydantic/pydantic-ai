@@ -4,24 +4,26 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '195'
+      - '234'
       content-type:
       - application/json
       host:
       - api.openai.com
     method: POST
     parsed_body:
+      include:
+      - reasoning.encrypted_content
       input:
       - content: Explain me how to cook uruguayan alfajor. Do not send whitespaces at the end of the lines.
         role: user
-      instructions: ''
       model: o3-mini
       reasoning:
         effort: low
+      stream: false
     uri: https://api.openai.com/v1/responses
   response:
     headers:
@@ -30,13 +32,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '3127'
+      - '4169'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '6575'
+      - '5638'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -44,65 +44,82 @@ interactions:
       transfer-encoding:
       - chunked
     parsed_body:
-      created_at: 1743075632
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1769747660
+      created_at: 1769747655
       error: null
-      id: resp_67e5393080ec81918116f16210e1395c0e395386ebcf3a62
+      frequency_penalty: 0.0
+      id: resp_0db6405f23f4a64e00697c34c71b8c8193a3e8617e8d2785e3
       incomplete_details: null
-      instructions: ''
+      instructions: null
       max_output_tokens: null
+      max_tool_calls: null
       metadata: {}
       model: o3-mini-2025-01-31
       object: response
       output:
-      - id: rs_67e539329f808191ae793066c0ee20800e395386ebcf3a62
+      - encrypted_content: gAAAAABpfDTM3goyAeEXFciOWrTB5lo5FeFd7tSE5ytydW9NiK9NflJs7pWd-J0uXDwMaH_cwNw-K__sP2eQDHrxJ0UsvZB8hosLBEZypWMecKppCDWRrDP5gYpNGlvlauN6WqkYCTTW2S0kPDF7_5vEm94Pivuu9WOWcZbEBWtPvPlNyhC_fA2p6nsbLdaE9rIYg04KlEnYagIVdK6ytbsC-085nVdatDP-GEFZw4mK6YHEjj8qDtE_MxR75VkBH0pfbqu7Iv8QHxGoZhYp__XwVExGzqfL4FHMXuSm_8N6Z2ZZd-OJ7pUTDvoqKY-3hjJwjVb-KVtFuL4BfWxdCoUM3rdFAs6yrdK8wgCH-f8k8WUeuUYmrOEUMvdrKsjpB443EHYmcayhPBpUrfh6_QN1MYNc4REehUox17NxwOl0sKmMPXVHK7A=
+        id: rs_0db6405f23f4a64e00697c34c87e9c8193ac4e592a993519fa
         summary: []
         type: reasoning
       - content:
         - annotations: []
-          text: "Ingredients for the dough:\n• 300 g cornstarch  \n• 200 g flour  \n• 150 g powdered sugar  \n• 200 g unsalted
-            butter  \n• 3 egg yolks  \n• Zest of 1 lemon  \n• 1 teaspoon vanilla extract  \n• A pinch of salt  \n\nIngredients
-            for the filling (dulce de leche):\n• 400 g dulce de leche  \n\nOptional coating:\n• Powdered sugar for dusting
-            \ \n• Grated coconut  \n• Crushed peanuts or walnuts  \n• Melted chocolate\n\nSteps:\n1. In a bowl, mix together
-            the cornstarch, flour, powdered sugar, and salt.\n2. Add the unsalted butter cut into small pieces. Work it into
-            the dry ingredients until the mixture resembles coarse breadcrumbs.\n3. Incorporate the egg yolks, lemon zest,
-            and vanilla extract. Mix until you obtain a smooth and homogeneous dough.\n4. Wrap the dough in plastic wrap and
-            let it rest in the refrigerator for at least one hour.\n5. Meanwhile, prepare a clean workspace by lightly dusting
-            it with flour.\n6. Roll out the dough on the working surface until it is about 0.5 cm thick.\n7. Use a round cutter
-            (approximately 3-4 cm in diameter) to cut out circles. Re-roll any scraps to maximize the number of cookies.\n8.
-            Arrange the circles on a baking sheet lined with parchment paper.\n9. Preheat the oven to 180°C (350°F) and bake
-            the cookies for about 10-12 minutes until they are lightly golden at the edges. They should remain soft.\n10.
-            Remove the cookies from the oven and allow them to cool completely on a rack.\n11. Once the cookies are cool,
-            spread dulce de leche on the flat side of one cookie and sandwich it with another.\n12. If desired, roll the edges
-            of the alfajores in powdered sugar, grated coconut, crushed nuts, or dip them in melted chocolate.\n13. Allow
-            any coatings to set before serving.\n\nEnjoy your homemade Uruguayan alfajores!"
+          logprobs: []
+          text: "Alfajores uruguayos are delicious sandwich cookies filled with dulce de leche and rolled in coconut or covered
+            with chocolate. Follow these steps to prepare them:\n\nIngredients:\n• 300 g cornstarch  \n• 200 g all‐purpose
+            flour  \n• 100 g unsalted butter, cold and diced  \n• 100 g powdered sugar  \n• 2 egg yolks  \n• Zest of 1 lemon
+            \ \n• 1 teaspoon vanilla extract  \n• 1 pinch of salt  \n• Dulce de leche for filling  \n• Optional: desiccated
+            coconut or melted chocolate for coating\n\nInstructions:\n1. In a large bowl, sift together the cornstarch, flour,
+            powdered sugar, and salt to avoid lumps.\n2. Add the cold diced butter, lemon zest, and vanilla extract. Work
+            the ingredients with your fingertips or a pastry cutter until the mixture resembles coarse crumbs.\n3. Add the
+            egg yolks and gently mix until the dough comes together. Avoid overworking the dough for a tender texture.\n4.
+            Shape the dough into a disc, wrap it in plastic wrap, and refrigerate for at least 1 hour to relax the gluten
+            and firm the dough.\n5. Preheat your oven to 180°C (350°F). Line baking sheets with parchment paper.\n6. On a
+            lightly floured surface, roll out the dough to about 0.5 cm thickness. Use a round cookie cutter (approximately
+            5 cm in diameter) to cut out circles.\n7. Place the cookies on the prepared baking sheets and bake for 8-10 minutes
+            until the edges are just set. The cookies should remain pale.\n8. Remove the cookies from the oven and allow them
+            to cool on a rack completely.\n9. Once cooled, spread a generous layer of dulce de leche on the flat side of one
+            cookie and sandwich it with another. Repeat with the rest.\n10. For finishing touches, optionally roll the alfajores
+            in desiccated coconut or gently dip them in melted chocolate. Place them on a rack to let the coating set.\n\nEnjoy
+            your homemade alfajores with a cup of mate or tea!\n\nNote: Clean up all utensils and surfaces promptly and store
+            any leftovers in an airtight container to preserve freshness."
           type: output_text
-        id: msg_67e539331e4c8191b4786c0660adb4ec0e395386ebcf3a62
+        id: msg_0db6405f23f4a64e00697c34c909088193845b081956d566ba
         role: assistant
         status: completed
         type: message
       parallel_tool_calls: true
+      presence_penalty: 0.0
       previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
       reasoning:
         effort: low
-        generate_summary: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
       status: completed
       store: true
       temperature: 1.0
       text:
         format:
           type: text
+        verbosity: medium
       tool_choice: auto
       tools: []
+      top_logprobs: 0
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 88
+        input_tokens: 29
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 547
+        output_tokens: 515
         output_tokens_details:
-          reasoning_tokens: 128
-        total_tokens: 635
+          reasoning_tokens: 64
+        total_tokens: 544
       user: null
     status:
       code: 200

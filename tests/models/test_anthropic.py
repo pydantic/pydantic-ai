@@ -57,7 +57,7 @@ from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsInstance, IsInt, IsNow, IsStr, TestEnv, raise_if_exception, try_import
 from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
 
@@ -2321,8 +2321,21 @@ async def test_anthropic_model_thinking_part_from_other_model(
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
     agent = Agent(m, instructions='You are a helpful assistant.', model_settings=settings)
 
-    result = await agent.run('How do I cross the street?')
-    assert result.all_messages() == snapshot(
+    # Assertions are deferred to the end so all API calls complete before any assertion can fail.
+    # This ensures VCR records all interactions when re-recording cassettes.
+    first_result = await agent.run('How do I cross the street?')
+
+    second_result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        model=AnthropicModel(
+            'claude-sonnet-4-0',
+            provider=AnthropicProvider(api_key=anthropic_api_key),
+            settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024}),
+        ),
+        message_history=first_result.all_messages(),
+    )
+
+    assert first_result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
@@ -2339,67 +2352,52 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                        id=IsStr(),
                         signature=IsStr(),
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                        id=IsStr(),
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                        id=IsStr(),
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                        id=IsStr(),
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
-                        provider_name='openai',
-                    ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                        id=IsStr(),
                         provider_name='openai',
                     ),
                     TextPart(
                         content=IsStr(),
-                        id='msg_68c1fdbecbf081a18085a084257a9aef06da9901a3d98ab7',
+                        id=IsStr(),
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=23, output_tokens=2211, details={'reasoning_tokens': 1920}),
-                model_name='gpt-5-2025-08-07',
+                usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt(), details={'reasoning_tokens': IsInt()}),
+                model_name=IsStr(),
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 10, 22, 37, 27, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_68c1fda6f11081a1b9fa80ae9122743506da9901a3d98ab7',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
         ]
     )
-
-    result = await agent.run(
-        'Considering the way to cross the street, analogously, how do I cross the river?',
-        model=AnthropicModel(
-            'claude-sonnet-4-0',
-            provider=AnthropicProvider(api_key=anthropic_api_key),
-            settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024}),
-        ),
-        message_history=result.all_messages(),
-    )
-    assert result.new_messages() == snapshot(
+    assert second_result.new_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
@@ -2422,13 +2420,13 @@ async def test_anthropic_model_thinking_part_from_other_model(
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1343,
-                    output_tokens=538,
+                    input_tokens=1061,
+                    output_tokens=546,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 1343,
-                        'output_tokens': 538,
+                        'input_tokens': 1061,
+                        'output_tokens': 546,
                     },
                 ),
                 model_name='claude-sonnet-4-20250514',
@@ -2436,7 +2434,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_016e2w8nkCuArd5HFSfEwke7',
+                provider_response_id='msg_01LbeEgfkZoBZDUa38s8Nk9o',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2480,21 +2478,21 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=42,
-                    output_tokens=419,
+                    input_tokens=43,
+                    output_tokens=277,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 42,
-                        'output_tokens': 419,
+                        'input_tokens': 43,
+                        'output_tokens': 277,
                     },
                 ),
-                model_name='claude-sonnet-4-5-20250929',
+                model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_01PiJ6i3vjEZjHxojahi2YNc',
+                provider_response_id='msg_01A6gwM9ZYySVuWAZxJ5Keko',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2513,142 +2511,88 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' safety information that could')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' help')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' prevent')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' accidents.')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='')),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    content_delta="""\
-.)
-2. Look\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' both ways (left-')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='right-left in countries')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' where cars drive on the right;'),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' right-left-right where')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' they drive on the left)')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
-
-3. Wait for\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' traffic to stop or for a clear'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- gap in traffic
-4\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta='. Make eye contact with drivers if'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- possible
-5. Cross at\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- a steady pace without running
-6. Continue\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- watching for traffic while crossing
-7\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta='. Use pedestrian signals where'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- available
-
-I'll also mention\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' some additional safety tips and considerations for'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' different situations (busy streets, streets'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' with traffic signals, etc.).'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    signature_delta='ErUBCkYIBhgCIkA/Y+JwNMtmQyHcoo4/v2dpY6ruQifcu3pAzHbzIwpIrjIyaWaYdJOp9/0vUmBPj+LmqgiDSTktRcn0U75AlpXOEgwzVmYdHgDaZfeyBGcaDFSIZCHzzrZQkolJKCIwhMETosYLx+Dw/vKa83hht943z9R3/ViOqokT25JmMfaGOntuo+33Zxqf5rqUbkQ3Kh34rIqqnKaFSVr7Nn85z8OFN3Cwzz+HmXl2FgCXOxgC'
+                    signature_delta='Eu4CCkYICxgCKkCptg1Gj6hlyXcXwEx/TWfLRbzj5pHZxehbLo+uxHyNHQBj3v94K/YaznDPaHK1SaPgHUXNGXLS5ZLCZLLL1JyXEgxQLRrXD+MKA8Gj3MMaDAIi1Fk1ElbTcIO+ySIwwNajYXaoICvXKEtJBn5Twv/xy2yG1gi2lSgo3666fWNsYlcNiVXkqoaw/VV5UKpaKtUBEYTbKvFgKPl/bDQbNNj1SZT3LYTE48PfmCGyN7ftjsi0wjeMQjuLJPWfnjszeZWLb1Ccdg7rmwtmIjBRE89SwW875a6sdIfLeXClM60m/mOwInPm0VBkRTbWEgTyalRdVIz0FGno+ls3M8JHWlaJhYutqSabkupoYsvO+ZNMszrIm8WkmnAhzRyYlCm6F6n2fnbDLOhgfUQbqukDcvs+QzxfwS21+l9T5fI8d4Xe5V7kyW1TB2oDfbY+qc1JPHgZhpI3Qy+BFYWVLaPls+l6xM1BpoJQGAE='
                 ),
             ),
             PartEndEvent(
                 index=0,
                 part=ThinkingPart(
-                    content="""\
-The question is asking about how to safely cross a street, which is a basic but important safety skill.
-
-I should provide clear, step-by-step instructions for crossing a street safely:
-
-1. Find a designated crossing point if possible (crosswalk, pedestrian crossing, etc.)
-2. Look both ways (left-right-left in countries where cars drive on the right; right-left-right where they drive on the left)
-3. Wait for traffic to stop or for a clear gap in traffic
-4. Make eye contact with drivers if possible
-5. Cross at a steady pace without running
-6. Continue watching for traffic while crossing
-7. Use pedestrian signals where available
-
-I'll also mention some additional safety tips and considerations for different situations (busy streets, streets with traffic signals, etc.).\
-""",
-                    signature='ErUBCkYIBhgCIkA/Y+JwNMtmQyHcoo4/v2dpY6ruQifcu3pAzHbzIwpIrjIyaWaYdJOp9/0vUmBPj+LmqgiDSTktRcn0U75AlpXOEgwzVmYdHgDaZfeyBGcaDFSIZCHzzrZQkolJKCIwhMETosYLx+Dw/vKa83hht943z9R3/ViOqokT25JmMfaGOntuo+33Zxqf5rqUbkQ3Kh34rIqqnKaFSVr7Nn85z8OFN3Cwzz+HmXl2FgCXOxgC',
+                    content='This is a straightforward question about pedestrian safety. I should provide clear, practical advice for crossing streets safely. This is basic safety information that could help prevent accidents.',
+                    signature='Eu4CCkYICxgCKkCptg1Gj6hlyXcXwEx/TWfLRbzj5pHZxehbLo+uxHyNHQBj3v94K/YaznDPaHK1SaPgHUXNGXLS5ZLCZLLL1JyXEgxQLRrXD+MKA8Gj3MMaDAIi1Fk1ElbTcIO+ySIwwNajYXaoICvXKEtJBn5Twv/xy2yG1gi2lSgo3666fWNsYlcNiVXkqoaw/VV5UKpaKtUBEYTbKvFgKPl/bDQbNNj1SZT3LYTE48PfmCGyN7ftjsi0wjeMQjuLJPWfnjszeZWLb1Ccdg7rmwtmIjBRE89SwW875a6sdIfLeXClM60m/mOwInPm0VBkRTbWEgTyalRdVIz0FGno+ls3M8JHWlaJhYutqSabkupoYsvO+ZNMszrIm8WkmnAhzRyYlCm6F6n2fnbDLOhgfUQbqukDcvs+QzxfwS21+l9T5fI8d4Xe5V7kyW1TB2oDfbY+qc1JPHgZhpI3Qy+BFYWVLaPls+l6xM1BpoJQGAE=',
                     provider_name='anthropic',
                 ),
                 next_part_kind='text',
             ),
-            PartStartEvent(
-                index=1, part=TextPart(content='# How to Cross a Street Safely'), previous_part_kind='thinking'
-            ),
+            PartStartEvent(index=1, part=TextPart(content="Here's"), previous_part_kind='thinking'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+- Cross\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' when traffic')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' is clear in')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' both directions')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+- Walk\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' br')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='iskly but don')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta="'t run")),
             PartDeltaEvent(
                 index=1,
                 delta=TextPartDelta(
                     content_delta="""\
 
 
-Follow these steps to cross a\
+**General\
 """
                 ),
             ),
@@ -2656,85 +2600,167 @@ Follow these steps to cross a\
                 index=1,
                 delta=TextPartDelta(
                     content_delta="""\
- street safely:
-
-1\
+ safety tips:**
+- Use\
 """
                 ),
             ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='. **Find a proper')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' crossing point** - Use a crosswalk,')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' pedestrian crossing, or intersection')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' crosswalks and')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' inters')),
             PartDeltaEvent(
                 index=1,
                 delta=TextPartDelta(
                     content_delta="""\
- whenever possible.
-
-2.\
+ections when available
+-\
 """
                 ),
             ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' **Stop at the curb** -')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Stand slightly back from the edge.')),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Wear')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' bright or')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' reflective clothing,')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+ especially at night
+- Stay\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' visible -')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' avoid')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' crossing')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' between')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' par')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+ked cars
+- Keep\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' looking')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' for')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' traffic while')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+ crossing
+- If\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' there')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta="'s a")),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' pedest')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='rian island')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=', stop')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' there')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' check')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' traffic')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' again')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+
+**\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Teach')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' children to')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=':**')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+- Always\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' hold')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' an')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=" adult's hand")),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+- Stop\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' at the')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' curb automatically')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+- Look and\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' listen before crossing')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+
+The\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' key')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' is being predict')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='able,')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' visible, and alert')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='.')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Take')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' your time to')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' ensure')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' it')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta="'s safe before crossing.")),
             PartEndEvent(
                 index=1,
                 part=TextPart(
                     content="""\
-# How to Cross a Street Safely
+Here's how to cross the street safely:
 
-Follow these steps to cross a street safely:
+**At traffic lights or crosswalks:**
+- Wait for the walk signal or green light
+- Look both ways before stepping into the street
+- Make eye contact with drivers when possible
+- Stay alert and avoid distractions (phones, headphones)
 
-1. **Find a proper crossing point** - Use a crosswalk, pedestrian crossing, or intersection whenever possible.
+**At intersections without signals:**
+- Stop at the curb and look left, right, then left again
+- Listen for approaching vehicles
+- Cross when traffic is clear in both directions
+- Walk briskly but don't run
 
-2. **Stop at the curb** - Stand slightly back from the edge.
+**General safety tips:**
+- Use crosswalks and intersections when available
+- Wear bright or reflective clothing, especially at night
+- Stay visible - avoid crossing between parked cars
+- Keep looking for traffic while crossing
+- If there's a pedestrian island, stop there and check traffic again
 
-3. **Look both ways** - Look left, right, then left again (reverse in countries where cars drive on the left).
+**Teach children to:**
+- Always hold an adult's hand
+- Stop at the curb automatically
+- Look and listen before crossing
 
-4. **Listen for traffic** - Remove headphones if you're wearing them.
-
-5. **Wait for a gap** or for vehicles to stop completely.
-
-6. **Make eye contact** with drivers to ensure they see you.
-
-7. **Cross with purpose** - Walk at a steady pace without stopping or running.
-
-8. **Continue watching** for traffic as you cross.
-
-9. **Use signals** - Follow pedestrian crossing signals where available.
-
-If there's a traffic light or pedestrian signal, only cross when indicated, and always check for turning vehicles even when you have the right of way.
-
-Is there a specific situation or type of street crossing you're concerned about?\
+The key is being predictable, visible, and alert. Take your time to ensure it's safe before crossing.\
 """
                 ),
             ),
@@ -4572,8 +4598,8 @@ async def test_anthropic_web_fetch_tool_stream(
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='The user wants me to fetch the content from the URL https://ai.pydantic.dev and provide only the first sentence from that page. I need to use the web_fetch tool to get the content from this URL.',
-                        signature='EusCCkYICRgCKkAG/7zhRcmUoiMtml5iZUXVv3nqupp8kgk0nrq9zOoklaXzVCnrb9kwLNWGETIcCaAnLd0cd0ESwjslkVKdV9n8EgxKKdu8LlEvh9VGIWIaDAJ2Ja2NEacp1Am6jSIwyNO36tV+Sj+q6dWf79U+3KOIa1khXbIYarpkIViCuYQaZwpJ4Vtedrd7dLWTY2d5KtIB9Pug5UPuvepSOjyhxLaohtGxmdvZN8crGwBdTJYF9GHSli/rzvkR6CpH+ixd8iSopwFcsJgQ3j68fr/yD7cHmZ06jU3LaESVEBwTHnlK0ABiYnGvD3SvX6PgImMSQxQ1ThARFTA7DePoWw+z5DI0L2vgSun2qTYHkmGxzaEskhNIBlK9r7wS3tVcO0Di4lD/rhYV61tklL2NBWJqvm7ZCtJTN09CzPFJy7HDkg7bSINVL4kuu9gTWEtb/o40tw1b+sO62UcfxQTVFQ4Cj8D8XFZbGAE=',
+                        content='The user is asking me to fetch the content from https://ai.pydantic.dev and provide only the first sentence from that page. I need to use the web_fetch tool to get the content from this URL, then identify and return just the first sentence.',
+                        signature='EpkDCkYICxgCKkCQfOq+gEPQZDPE7TCjy3DoVNBdYNE+46NSvmhdtm/yrdYjpMI8kMy2fqKrvc9kpsJsRCdE+MZMaavEFdZXFS7NEgxOkF+GhZ3LPui+laQaDHt2QT9QfXFB6iVkkiIwk8cdAciJ0IgFsxs+HggQlcYLFm4V/9E4JjAaF6eLXKgNH1aOrixXepyh+LhZ5LPFKoACiMJWMj3OLKvmuHCp5U7S8TK3TPYzCyMAUtA2gadh1w3AL5YhoWPZx1lQBmZ3h1L6NqNmIDptKA5FmWhX4FRYAQwPnKpAlo/OYbm9H2vgUhRN6NmEai1VUpBigpExszfyjiW7cwnw3N1dhHv0QqsDT7Hc0kVAoF7Gd4zCz2/PbFYjgU/Lt4wBdzkgP//Z0Y2Rdvz1duTjL2XSLJdHkasTHWMkDRLxwQhkc3SXE971tZtrFs/uRuSbNhETPHRMiir2JgT7O3snG7I+GISLTClODFJvC3o2uye2UGWqAiIZ71JK0qGo5fqA++H39K95G1tljzPXFunq5+WpPZwcNfo0hRgB',
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
@@ -4608,13 +4634,13 @@ async def test_anthropic_web_fetch_tool_stream(
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=7244,
-                    output_tokens=153,
+                    input_tokens=11749,
+                    output_tokens=161,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 7244,
-                        'output_tokens': 153,
+                        'input_tokens': 11749,
+                        'output_tokens': 161,
                     },
                 ),
                 model_name='claude-sonnet-4-20250514',
@@ -4630,26 +4656,31 @@ async def test_anthropic_web_fetch_tool_stream(
     )
     assert event_parts == snapshot(
         [
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='The user wants')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' me to fetch')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='The user is asking me')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' to fetch')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the content')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' from the URL https')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' from')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' https')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='://ai.pydantic.dev')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and provide')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' only')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the first sentence from')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' that page.')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' I need to use the web_fetch'),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' tool to')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' I')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' need to use the web_fetch tool')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' to')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' get the content from')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' this URL.')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' this')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' URL,')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' then')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' identify')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' return just the first sentence.')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='')),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    signature_delta='EusCCkYICRgCKkAG/7zhRcmUoiMtml5iZUXVv3nqupp8kgk0nrq9zOoklaXzVCnrb9kwLNWGETIcCaAnLd0cd0ESwjslkVKdV9n8EgxKKdu8LlEvh9VGIWIaDAJ2Ja2NEacp1Am6jSIwyNO36tV+Sj+q6dWf79U+3KOIa1khXbIYarpkIViCuYQaZwpJ4Vtedrd7dLWTY2d5KtIB9Pug5UPuvepSOjyhxLaohtGxmdvZN8crGwBdTJYF9GHSli/rzvkR6CpH+ixd8iSopwFcsJgQ3j68fr/yD7cHmZ06jU3LaESVEBwTHnlK0ABiYnGvD3SvX6PgImMSQxQ1ThARFTA7DePoWw+z5DI0L2vgSun2qTYHkmGxzaEskhNIBlK9r7wS3tVcO0Di4lD/rhYV61tklL2NBWJqvm7ZCtJTN09CzPFJy7HDkg7bSINVL4kuu9gTWEtb/o40tw1b+sO62UcfxQTVFQ4Cj8D8XFZbGAE='
+                    signature_delta='EpkDCkYICxgCKkCQfOq+gEPQZDPE7TCjy3DoVNBdYNE+46NSvmhdtm/yrdYjpMI8kMy2fqKrvc9kpsJsRCdE+MZMaavEFdZXFS7NEgxOkF+GhZ3LPui+laQaDHt2QT9QfXFB6iVkkiIwk8cdAciJ0IgFsxs+HggQlcYLFm4V/9E4JjAaF6eLXKgNH1aOrixXepyh+LhZ5LPFKoACiMJWMj3OLKvmuHCp5U7S8TK3TPYzCyMAUtA2gadh1w3AL5YhoWPZx1lQBmZ3h1L6NqNmIDptKA5FmWhX4FRYAQwPnKpAlo/OYbm9H2vgUhRN6NmEai1VUpBigpExszfyjiW7cwnw3N1dhHv0QqsDT7Hc0kVAoF7Gd4zCz2/PbFYjgU/Lt4wBdzkgP//Z0Y2Rdvz1duTjL2XSLJdHkasTHWMkDRLxwQhkc3SXE971tZtrFs/uRuSbNhETPHRMiir2JgT7O3snG7I+GISLTClODFJvC3o2uye2UGWqAiIZ71JK0qGo5fqA++H39K95G1tljzPXFunq5+WpPZwcNfo0hRgB'
                 ),
             ),
             PartStartEvent(
@@ -4658,25 +4689,24 @@ async def test_anthropic_web_fetch_tool_stream(
                 previous_part_kind='thinking',
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk')
+                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01E4Qp3Q56a2PCnd22MK4JJB')
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='{"u', tool_call_id='srvtoolu_01E4Qp3Q56a2PCnd22MK4JJB')
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='{"url": "', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk'),
+                delta=ToolCallPartDelta(args_delta='rl": "https', tool_call_id='srvtoolu_01E4Qp3Q56a2PCnd22MK4JJB'),
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='https://ai', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk'),
+                delta=ToolCallPartDelta(args_delta='://ai.py', tool_call_id='srvtoolu_01E4Qp3Q56a2PCnd22MK4JJB'),
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='.p', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk')
+                index=1, delta=ToolCallPartDelta(args_delta='dantic', tool_call_id='srvtoolu_01E4Qp3Q56a2PCnd22MK4JJB')
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='yd', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk')
-            ),
-            PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='antic.dev"}', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk'),
+                index=1, delta=ToolCallPartDelta(args_delta='.dev"}', tool_call_id='srvtoolu_01E4Qp3Q56a2PCnd22MK4JJB')
             ),
             PartStartEvent(
                 index=2,
@@ -4687,286 +4717,814 @@ async def test_anthropic_web_fetch_tool_stream(
                             'citations': None,
                             'source': {
                                 'data': '''\
+Pydantic AI - Pydantic AI
+
+
+
+
+
+
+[Skip to content](#pydantic-ai)
+
+**Join us at the inaugural PyAI Conf in San Francisco on March 10th!
+[Learn More](https://pyai.events/?utm_source=pydantic-ai)**
+
+[![logo](img/logo-white.svg)](. "Pydantic AI")
+
+
+
+
 Pydantic AI
-GenAI Agent Framework, the Pydantic way
-Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.
+
+Pydantic AI
+
+
+
+
+
+
+
+Type to start searching
+
+[pydantic/pydantic-ai](https://github.com/pydantic/pydantic-ai "Go to repository")
+
+[![logo](img/logo-white.svg)](. "Pydantic AI")
+Pydantic AI
+
+[pydantic/pydantic-ai](https://github.com/pydantic/pydantic-ai "Go to repository")
+
+* Pydantic AI
+
+  [Pydantic AI](.)
+
+
+
+  Table of contents
+  + [Why use Pydantic AI](#why-use-pydantic-ai)
+  + [Hello World Example](#hello-world-example)
+  + [Tools & Dependency Injection Example](#tools-dependency-injection-example)
+  + [Instrumentation with Pydantic Logfire](#instrumentation-with-pydantic-logfire)
+  + [llms.txt](#llmstxt)
+  + [Next Steps](#next-steps)
+* [Installation](install/)
+* [Getting Help](help/)
+* [Troubleshooting](troubleshooting/)
+* [Pydantic AI Gateway](gateway/)
+* Documentation
+
+
+
+
+  Documentation
+  + Core Concepts
+
+
+
+
+    Core Concepts
+    - [Agents](agents/)
+    - [Dependencies](dependencies/)
+    - [Function Tools](tools/)
+    - [Output](output/)
+    - [Messages and chat history](message-history/)
+    - [Direct Model Requests](direct/)
+  + Models & Providers
+
+
+
+
+    Models & Providers
+    - [Overview](models/overview/)
+    - [OpenAI](models/openai/)
+    - [Anthropic](models/anthropic/)
+    - [Google](models/google/)
+    - [xAI](models/xai/)
+    - [Bedrock](models/bedrock/)
+    - [Cerebras](models/cerebras/)
+    - [Cohere](models/cohere/)
+    - [Groq](models/groq/)
+    - [Hugging Face](models/huggingface/)
+    - [Mistral](models/mistral/)
+    - [OpenRouter](models/openrouter/)
+    - [Outlines](models/outlines/)
+  + Tools & Toolsets
+
+
+
+
+    Tools & Toolsets
+    - [Function Tools](tools/)
+    - [Advanced Tool Features](tools-advanced/)
+    - [Toolsets](toolsets/)
+    - [Deferred Tools](deferred-tools/)
+    - [Built-in Tools](builtin-tools/)
+    - [Common Tools](common-tools/)
+    - [Third-Party Tools](third-party-tools/)
+  + Advanced Features
+
+
+
+
+    Advanced Features
+    - [Image, Audio, Video & Document Input](input/)
+    - [Thinking](thinking/)
+    - [HTTP Request Retries](retries/)
+  + MCP
+
+
+
+
+    MCP
+    - [Overview](mcp/overview/)
+    - [Client](mcp/client/)
+    - [FastMCP Client](mcp/fastmcp-client/)
+    - [Server](mcp/server/)
+  + [Multi-Agent Patterns](multi-agent-applications/)
+  + [Web Chat UI](web/)
+  + [Embeddings](embeddings/)
+  + [Testing](testing/)
+* Pydantic Evals
+
+
+
+
+  Pydantic Evals
+  + [Overview](evals/)
+  + Getting Started
+
+
+
+
+    Getting Started
+    - [Quick Start](evals/quick-start/)
+    - [Core Concepts](evals/core-concepts/)
+  + Evaluators
+
+
+
+
+    Evaluators
+    - [Overview](evals/evaluators/overview/)
+    - [Built-in Evaluators](evals/evaluators/built-in/)
+    - [LLM Judge](evals/evaluators/llm-judge/)
+    - [Custom Evaluators](evals/evaluators/custom/)
+    - [Span-Based](evals/evaluators/span-based/)
+  + How-To Guides
+
+
+
+
+    How-To Guides
+    - [Logfire Integration](evals/how-to/logfire-integration/)
+    - [Dataset Management](evals/how-to/dataset-management/)
+    - [Dataset Serialization](evals/how-to/dataset-serialization/)
+    - [Concurrency & Performance](evals/how-to/concurrency/)
+    - [Retry Strategies](evals/how-to/retry-strategies/)
+    - [Metrics & Attributes](evals/how-to/metrics-attributes/)
+  + Examples
+
+
+
+
+    Examples
+    - [Simple Validation](evals/examples/simple-validation/)
+* Pydantic Graph
+
+
+
+
+  Pydantic Graph
+  + [Overview](graph/)
+  + [Beta API](graph/beta/)
+
+    Beta API
+    - [Steps](graph/beta/steps/)
+    - [Joins & Reducers](graph/beta/joins/)
+    - [Decisions](graph/beta/decisions/)
+    - [Parallel Execution](graph/beta/parallel/)
+* Integrations
+
+
+
+
+  Integrations
+  + [Debugging & Monitoring with Pydantic Logfire](logfire/)
+  + Durable Execution
+
+
+
+
+    Durable Execution
+    - [Overview](durable_execution/overview/)
+    - [Temporal](durable_execution/temporal/)
+    - [DBOS](durable_execution/dbos/)
+    - [Prefect](durable_execution/prefect/)
+  + UI Event Streams
+
+
+
+
+    UI Event Streams
+    - [Overview](ui/overview/)
+    - [AG-UI](ui/ag-ui/)
+    - [Vercel AI](ui/vercel-ai/)
+  + [Agent2Agent (A2A)](a2a/)
+* Related Packages
+
+
+
+
+  Related Packages
+  + [Clai](cli/)
+* Examples
+
+
+
+
+  Examples
+  + [Setup](examples/setup/)
+  + Getting Started
+
+
+
+
+    Getting Started
+    - [Pydantic Model](examples/pydantic-model/)
+    - [Weather agent](examples/weather-agent/)
+  + Conversational Agents
+
+
+
+
+    Conversational Agents
+    - [Chat App with FastAPI](examples/chat-app/)
+    - [Bank support](examples/bank-support/)
+  + Data & Analytics
+
+
+
+
+    Data & Analytics
+    - [SQL Generation](examples/sql-gen/)
+    - [Data Analyst](examples/data-analyst/)
+    - [RAG](examples/rag/)
+  + Streaming
+
+
+
+
+    Streaming
+    - [Stream markdown](examples/stream-markdown/)
+    - [Stream whales](examples/stream-whales/)
+  + Complex Workflows
+
+
+
+
+    Complex Workflows
+    - [Flight booking](examples/flight-booking/)
+    - [Question Graph](examples/question-graph/)
+  + Business Applications
+
+
+
+
+    Business Applications
+    - [Slack Lead Qualifier with Modal](examples/slack-lead-qualifier/)
+  + UI Examples
+
+
+
+
+    UI Examples
+    - [Agent User Interaction (AG-UI)](examples/ag-ui/)
+* API Reference
+
+
+
+
+  API Reference
+  + pydantic\\_ai
+
+
+
+
+    pydantic\\_ai
+    - [pydantic\\_ai.ag\\_ui](api/ag_ui/)
+    - [pydantic\\_ai.agent](api/agent/)
+    - [pydantic\\_ai.builtin\\_tools](api/builtin_tools/)
+    - [pydantic\\_ai.common\\_tools](api/common_tools/)
+    - [pydantic\\_ai.direct](api/direct/)
+    - [pydantic\\_ai.durable\\_exec](api/durable_exec/)
+    - [pydantic\\_ai.embeddings](api/embeddings/)
+    - [pydantic\\_ai.exceptions](api/exceptions/)
+    - [pydantic\\_ai.ext](api/ext/)
+    - [pydantic\\_ai.format\\_prompt](api/format_prompt/)
+    - [pydantic\\_ai.mcp](api/mcp/)
+    - [pydantic\\_ai.messages](api/messages/)
+    - [pydantic\\_ai.models.anthropic](api/models/anthropic/)
+    - [pydantic\\_ai.models](api/models/base/)
+    - [pydantic\\_ai.models.bedrock](api/models/bedrock/)
+    - [pydantic\\_ai.models.cerebras](api/models/cerebras/)
+    - [pydantic\\_ai.models.cohere](api/models/cohere/)
+    - [pydantic\\_ai.models.fallback](api/models/fallback/)
+    - [pydantic\\_ai.models.function](api/models/function/)
+    - [pydantic\\_ai.models.google](api/models/google/)
+    - [pydantic\\_ai.models.xai](api/models/xai/)
+    - [pydantic\\_ai.models.groq](api/models/groq/)
+    - [pydantic\\_ai.models.huggingface](api/models/huggingface/)
+    - [pydantic\\_ai.models.instrumented](api/models/instrumented/)
+    - [pydantic\\_ai.models.mcp\\_sampling](api/models/mcp-sampling/)
+    - [pydantic\\_ai.models.mistral](api/models/mistral/)
+    - [pydantic\\_ai.models.openai](api/models/openai/)
+    - [pydantic\\_ai.models.openrouter](api/models/openrouter/)
+    - [pydantic\\_ai.models.outlines](api/models/outlines/)
+    - [pydantic\\_ai.models.test](api/models/test/)
+    - [pydantic\\_ai.models.wrapper](api/models/wrapper/)
+    - [pydantic\\_ai.output](api/output/)
+    - [pydantic\\_ai.profiles](api/profiles/)
+    - [pydantic\\_ai.providers](api/providers/)
+    - [pydantic\\_ai.result](api/result/)
+    - [pydantic\\_ai.retries](api/retries/)
+    - [pydantic\\_ai.run](api/run/)
+    - [pydantic\\_ai.settings](api/settings/)
+    - [pydantic\\_ai.tools](api/tools/)
+    - [pydantic\\_ai.toolsets](api/toolsets/)
+    - [pydantic\\_ai.ui.ag\\_ui](api/ui/ag_ui/)
+    - [pydantic\\_ai.ui](api/ui/base/)
+    - [pydantic\\_ai.ui.vercel\\_ai](api/ui/vercel_ai/)
+    - [pydantic\\_ai.usage](api/usage/)
+  + pydantic\\_evals
+
+
+
+
+    pydantic\\_evals
+    - [pydantic\\_evals.dataset](api/pydantic_evals/dataset/)
+    - [pydantic\\_evals.evaluators](api/pydantic_evals/evaluators/)
+    - [pydantic\\_evals.reporting](api/pydantic_evals/reporting/)
+    - [pydantic\\_evals.otel](api/pydantic_evals/otel/)
+    - [pydantic\\_evals.generation](api/pydantic_evals/generation/)
+  + pydantic\\_graph
+
+
+
+
+    pydantic\\_graph
+    - [pydantic\\_graph](api/pydantic_graph/graph/)
+    - [pydantic\\_graph.nodes](api/pydantic_graph/nodes/)
+    - [pydantic\\_graph.persistence](api/pydantic_graph/persistence/)
+    - [pydantic\\_graph.mermaid](api/pydantic_graph/mermaid/)
+    - [pydantic\\_graph.exceptions](api/pydantic_graph/exceptions/)
+    - Beta API
+
+
+
+
+      Beta API
+      * [pydantic\\_graph.beta](api/pydantic_graph/beta/)
+      * [pydantic\\_graph.beta.graph](api/pydantic_graph/beta_graph/)
+      * [pydantic\\_graph.beta.graph\\_builder](api/pydantic_graph/beta_graph_builder/)
+      * [pydantic\\_graph.beta.step](api/pydantic_graph/beta_step/)
+      * [pydantic\\_graph.beta.join](api/pydantic_graph/beta_join/)
+      * [pydantic\\_graph.beta.decision](api/pydantic_graph/beta_decision/)
+      * [pydantic\\_graph.beta.node](api/pydantic_graph/beta_node/)
+  + fasta2a
+
+
+
+
+    fasta2a
+    - [fasta2a](api/fasta2a/)
+* Project
+
+
+
+
+  Project
+  + [Contributing](contributing/)
+  + [Upgrade Guide](changelog/)
+  + [Version policy](version-policy/)
+
+Table of contents
+
+* [Why use Pydantic AI](#why-use-pydantic-ai)
+* [Hello World Example](#hello-world-example)
+* [Tools & Dependency Injection Example](#tools-dependency-injection-example)
+* [Instrumentation with Pydantic Logfire](#instrumentation-with-pydantic-logfire)
+* [llms.txt](#llmstxt)
+* [Next Steps](#next-steps)
+
+# Pydantic AI
+
+![Pydantic AI](./img/pydantic-ai-dark.svg#only-dark)
+
+![Pydantic AI](./img/pydantic-ai-light.svg#only-light)
+
+*GenAI Agent Framework, the Pydantic way*
+
+[![CI](https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml/badge.svg?event=push)](https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml?query=branch%3Amain)
+[![Coverage](https://coverage-badge.samuelcolvin.workers.dev/pydantic/pydantic-ai.svg)](https://coverage-badge.samuelcolvin.workers.dev/redirect/pydantic/pydantic-ai)
+[![PyPI](https://img.shields.io/pypi/v/pydantic-ai.svg)](https://pypi.python.org/pypi/pydantic-ai)
+[![versions](https://img.shields.io/pypi/pyversions/pydantic-ai.svg)](https://github.com/pydantic/pydantic-ai)
+[![license](https://img.shields.io/github/license/pydantic/pydantic-ai.svg)](https://github.com/pydantic/pydantic-ai/blob/main/LICENSE)
+[![Join Slack](https://img.shields.io/badge/Slack-Join%20Slack-4A154B?logo=slack)](https://logfire.pydantic.dev/docs/join-slack/)
+
+Pydantic AI is a Python agent framework designed to help you
+quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.
+
 FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev) and modern Python features like type hints.
+
 Yet despite virtually every Python agent framework and LLM library using Pydantic Validation, when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
+
 We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app and agent development.
-Why use Pydantic AI
--
-Built by the Pydantic Team:
-[Pydantic Validation](https://docs.pydantic.dev/latest/)is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. Why use the derivative when you can go straight to the source? -
-Model-agnostic: Supports virtually every
-[model](models/overview/)and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, and Outlines. If your favorite model or provider is not listed, you can easily implement a[custom model](models/overview/#custom-models). -
-Seamless Observability: Tightly
-[integrates](logfire/)with[Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior, tracing, and cost tracking. If you already have an observability platform that supports OTel, you can[use that too](logfire/#alternative-observability-backends). -
-Fully Type-safe: Designed to give your IDE or AI coding agent as much context as possible for auto-completion and
-[type checking](agents/#static-type-checking), moving entire classes of errors from runtime to write-time for a bit of that Rust "if it compiles, it works" feel. -
-Powerful Evals: Enables you to systematically test and
-[evaluate](evals/)the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire. -
-MCP, A2A, and UI: Integrates the
-[Model Context Protocol](mcp/overview/),[Agent2Agent](a2a/), and various[UI event stream](ui/overview/)standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication. -
-Human-in-the-Loop Tool Approval: Easily lets you flag that certain tool calls
-[require approval](deferred-tools/#human-in-the-loop-tool-approval)before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences. -
-Durable Execution: Enables you to build
-[durable agents](durable_execution/overview/)that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability. -
-Streamed Outputs: Provides the ability to
-[stream](output/#streamed-results)structured output continuously, with immediate validation, ensuring real time access to generated data. -
-Graph Support: Provides a powerful way to define
-[graphs](graph/)using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
+
+## Why use Pydantic AI
+
+1. **Built by the Pydantic Team**:
+   [Pydantic Validation](https://docs.pydantic.dev/latest/) is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. *Why use the derivative when you can go straight to the source?* ![😃](https://cdn.jsdelivr.net/gh/jdecked/twemoji@16.0.1/assets/svg/1f603.svg ":smiley:")
+2. **Model-agnostic**:
+   Supports virtually every [model](models/overview/) and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, Alibaba Cloud, SambaNova, and Outlines. If your favorite model or provider is not listed, you can easily implement a [custom model](models/overview/#custom-models).
+3. **Seamless Observability**:
+   Tightly [integrates](logfire/) with [Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior, tracing, and cost tracking. If you already have an observability platform that supports OTel, you can [use that too](logfire/#alternative-observability-backends).
+4. **Fully Type-safe**:
+   Designed to give your IDE or AI coding agent as much context as possible for auto-completion and [type checking](agents/#static-type-checking), moving entire classes of errors from runtime to write-time for a bit of that Rust "if it compiles, it works" feel.
+5. **Powerful Evals**:
+   Enables you to systematically test and [evaluate](evals/) the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire.
+6. **MCP, A2A, and UI**:
+   Integrates the [Model Context Protocol](mcp/overview/), [Agent2Agent](a2a/), and various [UI event stream](ui/overview/) standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication.
+7. **Human-in-the-Loop Tool Approval**:
+   Easily lets you flag that certain tool calls [require approval](deferred-tools/#human-in-the-loop-tool-approval) before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences.
+8. **Durable Execution**:
+   Enables you to build [durable agents](durable_execution/overview/) that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability.
+9. **Streamed Outputs**:
+   Provides the ability to [stream](output/#streamed-results) structured output continuously, with immediate validation, ensuring real time access to generated data.
+10. **Graph Support**:
+    Provides a powerful way to define [graphs](graph/) using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
+
 Realistically though, no list is going to be as convincing as [giving it a try](#next-steps) and seeing how it makes you feel!
-Sign up for our newsletter, The Pydantic Stack, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:
-Hello World Example
+
+**Sign up for our newsletter, *The Pydantic Stack*, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:**
+
+Subscribe
+
+## Hello World Example
+
 Here's a minimal example of Pydantic AI:
-[Learn about Gateway](gateway)hello_world.py
+
+With Pydantic AI GatewayDirectly to Provider API
+
+[Learn about Gateway](../gateway) hello\\_world.py
+
+```
 from pydantic_ai import Agent
-agent = Agent( # (1)!
-'gateway/anthropic:claude-sonnet-4-0',
-instructions='Be concise, reply with one sentence.', # (2)!
+
+agent = Agent(  # (1)!
+    'gateway/anthropic:claude-sonnet-4-0',
+    instructions='Be concise, reply with one sentence.',  # (2)!
 )
-result = agent.run_sync('Where does "hello world" come from?') # (3)!
+
+result = agent.run_sync('Where does "hello world" come from?')  # (3)!
 print(result.output)
 """
 The first known use of "hello, world" was in a 1974 textbook about the C programming language.
 """
-- We configure the agent to use
-[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
-[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+```
+
+1. We configure the agent to use [Anthropic's Claude Sonnet 4.0](api/models/anthropic/) model, but you can also set the model when running the agent.
+2. Register static [instructions](agents/#instructions) using a keyword argument to the agent.
+3. [Run the agent](agents/#running-agents) synchronously, starting a conversation with the LLM.
+
+hello\\_world.py
+
+```
 from pydantic_ai import Agent
-agent = Agent( # (1)!
-'anthropic:claude-sonnet-4-0',
-instructions='Be concise, reply with one sentence.', # (2)!
+
+agent = Agent(  # (1)!
+    'anthropic:claude-sonnet-4-0',
+    instructions='Be concise, reply with one sentence.',  # (2)!
 )
-result = agent.run_sync('Where does "hello world" come from?') # (3)!
+
+result = agent.run_sync('Where does "hello world" come from?')  # (3)!
 print(result.output)
 """
 The first known use of "hello, world" was in a 1974 textbook about the C programming language.
 """
-- We configure the agent to use
-[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
-[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
-(This example is complete, it can be run "as is", assuming you've [installed the pydantic_ai package](install/))
+```
+
+1. We configure the agent to use [Anthropic's Claude Sonnet 4.0](api/models/anthropic/) model, but you can also set the model when running the agent.
+2. Register static [instructions](agents/#instructions) using a keyword argument to the agent.
+3. [Run the agent](agents/#running-agents) synchronously, starting a conversation with the LLM.
+
+*(This example is complete, it can be run "as is", assuming you've [installed the `pydantic_ai` package](install/))*
+
 The exchange will be very short: Pydantic AI will send the instructions and the user prompt to the LLM, and the model will return a text response.
+
 Not very interesting yet, but we can easily add [tools](tools/), [dynamic instructions](agents/#instructions), and [structured outputs](output/) to build more powerful agents.
-Tools & Dependency Injection Example
+
+## Tools & Dependency Injection Example
+
 Here is a concise example using Pydantic AI to build a support agent for a bank:
-[Learn about Gateway](gateway)bank_support.py
+
+With Pydantic AI GatewayDirectly to Provider API
+
+[Learn about Gateway](../gateway) bank\\_support.py
+
+```
 from dataclasses import dataclass
+
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
+
 from bank_database import DatabaseConn
+
+
 @dataclass
-class SupportDependencies: # (3)!
-customer_id: int
-db: DatabaseConn # (12)!
-class SupportOutput(BaseModel): # (13)!
-support_advice: str = Field(description='Advice returned to the customer')
-block_card: bool = Field(description="Whether to block the customer's card")
-risk: int = Field(description='Risk level of query', ge=0, le=10)
-support_agent = Agent( # (1)!
-'gateway/openai:gpt-5', # (2)!
-deps_type=SupportDependencies,
-output_type=SupportOutput, # (9)!
-instructions=( # (4)!
-'You are a support agent in our bank, give the '
-'customer support and judge the risk level of their query.'
-),
+class SupportDependencies:  # (3)!
+    customer_id: int
+    db: DatabaseConn  # (12)!
+
+
+class SupportOutput(BaseModel):  # (13)!
+    support_advice: str = Field(description='Advice returned to the customer')
+    block_card: bool = Field(description="Whether to block the customer's card")
+    risk: int = Field(description='Risk level of query', ge=0, le=10)
+
+
+support_agent = Agent(  # (1)!
+    'gateway/openai:gpt-5',  # (2)!
+    deps_type=SupportDependencies,
+    output_type=SupportOutput,  # (9)!
+    instructions=(  # (4)!
+        'You are a support agent in our bank, give the '
+        'customer support and judge the risk level of their query.'
+    ),
 )
-@support_agent.instructions # (5)!
+
+
+@support_agent.instructions  # (5)!
 async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
-customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
-return f"The customer's name is {customer_name!r}"
-@support_agent.tool # (6)!
+    customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+    return f"The customer's name is {customer_name!r}"
+
+
+@support_agent.tool  # (6)!
 async def customer_balance(
-ctx: RunContext[SupportDependencies], include_pending: bool
+    ctx: RunContext[SupportDependencies], include_pending: bool
 ) -> float:
-"""Returns the customer's current account balance.""" # (7)!
-return await ctx.deps.db.customer_balance(
-id=ctx.deps.customer_id,
-include_pending=include_pending,
-)
-... # (11)!
+    """Returns the customer's current account balance."""  # (7)!
+    return await ctx.deps.db.customer_balance(
+        id=ctx.deps.customer_id,
+        include_pending=include_pending,
+    )
+
+
+...  # (11)!
+
+
 async def main():
-deps = SupportDependencies(customer_id=123, db=DatabaseConn())
-result = await support_agent.run('What is my balance?', deps=deps) # (8)!
-print(result.output) # (10)!
-"""
-support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
-"""
-result = await support_agent.run('I just lost my card!', deps=deps)
-print(result.output)
-"""
-support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
-"""
-- This
-[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
-. - Here we configure the agent to use
-[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
-SupportDependencies
-dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
-[instructions](agents/#instructions)can be registered with theto the agent.instructions
-keyword argument - Dynamic
-[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
-argument, which is parameterized with theRunContext
-deps_type
-from above. If the type annotation here is wrong, static type checkers will catch it. - The
-decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
-, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
-- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
-[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
-SupportOutput
-. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
-SupportOutput
-, since the agent is generic, it'll also be typed as aSupportOutput
-to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
-- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
-- This
-[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+    deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+    result = await support_agent.run('What is my balance?', deps=deps)  # (8)!
+    print(result.output)  # (10)!
+    """
+    support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+    """
+
+    result = await support_agent.run('I just lost my card!', deps=deps)
+    print(result.output)
+    """
+    support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+    """
+```
+
+1. This [agent](agents/) will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has type `Agent[SupportDependencies, SupportOutput]`.
+2. Here we configure the agent to use [OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent.
+3. The `SupportDependencies` dataclass is used to pass data, connections, and logic into the model that will be needed when running [instructions](agents/#instructions) and [tool](tools/) functions. Pydantic AI's system of dependency injection provides a [type-safe](agents/#static-type-checking) way to customise the behavior of your agents, and can be especially useful when running [unit tests](testing/) and evals.
+4. Static [instructions](agents/#instructions) can be registered with the [`instructions` keyword argument](api/agent/#pydantic_ai.agent.Agent.__init__ "__init__") to the agent.
+5. Dynamic [instructions](agents/#instructions) can be registered with the [`@agent.instructions`](api/agent/#pydantic_ai.agent.Agent.instructions "instructions") decorator, and can make use of dependency injection. Dependencies are carried via the [`RunContext`](api/tools/#pydantic_ai.tools.RunContext "RunContext
+
+
+     \n\
+         dataclass
+     ") argument, which is parameterized with the `deps_type` from above. If the type annotation here is wrong, static type checkers will catch it.
+6. The [`@agent.tool`](tools/) decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via [`RunContext`](api/tools/#pydantic_ai.tools.RunContext "RunContext
+
+
+     \n\
+         dataclass
+     "), any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.
+7. The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are [extracted](tools/#function-tools-and-schema) from the docstring and added to the parameter schema sent to the LLM.
+8. [Run the agent](agents/#running-agents) asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.
+9. The response from the agent will be guaranteed to be a `SupportOutput`. If validation fails [reflection](agents/#reflection-and-self-correction), the agent is prompted to try again.
+10. The output will be validated with Pydantic to guarantee it is a `SupportOutput`, since the agent is generic, it'll also be typed as a `SupportOutput` to aid with static type checking.
+11. In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+12. This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+13. This [Pydantic](https://docs.pydantic.dev) model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+
+bank\\_support.py
+
+```
 from dataclasses import dataclass
+
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
+
 from bank_database import DatabaseConn
+
+
 @dataclass
-class SupportDependencies: # (3)!
-customer_id: int
-db: DatabaseConn # (12)!
-class SupportOutput(BaseModel): # (13)!
-support_advice: str = Field(description='Advice returned to the customer')
-block_card: bool = Field(description="Whether to block the customer's card")
-risk: int = Field(description='Risk level of query', ge=0, le=10)
-support_agent = Agent( # (1)!
-'openai:gpt-5', # (2)!
-deps_type=SupportDependencies,
-output_type=SupportOutput, # (9)!
-instructions=( # (4)!
-'You are a support agent in our bank, give the '
-'customer support and judge the risk level of their query.'
-),
+class SupportDependencies:  # (3)!
+    customer_id: int
+    db: DatabaseConn  # (12)!
+
+
+class SupportOutput(BaseModel):  # (13)!
+    support_advice: str = Field(description='Advice returned to the customer')
+    block_card: bool = Field(description="Whether to block the customer's card")
+    risk: int = Field(description='Risk level of query', ge=0, le=10)
+
+
+support_agent = Agent(  # (1)!
+    'openai:gpt-5',  # (2)!
+    deps_type=SupportDependencies,
+    output_type=SupportOutput,  # (9)!
+    instructions=(  # (4)!
+        'You are a support agent in our bank, give the '
+        'customer support and judge the risk level of their query.'
+    ),
 )
-@support_agent.instructions # (5)!
+
+
+@support_agent.instructions  # (5)!
 async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
-customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
-return f"The customer's name is {customer_name!r}"
-@support_agent.tool # (6)!
+    customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+    return f"The customer's name is {customer_name!r}"
+
+
+@support_agent.tool  # (6)!
 async def customer_balance(
-ctx: RunContext[SupportDependencies], include_pending: bool
+    ctx: RunContext[SupportDependencies], include_pending: bool
 ) -> float:
-"""Returns the customer's current account balance.""" # (7)!
-return await ctx.deps.db.customer_balance(
-id=ctx.deps.customer_id,
-include_pending=include_pending,
-)
-... # (11)!
+    """Returns the customer's current account balance."""  # (7)!
+    return await ctx.deps.db.customer_balance(
+        id=ctx.deps.customer_id,
+        include_pending=include_pending,
+    )
+
+
+...  # (11)!
+
+
 async def main():
-deps = SupportDependencies(customer_id=123, db=DatabaseConn())
-result = await support_agent.run('What is my balance?', deps=deps) # (8)!
-print(result.output) # (10)!
-"""
-support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
-"""
-result = await support_agent.run('I just lost my card!', deps=deps)
-print(result.output)
-"""
-support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
-"""
-- This
-[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
-. - Here we configure the agent to use
-[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
-SupportDependencies
-dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
-[instructions](agents/#instructions)can be registered with theto the agent.instructions
-keyword argument - Dynamic
-[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
-argument, which is parameterized with theRunContext
-deps_type
-from above. If the type annotation here is wrong, static type checkers will catch it. - The
-decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
-, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
-- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
-[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
-SupportOutput
-. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
-SupportOutput
-, since the agent is generic, it'll also be typed as aSupportOutput
-to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
-- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
-- This
-[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
-Complete bank_support.py
-example
-The code included here is incomplete for the sake of brevity (the definition of DatabaseConn
-is missing); you can find the complete bank_support.py
-example [here](examples/bank-support/).
-Instrumentation with Pydantic Logfire
-Even a simple agent with just a handful of tools can result in a lot of back-and-forth with the LLM, making it nearly impossible to be confident of what's going on just from reading the code. To understand the flow of the above runs, we can watch the agent in action using Pydantic Logfire.
+    deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+    result = await support_agent.run('What is my balance?', deps=deps)  # (8)!
+    print(result.output)  # (10)!
+    """
+    support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+    """
+
+    result = await support_agent.run('I just lost my card!', deps=deps)
+    print(result.output)
+    """
+    support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+    """
+```
+
+1. This [agent](agents/) will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has type `Agent[SupportDependencies, SupportOutput]`.
+2. Here we configure the agent to use [OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent.
+3. The `SupportDependencies` dataclass is used to pass data, connections, and logic into the model that will be needed when running [instructions](agents/#instructions) and [tool](tools/) functions. Pydantic AI's system of dependency injection provides a [type-safe](agents/#static-type-checking) way to customise the behavior of your agents, and can be especially useful when running [unit tests](testing/) and evals.
+4. Static [instructions](agents/#instructions) can be registered with the [`instructions` keyword argument](api/agent/#pydantic_ai.agent.Agent.__init__ "__init__") to the agent.
+5. Dynamic [instructions](agents/#instructions) can be registered with the [`@agent.instructions`](api/agent/#pydantic_ai.agent.Agent.instructions "instructions") decorator, and can make use of dependency injection. Dependencies are carried via the [`RunContext`](api/tools/#pydantic_ai.tools.RunContext "RunContext
+
+
+     \n\
+         dataclass
+     ") argument, which is parameterized with the `deps_type` from above. If the type annotation here is wrong, static type checkers will catch it.
+6. The [`@agent.tool`](tools/) decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via [`RunContext`](api/tools/#pydantic_ai.tools.RunContext "RunContext
+
+
+     \n\
+         dataclass
+     "), any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.
+7. The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are [extracted](tools/#function-tools-and-schema) from the docstring and added to the parameter schema sent to the LLM.
+8. [Run the agent](agents/#running-agents) asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.
+9. The response from the agent will be guaranteed to be a `SupportOutput`. If validation fails [reflection](agents/#reflection-and-self-correction), the agent is prompted to try again.
+10. The output will be validated with Pydantic to guarantee it is a `SupportOutput`, since the agent is generic, it'll also be typed as a `SupportOutput` to aid with static type checking.
+11. In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+12. This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+13. This [Pydantic](https://docs.pydantic.dev) model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+
+Complete `bank_support.py` example
+
+The code included here is incomplete for the sake of brevity (the definition of `DatabaseConn` is missing); you can find the complete `bank_support.py` example [here](examples/bank-support/).
+
+## Instrumentation with Pydantic Logfire
+
+Even a simple agent with just a handful of tools can result in a lot of back-and-forth with the LLM, making it nearly impossible to be confident of what's going on just from reading the code.
+To understand the flow of the above runs, we can watch the agent in action using Pydantic Logfire.
+
 To do this, we need to [set up Logfire](logfire/#using-logfire), and add the following to our code:
-[Learn about Gateway](gateway)bank_support_with_logfire.py
+
+With Pydantic AI GatewayDirectly to Provider API
+
+[Learn about Gateway](../gateway) bank\\_support\\_with\\_logfire.py
+
+```
 ...
 from pydantic_ai import Agent, RunContext
+
 from bank_database import DatabaseConn
+
 import logfire
-logfire.configure() # (1)!
-logfire.instrument_pydantic_ai() # (2)!
-logfire.instrument_asyncpg() # (3)!
+
+logfire.configure()  # (1)!
+logfire.instrument_pydantic_ai()  # (2)!
+logfire.instrument_sqlite3()  # (3)!
+
 ...
+
 support_agent = Agent(
-'gateway/openai:gpt-5',
-deps_type=SupportDependencies,
-output_type=SupportOutput,
-system_prompt=(
-'You are a support agent in our bank, give the '
-'customer support and judge the risk level of their query.'
-),
+    'gateway/openai:gpt-5',
+    deps_type=SupportDependencies,
+    output_type=SupportOutput,
+    instructions=(
+        'You are a support agent in our bank, give the '
+        'customer support and judge the risk level of their query.'
+    ),
 )
-- Configure the Logfire SDK, this will fail if project is not set up.
-- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
-to the agent.instrument=True
-keyword argument - In our demo,
-DatabaseConn
-usesto connect to a PostgreSQL database, soasyncpg
-is used to log the database queries.logfire.instrument_asyncpg()
+```
+
+1. Configure the Logfire SDK, this will fail if project is not set up.
+2. This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the [`instrument=True` keyword argument](api/agent/#pydantic_ai.agent.Agent.__init__ "__init__") to the agent.
+3. In our demo, `DatabaseConn` uses [`sqlite3`](https://docs.python.org/3/library/sqlite3.html#module-sqlite3) to connect to a PostgreSQL database, so [`logfire.instrument_sqlite3()`](https://logfire.pydantic.dev/docs/integrations/databases/sqlite3/)
+   is used to log the database queries.
+
+bank\\_support\\_with\\_logfire.py
+
+```
 ...
 from pydantic_ai import Agent, RunContext
+
 from bank_database import DatabaseConn
+
 import logfire
-logfire.configure() # (1)!
-logfire.instrument_pydantic_ai() # (2)!
-logfire.instrument_asyncpg() # (3)!
+
+logfire.configure()  # (1)!
+logfire.instrument_pydantic_ai()  # (2)!
+logfire.instrument_sqlite3()  # (3)!
+
 ...
+
 support_agent = Agent(
-'openai:gpt-5',
-deps_type=SupportDependencies,
-output_type=SupportOutput,
-system_prompt=(
-'You are a support agent in our bank, give the '
-'customer support and judge the risk level of their query.'
-),
+    'openai:gpt-5',
+    deps_type=SupportDependencies,
+    output_type=SupportOutput,
+    instructions=(
+        'You are a support agent in our bank, give the '
+        'customer support and judge the risk level of their query.'
+    ),
 )
-- Configure the Logfire SDK, this will fail if project is not set up.
-- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
-to the agent.instrument=True
-keyword argument - In our demo,
-DatabaseConn
-usesto connect to a PostgreSQL database, soasyncpg
-is used to log the database queries.logfire.instrument_asyncpg()
+```
+
+1. Configure the Logfire SDK, this will fail if project is not set up.
+2. This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the [`instrument=True` keyword argument](api/agent/#pydantic_ai.agent.Agent.__init__ "__init__") to the agent.
+3. In our demo, `DatabaseConn` uses [`sqlite3`](https://docs.python.org/3/library/sqlite3.html#module-sqlite3) to connect to a PostgreSQL database, so [`logfire.instrument_sqlite3()`](https://logfire.pydantic.dev/docs/integrations/databases/sqlite3/)
+   is used to log the database queries.
+
 That's enough to get the following view of your agent in action:
+
+Logfire instrumentation for the bank agent — [View in Logfire](https://logfire-eu.pydantic.dev/public-trace/a2957caa-b7b7-4883-a529-777742649004?spanId=31aade41ab896144)
+
 See [Monitoring and Performance](logfire/) to learn more.
-llms.txt
+
+## `llms.txt`
+
 The Pydantic AI documentation is available in the [llms.txt](https://llmstxt.org/) format.
 This format is defined in Markdown and suited for LLMs and AI coding assistants and agents.
+
 Two formats are available:
-: a file containing a brief description of the project, along with links to the different sections of the documentation. The structure of this file is described in detailsllms.txt
-[here](https://llmstxt.org/#format).: Similar to thellms-full.txt
-llms.txt
-file, but every link content is included. Note that this file may be too large for some LLMs.
+
+* [`llms.txt`](https://ai.pydantic.dev/llms.txt): a file containing a brief description
+  of the project, along with links to the different sections of the documentation. The structure
+  of this file is described in details [here](https://llmstxt.org/#format).
+* [`llms-full.txt`](https://ai.pydantic.dev/llms-full.txt): Similar to the `llms.txt` file,
+  but every link content is included. Note that this file may be too large for some LLMs.
+
 As of today, these files are not automatically leveraged by IDEs or coding agents, but they will use it if you provide a link or the full text.
-Next Steps
+
+## Next Steps
+
 To try Pydantic AI for yourself, [install it](install/) and follow the instructions [in the examples](examples/setup/).
+
 Read the [docs](agents/) to learn more about building applications with Pydantic AI.
+
 Read the [API Reference](api/agent/) to understand Pydantic AI's interface.
-Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [ GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.\
+
+Join [:simple-slack: Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on  [GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.
+
+
+
+© Pydantic Services Inc. 2024 to present\
 ''',
                                 'media_type': 'text/plain',
                                 'type': 'text',
@@ -4974,32 +5532,32 @@ Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on
                             'title': 'Pydantic AI',
                             'type': 'document',
                         },
-                        'retrieved_at': IsStr(),
+                        'retrieved_at': '2026-01-30T00:19:27.579000+00:00',
                         'type': 'web_fetch_result',
                         'url': 'https://ai.pydantic.dev',
                     },
-                    tool_call_id=IsStr(),
+                    tool_call_id='srvtoolu_01E4Qp3Q56a2PCnd22MK4JJB',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='ydantic AI is a')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='ydantic AI is')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' a')),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Python')),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' agent')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' framework')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' designe')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='d to help')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' framework designed')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' to help')),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' you quickly')),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' confi')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='dently,')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' confid')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='ently,')),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' and pain')),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='lessly build production')),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' grade')),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' applications')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' an')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='d workflows')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' workflows')),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' with')),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Gener')),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='ative AI.')),
@@ -6453,16 +7011,39 @@ async def test_anthropic_server_tool_receive_history_from_another_provider(
 
     result = await agent.run('How much is 3 * 12390?', model=google_model)
     assert part_types_from_messages(result.all_messages()) == snapshot(
-        [[UserPromptPart], [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart]]
+        [
+            [UserPromptPart],
+            [
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+            ],
+        ]
     )
 
     result = await agent.run('Multiplied by 12390', model=anthropic_model, message_history=result.all_messages())
     assert part_types_from_messages(result.all_messages()) == snapshot(
         [
             [UserPromptPart],
-            [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+            ],
             [UserPromptPart],
-            [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
         ]
     )
 
@@ -6540,15 +7121,15 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_01X9wcHKKAZD9tBC711xipPa')
+                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_01ECaF1WRmnTui1BpXZXyBds')
                 ],
                 usage=RequestUsage(
-                    input_tokens=445,
+                    input_tokens=711,
                     output_tokens=23,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 445,
+                        'input_tokens': 711,
                         'output_tokens': 23,
                     },
                 ),
@@ -6557,7 +7138,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'tool_use'},
-                provider_response_id='msg_012TXW181edhmR5JCsQRsBKx',
+                provider_response_id='msg_014qNMmxefjUvuPTSkMMHjWE',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -6566,7 +7147,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='toolu_01X9wcHKKAZD9tBC711xipPa',
+                        tool_call_id='toolu_01ECaF1WRmnTui1BpXZXyBds',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -6578,16 +7159,16 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                     ToolCallPart(
                         tool_name='final_result',
                         args={'city': 'Mexico City', 'country': 'Mexico'},
-                        tool_call_id='toolu_01LZABsgreMefH2Go8D5PQbW',
+                        tool_call_id='toolu_01UKDf4fk894G2BEpiPSwL6s',
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=497,
+                    input_tokens=762,
                     output_tokens=56,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 497,
+                        'input_tokens': 762,
                         'output_tokens': 56,
                     },
                 ),
@@ -6596,7 +7177,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'tool_use'},
-                provider_response_id='msg_01K4Fzcf1bhiyLzHpwLdrefj',
+                provider_response_id='msg_01M5PoMWEjyV6vzXYve8Vgyw',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -6605,7 +7186,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='toolu_01LZABsgreMefH2Go8D5PQbW',
+                        tool_call_id='toolu_01UKDf4fk894G2BEpiPSwL6s',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -7044,613 +7625,546 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
 
     assert event_parts == snapshot(
         [
-            PartStartEvent(
-                index=0,
-                part=BuiltinToolCallPart(
-                    tool_name='web_search', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY', provider_name='anthropic'
-                ),
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='{"q', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY')
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ToolCallPartDelta(args_delta='uery": "top', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY'),
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' w', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='orld n', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='ew', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY')
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ToolCallPartDelta(args_delta='s today"}', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY'),
-            ),
-            PartEndEvent(
-                index=0,
-                part=BuiltinToolCallPart(
-                    tool_name='web_search',
-                    args='{"query": "top world news today"}',
-                    tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
-                    provider_name='anthropic',
-                ),
-                next_part_kind='builtin-tool-return',
-            ),
-            PartStartEvent(
-                index=1,
-                part=BuiltinToolReturnPart(
-                    tool_name='web_search',
-                    content=[
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '4 hours ago',
-                            'title': 'World news - breaking news, video, headlines and opinion | CNN',
-                            'type': 'web_search_result',
-                            'url': 'https://www.cnn.com/world',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 hour ago',
-                            'title': 'Breaking News, World News and Video from Al Jazeera',
-                            'type': 'web_search_result',
-                            'url': 'https://www.aljazeera.com/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 hour ago',
-                            'title': 'News: U.S. and World News Headlines : NPR',
-                            'type': 'web_search_result',
-                            'url': 'https://www.npr.org/sections/news/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '7 hours ago',
-                            'title': 'NBC News - Breaking News & Top Stories - Latest World, US & Local News | NBC News',
-                            'type': 'web_search_result',
-                            'url': 'https://www.nbcnews.com/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '3 hours ago',
-                            'title': 'Breaking News, Latest News and Videos | CNN',
-                            'type': 'web_search_result',
-                            'url': 'https://www.cnn.com/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '14 hours ago',
-                            'title': "World news: Latest news, breaking news, today's news stories from around the world, updated daily from CBS News",
-                            'type': 'web_search_result',
-                            'url': 'https://www.cbsnews.com/world/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '4 hours ago',
-                            'title': 'International News | Latest World News, Videos & Photos -ABC News - ABC News',
-                            'type': 'web_search_result',
-                            'url': 'https://abcnews.go.com/International',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 hour ago',
-                            'title': 'Google News',
-                            'type': 'web_search_result',
-                            'url': 'https://news.google.com/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '2 days ago',
-                            'title': 'World News Headlines - US News and World Report',
-                            'type': 'web_search_result',
-                            'url': 'https://www.usnews.com/news/world',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '2 hours ago',
-                            'title': 'Fox News - Breaking News Updates | Latest News Headlines | Photos & News Videos',
-                            'type': 'web_search_result',
-                            'url': 'https://www.foxnews.com/',
-                        },
-                    ],
-                    tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
-                ),
-                previous_part_kind='builtin-tool-call',
-            ),
-            PartStartEvent(
-                index=2,
-                part=TextPart(content='Let me search for more specific breaking'),
-                previous_part_kind='builtin-tool-return',
-            ),
+            PartStartEvent(index=0, part=TextPart(content="I'll search for the latest world")),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' news stories to get clearer headlines.')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' news to get')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' you the top stories')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' from')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' today.')),
             PartEndEvent(
-                index=2,
-                part=TextPart(
-                    content='Let me search for more specific breaking news stories to get clearer headlines.'
-                ),
+                index=0,
+                part=TextPart(content="I'll search for the latest world news to get you the top stories from today."),
                 next_part_kind='builtin-tool-call',
             ),
             PartStartEvent(
-                index=3,
+                index=1,
                 part=BuiltinToolCallPart(
-                    tool_name='web_search', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T', provider_name='anthropic'
+                    tool_name='web_search', tool_call_id='srvtoolu_01JKFV3PtXKT5pxCsC4VGTxs', provider_name='anthropic'
                 ),
                 previous_part_kind='text',
             ),
             PartDeltaEvent(
-                index=3, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T')
+                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01JKFV3PtXKT5pxCsC4VGTxs')
             ),
             PartDeltaEvent(
-                index=3, delta=ToolCallPartDelta(args_delta='{"query', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T')
+                index=1, delta=ToolCallPartDelta(args_delta='{"qu', tool_call_id='srvtoolu_01JKFV3PtXKT5pxCsC4VGTxs')
             ),
             PartDeltaEvent(
-                index=3,
-                delta=ToolCallPartDelta(args_delta='": "breaki', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T'),
+                index=1,
+                delta=ToolCallPartDelta(args_delta='ery": "top ', tool_call_id='srvtoolu_01JKFV3PtXKT5pxCsC4VGTxs'),
             ),
             PartDeltaEvent(
-                index=3,
-                delta=ToolCallPartDelta(args_delta='ng news ', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T'),
+                index=1, delta=ToolCallPartDelta(args_delta='world', tool_call_id='srvtoolu_01JKFV3PtXKT5pxCsC4VGTxs')
             ),
             PartDeltaEvent(
-                index=3, delta=ToolCallPartDelta(args_delta='headl', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T')
+                index=1, delta=ToolCallPartDelta(args_delta=' news', tool_call_id='srvtoolu_01JKFV3PtXKT5pxCsC4VGTxs')
             ),
             PartDeltaEvent(
-                index=3,
-                delta=ToolCallPartDelta(args_delta='ines August ', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T'),
+                index=1,
+                delta=ToolCallPartDelta(args_delta=' today Ja', tool_call_id='srvtoolu_01JKFV3PtXKT5pxCsC4VGTxs'),
             ),
             PartDeltaEvent(
-                index=3, delta=ToolCallPartDelta(args_delta='14 2025', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T')
+                index=1, delta=ToolCallPartDelta(args_delta='nuary 3', tool_call_id='srvtoolu_01JKFV3PtXKT5pxCsC4VGTxs')
             ),
             PartDeltaEvent(
-                index=3, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T')
+                index=1,
+                delta=ToolCallPartDelta(args_delta='0 2026"}', tool_call_id='srvtoolu_01JKFV3PtXKT5pxCsC4VGTxs'),
             ),
             PartEndEvent(
-                index=3,
+                index=1,
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
-                    args='{"query": "breaking news headlines August 14 2025"}',
-                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                    args='{"query": "top world news today January 30 2026"}',
+                    tool_call_id='srvtoolu_01JKFV3PtXKT5pxCsC4VGTxs',
                     provider_name='anthropic',
                 ),
                 next_part_kind='builtin-tool-return',
             ),
             PartStartEvent(
-                index=4,
+                index=2,
                 part=BuiltinToolReturnPart(
                     tool_name='web_search',
                     content=[
                         {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'Breaking News, Latest News and Videos | CNN',
+                            'encrypted_content': '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',
+                            'page_age': '15 hours ago',
+                            'title': 'School Assembly News Headlines Today (January 30): Top National, Business News, Sports News & World News with Weather Updates & Thought of the Day',
                             'type': 'web_search_result',
-                            'url': 'https://edition.cnn.com/',
+                            'url': 'https://sundayguardianlive.com/news/school-assembly-news-headlines-today-january-30-top-national-business-news-sports-news-world-news-with-weather-updates-thought-of-the-day-167110/',
                         },
                         {
-                            'encrypted_content': IsStr(),
+                            'encrypted_content': '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',
+                            'page_age': None,
+                            'title': 'Portal:Current events - Wikipedia',
+                            'type': 'web_search_result',
+                            'url': 'https://en.wikipedia.org/wiki/Portal:Current_events',
+                        },
+                        {
+                            'encrypted_content': 'EqACCioIDBgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDCunlq+q6YpL75vFExoMf3GFJXQngM8KOdS4IjCpB1Mx0TYqPYe0PMWnlzQw/IC1LRMTI82Ls1hoTLAEIM9eIEu8wVchsdaI41RKFLYqowE94hTLEELIJDlEA2pmXYMnJ/IXOuMgI7zzAeqxAn+cf2C+iR3sNdbDq6f05RtJJ0YvQw5J8++bC8tF6+5MKQmvr+v/iXgvwqPWpcmMr7IFs9+ikabISNfDJZnbuTv7N+gX0DLEAajaxBFTAz3fVHBgLgIdhlYQvNNvUo1QIw6WVX9zs3pD9o2ZS7ylVi8pGSUY9QVuCX0Kc0VB16OeOW9h8ZkDGAM=',
+                            'page_age': None,
+                            'title': 'International News | Latest World News, Videos & Photos - ABC News',
+                            'type': 'web_search_result',
+                            'url': 'https://abcnews.go.com/International',
+                        },
+                        {
+                            'encrypted_content': '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',
                             'page_age': None,
                             'title': 'News: U.S. and World News Headlines : NPR',
                             'type': 'web_search_result',
                             'url': 'https://www.npr.org/sections/news/',
                         },
                         {
-                            'encrypted_content': IsStr(),
+                            'encrypted_content': 'EqkCCioIDBgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDN4KPmN7wxpebWDWNRoMlPBJD+QekBHyoplCIjAgZLSY6eibJ2/aB0VlfecaWuPD+o0EZciGillkO430AWJ2Y4RupdmszovqCWORBMoqrAGIDlDnl9BL+K0H71mRLfIBeE53YUTun886rNLQPHv8LPKNxdIo7XQorjXUCcQSmt46Fa7S5v7BDy+C7rAPcWu64+9BV0bhdsFiKvhHNXLwg/C97eFJHuZdP6qOPUD/GmPA6g+WcNpQEv99tdEbXEKASvj2GKQ8hJ7yJMf8ST7rnACAlr3QJuzllWZ3DxU/dLCOBSz0U2iA934RwsHVMzYPUA2arCFy2dPle2O0GAM=',
                             'page_age': None,
-                            'title': 'ABC News – Breaking News, Latest News and Videos',
-                            'type': 'web_search_result',
-                            'url': 'https://abcnews.go.com/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '4 hours ago',
-                            'title': 'Newspaper headlines: Thursday, August 14, 2025 - Adomonline.com',
-                            'type': 'web_search_result',
-                            'url': 'https://www.adomonline.com/newspaper-headlines-thursday-august-14-2025/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'Global News - Breaking International News And Headlines | Inquirer.net',
-                            'type': 'web_search_result',
-                            'url': 'https://globalnation.inquirer.net',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'News – The White House',
-                            'type': 'web_search_result',
-                            'url': 'https://www.whitehouse.gov/news/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 hour ago',
-                            'title': 'Latest News: Top News, Breaking News, LIVE News Headlines from India & World | Business Standard',
-                            'type': 'web_search_result',
-                            'url': 'https://www.business-standard.com/latest-news',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '10 hours ago',
-                            'title': 'Ukraine News Today: Breaking Updates & Live Coverage - August 14, 2025 from Kyiv Post',
-                            'type': 'web_search_result',
-                            'url': 'https://www.kyivpost.com/thread/58085',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': 'July 14, 2025',
-                            'title': '5 things to know for July 14: Immigration, Gaza, Epstein files, Kentucky shooting, Texas flooding | CNN',
-                            'type': 'web_search_result',
-                            'url': 'https://www.cnn.com/2025/07/14/us/5-things-to-know-for-july-14-immigration-gaza-epstein-files-kentucky-shooting-texas-flooding',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'Daily Show for July 14, 2025 | Democracy Now!',
-                            'type': 'web_search_result',
-                            'url': 'https://www.democracynow.org/shows/2025/7/14',
-                        },
-                    ],
-                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
-                ),
-                previous_part_kind='builtin-tool-call',
-            ),
-            PartStartEvent(index=5, part=TextPart(content='Base'), previous_part_kind='builtin-tool-return'),
-            PartDeltaEvent(
-                index=5, delta=TextPartDelta(content_delta='d on the search results, I can identify the top')
-            ),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' 3 major news stories from aroun')),
-            PartDeltaEvent(
-                index=5,
-                delta=TextPartDelta(
-                    content_delta="""\
-d the world today (August 14, 2025):
-
-## Top\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=5,
-                delta=TextPartDelta(
-                    content_delta="""\
- 3 World News Stories Today
-
-**\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='1. Trump-Putin Summit and Ukraine Crisis')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='**\n')),
-            PartEndEvent(
-                index=5,
-                part=TextPart(
-                    content="""\
-Based on the search results, I can identify the top 3 major news stories from around the world today (August 14, 2025):
-
-## Top 3 World News Stories Today
-
-**1. Trump-Putin Summit and Ukraine Crisis**
-"""
-                ),
-                next_part_kind='text',
-            ),
-            PartStartEvent(
-                index=6,
-                part=TextPart(
-                    content='European leaders held a high-stakes meeting Wednesday with President Trump, Vice President Vance, Ukraine'
-                ),
-                previous_part_kind='text',
-            ),
-            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta="'s Volodymyr Zel")),
-            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta="enskyy and NATO's chief ahea")),
-            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta="d of Friday's U.S.-")),
-            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta='Russia summit')),
-            PartEndEvent(
-                index=6,
-                part=TextPart(
-                    content="European leaders held a high-stakes meeting Wednesday with President Trump, Vice President Vance, Ukraine's Volodymyr Zelenskyy and NATO's chief ahead of Friday's U.S.-Russia summit"
-                ),
-                next_part_kind='text',
-            ),
-            PartStartEvent(index=7, part=TextPart(content='. '), previous_part_kind='text'),
-            PartEndEvent(index=7, part=TextPart(content='. '), next_part_kind='text'),
-            PartStartEvent(
-                index=8,
-                part=TextPart(content='The White House lowered its expectations surrounding'),
-                previous_part_kind='text',
-            ),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' the Trump-Putin summit on Friday')),
-            PartEndEvent(
-                index=8,
-                part=TextPart(
-                    content='The White House lowered its expectations surrounding the Trump-Putin summit on Friday'
-                ),
-                next_part_kind='text',
-            ),
-            PartStartEvent(index=9, part=TextPart(content='. '), previous_part_kind='text'),
-            PartEndEvent(index=9, part=TextPart(content='. '), next_part_kind='text'),
-            PartStartEvent(
-                index=10,
-                part=TextPart(content='In a surprise move just days before the Trump-Putin summit'),
-                previous_part_kind='text',
-            ),
-            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=', the White House swapped out pro')),
-            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta="-EU PM Tusk for Poland's new president –")),
-            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=" a political ally who once opposed Ukraine's")),
-            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=' NATO and EU bids')),
-            PartEndEvent(
-                index=10,
-                part=TextPart(
-                    content="In a surprise move just days before the Trump-Putin summit, the White House swapped out pro-EU PM Tusk for Poland's new president – a political ally who once opposed Ukraine's NATO and EU bids"
-                ),
-                next_part_kind='text',
-            ),
-            PartStartEvent(
-                index=11,
-                part=TextPart(
-                    content="""\
-.
-
-**2. Trump's Federal Takeover of Washington D\
-"""
-                ),
-                previous_part_kind='text',
-            ),
-            PartDeltaEvent(index=11, delta=TextPartDelta(content_delta='.C.**')),
-            PartDeltaEvent(index=11, delta=TextPartDelta(content_delta='\n')),
-            PartEndEvent(
-                index=11,
-                part=TextPart(
-                    content="""\
-.
-
-**2. Trump's Federal Takeover of Washington D.C.**
-"""
-                ),
-                next_part_kind='text',
-            ),
-            PartStartEvent(
-                index=12,
-                part=TextPart(
-                    content="Federal law enforcement's presence in Washington, DC, continued to be felt Wednesday as President Donald Trump's tak"
-                ),
-                previous_part_kind='text',
-            ),
-            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta="eover of the city's police entered its thir")),
-            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta='d night')),
-            PartEndEvent(
-                index=12,
-                part=TextPart(
-                    content="Federal law enforcement's presence in Washington, DC, continued to be felt Wednesday as President Donald Trump's takeover of the city's police entered its third night"
-                ),
-                next_part_kind='text',
-            ),
-            PartStartEvent(index=13, part=TextPart(content='. '), previous_part_kind='text'),
-            PartEndEvent(index=13, part=TextPart(content='. '), next_part_kind='text'),
-            PartStartEvent(
-                index=14,
-                part=TextPart(
-                    content="National Guard troops arrived in Washington, D.C., following President Trump's deployment an"
-                ),
-                previous_part_kind='text',
-            ),
-            PartDeltaEvent(
-                index=14, delta=TextPartDelta(content_delta='d federalization of local police to crack down on crime')
-            ),
-            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=" in the nation's capital")),
-            PartEndEvent(
-                index=14,
-                part=TextPart(
-                    content="National Guard troops arrived in Washington, D.C., following President Trump's deployment and federalization of local police to crack down on crime in the nation's capital"
-                ),
-                next_part_kind='text',
-            ),
-            PartStartEvent(index=15, part=TextPart(content='. '), previous_part_kind='text'),
-            PartEndEvent(index=15, part=TextPart(content='. '), next_part_kind='text'),
-            PartStartEvent(
-                index=16,
-                part=TextPart(content='Over 100 arrests made as National Guard rolls into DC under'),
-                previous_part_kind='text',
-            ),
-            PartDeltaEvent(index=16, delta=TextPartDelta(content_delta=" Trump's federal takeover")),
-            PartEndEvent(
-                index=16,
-                part=TextPart(
-                    content="Over 100 arrests made as National Guard rolls into DC under Trump's federal takeover"
-                ),
-                next_part_kind='text',
-            ),
-            PartStartEvent(
-                index=17,
-                part=TextPart(
-                    content="""\
-.
-
-**3. Air\
-"""
-                ),
-                previous_part_kind='text',
-            ),
-            PartDeltaEvent(index=17, delta=TextPartDelta(content_delta=' Canada Flight Disruption')),
-            PartDeltaEvent(index=17, delta=TextPartDelta(content_delta='**\n')),
-            PartEndEvent(
-                index=17,
-                part=TextPart(
-                    content="""\
-.
-
-**3. Air Canada Flight Disruption**
-"""
-                ),
-                next_part_kind='text',
-            ),
-            PartStartEvent(
-                index=18,
-                part=TextPart(
-                    content='Air Canada plans to lock out its flight attendants and cancel all flights starting this weekend'
-                ),
-                previous_part_kind='text',
-            ),
-            PartEndEvent(
-                index=18,
-                part=TextPart(
-                    content='Air Canada plans to lock out its flight attendants and cancel all flights starting this weekend'
-                ),
-                next_part_kind='text',
-            ),
-            PartStartEvent(index=19, part=TextPart(content='. '), previous_part_kind='text'),
-            PartEndEvent(index=19, part=TextPart(content='. '), next_part_kind='text'),
-            PartStartEvent(
-                index=20,
-                part=TextPart(
-                    content='Air Canada says it will begin cancelling flights starting Thursday to allow an orderly shutdown of operations'
-                ),
-                previous_part_kind='text',
-            ),
-            PartDeltaEvent(
-                index=20,
-                delta=TextPartDelta(
-                    content_delta=" with a complete cessation of flights for the country's largest airline by"
-                ),
-            ),
-            PartDeltaEvent(
-                index=20, delta=TextPartDelta(content_delta=' Saturday as it faces a potential work stoppage by')
-            ),
-            PartDeltaEvent(index=20, delta=TextPartDelta(content_delta=' its flight attendants')),
-            PartEndEvent(
-                index=20,
-                part=TextPart(
-                    content="Air Canada says it will begin cancelling flights starting Thursday to allow an orderly shutdown of operations with a complete cessation of flights for the country's largest airline by Saturday as it faces a potential work stoppage by its flight attendants"
-                ),
-                next_part_kind='text',
-            ),
-            PartStartEvent(
-                index=21,
-                part=TextPart(
-                    content="""\
-.
-
-These stories represent major international diplomatic developments, significant domestic policy\
-"""
-                ),
-                previous_part_kind='text',
-            ),
-            PartDeltaEvent(index=21, delta=TextPartDelta(content_delta=' changes in the US, and major transportation')),
-            PartDeltaEvent(index=21, delta=TextPartDelta(content_delta=' disruptions affecting North America.')),
-            PartEndEvent(
-                index=21,
-                part=TextPart(
-                    content="""\
-.
-
-These stories represent major international diplomatic developments, significant domestic policy changes in the US, and major transportation disruptions affecting North America.\
-"""
-                ),
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
-                    tool_name='web_search',
-                    args='{"query": "top world news today"}',
-                    tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
-                    provider_name='anthropic',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
-                    tool_name='web_search',
-                    content=[
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '4 hours ago',
-                            'title': 'World news - breaking news, video, headlines and opinion | CNN',
-                            'type': 'web_search_result',
-                            'url': 'https://www.cnn.com/world',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 hour ago',
                             'title': 'Breaking News, World News and Video from Al Jazeera',
                             'type': 'web_search_result',
                             'url': 'https://www.aljazeera.com/',
                         },
                         {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 hour ago',
-                            'title': 'News: U.S. and World News Headlines : NPR',
+                            'encrypted_content': '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',
+                            'page_age': None,
+                            'title': 'World News and International Headlines : NPR',
                             'type': 'web_search_result',
-                            'url': 'https://www.npr.org/sections/news/',
+                            'url': 'https://www.npr.org/sections/world/',
                         },
                         {
-                            'encrypted_content': IsStr(),
-                            'page_age': '7 hours ago',
-                            'title': 'NBC News - Breaking News & Top Stories - Latest World, US & Local News | NBC News',
+                            'encrypted_content': 'EqwDCioIDBgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDD49B1d3wGtkGYWsYhoMLkqJFooHgmtmEeKJIjDQjT/gexlFQB4OGLl8+IYiofAeM+Kup7uWazbd7pdGHJtsiqQ+Cb/RWKv5CxfaZl4qrwIxX5XyItPzj9pL79stcwYTP+UVVF+dCBCg/2ff9WCfOMoXmhXaZUYXpho9VI3WnCusPweneu0F2IQ14MpvahNCKqz9IlNVgkX5qxKk8FskQLiBEHLPEVZPllZshcuPQ58QERh1CfPN1m5lYeb5xoSpYkntlHqcIAfdQjnEnbXQdsfVU0JFtXfXW3HJGf2r3vxAE+aF4h4KF71o8Fjwxk+EDtQ4QE4n7dcfIWQBqkkaGn8fW1s1kVZYcpKokP4zsW1YOZsomAXFN57c/FYcb/IKALrV6Vq3wyqkKcDIZgRWOg/3nKkJ9kF0g0cCkHWwXmh1zwsYRGZk44S+lWHxeRpvr9ChpNazqsd6USr+koi0O10R7bnaZwIE6A99Q6DAMvtZXi8Iom/7Z6CLD51MRkMYAw==',
+                            'page_age': None,
+                            'title': 'WATCH: PBS News Hour for January 29, 2026',
                             'type': 'web_search_result',
-                            'url': 'https://www.nbcnews.com/',
+                            'url': 'https://www.pbs.org/newshour/',
                         },
                         {
-                            'encrypted_content': IsStr(),
-                            'page_age': '3 hours ago',
-                            'title': 'Breaking News, Latest News and Videos | CNN',
+                            'encrypted_content': 'EqwLCioIDBgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDLteTFkZGpzfjSNOtBoMm0IUg4Kfd2v3Le3cIjDDxqTdDJ7Ca5GtKOPUY8wpTGkMq73TfHpSqaAuznrmJ0ftfG+Mc7WsB/C6KTa9/zEqrwqn/9r0wasGY3cbr3VF2lIjbb9zCfelRqzoZQolvGy/HTvcVsI6RSZ0E+OEYa6wtojVTT6+jpvlcdunuesrCINpwlZT73OZlOL7heZ4J3hZZPU0KeSjFqTbrbDnE1DzngviS6tM3E7YZ2sdr51Qn0ENc97R9GkNkkum8LQ/1d3TfV1wV8dZVqzEhYuZosJZsBvz/F2b7zTovthjTNKCAV69oAkp32ZLtSpyoA/9GbgqkJnfhTuA4qLxxmhQOwQaw5Br4VEsiRLO1frlqecItnXqQskWHB6ZcSm83J3ZSJgycPyzgqAXDquz/0+Yzxvuo8G5nd+F+IE1MKGvazMBC36FZ+sz+w+156wB86kGV5xtEz/v8igSVIBavkKvCtv1kcABAeZeY49DuqD0U5vlHcj6jwBscZdQ0sj5mfchEtCSU/o9RfePk5dxrQZCY0pd1PQruX4Z1lRcZSCiOujTDQRzpKsh7yak6Q7JZatQoy9/dijqr6BWlFAZPAZKf6l8h9mfv++RNb32+323cg5ynkKB03ptQySAASWeuC4SAGcWBeVyUm3FoXSFTGd7K3y6qXKBmdRGBUt/uyNC3GjXgT97lpRJe3PupYb59PloekhSeSy2nWApEnK5ORvL7+1Kjs95PLOwA8G2sLLH46jP1Y20EYjTzZEyH49xpZlgF3vWH/dwfeFiDu5oAv34Ey/7PFkOtZ9dOgzf5j1xUKXNd5tZ2pteavP5vqGri6PI4jdXh4Ruy/UjxTm+8/KBFCRl0KQX/lYC8WfDW3PUiMpSxaKHUqcviByTm8y8u8Lb85npK7RAqpG+El6OKi+OencgxElT7VaOHBduIQPZg4CGZeilakrlX5qaR+kOf5OXEqyZMkJizeabT965rqmfFktA46o+AXeilG242qbpJ9IxOW2QzlZT2i3mgxIEnNlbULHcQHZMtalvhkbvvun6camUdpHaidhr1FwFT0PnV4/6qlwC6Bbn2r6YzPScLf3W4y/HYwkHERWJJNQ6WYTiK775DUYgyROWNFrzn2CGXqIROTFBIIPZ3uR9N3hqE2Wuxu7tOpB4yLeVwyPejk4/jI0HoNB2K60m8tDe2vSijS8H8UwcwM8lkSqs7b4jWW4amOneUpXKxbtncqUslUqwtzWTmBns27bkic+i6lYtydgSiPUCvtYPK4o/Hs0gnjowuE9g87zjQrRZsNiMYVIrYF09zgD0WhdsZj9CQVKrZRZSfEKsnnafBufU9PSb/Fp/pyLphV8vyBF+4tUmhxpXB+04AlBO5JDgTQGkNarKRNXWzOcIjeEizK/az7n98cMM4Wb9rz+e2dfi0nPwE8ugjTO5xO8oIKYUGhoYbXQUbl7iRO9b1oSqQT59g99PTfPuIQuCCOMxx83nLj9m2a0MgfMjTtp9rfW32GOt676JIq2EQ5TTEJ53c7BOYsV/XjmQsy6aRbkpDEvOeZ+bAlw7uOVpuIY6hU3W6rE4WQYd0gILqh9ENvKBU1/hW+JV65uT3t/wlYtqjUNAEYFTdKMRlhKYvkRTVteDUQEcAJB8QK4riDA4rmCWsxACto5knehR5ELrMHZTu1qLK4bPJGpGEZeeiaKSNpVJRNpZTEtJ3I15t9ZXufo2YwSpZjI0xAiEOyw+WJYB3oEkB4PxxnkcawxUccAheYwGM29C4rq+Jr9RVaotFp0DWOOLpGrbXtZ4TvMlA7MzemwPUfteMVKfcZfnULur1MzeNVVUCguarUJDPY7RmHG17Zt4tu3O1fT8EcQBGAM=',
+                            'page_age': '1 day ago',
+                            'title': 'Video. Latest news bulletin | January 29th, 2026 – Morning | Euronews',
                             'type': 'web_search_result',
-                            'url': 'https://www.cnn.com/',
+                            'url': 'https://www.euronews.com/video/2026/01/29/latest-news-bulletin-january-29th-2026-morning',
                         },
                         {
-                            'encrypted_content': IsStr(),
-                            'page_age': '14 hours ago',
-                            'title': "World news: Latest news, breaking news, today's news stories from around the world, updated daily from CBS News",
+                            'encrypted_content': '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',
+                            'page_age': '5 hours ago',
+                            'title': 'AnydayGuide - Holidays, Festivals & Events Calendar for January 30, 2026',
                             'type': 'web_search_result',
-                            'url': 'https://www.cbsnews.com/world/',
+                            'url': 'https://anydayguide.com/calendar/30-01-2026',
                         },
                         {
-                            'encrypted_content': IsStr(),
-                            'page_age': '4 hours ago',
-                            'title': 'International News | Latest World News, Videos & Photos -ABC News - ABC News',
+                            'encrypted_content': 'EqsCCioIDBgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDNeYMySgGC4zToTc3BoMNFt5zN3roI6BCjYcIjCt9aSl1Qx0hVyffF7lKNy/UIhdzRRH3zDgQ72PLw57mJSa3Fexb4WeynQVzxAOxV8qrgHJBr7HeXjwz0pjPBstzb9I6KAZFt98zu6/5h2tEVyJNHRM5RyTgx4imQsjCnnctpOJ/l0sNbA4MhAiQPPLgDZi2cNCtWY82OGD3/DO6d2v3FYPAYjXuCl/gLn51o9dRfze6DE15IvrwWVXgvixoM4POoKS4i4tD/R4LdSI8sLxFpr7uj5w2ir0/er4wOtbNJ+1PDxmcf/6O/BAmrfFgnDO1YV3ZE4gPCRe/Rt2m6cYAw==',
+                            'page_age': None,
+                            'title': 'January 20, 2026 - Air Force One delay as Trump heads to ...',
                             'type': 'web_search_result',
-                            'url': 'https://abcnews.go.com/International',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 hour ago',
-                            'title': 'Google News',
-                            'type': 'web_search_result',
-                            'url': 'https://news.google.com/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '2 days ago',
-                            'title': 'World News Headlines - US News and World Report',
-                            'type': 'web_search_result',
-                            'url': 'https://www.usnews.com/news/world',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '2 hours ago',
-                            'title': 'Fox News - Breaking News Updates | Latest News Headlines | Photos & News Videos',
-                            'type': 'web_search_result',
-                            'url': 'https://www.foxnews.com/',
+                            'url': 'https://www.cnn.com/politics/live-news/trump-administration-news-01-20-26',
                         },
                     ],
-                    tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
+                    tool_call_id='srvtoolu_01JKFV3PtXKT5pxCsC4VGTxs',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
-                )
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(index=3, part=TextPart(content='Based'), previous_part_kind='builtin-tool-return'),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' on the search results, here')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' are the top')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' 3 news stories from around')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' the world today')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' (')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='January 30')),
+            PartDeltaEvent(
+                index=3,
+                delta=TextPartDelta(
+                    content_delta="""\
+, 2026):
+
+## \
+"""
+                ),
+            ),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='1. EU')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Design')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='ates Iranian')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Revolutionary')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Guard as')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Terrorist Organization')),
+            PartDeltaEvent(
+                index=3,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+
+"""
+                ),
+            ),
+            PartEndEvent(
+                index=3,
+                part=TextPart(
+                    content="""\
+Based on the search results, here are the top 3 news stories from around the world today (January 30, 2026):
+
+## 1. EU Designates Iranian Revolutionary Guard as Terrorist Organization
+
+"""
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=4,
+                part=TextPart(content='The European Union has designated the Islamic'),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Revolutionary Guard Corps as')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' a terrorist organization in')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' response')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' to the')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' violent')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' cr')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='ackdown on protests')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' earlier')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' this month during')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' the ongoing')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='2025')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='-')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='2026 Iranian')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' protests')),
+            PartEndEvent(
+                index=4,
+                part=TextPart(
+                    content='The European Union has designated the Islamic Revolutionary Guard Corps as a terrorist organization in response to the violent crackdown on protests earlier this month during the ongoing 2025-2026 Iranian protests'
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=5, part=TextPart(content='. This'), previous_part_kind='text'),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' marks')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' a significant escalation in EU-Iran')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' relations amid')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' widespread')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' unrest in the')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' country')),
+            PartDeltaEvent(
+                index=5,
+                delta=TextPartDelta(
+                    content_delta="""\
+.
+
+## 2. Violence\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' Attacks')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' Across Multiple')),
+            PartDeltaEvent(
+                index=5,
+                delta=TextPartDelta(
+                    content_delta="""\
+ Countries
+
+Several\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' violent')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' incidents are')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' making')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' headlines today')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=':')),
+            PartDeltaEvent(
+                index=5,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+- \
+"""
+                ),
+            ),
+            PartEndEvent(
+                index=5,
+                part=TextPart(
+                    content="""\
+. This marks a significant escalation in EU-Iran relations amid widespread unrest in the country.
+
+## 2. Violence and Attacks Across Multiple Countries
+
+Several violent incidents are making headlines today:
+- \
+"""
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=6, part=TextPart(content='Heavy'), previous_part_kind='text'),
+            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta=' gun')),
+            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta='fire and')),
+            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta=' several')),
+            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta=' explosions are')),
+            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta=' reported around')),
+            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta=' Di')),
+            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta='ori')),
+            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta=' Hamani')),
+            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta=' International Airport in Ni')),
+            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta='amey, Niger, with')),
+            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta=' causes')),
+            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta=' unknown')),
+            PartEndEvent(
+                index=6,
+                part=TextPart(
+                    content='Heavy gunfire and several explosions are reported around Diori Hamani International Airport in Niamey, Niger, with causes unknown'
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=7,
+                part=TextPart(
+                    content="""\
+
+- \
+"""
+                ),
+                previous_part_kind='text',
+            ),
+            PartEndEvent(
+                index=7,
+                part=TextPart(
+                    content="""\
+
+- \
+"""
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=8, part=TextPart(content='At'), previous_part_kind='text'),
+            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' least one')),
+            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' person was killed and 14 others')),
+            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' were injured')),
+            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' in a gas')),
+            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' explosion and')),
+            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' multiple')),
+            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta='-')),
+            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta='alarm')),
+            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' fire at a ')),
+            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta='17')),
+            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta='-story apartment')),
+            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' building in the')),
+            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' Bronx, New York City')),
+            PartEndEvent(
+                index=8,
+                part=TextPart(
+                    content='At least one person was killed and 14 others were injured in a gas explosion and multiple-alarm fire at a 17-story apartment building in the Bronx, New York City'
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=9,
+                part=TextPart(
+                    content="""\
+
+-\
+"""
+                ),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' ')),
+            PartEndEvent(
+                index=9,
+                part=TextPart(
+                    content="""\
+
+- \
+"""
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=10, part=TextPart(content='Eleven'), previous_part_kind='text'),
+            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=' people were killed and several')),
+            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=' others critically')),
+            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=' injured when')),
+            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=' a truck')),
+            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=' coll')),
+            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta='ided with a min')),
+            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta='ibus taxi')),
+            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=' near')),
+            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=' Dur')),
+            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta='ban, K')),
+            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta='waZulu-Natal, South')),
+            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=' Africa')),
+            PartEndEvent(
+                index=10,
+                part=TextPart(
+                    content='Eleven people were killed and several others critically injured when a truck collided with a minibus taxi near Durban, KwaZulu-Natal, South Africa'
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=11,
+                part=TextPart(
+                    content="""\
+
+
+## 3. Plane\
+"""
+                ),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(index=11, delta=TextPartDelta(content_delta=' Crash in India')),
+            PartDeltaEvent(index=11, delta=TextPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=11, delta=TextPartDelta(content_delta=' Russian')),
+            PartDeltaEvent(index=11, delta=TextPartDelta(content_delta='-')),
+            PartDeltaEvent(index=11, delta=TextPartDelta(content_delta='Ukrainian')),
+            PartDeltaEvent(index=11, delta=TextPartDelta(content_delta=' Prisoner')),
+            PartDeltaEvent(
+                index=11,
+                delta=TextPartDelta(
+                    content_delta="""\
+ Exchange
+
+Two\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=11, delta=TextPartDelta(content_delta=' major international')),
+            PartDeltaEvent(index=11, delta=TextPartDelta(content_delta=' stories')),
+            PartDeltaEvent(index=11, delta=TextPartDelta(content_delta=':')),
+            PartDeltaEvent(
+                index=11,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+- \
+"""
+                ),
+            ),
+            PartEndEvent(
+                index=11,
+                part=TextPart(
+                    content="""\
+
+
+## 3. Plane Crash in India and Russian-Ukrainian Prisoner Exchange
+
+Two major international stories:
+- \
+"""
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=12, part=TextPart(content='The'), previous_part_kind='text'),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta=' black')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta=' box')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta=' has')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta=' been recovered from a')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta=' plane crash')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta=' in')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta=' Ba')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta='ramati')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta=', India that')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta=' killed Maharashtra')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta=' Deputy')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta=' CM')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta=' Ajit Pawar,')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta=' with')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta=' investigations')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta=' by')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta=' DG')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta='CA and')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta='AA')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta='IB intens')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta='ifying into')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta=' the landing')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta=' sequence')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta=' flight')),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta=' data')),
+            PartEndEvent(
+                index=12,
+                part=TextPart(
+                    content='The black box has been recovered from a plane crash in Baramati, India that killed Maharashtra Deputy CM Ajit Pawar, with investigations by DGCA and AAIB intensifying into the landing sequence and flight data'
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=13,
+                part=TextPart(
+                    content="""\
+
+-\
+"""
+                ),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' ')),
+            PartEndEvent(
+                index=13,
+                part=TextPart(
+                    content="""\
+
+- \
+"""
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=14, part=TextPart(content='Russia'), previous_part_kind='text'),
+            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=' Ukraine conducted')),
+            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=' a swap')),
+            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=' of bodies')),
+            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=' with Russia receiving')),
+            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=' the')),
+            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=' remains of ')),
+            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta='38')),
+            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=' soldiers')),
+            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=' Ukraine receiving the')),
+            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=' remains of 1')),
+            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=',000 soldiers')),
+            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=' marking')),
+            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=' the first such swap')),
+            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=' since')),
+            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=' November')),
+            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=' 2025')),
+            PartEndEvent(
+                index=14,
+                part=TextPart(
+                    content='Russia and Ukraine conducted a swap of bodies, with Russia receiving the remains of 38 soldiers and Ukraine receiving the remains of 1,000 soldiers, marking the first such swap since November 2025'
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=15,
+                part=TextPart(
+                    content="""\
+
+
+These\
+"""
+                ),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(index=15, delta=TextPartDelta(content_delta=' stories reflect')),
+            PartDeltaEvent(index=15, delta=TextPartDelta(content_delta=' ongoing')),
+            PartDeltaEvent(index=15, delta=TextPartDelta(content_delta=' geopolitical tensions, security concerns,')),
+            PartDeltaEvent(index=15, delta=TextPartDelta(content_delta=' and tragic')),
+            PartDeltaEvent(index=15, delta=TextPartDelta(content_delta=' accidents')),
+            PartDeltaEvent(index=15, delta=TextPartDelta(content_delta=' occurring')),
+            PartDeltaEvent(index=15, delta=TextPartDelta(content_delta=' globally')),
+            PartDeltaEvent(index=15, delta=TextPartDelta(content_delta=' on')),
+            PartDeltaEvent(index=15, delta=TextPartDelta(content_delta=' January 30, 2026.')),
+            PartEndEvent(
+                index=15,
+                part=TextPart(
+                    content="""\
+
+
+These stories reflect ongoing geopolitical tensions, security concerns, and tragic accidents occurring globally on January 30, 2026.\
+"""
+                ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
-                    args='{"query": "breaking news headlines August 14 2025"}',
-                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                    args='{"query": "top world news today January 30 2026"}',
+                    tool_call_id='srvtoolu_01JKFV3PtXKT5pxCsC4VGTxs',
                     provider_name='anthropic',
                 )
             ),
@@ -7659,77 +8173,77 @@ These stories represent major international diplomatic developments, significant
                     tool_name='web_search',
                     content=[
                         {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'Breaking News, Latest News and Videos | CNN',
+                            'encrypted_content': 'EuwZCioIDBgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDM4oTSiQubSuCwYTABoMIbM9Pgem92gN9mm+IjAw9zePZkWLE40xh0gBzhyMgCZDDmRpQvcmwBjsghjsISymX2mo40J54s11ZX3VBnsq7xj/T7LKiOax1xcLu36TcTTHoGNfclop7tR0OFZ7Vo/eNJ5Q2oZO40NUH2RkkmkpvCq008nZnRENDQTvgx+waXBZqkgjPumqr9g4uc74kgk9u9OxRpPcMhPXyKq+10cWPmwDC5Aej1LGASwq6mSLPw+Z2Osovs/mL10LvnVCl13C2zHK/6eB9bJ3P+1qR5noeCOPW6tTDsqvyaOfJMwD8gogaZrU9JJEslx44OHxAff/q6KzL8C0s1Siz7/zYPUCBZhlAgK3ywCQhQrFHb3YnVJgoob9keK+nS4mBv+n+EKfQv1Ia2vm19Se41Tpa/tFbVhIHtj7QG1czkGKtVs+gGl9KwzrnkWVVv/oP/65MTxVkYEpWhA2HVxsxRyr2yxaSEizePDa5NJLkLAIT5214JeRWecZc3UOj8pn0PcJ6rHQgQyq1aM5MseJl/V9Xgv4vuSki8/D2vdS6LrURH1OMnCMSv3eUsZCfHukCCmAPz+gr6cqoLquP4yQfvGMnUA2sWjUiZjWSFNuRYKx7vWnupr6raPA1c3b+g3Jj9I7Rl80gGu3O/Tjh7MPMSaLdPD+pVMEdp7FFiuhrIudh4I0tVzQ/NPkaTVOOgZkTHaXd5L3w50uABBkES4OhZyqaDa2cfc8Sipq3z37rO7YU7r2d5teRqgeq+4vUAexwbKIk6Wajm9gNXjJLlAyNrHM2xavJkGDIk0y9rbQNUSLM09KZrUyFXebgi6pR+/Mv2kNW8NZaaq9BoYoZ7AU6iKY7jv52rm35cI0hHWsrIiiQ8+g02v/5EyUHB2QjsOqkiyDhs5NCKUm6Ia670KGutdYenIzy0J6lqaBzAuiz2TAMuEEKQzEJlcvnnvz3m41n8r2urRV8tac4jnVAfYaruor73qpnClCq0wvuaJlfH69Cchrg5mrcDWWlQH4WRSp4hGJgGvX21xdUTnT1UzCEnSKfRUZKi9Qz9FF2nI0bC9M78Eio85cvbLUePYIiEEfXbrfS5SDT3PxcDLMIC/8yQPTb78ClpGPMJsdnsf87Zr8sD5wNJ82ME6Y1c7X7cJkTx2VZrjR126T7v52YsAnJZkDZI3qPQYNEBkNXJz25CBF5uA8Eu5/J0sEoq1sXrzH17FcMtenvVOKHetlZoTVDO0+WoohXCzVTAa5Xidyxy7Y/71hBTtWbxjZlOu4efT/+cKCVchviCMwkQowCh/8yMS0uh9AtdBhlVyvm5G0aPS8C8aiB6g6cTGa1dUuTeyfj2tk0EBBxSAoQzoyJUSxGDRoMNxS8AZrKQKhpd1Gi8rh3rL1nEfJ4NWqiDEXGgeqwkqpa6nBIiwUo5FN3oEBKrcJzUJTV1NU6ja1xSirUFc1Uuzey6sjD/adphujSijH3JcPOqWEfFnxdkzL7iuXYRznCvXdPoO+sgD5k3lt6CvuzsB+R6NUj6AZpdVTA2vNu67/mf3fXbulCpohO9BQLUH49W7Tcbwa5CmGSSNVv2feQOYENGHU1hv8rq+6OYurVtnq5yMAYDjwMYdDZzfm8VXIFj/N3mHeSgDb3C5Cg8tJ16TWAaOjqK4P0JGz3ilvko8qpj+5RjAaWu8G1F1+eFaHVqn0b0UfiKp18sxvoe+M70L9MZp/e8hNYeKOh/i3l2PZB6uM1Ij7hIY2ujyr3IzX7sDXZDUTYNVWJTkRkfgJ8bUPs4kWtQpjqaCQEJsqmUyqJn9OUPa+U7j/ZWDrBHenN/B8+51jMeJA6A1ZPt2a9ZoXYRRWivCuljttKNeS4S8YFFnfFovdwl7rZo4VZb6y5P1sjG+t3g6XXATBqwCPNCpCOeiZUHdWxEPJLlobgdkX9fsUOBejeQp7W6VQIFNUvxvA0DpSWl1N8YmxHgpQP7zWdq6kJErfXW5FzJArjx1q4yaJdGfx9sjiD9FnsktFpiy3aGj5iw1zc1Qad0Sgbs97n/6dDGZGtIlOyTPRy17rKaRGBavdIyEX5vyIBtB/dKGvkjcd/x5rBAObi77x6V8T5E4XSn9Lgps//2H8JiOEo2qecBfKyYwcut79wefUD+N46qOTXaiSY7IGUawbXMFNB3YwYDb3rrPzwNmnu7MyljxQgSgTj8OO8NXpbW90hAjoMadz7q4ePx4Bj/pxy9uGl2sf3XCi9Q0vS56eYNkqMtuaAbTiMd9nDlZUvQnDZi6OxF6ESewqgadqJtNM2dYrOUs1ZVMmnQDeXfDMkPIuFaukBIUfjEPBuviNm2c9wPmflit7AIwZaPoz/97N1vLDdvqrXB9sqH8sz+FmWlzx0U/7gnknWGCxg5vAb/TLbLmNWs/5GVks31mAJ0pslHk55sWouwBmMwgofqqV2x6kSiLTmVlPVthxcZpC4/V9JGmMyM8FXVYvwvoWhSdMFTj+8XpXe9fu/7Ey2OLlh1h8xXyOZPSI0BTL6TIHLTDKOIt8lnmdACcrk1u/2y9QL0fvNQCCI3mLpev8bw02XXEfwjpGII6jBiatQaIoj76kLokZwZF8z4mOKIcRInhBPIkHQU65uc6pLNLuRT3VACYJhaELb37wMYHV2elQ7pPEQxnD/uvdR4k+FCqMgo1rhXiMEul1zi7y9AIbuU6FRtI8O2Euyb68Q09zDt2oWfrmiuQoU4x4kbtwfn8yfI5diFhm9/bIqi6nYS0B3OqHqf2rbffN8kksc0ti+vmybD2GLb8MOTd/SlWPuwdWv7OuxAovmyQoqJj0VrwZY81D8VhLhpeJQFNWLkn2UlKFB54aPkcq+y49Kfrq8gR/o3+ZudWhvK4cyual1D9RmstibWUHMNt/4mJ8wRtQFZ9GB7wscu0k+1ItTdB5UNJdeQyUH1nf0PIziV7lMDikk3sDohQeP6atLExf5Euha/IqAzfVsNGERXqtIEEXj7ieUEBMsg5Fi7TpQnHwlZB3hZCuqyqbqESNwhH5Ki1+GKrpQp3jsVzSxhDnn73baQCFc8/X3Rm3ZbwHmERc0IG43Xo2jYHUr1PVzqd4gclxSQJFpl/ca3EMOOYmmusV4agbSdrxRE8+dHzMxJ4oGTNuBhbupBYif4Lwa1r5+E1gkYO+9xLzgT3e1C7ECS9IH4z6NiYq0GCLsceysR5RuV9gvJx4ufAODhaye6hbRZ33YRUijUfiFuocf3JabMA1Ex+KNnTgSBLv9e3tYSF7BRh+KuLbqlxyUjJM5wx0SqyOrlD6d5cn9ylpshSDH12ebKc3QtHoBFf4QP2w7kmfSu7o8XquHXYoy83P/LACEm8Qrqs3eVopy2Dx+QGL+Ts71TRI5JcsHj6Rw5Ddbod3GZTBcFQm8fmh8z95+sPl9gEz4q8pFvz0hnVvcjhdVG7UYLGyr6AgiKW4/+v0vG7fdVVFJAkLRm2VbmUFuDJDR1PlBw/VxgUjEYQ3ucb+M64MePl9HNH0AUjQv7C9U1DnoYm3npk5j/MWGL4EykI34HKhhohgMYQwrPToh/FKpaebS/9lOmiirGy8vCi2rzdIzJUB7yszQZCEjjJaxVVsjGM0zeIgdlfoL/3D4OIvET7RKHVoWU6ateoHn4sufJxqE+UL7wKpBYn9ZIsUk3VZqwQ5pqcYV7bNYT15IVaodE/+mbs5MQv43Ps4kb/L3uXCw0FLk8zblH8czdqQjg1SaB8R19sfaQyGZKGbwX/VPqKQXKkwxmagh/I55V0q+hm0C2C3c89iQ7WWgu+dZm0RBCbTr1avlXhe2pGp1rJg5TBOE2vZKzBsMLlm3U6G42S0+P8fnwdo5+o2gvPE4/s2KAFJdyeDt4rfQZ5wPWqgSuvNiJbdN0pxXKwMrT41tI40FHTl0PkoK4uXlpWCj61aCDRpqKR5dVEBV0wMCbg24d2B7o7ITyGuL78xq1a3o/8kCclC17wHU5BBgNFW1WWCl9A8+2M6E7dbpf1W/bS1l9EUU9MhnPd+tGGljFEhp6WoTAhrrT8mohOgEfW27sCmkgFjMGbmnY4Sxfq43IKs6GIYbg79+pWFcsoh6NagieqftfEkaHGJTCVkcAODatWKNGrc+kKwZsvVmDmeO1UYT+gHiWm0VLHQshtRvdlUP273c9l3RNzrn7Kc9Ns2hc+FYK0W47SCHwWJxeWph8Pk83Ws9CrUbfjHdNkI7B0s897dmEff0nthsU2wf7JBoqiDonD6t2BcONOGdPCVGBXIoKhsAFNN0ihxTZyyNikN2etqwLywLCzyCtuoFqLZ8Pv9J9Bdm6BThv3SXhuS/7SkoMlhTSJiCUQJB1x1OEQYAw==',
+                            'page_age': '15 hours ago',
+                            'title': 'School Assembly News Headlines Today (January 30): Top National, Business News, Sports News & World News with Weather Updates & Thought of the Day',
                             'type': 'web_search_result',
-                            'url': 'https://edition.cnn.com/',
+                            'url': 'https://sundayguardianlive.com/news/school-assembly-news-headlines-today-january-30-top-national-business-news-sports-news-world-news-with-weather-updates-thought-of-the-day-167110/',
                         },
                         {
-                            'encrypted_content': IsStr(),
+                            'encrypted_content': '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',
+                            'page_age': None,
+                            'title': 'Portal:Current events - Wikipedia',
+                            'type': 'web_search_result',
+                            'url': 'https://en.wikipedia.org/wiki/Portal:Current_events',
+                        },
+                        {
+                            'encrypted_content': 'EqACCioIDBgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDCunlq+q6YpL75vFExoMf3GFJXQngM8KOdS4IjCpB1Mx0TYqPYe0PMWnlzQw/IC1LRMTI82Ls1hoTLAEIM9eIEu8wVchsdaI41RKFLYqowE94hTLEELIJDlEA2pmXYMnJ/IXOuMgI7zzAeqxAn+cf2C+iR3sNdbDq6f05RtJJ0YvQw5J8++bC8tF6+5MKQmvr+v/iXgvwqPWpcmMr7IFs9+ikabISNfDJZnbuTv7N+gX0DLEAajaxBFTAz3fVHBgLgIdhlYQvNNvUo1QIw6WVX9zs3pD9o2ZS7ylVi8pGSUY9QVuCX0Kc0VB16OeOW9h8ZkDGAM=',
+                            'page_age': None,
+                            'title': 'International News | Latest World News, Videos & Photos - ABC News',
+                            'type': 'web_search_result',
+                            'url': 'https://abcnews.go.com/International',
+                        },
+                        {
+                            'encrypted_content': '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',
                             'page_age': None,
                             'title': 'News: U.S. and World News Headlines : NPR',
                             'type': 'web_search_result',
                             'url': 'https://www.npr.org/sections/news/',
                         },
                         {
-                            'encrypted_content': IsStr(),
+                            'encrypted_content': 'EqkCCioIDBgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDN4KPmN7wxpebWDWNRoMlPBJD+QekBHyoplCIjAgZLSY6eibJ2/aB0VlfecaWuPD+o0EZciGillkO430AWJ2Y4RupdmszovqCWORBMoqrAGIDlDnl9BL+K0H71mRLfIBeE53YUTun886rNLQPHv8LPKNxdIo7XQorjXUCcQSmt46Fa7S5v7BDy+C7rAPcWu64+9BV0bhdsFiKvhHNXLwg/C97eFJHuZdP6qOPUD/GmPA6g+WcNpQEv99tdEbXEKASvj2GKQ8hJ7yJMf8ST7rnACAlr3QJuzllWZ3DxU/dLCOBSz0U2iA934RwsHVMzYPUA2arCFy2dPle2O0GAM=',
                             'page_age': None,
-                            'title': 'ABC News – Breaking News, Latest News and Videos',
+                            'title': 'Breaking News, World News and Video from Al Jazeera',
                             'type': 'web_search_result',
-                            'url': 'https://abcnews.go.com/',
+                            'url': 'https://www.aljazeera.com/',
                         },
                         {
-                            'encrypted_content': IsStr(),
-                            'page_age': '4 hours ago',
-                            'title': 'Newspaper headlines: Thursday, August 14, 2025 - Adomonline.com',
-                            'type': 'web_search_result',
-                            'url': 'https://www.adomonline.com/newspaper-headlines-thursday-august-14-2025/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
+                            'encrypted_content': 'ErEmCioIDBgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDGpLmnDbA11h8d9TbxoMt80XjAau9ifoQYBIIjAdC+3VxgMSzPX1klIIa0Ux41O7MjIAD61DM2WOD36rXle+ZSFUh75YwwAvKlM+aL8qtCUS7k2hD6q9f6t5RS42ldzH6KsLueH5k8Wb7x2XGpUthboss1cLkDh08qF4YfaFkJvLvHazT/qmArVwKbnFQVx3mqd4zdyiTTL9ZlhC6PpMrXdU6wPLVNfd+hDKO8VnJErYxPU40TlTpS4In7BfxmqYzYr+oMoXhxQf37jBSe5cPnJDoMlQeP5Bhc5o25BS83FuvZXz84zmnJ3QO8FOvgHJx2N4ZZV8E4k0ihexcIiCkJRf0QEGqjAnzsu5qGVhypstynwPLIzrSVPO6rtF5y6H5dddcHInNnnaqWLdV+j33KRGT2jWiVId7WrQjo9Id8MtTJRepL7uDxCkSy7wEAlk98TdoX4NCnlMtFujKE0sXS3ets988nPENNkOSsD3iMN0qwyt11vnX4K4AFJR+539SqNy/tBWPkKSBcDguTht8TjrHNY+vDjwrnev7I0pOuiiyQTSBd3dG0RckETCFI+fshoHIGJkVV9vW70/AtKCLuT35taS8doFHNRatuLoeLmNPlIAUN4uowVd+i2FySNLSOSdWwPlqg9/V17hwrogZ+vdh6+r15cvlVh7NLiys7otR8zhBx3m3FsrvCIG7xdskBPr+Pi508ZW8ga1yyBxlS+SH+OknRfFP1MvU3r+g3AHNFLzHZ86X+oPGvasP3PHmlPXGHvzIrQ+R2Hhs11rIBaZgLpkz31HC1G8Cp5xZ/Vkn6VVBOQvg60pLiU669hu9ubrM0Fdw5w4+VXwXTjXoCIgkFZbwoW5TCKCaLjr572dfunSG/rxIka7Wc4TUXrVBd/rwxljHQXYHEC8Jh1o9edhJ5ScquwNHBcPrXSe6flBf6Pf6Dkb7PTpQ6F2pBPkFo5qDKhqynOU1PvWHfMtKuWiM7Sd4SCXEhaS2ctP8Fbi3YlVxShk/uxNR/DdJuGqMq+nk1czFhm0w3xbeznSYH7t77YX5hHlZtu+A4yId6801ioPsUgigii8YXVbmw13Ka0UE2CgU6efVkSarLeoiKi0vfrxzBJamIlaAZtF05bHB4WvJYyRhM4S83ZnPz63ojc8AGOZweIuBTmYjumieKVmBjp8CDuH+4Flq6OcRA1Ro2ZQjO7uqEKdWOTOzSDHw37cD8u1cn5yuC5/B+Q8cJS12GEzrhhxYrje76I7Ih/+2ZRE6Adv2ob2l2gFYFM0pXiGdkKz4wZKoW+KSjkvTHv+Hux/Kw8EmOZtCgeBDPNyDP41V7pBCWe/qZEd45kKdF4uNbsimrvtXYoEIFFKq2I1ZhvKfVQ+UnKeialegCOh2U2CA5UFf5lBn3kRJjxpTmmwie3laXEG5yOvXipk3XvROQNOk3sC1YNLqAusYT4mImwadze2oNka2N3sj5rlp9BPSG89ZCeTKG8CSRO3oVWBPGmYGrpaSbtEPODS/SPDfSzf0AhOhrAsLPa3ewRqc0Wwp4lrvd1C7r4DDSfJnxgRTu6JSiIlSfB5UoWuuDz6Me7Vk/LP8jUe6lNGGyq/5lBaeT3/vrGN1JnBHiIAY4LGUlNMOHz/qR4G6bHyyzG+Ou15qaENJybfpye0IQxMl1Tv4yum7m4Njde9Z+n2c69bbQNs5UL0oid5XCWQ70h3MA/CADDb36cYaK0M6GTwJo1CMab0V4ymMcxp6z4jmzlmwYj4o2Ak3X1Mx7FlEsa0mt8p2MqbHavqvzKhtsjHHxpy3WSRQOCdD0Txu9VZjJg+XQnu4o5DVMdXHlCEu7OSU5MxgfJXQOaLZu0O3E1WCfTS7YGmEftx5+5OE/fOy3cXJZ1xwYMNjS8LvSOk6EY/V6eTJ9YRifBfaeWLrQVR1xTP8aB4jNOZI2KW1KFHdM1LQetUZ0Mx+4QtVySZ/v1BHWYs6gmUov2nu/n53cEYmgHo64bhS7AXxavO+rBmFfkYG8pdFCqQzuUk3AFVq5ikS+tgHMz3qYQDkelSdoBxxkg+1f5rRVnEBipvuxLo65Cj6DLVFihF5iTlsFHcfYmQTqXz1aup9hyKEm3Cz4v5m2GEvk/TYqujn4XBYGZQy/pgfWNB/AyErTd4HYk17vpuXz5zCHUbz4Fx3KpMBmQiG7JujlZhbu0udBfiPfgL/Re+txVjCy5LoU3CEJLa/LFLB4GIlmP1bml1cvsqwNASiOiQ3n+ORxN1ttAy9BZXMJQMONoKF5fWEltuU+4PGSAcBZPt777AeHaA9KM4bkhhbilPmwF8vuip7sOfl8amEpFcdAMWYpy+NPy4KCy8kfzt9BR5Wbx49rZEOmVT+FMsGN3heK32zWw+wIuO49+adggLkDHognLDHrZHw598YjxxwQw2riuqgJ9Fe/JoWSIyKgxmHUd1fdE0DE7JfrzWx0LU5MXH5l9hDbc6nWEayKsHmLMmCDcSD5hZES8weYpFiAbTcEGi0vx2bD1PoWX1mMD7luGiYKzfpE5gM/ErKJyp+M8nsDK9TjCB/23jbnSEEoL3twYPm9DoOTU3YrzY4gAiJyH8tx/22KLz+4DP8XyloMUeTKG3jkd0jhlWZIu4MTH08E1+Cb1wI8s0OtoDlyy2OXtQWpnvUpPeWskJR2naGdNILPxxBXNETp7KneWhOzebH+vlMnuLgb4CAz/roJZ+V0yu3gDFLkKqlhRszvFJI3/1Y6TUWhmFc3BXIT3O0FB4VGXU9eSpCOBY6nsCaBRhtvhePJYZOPgvWz8sdBiMcp2pruMLKvqRpW9IxAJgPt7ElvDFSL8E1FiEQ86SNbdyRytEyo5dhKc8Q1sg/e0+D3n5Z2/Z+Li2yK4EcBnPpRROnrcv1PboDZC9ERa3saMXDjtAj29Y+7boH83lhT5RrVdr3g+bHz4s+eXo+LuRjgBJKaKoJz1k4r0Ul5aoNf0BUUWNrLTTKb3bSGEh8incsulkWVilZOU9WQGSGpcYF+o6YlhkYu1IpnD4xwhZVJwfdavnNzJjTTiyh2V20GSKrckuGXZOpQ9nrXKYYRu9qljWUXqgeOQVFjKh6Iv7BAD8uU/4kYD9R+BViQzl+mnWQIzMnRnVW53RfG08SbQxTWO/6pCI5fAAsD5y7WeG8HFdS9O3heqAvKcKhf3j3MehFuCRSACJhGYSDSTNaw8TI/A3wfsRjt2JFMmi9I2VqRW7ajAmr4W2dgM9oWDNKLDgBlE0W3BnojYwKVO1mz5ivkeg5Cnce0wl3a5gbntZscse28yj9ol+2Y5+3lrQVgmWQnil5qaBkl28jIWBGG2ICcMuNtbK/8WYUlRWnck08Q56WpwvO4cBT9Vg+iGvuoJr9MX+4l+UfmDyoi9zo050dpm4zeGn/Q2V6ed1rm3xaxLP1WGKaT1yYxlpf5KvYPgbDs8zqnTLofpNWIt7M2G9ni+dzlY0ogr3l2wWfY7TvXyS4H8+ls/oODmiMJVb0kZiweKdowzHv8jDMiJhw/vg59zBpCEV2YEqPrRrOJZHWthSoPRqe3KRmnMbeAOirJT5tr+BYSRSj3Xuwa06AHSyAf2+NhhintDVmJMYLglrZQTfgdV8Vbodd7lFRCc/9Q0pcpA+LR/jJoj0AEbL4xydXtOElV8kHxSU49TvNyTUIrAc9S9WLND1gSrepj1Z+uPNFaOq1QYq3PuYRB3JleRspJCO1NaSFEfWdbrVZ2XAYbO+kHUwUMq8f5+xJac8P267qAXZKrSHjP8QARYXljBGWQzh5UQUEMjvtEpTfH35bdASsSLksl1vV0Y85erhcd33Vcxp6OAzyJRsMpVFiCnkhzi3dIvjoHbU5LUMRWygfr2JKKegAT5XhPcf5Gw2c4AJ/0gRnTItDwgOKXFfUoQrtooTbvW7HgxMzNZUtTTCTUo6RjeiVTPiRdr2S37LoLDm23lphCO8+O3uLPVEPNjdhnVVGpUdQ5jk+s4c9E3hniS3ZvK40xXXG2QHwOO3/GvsjtxXfL+dyP9uSMT87b0nCBbtSreBmYNiwFbKc9PUT7akv1YXSgExSccO3vyStmRt7sjdq3I0amU3dhvUoTbSEpX2w7ZjAE0wPvCrBp0AjMHLD4d1setFrgD8quLwuIxdhP6aFbg/LC81BYwHishsMiHmo9KkiJZwIcCJKk4gSp225VWN5gkR7UzTiFbmX7GfUWoLa/KiU3WycvwI38u5IZyp1F3H1OBG3VidEEqB+Exsf1eGE2lQLEBb4/0QnO4j0WGTeotnBSOxkvZ8XuKVONFvdJxaZpVouPP5dv+vlvQLLVTWvRXhqICu9mP77q5tkw7IEa+1D2WSx/6+T8SbSlnCU70Vc+BmAb218pQJbX+blsnIVWN7YVQnVOlKsLeOE5R412WjmQPucY13vaI5HUPP8uwck604CJGpIrT48EAhzCSPIbkjAG/8gdGy0YF11CgJjRbhT/j+J9i19n8bXferS7MBu4G4+fxJK+sDhwHM+9JwmDIEUfccabJ2dOGv8v3+mWQ/WlM+4oo/Hn2SsDR7HaqzoisP/L70dUk7UrNfJ0piOyZVqlE4Z2ulBx41kS2N49NCP1XumQPNZRetam/IrWf28NqurdJ2o9Fuzqk2HbknwEM9/QtXAPYEceewP6PBbuLpQftBPsNVHX7y/Yhiei/fBM077fw5L/rNCHnycW54GMuBq+Tp63IwCRslW1lpf6MqKnzvIKefQP7jaEPIzyPiLihGiztG4CuDMU75YAWnsx3Y+hee68kcWFC7TMUf43kBuje9aEntw7yG+gtBhpGwiSk8Nz9TKJQG/YAM59X9BeOvWWI4lrFULt2lmL3e4TocTW9avwnZFaDE1CVISc+fhStrAIFofRXxgLVF1RbTWPmZsgZELrbbMe8Fuaf7LzpI6qqNJheYZmlgMoB1u7sihHQpUyLuEn1TfBfEKXIVY+BZchGciU0nPN3zg+MtCSUm1K5+6JfKnFADp1K1TUoJZyJ63hdDzilW/5xx6keW/+Z13YKmdAIPWG1e1MNWjl7xDsPev2j74l/lXbVyIB+mfcIBQzSymTeMVbss6X8Qsy0RQ0y/mF0QscBUmJS19idh2CpcDWIt25BaE1moIWQjbs3ddtvRBAY4Z4gPvBTXtIvicsE7VPK2d7yd0uD2u9UddAX8AyAIQ1tGOZRAvTPG+wX3nq+OnlXhLW58WibsRfAZnErzeXNaQkthjjDV37vQx2uJQasm+1H1hp+M7zH/6BfkAkYWWK+DPa7IsmsFrp/0L3X33r8NQtyjLPlQFE1GgcsDw7i5xkUonn7JmnV86yMzEopZfbhdPPzjOtZrqKb1qPtaYtiig03CKOPvqGhnHNBtwj00Q0ag3taMg/X/+PaxyWvXSp28sh5IisoSuMwOxQL2rGyNRsn7vLm3YputRMZs6LTIsxqvSc2QsHLqgX60io3p1scX8CeOEPUbpt5mGcXJNjua875Fcl3u+NrOgx+aqwS1qln3QWcTRkfnv8Da5o2kWROCmxXcEs/72Dqtaws5q6Op3V0hTjdBVCa0DVu0KZ/aJtEhgbSqNbPghWUzt4Oej2gSMhygBcSIbtK9TWazGuEYXMU8u8h3u9ASyaZsxRSmdc0GJlnHyI01niSAk5d++AYDhUrG4UeaZngWbdWOtUjy38jM0LkOTtAPxgUJpPAcjLK4sMjU4fegTJZzXGE/vgKuxx+sDwiHZJ4I0C4YPk22ceAJrq26Ohe2TEfF5uHbe6c/72BTtKUNuCH8kIwf2BaCk4PFvtdgG1jX8XbpeQTE9kmD89+F+4E+YucHGErAh0XxHIyGrmpWPyiZD5nP3Q4g3QpGq4TfkDpEcvYirMY1WeU/EMrl40XW1Tz3tTfI6saY+xzGAdLeFXLiQTmdBE5Ktsye4pChaGfXQJfsZQMpYnUsO3Afy8wloLOmJ8AGx3tMjgAu6fE4g/ls7L10GiYg3o0heGhAiqI/R/8o8PyxkOOjJ/J+AlwamcHN4JK9GJFXfzgTjfDmKbVkExAIF6IugsNC3dAqjSg+zZxrZ+A104G25Ad8rDxsVq09FpL39NFH/KUR9LR8mUrE4Z/srdt1/PRpCT2KG9payIak8Cn986tLmu1iIqLqoQhSRWFgU8vzOCO8Pk1JEKjbOjUODMNHER+zHsoiqPmTGPX/knwguCVyFvbHANY5U7ICtUauKKFINYZvCYxKpZACOLc5Oy6QwG4lknfxp5NeyQhxHdE0yNalieNxoJoQpTbzy2GHS/spnstKzbVlBUGvzWuXCxuTZfHSmsUJh4fCmCZkFKHuU9WZHD4v8wuuX3gDb0W9XF+CCbj3HWc7vcISMN8xcHhp0/K/pqOF3A9RIISAUrv1k3yY0BwRqQqQV9cAVJiE6dCy4VYquhcI2BlgIsJ1cjJaqEfmLPFoUe4vewUU2fuJRWxDt7looN3AbbaaWIBcRAf5r18fPRiTlvGRMiVIoNAFa41KN2sYAw==',
                             'page_age': None,
-                            'title': 'Global News - Breaking International News And Headlines | Inquirer.net',
+                            'title': 'World News and International Headlines : NPR',
                             'type': 'web_search_result',
-                            'url': 'https://globalnation.inquirer.net',
+                            'url': 'https://www.npr.org/sections/world/',
                         },
                         {
-                            'encrypted_content': IsStr(),
+                            'encrypted_content': 'EqwDCioIDBgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDD49B1d3wGtkGYWsYhoMLkqJFooHgmtmEeKJIjDQjT/gexlFQB4OGLl8+IYiofAeM+Kup7uWazbd7pdGHJtsiqQ+Cb/RWKv5CxfaZl4qrwIxX5XyItPzj9pL79stcwYTP+UVVF+dCBCg/2ff9WCfOMoXmhXaZUYXpho9VI3WnCusPweneu0F2IQ14MpvahNCKqz9IlNVgkX5qxKk8FskQLiBEHLPEVZPllZshcuPQ58QERh1CfPN1m5lYeb5xoSpYkntlHqcIAfdQjnEnbXQdsfVU0JFtXfXW3HJGf2r3vxAE+aF4h4KF71o8Fjwxk+EDtQ4QE4n7dcfIWQBqkkaGn8fW1s1kVZYcpKokP4zsW1YOZsomAXFN57c/FYcb/IKALrV6Vq3wyqkKcDIZgRWOg/3nKkJ9kF0g0cCkHWwXmh1zwsYRGZk44S+lWHxeRpvr9ChpNazqsd6USr+koi0O10R7bnaZwIE6A99Q6DAMvtZXi8Iom/7Z6CLD51MRkMYAw==',
                             'page_age': None,
-                            'title': 'News – The White House',
+                            'title': 'WATCH: PBS News Hour for January 29, 2026',
                             'type': 'web_search_result',
-                            'url': 'https://www.whitehouse.gov/news/',
+                            'url': 'https://www.pbs.org/newshour/',
                         },
                         {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 hour ago',
-                            'title': 'Latest News: Top News, Breaking News, LIVE News Headlines from India & World | Business Standard',
+                            'encrypted_content': 'EqwLCioIDBgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDLteTFkZGpzfjSNOtBoMm0IUg4Kfd2v3Le3cIjDDxqTdDJ7Ca5GtKOPUY8wpTGkMq73TfHpSqaAuznrmJ0ftfG+Mc7WsB/C6KTa9/zEqrwqn/9r0wasGY3cbr3VF2lIjbb9zCfelRqzoZQolvGy/HTvcVsI6RSZ0E+OEYa6wtojVTT6+jpvlcdunuesrCINpwlZT73OZlOL7heZ4J3hZZPU0KeSjFqTbrbDnE1DzngviS6tM3E7YZ2sdr51Qn0ENc97R9GkNkkum8LQ/1d3TfV1wV8dZVqzEhYuZosJZsBvz/F2b7zTovthjTNKCAV69oAkp32ZLtSpyoA/9GbgqkJnfhTuA4qLxxmhQOwQaw5Br4VEsiRLO1frlqecItnXqQskWHB6ZcSm83J3ZSJgycPyzgqAXDquz/0+Yzxvuo8G5nd+F+IE1MKGvazMBC36FZ+sz+w+156wB86kGV5xtEz/v8igSVIBavkKvCtv1kcABAeZeY49DuqD0U5vlHcj6jwBscZdQ0sj5mfchEtCSU/o9RfePk5dxrQZCY0pd1PQruX4Z1lRcZSCiOujTDQRzpKsh7yak6Q7JZatQoy9/dijqr6BWlFAZPAZKf6l8h9mfv++RNb32+323cg5ynkKB03ptQySAASWeuC4SAGcWBeVyUm3FoXSFTGd7K3y6qXKBmdRGBUt/uyNC3GjXgT97lpRJe3PupYb59PloekhSeSy2nWApEnK5ORvL7+1Kjs95PLOwA8G2sLLH46jP1Y20EYjTzZEyH49xpZlgF3vWH/dwfeFiDu5oAv34Ey/7PFkOtZ9dOgzf5j1xUKXNd5tZ2pteavP5vqGri6PI4jdXh4Ruy/UjxTm+8/KBFCRl0KQX/lYC8WfDW3PUiMpSxaKHUqcviByTm8y8u8Lb85npK7RAqpG+El6OKi+OencgxElT7VaOHBduIQPZg4CGZeilakrlX5qaR+kOf5OXEqyZMkJizeabT965rqmfFktA46o+AXeilG242qbpJ9IxOW2QzlZT2i3mgxIEnNlbULHcQHZMtalvhkbvvun6camUdpHaidhr1FwFT0PnV4/6qlwC6Bbn2r6YzPScLf3W4y/HYwkHERWJJNQ6WYTiK775DUYgyROWNFrzn2CGXqIROTFBIIPZ3uR9N3hqE2Wuxu7tOpB4yLeVwyPejk4/jI0HoNB2K60m8tDe2vSijS8H8UwcwM8lkSqs7b4jWW4amOneUpXKxbtncqUslUqwtzWTmBns27bkic+i6lYtydgSiPUCvtYPK4o/Hs0gnjowuE9g87zjQrRZsNiMYVIrYF09zgD0WhdsZj9CQVKrZRZSfEKsnnafBufU9PSb/Fp/pyLphV8vyBF+4tUmhxpXB+04AlBO5JDgTQGkNarKRNXWzOcIjeEizK/az7n98cMM4Wb9rz+e2dfi0nPwE8ugjTO5xO8oIKYUGhoYbXQUbl7iRO9b1oSqQT59g99PTfPuIQuCCOMxx83nLj9m2a0MgfMjTtp9rfW32GOt676JIq2EQ5TTEJ53c7BOYsV/XjmQsy6aRbkpDEvOeZ+bAlw7uOVpuIY6hU3W6rE4WQYd0gILqh9ENvKBU1/hW+JV65uT3t/wlYtqjUNAEYFTdKMRlhKYvkRTVteDUQEcAJB8QK4riDA4rmCWsxACto5knehR5ELrMHZTu1qLK4bPJGpGEZeeiaKSNpVJRNpZTEtJ3I15t9ZXufo2YwSpZjI0xAiEOyw+WJYB3oEkB4PxxnkcawxUccAheYwGM29C4rq+Jr9RVaotFp0DWOOLpGrbXtZ4TvMlA7MzemwPUfteMVKfcZfnULur1MzeNVVUCguarUJDPY7RmHG17Zt4tu3O1fT8EcQBGAM=',
+                            'page_age': '1 day ago',
+                            'title': 'Video. Latest news bulletin | January 29th, 2026 – Morning | Euronews',
                             'type': 'web_search_result',
-                            'url': 'https://www.business-standard.com/latest-news',
+                            'url': 'https://www.euronews.com/video/2026/01/29/latest-news-bulletin-january-29th-2026-morning',
                         },
                         {
-                            'encrypted_content': IsStr(),
-                            'page_age': '10 hours ago',
-                            'title': 'Ukraine News Today: Breaking Updates & Live Coverage - August 14, 2025 from Kyiv Post',
+                            'encrypted_content': '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',
+                            'page_age': '5 hours ago',
+                            'title': 'AnydayGuide - Holidays, Festivals & Events Calendar for January 30, 2026',
                             'type': 'web_search_result',
-                            'url': 'https://www.kyivpost.com/thread/58085',
+                            'url': 'https://anydayguide.com/calendar/30-01-2026',
                         },
                         {
-                            'encrypted_content': IsStr(),
-                            'page_age': 'July 14, 2025',
-                            'title': '5 things to know for July 14: Immigration, Gaza, Epstein files, Kentucky shooting, Texas flooding | CNN',
-                            'type': 'web_search_result',
-                            'url': 'https://www.cnn.com/2025/07/14/us/5-things-to-know-for-july-14-immigration-gaza-epstein-files-kentucky-shooting-texas-flooding',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
+                            'encrypted_content': 'EqsCCioIDBgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDNeYMySgGC4zToTc3BoMNFt5zN3roI6BCjYcIjCt9aSl1Qx0hVyffF7lKNy/UIhdzRRH3zDgQ72PLw57mJSa3Fexb4WeynQVzxAOxV8qrgHJBr7HeXjwz0pjPBstzb9I6KAZFt98zu6/5h2tEVyJNHRM5RyTgx4imQsjCnnctpOJ/l0sNbA4MhAiQPPLgDZi2cNCtWY82OGD3/DO6d2v3FYPAYjXuCl/gLn51o9dRfze6DE15IvrwWVXgvixoM4POoKS4i4tD/R4LdSI8sLxFpr7uj5w2ir0/er4wOtbNJ+1PDxmcf/6O/BAmrfFgnDO1YV3ZE4gPCRe/Rt2m6cYAw==',
                             'page_age': None,
-                            'title': 'Daily Show for July 14, 2025 | Democracy Now!',
+                            'title': 'January 20, 2026 - Air Force One delay as Trump heads to ...',
                             'type': 'web_search_result',
-                            'url': 'https://www.democracynow.org/shows/2025/7/14',
+                            'url': 'https://www.cnn.com/politics/live-news/trump-administration-news-01-20-26',
                         },
                     ],
-                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                    tool_call_id='srvtoolu_01JKFV3PtXKT5pxCsC4VGTxs',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 )

@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '807'
+      - '775'
       content-type:
       - application/json
       host:
@@ -33,7 +33,6 @@ interactions:
                   type: string
               required:
               - meow_volume
-              title: Cat
               type: object
             Dog:
               properties:
@@ -46,7 +45,6 @@ interactions:
                   type: string
               required:
               - bark_volume
-              title: Dog
               type: object
           description: A response containing a pet.
           properties:
@@ -67,11 +65,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '724'
+      - '721'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=851
+      - gfet4t7; dur=1096
       transfer-encoding:
       - chunked
       vary:
@@ -80,7 +78,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -5.571447036345489e-05
+      - avgLogprobs: -3.6063861581638e-05
         content:
           parts:
           - text: |-
@@ -93,17 +91,17 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: 6ZMcaZ6TI_Dl7M8P76yU6AI
+      responseId: ozR8abytLbzhz7IPjYGJsAM
       usageMetadata:
-        candidatesTokenCount: 32
+        candidatesTokenCount: 33
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 32
-        promptTokenCount: 12
+          tokenCount: 33
+        promptTokenCount: 13
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 12
-        totalTokenCount: 44
+          tokenCount: 13
+        totalTokenCount: 46
     status:
       code: 200
       message: OK

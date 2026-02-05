@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '509'
+      - '488'
       content-type:
       - application/json
       host:
@@ -27,7 +27,6 @@ interactions:
               - 1
               - 2
               - 3
-              title: Priority
               type: integer
           description: A task with a priority level.
           properties:
@@ -53,7 +52,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=700
+      - gfet4t7; dur=1003
       transfer-encoding:
       - chunked
       vary:
@@ -62,7 +61,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -1.7794657890733918e-05
+      - avgLogprobs: -1.901249082660989e-05
         content:
           parts:
           - text: |-
@@ -73,7 +72,7 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: ApQcacWhNPnk7M8PyOWhkQQ
+      responseId: qjR8aYjwBKjpz7IPpK3MoAE
       usageMetadata:
         candidatesTokenCount: 19
         candidatesTokensDetails:

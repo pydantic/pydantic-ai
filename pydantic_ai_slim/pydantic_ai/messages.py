@@ -178,7 +178,14 @@ class FileUrl(ABC):
     """Vendor-specific metadata for the file.
 
     Supported by:
-    - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
+
+    - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`.
+      Supported fields for videos:
+        - `fps`: Frame rate (works with both `VideoUrl` and `BinaryContent`)
+        - `start_offset`, `end_offset`: Time range clipping (only works with `VideoUrl` for YouTube/GCS URLs,
+          returns 500 error with `BinaryContent`/inline data)
+
+      See: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
     - `OpenAIChatModel`, `OpenAIResponsesModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     - `XaiModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     """
@@ -470,7 +477,14 @@ class BinaryContent:
     """Vendor-specific metadata for the file.
 
     Supported by:
-    - `GoogleModel`: `BinaryContent.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
+
+    - `GoogleModel`: `BinaryContent.vendor_metadata` is used as `video_metadata`.
+      Supported fields for videos:
+        - `fps`: Frame rate (works with `BinaryContent`)
+        - `start_offset`, `end_offset`: **Not supported** with `BinaryContent` (returns 500 error).
+          Use `VideoUrl` with YouTube/GCS URLs for time range clipping.
+
+      See: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
     - `OpenAIChatModel`, `OpenAIResponsesModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     - `XaiModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     """

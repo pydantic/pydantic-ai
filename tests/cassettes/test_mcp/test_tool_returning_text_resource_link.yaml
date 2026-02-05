@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '2914'
+      - '4689'
       content-type:
       - application/json
       host:
@@ -27,29 +27,34 @@ interactions:
             \       Temperature in Fahrenheit\n    "
           name: celsius_to_fahrenheit
           parameters:
+            additionalProperties: false
             properties:
               celsius:
                 type: number
             required:
             - celsius
             type: object
+          strict: true
         type: function
       - function:
           description: "Get the weather forecast for a location.\n\n    Args:\n        location: The location to get the weather
             forecast for.\n\n    Returns:\n        The weather forecast for the location.\n    "
           name: get_weather_forecast
           parameters:
+            additionalProperties: false
             properties:
               location:
                 type: string
             required:
             - location
             type: object
+          strict: true
         type: function
       - function:
           description: ''
           name: get_image_resource
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -57,6 +62,7 @@ interactions:
           description: ''
           name: get_image_resource_link
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -64,6 +70,7 @@ interactions:
           description: ''
           name: get_audio_resource
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -71,6 +78,7 @@ interactions:
           description: ''
           name: get_audio_resource_link
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -78,6 +86,7 @@ interactions:
           description: ''
           name: get_product_name
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -85,6 +94,7 @@ interactions:
           description: ''
           name: get_product_name_link
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -92,6 +102,7 @@ interactions:
           description: ''
           name: get_image
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -99,6 +110,15 @@ interactions:
           description: ''
           name: get_dict
           parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_unstructured_dict
+          parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -106,6 +126,7 @@ interactions:
           description: ''
           name: get_error
           parameters:
+            additionalProperties: false
             properties:
               value:
                 default: false
@@ -116,6 +137,7 @@ interactions:
           description: ''
           name: get_none
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -123,6 +145,7 @@ interactions:
           description: ''
           name: get_multiple_items
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -130,6 +153,7 @@ interactions:
           description: "Get the current log level.\n\n    Returns:\n        The current log level.\n    "
           name: get_log_level
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -138,6 +162,7 @@ interactions:
             \   Returns:\n        Dictionary with an echo message and the deps.\n    "
           name: echo_deps
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -145,11 +170,43 @@ interactions:
           description: Use sampling callback.
           name: use_sampling
           parameters:
+            additionalProperties: false
             properties:
               foo:
                 type: string
             required:
             - foo
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: "Get information about the connected MCP client.\n\n    Returns:\n        Dictionary with client info
+            (name, version, etc.) or None if not available.\n    "
+          name: get_client_info
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: Use elicitation callback to ask the user a question.
+          name: use_elicitation
+          parameters:
+            additionalProperties: false
+            properties:
+              question:
+                type: string
+            required:
+            - question
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Enable the hidden tool, triggering a ToolListChangedNotification.
+          name: enable_hidden_tool
+          parameters:
+            additionalProperties: false
+            properties: {}
             type: object
         type: function
     uri: https://api.openai.com/v1/chat/completions
@@ -162,15 +219,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1073'
+      - '786'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '406'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - '285'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -191,14 +244,14 @@ interactions:
           - function:
               arguments: '{}'
               name: get_product_name_link
-            id: call_qi5GtBeIEyT7Y3yJvVFIi062
+            id: call_gNC6mijxj5SIGlnng58PUTcT
             type: function
-      created: 1753313718
-      id: chatcmpl-BwdHSFe0EykAOpf0LWZzsWAodIQzb
+      created: 1770129920
+      id: chatcmpl-D5BwWeauLrMW5jaJMEJjWO8YvUtbK
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_07871e2ad8
+      system_fingerprint: fp_fa7f5b168b
       usage:
         completion_tokens: 12
         completion_tokens_details:
@@ -206,11 +259,11 @@ interactions:
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 305
+        prompt_tokens: 399
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 317
+        total_tokens: 411
     status:
       code: 200
       message: OK
@@ -219,16 +272,16 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '3157'
+      - '4967'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=dNvMC5DtbrdcBH3T.vxQ0.rJlN3RgQrqWogkc2mmb_U-1753313718-1.0.1.1-GOGnnRX1eFWciLCc6uzJ3o8PrImFvt5aWC84DrATUaFT83kg1RIYNFJqiA4fvLSUXUlgYzxUco2vpTEKiw82tvClsFZ33_f8Et9xU3ZBo0I;
-        _cfuvid=rwweg_X8oTSuj1KOaQnaAxP.vlBFQa426mhlT72v6tY-1753313718469-0.0.1.1-604800000
+      - __cf_bm=QvqcMBInLPs_JkOZCjteRiHMlFdUPsAkKaiiImRO21Q-1770129921-1.0.1.1-YQ3f5aPWhzFTsyf4PK4_oiVR_brZ2ZJ5ldYAb.W6DqMSZ.BJHvnnrnhmD0lKIJ1tLzTYL0ZpOl_4rKGb50brOJrDEtNV3DwtuwGeiqkf5Yw;
+        _cfuvid=8E_vlFfndiOzcGayM2ekKaolLKmoUqBdGHi0sHERTGA-1770129921125-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -236,17 +289,18 @@ interactions:
       messages:
       - content: Get me the product name via get_product_name_link
         role: user
-      - role: assistant
+      - content: null
+        role: assistant
         tool_calls:
         - function:
             arguments: '{}'
             name: get_product_name_link
-          id: call_qi5GtBeIEyT7Y3yJvVFIi062
+          id: call_gNC6mijxj5SIGlnng58PUTcT
           type: function
       - content: |
           Pydantic AI
         role: tool
-        tool_call_id: call_qi5GtBeIEyT7Y3yJvVFIi062
+        tool_call_id: call_gNC6mijxj5SIGlnng58PUTcT
       model: gpt-4o
       stream: false
       tool_choice: auto
@@ -256,29 +310,34 @@ interactions:
             \       Temperature in Fahrenheit\n    "
           name: celsius_to_fahrenheit
           parameters:
+            additionalProperties: false
             properties:
               celsius:
                 type: number
             required:
             - celsius
             type: object
+          strict: true
         type: function
       - function:
           description: "Get the weather forecast for a location.\n\n    Args:\n        location: The location to get the weather
             forecast for.\n\n    Returns:\n        The weather forecast for the location.\n    "
           name: get_weather_forecast
           parameters:
+            additionalProperties: false
             properties:
               location:
                 type: string
             required:
             - location
             type: object
+          strict: true
         type: function
       - function:
           description: ''
           name: get_image_resource
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -286,6 +345,7 @@ interactions:
           description: ''
           name: get_image_resource_link
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -293,6 +353,7 @@ interactions:
           description: ''
           name: get_audio_resource
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -300,6 +361,7 @@ interactions:
           description: ''
           name: get_audio_resource_link
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -307,6 +369,7 @@ interactions:
           description: ''
           name: get_product_name
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -314,6 +377,7 @@ interactions:
           description: ''
           name: get_product_name_link
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -321,6 +385,7 @@ interactions:
           description: ''
           name: get_image
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -328,6 +393,15 @@ interactions:
           description: ''
           name: get_dict
           parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_unstructured_dict
+          parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -335,6 +409,7 @@ interactions:
           description: ''
           name: get_error
           parameters:
+            additionalProperties: false
             properties:
               value:
                 default: false
@@ -345,6 +420,7 @@ interactions:
           description: ''
           name: get_none
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -352,6 +428,7 @@ interactions:
           description: ''
           name: get_multiple_items
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -359,6 +436,7 @@ interactions:
           description: "Get the current log level.\n\n    Returns:\n        The current log level.\n    "
           name: get_log_level
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -367,6 +445,7 @@ interactions:
             \   Returns:\n        Dictionary with an echo message and the deps.\n    "
           name: echo_deps
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -374,11 +453,43 @@ interactions:
           description: Use sampling callback.
           name: use_sampling
           parameters:
+            additionalProperties: false
             properties:
               foo:
                 type: string
             required:
             - foo
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: "Get information about the connected MCP client.\n\n    Returns:\n        Dictionary with client info
+            (name, version, etc.) or None if not available.\n    "
+          name: get_client_info
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: Use elicitation callback to ask the user a question.
+          name: use_elicitation
+          parameters:
+            additionalProperties: false
+            properties:
+              question:
+                type: string
+            required:
+            - question
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Enable the hidden tool, triggering a ToolListChangedNotification.
+          name: enable_hidden_tool
+          parameters:
+            additionalProperties: false
+            properties: {}
             type: object
         type: function
     uri: https://api.openai.com/v1/chat/completions
@@ -391,15 +502,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '840'
+      - '713'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '440'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - '691'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -413,27 +520,27 @@ interactions:
         logprobs: null
         message:
           annotations: []
-          content: The product name is "Pydantic AI".
+          content: The product name retrieved via the `get_product_name_link` is "Pydantic AI".
           refusal: null
           role: assistant
-      created: 1753313719
-      id: chatcmpl-BwdHTIlBZWzXJPBR8VTOdC4O57ZQA
+      created: 1770129921
+      id: chatcmpl-D5BwXvJV4iDPP4boU9DvdQ60sQq5p
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_07871e2ad8
+      system_fingerprint: fp_fa7f5b168b
       usage:
-        completion_tokens: 11
+        completion_tokens: 20
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 332
+        prompt_tokens: 426
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 343
+        total_tokens: 446
     status:
       code: 200
       message: OK

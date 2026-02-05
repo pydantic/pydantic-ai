@@ -4,7 +4,7 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
@@ -29,7 +29,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=191
+      - gfet4t7; dur=532
       transfer-encoding:
       - chunked
       vary:
@@ -49,11 +49,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '124'
+      - '154'
       content-type:
       - application/json
       host:
@@ -64,18 +64,20 @@ interactions:
       - parts:
         - text: The quick brown fox jumps over the lazydog.
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '979'
+      - '1220'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=4808
+      - gfet4t7; dur=4697
       transfer-encoding:
       - chunked
       vary:
@@ -87,28 +89,27 @@ interactions:
       - content:
           parts:
           - text: |-
-              That's a classic! It's famously known as a **pangram**, which means it's a sentence that contains every letter of the alphabet.
+              That's a classic! "The quick brown fox jumps over the lazy dog" is one of the most famous **pangrams**.
 
-              It's often used for:
-              *   **Typing practice:** To ensure all keys are hit.
-              *   **Displaying font samples:** Because it showcases every character.
+              A pangram is a sentence that contains every letter of the alphabet at least once. It's widely used for:
+              *   **Typing practice:** To ensure you hit every key.
+              *   **Displaying typefaces (fonts):** To show how all the letters look in a particular font.
+              *   **Testing equipment:** Like typewriters or keyboards.
 
-              Just a small note, it's typically written as "lazy dog" (two words) and usually ends with a period:
-
-              **The quick brown fox jumps over the lazy dog.**
+              It's quite efficient for that purpose, using only 35 letters (if "lazy dog" is treated as two words, which is more common). You even combined "lazy dog" into "lazydog" which is often done to make it even shorter or for specific software testing!
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: ZwudaISALoquqtsP9uCG6Qw
+      responseId: pTR8abnDAbyI6dkP5OvFkQE
       usageMetadata:
-        candidatesTokenCount: 109
+        candidatesTokenCount: 165
         promptTokenCount: 12
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 12
-        thoughtsTokenCount: 806
-        totalTokenCount: 927
+        thoughtsTokenCount: 670
+        totalTokenCount: 847
     status:
       code: 200
       message: OK

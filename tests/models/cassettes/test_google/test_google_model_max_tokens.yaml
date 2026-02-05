@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '221'
+      - '253'
       content-type:
       - application/json
       host:
@@ -21,21 +21,23 @@ interactions:
         role: user
       generationConfig:
         maxOutputTokens: 5
+        responseModalities:
+        - TEXT
       systemInstruction:
         parts:
         - text: You are a helpful chatbot.
         role: user
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '677'
+      - '541'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=703
+      - gfet4t7; dur=941
       transfer-encoding:
       - chunked
       vary:
@@ -44,24 +46,21 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -8.130469359457493e-05
-        content:
+      - content:
           parts:
           - text: The capital of France is
           role: model
         finishReason: MAX_TOKENS
-      modelVersion: gemini-1.5-flash
-      responseId: zlpeaNKFIZW1nvgP-O3vwQY
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: y1R8abboCra_qtsPh-z9kAI
       usageMetadata:
         candidatesTokenCount: 5
-        candidatesTokensDetails:
-        - modality: TEXT
-          tokenCount: 5
-        promptTokenCount: 13
+        promptTokenCount: 15
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 13
-        totalTokenCount: 18
+          tokenCount: 15
+        totalTokenCount: 20
     status:
       code: 200
       message: OK

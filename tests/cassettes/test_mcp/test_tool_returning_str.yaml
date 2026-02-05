@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '1771'
+      - '4675'
       content-type:
       - application/json
       host:
@@ -19,7 +19,6 @@ interactions:
       - content: What is the weather in Mexico City?
         role: user
       model: gpt-4o
-      n: 1
       stream: false
       tool_choice: auto
       tools:
@@ -28,29 +27,74 @@ interactions:
             \       Temperature in Fahrenheit\n    "
           name: celsius_to_fahrenheit
           parameters:
+            additionalProperties: false
             properties:
               celsius:
                 type: number
             required:
             - celsius
             type: object
+          strict: true
         type: function
       - function:
           description: "Get the weather forecast for a location.\n\n    Args:\n        location: The location to get the weather
             forecast for.\n\n    Returns:\n        The weather forecast for the location.\n    "
           name: get_weather_forecast
           parameters:
+            additionalProperties: false
             properties:
               location:
                 type: string
             required:
             - location
             type: object
+          strict: true
         type: function
       - function:
           description: ''
           name: get_image_resource
           parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_image_resource_link
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_audio_resource
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_audio_resource_link
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_product_name
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_product_name_link
+          parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -58,6 +102,7 @@ interactions:
           description: ''
           name: get_image
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -65,6 +110,15 @@ interactions:
           description: ''
           name: get_dict
           parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_unstructured_dict
+          parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -72,8 +126,10 @@ interactions:
           description: ''
           name: get_error
           parameters:
+            additionalProperties: false
             properties:
               value:
+                default: false
                 type: boolean
             type: object
         type: function
@@ -81,6 +137,7 @@ interactions:
           description: ''
           name: get_none
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -88,6 +145,7 @@ interactions:
           description: ''
           name: get_multiple_items
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -95,6 +153,59 @@ interactions:
           description: "Get the current log level.\n\n    Returns:\n        The current log level.\n    "
           name: get_log_level
           parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: "Echo the run context.\n\n    Args:\n        ctx: Context object containing request and session information.\n\n
+            \   Returns:\n        Dictionary with an echo message and the deps.\n    "
+          name: echo_deps
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: Use sampling callback.
+          name: use_sampling
+          parameters:
+            additionalProperties: false
+            properties:
+              foo:
+                type: string
+            required:
+            - foo
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: "Get information about the connected MCP client.\n\n    Returns:\n        Dictionary with client info
+            (name, version, etc.) or None if not available.\n    "
+          name: get_client_info
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: Use elicitation callback to ask the user a question.
+          name: use_elicitation
+          parameters:
+            additionalProperties: false
+            properties:
+              question:
+                type: string
+            required:
+            - question
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Enable the hidden tool, triggering a ToolListChangedNotification.
+          name: enable_hidden_tool
+          parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -108,13 +219,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1100'
+      - '813'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '879'
+      - '583'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -135,26 +244,26 @@ interactions:
           - function:
               arguments: '{"location":"Mexico City"}'
               name: get_weather_forecast
-            id: call_m9goNwaHBbU926w47V7RtWPt
+            id: call_hs45n1eUTneg5ukckueIopbO
             type: function
-      created: 1745958323
-      id: chatcmpl-BRlo3e1Ud2lnvkddMilmwC7LAemiy
+      created: 1770129912
+      id: chatcmpl-D5BwOdSng6tgCsFqFaCOM7EDtWpBy
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_f5bdcc3276
+      system_fingerprint: fp_fa7f5b168b
       usage:
-        completion_tokens: 18
+        completion_tokens: 17
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 194
+        prompt_tokens: 397
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 212
+        total_tokens: 414
     status:
       code: 200
       message: OK
@@ -163,16 +272,16 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '2087'
+      - '5026'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=oQrE99G0FvCYsEl.yfxpcPSrQPVTV7xLj.H0J16R0Dk-1745958324-1.0.1.1-v9A1h369ezUbwkYf3w30dddw6zPPZhPRT_mtFg_qxdMznvdhfum1O3Q1jTHzsh3Cb7Lba2.E9JcfYABq8xlMUI_Kxw8XpZEbbDMq4BTdXfI;
-        _cfuvid=v6AEt1fkTS6Q2.1ZckhUoeXaLyymB5T7JZ0xfzWeTdk-1745958324503-0.0.1.1-604800000
+      - __cf_bm=J0lwouHvNQZQR0jNWD7mUdk02acIXj_MD8YHRXaF6Ho-1770129913-1.0.1.1-vhvEOwTypG2GxTjoUyR68mXOj7krS8j7Gk62Ka2CmbAirN8e_E2Lin0JDHFQDHQwgWlZu5mPYprk9H4soLZxilTR.7nCix3KmLCVSxkQOo8;
+        _cfuvid=HfypHj2llRK.g2HHKa914gk.1xKdsIKPMfhvO_QyxWo-1770129913367-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -180,18 +289,18 @@ interactions:
       messages:
       - content: What is the weather in Mexico City?
         role: user
-      - role: assistant
+      - content: null
+        role: assistant
         tool_calls:
         - function:
             arguments: '{"location":"Mexico City"}'
             name: get_weather_forecast
-          id: call_m9goNwaHBbU926w47V7RtWPt
+          id: call_hs45n1eUTneg5ukckueIopbO
           type: function
       - content: The weather in Mexico City is sunny and 26 degrees Celsius.
         role: tool
-        tool_call_id: call_m9goNwaHBbU926w47V7RtWPt
+        tool_call_id: call_hs45n1eUTneg5ukckueIopbO
       model: gpt-4o
-      n: 1
       stream: false
       tool_choice: auto
       tools:
@@ -200,29 +309,74 @@ interactions:
             \       Temperature in Fahrenheit\n    "
           name: celsius_to_fahrenheit
           parameters:
+            additionalProperties: false
             properties:
               celsius:
                 type: number
             required:
             - celsius
             type: object
+          strict: true
         type: function
       - function:
           description: "Get the weather forecast for a location.\n\n    Args:\n        location: The location to get the weather
             forecast for.\n\n    Returns:\n        The weather forecast for the location.\n    "
           name: get_weather_forecast
           parameters:
+            additionalProperties: false
             properties:
               location:
                 type: string
             required:
             - location
             type: object
+          strict: true
         type: function
       - function:
           description: ''
           name: get_image_resource
           parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_image_resource_link
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_audio_resource
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_audio_resource_link
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_product_name
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_product_name_link
+          parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -230,6 +384,7 @@ interactions:
           description: ''
           name: get_image
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -237,6 +392,15 @@ interactions:
           description: ''
           name: get_dict
           parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_unstructured_dict
+          parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -244,8 +408,10 @@ interactions:
           description: ''
           name: get_error
           parameters:
+            additionalProperties: false
             properties:
               value:
+                default: false
                 type: boolean
             type: object
         type: function
@@ -253,6 +419,7 @@ interactions:
           description: ''
           name: get_none
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -260,6 +427,7 @@ interactions:
           description: ''
           name: get_multiple_items
           parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -267,6 +435,59 @@ interactions:
           description: "Get the current log level.\n\n    Returns:\n        The current log level.\n    "
           name: get_log_level
           parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: "Echo the run context.\n\n    Args:\n        ctx: Context object containing request and session information.\n\n
+            \   Returns:\n        Dictionary with an echo message and the deps.\n    "
+          name: echo_deps
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: Use sampling callback.
+          name: use_sampling
+          parameters:
+            additionalProperties: false
+            properties:
+              foo:
+                type: string
+            required:
+            - foo
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: "Get information about the connected MCP client.\n\n    Returns:\n        Dictionary with client info
+            (name, version, etc.) or None if not available.\n    "
+          name: get_client_info
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: Use elicitation callback to ask the user a question.
+          name: use_elicitation
+          parameters:
+            additionalProperties: false
+            properties:
+              question:
+                type: string
+            required:
+            - question
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Enable the hidden tool, triggering a ToolListChangedNotification.
+          name: enable_hidden_tool
+          parameters:
+            additionalProperties: false
             properties: {}
             type: object
         type: function
@@ -280,13 +501,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '891'
+      - '713'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '1018'
+      - '524'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -300,27 +519,27 @@ interactions:
         logprobs: null
         message:
           annotations: []
-          content: The weather in Mexico City is currently sunny with a temperature of 26 degrees Celsius.
+          content: The weather in Mexico City is sunny, with a temperature of 26 degrees Celsius.
           refusal: null
           role: assistant
-      created: 1745958324
-      id: chatcmpl-BRlo41LxqBYgGKWgGrQn67fQacOLp
+      created: 1770129914
+      id: chatcmpl-D5BwQUoOYUShONFr1zg4NLTZOllN7
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_f5bdcc3276
+      system_fingerprint: fp_fa7f5b168b
       usage:
-        completion_tokens: 19
+        completion_tokens: 18
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 234
+        prompt_tokens: 437
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 253
+        total_tokens: 455
     status:
       code: 200
       message: OK

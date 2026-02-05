@@ -5,7 +5,7 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       host:
@@ -580,7 +580,7 @@ interactions:
       access-control-allow-origin:
       - '*'
       age:
-      - '737795'
+      - '593330'
       cache-control:
       - public, max-age=31536000
       connection:
@@ -605,7 +605,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        NzliYjEzMDktYjJlZC00YjM0LTg0YTctMmE0ZDc1ZWJmNTUx
+        OTg4MDg1YzAtYmYxZC00NGY3LTg0YjktYzMwZmFiYjIxN2Jh
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -621,25 +621,25 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '585'
+      - '525'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1785
+        latencyMs: 1468
       output:
         message:
           content:
-          - text: The image shows a potato. It is oval in shape and has a yellow skin with numerous dark brown patches. These
-              patches are known as lenticels, which are pores that allow the potato to breathe. The potato is a root vegetable
-              that is widely cultivated and consumed around the world. It is a versatile ingredient that can be used in a
-              variety of dishes, including mashed potatoes, fries, and potato salad.
+          - text: The vegetable shown in the image is a potato. It is a starchy tuber that is widely consumed around the world.
+              Potatoes come in various shapes, sizes, and colors, but the one in the image appears to be a common yellow-skinned
+              potato. The potato has a rough, textured surface with small eyes or buds scattered across it.
           role: assistant
       stopReason: end_turn
       usage:
         inputTokens: 1837
-        outputTokens: 82
-        totalTokens: 1919
+        outputTokens: 69
+        serverToolUsage: {}
+        totalTokens: 1906
     status:
       code: 200
       message: OK

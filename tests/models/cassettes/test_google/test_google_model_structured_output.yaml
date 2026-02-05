@@ -4,7 +4,7 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
@@ -79,7 +79,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=795
+      - gfet4t7; dur=1099
       transfer-encoding:
       - chunked
       vary:
@@ -88,7 +88,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -8.833004228238548e-06
+      - avgLogprobs: -1.5454250387847424e-05
         content:
           parts:
           - functionCall:
@@ -99,7 +99,7 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: cDlXacOkMODnqtsPz8P96Ao
+      responseId: cjR8aY30KYyHz7IPgpnP2Qg
       usageMetadata:
         candidatesTokenCount: 14
         candidatesTokensDetails:
@@ -118,7 +118,7 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
@@ -138,13 +138,13 @@ interactions:
             args:
               city: London
               date: '2022-01-01'
-            id: pyd_ai_3b434062371141a69cab8ea6571e6812
+            id: pyd_ai_667438cc58af486b8291a20d23428b32
             name: temperature
           thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_3b434062371141a69cab8ea6571e6812
+            id: pyd_ai_667438cc58af486b8291a20d23428b32
             name: temperature
             response:
               return_value: 30°C
@@ -205,11 +205,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '860'
+      - '859'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=843
+      - gfet4t7; dur=1264
       transfer-encoding:
       - chunked
       vary:
@@ -218,7 +218,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -5.462665631923647e-06
+      - avgLogprobs: -7.697110829342688e-06
         content:
           parts:
           - functionCall:
@@ -230,7 +230,7 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: cjlXadqMAv3hqtsPuej14A4
+      responseId: czR8aYbANbbpz7IPlerjOQ
       usageMetadata:
         candidatesTokenCount: 21
         candidatesTokensDetails:

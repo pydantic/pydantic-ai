@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '302'
+      - '304'
       content-type:
       - application/json
       host:
@@ -22,7 +22,7 @@ interactions:
       stream: false
       tool_choice: auto
       tools:
-      - description: ''
+      - description: null
         name: get_user_country
         parameters:
           additionalProperties: false
@@ -38,13 +38,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1399'
+      - '1698'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '490'
+      - '712'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -53,27 +51,36 @@ interactions:
       - chunked
     parsed_body:
       background: false
-      created_at: 1749516045
+      billing:
+        payer: developer
+      completed_at: 1769786535
+      created_at: 1769786534
       error: null
-      id: resp_68477f0d9494819ea4f123bba707c9ee0356a60c98816d6a
+      frequency_penalty: 0.0
+      id: resp_0e72e194bd8a114f00697ccca6e88c81a0a184b8d6a8696988
       incomplete_details: null
       instructions: null
       max_output_tokens: null
+      max_tool_calls: null
       metadata: {}
       model: gpt-4o-2024-08-06
       object: response
       output:
       - arguments: '{}'
-        call_id: call_aTJhYjzmixZaVGqwl5gn2Ncr
-        id: fc_68477f0dff5c819ea17a1ffbaea621e00356a60c98816d6a
+        call_id: call_2KOvRpMHLjrlWgf3O0GaNT1k
+        id: fc_0e72e194bd8a114f00697ccca77f1881a09797e17c0a84fbd6
         name: get_user_country
         status: completed
         type: function_call
       parallel_tool_calls: true
+      presence_penalty: 0.0
       previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
       reasoning:
         effort: null
         summary: null
+      safety_identifier: null
       service_tier: default
       status: completed
       store: true
@@ -81,6 +88,7 @@ interactions:
       text:
         format:
           type: text
+        verbosity: medium
       tool_choice: auto
       tools:
       - description: null
@@ -91,6 +99,7 @@ interactions:
           type: object
         strict: false
         type: function
+      top_logprobs: 0
       top_p: 1.0
       truncation: disabled
       usage:
@@ -110,16 +119,16 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '538'
+      - '506'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=JZXeUMfyA2MKPG61ecku4K0wMqhJgj2ih66RpjtdqZk-1749516046-1.0.1.1-ZF5eievVR.Y5iPpLK_dVCJNl_ANFmiDhY4iZDFbopdvvhXnZvwLMCQVFWg.S.nQ0TvOw0it63SRuHbjo3jcjuD0lnI5oRQBJUOLiQElZ_j4;
-        _cfuvid=K7T3n3fgO8pCRHtSCoIpwTW2UEh0En8ro1rV5aPciGo-1749516046095-0.0.1.1-604800000
+      - __cf_bm=3I0adg0PzIOmIpj1cuVOmFydeKVGj7CdEZM0.z0dI2Q-1769786535-1.0.1.1-qFwGFqCMvckjcQ2NtGlzzJl4Lp5K6o7.JeFV4BoRqmF3C9VryMak3CMRa16wgL3gbOSUNpDCJ9S.P_k_iv0.WCSesmLBpurPziAHP8.h1k8;
+        _cfuvid=itRQYDw3X4j.wCHFtTFDjyIFJbH3c9su8jO8F8lEAEE-1769786535658-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -127,20 +136,18 @@ interactions:
       input:
       - content: What is the largest city in the user country?
         role: user
-      - content: ''
-        role: assistant
       - arguments: '{}'
-        call_id: call_aTJhYjzmixZaVGqwl5gn2Ncr
+        call_id: call_2KOvRpMHLjrlWgf3O0GaNT1k
         name: get_user_country
         type: function_call
-      - call_id: call_aTJhYjzmixZaVGqwl5gn2Ncr
+      - call_id: call_2KOvRpMHLjrlWgf3O0GaNT1k
         output: Mexico
         type: function_call_output
       model: gpt-4o
       stream: false
       tool_choice: auto
       tools:
-      - description: ''
+      - description: null
         name: get_user_country
         parameters:
           additionalProperties: false
@@ -156,13 +163,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1485'
+      - '1810'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '825'
+      - '794'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -171,29 +176,39 @@ interactions:
       - chunked
     parsed_body:
       background: false
-      created_at: 1749516046
+      billing:
+        payer: developer
+      completed_at: 1769786537
+      created_at: 1769786536
       error: null
-      id: resp_68477f0e2b28819d9c828ef4ee526d6a03434b607c02582d
+      frequency_penalty: 0.0
+      id: resp_06e59ea7bd8d01b700697ccca871bc8192bd6fdf70fcd63490
       incomplete_details: null
       instructions: null
       max_output_tokens: null
+      max_tool_calls: null
       metadata: {}
       model: gpt-4o-2024-08-06
       object: response
       output:
       - content:
         - annotations: []
+          logprobs: []
           text: The largest city in Mexico is Mexico City.
           type: output_text
-        id: msg_68477f0ebf54819d88a44fa87aadaff503434b607c02582d
+        id: msg_06e59ea7bd8d01b700697ccca915dc81928358b6746724aa62
         role: assistant
         status: completed
         type: message
       parallel_tool_calls: true
+      presence_penalty: 0.0
       previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
       reasoning:
         effort: null
         summary: null
+      safety_identifier: null
       service_tier: default
       status: completed
       store: true
@@ -201,6 +216,7 @@ interactions:
       text:
         format:
           type: text
+        verbosity: medium
       tool_choice: auto
       tools:
       - description: null
@@ -211,16 +227,17 @@ interactions:
           type: object
         strict: false
         type: function
+      top_logprobs: 0
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 59
+        input_tokens: 55
         input_tokens_details:
           cached_tokens: 0
         output_tokens: 11
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 70
+        total_tokens: 66
       user: null
     status:
       code: 200

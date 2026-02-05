@@ -288,7 +288,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
 
 
 async def test_google_model_stream(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-2.0-flash-exp', provider=google_provider)
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
     async with agent.run_stream('What is the capital of France?') as result:
         data = await result.get_output()
@@ -296,13 +296,13 @@ async def test_google_model_stream(allow_model_requests: None, google_provider: 
             if is_last:
                 assert response == snapshot(
                     ModelResponse(
-                        parts=[TextPart(content='The capital of France is Paris.\n')],
+                        parts=[TextPart(content='The capital of France is **Paris**.')],
                         usage=RequestUsage(
-                            input_tokens=13,
-                            output_tokens=8,
-                            details={'text_prompt_tokens': 13, 'text_candidates_tokens': 8},
+                            input_tokens=15,
+                            output_tokens=24,
+                            details={'thoughts_tokens': 16, 'text_prompt_tokens': 15},
                         ),
-                        model_name='gemini-2.0-flash-exp',
+                        model_name='gemini-2.5-flash',
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                         provider_url='https://generativelanguage.googleapis.com/',
@@ -311,7 +311,7 @@ async def test_google_model_stream(allow_model_requests: None, google_provider: 
                         finish_reason='stop',
                     )
                 )
-    assert data == snapshot('The capital of France is Paris.\n')
+    assert data == snapshot('The capital of France is **Paris**.')
 
 
 async def test_google_model_builtin_code_execution_stream(
@@ -354,8 +354,7 @@ async def test_google_model_builtin_code_execution_stream(
                         tool_name='code_execution',
                         args={
                             'code': """\
-    result = 65465 - 6544 * 65464 - 6 + 1.02255
-    print(result)
+    print(65465 - 6544 * 65464 - 6 + 1.02255)
     \
 """,
                             'language': 'PYTHON',
@@ -370,16 +369,21 @@ async def test_google_model_builtin_code_execution_stream(
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                     ),
+                    TextPart(
+                        content="""\
+Following the order of operations (PEMDAS/BODMAS), the calculation is performed as follows:
+
+1.  Multiplication: `6544 * 65464`
+2.  Subtraction: `65465 - (the result from step 1)`
+3.  Subtraction: `(the result from step 2) - 6`
+4.  Addition: `(the result from step 3) + 1.02255`
+
+Here is the calculation performed using Python:
+"""
+                    ),
                     BuiltinToolCallPart(
                         tool_name='code_execution',
-                        args={
-                            'code': """\
-# Calculate the expression 65465-6544 * 65464-6+1.02255
-result = 65465 - 6544 * 65464 - 6 + 1.02255
-print(result)\
-""",
-                            'language': 'PYTHON',
-                        },
+                        args={'code': 'print(65465 - 6544 * 65464 - 6 + 1.02255)\n', 'language': 'PYTHON'},
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
@@ -390,16 +394,18 @@ print(result)\
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                     ),
-                    TextPart(content='The result is -428,330,955.97745.'),
+                    TextPart(
+                        content='The result of the expression `65465-6544 * 65464-6+1.02255` is **-428,330,955.97745**.'
+                    ),
                 ],
                 usage=RequestUsage(
                     input_tokens=46,
-                    output_tokens=1429,
+                    output_tokens=2066,
                     details={
-                        'thoughts_tokens': 396,
-                        'tool_use_prompt_tokens': 901,
+                        'thoughts_tokens': 563,
+                        'tool_use_prompt_tokens': 1268,
                         'text_prompt_tokens': 46,
-                        'text_tool_use_prompt_tokens': 901,
+                        'text_tool_use_prompt_tokens': 1268,
                     },
                 ),
                 model_name='gemini-2.5-pro',
@@ -421,8 +427,7 @@ print(result)\
                     tool_name='code_execution',
                     args={
                         'code': """\
-    result = 65465 - 6544 * 65464 - 6 + 1.02255
-    print(result)
+    print(65465 - 6544 * 65464 - 6 + 1.02255)
     \
 """,
                         'language': 'PYTHON',
@@ -437,8 +442,7 @@ print(result)\
                     tool_name='code_execution',
                     args={
                         'code': """\
-    result = 65465 - 6544 * 65464 - 6 + 1.02255
-    print(result)
+    print(65465 - 6544 * 65464 - 6 + 1.02255)
     \
 """,
                         'language': 'PYTHON',
@@ -461,40 +465,89 @@ print(result)\
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolCallPart(
-                    tool_name='code_execution',
-                    args={
-                        'code': """\
-# Calculate the expression 65465-6544 * 65464-6+1.02255
-result = 65465 - 6544 * 65464 - 6 + 1.02255
-print(result)\
-""",
-                        'language': 'PYTHON',
-                    },
-                    tool_call_id=IsStr(),
-                    provider_name='google-gla',
+                part=TextPart(
+                    content='Following the order of operations (PEMDAS/BODMAS), the calculation is performed as'
                 ),
                 previous_part_kind='builtin-tool-return',
             ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(
+                index=2,
+                delta=TextPartDelta(
+                    content_delta="""\
+ follows:
+
+1.  Multiplication: `6544 * 65464`
+2.  Subtraction\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=TextPartDelta(
+                    content_delta="""\
+: `65465 - (the result from step 1)`
+3.  Subtraction: `(the\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=TextPartDelta(
+                    content_delta="""\
+ result from step 2) - 6`
+4.  Addition: `(the result from step 3\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=TextPartDelta(
+                    content_delta="""\
+) + 1.02255`
+
+Here is the calculation performed using Python:
+"""
+                ),
+            ),
             PartEndEvent(
                 index=2,
+                part=TextPart(
+                    content="""\
+Following the order of operations (PEMDAS/BODMAS), the calculation is performed as follows:
+
+1.  Multiplication: `6544 * 65464`
+2.  Subtraction: `65465 - (the result from step 1)`
+3.  Subtraction: `(the result from step 2) - 6`
+4.  Addition: `(the result from step 3) + 1.02255`
+
+Here is the calculation performed using Python:
+"""
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=3,
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
-                    args={
-                        'code': """\
-# Calculate the expression 65465-6544 * 65464-6+1.02255
-result = 65465 - 6544 * 65464 - 6 + 1.02255
-print(result)\
-""",
-                        'language': 'PYTHON',
-                    },
+                    args={'code': 'print(65465 - 6544 * 65464 - 6 + 1.02255)\n', 'language': 'PYTHON'},
+                    tool_call_id=IsStr(),
+                    provider_name='google-gla',
+                ),
+                previous_part_kind='text',
+            ),
+            PartEndEvent(
+                index=3,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args={'code': 'print(65465 - 6544 * 65464 - 6 + 1.02255)\n', 'language': 'PYTHON'},
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
                 ),
                 next_part_kind='builtin-tool-return',
             ),
             PartStartEvent(
-                index=3,
+                index=4,
                 part=BuiltinToolReturnPart(
                     tool_name='code_execution',
                     content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
@@ -504,18 +557,22 @@ print(result)\
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=4, part=TextPart(content='The result is'), previous_part_kind='builtin-tool-return'),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' -428,330,955.977')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='45.')),
-            PartEndEvent(index=4, part=TextPart(content='The result is -428,330,955.97745.')),
+            PartStartEvent(index=5, part=TextPart(content='The'), previous_part_kind='builtin-tool-return'),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' result of the expression `65465-6544 * 65')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='464-6+1.02255` is **-428,330')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=',955.97745**.')),
+            PartEndEvent(
+                index=5,
+                part=TextPart(
+                    content='The result of the expression `65465-6544 * 65464-6+1.02255` is **-428,330,955.97745**.'
+                ),
+            ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
                     args={
                         'code': """\
-    result = 65465 - 6544 * 65464 - 6 + 1.02255
-    print(result)
+    print(65465 - 6544 * 65464 - 6 + 1.02255)
     \
 """,
                         'language': 'PYTHON',
@@ -536,14 +593,7 @@ print(result)\
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
-                    args={
-                        'code': """\
-# Calculate the expression 65465-6544 * 65464-6+1.02255
-result = 65465 - 6544 * 65464 - 6 + 1.02255
-print(result)\
-""",
-                        'language': 'PYTHON',
-                    },
+                    args={'code': 'print(65465 - 6544 * 65464 - 6 + 1.02255)\n', 'language': 'PYTHON'},
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
                 )
@@ -601,7 +651,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=57, output_tokens=139, details={'thoughts_tokens': 124, 'text_prompt_tokens': 57}
+                    input_tokens=57, output_tokens=126, details={'thoughts_tokens': 111, 'text_prompt_tokens': 57}
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -631,18 +681,20 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                         args={'country': 'La France'},
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
-                        provider_details={'thought_signature': IsStr()},
+                        provider_details={
+                            'thought_signature': 'CtUFAXLI2nxgt22EiUCfSwcU1wo3pJK6Bowq5Xk//KMUvV1rQrJVEucURHd7XVEAAxoGXfbMjNzrrAzSftCyBS7351SA9/xu5/odnjjFizPSn5gWYVMgON/qobXE7CXBvHwI5e8fR+BApvZKQsQC+70AmLFdAHgoV6aX2lo7wU7zxaAee0zTRDh9QjSKngUZ1/+H7a/8MxFSsnpoJ3uHwsE6ogbZE/C5Guk/S/5CqeozTJ4ZbWz6HuFgBHhLy8etMH2QAHpdd8MWnoIOHuLTiQ4+8c0op0fI8OQZfoix21MWjjSEAwqta5eKEd+qHMCgI2zodld57b7DaSdht/b2Q43fFriTsEJ15aIXlkCPMrA6ed4abDtUuLYl26aGnWmUYZqDkGR78vcJccThxYgEwM4Y8OlKg/kPuNstt5gMnENKpjXrBQaLQ/tAnXhNyJUSHJw9GvcVv9sus2MOL8TdWOhleKs8vu270fU/jGv3cVkK/SLzkXMlvjKvoDrXXJ5FaXLJBuE6J8cWexIamV02tE3DBYXcN5gNCHb5Rf532uBR/na1m/cHNerxOSxOpDdXy0lcPhyyWGVVB5Vdu1d7skVcRWN4Z37Yy6nXnFiixbPcUH61l2OxErWXWYNwfdQF+nKquJYEIroDAEbVof9luS6ITwH+ffe6bV1zY6NeUyilKwCqu1X6ioE+qO7RwRvQJT936BQqIsDDzdHF+GSQ2qwUOsHxbDZagmJHDwzqQEwdDK43srgxRXfi5JvfU6G/IExnlBaemR18fcqTuLCBo5ov5mvGyoexuxetJMm+3b/RYlju1xx81Sxz0l47wFTkLLhr8EtXEa6E0w0XioTRYaHsz+oLKsjdVYIMo5x6wTpoNxDq/+si4p+iNd0WwxgmBMEKvmFxr+WzAqb3QG1OcjgwfxC634THId/dqU/A9f6YLXZfE5gSgi4PGcAFC8cVXXgkS/gff60='
+                        },
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=109, output_tokens=215, details={'thoughts_tokens': 199, 'text_prompt_tokens': 109}
+                    input_tokens=109, output_tokens=163, details={'thoughts_tokens': 147, 'text_prompt_tokens': 109}
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id=IsStr(),
+                provider_response_id='TFd8aajpJNifz7IPuJq08AE',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -655,26 +707,28 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='Paris',
+                        content='The capital of France is Paris.',
                         provider_name='google-gla',
-                        provider_details={'thought_signature': IsStr()},
+                        provider_details={
+                            'thought_signature': 'CtMDAXLI2nwxeQ/v3e6EHAjLin/y91gLUDFWAYiTSofXvoMXaMjeSxHVJLqYBifB671o7/CllKzdKYP5bIlGr3z7tIlQ498NPcLdZ+tSZ5cH3FT/Yf6hza8mSxD/T5vbOZ8lLh9Yum1G7SdMvpA256cDkYrqJrc3JmSoSxfPavPedKkMHdyQ0T48MCZvDYNmKW+BjALuO7Lehba4EJvxH6FrBLuv73lqfepAydBPWhMFeE/hprw/Csu9rGlVwTjzH8D8v80rBVLQx0fTfoP4wZejtoArNe+NtWt+SAbI/Gi1oZctJI5sxP3D0HII5XpFisZcO7jt1lfwFAedu6h0ULpCeSa/8SMbZg1XvyZ8J+as43qdoll1YBEPhJZF7dS0A2LsQAVV8g+bGBs0flo5Z+OyTp/8b3S+HWiYml7Cg3ftHcv3ZTGNyWNjQiXD9FTfPARUG9lYW2vqd1l0FAVY5tqAOKhCrb83QVaAImGZWfV5Gt/b4rnhD9G+yljY3Nlr2zhEAiUvvvTtCQv9CusN6NSL5x/FA7dbJdLpjkVG9vBc1uvohGxIiDgN7a43j8nxeVyaYaV+yIc/gRiDghxABSo82S/shAa3WbEEfzKbuhEF9GM7O4M='
+                        },
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=142, output_tokens=98, details={'thoughts_tokens': 97, 'text_prompt_tokens': 142}
+                    input_tokens=142, output_tokens=108, details={'thoughts_tokens': 101, 'text_prompt_tokens': 142}
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id=IsStr(),
+                provider_response_id='T1d8aYMZ_tfPsg-V08HBDw',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -683,21 +737,21 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
 
 
 async def test_google_model_max_tokens(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'max_tokens': 5})
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is')
 
 
 async def test_google_model_top_p(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'top_p': 0.5})
     result = await agent.run('What is the capital of France?')
-    assert result.output == snapshot('The capital of France is Paris.\n')
+    assert result.output == snapshot('The capital of France is **Paris**.')
 
 
 async def test_google_model_thinking_config(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=google_provider)
+    model = GoogleModel('gemini-2.5-pro', provider=google_provider)
     settings = GoogleModelSettings(google_thinking_config={'include_thoughts': False})
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=settings)
     result = await agent.run('What is the capital of France?')
@@ -717,20 +771,20 @@ async def test_google_model_gla_labels_raises_value_error(allow_model_requests: 
 async def test_google_model_vertex_provider(
     allow_model_requests: None, vertex_provider: GoogleProvider
 ):  # pragma: lax no cover
-    model = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
+    model = GoogleModel('gemini-3-flash-preview', provider=vertex_provider)
     agent = Agent(model=model, instructions='You are a helpful chatbot.')
     result = await agent.run('What is the capital of France?')
-    assert result.output == snapshot('The capital of France is Paris.\n')
+    assert result.output == snapshot('The capital of France is **Paris**.')
 
 
 async def test_google_model_vertex_labels(
     allow_model_requests: None, vertex_provider: GoogleProvider
 ):  # pragma: lax no cover
-    model = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
+    model = GoogleModel('gemini-3-flash-preview', provider=vertex_provider)
     settings = GoogleModelSettings(google_labels={'environment': 'test', 'team': 'analytics'})
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=settings)
     result = await agent.run('What is the capital of France?')
-    assert result.output == snapshot('The capital of France is Paris.\n')
+    assert result.output == snapshot('The capital of France is **Paris**.')
 
 
 async def test_google_model_iter_stream(allow_model_requests: None, google_provider: GoogleProvider):
@@ -793,10 +847,10 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
                     tool_name='get_temperature', content='30°C', tool_call_id=IsStr(), timestamp=IsDatetime()
                 )
             ),
-            PartStartEvent(index=0, part=TextPart(content='The temperature in Paris')),
+            PartStartEvent(index=0, part=TextPart(content='The temperature in')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' is 30°C.\n')),
-            PartEndEvent(index=0, part=TextPart(content='The temperature in Paris is 30°C.\n')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' Paris is 30°C.')),
+            PartEndEvent(index=0, part=TextPart(content='The temperature in Paris is 30°C.')),
         ]
     )
 
@@ -808,7 +862,7 @@ async def test_google_model_image_as_binary_content_input(
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
     result = await agent.run(['What fruit is in the image?', image_content])
-    assert result.output == snapshot('The fruit in the image is a kiwi.')
+    assert result.output == snapshot('The fruit in the image is a kiwi.\n')
 
 
 async def test_google_model_video_as_binary_content_input(
@@ -819,32 +873,32 @@ async def test_google_model_video_as_binary_content_input(
 
     result = await agent.run(['Explain me this video', video_content])
     assert result.output == snapshot("""\
-Okay! It looks like the image shows a camera monitor, likely used for professional or semi-professional video recording. \n\
+Certainly! Based on the image, here's what I can tell you:
 
-Here's what I can gather from the image:
-
-*   **Camera Monitor:** The central element is a small screen attached to a camera rig (tripod and probably camera body). These monitors are used to provide a larger, clearer view of what the camera is recording, aiding in focus, composition, and exposure adjustments.
-*   **Scene on Monitor:** The screen shows an image of what appears to be a rocky mountain path or canyon with a snow capped mountain in the distance.
-*   **Background:** The background is blurred, likely the same scene as on the camera monitor.
-
-Let me know if you want me to focus on any specific aspect or detail!\
+The image shows a camera setup, likely for photography or videography, in an outdoor setting. A camera is mounted on a tripod and connected to an external monitor. The monitor is displaying a scene that is very similar to the background, suggesting that the camera is recording or previewing the landscape. The landscape appears to be a canyon or desert environment, with rocky formations and mountains in the background.
 """)
 
 
 async def test_google_model_video_as_binary_content_input_with_vendor_metadata(
     allow_model_requests: None, video_content: BinaryContent, google_provider: GoogleProvider
 ):
-    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
-    video_content.vendor_metadata = {'start_offset': '2s', 'end_offset': '10s'}
+    video_content.vendor_metadata = {'fps': 2}
 
     result = await agent.run(['Explain me this video', video_content])
     assert result.output == snapshot("""\
-Okay, I can describe what is visible in the image.
+This video shows a camera setup filming a picturesque outdoor landscape. Here's a breakdown:
 
-The image shows a camera setup in an outdoor setting. The camera is mounted on a tripod and has an external monitor attached to it. The monitor is displaying a scene that appears to be a desert landscape with rocky formations and mountains in the background. The foreground and background of the overall image, outside of the camera monitor, is also a blurry, desert landscape. The colors in the background are warm and suggest either sunrise, sunset, or reflected light off the rock formations.
+1.  **Foreground/Subject:** A professional camera rig is prominently displayed. It consists of:
+    *   A camera mounted on a tripod.
+    *   An external monitor attached to the camera, displaying a live feed or a recently captured shot.
 
-It looks like someone is either reviewing footage on the monitor, or using it as an aid for framing the shot.\
+2.  **What's on the Monitor:** The monitor shows a stunning view of a rugged, natural environment. It appears to be a canyon or a mountainous desert landscape. There's a path winding through the scene, with dramatic rock formations on the left and a brightly lit, possibly distant mountain under a blue sky on the right. The lighting is warm, suggesting either sunrise or sunset ("golden hour").
+
+3.  **Background:** The area behind the camera and monitor is blurred, but it clearly shows the *same* natural landscape that the camera is pointed at. This indicates that the camera is set up *in* the very environment it is filming, providing a "behind-the-scenes" look at the filming process. The blurred background emphasizes the crisp image on the monitor, highlighting the camera's focus.
+
+In essence, the video captures a moment of filming a beautiful, warm-toned natural landscape, showcasing the equipment used and the stunning result displayed on the external monitor.\
 """)
 
 
@@ -858,7 +912,7 @@ async def test_google_model_image_url_input(allow_model_requests: None, google_p
             ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
         ]
     )
-    assert result.output == snapshot('That is a potato.')
+    assert result.output == snapshot('That vegetable is a potato.')
 
 
 async def test_google_model_video_url_input(allow_model_requests: None, google_provider: GoogleProvider):
@@ -872,15 +926,17 @@ async def test_google_model_video_url_input(allow_model_requests: None, google_p
         ]
     )
     assert result.output == snapshot("""\
-Certainly! Based on the image you sent, it appears to be a setup for filming or photography. \n\
+Okay! Based on the image, here's what I can tell you:
 
-Here's what I can observe:
+**Main Elements:**
 
-*   **Camera Monitor:** There is a monitor mounted on a tripod, displaying a shot of a canyon or mountain landscape.
-*   **Camera/Recording Device:** Below the monitor, there is a camera or some other kind of recording device.
-*   **Landscape Backdrop:** In the background, there is a similar-looking landscape to what's being displayed on the screen.
+*   **Camera Setup:** The primary focus is a camera setup, likely for photography or videography. It includes a camera mounted on a tripod and connected to an external monitor.
+*   **External Monitor:** The external monitor shows a scene that resembles a desert or canyon landscape. It appears to be displaying the camera's live view or a previously recorded image.
+*   **Background:** The background is intentionally blurred, showing a similar desert or canyon environment, which helps to create depth and emphasizes the camera setup as the subject.
 
-In summary, it looks like the image shows a camera setup, perhaps in the process of filming, with a monitor to review the footage.\
+**In summary:**
+
+The image likely showcases the equipment used for filming or photographing in a scenic outdoor location. The external monitor helps preview or review the footage.\
 """)
 
 
@@ -915,10 +971,61 @@ async def test_google_model_youtube_video_url_input_with_vendor_metadata(
         ]
     )
     assert result.output == snapshot("""\
-Sure, here is a summary of the video in a few sentences.
+Here's a breakdown of what's happening in the video:
 
-The video is an AI analyzing recent 404 HTTP responses using Logfire. It identifies several patterns such as the most common endpoints with 404 errors, request patterns, timeline-related issues, organization/project access issues, and configuration/authentication issues. Based on the analysis, it provides several recommendations, including verifying the platform-config endpoint is properly configured, checking organization and project permissions, and investigating timeline requests.\
+**Context:**
+
+*   The user is in a development environment, likely using VS Code, examining TypeScript code related to a browser router.
+*   The user is interacting with a chat interface within the IDE, specifically using a tool called "logfile" (indicated by the bot's opening lines).
+
+**The Task:**
+
+*   The user asks the bot to analyze recent 404 HTTP responses from log files.  The goal is to identify any patterns that could explain why these "Not Found" errors are occurring.
+
+**The Process:**
+
+1.  **Logfile Schema Check:** The bot first checks the structure or schema of the log files to ensure it can accurately query the data.
+2.  **Query Creation:**  Using the schema, the bot formulates a query to search for 404 responses specifically within the last 30 minutes. The query will focus on relevant information like the URL path, HTTP method (GET, POST, etc.), and timestamp.
+3.  **Analysis and Pattern Identification:** The bot analyzes the query results to identify common patterns, which will include the following:
+
+    *   **Most Common Endpoints with 404s:**
+    *   **Request Patterns:**
+    *   **Timeline-Related Issues:**
+    *   **Organization/Project Access:**
+    *   **Configuration and Authentication:**
+
+**Key takeaways:**
+
+*   The bot is using log data analysis to automatically identify patterns and issues related to 404 errors.
+*   The analysis provided by the bot is then displayed in the chat interface to assist the user to find the errors.
+*   By identifying frequent 404's the tool also recommends monitoring these 404's to track expected behavior or indicate actual issues.\
 """)
+
+
+async def test_google_model_youtube_video_url_input_with_start_end_offset(
+    allow_model_requests: None, google_provider: GoogleProvider
+):
+    """Test video_metadata with start_offset/end_offset on YouTube URLs.
+
+    Note: start_offset/end_offset only work with file_data (VideoUrl for YouTube/GCS),
+    not with inline_data (BinaryContent). See test_google_model_video_as_binary_content_input_with_vendor_metadata
+    for the fps-only test with BinaryContent.
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(m, instructions='You are a helpful chatbot.')
+
+    result = await agent.run(
+        [
+            'What happens in this specific part of the video? Be brief.',
+            VideoUrl(
+                url='https://youtu.be/lCdaVNyHtjU',
+                vendor_metadata={'start_offset': '40s', 'end_offset': '80s'},
+            ),
+        ]
+    )
+    assert result.output == snapshot(
+        'At 00:40, the user scrolls through the "Recommendations" section in the chat interface, highlighting various points related to configuration and authentication.'
+    )
 
 
 async def test_google_model_document_url_input(allow_model_requests: None, google_provider: GoogleProvider):
@@ -928,7 +1035,7 @@ async def test_google_model_document_url_input(allow_model_requests: None, googl
     document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
 
     result = await agent.run(['What is the main content on this document?', document_url])
-    assert result.output == snapshot('The document appears to be a dummy PDF file.\n')
+    assert result.output == snapshot('The main content of the document is the phrase "Dummy PDF file".\n')
 
 
 async def test_google_model_text_document_url_input(allow_model_requests: None, google_provider: GoogleProvider):
@@ -939,7 +1046,7 @@ async def test_google_model_text_document_url_input(allow_model_requests: None, 
 
     result = await agent.run(['What is the main content on this document?', text_document_url])
     assert result.output == snapshot(
-        'The main content of the TXT file is an explanation of the placeholder name "John Doe" (and related variations) and its usage in legal contexts, popular culture, and other situations where the identity of a person is unknown or needs to be withheld. The document also includes the purpose of the file and other file type information.\n'
+        'The main content of the document is an explanation of the placeholder name "John Doe" (and related names like Jane Doe, Baby Doe, etc.) and its usage, primarily in legal and other contexts in the United States and Canada, when the true identity of a person is unknown or must be withheld. It also mentions alternative names used in other English-speaking countries like the UK.\n'
     )
 
 
@@ -1009,11 +1116,13 @@ async def test_google_model_multiple_documents_in_history(
         ],
     )
 
-    assert result.output == snapshot('Both documents contain the text "Dummy PDF file" at the top of the page.')
+    assert result.output == snapshot(
+        'Both documents contain the text "Dummy PDF file". They appear to be placeholder or example PDF files.\n'
+    )
 
 
 async def test_google_model_safety_settings(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
     settings = GoogleModelSettings(
         google_safety_settings=[
             {
@@ -1047,7 +1156,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                     'output_audio_tokens': 0,
                     'details': {'text_prompt_tokens': 14},
                 },
-                'model_name': 'gemini-1.5-flash',
+                'model_name': 'gemini-2.5-flash',
                 'timestamp': IsStr(),
                 'kind': 'response',
                 'provider_name': 'google-gla',
@@ -1133,18 +1242,23 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
                         content=[
                             {
                                 'domain': None,
+                                'title': 'wunderground.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEtIMuE-qRD5sZj_LCu_5McCA8JLJOk7maet5sQ9DHIOSHCup7I3X2p-ERs77Ri1HmhoCKKRi31xHLo5yJKtRQz5aJz408iaDnkjYIkjX2RsaNk1g8nnzq13Qme6hVQhfXa38l-2zMctvbmAhJpaMqOtg==',
+                            },
+                            {
+                                'domain': None,
                                 'title': 'Weather information for San Francisco, CA, US',
                                 'uri': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
                             },
                             {
                                 'domain': None,
-                                'title': 'weather.gov',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF_uqo2G5Goeww8iF1L_dYa2sqWGhzu_UnxEZd1gQ7ZNuXEVVVYEEYcx_La3kuODFm0dPUhHeF4qGP1c6kJ86i4SKfvRqFitMCvNiDx07eC5iM7axwepoTv3FeUdIRC-ou1P-6DDykZ4QzcxcrKISa_1Q==',
+                                'title': 'accuweather.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFj_Qm-tG4ohXlBnuw_2KkZkt-9gOaSZpFQ3tOCvrZeAgo3mpoobp0f_tMfbVPptdKoLFB-V1Pj9Xt9HpYPrxUPk9-VyQpZEM2qeyG_yJ6Y6vReEk-4XfrcBVEaEiWeH5BXXsdWK75kHpfSeqFTqQRYnRBa1F9PQy8U76gISO_p5ATCADVFvpY=',
                             },
                             {
                                 'domain': None,
-                                'title': 'wunderground.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFywixFZicmDjijfhfLNw8ya7XdqWR31aJp8CHyULLelG8bujH1TuqeP9RAhK6Pcm1qz11ujm2yM7gM5bJXDFsZwbsubub4cnUp5ixRaloJcjVrHkyd5RHblhkDDxHGiREV9BcuqeJovdr8qhtrCKMcvJk=',
+                                'title': 'weather.gov',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG_QDYAlEKqk0Pz0unIB2ZaI8LdvAgYTlbPqmBsZZFtnV09N1BO1Ufu1m7OrNxrCspdumvT0790s7vPRYDJ7BvBtKGTUq4S46085nyPJkcK_6cED1Thcw==',
                             },
                         ],
                         tool_call_id=IsStr(),
@@ -1153,26 +1267,24 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
                     ),
                     TextPart(
                         content="""\
-## Weather in San Francisco is Mild and Partly Cloudy
+Here's a look at the weather in San Francisco for Friday, January 30, 2026.
 
-**San Francisco, CA** - Residents and visitors in San Francisco are experiencing a mild Tuesday, with partly cloudy skies and temperatures hovering around 69°F. There is a very low chance of rain throughout the day.
+**Today's forecast calls for a mix of clouds and sun, with cloudy skies in the morning giving way to partly cloudy conditions in the afternoon.** The chance of rain is low, at around 10%.
 
-According to the latest weather reports, the forecast for the remainder of the day is expected to be sunny, with highs ranging from the mid-60s to the lower 80s. Winds are predicted to come from the west at 10 to 15 mph.
+The high temperature is expected to be in the low 60s, with different sources predicting between 61°F (16°C) and 64°F. The low temperature for tonight is anticipated to be around 48°F. You can expect winds from the north-northeast at 5 to 10 mph.
 
-As the evening approaches, the skies are expected to remain partly cloudy, with temperatures dropping to the upper 50s. There is a slight increase in the chance of rain overnight, but it remains low at 20%.
-
-Overall, today's weather in San Francisco is pleasant, with a mix of sun and clouds and comfortable temperatures.\
+**Hazardous Conditions:** It's important to be aware of a Coastal Flood Advisory in effect for bayshore locations through Sunday. Additionally, a Beach Hazards Statement is active until Monday, so caution is advised near the water.\
 """
                     ),
                 ],
                 usage=RequestUsage(
                     input_tokens=17,
-                    output_tokens=533,
+                    output_tokens=745,
                     details={
-                        'thoughts_tokens': 213,
-                        'tool_use_prompt_tokens': 119,
+                        'thoughts_tokens': 437,
+                        'tool_use_prompt_tokens': 103,
                         'text_prompt_tokens': 17,
-                        'text_tool_use_prompt_tokens': 119,
+                        'text_tool_use_prompt_tokens': 103,
                     },
                 ),
                 model_name='gemini-2.5-pro',
@@ -1206,53 +1318,37 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='web_search',
-                        args={'queries': ['current weather in Mexico City']},
+                        args={'queries': ['weather in Mexico City today']},
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content=[
-                            {
-                                'domain': None,
-                                'title': 'theweathernetwork.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEvigSUuLwtMoqPNq2bvqCduH6yYQLKmhzoj0-SQbxBb2rs_ow380KClss6yfKqxmQ-3HIrmzasviLVdO2FhQ_uEIGfpv6-_r4XOSSLu57LKZgAFYTsswd5Q--VkuO2eEr4Vh8b0aK4KFi3Rt3k_r99frmOa-8mCHzWrXI_HeS58IvIpda0XNtWVEjg',
-                            },
-                            {
-                                'domain': None,
-                                'title': 'wunderground.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFEXnJiWubQ1I2xMumZnSwxzZzhO_s2AdGg1yFakgO7GqJXU25aq3-Zl5xFEsUk9KpDtKUsS0NrBQxRNYCTkbKMknHSD5n8Yps9aAYvLOvyKgKPDFt4SkBkt1RO1nyPOweAzOzjPmnnd8AqBqOq',
-                            },
-                            {
-                                'domain': None,
-                                'title': 'wunderground.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEDXOJgWay-hTPi0eqxph51YPv_mX15kug_vYdV3Ybx19gm4XsIFdbDN3OhP8tHbKJDheVySvDaxmXZK2lsEJlHITYidz_uKAiY38_peXIPv0Kw4LvBYLWUh4SPwHBLgHAR3CsLQo3293ZbIXZ_3A==',
-                            },
-                        ],
+                        content=None,
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                     ),
                     TextPart(
                         content="""\
-In Mexico City today, you can expect a day of mixed sun and clouds with a high likelihood of showers and thunderstorms, particularly in the afternoon and evening.
+Here is the weather forecast for Mexico City on Friday, January 30, 2026.
 
-Currently, the weather is partly cloudy with temperatures in the mid-60s Fahrenheit (around 17-18°C). As the day progresses, the temperature is expected to rise, reaching a high of around 73-75°F (approximately 23°C).
+You can expect a day with variable cloudiness and a slight chance of rain. The morning will begin with overcast skies and temperatures around 53°F (12°C).
 
-There is a significant chance of rain, with forecasts indicating a 60% to 100% probability of precipitation, especially from mid-afternoon into the evening. Winds are generally light, coming from the north-northeast at 10 to 15 mph.
+As the day progresses, there is a 10% chance of passing showers in the afternoon, with the high temperature reaching approximately 70°F (21°C). The evening will be overcast with temperatures around 60°F (16°C), dropping to a low of about 50°F (10°C) overnight.
 
-Tonight, the skies will remain cloudy with a continued chance of showers, and the temperature will drop to a low of around 57°F (about 14°C).\
+Winds are expected to be light, ranging from 2 to 8 mph.\
 """
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=209,
-                    output_tokens=623,
+                    input_tokens=213,
+                    output_tokens=853,
                     details={
-                        'thoughts_tokens': 131,
-                        'tool_use_prompt_tokens': 286,
-                        'text_prompt_tokens': 209,
-                        'text_tool_use_prompt_tokens': 286,
+                        'thoughts_tokens': 375,
+                        'tool_use_prompt_tokens': 308,
+                        'text_prompt_tokens': 213,
+                        'text_tool_use_prompt_tokens': 308,
                     },
                 ),
                 model_name='gemini-2.5-pro',
@@ -1299,26 +1395,26 @@ async def test_google_model_web_search_tool_stream(allow_model_requests: None, g
                 parts=[
                     TextPart(
                         content="""\
-### Weather in San Francisco is Mild and Partly Cloudy Today
+### Cloudy Skies with Afternoon Sun Expected in San Francisco Today
 
-**San Francisco, CA** - Today's weather in San Francisco is partly cloudy with temperatures ranging from the high 50s to the low 80s, according to various weather reports.
+**San Francisco, CA** - Residents of San Francisco can expect a day of mixed clouds and sun today, with a high temperature hovering around the low 60s. The morning will begin with mostly cloudy skies, which are expected to give way to partly cloudy conditions and some sunshine in the afternoon. The overnight low is anticipated to be in the mid to upper 40s.
 
-As of Tuesday afternoon, the temperature is around 69°F (21°C), with a real feel of about 76°F (24°C) and humidity at approximately 68%. Another report indicates a temperature of 68°F with passing clouds. There is a very low chance of rain throughout the day.
+There is a low chance of rain throughout the day, with precipitation chances pegged at around 10%. Winds are forecast to be from the north-northeast at a gentle 5 to 10 miles per hour.
 
-The forecast for the remainder of the day predicts sunny skies with highs ranging from the mid-60s to the lower 80s. Some sources suggest the high could reach up to 85°F. Tonight, the weather is expected to be partly cloudy with lows in the upper 50s.
+A Coastal Flood Advisory is currently in effect for bayshore locations along the San Francisco Bay. This advisory warns of minor coastal flooding during the highest tides of the day.
 
-Hourly forecasts show temperatures remaining in the low 70s during the afternoon before gradually cooling down in the evening. The chance of rain remains low throughout the day.\
+Looking ahead, the weekend is expected to bring a similar mild and dry weather pattern.\
 """
                     )
                 ],
                 usage=RequestUsage(
                     input_tokens=17,
-                    output_tokens=755,
+                    output_tokens=628,
                     details={
-                        'thoughts_tokens': 412,
-                        'tool_use_prompt_tokens': 102,
+                        'thoughts_tokens': 319,
+                        'tool_use_prompt_tokens': 104,
                         'text_prompt_tokens': 17,
-                        'text_tool_use_prompt_tokens': 102,
+                        'text_tool_use_prompt_tokens': 104,
                     },
                 ),
                 model_name='gemini-2.5-pro',
@@ -1339,9 +1435,9 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                 index=0,
                 part=TextPart(
                     content="""\
-### Weather in San Francisco is Mild and Partly Cloudy Today
+### Cloudy Skies with Afternoon Sun Expected in San Francisco Today
 
-**San Francisco, CA** - Today's weather in San\
+**\
 """
                 ),
             ),
@@ -1349,80 +1445,68 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
             PartDeltaEvent(
                 index=0,
                 delta=TextPartDelta(
-                    content_delta=' Francisco is partly cloudy with temperatures ranging from the high 50s to the low 80s, according to various weather'
+                    content_delta='San Francisco, CA** - Residents of San Francisco can expect a day of mixed clouds and sun today, with a high temperature'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=TextPartDelta(
+                    content_delta=' hovering around the low 60s. The morning will begin with mostly cloudy skies, which are expected to give way to partly cloudy'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=TextPartDelta(
+                    content_delta=' conditions and some sunshine in the afternoon. The overnight low is anticipated to be in'
                 ),
             ),
             PartDeltaEvent(
                 index=0,
                 delta=TextPartDelta(
                     content_delta="""\
- reports.
+ the mid to upper 40s.
 
-As of Tuesday afternoon, the temperature is around 69°F (21°C), with a real\
+There is a low\
 """
                 ),
             ),
             PartDeltaEvent(
                 index=0,
                 delta=TextPartDelta(
-                    content_delta=' feel of about 76°F (24°C) and humidity at approximately 68%. Another'
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=TextPartDelta(
-                    content_delta=' report indicates a temperature of 68°F with passing clouds. There is a very low chance of'
+                    content_delta=' chance of rain throughout the day, with precipitation chances pegged at around 10%. Winds are forecast'
                 ),
             ),
             PartDeltaEvent(
                 index=0,
                 delta=TextPartDelta(
                     content_delta="""\
- rain throughout the day.
+ to be from the north-northeast at a gentle 5 to 10 miles per hour.
 
-The forecast for the remainder of the day predicts sunny skies with highs ranging from the mid\
+A Coastal Flood Advisory is currently in effect for bayshore locations along the San Francisco Bay. This advisory warns of minor coastal flooding during the highest tides of the day.
+
+Looking\
 """
                 ),
             ),
             PartDeltaEvent(
                 index=0,
                 delta=TextPartDelta(
-                    content_delta='-60s to the lower 80s. Some sources suggest the high could reach up to 85'
+                    content_delta=' ahead, the weekend is expected to bring a similar mild and dry weather pattern.'
                 ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=TextPartDelta(
-                    content_delta='°F. Tonight, the weather is expected to be partly cloudy with lows in the upper 50s'
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=TextPartDelta(
-                    content_delta="""\
-.
-
-Hourly forecasts show temperatures remaining in the low 70s during the afternoon before gradually cooling down in\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=TextPartDelta(content_delta=' the evening. The chance of rain remains low throughout the day.'),
             ),
             PartEndEvent(
                 index=0,
                 part=TextPart(
                     content="""\
-### Weather in San Francisco is Mild and Partly Cloudy Today
+### Cloudy Skies with Afternoon Sun Expected in San Francisco Today
 
-**San Francisco, CA** - Today's weather in San Francisco is partly cloudy with temperatures ranging from the high 50s to the low 80s, according to various weather reports.
+**San Francisco, CA** - Residents of San Francisco can expect a day of mixed clouds and sun today, with a high temperature hovering around the low 60s. The morning will begin with mostly cloudy skies, which are expected to give way to partly cloudy conditions and some sunshine in the afternoon. The overnight low is anticipated to be in the mid to upper 40s.
 
-As of Tuesday afternoon, the temperature is around 69°F (21°C), with a real feel of about 76°F (24°C) and humidity at approximately 68%. Another report indicates a temperature of 68°F with passing clouds. There is a very low chance of rain throughout the day.
+There is a low chance of rain throughout the day, with precipitation chances pegged at around 10%. Winds are forecast to be from the north-northeast at a gentle 5 to 10 miles per hour.
 
-The forecast for the remainder of the day predicts sunny skies with highs ranging from the mid-60s to the lower 80s. Some sources suggest the high could reach up to 85°F. Tonight, the weather is expected to be partly cloudy with lows in the upper 50s.
+A Coastal Flood Advisory is currently in effect for bayshore locations along the San Francisco Bay. This advisory warns of minor coastal flooding during the highest tides of the day.
 
-Hourly forecasts show temperatures remaining in the low 70s during the afternoon before gradually cooling down in the evening. The chance of rain remains low throughout the day.\
+Looking ahead, the weekend is expected to bring a similar mild and dry weather pattern.\
 """
                 ),
             ),
@@ -1457,22 +1541,17 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                             {
                                 'domain': None,
                                 'title': 'wunderground.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEQC0SXLaLGgcMFH_tEWkajsUbbqi5e41d5DCbU7UYn-07hCucenSJSG81JCNJHvCmvBBNLToqgi9ekV5gIRMRxWyuGtmwk6_mm9PkCXkma14WNA77Mop53-RlMrNGA0Pv1cWWsfjT2eO0TzYw=',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHqT9N1t8LIG7wvA12kuHGFiXVVycOQWw1-6QD9MP4gIGPb2hSBro-2vCVrdGAL0BmJ0oiubiM3HgrZKcJcZULwlnO1nrH__pzNh5XnaQ9VmiuJ_1xdfvVQKmocUSSkAHYjAGrzqKVTe8Vy0BJa',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'accuweather.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGtaYs8V0c3_QKMVpLlTHuKWAVT_IU79tzw3s6V4uS84oOOR2TN5lGta0JTjQUPFPVgW4W-JanN6uqT6Kta2-Y84iqM8fKY1uxgyxN4aFk-m1abZP0tRXTsVdQR4M3XaRYUSLH3QaQh9d-BQunhhsUp0YMx9q35mKdcz_I1c0blmq6wfYaOuBk=',
                             },
                             {
                                 'domain': None,
                                 'title': 'wunderground.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHvVca9OLivHL55Skj5zYB3_Tz-N5Fqhjbq3NA61blVTqN54YtDSleJ9UIx6wsIAcCih6MGTG2GGnqXbcinemBrd66vI4a93SqCUUenrG2M9mzjdVShhGaW3hLtx8jGnNGiGVbg3i6EiHJWExkG',
-                            },
-                            {
-                                'domain': None,
-                                'title': 'yahoo.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFTqbIT6r826Xu2U3cET_KtlwQe82Sf_LNSKFQKayYaymtY3qAbz6iIkbQxccEiSnFv-HmDVkk_ie97DIp9d3iw-PapYXUKqV3OA720KCi6KmqZ98zJkAxg-egXxD-PyHIkyaK5eBlCo5JLKDff_EhJchxZ',
-                            },
-                            {
-                                'domain': None,
-                                'title': 'theweathernetwork.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGfewQ5Ayt0L90iNqoh_TfbKWfmLEfxHK2StObAJayvxDyyZnZN9RQce45e_lWWThsK4AqsqSRcHabKkQK8YMa1owQR8Bn6-ma7jiWhx8NN2d7Cu5diJcujVwyEbvTLS3ZlavVz8J6lXmUvDTVVDrVA4pKBYkz96YMy76lT1IJJzo4quSaVFhXjk1Y=',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGWpQJY3pY95r0iTR7awgFhFwZ-17VxVS1DA_WhAn4E-m3XvMys6pc_zOslQ1enpCaPi4rvWG_3ES3jdhUgwYOW04fZ43KVfNZXpQLfFhcDno8iRPEQM0ERbjBmjqVC5oqS5IRp3k9L13dDlITT0w==',
                             },
                         ],
                         tool_call_id=IsStr(),
@@ -1481,24 +1560,26 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     ),
                     TextPart(
                         content="""\
-### Scattered Thunderstorms and Mild Temperatures in Mexico City Today
+### Mild Temperatures and Variable Clouds in Mexico City Today
 
-**Mexico City, Mexico** - The weather in Mexico City today is generally cloudy with scattered thunderstorms expected to develop, particularly this afternoon. Temperatures are mild, with highs forecasted to be in the mid-70s and lows in the upper 50s.
+**Mexico City, Mexico** - A mild day is in store for Mexico City, with a high temperature expected to reach the mid to upper 70s. The forecast indicates a mix of clouds and sun throughout the day.
 
-Currently, the temperature is approximately 78°F (26°C), but it feels like 77°F (25°C). The forecast for the rest of the day indicates a high of around 73°F to 75°F (23°C to 24°C). Tonight, the temperature is expected to drop to a low of about 57°F (14°C).
+This morning, skies will be mostly cloudy, gradually becoming partly cloudy as the day progresses. There is a very low chance of precipitation, with some forecasts suggesting a slight possibility of passing showers in the afternoon.
 
-There is a high chance of rain throughout the day, with some reports stating a 60% to 85% probability of precipitation. Hourly forecasts indicate that the likelihood of rain increases significantly in the late afternoon and evening. Winds are coming from the north-northeast at 10 to 15 mph.\
+Winds are anticipated to be from the north and northeast at a speed of 5 to 15 miles per hour.
+
+Tonight, the skies will be partly cloudy early on before becoming more overcast. The overnight low is expected to be in the upper 40s.\
 """
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=249,
-                    output_tokens=860,
+                    input_tokens=212,
+                    output_tokens=704,
                     details={
-                        'thoughts_tokens': 301,
-                        'tool_use_prompt_tokens': 319,
-                        'text_prompt_tokens': 249,
-                        'text_tool_use_prompt_tokens': 319,
+                        'thoughts_tokens': 239,
+                        'tool_use_prompt_tokens': 293,
+                        'text_prompt_tokens': 212,
+                        'text_tool_use_prompt_tokens': 293,
                     },
                 ),
                 model_name='gemini-2.5-pro',
@@ -1532,9 +1613,7 @@ async def test_google_model_web_fetch_tool(
         'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
     )
 
-    assert result.output == snapshot(
-        'Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.'
-    )
+    assert result.output == snapshot('Join us at the inaugural PyAI Conf in San Francisco on March 10th!')
 
     # Check that BuiltinToolCallPart and BuiltinToolReturnPart are generated
     assert result.all_messages() == snapshot(
@@ -1570,20 +1649,9 @@ async def test_google_model_web_fetch_tool(
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                     ),
-                    TextPart(
-                        content='Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.'
-                    ),
+                    TextPart(content='Join us at the inaugural PyAI Conf in San Francisco on March 10th!'),
                 ],
-                usage=RequestUsage(
-                    input_tokens=32,
-                    output_tokens=2483,
-                    details={
-                        'thoughts_tokens': 47,
-                        'tool_use_prompt_tokens': 2395,
-                        'text_prompt_tokens': 32,
-                        'text_tool_use_prompt_tokens': 2395,
-                    },
-                ),
+                usage=IsInstance(RequestUsage),
                 model_name='gemini-2.5-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
@@ -1720,6 +1788,10 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(
+                index=2,
+                delta=TextPartDelta(content_delta='Join us at the inaugural PyAI Conf in San Francisco on March 10th!'),
+            ),
             PartEndEvent(index=2, part=TextPart(content=IsStr())),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
@@ -1769,19 +1841,9 @@ async def test_google_model_code_execution_tool(allow_model_requests: None, goog
 from datetime import datetime
 import pytz
 
-# Get the current time in UTC
-utc_now = datetime.now(pytz.utc)
-
-# Get the timezone for Utrecht (which is in the Netherlands, using Europe/Amsterdam)
-utrecht_tz = pytz.timezone('Europe/Amsterdam')
-
-# Convert the current UTC time to Utrecht's local time
-utrecht_now = utc_now.astimezone(utrecht_tz)
-
-# Format the date to be easily readable (e.g., "Tuesday, May 21, 2024")
-formatted_date = utrecht_now.strftime("%A, %B %d, %Y")
-
-print(f"Today in Utrecht is {formatted_date}.")
+utrecht_timezone = pytz.timezone('Europe/Amsterdam')
+utrecht_time = datetime.now(utrecht_timezone)
+print(utrecht_time.strftime('%A, %B %d, %Y'))\
 """,
                             'language': 'PYTHON',
                         },
@@ -1790,24 +1852,21 @@ print(f"Today in Utrecht is {formatted_date}.")
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content={
-                            'outcome': 'OUTCOME_OK',
-                            'output': 'Today in Utrecht is Tuesday, September 16, 2025.\n',
-                        },
+                        content={'outcome': 'OUTCOME_OK', 'output': 'Friday, January 30, 2026\n'},
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                     ),
-                    TextPart(content='Today in Utrecht is Tuesday, September 16, 2025.'),
+                    TextPart(content='Today in Utrecht is Friday, January 30, 2026.'),
                 ],
                 usage=RequestUsage(
                     input_tokens=15,
-                    output_tokens=1335,
+                    output_tokens=847,
                     details={
-                        'thoughts_tokens': 483,
-                        'tool_use_prompt_tokens': 675,
+                        'thoughts_tokens': 343,
+                        'tool_use_prompt_tokens': 429,
                         'text_prompt_tokens': 15,
-                        'text_tool_use_prompt_tokens': 675,
+                        'text_tool_use_prompt_tokens': 429,
                     },
                 ),
                 model_name='gemini-2.5-pro',
@@ -1832,42 +1891,11 @@ print(f"Today in Utrecht is {formatted_date}.")
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[
-                    BuiltinToolCallPart(
-                        tool_name='code_execution',
-                        args={
-                            'code': """\
-from datetime import date, timedelta
-
-tomorrow = date.today() + timedelta(days=1)
-print(f"Tomorrow is {tomorrow.strftime('%A, %B %d, %Y')}.")
-""",
-                            'language': 'PYTHON',
-                        },
-                        tool_call_id=IsStr(),
-                        provider_name='google-gla',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='code_execution',
-                        content={
-                            'outcome': 'OUTCOME_OK',
-                            'output': 'Tomorrow is Wednesday, September 17, 2025.\n',
-                        },
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='google-gla',
-                    ),
-                    TextPart(content='Tomorrow is Wednesday, September 17, 2025.'),
-                ],
+                parts=[TextPart(content='Based on the previous answer, tomorrow will be Saturday, January 31, 2026.')],
                 usage=RequestUsage(
                     input_tokens=39,
-                    output_tokens=1235,
-                    details={
-                        'thoughts_tokens': 540,
-                        'tool_use_prompt_tokens': 637,
-                        'text_prompt_tokens': 39,
-                        'text_tool_use_prompt_tokens': 637,
-                    },
+                    output_tokens=277,
+                    details={'thoughts_tokens': 255, 'text_prompt_tokens': 39},
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -1903,7 +1931,18 @@ async def test_google_model_server_tool_receive_history_from_another_provider(
             [UserPromptPart],
             [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
             [UserPromptPart],
-            [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [
+                TextPart,
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+            ],
         ]
     )
 
@@ -2033,9 +2072,9 @@ async def test_google_instructions_only_with_tool_calls(allow_model_requests: No
     result = await agent.run()
     assert result.output == snapshot(
         [
-            'What kind of car does a sheep drive? A Lamborghini!',
-            "Why don't you see penguins in Great Britain? Because they're afraid of Wales!",
-            'What happened when the wheel was invented? It caused a revolution!',
+            'Why did the car get a flat tire? Because there was a fork in the road!',
+            'Why do golfers carry an extra pair of trousers? In case they get a hole in one!',
+            "Why don't you ever see penguins in Great Britain? Because they're afraid of Wales!",
         ]
     )
 
@@ -2181,45 +2220,89 @@ async def test_google_model_thinking_part_from_other_model(
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
-                        signature=IsStr(),
+                        content="""\
+**Providing street crossing instructions**
+
+I'm looking to craft a response for the user who asked how to cross the street safely. This is about general safety rather than legal advice. I should offer step-by-step instructions, like using crosswalks, looking both ways, and waiting for the walk signal. It's important to mention eye contact with drivers, avoiding distractions, and keeping kids close. For those with mobility challenges, I can include accessible tips like using curb ramps and audible signals.\
+""",
+                        id='rs_0d3e7d19e1d3306100697cc0a5b06081979f3164a57ea04a97',
+                        signature='gAAAAABpfMDLUiax62V-zYQoJHemQlL-lVGvVJ7QQu9oBnz99qirSeOTFgHoBDvYOU98naLPHaDD4N98A-Ms7zZtwceexXUSwfbpuJU7bxs5l_yUUdBxYDwG8hCLUoxpXJhwJPTNBVbpck_9algTm2RzQl38Wo2dTBpO8UfTwwRMMChgxV529wgHcCXFqrBWu6nykwwZ6AmunT_lTzCEXiiluahl-8cEdOtBaxOI4-FPhcKDA8ye-z3UHWc-OJxHQf78e3Bv76oyp-ENJj03r2GOvjNyyeGZoijz2zr6_5H2mRT_nZeqwr5AAXCl5QT6Fqf8r2Ybr8Z7FlmgZdtifDHHoIC_YjU0sFBNlRmOsqJgnp5r41S4hEsM7RuDGdMP71Tmi0Uh_tIXHctoox2CQq3rDQzuuaoFm4WEl_Gr8_texfUAQ795iSxfvBAC46g4EmpHb4aUWD-rsldUB4sqm4nMLF_9IGwSqxCUecZyKP7a8V_oMr_sAAMOJAXAhR0jxaXO-NWGfY13Y3teX0DUUI6ixv7aJshdjNVO0kRO_zBPIInoWBGfX7CQzslumSfjpv__g9yF_RsEBqjxU5c1sdP14jR2NTfKxNlD2B_CMPiyKy56HUflvqRElSNTjSuvYIOCbOKS3JcYWuu135m3q_YjFyO3x8cGl2NBL6TYXvWZJZM6W6DFdLBD_EzGD_mY8FIRD7UePRFVId4esMjabK65Kv0C7YRHCYKzehvBGd7Yf1tFm6-t-NhaJNiUkPXeehcvVG0_KU2GMbLdljO1v9_4duNAYv-mRIr9r7HhX8RO7r5VzVWdJnwPVHv-9dWv3YB0giXHUePzMcsGbra_A7gcb3U30CE4I6EdZ9Ps0VFbvt2hgId_qTTbQG7KPsWRiaEWVQIs-LyEQx6HBYfu0ntcOii73erWSoU9I53Dz2NVsNHUHgqL-ilfjF3e2abj7y_SSCkZEgaz3kRsylBR7WMsVlRgk5ffKo88haVZGIU_zKLfyYHWa_EEOwVJmw2fCo7ck7FZdN7PMbX4IuJaibF4tZNoXskgkF692IstAG2bnZM5tKrCO7odNEVryBYzgtfzs6LWQfU4UXMjUrsv6G-2lWU5PMD_A7TgnnX0FgBmJh9MD5pjPTqJfQubtcn-JuLM95MTfcef5zhTNNqUs_lyL503FRWzWoVjcc2XhATsetRMOIWq4cq_A4h8DxtqKjelnV5zTevGrYBM834a7mANd1tecMOAAyAy9mbau52xuL11x8Id3UfQoSEPmX3ouVmGhsMk1V6KJAyxYjkacR2ilCz6rAHNRcLNzFBINqykxIyvEBv31odSJngkpGSsCRLgk1nLpe9qHEpQC4wG5THqu_-b4QXX4KR3q2g373WmyHSjvGNmHM0YhJvage0z6oVrdFiCk-gMy4qq2HsfkuUsFdtZFcS6pl3P-7omma4WsrghdVfb9jbWLCbqP-jWBJmLNi7uGbXxuQfdxqGlNtd6zMpBL3IQWVoT4HJBfdv2oVYeZGflr0YbMhxp5pbwDu7LEuo6YDSwjehnHRc0Psd3N0ZU4M7N_601_uTuqiQiQ_rOLnk6k5XKQtAwIfry4XeoIQOfhOWI1owXMqb38n0ZmTBIysj7qxAt0USsW4z1wn0qNtGd-kT9eYkfQjZ5PmO5aBxCCwQeFTqDjKrH4eQkwT4MfdBtFaZUYiIh0eT8smOv7fq8J7sz11IJOExSl8oSgQtCMxYHv108EIS4W4qHb0uBekS5bI9_--y6Vk0Gq5YhC8JXblsZ5I0bnihMuT4xljyikjvNXFzWfYZMvTpAkPGVpj59tERk2MV7v3z4z863bNWOPPXgT7kT1YfzFc77mdbHKBZ32jrrp1EljXf-rIxLN4ZpV6u2m6kDUwiHtFynvZGPT_ltRKrnTov0dkgpgXj9-RrihyiZFE2PQq2z5_DsYLX_a4Xtvc5YYgjQyXGcxUmREh_b7zCobRYc-T8SU-wsy2dYHrDMW0HuCz0fpD7DZWhIrg7Rf1FuU_jy3uarDamMUx3hhCb_59vEpG6JgK85-wLFmC7YL7E4K1HcJfig6euyMBMyHVDmYeKVXX47Urjw1Q2L-w14jC-0wjF9k3tYB-QC5cpHpSOLd7mD2xOigMOQKakXg4_FoJKiywanJ79qc2SpH3S3kO8uHZ4V7pxMgI_rTF_XsyOEaqHzRRuAxTsNAhvTYONwm4yuCCGWrA_9N3Vbt3w1jHojNkWmzfY52B4k85r9kWl7TAncEK0zGQw0E3ez0mBwssI0LlKbsX-jzv9l1rYjjiMmXexfX8oylnkZZHQ_9FuQ9bCzYAjA-W72FEqq24FM2JbfTZfBH9Wopsp91z85vrPRTJ4QlJSepBexC-3zoeLJpyLQDa618A1ueSTKiBahSbaiUzbqxvvIiycmAsVUSYqc8RdpnGcLKgDHmNzZ3ldbYN5xZiMpUJtuttYcEucc48LlXt7zf-_OWBQIzIhAH3e8dRf0nmpW2UaRaL1xe16uMPMFNPWJOkT5z2Gh6Qogag4il9sznmtvYAJWpPg3sAgiPCLESkiHlguPuH94lTpIjfDOoT-I9fb1F3c_wQFIHGBQxKcfoinSgyHwvRpMxglP4iBOqja-Fqf8JPDLc13TCSl0cumpFZmHDY2dw6W5eePb58dtrXWkpZz2HVBl4uIxDc3mR4zbcEfVjLiGr3NPKiJwXunzig2wGzfAj1mZZKBV8lEGksiCacFF0UfMqan9GAdBkMp73KL_W6fCBxowQ_keieJY15p_iRQ3hZb67SrXA0nBdSOLxUk8yQ_g1HtjJWN2jTVJXZeHzDxFjdAqxaaeFewtC1CuZWNMnLdhQklm5zgmJX_sk6PhY_vdvoZrNn-oedRe7pMko2h6WM8uNa4PBD81p0wVm05PYLmxHStFiF6RxZdxY6iVzsm9nldRmWtINSPKw47aHH5lsLngcvPAcvBAp3tuuYxQ1fG-42h5wFjjTHdOkE4ZRSaVG7pTK_GkIxJ7lYmEUjyn6Zy-tmQ-ukfMlDZswlsKlX3Phze4p0sc6V7hLFXXjPySzkAxOx7DEJ94nibDdi05v0VBpbMEGz9zDrzg3veQ_mtxaZHQdsRW2l9zZqYX9-hHlvmAFyg7UiJVe61H2IabOdtcP9BJ42KO663NaH77NIC-i2bthG4HWnqlOO2FReFK0R6dGq2tc09kQBKAoLYwvNA-9L4l9u6wDTEiFQOz8ynE8FN6GS9rVy_Nx9GgL4URPq9MtfXWd15_65wgZvV39p6fXVxwzvsvBiBMJUv0AyTCE8R8_rPzge00E-TcznuRapGxHDypmRHnVe9pQIB7s2tPAsnad209LBAFWMYObS2-a_wKYE5UOM3-zNrdxRRN-tQ2OhIANdxoynhk91Xzj1R42hRR4ITsC5wjAtSoj1jLWy-oFDIP9oKSeVi9J0d_pmDDLa3V367Fw6VNnrEZFM5hEYyYU1eLcji7bI-XDb44YsPnYj1nGRoI5-4LMBkbXEsP9xK7c87bmS2BhQ1BJxW_SIIzNvi_LmCW2g-o4SboBaKFDVJ-Sd2-Bp9uSo6DIZ4vC28reB4ydj9hSmk1mBh4w-uVXhCl5XoKqHEVXm9-OG8iWGgd_iNWnXgL0vqP2tD8T6fXGjNxl-3TJg7ifpfBdgmWrkb7aXcvUsFLer1F2YtEa4bNZC8hILeRD7rjkoFMyKOUuQSVv4JyWtpVCxmCj0qwWpMmhxjXO1xaokESZyBE1v6HxffdEHUsSIgpv-mz90LiMTyf1fbt6wGHMcJMw7PtLuImgRMXjwBaMoumzQBSkWlXwCkJP0scf2S4JLhSDysf3Bgg5uv2LfsZalZ1IMtQmAu8bq2LkQl2k41WmSAyXHsuD2XRU2d-gsGoDGha6s795xoTma_zhx7fUfxXEJINUCgu0V79EZuXFN9DbrB5nEX_O5E30_5P4oU46C3I_m3x8_6hOzQMT7d95UiJJgfCpPqWlOcULpDHHyur-XaFRO2yLqKy05FmiGNlkw8r_z2BmztJkBaVPuJzwOxae0FIyksWYJZWeSRjEtQwQM96TutJzvv8c0raiB2E1vwYq9HNO-8jctexwyJMbvsEUiOUCTazRTLEuFXQ1NoTzXRYMVoGHj0EoVi3LtJpuUA9xv4b9UlJJlimvfSO-_NDsWdzQoNwKX430nzRfUwemL4LROFovma8Vu6hUHywaC30Vl7FFt9G993i7oCbWP58Q3XvS65hEOyYHpD2d8LV3fE6_nwtH5t9hapKiGjup3GY5HkyLhWKB2jvgJJceUi4VaQMbbZlaLXQS-66mLCqszHINHhdRduw_7Cfv2asHzleYmOYsaIlQ5DXUPtQjcAALK5JfEhI60bW06sb4ZiYirRQGTWFX6MfZccFy0PenZLn1lpyvhMOxXVoKQ9MjkD8c1Zk3rtBIzD1mD_bli-yQxcrgHgROdBMKVh2ODQvXhMGjrlCQVDqA5VKEi2pZiRQlG1DvhzA3Ab5OvPubOvJ96JiVXHaY-m63HXf5lw4IxNQ6x-Lsp9L67jncTOaGYCQw2isej9tmjm95oG0g3Gv1zL4wK0Dmup_MbDEHRhuyDAYKOJCqA5Wrnh4DP3oxQBZRMfJDgjvplPlBYlDBv2AcKiTEGy_ZZbVcv3NsVnAJpGoCkbA--SKtes9oA0qOA7YZkRIQYe7d0NwIzMEMZSkV23ejeGJdki3fHfBvOurAg1axGk6A7EvKm8SjBbx7pibFAOWwDMf_AV9SKwhCYo2EyRsB1ntzdUM29e6gBqpWtwu1bceOACzhMKtlrXg7COuvfjX62k9R2-aadhef6qKK50v6Av1a9IvEX_TEtylcm6zVx8yRQTRIWKUd6rVlf7VwCQ0u4lTjspdUUjYDQR-l7PuDjehzGdKduiBY6x6YVKhSrL8j6RuXuerx3-xviPE6GXyhl7nWn8awZ1adBdgQ-fqXOF92wh9DSqgCM0vek5g3nCIOxWOwqPcIYP82wJ8E9YupD3TiRcmZen8kNTuzhbqkfYuF3AsptWyu5v263VzFWHRJOhlG4NOfJTCVppqWSVBaJ9Mlv8Qc4BPDin153F3BalFCkfiGqKyHCxPMV8BUkf9kk6Nvquv7l5RqbQMuNmLKWx2hnRDFxcDuIyOnHAZipfn2pVNLwDfJg7uct8W4hvpKDoRQexZkoR0sl5i1784nbV1DbH5AJyP_7y53LNidJhGdkoEBm5bbNP8mUhLNGCXOJNyM2lqWSbc3XyuD43Pv1LDZafWYoZ8q9v7kSack-IS_LUL-p31F8OU3lsE2gfwqpXAYUN74wDl7sB6Otw_hHllDTyJcClAtj-Y7W1oVxIWXxCd3zFGed2iOD1tF6oXMVJM0aDSQX1KmtTW85Ugk45yBOLWQE_lmecNWG-91AxvRLwhObxPmyX9BEAnRJCqhAyG-7zx6mDA9CISvO6kLaDgbt1Vu0qkbe7fN46N2MBButKJXgVxXmunOfovgAGLNigbe24xPozBmGv8JIyb6OgBAQFpbpXHeWkCWD8BdCtvkwgS0pdG0cQ4hNtEEU2SwJ64lZugNsR7oTurvuBCWonbQBLi5PnDlo1DhCTv_-avkVrEZV_Zou3wPZ11p-earhjb0nEtYIkP3V7Pg4qYDHD0y-uYUJaq0tKtBFbfOJk-ugGKdBBujXRm9-cXrgpfL4twkB32YmW7ijyo5PVIVXNs6hsBUknYiCbWSa2XiJ3WFRFMgKgAYIPDxfoeGFbdd-7_vxn0C7shcF6C02e6BZj6uEIXG9iLHCKoy_nhiQOhSb4EXIKRl4c5K9rfaoyRmbeV84GlmzZYtEbSKmD_RONPQOhfcOw0Rl796-vmeuLJmk_EKdup5MTr9WWP8W5dNGhQdEDGTTFT7M_IN3B72rcVFpVVk8j0ZfYHXoVMMngP7uRJ2N8VRim_n_1BMXuMWQZLzL-SIKJKnAk4dBfJhRnPNOEY8rQEfopp7k5zu6pCeY3Himhh8GZ9OX2HgDcQEWTtp7S0ZDfMnFB5YPlLqkl5R1uLVxDgzPgx6d673TRAFa-aHh3d5RrxwYEebU1p6sUUcC_5oYmgpU3gxRXlFSxPbJDWvwJobbJXmb6XeyjZkHznz21xz6R4YOY-hZ5oZdcASjm0Ao9092EV3zKzCLmOzlHQX72qtyYj3OaBisePaO9znlzjwgdX0SUC69P6-DuENrj_7cDIdPrSDZ53MYaweMuRxUBSPvYDbYptR5j7m2kC7ftsw0ZFjsvYLt73DMJzuGSIUpmhHnl6aKH12rY0YXnfu1leEpNhkLB4A8JWiykcJ9C-Oq6FMlpBNlqNaVGFGhAapZG6SGinhdxFFSZD3PUND5FvITKjhGDVnUvGjP1WPB54XbOlZvQR0c4xB4bv41qHbgeEFTNn4LN9PbNqBI-3hwQQRfN76nf_WmCnrg92OW3hWZbPFSlyTD145k3m9vavjUBueD1UpQxVrV3r-w9RhCy1bp1jxz0lIICPbs6MZ01BtTsJJ2f3-TRa3eZideKofJZY4ZgUSxhLxlP1an-wz3vvhPQ6Mhw1CAtK8o6BbGt-6wZpHY_ZvpR-E9Ev6kLu_ia26QW7F6cFiM-a2pdLbgfSfwT9PLGlTxLZpEBOKZegOJ-z_hL5ACP7RvPNxCttfXYTKWUXZL9hAeH8JlIgPd967kgoBHrqqF4_47Od0RF6GMYoM0jHCzMFDdHLK3iA5rKQKn8yJXqc7x0KUJaT2ijvZdk1hFqFV6aYg9yZtJii0bP_HYbCQNO_xfDE2CuS89y-9rKsZL9I_HJ2A7GxdUjpWT_e44HMsAyjEXDy1Mxnx0Tpqi67YvJQD5zQWGT20i_6h0M73logR9UHEVZ6b-HSb9wvaBEdNozIDcm3zW-c1vTh-PKU43lTQ3NhRfW6FwamzN0l0fihiRYUMHwxuJxEzl5w1zZSQL5a7BBmBdkvwwOWZ5_0qZDK1so30jBkL8goL3fC5n6u9ytq6tYZRwjAUjb3W2rpmDljd2MtnFWn6TzHpN11jOCOnqqAhuU16x-j6SG5m3VWgfk09Fi5ZRW4ZfkitUzZVmFLtwkY-3je8FbNrsVkjUk-3UBW-AMN1nzTDv7wqcmKEAiUpmhkLFCr1kqkG67qNdicu_6-FRiIb9vqubm2uOpLFYao-S_EeoK-V2ayMht3nHqNYlpeplcYJUvZ-QZaFhapJDwRwzPKk12x8LDLv0UCd79Z-OlrSCX-b5oY4NUe-ao-jS9lqccfJ33FPpOUAOhZprPDk2kZZ6yz6_7zgTeAEZ0KMXlG0bx4UcqAuMFnaIYYLCMWg0oZ3HufvwTEcu9LgyY2aHu6zqINl-WOMrEWf4TC4XO-ujuqat15oZXkxaNUg8Z_eajg6vENMwbqRbVOwVCI6Vgu7g-sSu48vCCsAVOrSeKXFfzKiw5G-f1pPjwwu666MTxAtSu4YFWXQC_0J2QOkfkFfcezeuLbBAwbQB_pleSP1TljA4TeB1DdI--iCLYHTBtDOpgdzrC3yDHFlW3TehfifZ-PPMfMyIcinm8jZ95sVgPDWPbtguPFrJg8qXCYNRBFSKMe_plylblZuZGZlJ0UrarZ-j4LwVTNlHl92Ws3tgOmC_5ljMezv9pNx2d8jiQIJ0LX7P7L6ZyEZRx69HkHknlWfbKepiAY23FiU2ir1yd-3gdLi-tMdELBY9l7yayOo9XnEWXAXwaL9vGmD2tukbsM9tpN7LgquaqTRXFGRKPg2KkBu6O5n6_B81pngaS-8vBCYjvdXCUq7O5l6_8KgNMi2AwBxqPNtnNaIBIvQ7AZTVVe5sxE6qqxjXsrx_OGi8Vs579THKtne6rjZ3bTgTNjdOPdKxgBaTQh_yB6agIHj3nw9jFY4d45gTcnKRQeVHGQ9anUq46FamgnnLk476BBX1YFpo3ndibpqv2nkz6V4wQ9ZSkAgvL33L--wpzz7_mCQSW9SVj4ZcyV8eG5LXDpqJr_4NISOYvIhaOlFf6stUfvAWtnqG_RnBEElHPlGjiEC-KQPDx7v9nacBOGssFe4io56zZye4Gi2yLhDB3f9d0d8Ogs0NVC40p2yEN72kbHNv-4486U_bAkzwu78gU4Myx2nMgmOi46NKDx6iyx16VKuVlcPBlgpxpA_mfs-iPO7tey1zgejzH3YC-lfK3wfsQHsnVVs0KFnda9QMwmM34RhCzDTcf4YDDWxWnvh-IYdotTDzCEOsi-Nl9SY-gSfGkKA69Y22R42B2kRlpsalLZB-uj71W0C4YW1nixuRIsYZCjHZkBL9I0QtM9EuwkQhojbwu42UpwpNLdWWTbT_kfau5XB2bsueCZVYjbw4cd24kLnq5ZKgmVajM1Qv-dNduCcKiNEJ30sfGjTHKHr4dEGAaoAcloBock1HDUaX6PfTjPHM4c9IdTPgml2wBnOkN1XW7o9X6mnPDmLYldEPKzedl_9UYLYSFQLKaYQA9Mlf50fOBWZgi1RNk-OQxAbxuJlOUj671Wvh_a2ySBMbFYAeFIYJtkzkshqXt_qI-8kQqrEpJ9nbR59E6cQ2QkvloIarpkdAs_m6_9QQ0sw3PuY_8vAa2CYkCJdJOLHoX6mIHId8Czdtgp17xJDI8xRtnLZ2yxagJ8mU4jbtizllPI4hIMIi9x7Gtv-dMy_kMZflReTuiy-_Mya_Y3yJNKc8yBkr6yXUAx5drPKY5wTy_AFrAdaLWDHPc-ZLdRgx6Jp2VazSZQw-RMA4jt5Lb3lrrnorPI-CCQrzwqsP-fOzCZ3h8sXonoY7YCJ6bhL_XXmDomIC1IcBtfCkx70hqGyLxNT77T4qOo9APJeNmJttcJ8Sbi09R1kLIJdIr_03o4kUinCjwY5_utntioURY_ZRcki9wHEaZ4DUvPmc1R9i4cC8Yi0TsXEYuzTTMpCFRcPyHgM_ZgM-cAUrL9TeyIAfMBfJWoq7mUDqQtrslJQt7791HdGxrH-6WSpV8lq5bOUcaAIYH_Gwej4lO9cvAxI3IW-i6RLibrRfwcuDYoXuwccYxWUx9UD-NMMsBSX8zIneim3Zd7dHRLSgwgjAGod-GchNV-J4gqoxccSJqRFrSqOto9JGvgK2irfRi4PwSzU4LBVPLIywGhp2mPjAfGjCv7fm5AAE9vEPxeTIbw4B1F6vQT9VjdFk7ldW6ut8DmOmuJhnvQMPGKRg2avCZp6f-v6GYT186NiXjKzP6gIbn1qXIcfVETNyrFWeMTiLCVna73BxTlG-_FSTSEYq-lL9-mCv-lLCqCczYdH1cbrUif8POLDZluDEIyNtDoxl7fjh8HN6P5FVZVUx6z_qTGAaA18LYARZ_o_rUydnPyKdSzqSEcDvrQ7ZQ4rYo5e-2W5iUggwJ9WIap5o2k5gxbJ_QkRw3HBuxaXi84s3gs8HM5Xwne3NP48VMtc42qvRGd00hKHuJ8Yz70yr5llDJb62ZtF39mNMvuaeF1bMstGIHYVR4l9c939hZilFkYrJ58hr1AEdcBcEcZNXxWEoRBjiGjnYZBtEf6I4Ir_X54_Y9_pcdX5NctxHZbfQ87HXrKbmUm4KognMPyxfbcKn8x9R6AcJMPZU9YGhNaOLPpei1cB0_Or8lf6398lSdUKBaAQ7sKiJcaSQkjmU8LHsJTEdUjKuexTtVf85wKsSUrXJMAhZFz-JtzO2CAWjEVFUSN9DZ_bR7cwlNH5Wu37rYoSfECbJ1iTNUaYK3TmhXCFPrPYK_bGTG_gp47omErksH9q5n8wxbOQ_5N2g73PnE0ywdwUXZqZ4cjfrDwM9GT_F6mcLdih4yUED-LNavBSxOuctKJaCK4KyqtEg3MrYWQL1XmAnxC-kFtW0trNcroTx2jEi8kj0BZ4ehXpxHlSBnL-h11mBYaEoprhgQBSIXgBkt5of3XMJwlAdy4rD8jCfRJwHCuL5GQW5J7bUlIGILGj-jdOstGBsvaD2OGri3G4j5HLi-eZUeBr_114cFInDcqwezkjaTQa7b2L-IPEfeJ8Z_SW--yyfu1adhyLDIm0dhSEHirTk6l_gzdOphFKkPi5HqDD75GLjbOVTMc6N_fPefUg4jLEaptfcvf1UFh9wbUzVb_BRRXnyKy1NbEvfOhKCOv1GbA-eYowXcpRyubqDGL-si8ZTmMt8BUj2fj_lD7b2COjBpouLPlKukOWxz1HFXpCjJ9IHyiSWivf-LcxtQsY2zlXkBRpYJuAixC55xRWeJ4z_YDYLwJXO6OBzHml5MknOK9354P9QuLtkhpF429Vw6S8gKcDU9vv_daWYV_jyny3vzS-0XifocjJSt0Rll25bOT_vGcEMH-AbI2M8sH--pJ5DZqDadT2jsesRoVUtMRs66McV38t47n-hsNUgb1ys-UIq2LnhjldgArpcbNd3Kmn85Asrh4E0RA_kz2Q1QOgzaEqLF21xIjo43xLPYZ_bRDNPlrdVd3zg4vr7xs3UWk2i2R9PbHYJFDpVF0Bgs3zL0pmZXGr0caZeWJXhLPqAld2GjOMPxgkj0-S_QvcmWKF2aO78NgNSSMQOpc6zpE-qt8DWZ16Wscwtmg6uL1HvnSH4Mn_0hdYh1o7glhcVEbvC9TkFIoYcge_Gy4GuSfeJlmGoIE27qz264yZUmpEfaipFPHiPzZlS9tKOlDVyTcWmvhS2GHAmfjU_AV9Fdn_THKZ_ijbz73eOMQLmWRPdrqdYfkLNTmNK4F-pkWraGeQ88k-6GCHkgVirO4rT0C9sM6WqpJVSvikU7rB4nIME1SAp26o07nFzxP0hp3GzjawFoX_WgmKvvS2JUgHNnL8FjSZCcfHbHB-R9r66N89JNTP91uD82fIJg0sSKRScljpSmv_DF2Z5P_5YVAhBMwvrOtsjVkLrB-mPTMxKUYmIjBS-BkOMo5sSL76kJQ9xz2XrYYf2kGWLLEFJZmDU0OHLqCoNmTSQS-F1q9TZFsn2qMu4i8PA1n9I_C4aFsCeADroy6YiflwceYL6TzKN4JKICYFFpJE99CIfYa1NPIXraA1GzcXu9maV0oEmwYvaXAcQeGvR20C1uvvTb8uCJU1g7p0Yi51WTZiAcSu4vjrHcS-AI-6cE5aZbmQTFHhI8Od2-05eD4s7t73rPT3pr8_VhtH6YX-JkdsPeojZ8H4852lXraC1t0kOWX0gaBbLQSEVLwN_iQhxIqKTl4fQwSiRMzTypDbrW9C2QfxuGra4wyRaTBenq_x5_xe0rp5xGA_uXXZ0EnugtB-FwXagIQBhWfjbII_r8SDnfV8NKDoV0V5pTygOd_8j9HSKOrkCq0YREJMSNCnsDSUTe5WXmO-k-EenBRpbTk3Sh6ga_H_w29hoRkewO73Fcn1Wr9CjCza6qBbNkfNIcEGsf_Ha-QWkzyBrvPTGKTC0HYJj9RBTVW7A_KDTw7H2s1s5CBlrlKYJ9LCRZ_bbbxs1Dw_FyMBsy8yVoegLRLEy1UDCQUY-ZbXE8Gm4ycFxvOFkxLjHbCxF5pVRAhus24uYQIfz4hhEvHNKCSe0hSmxErEJ1IDEAQwyYkp88AKIsMxd7ucJIWjkOl_fSSTnMnxhQP_05OeDWksnMJhvHf1-_7olpWfWIy6YSOnj0wJV2jnRu7oqqJBIUX0oxWT2OFpH4nu-_7P9PzMmzVmp4TWH0fptrfhPeQSfB5u8GSWvcZyqQYqufosGr_59hG5T5V-J-Ld2-r4zocNHhhzHzRopcZjlyJvRjF2BwAv86wpDhMHOf19bziMwWsT1fKbaai2MjZYjuo_X1_ZWxYngYOsfk0J3d9tqqzI5zsxJnfr4C7Ryyd-SQwMNWbBfeGoywmBvk3EF4HKZ9ol9dNYF59q040IZRoP97j3ndAn8SfzVpHxxc5b3AQVfGzREktkqMc2Shj3driZQ1W-8kOO9j2spYSjuIm6NdTPtkht8wdj34nEeyvGN-UveXR5kGu29WvqgQl-DVnCAr4ryvJvs8ZASEuhe6eThsJkTVSALZPtLl3uLgFwHfZ6NTLsZR5-9pBo_2GmkASRuwvjfk72s1ax7NxOVDGgbdycM147aLU2qq-uRC-rko61G5QfFfUozwNjauwVl6oYB5BfZtvCCLdxbf2OghoP6eoXuuP_3qCNeqEvj2YVX9KitaY18lbU-_rn8hyDrWHoP6SaGHm20bEoPgKE0uuYu2qhZ7IRvRvq8mqOXIuxDCi_6L-4gH8eBxRtXSzAB48spAmKB9uERdXs0XKRXUyYUODvqIsjw==',
                         provider_name='openai',
                     ),
                     ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                        content="""\
+**Considering rural and urban crossing safety**
+
+I'm thinking about additional contexts for crossing streets, especially in rural areas without crosswalks. It's important to find straight stretches with good sight lines and cross perpendicularly. I should mention to look for gaps in traffic and be aware of hills or curves. For high-speed roads, use pedestrian overpasses if available. Also, I'll remind to check local driving directions, always looking left-right-left for safety. I might end with a brief, actionable list of tips for crossing at intersections.\
+""",
+                        id='rs_0d3e7d19e1d3306100697cc0a5b06081979f3164a57ea04a97',
                         provider_name='openai',
                     ),
                     ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                        content="""\
+**Providing general safety guidelines**
+
+I want to give general safety advice for crossing streets while also asking if the user needs specifics. I need to avoid coming off as patronizing, so I'll focus on being helpful. It's important to provide clear disclaimers about safety and aim for minimal formatting, maybe using bullet points. I'll include tips for kids to hold hands and look both ways. For people with mobility challenges, I should emphasize proper timing with crossing signals and watch for turning vehicles, especially in low visibility.\
+""",
+                        id='rs_0d3e7d19e1d3306100697cc0a5b06081979f3164a57ea04a97',
                         provider_name='openai',
                     ),
                     ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                        content="""\
+**Detailing safe crossing procedures**
+
+I want to ensure that the user knows to step out only when it's clear. I should highlight edge cases, like the "double threat" in multi-lane situations, where one car stops but others might not. It's important to peek past parked cars and listen for approaching vehicles. If using a stroller, keep it back until there's a safe gap. I need to emphasize clear viewing points, especially on rural roads or roundabouts, and also remind about the dangers of alcohol or drug impairment. I'll keep it concise while outlining core steps with optional variations.\
+""",
+                        id='rs_0d3e7d19e1d3306100697cc0a5b06081979f3164a57ea04a97',
                         provider_name='openai',
                     ),
                     ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                        content="""\
+**Creating safe crossing instructions**
+
+I'm looking to create clear and concise instructions for the user about how to safely cross the street. First, I want to know if they're at a signalized intersection, a stop sign, or without a crosswalk. Then, I should present step-by-step guidance without heavy formatting, using bullet points when helpful.
+
+I need to emphasize things like stopping at the edge, putting away phones, and making eye contact with drivers. It's important to discuss special situations, such as crossing near parked vehicles or in low visibility conditions. I'll encourage them to tell me about their specific crossing situation so I can tailor my guidance.\
+""",
+                        id='rs_0d3e7d19e1d3306100697cc0a5b06081979f3164a57ea04a97',
                         provider_name='openai',
                     ),
                     TextPart(
-                        content=IsStr(),
-                        id='msg_68c1fb814fdc8196aec1a46164ddf7680c14a8a9087e8689',
+                        content="""\
+Here's a simple, safe way to cross a street:
+
+- Go to a crosswalk or intersection if you can. Avoid crossing mid‐block.
+- Stop at the curb; put your phone away and remove earbuds.
+- Press the pedestrian button if there is one.
+- When the signal shows WALK/the walking person, or when there's no signal but traffic is clear:
+  - Look for traffic in all lanes. Check the lane nearest you first.
+    - In right‐hand traffic countries: look left → right → left.
+    - In left‐hand traffic countries: look right → left → right.
+  - Watch for turning cars, bikes, and e‐scooters. Make eye contact with drivers.
+- Step off only when vehicles have stopped or there's a big gap. Keep scanning as you cross; walk straight, don't run.
+- If the signal starts flashing "Don't Walk" while you're already in the crosswalk, continue to the other side. Don't start crossing on a solid "Don't Walk."
+- On multi‐lane roads, be sure each lane is clear or stopped--don't rely on one car waving you through.
+- If there's no crosswalk: choose a well‐lit spot with clear views (not near a curve, hill, or parked vehicles), wait for a large gap in both directions, then cross directly across.
+- Extra tips:
+  - At night or in rain, wear something bright/reflective and take extra time.
+  - With kids or pets, hold hands/short leash and cross together.
+  - Don't step out from in front of a bus or large vehicle that blocks your view.
+  - At roundabouts, cross one direction at a time using the refuge island.
+
+Tell me what kind of road and signals you see, and I can give step‐by‐step guidance for your exact situation.\
+""",
+                        id='msg_0d3e7d19e1d3306100697cc0c8c61c8197b88aa4803ed780f5',
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=45, output_tokens=1719, details={'reasoning_tokens': 1408}),
+                usage=RequestUsage(input_tokens=45, output_tokens=2214, details={'reasoning_tokens': 1792}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime.datetime(2025, 9, 10, 22, 27, 55, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2260,7 +2343,7 @@ async def test_google_model_thinking_part_from_other_model(
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1106, output_tokens=1867, details={'thoughts_tokens': 1089, 'text_prompt_tokens': 1106}
+                    input_tokens=1053, output_tokens=2233, details={'thoughts_tokens': 1341, 'text_prompt_tokens': 1053}
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -2316,7 +2399,7 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=34, output_tokens=1256, details={'thoughts_tokens': 787, 'text_prompt_tokens': 34}
+                    input_tokens=34, output_tokens=1146, details={'thoughts_tokens': 759, 'text_prompt_tokens': 34}
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -2340,24 +2423,24 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
                 index=0,
                 part=ThinkingPart(
                     content="""\
-**Clarifying User Goals**
+**Defining the Goal**
 
-I'm currently focused on defining the user's ultimate goal: ensuring their safety while crossing the street. I've pinpointed that this is a real-world scenario with significant safety considerations. However, I'm also mindful of my limitations as an AI and my inability to physically assist or visually assess the situation.
-
-
-**Developing a Safety Protocol**
-
-I'm now formulating a comprehensive safety procedure. I've pinpointed the essential first step: finding a safe crossing location, such as marked crosswalks or intersections. Stopping at the curb, and looking and listening for traffic are vital too. The rationale behind "look left, right, then left again" now needs further exploration. I'm focusing on crafting universally applicable and secure steps.
+I've homed in on the user's need: safe street crossing guidance. It's a straightforward task with clear safety parameters. My focus is now on extracting core safety principles for a successful outcome.
 
 
-**Prioritizing Safe Crossing**
+**Refining the Steps**
 
-I've revised the procedure's initial step, emphasizing safe crossing zones (crosswalks, intersections). Next, I'm integrating the "look left, right, then left" sequence, considering why it's repeated. I'm focusing on crafting universal, safety-focused instructions that suit diverse situations and address my inherent limitations.
+I'm now detailing each step, starting with finding a safe crossing point. I've broken down safe and unsafe locations, explaining the reasoning behind each. Next, I'm defining "edge" in the second step, clarifying the vantage point. The goal is to provide specific, actionable advice.
 
 
-**Crafting Safe Instructions**
+**Structuring the Guidelines**
 
-I've identified the core user intent: to learn safe street-crossing. Now, I'm focusing on crafting universally applicable steps. Finding safe crossing locations and looking-listening for traffic remain paramount. I'm prioritizing direct, clear language, addressing my limitations as an AI. I'm crafting advice that works generally, regardless of specific circumstances or locations.
+I've organized the safety instructions into a logical, step-by-step format, and I'm adding crucial details to each point. I've covered safe crossing points, and I am now expanding the second step, clarifying the vantage point as the edge of the road, giving reasoning as to why it gives a clear advantage. I am working on the third step, which entails looking and listening for traffic. The mantra is "Look left, right, then left again", and I will add what to do about headphones.
+
+
+**Developing the Structure**
+
+I am finalizing the safety instructions with clear, concise language. I've incorporated the core safety principles into a step-by-step list, fleshing out each point with details like the importance of looking left, right, then left again. I'm focusing on ensuring clarity and addressing potential scenarios, and have added extra safety tips, such as wearing bright clothing.
 
 
 """
@@ -2367,7 +2450,11 @@ I've identified the core user intent: to learn safe street-crossing. Now, I'm fo
             PartStartEvent(
                 index=1,
                 part=TextPart(
-                    content='This is a great question! Safely crossing the street is all about being aware and predictable. Here is a step-by-step',
+                    content="""\
+Here is a step-by-step guide to crossing the street safely:
+
+### 1. Find\
+""",
                     provider_name='google-gla',
                     provider_details={'thought_signature': IsStr()},
                 ),
@@ -2389,45 +2476,35 @@ I've identified the core user intent: to learn safe street-crossing. Now, I'm fo
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartEndEvent(
                 index=1,
                 part=TextPart(
                     content="""\
-This is a great question! Safely crossing the street is all about being aware and predictable. Here is a step-by-step guide that is widely taught for safety:
+Here is a step-by-step guide to crossing the street safely:
 
 ### 1. Find a Safe Place to Cross
-The best place is always at a designated **crosswalk** or a **street corner/intersection**. These are places where drivers expect to see pedestrians. Avoid crossing in the middle of the block or from between parked cars.
+Always use a designated crosswalk or a street corner with traffic signals. These are the safest places because drivers expect pedestrians to be there. Avoid crossing in the middle of the block or from between parked cars.
 
-### 2. Stop at the Edge of the Curb
-Stand on the sidewalk, a safe distance from the edge of the street. This gives you a clear view of the traffic without putting you in danger.
+### 2. Stop at the Edge
+Stand on the curb or the edge of the street. This gives you a clear view of the road without putting you in the path of traffic.
 
 ### 3. Look and Listen for Traffic
-Follow the "Left-Right-Left" rule:
-*   **Look left** for the traffic that will be closest to you first.
-*   **Look right** for oncoming traffic in the other lane.
-*   **Look left again** to make sure nothing has changed.
-*   **Listen** for the sound of approaching vehicles that you might not be able to see.
+Follow this simple but crucial rule: **Look left, look right, and then look left again.**
+*   **Look Left:** For traffic that will be in the lane closest to you.
+*   **Look Right:** For traffic in the farther lanes.
+*   **Look Left Again:** To make sure nothing has changed in the closest lane before you step off the curb.
+*   **Listen:** Sometimes you can hear a vehicle before you can see it. It's a good idea to remove headphones.
 
 ### 4. Wait for a Safe Gap
-Wait until there is a large enough gap in traffic for you to walk all the way across. Don't assume a driver will stop for you. If you can, try to **make eye contact** with drivers to ensure they have seen you.
+If there are cars coming, wait for a large enough gap in traffic for you to cross safely. If you are at a crosswalk with a signal, press the button and wait for the "Walk" or walking person symbol to appear.
 
-### 5. Walk, Don't Run
-Once it's safe:
-*   Walk straight across the street.
-*   **Keep looking and listening** for traffic as you cross. The situation can change quickly.
-*   **Don't use your phone** or wear headphones that block out the sound of traffic.
+### 5. Make Eye Contact
+If possible, make eye contact with the drivers of any stopped or approaching vehicles. This is the best way to be sure they have seen you.
 
----
+### 6. Cross Quickly but Safely
+Walk, do not run, across the street. Keep looking for traffic as you cross, as the situation can change quickly. Once you have started crossing, do not stop in the middle of the road.
 
-### Special Situations:
-
-*   **At a Traffic Light:** Wait for the pedestrian signal to show the "Walk" sign (often a symbol of a person walking). Even when the sign says to walk, you should still look left and right before crossing.
-*   **At a Stop Sign:** Wait for the car to come to a complete stop. Make eye contact with the driver before you step into the street to be sure they see you.
-
-The most important rule is to **stay alert and be predictable**. Always assume a driver might not see you.\
+By following these steps, you can greatly reduce the risk of an accident. Stay alert and stay safe\
 """,
                     provider_name='google-gla',
                     provider_details={'thought_signature': IsStr()},
@@ -2609,7 +2686,7 @@ async def test_google_tool_config_any_with_tool_without_args(
             ModelResponse(
                 parts=[ToolCallPart(tool_name='bar', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(
-                    input_tokens=21, output_tokens=1, details={'text_candidates_tokens': 1, 'text_prompt_tokens': 21}
+                    input_tokens=16, output_tokens=1, details={'text_candidates_tokens': 1, 'text_prompt_tokens': 16}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2635,7 +2712,7 @@ async def test_google_tool_config_any_with_tool_without_args(
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'bar': 'hello'}, tool_call_id=IsStr())],
                 usage=RequestUsage(
-                    input_tokens=27, output_tokens=5, details={'text_candidates_tokens': 5, 'text_prompt_tokens': 27}
+                    input_tokens=22, output_tokens=5, details={'text_candidates_tokens': 5, 'text_prompt_tokens': 22}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2663,11 +2740,11 @@ async def test_google_tool_config_any_with_tool_without_args(
 
 
 async def test_google_timeout(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
     agent = Agent(model=model)
 
     result = await agent.run('Hello!', model_settings={'timeout': 10})
-    assert result.output == snapshot('Hello there! How can I help you today?\n')
+    assert result.output == snapshot('Hello there! How can I help you today?')
 
     with pytest.raises(UserError, match='Google does not support setting ModelSettings.timeout to a httpx.Timeout'):
         await agent.run('Hello!', model_settings={'timeout': Timeout(10)})
@@ -2704,7 +2781,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(
-                    input_tokens=33, output_tokens=5, details={'text_candidates_tokens': 5, 'text_prompt_tokens': 33}
+                    input_tokens=25, output_tokens=5, details={'text_candidates_tokens': 5, 'text_prompt_tokens': 25}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2736,7 +2813,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=47, output_tokens=8, details={'text_candidates_tokens': 8, 'text_prompt_tokens': 47}
+                    input_tokens=39, output_tokens=8, details={'text_candidates_tokens': 8, 'text_prompt_tokens': 39}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2764,7 +2841,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
 
 
 async def test_google_text_output_function(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-pro-preview-05-06', provider=google_provider)
+    m = GoogleModel('gemini-2.5-pro', provider=google_provider)
 
     def upcase(text: str) -> str:
         return text.upper()
@@ -2778,7 +2855,9 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
     result = await agent.run(
         'What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.'
     )
-    assert result.output == snapshot('THE LARGEST CITY IN MEXICO IS MEXICO CITY.')
+    assert result.output == snapshot(
+        "I CAN'T PROVIDE THE LARGEST CITY WITHOUT KNOWING YOUR LOCATION. HOWEVER, IF I ASSUME YOU ARE IN MEXICO, THE LARGEST CITY IS MEXICO CITY."
+    )
 
     assert result.all_messages() == snapshot(
         [
@@ -2793,11 +2872,21 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_user_country',
+                        args={},
+                        tool_call_id=IsStr(),
+                        provider_name='google-gla',
+                        provider_details={
+                            'thought_signature': 'Cu8FAXLI2nwOxI+G9/9Z3jRnajoJapA7KjidIMHk8OKBiR76nML4Nn50WqYgxcStX00dDeu/1TARhkhemTHJibXzzq37701VyTTKcSO4dKEqOk0uCtG/eyIEU0tbNLYWqYTajhCAPgZFyRHWfclItjEf8J5gAIMrofx0Tg0dwF6YwmSCSe6m/K9LrAqwhXVzFfy1TUm5zBIOFpBlS5mu7DvdP/F4xBc53AlYJ5FRB+SG0UWT0n3ETnREgNyU9yE04dIdImVlVOuG/CN+jVCCxyTxj5PaoU3IFqW/rg1jNgHHE9MRVmSAgO31iCkejYDBL7ckvGg7H8MZ3dvKz2CJHCo5acM0XmOIBFTqaM0jFcR4P0I2v37maY1/MrjFVj3+Cdi7QN1ype+3xk1e7aQSec9THmxjRoPPvGY01SjPZB/SD5JECbR90NEdDrNy09Y1+eVhr5NaBOY0nobngZ7QtcBVtjPQnpXyeQ942ygYiL899MphdcODv1EVMKKTDU4a7rDPs+x69o1BlStafBWUfkzG2L3azJSXDYX9rk3tIV0vJSVQZfQr/e9uGXGHw7pTudyHCK96bSjp6J/RppdkZB/TEPyemUXhbEdtPnqo36i2UatCmfQoU31PSRqXkdEig8drnmwuceAV4Fxadnkt6OwZ5MonjJN+4CK9S0r/rMtHkqv0RdF1HhR/MnvtZP9TGP5Pu9IIR8ToYF5EVbeAIOkiP1HjMJTbXIM89drkWxZGyTKw1JnBGKcA69xj55fUPNfse3FQuto5JlmX2cO5ax/Cwza1/qVR0sSM/2B87RmjZSpbF5ihRDikkRkEM4DkaJCakpJQ45+yKJoq9zHR1eza0Z89Vfbwgp24YZWKLucLtBt8ENeHlsl4Sthjhks3Zf4oufDFtGrpQ6v+3GyZFAEQFKevdlfGs7LlMlx1Rn/Mkwww8Osa4XNjlo4FXLt6dmmRzMN8/a04sKGaYEsPN9VFg00FmdN74Usa4zVyBZ5DYA=='
+                        },
+                    )
+                ],
                 usage=RequestUsage(
-                    input_tokens=49, output_tokens=276, details={'thoughts_tokens': 264, 'text_prompt_tokens': 49}
+                    input_tokens=49, output_tokens=181, details={'thoughts_tokens': 169, 'text_prompt_tokens': 49}
                 ),
-                model_name='models/gemini-2.5-pro',
+                model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
@@ -2819,11 +2908,13 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='The largest city in Mexico is Mexico City.')],
-                usage=RequestUsage(
-                    input_tokens=80, output_tokens=159, details={'thoughts_tokens': 150, 'text_prompt_tokens': 80}
-                ),
-                model_name='models/gemini-2.5-pro',
+                parts=[
+                    TextPart(
+                        content="I can't provide the largest city without knowing your location. However, if I assume you are in Mexico, the largest city is Mexico City."
+                    )
+                ],
+                usage=RequestUsage(input_tokens=80, output_tokens=30, details={'text_prompt_tokens': 80}),
+                model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
@@ -2956,7 +3047,7 @@ async def test_google_native_output_multiple(allow_model_requests: None, google_
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=50, output_tokens=46, details={'text_candidates_tokens': 46, 'text_prompt_tokens': 50}
+                    input_tokens=9, output_tokens=46, details={'text_candidates_tokens': 46, 'text_prompt_tokens': 9}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2998,7 +3089,7 @@ async def test_google_prompted_output(allow_model_requests: None, google_provide
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
                 usage=RequestUsage(
-                    input_tokens=80, output_tokens=13, details={'text_candidates_tokens': 13, 'text_prompt_tokens': 80}
+                    input_tokens=83, output_tokens=13, details={'text_candidates_tokens': 13, 'text_prompt_tokens': 83}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -3014,7 +3105,7 @@ async def test_google_prompted_output(allow_model_requests: None, google_provide
 
 
 async def test_google_prompted_output_with_tools(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-pro-preview-05-06', provider=google_provider)
+    m = GoogleModel('gemini-2.5-pro', provider=google_provider)
 
     class CityLocation(BaseModel):
         city: str
@@ -3044,11 +3135,21 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_user_country',
+                        args={},
+                        tool_call_id=IsStr(),
+                        provider_name='google-gla',
+                        provider_details={
+                            'thought_signature': 'Co4UAXLI2nzudxgaUXrUC1zevWlZ4jkiOkS8QVwNRwOY3mVz6GrGtg7b3uLuTqCH95cyoN4jE3HECl/mJbjLU92UQVsq7kZ2Xez4FUc3ClRH3u03AZgVyVVUN43ktJqkLqIsX8r3nEbm0jfC+z5Xw5GTbIpyUUHaM0BL391nsK0Y0ZSPB9G7QHzDHN/Nq7+K/QUqtLSxVqLkDxQ5pU8A8FiDuQCiXE6qmqnh9XMCte572qZmJazCnHFW42IQhvOfSUMH9wEabsimgwswiScg1pDgSBhIPMn/SbUPwLlS5BMhYVEsBrgzCI6wwcES5a8CZCsk1ZwjlrMjzOOannQ3D35powwuaTZsNPD2MbfaQv7KR1KGNQc4QPWMf+D/b/ZTYqwfMwBfWVe9SZPe5OD/IvCJpfEuMbupVhrpraY9+J1uaxJ9U9eDMiiZ3WVjwIOJGHxJ1nBibd0dqRcf6ZbHGUaT4ej4mzJwVDcys4/J5Ol54qHA12R3rYGykUdSKEA95S9lDYvJCrHSavIzUK0BjD8C5mNQlnllUFNYKII0j9D+Wt0sYDRegedtC2+SNPBvyRxbR7lSdJGmZUaq7S2k8fEqVh1bujrRG6dkDFlrgOs0NH/vZA9rFW0OvSM1Z68rMYkAhzaxhWz8YdYUYqc02V8o4311huwDNt4EjBTZ9nINLaObZIz6jbZN2l0MUA0uuunGkydRzUj5X1nmrb1mEGEOOYqtYugEZtRLerqj3XWiKmpWtBeEDX/hoVHQ7etKohKVGXPjFRmM5lzFCGH380SVwcvvKmVcMDkzaqtvSgRDMfg0+WuxFdxJ7Sz2ixwxoeAWKtK/TahvYrWJBMBmGnOfT7052jSXuY1r4wpC0CcupLS64P98TRtHr04IzuYpcyKRtOX/GjuABmpd2t4Ha9cFb6flPkp484sHd8xaT5uMJY0w/IoxDVDYafRUXBeeAIqRQb7sWk/5nifY6dfNLJf7jHwE5xD/sTx2XxnB5oBU06ERjPeUCMfLdZYWkbx1ooeLZsYTnwwMKqMi56wQtXIWpGlG8au6OjScEO3skN1RT2WnJMvfYohzQQ+SPISNRdXRb59T7s/+OB2PBHgW2xWYInLHrk0thFiOEJ2N8Pl9hhOzcj1+gaIitAMOaXrF5Ix9bspENdYdh+tnHYg/MQ3S2x4LG4qRJ3cQLXR4nn0nG54RcDmC30JhbPWaL0H72gbLrVGnMIRd1U2VT0l2e6fTrA+FOXEjwV5/BoRnA2UrEzw8DlJubJFyjfpz+I3tAPnWdIQ7u2md6fqnTV8lnpFGedqngmQ2My5/r4bKh/L8/RbmNNVixIb6GLtMNycOS/C0XyUUsJ/liMyicgGzt8AbTam/ytzZmInKFnUdel5WmCF3tCGCbB7WWFA6E2eT5pvMGzcgyKHmSBLGqTdAyvch+8FP0FFD1XrfUpbL3FQFU31wDsglCITbeiWh/+qXNIQEgaVHquD2YdLc4ngJWpL5+Vl+OcFjBhrv1QpgjcfOcc/9Ku7LFB/b4LdkF7bWlSFPasIBGeQfwPM+QJsPlmXUn2mv/bt0i3iA+adWulIdVTzaO+dm9vfJEDNyzHXblUNe4dLD2Ani78Ek5krcmVnw7fFPigh4qszWtHaia69FsLaIqfyA0J/2adbYPATztPuZhA+hlTPejlGkAUQB8mTt1uFpFodQ9+GxxORBfnoRzMrBLu/oL7vxE+UwUALVNEAul6x+EjHSCMDlAMI2rvUgSWq+yQOIQcrD/L+Uy247U+TUyr5huabz/RiAk/QWbviAbAHGE4lgG3ZEJlXvHtcENqZEbuqu0XbTWEuy+7H40Uxf4/1HKt8g+6nRowLxA0Ioyy0uNJXzY9xcE3uQulVC2TDmPZyg8DKaJcPvVZx1Qd0M+bpaKBZYOjDJ6N1wlHUrsdqNQZ+Vem0BvxzkzZFCbG8jS06hnOpBTdJrkFxFp4jhyJIbMX8Q9Y3z/ci225F6es5RtG9Ifr8gpNUgLy2Lc/o/uFO6lKcscJJ7L5kz6jijiEWedWTULmCzYKDh3xGlwUSN9lmIJfry0PqZUKcIVJGfFZ2pU5wifqzpWJaPZOXPfu0OgbL2eZu7jv+MbR/bP3vmSt6eWO57bxuMxwrT07lbydw+4nb2mzLzzhnxSad7kQ771IY4rpDcLXB/nOtdfjaQmT/Nzmw43ofwndPuqgs5banJgy2G/y7dOcd16Mr1K7w5wc5ypEW+sTqFTSUEy1gSUauq5ycji45l52RNAcYgqBzmAVvAHxy1MJlF6z02NnmVclgf654lwy130L+IducvuDGs0t/S3Iwi5ZAGxXzkXm0r1N30ALsstRuAhMDor40smkT/W7dzTkiEA1+ftSLU8E7bcck2sca4pLSiMnl9YIao+uhRQi3yYrcrQeKRDDNNwGy1eV5gV3M6eWu+Oz+Giaxc3brFESm9qq5NBZIYIIseFV9EV/BhsoUxVQ/ASAfBV4BqIAzHrhpvHSjExVGd/kkhdd3Gltg1s3oWm5Y++BXRFeU/wlGuBklnvHtzLMN4KUOoC5N+PMab6SsjA6nTMJh5Sc+v9q3RSLW1s9V3pOFCiuQGGPJi1rNYFXIfn7363sqnMOG1DdhYDUqSQoHoAmwOzE6xEN76PAATl8G7I+4EvBx30R/W/thI8zgrV2wRzG0x/MPqUGDQpVvFC2asr6+ONMGN0RQXMtoja66Avg7O4drouNd+weR3tU8Ht0LaDGs5wyYS11lKEosoOAOGs5X49pY+Ifgv5WHHb8j2uFgQb/TzvLL2xi+HfNlcabMLN3/hNGSzfN7RdPHKl7a3cK8AxrKFEOofbm0wWO/mcNt8vVr0QwhbLSfkV3koDI+LkeWIggps+RbsR3OKaljnkSPQWfYTgLiG8XtjO/kHcUUrwbYCOYN1lFDbcwKdlBR/PCQDsreGX8SZUdndLkRG54ArJfv6a5HbJE9Rhb/lYFrh83gelHmMeg92KhBuPtMbesqF2izeW9b+kA2oxUkh9VfVEQ0cpFTDQvsjQzSZ5LKzJSdPz/JquPpSS8ylXOjJnEHRN3X/NiX3hGdDpEI93b9gCDeWCLyMdQj9z/kCJHUa+XnJGzR0EEjHTy7TSw7CXHCrr2RXCvDYT3vUIcTH9E8O6JYg+D3kyalN5Z7RPGF4Ls+4gZ4o7n2JNrxQ9vvlW0XUAU48CLS3Y0l4mpEebc9zjLVEj9N7UEEm5rHcND7ZurBQLWQLyW4NPsvtG5C/ESFp3GD/AwomTKnFVCRsbSybm6r2HtFe2qxZ1cvmHycwye2eTYQuaPy3IeFbswQSW2/KSOX0BXavTYCqk/DAXqCCyblQPc2l350e/mgmCJ9aU+NPZeUfPzIyq1QhtyubpWU6j2FX0WX0qfPzIXyJbRbR1fUXewXucPUsl2/ycfvuXuPQrkMr4luI'
+                        },
+                    )
+                ],
                 usage=RequestUsage(
-                    input_tokens=123, output_tokens=144, details={'thoughts_tokens': 132, 'text_prompt_tokens': 123}
+                    input_tokens=125, output_tokens=658, details={'thoughts_tokens': 646, 'text_prompt_tokens': 125}
                 ),
-                model_name='models/gemini-2.5-pro',
+                model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
@@ -3070,11 +3171,26 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
+                parts=[
+                    TextPart(
+                        content="""\
+```json
+{
+  "city": "Mexico City",
+  "country": "Mexico"
+}
+```\
+""",
+                        provider_name='google-gla',
+                        provider_details={
+                            'thought_signature': 'CuAFAXLI2nzl76CfdYfKfaLJTtS0Am7Y1rPsjgFrlVsQpVL6QAci8+TGiYL4KFiowiVketMX1UQukxIszlkC+pRtihhSMiFpkbeOfMdmZOtzgqgAliWS5522OE9aOHiS/eGjLI6Utn4qfe+Y6FEBR5AIL2JQqb1wYv9ef9Qjl92dKdDaCjUsxizigT1r/SnPZPK5IXTj8nc8zDq5n5P1wOoos7v3FG4r5R7wqaDmDumzH4mo5kVp7VmVbhhUFgcvvA/F7DQR50rnzpXTqKkCyV06EhiN68M/eVvUoKNmUAZWO3/bs69AcLiQ3FmhRoJL423hsQQFgKkncJ+7ytTHYHkTWToHnlP9jcxbJIAReq4CNz5p7je+BBFeLYWZJ4xHjlRd+JKr1fOf0k74oh6o1PeotDyGrpPsmwqzTySN/JKmPXBzRt8jtHuwwrxXdV9bXIqLqgr5/r3WX6I86mmNqcGk0E9NUuMCnHTJ5ydrX4ZeJ2btkHxq6uJ4m6jpZ18fenhAd6MnHsJK1QrUhJ11tXAIYUQDtMYOMsswVp236gj2LWoz8w1smlnIhuDZlSBkenEPpT8styL1lafkwsvYWdcygoax0FYZTR6RGLBorrwHujIolWeF1DQsFWKt7GIv+Uwj6krP/FoqC8Bgv3M1eYZXKs/51JtQVTPt5iwAuQ6R+iAv6aU2wvPYLZqTyJ5e/kIAO9pBKK9yacmHpLhAxSONSTm/Hbvc9ei7MEZlFwByMdYc5HOQqzqWCSAAFfPP1ZIY7XURHBkLcOHYznouCsrDB1wPOBTG5WEA2jBvsgTPMJdizZr6oBAjk+Up2NaEV85qZpGTGyJsPC1wtl2QaibbsoEUMpqPnKzlMMsh+gvq3+paj19EI78L3HZLdrBJ3ncje7TnGWciUYrTmVlLksXmAlQJC1WUjTbNYC6XrqiD4hlvwLpbYmpyPi35Wcdrxb3w+6rsd1Z1BimA6o+CbGlpSA=='
+                        },
+                    )
+                ],
                 usage=RequestUsage(
-                    input_tokens=154, output_tokens=166, details={'thoughts_tokens': 153, 'text_prompt_tokens': 154}
+                    input_tokens=156, output_tokens=203, details={'thoughts_tokens': 178, 'text_prompt_tokens': 156}
                 ),
-                model_name='models/gemini-2.5-pro',
+                model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
@@ -3122,9 +3238,9 @@ async def test_google_prompted_output_multiple(allow_model_requests: None, googl
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=240,
+                    input_tokens=230,
                     output_tokens=27,
-                    details={'text_candidates_tokens': 27, 'text_prompt_tokens': 240},
+                    details={'text_candidates_tokens': 27, 'text_prompt_tokens': 230},
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -3162,22 +3278,21 @@ async def test_google_model_usage_limit_not_exceeded(allow_model_requests: None,
         usage_limits=UsageLimits(input_tokens_limit=15, count_tokens_before_request=True),
     )
     assert result.output == snapshot("""\
-That's a classic! It's famously known as a **pangram**, which means it's a sentence that contains every letter of the alphabet.
+That's a classic! "The quick brown fox jumps over the lazy dog" is one of the most famous **pangrams**.
 
-It's often used for:
-*   **Typing practice:** To ensure all keys are hit.
-*   **Displaying font samples:** Because it showcases every character.
+A pangram is a sentence that contains every letter of the alphabet at least once. It's widely used for:
+*   **Typing practice:** To ensure you hit every key.
+*   **Displaying typefaces (fonts):** To show how all the letters look in a particular font.
+*   **Testing equipment:** Like typewriters or keyboards.
 
-Just a small note, it's typically written as "lazy dog" (two words) and usually ends with a period:
-
-**The quick brown fox jumps over the lazy dog.**\
+It's quite efficient for that purpose, using only 35 letters (if "lazy dog" is treated as two words, which is more common). You even combined "lazy dog" into "lazydog" which is often done to make it even shorter or for specific software testing!\
 """)
 
 
 async def test_google_vertexai_model_usage_limit_exceeded(
     allow_model_requests: None, vertex_provider: GoogleProvider
 ):  # pragma: lax no cover
-    model = GoogleModel('gemini-2.0-flash', provider=vertex_provider, settings=ModelSettings(max_tokens=100))
+    model = GoogleModel('gemini-3-flash-preview', provider=vertex_provider, settings=ModelSettings(max_tokens=100))
 
     agent = Agent(model, instructions='You are a chatbot.')
 
@@ -3185,9 +3300,7 @@ async def test_google_vertexai_model_usage_limit_exceeded(
     async def get_user_country() -> str:
         return 'Mexico'  # pragma: no cover
 
-    with pytest.raises(
-        UsageLimitExceeded, match='The next request would exceed the total_tokens_limit of 9 \\(total_tokens=36\\)'
-    ):
+    with pytest.raises(UsageLimitExceeded, match='The next request would exceed the total_tokens_limit of 9'):
         await agent.run(
             'What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
             usage_limits=UsageLimits(total_tokens_limit=9, count_tokens_before_request=True),
@@ -3423,12 +3536,12 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content='Here you go! '),
+                    TextPart(content="Sure! Here's an image of an axolotl for you. "),
                     FilePart(content=IsInstance(BinaryImage)),
                 ],
                 usage=RequestUsage(
                     input_tokens=10,
-                    output_tokens=1295,
+                    output_tokens=1306,
                     details={'text_prompt_tokens': 10, 'image_candidates_tokens': 1290},
                 ),
                 model_name='gemini-2.5-flash-image',
@@ -3444,9 +3557,14 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
     )
     assert event_parts == snapshot(
         [
-            PartStartEvent(index=0, part=TextPart(content='Here you go!')),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' ')),
-            PartEndEvent(index=0, part=TextPart(content='Here you go! '), next_part_kind='file'),
+            PartStartEvent(index=0, part=TextPart(content="Sure! Here'")),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='s an image of')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' an axolotl')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' for')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' you. ')),
+            PartEndEvent(
+                index=0, part=TextPart(content="Sure! Here's an image of an axolotl for you. "), next_part_kind='file'
+            ),
             PartStartEvent(
                 index=1,
                 part=FilePart(content=IsInstance(BinaryImage)),
@@ -3518,12 +3636,11 @@ A little axolotl named Archie lived in a beautiful glass tank, but he always won
 
 async def test_google_image_or_text_output(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
-    # ImageGenerationTool is listed here to indicate just that it doesn't cause any issues, even though it's not necessary with an image model.
-    agent = Agent(m, output_type=str | BinaryImage, builtin_tools=[ImageGenerationTool(size='1K')])
+    agent = Agent(m, output_type=str | BinaryImage)
 
     result = await agent.run('Tell me a two-sentence story about an axolotl, no image please.')
     assert result.output == snapshot(
-        'In a hidden cave, a shy axolotl named Pip spent its days dreaming of the world beyond its murky pond. One evening, a glimmering portal appeared, offering Pip a chance to explore the vibrant, unknown depths of the ocean.'
+        'In a hidden cenote, a shy axolotl named Pipkin loved to collect shiny pebbles. One day, he found a pearl so luminous, it lit up his entire underwater world.'
     )
 
     result = await agent.run('Generate an image of an axolotl.')
@@ -3536,7 +3653,7 @@ async def test_google_image_and_text_output(allow_model_requests: None, google_p
 
     result = await agent.run('Tell me a two-sentence story about an axolotl with an illustration.')
     assert result.output == snapshot(
-        'Once, in a hidden cenote, lived an axolotl named Pip who loved to collect shiny pebbles. One day, Pip found a pebble that glowed, illuminating his entire underwater world with a soft, warm light. '
+        'Once, in a hidden cenote, lived a shy axolotl named Pip who dreamed of seeing the surface world. One day, a curious diver gently scooped him up, allowing Pip to briefly witness the sun-dappled world above before returning him to his serene, underwater home. '
     )
     assert result.response.files == snapshot([IsInstance(BinaryImage)])
 
@@ -4757,7 +4874,7 @@ async def test_cache_point_filtering():
     from pydantic_ai import CachePoint
 
     # Create a minimal GoogleModel instance to test _map_user_prompt
-    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
 
     # Test that CachePoint in a list is handled (triggers line 606)
     content = await model._map_user_prompt(UserPromptPart(content=['text before', CachePoint(), 'text after']))  # pyright: ignore[reportPrivateUsage]
@@ -4784,7 +4901,7 @@ async def test_gcs_video_url_with_vendor_metadata_on_google_vertex(mocker: Mocke
     This is the main fix - GCS URIs were previously falling through to FileUrl
     handling which doesn't pass vendor_metadata as video_metadata.
     """
-    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
     mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
 
     video = VideoUrl(
@@ -4806,7 +4923,7 @@ async def test_gcs_video_url_raises_error_on_google_gla():
     google-gla cannot access GCS buckets, so attempting to use gs:// URLs
     should fail with a helpful error message rather than a cryptic API error.
     """
-    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
     # google-gla is the default for GoogleProvider with api_key, but be explicit
     assert model.system == 'google-gla'
 
@@ -4827,7 +4944,7 @@ async def test_gcs_video_url_raises_error_on_google_gla():
 
 async def test_http_video_url_downloads_on_google_gla(mocker: MockerFixture):
     """HTTP VideoUrls are downloaded on google-gla with video_metadata preserved."""
-    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
 
     mock_download = mocker.patch(
         'pydantic_ai.models.google.download_item',
@@ -4850,7 +4967,7 @@ async def test_http_video_url_downloads_on_google_gla(mocker: MockerFixture):
 
 async def test_http_video_url_uses_file_uri_on_google_vertex(mocker: MockerFixture):
     """HTTP VideoUrls use file_uri directly on google-vertex with video_metadata."""
-    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
     mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
 
     video = VideoUrl(
@@ -4882,7 +4999,7 @@ async def test_thinking_with_tool_calls_from_other_model(
         return 'Mexico'
 
     result = await agent.run('What is the capital of the country?', model=openai_model)
-    assert result.output == snapshot('Mexico City (Ciudad de México).')
+    assert result.output == snapshot('Mexico City.')
     messages = result.all_messages()
     assert messages == snapshot(
         [
@@ -4908,14 +5025,14 @@ async def test_thinking_with_tool_calls_from_other_model(
                         tool_name='get_country', args='{}', tool_call_id=IsStr(), id=IsStr(), provider_name='openai'
                     ),
                 ],
-                usage=RequestUsage(input_tokens=37, output_tokens=272, details={'reasoning_tokens': 256}),
+                usage=RequestUsage(input_tokens=37, output_tokens=168, details={'reasoning_tokens': 128}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 19, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -4941,16 +5058,20 @@ async def test_thinking_with_tool_calls_from_other_model(
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    TextPart(content='Mexico City (Ciudad de México).', id=IsStr(), provider_name='openai'),
+                    TextPart(
+                        content='Mexico City.',
+                        id=IsStr(),
+                        provider_name='openai',
+                    ),
                 ],
-                usage=RequestUsage(input_tokens=379, output_tokens=77, details={'reasoning_tokens': 64}),
+                usage=RequestUsage(input_tokens=217, output_tokens=82, details={'reasoning_tokens': 64}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 25, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -4961,7 +5082,10 @@ async def test_thinking_with_tool_calls_from_other_model(
 
     model = GoogleModel('gemini-3-pro-preview', provider=google_provider)
 
-    result = await agent.run(model=model, message_history=messages[:-1], output_type=CityLocation)
+    usage_limits = UsageLimits(request_limit=10)
+    result = await agent.run(
+        model=model, message_history=messages[:-1], output_type=CityLocation, usage_limits=usage_limits
+    )
     assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
     assert result.new_messages() == snapshot(
         [
@@ -4976,7 +5100,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=107, output_tokens=146, details={'thoughts_tokens': 123, 'text_prompt_tokens': 107}
+                    input_tokens=107, output_tokens=96, details={'thoughts_tokens': 73, 'text_prompt_tokens': 107}
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -5031,7 +5155,7 @@ async def test_google_api_errors_are_handled(
     error_response: dict[str, Any],
     expected_status: int,
 ):
-    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
     mocked_error = error_class(expected_status, error_response)
     mocker.patch.object(model.client.aio.models, 'generate_content', side_effect=mocked_error)
 
@@ -5049,7 +5173,7 @@ async def test_google_api_non_http_error(
     google_provider: GoogleProvider,
     mocker: MockerFixture,
 ):
-    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
     mocked_error = errors.APIError(302, {'error': {'code': 302, 'message': 'Redirect', 'status': 'REDIRECT'}})
     mocker.patch.object(model.client.aio.models, 'generate_content', side_effect=mocked_error)
 
@@ -5058,7 +5182,7 @@ async def test_google_api_non_http_error(
     with pytest.raises(ModelAPIError) as exc_info:
         await agent.run('This prompt will trigger the mocked error.')
 
-    assert exc_info.value.model_name == 'gemini-1.5-flash'
+    assert exc_info.value.model_name == 'gemini-2.5-flash'
 
 
 async def test_google_model_retrying_after_empty_response(allow_model_requests: None, google_provider: GoogleProvider):
@@ -5319,7 +5443,7 @@ async def test_google_streaming_tool_call_thought_signature(
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=29, output_tokens=212, details={'thoughts_tokens': 202, 'text_prompt_tokens': 29}
+                    input_tokens=29, output_tokens=120, details={'thoughts_tokens': 110, 'text_prompt_tokens': 29}
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -5344,7 +5468,7 @@ async def test_google_streaming_tool_call_thought_signature(
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of Mexico is Mexico City.')],
-                usage=RequestUsage(input_tokens=257, output_tokens=8, details={'text_prompt_tokens': 257}),
+                usage=RequestUsage(input_tokens=165, output_tokens=8, details={'text_prompt_tokens': 165}),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',

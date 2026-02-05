@@ -6,7 +6,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        Nzk4MjcwYmEtZWU5MS00ZGRmLWI4YmEtODM0ZjBkNDE4Y2Mw
+        MGU2YjBjMzctNzZjZS00MWNlLThiNWQtYTNhZTRlMmMyODIx
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -16,25 +16,23 @@ interactions:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/amazon.nova-micro-v1%3A0/converse
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '1935'
+      - '1792'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1257
+        latencyMs: 990
       output:
         message:
           content:
-          - text: The capital of France is Paris. Paris is not only the capital city but also the most populous city in France,
-              serving as the center of French government, culture, and commerce. It's known for its historical and cultural
-              landmarks such as the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and many charming neighborhoods
-              like Montmartre.
+          - text: The capital of France is Paris. Paris is not only the political center of the country but also a major global
+              city known for its historical landmarks, cultural significance, and as a hub for fashion, art, and gastronomy.
           role: assistant
       stopReason: end_turn
       trace:
@@ -54,7 +52,7 @@ interactions:
                   textCharacters:
                     guarded: 30
                     total: 30
-                guardrailProcessingLatency: 397
+                guardrailProcessingLatency: 296
                 usage:
                   automatedReasoningPolicies: 0
                   automatedReasoningPolicyUnits: 0
@@ -65,7 +63,6 @@ interactions:
                   sensitiveInformationPolicyUnits: 0
                   topicPolicyUnits: 1
                   wordPolicyUnits: 0
-          modelOutput: []
           outputAssessments:
             xbgw7g293v7o:
             - appliedGuardrailDetails:
@@ -78,9 +75,9 @@ interactions:
               invocationMetrics:
                 guardrailCoverage:
                   textCharacters:
-                    guarded: 345
-                    total: 345
-                guardrailProcessingLatency: 370
+                    guarded: 220
+                    total: 220
+                guardrailProcessingLatency: 277
                 usage:
                   automatedReasoningPolicies: 0
                   automatedReasoningPolicyUnits: 0
@@ -93,9 +90,9 @@ interactions:
                   wordPolicyUnits: 0
       usage:
         inputTokens: 13
-        outputTokens: 69
+        outputTokens: 45
         serverToolUsage: {}
-        totalTokens: 82
+        totalTokens: 58
     status:
       code: 200
       message: OK

@@ -28,7 +28,7 @@ from pydantic_ai import (
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
 
-from ..conftest import try_import
+from ..conftest import IsDatetime, try_import
 
 with try_import() as imports_successful:
     from openai.types.chat import ChatCompletion
@@ -60,8 +60,9 @@ Because it felt like their relationship was going nowhere.\
 
 
 async def test_openrouter_with_native_options(allow_model_requests: None, openrouter_api_key: str) -> None:
+    """Test OpenRouter model with native OpenRouter options passed via model settings."""
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+    model = OpenRouterModel('google/gemini-2.5-flash:free', provider=provider)
     # These specific settings will force OpenRouter to use the fallback model, since Gemini is not available via the xAI provider.
     settings = OpenRouterModelSettings(
         openrouter_models=['x-ai/grok-4'],
@@ -69,22 +70,34 @@ async def test_openrouter_with_native_options(allow_model_requests: None, openro
         openrouter_provider={'only': ['xai']},
     )
     response = await model_request(model, [ModelRequest.user_text_prompt('Who are you')], model_settings=settings)
-    text_part = cast(TextPart, response.parts[0])
-    assert text_part.content == snapshot(
-        """\
-I'm Grok, a helpful and maximally truthful AI built by xAI. I'm not based on any other companies' models—instead, I'm inspired by the Hitchhiker's Guide to the Galaxy and JARVIS from Iron Man. My goal is to assist with questions, provide information, and maybe crack a joke or two along the way.
+    text_parts = [p for p in response.parts if isinstance(p, TextPart)]
+    assert text_parts == snapshot(
+        [
+            TextPart(
+                content="""\
+I'm Grok, an AI built by xAI. I'm designed to be helpful, maximally truthful, and a bit witty--think of me as a blend of the Hitchhiker's Guide to the Galaxy and JARVIS from Iron Man. My goal is to help humanity understand the universe, one query at a time.
 
-What can I help you with today?\
+What can I do for you today?\
 """
+            )
+        ]
     )
-    assert response.provider_details is not None
-    assert response.provider_details['downstream_provider'] == 'xAI'
-    assert response.provider_details['finish_reason'] == 'stop'
+    # we verify that OpenRouter is using Grok
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'completed',
+            'downstream_provider': 'xAI',
+            'cost': 0.00341325,
+            'upstream_inference_cost': 0.00341325,
+            'is_byok': False,
+            'timestamp': IsDatetime(),
+        }
+    )
 
 
 async def test_openrouter_stream_with_native_options(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+    model = OpenRouterModel('google/gemini-2.5-flash:free', provider=provider)
     # These specific settings will force OpenRouter to use the fallback model, since Gemini is not available via the xAI provider.
     settings = OpenRouterModelSettings(
         openrouter_models=['x-ai/grok-4'],
@@ -103,10 +116,10 @@ async def test_openrouter_stream_with_native_options(allow_model_requests: None,
         assert stream.provider_details is not None
         assert stream.provider_details == snapshot(
             {
-                'timestamp': datetime.datetime(2025, 11, 2, 6, 14, 57, tzinfo=datetime.timezone.utc),
+                'timestamp': IsDatetime(),
                 'finish_reason': 'completed',
-                'cost': 0.00333825,
-                'upstream_inference_cost': None,
+                'cost': 0.0043275,
+                'upstream_inference_cost': 0.0043275,
                 'is_byok': False,
                 'downstream_provider': 'xAI',
             }
@@ -245,38 +258,33 @@ async def test_openrouter_preserve_reasoning_block(allow_model_requests: None, o
 
     openai_messages = await model._map_messages(messages, None)  # type: ignore[reportPrivateUsage]
 
-    assistant_message = openai_messages[1]
-    assert assistant_message['role'] == 'assistant'
-    assert 'reasoning_details' not in assistant_message
+    for idx in (1, 3):
+        assistant_message = openai_messages[idx]
+        assert assistant_message['role'] == 'assistant'
+        assert 'reasoning_details' in assistant_message
 
-    assistant_message = openai_messages[3]
-    assert assistant_message['role'] == 'assistant'
-    assert 'reasoning_details' in assistant_message
+        reasoning_details = assistant_message['reasoning_details']
+        assert len(reasoning_details) == 2
 
-    reasoning_details = assistant_message['reasoning_details']
-    assert len(reasoning_details) == 2
+        reasoning_summary = reasoning_details[0]
+        assert 'summary' in reasoning_summary
+        assert reasoning_summary['type'] == 'reasoning.summary'
+        assert reasoning_summary['format'] == 'openai-responses-v1'
 
-    reasoning_summary = reasoning_details[0]
-
-    assert 'summary' in reasoning_summary
-    assert reasoning_summary['type'] == 'reasoning.summary'
-    assert reasoning_summary['format'] == 'openai-responses-v1'
-
-    reasoning_encrypted = reasoning_details[1]
-
-    assert 'data' in reasoning_encrypted
-    assert reasoning_encrypted['type'] == 'reasoning.encrypted'
-    assert reasoning_encrypted['format'] == 'openai-responses-v1'
+        reasoning_encrypted = reasoning_details[1]
+        assert 'data' in reasoning_encrypted
+        assert reasoning_encrypted['type'] == 'reasoning.encrypted'
+        assert reasoning_encrypted['format'] == 'openai-responses-v1'
 
 
 async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+    model = OpenRouterModel('google/gemini-2.5-flash:free', provider=provider)
     agent = Agent(model, instructions='Be helpful.', retries=1)
     with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('Tell me a joke.')
     assert str(exc_info.value) == snapshot(
-        "status_code: 429, model_name: google/gemini-2.0-flash-exp:free, body: {'code': 429, 'message': 'Provider returned error', 'metadata': {'provider_name': 'Google', 'raw': 'google/gemini-2.0-flash-exp:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations'}}"
+        "status_code: 404, model_name: google/gemini-2.5-flash:free, body: {'code': 404, 'message': 'No endpoints found for google/gemini-2.5-flash:free.'}"
     )
 
 
@@ -288,7 +296,12 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
     result = await agent.run('Tell me about Venus')
 
     assert result.usage() == snapshot(
-        RunUsage(input_tokens=17, output_tokens=1515, details={'reasoning_tokens': 704}, requests=1)
+        RunUsage(
+            input_tokens=17,
+            output_tokens=2117,
+            details={'is_byok': 0, 'reasoning_tokens': 1024, 'image_tokens': 0},
+            requests=1,
+        )
     )
 
     settings = OpenRouterModelSettings(openrouter_usage={'include': True})
@@ -298,8 +311,8 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
     assert result.usage() == snapshot(
         RunUsage(
             input_tokens=17,
-            output_tokens=2177,
-            details={'is_byok': 0, 'reasoning_tokens': 960, 'image_tokens': 0},
+            output_tokens=1763,
+            details={'is_byok': 0, 'reasoning_tokens': 832, 'image_tokens': 0},
             requests=1,
         )
     )
@@ -314,7 +327,7 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
 
 async def test_openrouter_validate_non_json_response(openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+    model = OpenRouterModel('google/gemini-2.5-flash:free', provider=provider)
 
     with pytest.raises(UnexpectedModelBehavior) as exc_info:
         model._process_response('This is not JSON!')  # type: ignore[reportPrivateUsage]
@@ -326,7 +339,7 @@ async def test_openrouter_validate_non_json_response(openrouter_api_key: str) ->
 
 async def test_openrouter_validate_error_response(openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+    model = OpenRouterModel('google/gemini-2.5-flash:free', provider=provider)
 
     choice = Choice.model_construct(
         index=0, message={'role': 'assistant'}, finish_reason='error', native_finish_reason='stop'
@@ -359,7 +372,7 @@ async def test_openrouter_with_provider_details_but_no_parent_details(openrouter
             return openrouter_details or None
 
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = TestOpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+    model = TestOpenRouterModel('google/gemini-2.5-flash:free', provider=provider)
 
     choice = Choice.model_construct(
         index=0, message={'role': 'assistant', 'content': 'test'}, finish_reason='stop', native_finish_reason='stop'
@@ -438,9 +451,9 @@ async def test_openrouter_tool_optional_parameters(allow_model_requests: None, o
 
     tool_call_part = response.parts[1]
     assert isinstance(tool_call_part, ToolCallPart)
-    assert tool_call_part.tool_call_id == snapshot('toolu_vrtx_015QAXScZzRDPttiPoc34AdD')
+    assert tool_call_part.tool_call_id == snapshot('toolu_01HDrihMKz5npKoC6xoaXjmF')
     assert tool_call_part.tool_name == 'find_education_content'
-    assert tool_call_part.args == snapshot(None)
+    assert tool_call_part.args == snapshot('')
 
     mapped_messages = await model._map_messages([response], None)  # type: ignore[reportPrivateUsage]
     tool_call_message = mapped_messages[0]
@@ -449,7 +462,7 @@ async def test_openrouter_tool_optional_parameters(allow_model_requests: None, o
     assert tool_call_message.get('tool_calls') == snapshot(
         [
             {
-                'id': 'toolu_vrtx_015QAXScZzRDPttiPoc34AdD',
+                'id': 'toolu_01HDrihMKz5npKoC6xoaXjmF',
                 'type': 'function',
                 'function': {
                     'name': 'find_education_content',
@@ -489,7 +502,7 @@ async def test_openrouter_no_openrouter_details(openrouter_api_key: str) -> None
     from unittest.mock import patch
 
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+    model = OpenRouterModel('google/gemini-2.5-flash:free', provider=provider)
 
     choice = Choice.model_construct(
         index=0, message={'role': 'assistant', 'content': 'test'}, finish_reason='stop', native_finish_reason='stop'
@@ -561,8 +574,8 @@ async def test_openrouter_google_nested_schema(allow_model_requests: None, openr
         [
             ToolCallPart(
                 tool_name='insert_level_with_spaces',
-                args='{"spaces":[{"space_type":"entryway","space_name":"entryway"},{"space_name":"living_room","space_type":"living-room"},{"space_name":"garage","space_type":"garage"}],"level":{"level_type":"ground","level_name":"ground_floor"}}',
-                tool_call_id='tool_insert_level_with_spaces_3ZiChYzj8xER8HixJe7W',
+                args='{"level":{"level_name":"ground floor","level_type":"ground"},"spaces":[{"space_type":"entryway","space_name":"entryway"},{"space_name":"living room","space_type":"living-room"},{"space_type":"garage","space_name":"garage"}]}',
+                tool_call_id='tool_insert_level_with_spaces_3PrqF9YFU0P9ktqTRJ0I',
             )
         ]
     )

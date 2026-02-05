@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '245'
+      - '278'
       content-type:
       - application/json
       host:
@@ -20,23 +20,25 @@ interactions:
         - text: What is the capital of France?
         role: user
       generationConfig:
+        responseModalities:
+        - TEXT
         thinkingConfig:
-          includeThoughts: false
+          include_thoughts: false
       systemInstruction:
         parts:
         - text: You are a helpful chatbot.
         role: user
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-03-25:generateContent
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '583'
+      - '576'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=4236
+      - gfet4t7; dur=3811
       transfer-encoding:
       - chunked
       vary:
@@ -51,16 +53,16 @@ interactions:
           role: model
         finishReason: STOP
         index: 0
-      modelVersion: models/gemini-2.5-pro
-      responseId: 1FpeaOWpAs-lkdUP_4eY2QY
+      modelVersion: gemini-2.5-pro
+      responseId: x1R8af-uF5a0qtsPxbfq0Ag
       usageMetadata:
         candidatesTokenCount: 8
         promptTokenCount: 15
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 15
-        thoughtsTokenCount: 275
-        totalTokenCount: 298
+        thoughtsTokenCount: 285
+        totalTokenCount: 308
     status:
       code: 200
       message: OK

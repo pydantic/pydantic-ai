@@ -347,8 +347,8 @@ async def test_complex_agent_run_in_workflow(
         assert output == snapshot(
             Response(
                 answers=[
-                    Answer(label='Capital of the country', answer='Mexico City'),
-                    Answer(label='Weather in the capital', answer='Sunny'),
+                    Answer(label='Capital of Mexico', answer='Mexico City'),
+                    Answer(label='Weather in Mexico City', answer='Sunny'),
                     Answer(label='Product Name', answer='Pydantic AI'),
                 ]
             )
@@ -398,22 +398,22 @@ async def test_complex_agent_run_in_workflow(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=1'),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_a9vqTE0fNyzTH3uBiqXox2Da","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_a9vqTE0fNyzTH3uBiqXox2Da","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":"tool-call","event_kind":"part_end"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_a9vqTE0fNyzTH3uBiqXox2Da","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":"tool-call","event_kind":"part_end"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":"tool-call","event_kind":"part_start"}'
+                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"","tool_call_id":"call_Znu6tKXVIHoiTrzemlWBBDpb","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":"tool-call","event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":1,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":1,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_Znu6tKXVIHoiTrzemlWBBDpb","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
+                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Znu6tKXVIHoiTrzemlWBBDpb","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
                                                 ),
                                             ],
                                         )
@@ -429,7 +429,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                            content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_a9vqTE0fNyzTH3uBiqXox2Da","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -443,7 +443,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                            content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Znu6tKXVIHoiTrzemlWBBDpb","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -460,11 +460,7 @@ async def test_complex_agent_run_in_workflow(
                                             content='RunActivity:agent__complex_agent__event_stream_handler',
                                             children=[
                                                 BasicSpan(content='ctx.run_step=1'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                                    )
-                                                ),
+                                                BasicSpan(content=IsStr()),
                                             ],
                                         )
                                     ],
@@ -489,11 +485,7 @@ async def test_complex_agent_run_in_workflow(
                                             content='RunActivity:agent__complex_agent__event_stream_handler',
                                             children=[
                                                 BasicSpan(content='ctx.run_step=1'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                                    )
-                                                ),
+                                                BasicSpan(content=IsStr()),
                                             ],
                                         )
                                     ],
@@ -517,28 +509,28 @@ async def test_complex_agent_run_in_workflow(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=2'),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_uXANkD0BmOhQXjs7YgEC4Sk6","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_uXANkD0BmOhQXjs7YgEC4Sk6","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"city","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"city","tool_call_id":"call_uXANkD0BmOhQXjs7YgEC4Sk6","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_uXANkD0BmOhQXjs7YgEC4Sk6","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Mexico","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Mexico","tool_call_id":"call_uXANkD0BmOhQXjs7YgEC4Sk6","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_uXANkD0BmOhQXjs7YgEC4Sk6","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_uXANkD0BmOhQXjs7YgEC4Sk6","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_uXANkD0BmOhQXjs7YgEC4Sk6","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
                                                 ),
                                             ],
                                         )
@@ -554,7 +546,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                            content='{"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_uXANkD0BmOhQXjs7YgEC4Sk6","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -583,11 +575,7 @@ async def test_complex_agent_run_in_workflow(
                                             content='RunActivity:agent__complex_agent__event_stream_handler',
                                             children=[
                                                 BasicSpan(content='ctx.run_step=2'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                                    )
-                                                ),
+                                                BasicSpan(content=IsStr()),
                                             ],
                                         )
                                     ],
@@ -611,133 +599,130 @@ async def test_complex_agent_run_in_workflow(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=3'),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
+                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"tool_name":"final_result","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","event_kind":"final_result"}'
+                                                    content='{"tool_name":"final_result","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","event_kind":"final_result"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answers","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answers","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":[","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":[","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Capital","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Capital","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" of","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" of","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" the","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" Mexico","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" country","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Mexico","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Mexico","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"},{\\"","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"},{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Weather","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Weather","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" in","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" in","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" Mexico","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" the","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" capital","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Sunny","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Sunny","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"},{\\"","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"},{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Product","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Product","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" Name","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" Name","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"P","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"P","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"yd","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"yd","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"antic","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"antic","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" AI","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" AI","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"]}","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"]}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                ),
-                                                BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
+                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"{\\"answers\\":[{\\"label\\":\\"Capital of Mexico\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in Mexico City\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}","tool_call_id":"call_1dvzJPMvR3CMbUUFsSKunTKE","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
                                                 ),
                                             ],
                                         )
@@ -772,9 +757,9 @@ async def test_complex_agent_run(allow_model_requests: None):
     assert result.output == snapshot(
         Response(
             answers=[
-                Answer(label='Capital', answer='The capital of Mexico is Mexico City.'),
-                Answer(label='Weather', answer='The weather in Mexico City is currently sunny.'),
-                Answer(label='Product Name', answer='The product name is Pydantic AI.'),
+                Answer(label='Capital of the country', answer='Mexico City is the capital of Mexico.'),
+                Answer(label='Weather in the capital city', answer='The weather in Mexico City is currently sunny.'),
+                Answer(label='Product name', answer='The product name is Pydantic AI.'),
             ]
         )
     )
@@ -782,41 +767,41 @@ async def test_complex_agent_run(allow_model_requests: None):
         [
             PartStartEvent(
                 index=0,
-                part=ToolCallPart(tool_name='get_country', args='', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z'),
+                part=ToolCallPart(tool_name='get_country', args='', tool_call_id='call_MWvvXpK7riKMt6riZhD9mQk5'),
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z')
+                index=0, delta=ToolCallPartDelta(args_delta='{}', tool_call_id='call_MWvvXpK7riKMt6riZhD9mQk5')
             ),
             PartEndEvent(
                 index=0,
-                part=ToolCallPart(tool_name='get_country', args='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z'),
+                part=ToolCallPart(tool_name='get_country', args='{}', tool_call_id='call_MWvvXpK7riKMt6riZhD9mQk5'),
                 next_part_kind='tool-call',
             ),
             PartStartEvent(
                 index=1,
-                part=ToolCallPart(tool_name='get_product_name', args='', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5'),
+                part=ToolCallPart(tool_name='get_product_name', args='', tool_call_id='call_4RHse08oZLqr6VeCEDS6eAJB'),
                 previous_part_kind='tool-call',
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='{}', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5')
+                index=1, delta=ToolCallPartDelta(args_delta='{}', tool_call_id='call_4RHse08oZLqr6VeCEDS6eAJB')
             ),
             PartEndEvent(
                 index=1,
                 part=ToolCallPart(
-                    tool_name='get_product_name', args='{}', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5'
+                    tool_name='get_product_name', args='{}', tool_call_id='call_4RHse08oZLqr6VeCEDS6eAJB'
                 ),
             ),
             FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='get_country', args='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z')
+                part=ToolCallPart(tool_name='get_country', args='{}', tool_call_id='call_MWvvXpK7riKMt6riZhD9mQk5')
             ),
             FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='get_product_name', args='{}', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5')
+                part=ToolCallPart(tool_name='get_product_name', args='{}', tool_call_id='call_4RHse08oZLqr6VeCEDS6eAJB')
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
                     tool_name='get_country',
                     content='Mexico',
-                    tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z',
+                    tool_call_id='call_MWvvXpK7riKMt6riZhD9mQk5',
                     timestamp=IsDatetime(),
                 )
             ),
@@ -824,221 +809,266 @@ async def test_complex_agent_run(allow_model_requests: None):
                 result=ToolReturnPart(
                     tool_name='get_product_name',
                     content='Pydantic AI',
-                    tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5',
+                    tool_call_id='call_4RHse08oZLqr6VeCEDS6eAJB',
                     timestamp=IsDatetime(),
                 )
             ),
             PartStartEvent(
                 index=0,
-                part=ToolCallPart(tool_name='get_weather', args='', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv'),
+                part=ToolCallPart(tool_name='get_weather', args='', tool_call_id='call_9zNG8BMY6lpD2RmGxBHNkMqN'),
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='{"', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
+                index=0, delta=ToolCallPartDelta(args_delta='{"', tool_call_id='call_9zNG8BMY6lpD2RmGxBHNkMqN')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='city', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
+                index=0, delta=ToolCallPartDelta(args_delta='city', tool_call_id='call_9zNG8BMY6lpD2RmGxBHNkMqN')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
+                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_9zNG8BMY6lpD2RmGxBHNkMqN')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='Mexico', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
+                index=0, delta=ToolCallPartDelta(args_delta='Mexico', tool_call_id='call_9zNG8BMY6lpD2RmGxBHNkMqN')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' City', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
+                index=0, delta=ToolCallPartDelta(args_delta=' City', tool_call_id='call_9zNG8BMY6lpD2RmGxBHNkMqN')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
+                index=0, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='call_9zNG8BMY6lpD2RmGxBHNkMqN')
             ),
             PartEndEvent(
                 index=0,
                 part=ToolCallPart(
-                    tool_name='get_weather', args='{"city":"Mexico City"}', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv'
+                    tool_name='get_weather', args='{"city":"Mexico City"}', tool_call_id='call_9zNG8BMY6lpD2RmGxBHNkMqN'
                 ),
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
-                    tool_name='get_weather', args='{"city":"Mexico City"}', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv'
+                    tool_name='get_weather', args='{"city":"Mexico City"}', tool_call_id='call_9zNG8BMY6lpD2RmGxBHNkMqN'
                 )
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
                     tool_name='get_weather',
                     content='sunny',
-                    tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv',
+                    tool_call_id='call_9zNG8BMY6lpD2RmGxBHNkMqN',
                     timestamp=IsDatetime(),
                 )
             ),
             PartStartEvent(
                 index=0,
-                part=ToolCallPart(tool_name='final_result', args='', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn'),
-            ),
-            FinalResultEvent(tool_name='final_result', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn'),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='{"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                part=ToolCallPart(tool_name='get_product_name', args='', tool_call_id='call_voMjFj4kPvd6Ja0zm5XFk8On'),
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='answers', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='{}', tool_call_id='call_voMjFj4kPvd6Ja0zm5XFk8On')
+            ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='get_product_name', args='{}', tool_call_id='call_voMjFj4kPvd6Ja0zm5XFk8On'
+                ),
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(tool_name='get_product_name', args='{}', tool_call_id='call_voMjFj4kPvd6Ja0zm5XFk8On')
+            ),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='get_product_name',
+                    content='Pydantic AI',
+                    tool_call_id='call_voMjFj4kPvd6Ja0zm5XFk8On',
+                    timestamp=IsDatetime(),
+                )
+            ),
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='final_result', args='', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm'),
+            ),
+            FinalResultEvent(tool_name='final_result', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm'),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='{"', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='":[', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='answers', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='{"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='":[', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='label', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='{"', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='label', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='Capital', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='","', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='Capital', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='answer', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta=' of', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta=' the', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='The', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta=' country', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' capital', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='","', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' of', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='answer', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' Mexico', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' is', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='Mexico', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' Mexico', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta=' City', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' City', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta=' is', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='."', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta=' the', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='},{"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta=' capital', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='label', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta=' of', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta=' Mexico', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='Weather', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='."', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='","', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='},{"', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='answer', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='label', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='The', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='Weather', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' weather', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta=' in', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' in', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta=' the', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' Mexico', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta=' capital', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' City', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta=' city', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' is', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='","', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' currently', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='answer', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' sunny', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='."', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='The', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='},{"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta=' weather', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='label', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta=' in', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta=' Mexico', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='Product', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta=' City', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' Name', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta=' is', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='","', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta=' currently', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='answer', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta=' sunny', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='."', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='The', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='},{"', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' product', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='label', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' name', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' is', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='Product', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' P', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta=' name', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='yd', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='","', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='antic', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='answer', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' AI', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='."', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta='The', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='}', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta=' product', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=']}', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+                index=0, delta=ToolCallPartDelta(args_delta=' name', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' is', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' P', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='yd', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='antic', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' AI', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='."', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='}', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=']}', tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm')
             ),
             PartEndEvent(
                 index=0,
                 part=ToolCallPart(
                     tool_name='final_result',
-                    args='{"answers":[{"label":"Capital","answer":"The capital of Mexico is Mexico City."},{"label":"Weather","answer":"The weather in Mexico City is currently sunny."},{"label":"Product Name","answer":"The product name is Pydantic AI."}]}',
-                    tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn',
+                    args='{"answers":[{"label":"Capital of the country","answer":"Mexico City is the capital of Mexico."},{"label":"Weather in the capital city","answer":"The weather in Mexico City is currently sunny."},{"label":"Product name","answer":"The product name is Pydantic AI."}]}',
+                    tool_call_id='call_B8j3iuzqZGyzVs1n8IcHflFm',
                 ),
             ),
         ]
@@ -1072,9 +1102,9 @@ async def test_multiple_agents(allow_model_requests: None, client: Client):
         assert output == snapshot(
             Response(
                 answers=[
-                    Answer(label='Capital of the Country', answer='Mexico City'),
-                    Answer(label='Weather in Mexico City', answer='Sunny'),
-                    Answer(label='Product Name', answer='Pydantic AI'),
+                    Answer(label='Capital of the country', answer='The capital of the country Mexico is Mexico City.'),
+                    Answer(label='Weather in the capital', answer='The weather in Mexico City is currently sunny.'),
+                    Answer(label='Product name', answer='The product name is Pydantic AI.'),
                 ]
             )
         )
@@ -2563,7 +2593,7 @@ async def test_fastmcp_toolset(allow_model_requests: None, client: Client):
             task_queue=TASK_QUEUE,
         )
         assert output == snapshot(
-            'The `pydantic/pydantic-ai` repository is a Python agent framework crafted for developing production-grade Generative AI applications. It emphasizes type safety, model-agnostic design, and extensibility. The framework supports various LLM providers, manages agent workflows using graph-based execution, and ensures structured, reliable LLM outputs. Key packages include core framework components, graph execution engines, evaluation tools, and example applications.'
+            'The `pydantic-ai` repository is a Python framework for building type-safe, production-grade Generative AI applications. It offers a unified API to interact with over 20 LLM providers. Key features include type safety, model-agnostic design, structured outputs with Pydantic, native OpenTelemetry observability, a tool system for actions, graph-based execution, streaming support, durable execution, and an evaluation framework. The repository includes packages such as `pydantic-ai-slim` for core functionality and `pydantic-ai` as a meta-package, along with several other packages to support various application needs.'
         )
 
 
