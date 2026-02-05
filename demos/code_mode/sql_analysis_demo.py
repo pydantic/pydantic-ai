@@ -1,14 +1,11 @@
-"""CodeMode Demo: Nested Sales Report with Deep Dependency Chains.
+"""CodeMode Demo: Regional Sales SQL Analysis.
 
-This demo shows how code mode handles deep dependency chains where each query
-depends on results from the previous query. Even with parallel tool calling,
-traditional mode requires multiple sequential rounds.
+This demo shows how code mode reduces context bloat when processing large datasets.
+With 400+ sales records across 4 regions, traditional mode must send all data through
+the LLM context. Code mode processes it in a loop, returning only summaries.
 
-Dependency chain (4 levels):
-    get_regions() → get_top_sales(region) → get_sale_details(sale_id) → get_customer_info(customer_id)
-
-Traditional mode (with parallel): 4+ rounds (must wait for each level)
-Code mode: 1-2 rounds (all in nested loops)
+Traditional mode: All 400+ records flow through LLM context
+Code mode: Loop processes records, returns only totals
 
 Run:
     uv run python demos/code_mode/sql_analysis_demo.py
@@ -35,75 +32,71 @@ from pydantic_ai.toolsets.code_mode import CodeModeToolset
 # =============================================================================
 
 PROMPT = """
-Generate a detailed sales report for the top 3 sales in each region.
+Analyze Q4 2024 sales across all regions.
 
 Steps:
 1. Get all regions
-2. For each region, get the top 3 sales (returns sale_id and amount)
-3. For each sale, get the sale details (returns product and customer_id)
-4. For each sale, get the customer info (returns name and industry)
-5. Return a list with each region's top sales including customer details
+2. For each region, query Q4 sales
+3. Calculate total revenue by summing all transaction amounts
+4. Count transactions
+5. If revenue > 50000, check bonus rules
+6. Append each region's summary to a results list
+7. Return total revenue and the results list
 """
 
 MODEL = 'gateway/anthropic:claude-sonnet-4-5'
 MAX_RETRIES = 3
 
 # =============================================================================
-# Mock Database
+# Mock SQL Database - Large Dataset
 # =============================================================================
 
 _regions = ['West', 'East', 'North', 'South']
 
-# Generate sales data
-random.seed(42)
-_sales: dict[str, list[dict[str, Any]]] = {}
-_sale_details: dict[str, dict[str, Any]] = {}
-_customers: dict[str, dict[str, Any]] = {}
+# Bonus rules (only some regions have them)
+_bonus_rules = {
+    'West': {'threshold': 50000, 'bonus_pct': 0.05},
+    'East': {'threshold': 50000, 'bonus_pct': 0.04},
+}
 
-# Customer pool
-_customer_names = [
-    ('C001', 'Acme Corp', 'Technology'),
-    ('C002', 'GlobalTech', 'Technology'),
-    ('C003', 'MegaRetail', 'Retail'),
-    ('C004', 'HealthFirst', 'Healthcare'),
-    ('C005', 'EduLearn', 'Education'),
-    ('C006', 'FinanceHub', 'Finance'),
-    ('C007', 'AutoDrive', 'Automotive'),
-    ('C008', 'FoodCo', 'Food & Beverage'),
-]
 
-for cid, name, industry in _customer_names:
-    _customers[cid] = {'customer_id': cid, 'name': name, 'industry': industry}
+def _generate_sales_data() -> dict[str, list[dict[str, Any]]]:
+    """Generate large sales dataset - 100+ records per region."""
+    random.seed(42)
+    sales: dict[str, list[dict[str, Any]]] = {}
 
-# Products
-_products = ['Widget Pro', 'Gadget Plus', 'Smart Sensor', 'Power Bank', 'USB Hub']
+    # Revenue targets to ensure interesting results
+    revenue_targets: dict[str, int] = {'West': 65000, 'East': 55000, 'North': 45000, 'South': 70000}
 
-# Generate sales per region
-sale_counter = 1
-for region in _regions:
-    region_sales: list[dict[str, Any]] = []
-    for _ in range(20):  # 20 sales per region
-        sale_id = f'S{sale_counter:04d}'
-        amount = round(random.uniform(500, 5000), 2)
-        customer_id = random.choice([c[0] for c in _customer_names])
-        product = random.choice(_products)
+    for region in _regions:
+        region_sales: list[dict[str, Any]] = []
+        target = revenue_targets[region]
+        current_total: float = 0
+        sale_id = 1
 
-        region_sales.append({'sale_id': sale_id, 'amount': amount, 'region': region})
-        _sale_details[sale_id] = {
-            'sale_id': sale_id,
-            'product': product,
-            'customer_id': customer_id,
-            'date': f'2024-{random.randint(10, 12):02d}-{random.randint(1, 28):02d}',
-        }
-        sale_counter += 1
+        # Generate 100+ sales per region to bloat traditional mode context
+        while len(region_sales) < 100 or current_total < target * 0.95:
+            amount = round(random.uniform(100, 2000), 2)
 
-    # Sort by amount descending
-    region_sales.sort(key=lambda x: float(x['amount']), reverse=True)
-    _sales[region] = region_sales
+            region_sales.append({
+                'id': f'{region[0]}{sale_id:04d}',
+                'amount': amount,
+                'date': f'2024-{random.randint(10, 12):02d}-{random.randint(1, 28):02d}',
+            })
+
+            current_total += amount
+            sale_id += 1
+
+        sales[region] = region_sales
+
+    return sales
+
+
+_sales = _generate_sales_data()
 
 
 # =============================================================================
-# Tools - Each level depends on the previous
+# Tools
 # =============================================================================
 
 
@@ -116,57 +109,50 @@ def get_regions() -> list[str]:
     return _regions.copy()
 
 
-def get_top_sales(region: str, limit: int) -> list[dict[str, Any]]:
-    """Get the top N sales for a region by amount.
+def query_sales(region: str, quarter: str) -> dict[str, Any]:
+    """Query sales transactions for a region and quarter.
 
     Args:
         region: The region name.
-        limit: Maximum number of sales to return.
+        quarter: The quarter (e.g., "Q4").
 
     Returns:
-        List of sales with sale_id and amount, sorted by amount descending.
+        Dictionary with transaction records. Each has: id, amount, date.
     """
     if region not in _sales:
-        return []
-    sales = _sales[region][:limit]
-    return [{'sale_id': s['sale_id'], 'amount': s['amount']} for s in sales]
+        return {'error': f'Unknown region: {region}', 'transactions': []}
+
+    quarter_months = {
+        'Q1': ['01', '02', '03'],
+        'Q2': ['04', '05', '06'],
+        'Q3': ['07', '08', '09'],
+        'Q4': ['10', '11', '12'],
+    }
+
+    months = quarter_months.get(quarter, [])
+    transactions = [s for s in _sales[region] if s['date'][5:7] in months]
+
+    return {'region': region, 'quarter': quarter, 'transactions': transactions}
 
 
-def get_sale_details(sale_id: str) -> dict[str, Any]:
-    """Get detailed information for a sale.
-
-    Args:
-        sale_id: The sale ID.
-
-    Returns:
-        Sale details including product and customer_id.
-    """
-    if sale_id not in _sale_details:
-        return {'error': f'Sale not found: {sale_id}'}
-    return _sale_details[sale_id].copy()
-
-
-def get_customer_info(customer_id: str) -> dict[str, Any]:
-    """Get customer information.
+def get_bonus_rules(region: str) -> dict[str, Any] | None:
+    """Get bonus eligibility rules for a region.
 
     Args:
-        customer_id: The customer ID.
+        region: The region name.
 
     Returns:
-        Customer info including name and industry.
+        Bonus rules (threshold and bonus_pct) or None if no rules exist.
     """
-    if customer_id not in _customers:
-        return {'error': f'Customer not found: {customer_id}'}
-    return _customers[customer_id].copy()
+    return _bonus_rules.get(region)
 
 
 def create_toolset() -> FunctionToolset[None]:
-    """Create the toolset with 4-level dependency chain."""
+    """Create the SQL analysis toolset."""
     toolset: FunctionToolset[None] = FunctionToolset()
     toolset.add_function(get_regions)
-    toolset.add_function(get_top_sales)
-    toolset.add_function(get_sale_details)
-    toolset.add_function(get_customer_info)
+    toolset.add_function(query_sales)
+    toolset.add_function(get_bonus_rules)
     return toolset
 
 
@@ -180,7 +166,7 @@ def create_traditional_agent(toolset: FunctionToolset[None]) -> Agent[None, str]
     return Agent(
         MODEL,
         toolsets=[toolset],
-        system_prompt='You are a sales analyst. Use the available tools to generate reports.',
+        system_prompt='You are a sales analyst. Use the available tools to analyze regional sales data.',
     )
 
 
@@ -195,7 +181,7 @@ def create_code_mode_agent(toolset: FunctionToolset[None]) -> Agent[None, str]:
     return Agent(
         MODEL,
         toolsets=[code_toolset],
-        system_prompt='You are a sales analyst. Use the available tools to generate reports.',
+        system_prompt='You are a sales analyst. Use the available tools to analyze regional sales data.',
     )
 
 
@@ -289,29 +275,25 @@ def print_metrics(metrics: RunMetrics) -> None:
 def print_data_stats() -> None:
     """Print statistics about the mock data."""
     total_sales = sum(len(s) for s in _sales.values())
-    print(f'\n  Mock Data:')
+    print('\n  Mock Data:')
     print(f'    Regions: {len(_regions)}')
-    print(f'    Total Sales: {total_sales}')
-    print(f'    Customers: {len(_customers)}')
-    print(f'    Products: {len(_products)}')
-    print(f'\n  Dependency Chain (4 levels):')
-    print(f'    Level 0: get_regions() → {len(_regions)} regions')
-    print(f'    Level 1: get_top_sales() × {len(_regions)} = {len(_regions) * 3} sales')
-    print(f'    Level 2: get_sale_details() × {len(_regions) * 3} = {len(_regions) * 3} details')
-    print(f'    Level 3: get_customer_info() × {len(_regions) * 3} = {len(_regions) * 3} customers')
-    print(f'    Total tool calls: 1 + {len(_regions)} + {len(_regions) * 3} + {len(_regions) * 3} = {1 + len(_regions) + len(_regions) * 3 * 2}')
+    print(f'    Total Sales Records: {total_sales}')
+    for region in _regions:
+        count = len(_sales[region])
+        total = sum(s['amount'] for s in _sales[region])
+        print(f'    {region}: {count} transactions, ${total:,.2f} revenue')
 
 
 async def main() -> None:
-    # Configure Logfire
-    logfire.configure(service_name='code-mode-nested-demo')
+    """Run the demo."""
+    logfire.configure(service_name='code-mode-sql-demo')
     logfire.instrument_pydantic_ai()
 
     print('=' * 70)
-    print('CodeMode Demo: Nested Sales Report with Deep Dependency Chains')
+    print('CodeMode Demo: Regional Sales SQL Analysis')
     print('=' * 70)
     print(f'\nModel: {MODEL}')
-    print('Task: Generate report with 4-level dependency chain')
+    print('Task: Analyze Q4 sales across 4 regions with 400+ transactions')
 
     print_data_stats()
 
@@ -320,7 +302,7 @@ async def main() -> None:
     # Run Traditional
     print('\n' + '-' * 70)
     print('Running TRADITIONAL tool calling...')
-    print('(Even with parallel calls, needs 4+ rounds due to dependencies)')
+    print('(All 400+ sales records flow through LLM context)')
     print('-' * 70)
 
     with logfire.span('demo_traditional'):
@@ -330,7 +312,7 @@ async def main() -> None:
     # Run CodeMode
     print('\n' + '-' * 70)
     print('Running CODE MODE tool calling...')
-    print('(All 29 tool calls in nested loops, 1-2 rounds)')
+    print('(Loop processes records in code, returns only summaries)')
     print('-' * 70)
 
     with logfire.span('demo_code_mode'):
@@ -360,10 +342,8 @@ async def main() -> None:
         f'({token_pct:+.1f}% {"savings" if token_diff > 0 else "increase"})'
     )
 
-    print('\n  Key Insight: Deep dependency chains force sequential rounds.')
-    print('               get_regions → get_top_sales → get_sale_details → get_customer_info')
-    print('               Traditional mode MUST wait for each level, even with parallel calls.')
-    print('               Code mode does all 29 calls in nested loops in ONE code block.')
+    print('\n  Key Insight: Traditional mode sends 400+ sales records through LLM context.')
+    print('               Code mode processes them in a loop, returning only summaries.')
 
     print('\n' + '=' * 70)
     print('View detailed traces: https://logfire.pydantic.dev')
