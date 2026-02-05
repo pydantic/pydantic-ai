@@ -28,7 +28,7 @@ sed -i.bak "s/^export GOOGLE_CLOUD_PROJECT=.*/export GOOGLE_CLOUD_PROJECT=$PROJE
 source .env.vertex
 
 echo "Using Vertex AI project: $PROJECT"
-echo "Location: ${GOOGLE_CLOUD_LOCATION:-global}"
+echo "Location: ${GOOGLE_LOCATION:-global}"
 echo ""
 
 ENABLE_VERTEX=1 uv run pytest "$@"
