@@ -80,7 +80,7 @@ dbos_config: DBOSConfig = {
 DBOS(config=dbos_config)
 
 agent = Agent(
-    'gpt-5',
+    'gpt-5.2',
     instructions="You're an expert in geography.",
     name='geography',  # (4)!
 )
@@ -130,7 +130,7 @@ DBOS checkpoints workflow inputs/outputs and step outputs into a database using 
 Because DBOS cannot stream output directly to the workflow or step call site, [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream] and [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events] are not supported when running inside of a DBOS workflow.
 
 Instead, you can implement streaming by setting an [`event_stream_handler`][pydantic_ai.agent.EventStreamHandler] on the `Agent` or `DBOSAgent` instance and using [`DBOSAgent.run()`][pydantic_ai.durable_exec.dbos.DBOSAgent.run].
-The event stream handler function will receive the agent [run context][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools. For examples, see the [streaming docs](../agents.md#streaming-all-events).
+The event stream handler function will receive the agent [run context][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools. For examples, see the [streaming docs](../agent.md#streaming-all-events).
 
 
 ### Parallel Tool Execution

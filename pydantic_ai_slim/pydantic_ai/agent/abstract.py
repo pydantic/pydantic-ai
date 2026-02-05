@@ -221,7 +221,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```python
         from pydantic_ai import Agent
 
-        agent = Agent('openai:gpt-4o')
+        agent = Agent('openai:gpt-5.2')
 
         async def main():
             agent_run = await agent.run('What is the capital of France?')
@@ -351,7 +351,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```python
         from pydantic_ai import Agent
 
-        agent = Agent('openai:gpt-4o')
+        agent = Agent('openai:gpt-5.2')
 
         result_sync = agent.run_sync('What is the capital of Italy?')
         print(result_sync.output)
@@ -481,7 +481,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```python
         from pydantic_ai import Agent
 
-        agent = Agent('openai:gpt-4o')
+        agent = Agent('openai:gpt-5.2')
 
         async def main():
             async with agent.run_stream('What is the capital of the UK?') as response:
@@ -725,7 +725,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```python
         from pydantic_ai import Agent
 
-        agent = Agent('openai:gpt-4o')
+        agent = Agent('openai:gpt-5.2')
 
         def main():
             response = agent.run_stream_sync('What is the capital of the UK?')
@@ -848,7 +848,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```python
         from pydantic_ai import Agent, AgentRunResultEvent, AgentStreamEvent
 
-        agent = Agent('openai:gpt-4o')
+        agent = Agent('openai:gpt-5.2')
 
         async def main():
             events: list[AgentStreamEvent | AgentRunResultEvent] = []
@@ -1055,7 +1055,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```python
         from pydantic_ai import Agent
 
-        agent = Agent('openai:gpt-4o')
+        agent = Agent('openai:gpt-5.2')
 
         async def main():
             nodes = []
@@ -1088,7 +1088,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     model_response=ModelResponse(
                         parts=[TextPart(content='The capital of France is Paris.')],
                         usage=RequestUsage(input_tokens=56, output_tokens=7),
-                        model_name='gpt-4o',
+                        model_name='gpt-5.2',
                         timestamp=datetime.datetime(...),
                         run_id='...',
                     )
@@ -1277,7 +1277,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```python
         from pydantic_ai import Agent
 
-        agent = Agent('openai:gpt-4o')
+        agent = Agent('openai:gpt-5.2')
         app = agent.to_ag_ui()
         ```
 
@@ -1376,7 +1376,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```python
         from pydantic_ai import Agent
 
-        agent = Agent('openai:gpt-4o')
+        agent = Agent('openai:gpt-5.2')
         app = agent.to_a2a()
         ```
 
@@ -1412,6 +1412,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         prog_name: str = 'pydantic-ai',
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
     ) -> None:
         """Run the agent in a CLI chat interface.
 
@@ -1419,12 +1421,14 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deps: The dependencies to pass to the agent.
             prog_name: The name of the program to use for the CLI. Defaults to 'pydantic-ai'.
             message_history: History of the conversation so far.
+            model_settings: Optional settings to use for this model's request.
+            usage_limits: Optional limits on model request count or token usage.
 
         Example:
         ```python {title="agent_to_cli.py" test="skip"}
         from pydantic_ai import Agent
 
-        agent = Agent('openai:gpt-4o', instructions='You always respond in Italian.')
+        agent = Agent('openai:gpt-5.2', instructions='You always respond in Italian.')
 
         async def main():
             await agent.to_cli()
@@ -1442,6 +1446,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             code_theme='monokai',
             prog_name=prog_name,
             message_history=message_history,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
         )
 
     def to_cli_sync(
@@ -1449,6 +1455,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         prog_name: str = 'pydantic-ai',
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
     ) -> None:
         """Run the agent in a CLI chat interface with the non-async interface.
 
@@ -1456,15 +1464,23 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deps: The dependencies to pass to the agent.
             prog_name: The name of the program to use for the CLI. Defaults to 'pydantic-ai'.
             message_history: History of the conversation so far.
+            model_settings: Optional settings to use for this model's request.
+            usage_limits: Optional limits on model request count or token usage.
 
         ```python {title="agent_to_cli_sync.py" test="skip"}
         from pydantic_ai import Agent
 
-        agent = Agent('openai:gpt-4o', instructions='You always respond in Italian.')
+        agent = Agent('openai:gpt-5.2', instructions='You always respond in Italian.')
         agent.to_cli_sync()
         agent.to_cli_sync(prog_name='assistant')
         ```
         """
         return _utils.get_event_loop().run_until_complete(
-            self.to_cli(deps=deps, prog_name=prog_name, message_history=message_history)
+            self.to_cli(
+                deps=deps,
+                prog_name=prog_name,
+                message_history=message_history,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+            )
         )
