@@ -7632,3 +7632,92 @@ async def test_central_content_filter_with_partial_content():
     # Should NOT raise ContentFilterError
     result = await agent.run('Trigger filter')
     assert result.output == 'Partially generated content...'
+
+
+async def test_delegate_agent_approval_propagation():
+    """Test that ApprovalRequired from a delegate agent can be explicitly propagated to parent.
+
+    Flow:
+    1. Parent agent calls a tool that invokes a delegate agent
+    2. Delegate agent's tool raises ApprovalRequired
+    3. Parent tool explicitly re-raises ApprovalRequired with nested context
+    4. User approves via parent agent
+    5. Parent tool re-runs delegate with approval, gets result
+    """
+    from pydantic_ai.exceptions import ApprovalRequired
+
+    # --- Delegate agent ---
+    def delegate_llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Check if tool already executed (has tool return in messages)
+        for msg in messages:
+            if isinstance(msg, ModelRequest):
+                if any(isinstance(p, ToolReturnPart) for p in msg.parts):
+                    return ModelResponse(parts=[TextPart('delegate done')])
+        return ModelResponse(parts=[ToolCallPart('sensitive_action', {'value': 42}, tool_call_id='sens_1')])
+
+    delegate_agent: Agent[None, str | DeferredToolRequests] = Agent(
+        FunctionModel(delegate_llm),
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @delegate_agent.tool
+    def sensitive_action(ctx: RunContext[None], value: int) -> str:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired(metadata={'value': value})
+        return f'executed with {value}'
+
+    # --- Parent agent ---
+    call_count = 0
+
+    def parent_llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart('call_delegate', tool_call_id='del_1')])
+        # Second call: verify tool returned delegate's output
+        last_request = messages[-1]
+        assert isinstance(last_request, ModelRequest)
+        tool_return = next(p for p in last_request.parts if isinstance(p, ToolReturnPart))
+        assert tool_return.content == 'delegate done'
+        return ModelResponse(parts=[TextPart('All done!')])
+
+    parent_agent: Agent[None, str | DeferredToolRequests] = Agent(
+        FunctionModel(parent_llm),
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @parent_agent.tool
+    async def call_delegate(ctx: RunContext[None]) -> str:
+        result = await delegate_agent.run('do sensitive thing', usage=ctx.usage)
+
+        if isinstance(result.output, DeferredToolRequests):
+            if not ctx.tool_call_approved:
+                # Propagate approval requirement to parent's caller
+                raise ApprovalRequired(metadata={'nested_approvals': result.output.approvals})
+
+            # Parent was approved - pass approval to delegate
+            result = await delegate_agent.run(
+                message_history=result.all_messages(),
+                deferred_tool_results=DeferredToolResults(
+                    approvals={tc.tool_call_id: True for tc in result.output.approvals}
+                ),
+                usage=ctx.usage,
+            )
+            assert isinstance(result.output, str)
+
+        return result.output
+
+    # --- Run 1: Parent calls delegate, delegate needs approval ---
+    result = await parent_agent.run('Do the task')
+
+    assert isinstance(result.output, DeferredToolRequests)
+    assert len(result.output.approvals) == 1
+    assert result.output.approvals[0].tool_name == 'call_delegate'
+
+    # --- Run 2: User approves, delegate executes ---
+    result = await parent_agent.run(
+        message_history=result.all_messages(),
+        deferred_tool_results=DeferredToolResults(approvals={result.output.approvals[0].tool_call_id: True}),
+    )
+
+    assert result.output == 'All done!'

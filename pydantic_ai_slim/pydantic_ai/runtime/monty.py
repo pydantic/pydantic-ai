@@ -11,6 +11,7 @@ from pydantic_ai.runtime.abstract import (
     CodeSyntaxError,
     CodeTypingError,
     FunctionCall,
+    InterruptedToolCall,
     ToolCallback,
 )
 
@@ -119,81 +120,107 @@ class MontyRuntime(CodeRuntime):
         tasks: dict[int, asyncio.Task[Any]],
         call_tool: ToolCallback,
     ):
+        tool_call_id_to_call: dict[int, FunctionCall] = {}
+
         while not isinstance(monty_state, MontyComplete):
             if isinstance(monty_state, MontySnapshot):
-                # Do an external tool call
-                tasks[monty_state.call_id] = asyncio.ensure_future(
-                    call_tool(
-                        FunctionCall(
-                            function_name=monty_state.function_name,
-                            args=monty_state.args,
-                            kwargs=monty_state.kwargs,
-                        )
-                    )
+                call = FunctionCall(
+                    call_id=str(monty_state.call_id),
+                    function_name=monty_state.function_name,
+                    args=monty_state.args,
+                    kwargs=monty_state.kwargs,
                 )
+                # Do an external tool call
+                tasks[monty_state.call_id] = asyncio.ensure_future(call_tool(call))
+                tool_call_id_to_call[monty_state.call_id] = call
+
                 monty_state = monty_state.resume(future=...)
             elif isinstance(monty_state, MontyFutureSnapshot):
-                pending = [tasks[cid] for cid in monty_state.pending_call_ids if cid in tasks]
+                pending_ids = monty_state.pending_call_ids or []
+                pending = [tasks[cid] for cid in pending_ids if cid in tasks]
+                if not pending:
+                    # No pending tasks - this can happen if all results are already available
+                    # Just provide empty results and let Monty continue
+                    monty_state = monty_state.resume(results={})
+                    continue
                 done, _ = await asyncio.wait(pending, return_when=asyncio.ALL_COMPLETED)
                 results: dict[int, Any] = {}
-                inner_exceptions: list[ApprovalRequired | CallDeferred] = []
+                interrupted_calls: list[InterruptedToolCall] = []
                 for task in done:
                     for cid, t in list(tasks.items()):
                         if t is task:
                             try:
                                 results[cid] = {'return_value': task.result()}
 
-                            except ModelRetry:
-                                # Cancel all the tool calls which are in flight
-                                # It makes sense to cancel the calls though because if in the chain something does not work most probably nothing works?
-
+                            except (CallDeferred, ApprovalRequired) as e:
+                                interrupted_calls.append(InterruptedToolCall(type=e, call=tool_call_id_to_call[cid]))
+                                # Do not raise here, club them together we will fire them all off in one go
+                            except ModelRetry as e:
                                 for remaining in tasks.values():
                                     remaining.cancel()
 
-                                # No point in doing anything if ModelRetry is raised by a tool because code is going to be rewritten
-                                # Maybe we can do something clever using func prog concepts suggested by Douwe but I have no idea what that might look like rn
-
                                 raise
-
-                            except (CallDeferred, ApprovalRequired) as e:
-                                inner_exceptions.append(e)
-                                # Do not raise here, club them together we will fire them all off in one go
                             except Exception as e:
-                                # This is some other exception raised within Monty so I send it back to monty not sure what it can do with that though?
-                                results[cid] = {'exception': e}
-                                # I am really unsure if this is the right thing to do here with this, should there be no Model Retry here?
+                                for remaining in tasks.values():
+                                    remaining.cancel()
+
+                                raise ModelRetry(str(e))
+
                             del tasks[cid]
                             break
+
+                # IMPORTANT: Save checkpoint BEFORE advancing if there are interrupted calls
+                # The checkpoint needs to capture the state where Monty is waiting for these results
+                if len(interrupted_calls) > 0:
+                    # Save the checkpoint while Monty is still waiting for results
+                    # The interrupted_calls list tells us which calls need results from the user
+                    checkpoint = monty_state.dump()
+                    # TODO: We are going to lose some tasks and info though that are in flight at the moment
+                    raise CodeInterruptedError(interrupted_calls=interrupted_calls, checkpoint=checkpoint)
 
                 monty_state = monty_state.resume(results=results)
 
                 if isinstance(monty_state, MontyComplete):
-                    # Well we don't need to do anything because we got the result without having to get approvals for the tools or execution whatever
-                    # Must not have been needed?
                     break
-
-                if len(inner_exceptions) > 0:
-                    # We have inner exceptions
-                    # Let us just raise CodeInterruptedError with these bunched together and we will handle it outside
-                    raise CodeInterruptedError(exceptions=inner_exceptions, checkpoint=monty_state.dump())
 
         return monty_state
 
-    async def resume(self, checkpoint: bytes, call_tool: ToolCallback):
+    async def resume(self, checkpoint: bytes, call_tool: ToolCallback, interrupted_calls: list[dict[str, Any]]) -> Any:
         try:
             tasks: dict[int, asyncio.Task[Any]] = {}
             monty_state = MontyFutureSnapshot.load(checkpoint)
+
+            # Fire tasks for each pending call using the interrupted_calls details.
+            # The callback has results_map populated, so these will resolve immediately
+            # (either returning a value directly, or executing approved tools).
+            pending_ids = monty_state.pending_call_ids or []
+            for ic in interrupted_calls:
+                call_id_int = int(ic['call_id'])
+                if call_id_int in pending_ids:
+                    call = FunctionCall(
+                        call_id=ic['call_id'],
+                        function_name=ic['tool_name'],
+                        args=tuple(ic.get('args', ())),
+                        kwargs=ic.get('kwargs', {}),
+                    )
+                    tasks[call_id_int] = asyncio.ensure_future(call_tool(call))
+
+            # If we have interrupted calls but pending_ids is empty, something is wrong
+            # with the checkpoint. Try to continue by firing all interrupted calls.
+            if interrupted_calls and not tasks:
+                for ic in interrupted_calls:
+                    call_id_int = int(ic['call_id'])
+                    call = FunctionCall(
+                        call_id=ic['call_id'],
+                        function_name=ic['tool_name'],
+                        args=tuple(ic.get('args', ())),
+                        kwargs=ic.get('kwargs', {}),
+                    )
+                    tasks[call_id_int] = asyncio.ensure_future(call_tool(call))
+
             monty_state = await MontyRuntime._execution_loop(monty_state, tasks, call_tool)
 
         except MontyRuntimeError as e:
             raise CodeRuntimeError(e.display())
 
         return monty_state.output
-
-    @staticmethod
-    def dump(monty_state: MontySnapshot | MontyFutureSnapshot) -> bytes:
-        return monty_state.dump()
-
-    @staticmethod
-    def load(dumped_monty_state: bytes) -> MontySnapshot:
-        return MontySnapshot.load(dumped_monty_state)

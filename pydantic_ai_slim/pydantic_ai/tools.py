@@ -160,6 +160,21 @@ class DeferredToolRequests:
     """Tool calls that require external execution."""
     approvals: list[ToolCallPart] = field(default_factory=list)
     """Tool calls that require human-in-the-loop approval."""
+    context: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """Context for deferred tool calls, keyed by `tool_call_id`.
+
+    For code mode (run_code), the context contains:
+
+    - `checkpoint`: bytes - Monty checkpoint for resuming execution
+    - `interrupted_calls`: list of dicts with nested call details:
+        - `call_id`: str - The nested call ID
+        - `tool_name`: str - The tool name
+        - `args`: tuple - Positional arguments
+        - `kwargs`: dict - Keyword arguments
+        - `type`: 'approval' | 'external' - Whether the call needs approval or external execution
+
+    Pass this context back in DeferredToolResults.context with added 'results' key.
+    """
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
     """Metadata for deferred tool calls, keyed by `tool_call_id`."""
 
@@ -228,6 +243,18 @@ class DeferredToolResults:
     """Map of tool call IDs to results for tool calls that required human-in-the-loop approval."""
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
     """Metadata for deferred tool calls, keyed by `tool_call_id`. Each value will be available in the tool's RunContext as `tool_call_metadata`."""
+    context: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """Context to pass back for deferred tool calls, keyed by `tool_call_id`.
+
+    For code mode, pass back the original context from DeferredToolRequests with an added 'results' key:
+
+    - `checkpoint`: bytes (unchanged from request)
+    - `interrupted_calls`: list (unchanged from request)
+    - `results`: dict mapping nested call_id to one of:
+        - `ToolApproved()` for approved calls (will be executed)
+        - `ToolDenied(message=...)` for denied calls (will raise error)
+        - Any other value for external execution results (returned directly)
+    """
 
 
 A = TypeVar('A')

@@ -19,6 +19,7 @@ from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 class FunctionCall:
     """Represents a call to an external function made by executing code."""
 
+    call_id: str
     function_name: str
     args: tuple[Any, ...] = ()  # Positional args
     kwargs: dict[str, Any] = field(default_factory=lambda: {})  # keyword args
@@ -51,9 +52,16 @@ class CodeRuntimeError(CodeExecutionError):
 
 
 @dataclass
+class InterruptedToolCall:
+    type: ApprovalRequired | CallDeferred
+    call: FunctionCall
+
+
+@dataclass
 class CodeInterruptedError(Exception):
-    exceptions: list[ApprovalRequired | CallDeferred]  # These will be the exceptions within which we need to send back
+    interrupted_calls: list[InterruptedToolCall]  # These will be the exceptions within which we need to send back
     checkpoint: bytes
+    call_id: str | None = None
 
 
 # TODO: Consider whether this should be Coroutine[Any, Any, Any] instead of Awaitable[Any].
@@ -86,4 +94,21 @@ class CodeRuntime(ABC):
         ...
 
     @abstractmethod
-    async def resume(self, checkpoint: bytes, call_tool: ToolCallback) -> Any: ...
+    async def resume(
+        self, checkpoint: bytes, call_tool: ToolCallback, interrupted_calls: list[dict[str, Any]]
+    ) -> Any:
+        """Resume execution from a checkpoint with resolved results.
+
+        Args:
+            checkpoint: The serialized checkpoint state from a previous interrupted run.
+            call_tool: Callback invoked for each pending function call. The callback
+                should have pre-resolved results available (via results_map) so that
+                pending calls return immediately.
+            interrupted_calls: List of call details from the interrupted execution.
+                Each dict contains: call_id, tool_name, args, kwargs, type.
+                These are needed to reconstruct FunctionCall objects for the callback.
+
+        Returns:
+            The final output of the resumed code execution.
+        """
+        ...

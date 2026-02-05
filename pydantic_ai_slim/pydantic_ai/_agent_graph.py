@@ -337,6 +337,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             last_model_response,
             tool_call_results=tool_call_results,
             tool_call_metadata=deferred_tool_results.metadata or None,
+            tool_call_context=deferred_tool_results.context or None,
             user_prompt=self.user_prompt,
         )
 
@@ -570,6 +571,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None = None
     tool_call_metadata: dict[str, dict[str, Any]] | None = None
     """Metadata for deferred tool calls, keyed by `tool_call_id`."""
+    tool_call_context: dict[str, dict[str, Any]] | None = None
     user_prompt: str | Sequence[_messages.UserContent] | None = None
     """Optional user prompt to include alongside tool call results.
 
@@ -758,6 +760,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             tool_calls=tool_calls,
             tool_call_results=self.tool_call_results,
             tool_call_metadata=self.tool_call_metadata,
+            tool_call_context=self.tool_call_context,
             final_result=None,
             ctx=ctx,
             output_parts=output_parts,
@@ -871,6 +874,7 @@ async def process_tool_calls(  # noqa: C901
     tool_calls: list[_messages.ToolCallPart],
     tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None,
     tool_call_metadata: dict[str, dict[str, Any]] | None,
+    tool_call_context: dict[str, dict[str, Any]] | None,
     final_result: result.FinalResult[NodeRunEndT] | None,
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     output_parts: list[_messages.ModelRequestPart],
@@ -997,6 +1001,7 @@ async def process_tool_calls(  # noqa: C901
 
     deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]] = defaultdict(list)
     deferred_metadata: dict[str, dict[str, Any]] = {}
+    deferred_context: dict[str, Any] = {}
 
     if calls_to_run:
         async for event in _call_tools(
@@ -1004,12 +1009,14 @@ async def process_tool_calls(  # noqa: C901
             tool_calls=calls_to_run,
             tool_call_results=calls_to_run_results,
             tool_call_metadata=tool_call_metadata,
+            tool_call_context=tool_call_context,
             tracer=ctx.deps.tracer,
             usage=ctx.state.usage,
             usage_limits=ctx.deps.usage_limits,
             output_parts=output_parts,
             output_deferred_calls=deferred_calls,
             output_deferred_metadata=deferred_metadata,
+            output_deferred_context=deferred_context,
         ):
             yield event
 
@@ -1044,6 +1051,7 @@ async def process_tool_calls(  # noqa: C901
             calls=deferred_calls['external'],
             approvals=deferred_calls['unapproved'],
             metadata=deferred_metadata,
+            context=deferred_context,
         )
 
         final_result = result.FinalResult(cast(NodeRunEndT, deferred_tool_requests), None, None)
@@ -1057,17 +1065,20 @@ async def _call_tools(  # noqa: C901
     tool_calls: list[_messages.ToolCallPart],
     tool_call_results: dict[str, DeferredToolResult],
     tool_call_metadata: dict[str, dict[str, Any]] | None,
+    tool_call_context: dict[str, dict[str, Any]] | None,
     tracer: Tracer,
     usage: _usage.RunUsage,
     usage_limits: _usage.UsageLimits,
     output_parts: list[_messages.ModelRequestPart],
     output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
     output_deferred_metadata: dict[str, dict[str, Any]],
+    output_deferred_context: dict[str, dict[str, Any]],
 ) -> AsyncIterator[_messages.HandleResponseEvent]:
     tool_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
     user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
     deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
     deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
+    deferred_context_by_index: dict[int, dict[str, Any] | None] = {}
 
     if usage_limits.tool_calls_limit is not None:
         projected_usage = deepcopy(usage)
@@ -1108,6 +1119,7 @@ async def _call_tools(  # noqa: C901
             except exceptions.ApprovalRequired as e:
                 deferred_calls_by_index[index] = 'unapproved'
                 deferred_metadata_by_index[index] = e.metadata
+                deferred_context_by_index[index] = e.context
             else:
                 tool_parts_by_index[index] = tool_part
                 if tool_user_content:
@@ -1118,7 +1130,13 @@ async def _call_tools(  # noqa: C901
         if tool_manager.should_call_sequentially(tool_calls):
             for index, call in enumerate(tool_calls):
                 if event := await handle_call_or_result(
-                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), tool_call_metadata),
+                    _call_tool(
+                        tool_manager,
+                        call,
+                        tool_call_results.get(call.tool_call_id),
+                        tool_call_metadata,
+                        tool_call_context,
+                    ),
                     index,
                 ):
                     yield event
@@ -1126,7 +1144,13 @@ async def _call_tools(  # noqa: C901
         else:
             tasks = [
                 asyncio.create_task(
-                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), tool_call_metadata),
+                    _call_tool(
+                        tool_manager,
+                        call,
+                        tool_call_results.get(call.tool_call_id),
+                        tool_call_metadata,
+                        tool_call_context,
+                    ),
                     name=call.tool_name,
                 )
                 for call in tool_calls
@@ -1153,7 +1177,13 @@ async def _call_tools(  # noqa: C901
     output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
 
     _populate_deferred_calls(
-        tool_calls, deferred_calls_by_index, deferred_metadata_by_index, output_deferred_calls, output_deferred_metadata
+        tool_calls,
+        deferred_calls_by_index,
+        deferred_metadata_by_index,
+        deferred_context_by_index,
+        output_deferred_calls,
+        output_deferred_metadata,
+        output_deferred_context,
     )
 
 
@@ -1161,17 +1191,23 @@ def _populate_deferred_calls(
     tool_calls: list[_messages.ToolCallPart],
     deferred_calls_by_index: dict[int, Literal['external', 'unapproved']],
     deferred_metadata_by_index: dict[int, dict[str, Any] | None],
+    deferred_context_by_index: dict[int, dict[str, Any] | None],
     output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
     output_deferred_metadata: dict[str, dict[str, Any]],
+    output_deferred_context: dict[str, dict[str, Any]],
 ) -> None:
     """Populate deferred calls and metadata from indexed mappings."""
     for k in sorted(deferred_calls_by_index):
         call = tool_calls[k]
         output_deferred_calls[deferred_calls_by_index[k]].append(call)
-        metadata = deferred_metadata_by_index[k]
+        metadata = deferred_metadata_by_index.get(k)
+        context = deferred_context_by_index.get(k)
 
         if metadata is not None:
             output_deferred_metadata[call.tool_call_id] = metadata
+
+        if context is not None:
+            output_deferred_context[call.tool_call_id] = context
 
 
 async def _call_tool(
@@ -1179,6 +1215,7 @@ async def _call_tool(
     tool_call: _messages.ToolCallPart,
     tool_call_result: DeferredToolResult | None,
     tool_call_metadata: dict[str, dict[str, Any]] | None,
+    tool_call_context: dict[str, dict[str, Any]] | None,
 ) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]:
     try:
         if tool_call_result is None:
@@ -1188,7 +1225,8 @@ async def _call_tool(
                 tool_call = dataclasses.replace(tool_call, args=tool_call_result.override_args)
             # Get metadata from the tool_call_metadata dict by tool_call_id
             metadata = tool_call_metadata.get(tool_call.tool_call_id) if tool_call_metadata else None
-            tool_result = await tool_manager.handle_call(tool_call, approved=True, metadata=metadata)
+            context = tool_call_context.get(tool_call.tool_call_id) if tool_call_context else None
+            tool_result = await tool_manager.handle_call(tool_call, approved=True, metadata=metadata, context=context)
         elif isinstance(tool_call_result, ToolDenied):
             return _messages.ToolReturnPart(
                 tool_name=tool_call.tool_name,

@@ -20,11 +20,12 @@ from pydantic_ai.runtime.abstract import (
 )
 from pydantic_ai.runtime.monty import MontyRuntime
 
+from ... import exceptions
 from ..._run_context import AgentDepsT, RunContext
 from ..._tool_manager import ToolManager
 from ...exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from ...messages import ToolCallPart
-from ...tools import ToolDefinition
+from ...tools import ToolApproved, ToolDefinition, ToolDenied
 from ..abstract import SchemaValidatorProt, ToolsetTool
 from ..function import FunctionToolset, FunctionToolsetTool
 from ..wrapper import WrapperToolset
@@ -265,33 +266,68 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             )
         }
 
+    def _build_tool_kwargs(
+        self,
+        call: FunctionCall,
+        tool: _CodeModeTool[AgentDepsT],
+        sanitized_name: str,
+    ) -> dict[str, Any]:
+        """Build tool kwargs from FunctionCall, handling positional args fallback."""
+        tool_kwargs: dict[str, Any] = dict(call.kwargs)
+        if call.args:
+            # Positional args are mapped using JSON schema property order, which may not match
+            # the tool's actual parameter order. The prompt instructs models to use keyword
+            # arguments only, but we handle positional args as a fallback for non-compliant models.
+            original_tool = tool.original_tools[sanitized_name]
+            param_names = list(original_tool.tool_def.parameters_json_schema.get('properties', {}).keys())
+            for i, arg in enumerate(call.args):
+                if i < len(param_names):
+                    tool_kwargs[param_names[i]] = arg
+        return tool_kwargs
+
     def _make_tool_callback(
         self,
         tool: _CodeModeTool[AgentDepsT],
         code_mode_tool_manager: ToolManager[AgentDepsT],
         sanitized_to_original: dict[str, str],
+        results_map: dict[str, Any] | None = None,
     ) -> ToolCallback:
+        """Create a callback for Monty to invoke when code calls external functions.
+
+        Args:
+            tool: The code mode tool with original tools mapping.
+            code_mode_tool_manager: ToolManager for executing nested tool calls.
+            sanitized_to_original: Mapping from sanitized names to original tool names.
+            results_map: Optional mapping of call_id to pre-resolved results (for resume path).
+                Values can be ToolApproved (execute with approval), ToolDenied (raise error),
+                or any other value (return directly as external result).
+        """
+
         async def callback(call: FunctionCall) -> Any:
             sanitized_name = call.function_name
             original_name = sanitized_to_original.get(sanitized_name, sanitized_name)
 
-            # Build kwargs (positional arg fallback)
-            tool_kwargs: dict[str, Any] = dict(call.kwargs)
-            if call.args:
-                # Positional args are mapped using JSON schema property order, which may not match
-                # the tool's actual parameter order. The prompt instructs models to use keyword
-                # arguments only, but we handle positional args as a fallback for non-compliant models.
-                original_tool = tool.original_tools[sanitized_name]
-                param_names = list(original_tool.tool_def.parameters_json_schema.get('properties', {}).keys())
-                for i, arg in enumerate(call.args):
-                    if i < len(param_names):
-                        tool_kwargs[param_names[i]] = arg
+            # Check for pre-resolved result (resume path)
+            if results_map is not None and call.call_id in results_map:
+                result = results_map[call.call_id]
 
-            # Construct ToolCallPart for handle_call (tool_call_id auto-generated)
-            tool_call_part = ToolCallPart(
-                tool_name=original_name,
-                args=tool_kwargs,
-            )
+                if isinstance(result, ToolApproved):
+                    # Approved - execute with approval flag
+                    tool_kwargs = self._build_tool_kwargs(call, tool, sanitized_name)
+                    tool_call_part = ToolCallPart(tool_name=original_name, args=tool_kwargs)
+                    return await code_mode_tool_manager.handle_call(
+                        tool_call_part, wrap_validation_errors=False, approved=True
+                    )
+                elif isinstance(result, ToolDenied):
+                    # Denied - raise to tell LLM
+                    raise ModelRetry(result.message)
+                else:
+                    # External result - return directly
+                    return result
+
+            # Normal path - build and execute (may raise ApprovalRequired)
+            tool_kwargs = self._build_tool_kwargs(call, tool, sanitized_name)
+            tool_call_part = ToolCallPart(tool_name=original_name, args=tool_kwargs)
 
             # Route through full ToolManager flow:
             # handle_call → _call_function_tool (tracing + usage) → _call_tool (validate + enrich + call)
@@ -304,6 +340,78 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             )
 
         return callback
+
+    async def _handle_resume(
+        self,
+        ctx: RunContext[AgentDepsT],
+        tool: _CodeModeTool[AgentDepsT],
+        code_mode_tool_manager: ToolManager[AgentDepsT],
+        sanitized_to_original: dict[str, str],
+    ) -> Any:
+        """Handle resumption from a checkpoint after approval/external results are provided.
+
+        Args:
+            ctx: The run context with tool_call_context containing checkpoint and results.
+            tool: The code mode tool.
+            code_mode_tool_manager: ToolManager for executing nested tool calls.
+            sanitized_to_original: Mapping from sanitized names to original tool names.
+
+        Returns:
+            The result of the resumed code execution.
+
+        Raises:
+            UserError: If context is missing required data (checkpoint, results).
+            ModelRetry: If code execution fails after resume.
+        """
+        context = ctx.tool_call_context
+
+        if context is None:
+            raise exceptions.UserError(
+                'Code mode resume requires context with checkpoint. '
+                'Pass back the original DeferredToolRequests.context[tool_call_id] '
+                'with an added "results" key mapping call_id to ToolApproved(), ToolDenied(), or external result.'
+            )
+
+        checkpoint = context.get('checkpoint')
+        if checkpoint is None:
+            raise exceptions.UserError(
+                'Code mode resume requires checkpoint in context. '
+                'The checkpoint should be preserved from the original DeferredToolRequests.context.'
+            )
+
+        interrupted_calls: list[dict[str, Any]] = context.get('interrupted_calls', [])
+
+        results_map = context.get('results')
+
+        # GUARD: Validate results are provided
+        if results_map is None:
+            raise exceptions.UserError(
+                'Code mode resume requires context with results for nested calls. '
+                'Add a "results" key to the context mapping call_id to '
+                'ToolApproved(), ToolDenied(), or the external result.'
+            )
+
+        # GUARD: Validate all interrupted calls have results to prevent infinite loop
+        if not results_map:
+            raise exceptions.UserError(
+                'Code mode resume requires results for all interrupted calls. '
+                'Provide results in context["results"] mapping call_id to '
+                'ToolApproved(), ToolDenied(), or the external result.'
+            )
+
+        missing_results = [ic['call_id'] for ic in interrupted_calls if ic['call_id'] not in results_map]
+        if missing_results:
+            raise exceptions.UserError(
+                f'Missing results for interrupted calls: {missing_results}. '
+                'All interrupted calls must have a result (ToolApproved, ToolDenied, or value).'
+            )
+
+        callback = self._make_tool_callback(tool, code_mode_tool_manager, sanitized_to_original, results_map)
+
+        try:
+            return await self.runtime.resume(checkpoint, callback, interrupted_calls)
+        except CodeRuntimeError as e:
+            raise ModelRetry(f'Runtime error in generated code:\n{e.message}')
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
@@ -326,17 +434,15 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             tools=original_name_tools,
         )
 
-        callback = self._make_tool_callback(tool, code_mode_tool_manager, sanitized_to_original)
+        # Check if this is a resume from deferred (tool_call_approved indicates resumption)
+        if ctx.tool_call_approved:
+            return await self._handle_resume(ctx, tool, code_mode_tool_manager, sanitized_to_original)
+
+        # Normal execution path
+        callback = self._make_tool_callback(tool, code_mode_tool_manager, sanitized_to_original, results_map=None)
 
         try:
             functions = list(tool.original_tools.keys())
-
-            if (metadata := ctx.tool_call_metadata) is not None:
-                checkpoint = metadata.get('checkpoint')
-
-                # Do I have a way to know if this is a deferred request or not, well otherwise checkpoint would be None but I want to get out of the inf loop chance in case checkpoint is None, will find out later if I can do that or find that out somehow
-                return await self.runtime.resume(checkpoint, callback)
-
             return await self.runtime.run(code, functions, callback, signatures=self._cached_signatures)
         except CodeTypingError as e:
             raise ModelRetry(f'Type error in generated code:\n{e.message}')
@@ -344,9 +450,23 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             raise ModelRetry(f'Syntax error in generated code:\n{e.message}')
         except CodeRuntimeError as e:
             raise ModelRetry(f'Runtime error in generated code:\n{e.message}')
-        except CodeInterruptedError:
-            # I like this much better
-            # Although this will need specific handling within deferred flow to ensure all of the requests for call deferred and approvals go in one go and we don't dilly dally for each one
-            # One tricky bit is, where will we store this information?
-            # I need to route it back to load and resume, how do I do that?
-            raise
+        except CodeInterruptedError as e:
+            # Raise ApprovalRequired so run_code ends up in approvals (not calls)
+            # This ensures ToolApproved flows through correctly on resume
+            # The context contains checkpoint and interrupted_calls info
+            # We use context (not metadata) because this data is REQUIRED for resumption
+            raise ApprovalRequired(
+                context={
+                    'checkpoint': e.checkpoint,
+                    'interrupted_calls': [
+                        {
+                            'call_id': ic.call.call_id,
+                            'tool_name': ic.call.function_name,
+                            'args': ic.call.args,
+                            'kwargs': ic.call.kwargs,
+                            'type': 'approval' if isinstance(ic.type, ApprovalRequired) else 'external',
+                        }
+                        for ic in e.interrupted_calls
+                    ],
+                }
+            )
