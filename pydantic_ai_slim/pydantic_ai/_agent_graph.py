@@ -18,7 +18,7 @@ from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
-from pydantic_ai._tool_manager import ToolManager, ValidatedToolCall
+from pydantic_ai._tool_manager import ToolManager, ToolCallValidation
 from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, now_utc, run_in_executor
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_graph import BaseNode, GraphRunContext
@@ -1167,7 +1167,7 @@ async def _call_tools(  # noqa: C901
     # Validate and emit FunctionToolCallEvent for each tool, storing results to avoid double validation.
     # Skip upfront validation for calls with pre-supplied deferred results (e.g. ToolApproved):
     # those will be validated with correct context (approved=True, metadata) in _call_tool via handle_call.
-    validated_calls: dict[str, ValidatedToolCall[DepsT]] = {}
+    validated_calls: dict[str, ToolCallValidation[DepsT]] = {}
     for call in tool_calls:
         if call.tool_call_id in tool_call_results:
             yield _messages.FunctionToolCallEvent(call)
@@ -1304,7 +1304,7 @@ async def _call_tool(
     tool_call: _messages.ToolCallPart,
     tool_call_result: DeferredToolResult | None,
     tool_call_metadata: dict[str, dict[str, Any]] | None,
-    validated: ValidatedToolCall[DepsT] | None = None,
+    validated: ToolCallValidation[DepsT] | None = None,
 ) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]:
     try:
         if tool_call_result is None:

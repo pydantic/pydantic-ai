@@ -29,8 +29,8 @@ _parallel_execution_mode_ctx_var: ContextVar[ParallelExecutionMode] = ContextVar
 
 
 @dataclass
-class ValidatedToolCall(Generic[AgentDepsT]):
-    """Result of validating tool arguments, ready for execution.
+class ToolCallValidation(Generic[AgentDepsT]):
+    """Result of validating a tool call's arguments (may represent success or failure).
 
     This separates validation from execution, allowing callers to:
     1. Know if validation passed before executing
@@ -197,7 +197,6 @@ class ToolManager(Generic[AgentDepsT]):
                 call.args or {}, allow_partial=pyd_allow_partial, context=ctx.validation_context
             )
 
-        # Custom args_validator_func validation (if configured)
         if tool.args_validator_func is not None:
             result = tool.args_validator_func(ctx, **args_dict)
             if inspect.isawaitable(result):
@@ -213,7 +212,7 @@ class ToolManager(Generic[AgentDepsT]):
         wrap_validation_errors: bool = True,
         approved: bool = False,
         metadata: Any = None,
-    ) -> ValidatedToolCall[AgentDepsT]:
+    ) -> ToolCallValidation[AgentDepsT]:
         """Validate tool arguments without executing the tool.
 
         This method validates arguments BEFORE the tool is executed, allowing the caller to:
@@ -229,7 +228,7 @@ class ToolManager(Generic[AgentDepsT]):
             metadata: Additional metadata from DeferredToolResults.metadata.
 
         Returns:
-            ValidatedToolCall with validation results, ready for execution via execute_tool_call().
+            ToolCallValidation with validation results, ready for execution via execute_tool_call().
         """
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
@@ -261,7 +260,7 @@ class ToolManager(Generic[AgentDepsT]):
             if not allow_partial:  # pragma: no branch
                 self.failed_tools.add(name)
 
-            return ValidatedToolCall(
+            return ToolCallValidation(
                 call=call,
                 tool=None,
                 ctx=self.ctx,
@@ -274,7 +273,7 @@ class ToolManager(Generic[AgentDepsT]):
 
         try:
             validated_args = await self._validate_tool_args(call, tool, ctx, allow_partial=allow_partial)
-            return ValidatedToolCall(
+            return ToolCallValidation(
                 call=call,
                 tool=tool,
                 ctx=ctx,
@@ -313,7 +312,7 @@ class ToolManager(Generic[AgentDepsT]):
             if not allow_partial:  # pragma: no branch
                 self.failed_tools.add(name)
 
-            return ValidatedToolCall(
+            return ToolCallValidation(
                 call=call,
                 tool=tool,
                 ctx=ctx,
@@ -347,7 +346,7 @@ class ToolManager(Generic[AgentDepsT]):
 
     async def execute_tool_call(
         self,
-        validated: ValidatedToolCall[AgentDepsT],
+        validated: ToolCallValidation[AgentDepsT],
         *,
         tracer: Tracer | None = None,
         include_content: bool = True,
@@ -363,7 +362,7 @@ class ToolManager(Generic[AgentDepsT]):
         For function tools, a trace span is created if tracer is provided.
 
         Args:
-            validated: The validated tool call from validate_tool_call().
+            validated: The validation result from validate_tool_call().
             tracer: Optional tracer for creating spans. If None, no tracing is performed.
             include_content: Whether to include tool arguments and results in the span.
             instrumentation_version: The instrumentation version for span attribute names.
@@ -397,7 +396,7 @@ class ToolManager(Generic[AgentDepsT]):
 
     async def _execute_tool_call_impl(
         self,
-        validated: ValidatedToolCall[AgentDepsT],
+        validated: ToolCallValidation[AgentDepsT],
         *,
         usage: RunUsage | None = None,
     ) -> Any:
@@ -453,7 +452,7 @@ class ToolManager(Generic[AgentDepsT]):
 
     async def _execute_function_tool_call(
         self,
-        validated: ValidatedToolCall[AgentDepsT],
+        validated: ToolCallValidation[AgentDepsT],
         *,
         tracer: Tracer,
         include_content: bool,
