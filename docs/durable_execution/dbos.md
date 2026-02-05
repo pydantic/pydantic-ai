@@ -80,7 +80,7 @@ dbos_config: DBOSConfig = {
 DBOS(config=dbos_config)
 
 agent = Agent(
-    'gpt-5',
+    'gpt-5.2',
     instructions="You're an expert in geography.",
     name='geography',  # (4)!
 )
