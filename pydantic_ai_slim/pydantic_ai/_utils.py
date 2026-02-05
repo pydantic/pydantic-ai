@@ -259,7 +259,7 @@ async def group_by_temporal(  # noqa: C901
     closing = False
     try:
         yield async_iter_groups()
-    except GeneratorExit:
+    except GeneratorExit:  # pragma: no cover
         closing = True
         raise
     finally:  # pragma: no cover

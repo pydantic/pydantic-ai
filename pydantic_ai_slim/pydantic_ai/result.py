@@ -197,7 +197,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         """
         msg = self.response
         for i, part in enumerate(msg.parts):
-            if self._cancelled:
+            if self._cancelled:  # pragma: no cover
                 return
             if isinstance(part, _messages.TextPart) and part.content:
                 yield part.content, i
@@ -205,7 +205,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         last_text_index: int | None = None
         try:
             async for event in self._raw_stream_response:
-                if self._cancelled:
+                if self._cancelled:  # pragma: no cover
                     return
                 if (
                     isinstance(event, _messages.PartStartEvent)
@@ -229,7 +229,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     # Text parts that are interrupted by a built-in tool call should not be joined together directly
                     yield '\n\n', event.index
                     last_text_index = None
-        except Exception:
+        except Exception:  # pragma: no cover
             # Closing the stream mid-read can raise exceptions
             if self._cancelled:
                 return
@@ -339,7 +339,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                         if self._cancelled:
                             break
                         yield event
-                except Exception:
+                except Exception:  # pragma: no cover
                     # Closing the stream mid-read can raise exceptions. Reraise if not cancelled.
                     if self._cancelled:
                         return

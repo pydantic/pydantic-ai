@@ -1390,13 +1390,26 @@ async def _process_message_history(
     return messages
 
 
-def _filter_incomplete_tool_calls(response: _messages.ModelResponse) -> _messages.ModelResponse:
-    """Filter out tool call parts with args_incomplete=True from an incomplete response."""
+def _filter_incomplete_tool_calls(
+    response: _messages.ModelResponse, processed_tool_call_ids: set[str]
+) -> _messages.ModelResponse:
+    """Filter out unprocessed tool call parts from an incomplete response.
+
+    When a streaming response is cancelled/interrupted, tool calls in that response
+    without corresponding tool results should be filtered out to allow continuation.
+    Tool calls with matching results are preserved.
+
+    Args:
+        response: The model response to filter.
+        processed_tool_call_ids: Set of tool call IDs that have corresponding tool results.
+    """
     if not response.incomplete:
         return response
 
     filtered_parts = [
-        part for part in response.parts if not (isinstance(part, _messages.BaseToolCallPart) and part.args_incomplete)
+        part
+        for part in response.parts
+        if not isinstance(part, _messages.BaseToolCallPart) or part.tool_call_id in processed_tool_call_ids
     ]
 
     if len(filtered_parts) == len(response.parts):
@@ -1407,11 +1420,19 @@ def _filter_incomplete_tool_calls(response: _messages.ModelResponse) -> _message
 
 def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
     """Clean the message history by merging consecutive messages of the same type."""
+    # First, collect all tool return IDs so we know which tool calls have been processed
+    processed_tool_call_ids: set[str] = set()
+    for message in messages:
+        if isinstance(message, _messages.ModelRequest):
+            for part in message.parts:
+                if isinstance(part, _messages.ToolReturnPart) and part.tool_call_id:
+                    processed_tool_call_ids.add(part.tool_call_id)
+
     clean_messages: list[_messages.ModelMessage] = []
     for message in messages:
-        # Filter incomplete tool calls from incomplete responses before processing
+        # Filter unprocessed tool calls from incomplete responses
         if isinstance(message, _messages.ModelResponse):
-            message = _filter_incomplete_tool_calls(message)
+            message = _filter_incomplete_tool_calls(message, processed_tool_call_ids)
 
         last_message = clean_messages[-1] if len(clean_messages) > 0 else None
 

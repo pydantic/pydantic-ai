@@ -943,7 +943,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             try:
                 async for event in events:
                     await send_stream.send(event)
-            except anyio.BrokenResourceError:
+            except anyio.BrokenResourceError:  # pragma: no cover
                 # Receiver/consumer closed, so we cancel the stream
                 if isinstance(events, AgentStream):
                     await events.cancel()

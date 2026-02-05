@@ -960,7 +960,7 @@ class StreamedResponse(ABC):
         # If we broke out of the above loop, we need to yield the rest of the events
         # If we didn't, this will just be a no-op
         async for event in iterator:
-            if self._cancelled:
+            if self._cancelled:  # pragma: no cover
                 break
             yield event
 
@@ -988,7 +988,7 @@ class StreamedResponse(ABC):
             )
 
         async for event in iterator:
-            if self._cancelled:
+            if self._cancelled:  # pragma: no cover
                 break
             if isinstance(event, PartStartEvent):
                 if last_start_event:

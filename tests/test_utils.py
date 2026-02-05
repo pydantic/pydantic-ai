@@ -4,8 +4,9 @@ import asyncio
 import contextvars
 import functools
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from importlib.metadata import distributions
+from typing import cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -50,6 +51,36 @@ async def test_group_by_temporal(interval: float | None, expected: list[list[int
     async with group_by_temporal(yield_groups(), soft_max_interval=interval) as groups_iter:
         groups: list[list[int]] = [g async for g in groups_iter]
         assert groups == expected
+
+
+async def test_group_by_temporal_break_cancels_pending_task():
+    """Test that breaking out of iteration cancels a pending task in the inner finally block."""
+
+    async def yield_slowly() -> AsyncIterator[int]:
+        yield 1
+        await asyncio.sleep(10)  # Long delay to ensure task is pending when we break
+        yield 2
+
+    async with group_by_temporal(yield_slowly(), soft_max_interval=0.01) as groups_iter:
+        async for group in groups_iter:
+            assert group == [1]
+            break  # Triggers inner finally block which cancels the pending task
+
+
+async def test_group_by_temporal_aclose_triggers_generator_exit():
+    """Test that explicitly closing the generator triggers GeneratorExit handling."""
+
+    async def yield_slowly() -> AsyncIterator[int]:
+        yield 1
+        await asyncio.sleep(10)
+        yield 2
+
+    async with group_by_temporal(yield_slowly(), soft_max_interval=0.01) as groups_iter:
+        groups_aiter = cast(AsyncGenerator[list[int]], aiter(groups_iter))
+        group = await anext(groups_aiter)
+        assert group == [1]
+        # Explicitly close the inner generator to trigger GeneratorExit
+        await groups_aiter.aclose()
 
 
 def test_check_object_json_schema():

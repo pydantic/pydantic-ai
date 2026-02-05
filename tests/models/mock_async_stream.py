@@ -42,6 +42,9 @@ class MockAsyncStream(Generic[T]):
     _iter: Iterator[T]
     """The underlying synchronous iterator."""
 
+    _closed: bool = False
+    """Whether the stream has been closed."""
+
     async def __anext__(self) -> T:
         """Return the next item from the synchronous iterator as if it were asynchronous.
 
@@ -60,4 +63,39 @@ class MockAsyncStream(Generic[T]):
         return self
 
     async def __aexit__(self, *_args: Any) -> None:
-        pass
+        """Exit the async context manager, closing the stream."""
+        self._closed = True
+
+    async def close(self) -> None:
+        """Close the stream. Used for testing cancellation."""
+        self._closed = True
+
+    async def aclose(self) -> None:
+        """Close the async generator. Used for testing cancellation."""
+        self._closed = True
+
+
+@dataclass
+class MockEventStream(Generic[T]):
+    """Mocks Bedrock's EventStream which has a synchronous close() method.
+
+    Used for testing the BedrockStreamedResponse.cancel() method.
+    """
+
+    _iter: Iterator[T]
+    """The underlying synchronous iterator."""
+
+    _closed: bool = False
+    """Whether the stream has been closed."""
+
+    def __iter__(self) -> MockEventStream[T]:
+        return self
+
+    def __next__(self) -> T:
+        next_val = _utils.sync_anext(self._iter)
+        raise_if_exception(next_val)
+        return next_val
+
+    def close(self) -> None:
+        """Close the stream. Used for testing cancellation (synchronous)."""
+        self._closed = True
