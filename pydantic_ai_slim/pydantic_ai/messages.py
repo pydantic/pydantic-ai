@@ -1418,12 +1418,6 @@ class BaseToolCallPart:
     When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
-    args_incomplete: bool = False
-    """Whether the arguments are incomplete.
-
-    Incomplete arguments can occur when the agent run is cancelled or interrupted.
-    """
-
     def args_as_dict(self) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
 
@@ -1451,6 +1445,18 @@ class BaseToolCallPart:
     def has_content(self) -> bool:
         """Return `True` if the tool call has content."""
         return self.args not in ('', {}, None)
+
+    @property
+    def args_incomplete(self) -> bool:
+        """Whether the arguments are incomplete (can't be parsed as valid JSON).
+
+        Incomplete arguments can occur when the agent run is cancelled or interrupted.
+        """
+        try:
+            self.args_as_dict()
+            return False
+        except Exception:
+            return True
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
