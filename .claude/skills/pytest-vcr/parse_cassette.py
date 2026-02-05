@@ -28,7 +28,12 @@ def truncate_base64(obj: object, max_len: int = 100) -> object:
 def parse_cassette(path: Path, interaction_idx: int | None = None) -> None:
     """Parse and print cassette contents."""
     with open(path) as f:
+    with open(path) as f:
         data = yaml.safe_load(f)
+
+    if data is None:
+        print('Empty or invalid cassette file')
+        return
 
     interactions = data.get('interactions', [])
     if not interactions:
