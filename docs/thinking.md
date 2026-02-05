@@ -45,6 +45,9 @@ agent = Agent(model, model_settings=settings)
 
 To enable thinking, use the [`AnthropicModelSettings.anthropic_thinking`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_thinking] [model setting](agents.md#model-run-settings).
 
+!!! note
+    Extended thinking (`type: 'enabled'` with `budget_tokens`) is deprecated on `claude-opus-4-6`+. For those models, use [adaptive thinking](#adaptive-thinking--effort) instead.
+
 ```python {title="anthropic_thinking_part.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
@@ -73,6 +76,28 @@ settings = AnthropicModelSettings(
 agent = Agent(model, model_settings=settings)
 ...
 ```
+
+### Adaptive Thinking & Effort
+
+Starting with `claude-opus-4-6`, Anthropic supports [adaptive thinking](https://docs.anthropic.com/en/docs/build-with-claude/adaptive-thinking), where the model dynamically decides when and how much to think based on the complexity of each request. This replaces extended thinking (`type: 'enabled'` with `budget_tokens`) which is deprecated on Opus 4.6. Adaptive thinking also automatically enables interleaved thinking.
+
+```python {title="anthropic_adaptive_thinking.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+
+model = AnthropicModel('claude-opus-4-6')
+settings = AnthropicModelSettings(
+    anthropic_thinking={'type': 'adaptive'},
+    anthropic_effort='high',
+)
+agent = Agent(model, model_settings=settings)
+...
+```
+
+The [`anthropic_effort`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_effort] setting controls how much effort the model puts into its response (independent of thinking). See the [Anthropic effort docs](https://docs.anthropic.com/en/docs/build-with-claude/effort) for details.
+
+!!! note
+    Older models (`claude-sonnet-4-5`, `claude-opus-4-5`, etc.) do not support adaptive thinking and require `{'type': 'enabled', 'budget_tokens': N}` as shown [above](#anthropic).
 
 ## Google
 
