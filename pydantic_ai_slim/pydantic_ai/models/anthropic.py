@@ -94,6 +94,7 @@ try:
         BetaMessageParam,
         BetaMessageTokensCount,
         BetaMetadataParam,
+        BetaOutputConfigParam,
         BetaPlainTextSourceParam,
         BetaRawContentBlockDeltaEvent,
         BetaRawContentBlockStartEvent,
@@ -206,6 +207,12 @@ class AnthropicModelSettings(ModelSettings, total=False):
     Note: Uses 1 of Anthropic's 4 available cache points per request. Any additional CachePoint
     markers in messages will be automatically limited to respect the 4-cache-point maximum.
     See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
+    """
+
+    anthropic_effort: Literal['low', 'medium', 'high', 'max'] | None
+    """The effort level for the model to use when generating a response.
+
+    See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/effort) for more information.
     """
 
     anthropic_container: BetaContainerParams | Literal[False]
@@ -341,7 +348,7 @@ class AnthropicModel(Model):
             model_request_parameters.output_tools
             and settings
             and (thinking := settings.get('anthropic_thinking'))
-            and thinking.get('type') == 'enabled'
+            and thinking.get('type') in ('enabled', 'adaptive')
         ):
             if model_request_parameters.output_mode == 'auto':
                 output_mode = 'native' if self.profile.supports_json_schema_output else 'prompted'
@@ -405,7 +412,7 @@ class AnthropicModel(Model):
 
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._limit_cache_points(system_prompt, anthropic_messages, tools)
-        output_format = self._native_output_format(model_request_parameters)
+        output_config = self._build_output_config(model_request_parameters, model_settings)
         betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
         betas.update(builtin_tool_betas)
         container = self._get_container(messages, model_settings)
@@ -418,7 +425,7 @@ class AnthropicModel(Model):
                 tools=tools or OMIT,
                 tool_choice=tool_choice or OMIT,
                 mcp_servers=mcp_servers or OMIT,
-                output_format=output_format or OMIT,
+                output_config=output_config or OMIT,
                 betas=sorted(betas) or OMIT,
                 stream=stream,
                 thinking=model_settings.get('anthropic_thinking', OMIT),
@@ -493,7 +500,7 @@ class AnthropicModel(Model):
 
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._limit_cache_points(system_prompt, anthropic_messages, tools)
-        output_format = self._native_output_format(model_request_parameters)
+        output_config = self._build_output_config(model_request_parameters, model_settings)
         betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
         betas.update(builtin_tool_betas)
         try:
@@ -505,7 +512,7 @@ class AnthropicModel(Model):
                 tool_choice=tool_choice or OMIT,
                 mcp_servers=mcp_servers or OMIT,
                 betas=sorted(betas) or OMIT,
-                output_format=output_format or OMIT,
+                output_config=output_config or OMIT,
                 thinking=model_settings.get('anthropic_thinking', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 extra_headers=extra_headers,
@@ -1127,11 +1134,25 @@ class AnthropicModel(Model):
         return tool_param
 
     @staticmethod
-    def _native_output_format(model_request_parameters: ModelRequestParameters) -> BetaJSONOutputFormatParam | None:
-        if model_request_parameters.output_mode != 'native':
+    def _build_output_config(
+        model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
+    ) -> BetaOutputConfigParam | None:
+        output_format: BetaJSONOutputFormatParam | None = None
+        if model_request_parameters.output_mode == 'native':
+            assert model_request_parameters.output_object is not None
+            output_format = {'type': 'json_schema', 'schema': model_request_parameters.output_object.json_schema}
+
+        effort = model_settings.get('anthropic_effort')
+
+        if output_format is None and effort is None:
             return None
-        assert model_request_parameters.output_object is not None
-        return {'type': 'json_schema', 'schema': model_request_parameters.output_object.json_schema}
+
+        config: BetaOutputConfigParam = {}
+        if output_format is not None:
+            config['format'] = output_format
+        if effort is not None:
+            config['effort'] = effort
+        return config
 
 
 def _map_usage(
