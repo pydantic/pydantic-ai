@@ -22,7 +22,7 @@ jobs:
 
       - name: Check for modified config files
         run: |
-          CHANGED=$(gh pr diff ${{ github.event.pull_request.number }} --name-only)
+          CHANGED=$(gh pr diff ${{ github.event.pull_request.number }} --name-only --repo ${{ github.repository }})
           if echo "$CHANGED" | grep -qiE '(^|/)AGENTS\.md$|(^|/)CLAUDE\.md$|(^|/)\.claude/'; then
             echo "::error::PR modifies agent config files (AGENTS.md, CLAUDE.md, or .claude/). Skipping auto-review for security."
             exit 1
