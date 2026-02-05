@@ -160,9 +160,63 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'end_turn': 'stop',
     'guardrail_intervened': 'content_filter',
     'max_tokens': 'length',
+    'model_context_window_exceeded': 'length',
     'stop_sequence': 'stop',
     'tool_use': 'tool_call',
 }
+
+
+def _insert_cache_point_before_trailing_documents(
+    content: list[Any],
+    *,
+    raise_if_cannot_insert: bool = False,
+) -> bool:
+    """Insert a cache point before trailing document/video content.
+
+    AWS rejects cache points that directly follow documents and videos (but not images).
+    This function finds the start of the trailing contiguous group of documents/videos
+    and inserts a cache point before it.
+
+    Args:
+        content: The content list to modify in place.
+        raise_if_cannot_insert: If True, raises UserError when cache point cannot be inserted
+            (e.g., when the message contains only documents/videos). If False, silently skips.
+
+    Returns:
+        True if a cache point was inserted, False otherwise.
+
+    Raises:
+        UserError: If raise_if_cannot_insert is True and the cache point cannot be placed.
+    """
+    multimodal_keys = ['document', 'video']
+    # Find where the trailing contiguous group of documents/videos starts
+    trailing_start: int | None = None
+    for i in range(len(content) - 1, -1, -1):
+        if any(key in content[i] for key in multimodal_keys):
+            trailing_start = i
+        else:
+            break
+
+    if trailing_start is not None and trailing_start > 0:
+        # Skip if there's already a cache point at the insertion position
+        prev_block = content[trailing_start - 1]
+        if isinstance(prev_block, dict) and 'cachePoint' in prev_block:
+            return False
+        content.insert(trailing_start, {'cachePoint': {'type': 'default'}})
+        return True
+    elif trailing_start is None:
+        # No trailing document/video content, append cache point at the end
+        content.append({'cachePoint': {'type': 'default'}})
+        return True
+    else:
+        # trailing_start == 0, can't insert at start
+        if raise_if_cannot_insert:
+            raise UserError(
+                'CachePoint cannot be placed when the user message contains only a document or video, '
+                'due to Bedrock API restrictions. '
+                'Add text content before or after your document or video to enable caching.'
+            )
+        return False
 
 
 class BedrockModelSettings(ModelSettings, total=False):
@@ -746,27 +800,8 @@ class BedrockConverseModel(Model):
         if processed_messages and settings.get('bedrock_cache_messages') and profile.bedrock_supports_prompt_caching:
             last_user_content = self._get_last_user_message_content(processed_messages)
             if last_user_content is not None:
-                # AWS currently rejects cache points that directly follow documents and videos (but not images).
-                # So we insert the cache point before the trailing multi-modal content instead.
-                multimodal_keys = ['document', 'video']
-                last_multimodal_index = next(
-                    (
-                        i
-                        for i, block in reversed(list(enumerate(last_user_content)))
-                        if any(key in block for key in multimodal_keys)
-                    ),
-                    None,
-                )
-                if last_multimodal_index is not None and last_multimodal_index > 0:
-                    # Insert cache point before the last multi-modal content, unless it would be back-to-back
-                    prev_block = last_user_content[last_multimodal_index - 1]
-                    if not (isinstance(prev_block, dict) and 'cachePoint' in prev_block):
-                        last_user_content.insert(last_multimodal_index, {'cachePoint': {'type': 'default'}})
-                elif last_multimodal_index is None:
-                    # No multi-modal content, append cache point at the end.
-                    # Note: _get_last_user_message_content ensures content doesn't already end with a cachePoint.
-                    last_user_content.append({'cachePoint': {'type': 'default'}})
-                # If last_multimodal_index == 0, we can't insert at start, so skip auto-caching for this message
+                # Note: _get_last_user_message_content ensures content doesn't already end with a cachePoint.
+                _insert_cache_point_before_trailing_documents(last_user_content)
 
         return system_prompt, processed_messages
 
@@ -876,30 +911,7 @@ class BedrockConverseModel(Model):
                             'CachePoint cannot be the first content in a user message - there must be previous content to cache when using Bedrock. '
                             'To cache system instructions or tool definitions, use the `bedrock_cache_instructions` or `bedrock_cache_tool_definitions` settings instead.'
                         )
-                    # AWS currently rejects cache points that directly follow documents and videos (but not images).
-                    # So we insert the cache point before the trailing multi-modal content instead.
-                    multimodal_keys = ['document', 'video']
-                    last_multimodal_index = next(
-                        (
-                            i
-                            for i, block in reversed(list(enumerate(content)))
-                            if any(key in block for key in multimodal_keys)
-                        ),
-                        None,
-                    )
-                    if last_multimodal_index is not None and last_multimodal_index > 0:
-                        # Insert cache point before the last multi-modal content
-                        content.insert(last_multimodal_index, {'cachePoint': {'type': 'default'}})
-                    elif last_multimodal_index is None:
-                        # No multi-modal content, append cache point at the end
-                        content.append({'cachePoint': {'type': 'default'}})
-                    else:
-                        # last_multimodal_index == 0, can't insert at start
-                        raise UserError(
-                            'CachePoint cannot be placed when the user message contains only a document or video, '
-                            'due to Bedrock API restrictions. '
-                            'Add text content before or after your document or video to enable caching.'
-                        )
+                    _insert_cache_point_before_trailing_documents(content, raise_if_cannot_insert=True)
                 else:
                     assert_never(item)
         return [{'role': 'user', 'content': content}]
