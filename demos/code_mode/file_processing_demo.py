@@ -239,11 +239,6 @@ async def main() -> None:
         code = await run_code_mode(toolset)
     log_metrics(code)
 
-    request_reduction = trad.request_count - code.request_count
-    token_diff = trad.total_tokens - code.total_tokens
-
-    print(f'Results: {trad.request_count} → {code.request_count} requests ({request_reduction} fewer)')
-    print(f'Tokens: {trad.total_tokens:,} → {code.total_tokens:,} ({token_diff:+,} difference)')
     print('View traces: https://logfire.pydantic.dev')
 
 
