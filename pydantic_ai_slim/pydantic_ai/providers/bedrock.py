@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Literal, overload
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.builtin_tools import CodeExecutionTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.amazon import amazon_model_profile
@@ -16,6 +17,8 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.providers import Provider
+
+_sentinel = object()
 
 try:
     import boto3
@@ -29,6 +32,79 @@ except ImportError as _import_error:
         'Please install the `boto3` package to use the Bedrock provider, '
         'you can use the `bedrock` optional group — `pip install "pydantic-ai-slim[bedrock]"`'
     ) from _import_error
+
+
+_STRICT_INCOMPATIBLE_KEYS = [
+    'minimum',
+    'maximum',
+    'exclusiveMinimum',
+    'exclusiveMaximum',
+    'multipleOf',
+]
+
+
+@dataclass(init=False)
+class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
+    """Transforms schemas to the subset supported by Bedrock structured outputs.
+
+    Transformation is applied when:
+    - `NativeOutput` is used as the `output_type` of the Agent
+    - `strict=True` is set on the `Tool`
+
+    The behavior of this transformer differs from the OpenAI one in that it sets `Tool.strict=False` by default when not explicitly set to True.
+
+    When ``strict=True``:
+    - Strips numeric constraints (``minimum``, ``maximum``, ``exclusiveMinimum``, ``exclusiveMaximum``, ``multipleOf``)
+    - Strips ``maxItems`` and ``minItems > 1`` on arrays
+    - Appends stripped constraint info to the ``description`` field as a hint to the model
+
+    The following are preserved — Bedrock accepts them under strict validation:
+    - String constraints: ``minLength``, ``maxLength``, ``pattern``
+    - String ``format`` (all values including ``date-time``, ``date``, ``email``, ``uri``, etc.)
+    - ``enum``, ``const``, ``default``, ``$defs``/``$ref``, ``anyOf``
+    - ``minItems`` of 0 or 1 on arrays
+    """
+
+    def walk(self) -> JsonSchema:
+        schema = super().walk()
+        self.is_strict_compatible = self.strict is True
+        return schema
+
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        schema.pop('title', None)
+        schema.pop('$schema', None)
+
+        if schema.get('type') == 'object':
+            schema['additionalProperties'] = False
+
+        # Collect Bedrock-incompatible constraints based on schema type
+        incompatible: dict[str, Any] = {}
+        schema_type = schema.get('type')
+
+        if schema_type in ('number', 'integer'):
+            for key in _STRICT_INCOMPATIBLE_KEYS:
+                value = schema.get(key, _sentinel)
+                if value is not _sentinel:
+                    incompatible[key] = value
+
+        elif schema_type == 'array':
+            if 'maxItems' in schema:
+                incompatible['maxItems'] = schema['maxItems']
+            min_items = schema.get('minItems', _sentinel)
+            if min_items is not _sentinel and min_items > 1:
+                incompatible['minItems'] = min_items
+
+        # Strip incompatible keys only when strict=True
+        if incompatible and self.strict is True:
+            notes: list[str] = []
+            for key, value in incompatible.items():
+                schema.pop(key)
+                notes.append(f'{key}={value}')
+            notes_str = ', '.join(notes)
+            desc = schema.get('description')
+            schema['description'] = notes_str if not desc else f'{desc} ({notes_str})'
+
+        return schema
 
 
 @dataclass(kw_only=True)
@@ -114,6 +190,7 @@ class BedrockProvider(Provider[BaseClient]):
                 bedrock_send_back_thinking_parts=True,
                 bedrock_supports_prompt_caching=True,
                 bedrock_supports_tool_caching=True,
+                json_schema_transformer=BedrockJsonSchemaTransformer,
             ).update(_without_builtin_tools(anthropic_model_profile(model_name))),
             'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json').update(
                 _without_builtin_tools(mistral_model_profile(model_name))

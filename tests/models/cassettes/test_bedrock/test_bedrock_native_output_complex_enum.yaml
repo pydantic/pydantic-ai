@@ -1,0 +1,52 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Give me a person named Alice with status \"active\"."}]}],
+      "system": [], "inferenceConfig": {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure": {"jsonSchema":
+      {"schema": "{\"properties\": {\"status\": {\"anyOf\": [{\"enum\": [\"active\", \"inactive\"], \"type\": \"string\"},
+      {\"type\": \"integer\"}]}, \"name\": {\"type\": \"string\"}}, \"required\": [\"status\", \"name\"], \"type\": \"object\",
+      \"additionalProperties\": false}", "name": "ComplexEnumModel", "description": "Model with complex types in enum-like
+      unions."}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        YWUyZjE0Y2QtY2RhNC00ZDFjLWFjN2MtYTRiY2VkY2RiNmZl
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '601'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '385'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 3017
+      output:
+        message:
+          content:
+          - text: '{"status":"active","name":"Alice"}'
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 229
+        outputTokens: 12
+        serverToolUsage: {}
+        totalTokens: 241
+    status:
+      code: 200
+      message: OK
+version: 1

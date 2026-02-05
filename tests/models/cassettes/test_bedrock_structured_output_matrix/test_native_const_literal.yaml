@@ -1,0 +1,50 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Submit data \"hello world\"."}]}], "system": [], "inferenceConfig":
+      {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure": {"jsonSchema": {"schema": "{\"properties\":
+      {\"action\": {\"const\": \"submit\", \"type\": \"string\"}, \"data\": {\"type\": \"string\"}}, \"required\": [\"action\",
+      \"data\"], \"type\": \"object\", \"additionalProperties\": false}", "name": "ConstModel"}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        YTkwNmNiYTgtOWVlYy00OWY3LTk2NTgtMzY2ZTBhMWM4NmRi
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '452'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '392'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 13597
+      output:
+        message:
+          content:
+          - text: '{"action":"submit","data":"hello world"}'
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 183
+        outputTokens: 13
+        serverToolUsage: {}
+        totalTokens: 196
+    status:
+      code: 200
+      message: OK
+version: 1

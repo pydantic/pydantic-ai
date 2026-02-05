@@ -1,0 +1,51 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Tell me about Tokyo, Japan with its population."}]}], "system":
+      [], "inferenceConfig": {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure": {"jsonSchema": {"schema":
+      "{\"properties\": {\"city\": {\"type\": \"string\"}, \"country\": {\"default\": \"Unknown\", \"type\": \"string\"},
+      \"population\": {\"default\": 0, \"type\": \"integer\"}}, \"required\": [\"city\"], \"type\": \"object\", \"additionalProperties\":
+      false}", "name": "CityWithDefaults", "description": "City with default values."}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MDRkNWUzM2EtYTZlNC00ODE0LWI3MjYtNDAzNGI4MmFhNTMx
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '570'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '409'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 1701
+      output:
+        message:
+          content:
+          - text: '{"city":"Tokyo","country":"Japan","population":14000000}'
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 207
+        outputTokens: 18
+        serverToolUsage: {}
+        totalTokens: 225
+    status:
+      code: 200
+      message: OK
+version: 1

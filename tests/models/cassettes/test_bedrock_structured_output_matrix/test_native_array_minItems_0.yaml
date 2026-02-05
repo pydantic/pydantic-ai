@@ -1,0 +1,50 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Give me a list of fruits."}]}], "system": [], "inferenceConfig":
+      {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure": {"jsonSchema": {"schema": "{\"properties\":
+      {\"items\": {\"items\": {\"type\": \"string\"}, \"minItems\": 0, \"type\": \"array\"}}, \"required\": [\"items\"], \"type\":
+      \"object\", \"additionalProperties\": false}", "name": "ArrayMinItems0"}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        OTUxNDYzMWEtYTYwYi00MmI4LTk0MDEtNjZiZTU1MTVmMWY2
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '435'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '714'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 3214
+      output:
+        message:
+          content:
+          - text: '{"items":["apple","banana","orange","grape","strawberry","blueberry","raspberry","blackberry","mango","pineapple","watermelon","cantaloupe","honeydew","kiwi","papaya","peach","pear","plum","cherry","apricot","nectarine","grapefruit","lemon","lime","tangerine","pomegranate","fig","date","coconut","avocado"]}'
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 180
+        outputTokens: 104
+        serverToolUsage: {}
+        totalTokens: 284
+    status:
+      code: 200
+      message: OK
+version: 1

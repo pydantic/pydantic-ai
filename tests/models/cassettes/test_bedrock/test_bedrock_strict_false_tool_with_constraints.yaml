@@ -1,0 +1,113 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Look up user Alice, age 30, tags [\"python\", \"ai\"]."}]}],
+      "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "lookup_user", "inputSchema": {"json":
+      {"additionalProperties": false, "properties": {"username": {"maxLength": 50, "minLength": 2, "type": "string"}, "age":
+      {"maximum": 150, "minimum": 0, "type": "integer"}, "tags": {"items": {"type": "string"}, "maxItems": 5, "minItems":
+      2, "type": "array"}}, "required": ["username", "age", "tags"], "type": "object"}}}}], "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZjhlNGY2MGEtYWE4Mi00YjE3LWJkY2QtNDYwYTI0YmFkOTU3
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '586'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '503'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 2020
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                age: 30
+                tags:
+                - python
+                - ai
+                username: Alice
+              name: lookup_user
+              toolUseId: tooluse_S39FykeD4sqJcdKfy1LZYX
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 645
+        outputTokens: 92
+        serverToolUsage: {}
+        totalTokens: 737
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Look up user Alice, age 30, tags [\"python\", \"ai\"]."}]},
+      {"role": "assistant", "content": [{"toolUse": {"toolUseId": "tooluse_S39FykeD4sqJcdKfy1LZYX", "name": "lookup_user",
+      "input": {"username": "Alice", "age": 30, "tags": ["python", "ai"]}}}]}, {"role": "user", "content": [{"toolResult":
+      {"toolUseId": "tooluse_S39FykeD4sqJcdKfy1LZYX", "content": [{"text": "User Alice (age 30, tags: python, ai) found"}],
+      "status": "success"}}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "lookup_user",
+      "inputSchema": {"json": {"additionalProperties": false, "properties": {"username": {"maxLength": 50, "minLength": 2,
+      "type": "string"}, "age": {"maximum": 150, "minimum": 0, "type": "integer"}, "tags": {"items": {"type": "string"}, "maxItems":
+      5, "minItems": 2, "type": "array"}}, "required": ["username", "age", "tags"], "type": "object"}}}}], "toolChoice": {"auto":
+      {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ODgxNWIyNmEtMDVkZS00NjdhLTgxZGEtMjFlMWY4OThiMTVh
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '963'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '456'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 2124
+      output:
+        message:
+          content:
+          - text: I successfully looked up user Alice with age 30 and tags "python" and "ai". The user was found in the system.
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 764
+        outputTokens: 31
+        serverToolUsage: {}
+        totalTokens: 795
+    status:
+      code: 200
+      message: OK
+version: 1
