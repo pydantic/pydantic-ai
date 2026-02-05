@@ -7,7 +7,6 @@ __pycache__
 /scratch/
 /.coverage
 env*/
-.env.vertex
 /TODO.md
 /postgres-data/
 .DS_Store
