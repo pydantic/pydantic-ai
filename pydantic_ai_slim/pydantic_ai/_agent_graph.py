@@ -1164,9 +1164,14 @@ async def _call_tools(  # noqa: C901
         projected_usage.tool_calls += len(tool_calls)
         usage_limits.check_before_tool_call(projected_usage)
 
-    # Validate and emit FunctionToolCallEvent for each tool, storing results to avoid double validation
+    # Validate and emit FunctionToolCallEvent for each tool, storing results to avoid double validation.
+    # Skip upfront validation for calls with pre-supplied deferred results (e.g. ToolApproved):
+    # those will be validated with correct context (approved=True, metadata) in _call_tool via handle_call.
     validated_calls: dict[str, ValidatedToolCall[DepsT]] = {}
     for call in tool_calls:
+        if call.tool_call_id in tool_call_results:
+            yield _messages.FunctionToolCallEvent(call)
+            continue
         try:
             validated = await tool_manager.validate_tool_call(call)
         except exceptions.UnexpectedModelBehavior:

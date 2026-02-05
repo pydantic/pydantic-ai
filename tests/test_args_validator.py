@@ -8,7 +8,7 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext, Tool
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
 from pydantic_ai.messages import FunctionToolCallEvent
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -774,3 +774,55 @@ async def test_external_tool_validation_failure():
     external_events = [e for e in tool_call_events if e.part.tool_name == 'external_tool']
     assert external_events, 'Should have external tool events'
     assert external_events[0].args_validated is False
+
+
+# Test 23: args_validator called exactly once with correct context for ToolApproved deferred calls
+def test_args_validator_not_double_called_for_approved_tools():
+    """Test that args_validator is called exactly once for ToolApproved deferred tool calls.
+
+    When a tool requires approval and is later re-run with ToolApproved, the validator
+    should only be called once (during handle_call with approved=True), not twice
+    (once in upfront validation with approved=False, then again in handle_call).
+    """
+    from pydantic_ai._output import DeferredToolRequests
+    from pydantic_ai.tools import DeferredToolResults, ToolApproved
+
+    validator_calls: list[tuple[int, bool]] = []
+
+    def my_validator(ctx: RunContext[int], x: int) -> None:
+        validator_calls.append((ctx.retry, ctx.tool_call_approved))
+
+    agent = Agent(
+        TestModel(),
+        deps_type=int,
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def my_tool(ctx: RunContext[int], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired()
+        return x * 42
+
+    # First run: tool requires approval, gets deferred
+    result = agent.run_sync('Hello', deps=42)
+    assert isinstance(result.output, DeferredToolRequests)
+    assert len(result.output.approvals) == 1
+    tool_call_id = result.output.approvals[0].tool_call_id
+
+    # Validator should have been called once during the first run (for the initial tool call)
+    assert len(validator_calls) == 1
+    assert validator_calls[0] == (0, False)  # retry=0, approved=False
+
+    # Second run: re-run with ToolApproved
+    validator_calls.clear()
+    messages = result.all_messages()
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(approvals={tool_call_id: ToolApproved()}),
+        deps=42,
+    )
+
+    # Validator should have been called exactly once with approved=True
+    assert len(validator_calls) == 1
+    assert validator_calls[0] == (0, True)  # retry=0, approved=True
