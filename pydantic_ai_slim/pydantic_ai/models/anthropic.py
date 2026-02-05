@@ -21,7 +21,7 @@ from ..builtin_tools import (
     WebFetchTool,
     WebSearchTool,
 )
-from ..exceptions import ModelAPIError, UserError
+from ..exceptions import ContextWindowExceeded, ModelAPIError, UserError
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
@@ -59,6 +59,11 @@ _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
     'pause_turn': 'stop',
     'refusal': 'content_filter',
 }
+
+_CONTEXT_WINDOW_ERROR_PATTERNS = (
+    'prompt is too long',
+    'exceeds the context window',
+)
 
 
 try:
@@ -217,6 +222,22 @@ class AnthropicModelSettings(ModelSettings, total=False):
     Set to `False` to force a fresh container (ignore any `container_id` from history).
     Set to a dict (e.g. `{'id': 'container_xxx'}`) to explicitly specify a container.
     """
+
+
+def _check_context_window_exceeded(e: APIStatusError, model_name: str) -> ContextWindowExceeded | None:
+    """Check if the error is a context window exceeded error and return the appropriate exception."""
+    if e.status_code != 400:
+        return None
+    if (body := _utils.as_dict(e.body)) and (error := _utils.as_dict(body.get('error'))):
+        if error.get('type') == 'invalid_request_error':
+            message = error.get('message', '')
+            if isinstance(message, str) and any(p in message.lower() for p in _CONTEXT_WINDOW_ERROR_PATTERNS):
+                return ContextWindowExceeded(
+                    status_code=e.status_code,
+                    model_name=model_name,
+                    body=e.body,
+                )
+    return None
 
 
 @dataclass(init=False)
@@ -432,6 +453,8 @@ class AnthropicModel(Model):
                 extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
+            if ctx_exc := _check_context_window_exceeded(e, self.model_name):
+                raise ctx_exc from e
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e  # pragma: lax no cover
@@ -512,6 +535,8 @@ class AnthropicModel(Model):
                 extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
+            if ctx_exc := _check_context_window_exceeded(e, self.model_name):
+                raise ctx_exc from e
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e  # pragma: lax no cover

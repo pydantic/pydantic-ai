@@ -13,7 +13,7 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._run_context import RunContext
 from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
-from ..exceptions import ModelAPIError
+from ..exceptions import ContextWindowExceeded, ModelAPIError
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
@@ -109,6 +109,38 @@ _FINISH_REASON_MAP: dict[MistralFinishReason, FinishReason] = {
     'error': 'error',
     'tool_calls': 'tool_call',
 }
+
+_CONTEXT_WINDOW_ERROR_PATTERNS = (
+    'too large for model',
+    'maximum context length',
+)
+
+
+def _check_context_window_exceeded(e: SDKError, model_name: str) -> ContextWindowExceeded | None:
+    """Check if the error is a context window exceeded error and return the appropriate exception."""
+    if e.status_code != 400:
+        return None
+    body = _utils.as_dict(e.body)
+    if body is None and isinstance(e.body, str):
+        try:
+            body = pydantic_core.from_json(e.body)
+        except ValueError:
+            pass
+    if body:
+        if body.get('code') == '3051' or body.get('code') == 3051:
+            return ContextWindowExceeded(
+                status_code=e.status_code,
+                model_name=model_name,
+                body=e.body,
+            )
+        message = body.get('message', '')
+        if isinstance(message, str) and any(p in message.lower() for p in _CONTEXT_WINDOW_ERROR_PATTERNS):
+            return ContextWindowExceeded(
+                status_code=e.status_code,
+                model_name=model_name,
+                body=e.body,
+            )
+    return None
 
 
 class MistralModelSettings(ModelSettings, total=False):
@@ -242,6 +274,8 @@ class MistralModel(Model):
                 http_headers={'User-Agent': get_user_agent()},
             )
         except SDKError as e:
+            if ctx_exc := _check_context_window_exceeded(e, self.model_name):
+                raise ctx_exc from e
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
