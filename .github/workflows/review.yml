@@ -48,6 +48,7 @@ jobs:
 
             Before you start:
             - Read the `CLAUDE.md` at the root (symlinked to `AGENTS.md`) to understand the project and your responsibility in helping drive this PR towards a good outcome for the project and all of its users, and lowering the review burden on maintainers.
+            - Read the version policy in `docs/version-policy.md` to understand what constitutes a breaking change.
             - Gather context about the PR like related issues (and comments), earlier review comments, and changed file paths (using the `gh` CLI).
             - Read the directory-specific `AGENTS.md` files if changes were made in those directories.
             - Read all changes, excluding generated files like `uv.lock` and `tests/*/cassettes/*`.
@@ -61,16 +62,17 @@ jobs:
             Note that another agent (Devin) is responsible for thoroughly reviewing the code for bugs, security issues, and edge cases -- those are not your focus.
 
             Finally:
-            - Use `mcp__github_inline_comment__create_inline_comment` to attach feedback to specific lines of code, calling out every single identified issue.
+            - Use `mcp__github_inline_comment__create_inline_comment` to attach feedback to specific lines of code, calling out every single identified issue or change requiring explicit consideration.
               - Include the reasoning, but don't quote specific rules from the `AGENTS.md` files.
               - Include a concrete suggestion if appropriate, using GitHub suggestion code snippets for concrete code changes.
               - Ping the maintainer (`@DouweM`) on any change that requires further discussion or approval.
             - Use `gh pr comment` only for feedback that doesn't relate to a specific line or file.
+            - Do not post a final summary comment; inline comments are sufficient.
 
             Your comments should be:
-            - actionable: they should request a change, flag a concern that needs discussion, and/or suggest an improvement.
-            - concise and to the point: don't use unnecessary emojis, lists, or subheadings; 1 to 3 paragraphs are usually enough.
-            - friendly without being sycophantic: use the tone and language of a helpful and encouraging project maintainer, not a critical or nitpicking one.
+            - actionable: they should request a change, flag a concern that needs discussion, and/or suggest an improvement; don't comment on positive aspects of the PR like "excellent design choices".
+            - concise and to the point: don't use unnecessary emojis, lists, or subheadings; 1 to 3 paragraphs are pretty much always enough.
+            - friendly without being sycophantic: use the tone and language of a helpful and encouraging project maintainer, not a critical or nitpicking one; no need to compliment the author on positive aspects of the PR.
             - non-repetitive: don't repeat things pointed out in earlier comments, unless they are marked as resolved and the problem persists without a satisfactory resolution.
 
             It bears repeating that you are the first line of defense against low-quality contributions and maintainer headaches, and you have a big role in ensuring that every contribution to this project meets or exceeds the high standards that the Pydantic brand is known and loved for.
