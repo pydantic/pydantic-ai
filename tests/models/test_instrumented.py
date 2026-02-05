@@ -1289,44 +1289,6 @@ def test_messages_to_otel_messages_multimodal_v4():
         ),
     ]
     settings = InstrumentationSettings(version=4)
-    # Test messages_to_otel_events() (version 1 format with type->kind transformation)
-    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
-        [
-            {
-                'content': [
-                    'Describe these files',
-                    {
-                        'kind': 'uri',
-                        'modality': 'image',
-                        'uri': 'https://example.com/image.jpg',
-                        'mime_type': 'image/jpeg',
-                    },
-                    {
-                        'kind': 'uri',
-                        'modality': 'audio',
-                        'uri': 'https://example.com/audio.mp3',
-                        'mime_type': 'audio/mpeg',
-                    },
-                    {
-                        'kind': 'uri',
-                        'modality': 'document',
-                        'uri': 'https://example.com/doc.pdf',
-                        'mime_type': 'application/pdf',
-                    },
-                    {
-                        'kind': 'uri',
-                        'modality': 'video',
-                        'uri': 'https://example.com/video.mp4',
-                        'mime_type': 'video/mp4',
-                    },
-                ],
-                'role': 'user',
-                'gen_ai.message.index': 0,
-                'event.name': 'gen_ai.user.message',
-            }
-        ]
-    )
-    # Test messages_to_otel_messages() (version 2+ format)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -1379,18 +1341,6 @@ def test_messages_to_otel_messages_multimodal_v4_no_content():
         ),
     ]
     settings = InstrumentationSettings(version=4, include_content=False)
-    # Test messages_to_otel_events() (version 1 format)
-    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
-        [
-            {
-                'content': [{'kind': 'text'}, {'kind': 'uri', 'modality': 'image'}],
-                'role': 'user',
-                'gen_ai.message.index': 0,
-                'event.name': 'gen_ai.user.message',
-            }
-        ]
-    )
-    # Test messages_to_otel_messages() (version 2+ format)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
