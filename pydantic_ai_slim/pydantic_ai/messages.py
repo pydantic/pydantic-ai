@@ -158,27 +158,8 @@ def _multi_modal_content_identifier(identifier: str | bytes) -> str:
     return hashlib.sha1(identifier).hexdigest()[:6]
 
 
-class _MediaTypeMixin:
-    """Mixin providing media_type_category and media_type_subtype properties.
-
-    Classes using this mixin must have a `media_type: str` property or attribute.
-    """
-
-    @property
-    def media_type_category(self) -> str:
-        """Return the category part of the media type (e.g., 'image' from 'image/png')."""
-        media_type = self.media_type  # type: ignore[attr-defined]
-        return media_type.split('/', 1)[0]  # type: ignore[arg-type]
-
-    @property
-    def media_type_subtype(self) -> str:
-        """Return the subtype part of the media type (e.g., 'png' from 'image/png')."""
-        media_type = self.media_type  # type: ignore[attr-defined]
-        return media_type.split('/', 1)[1]  # type: ignore[arg-type]
-
-
 @pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
-class FileUrl(_MediaTypeMixin, ABC):
+class FileUrl(ABC):
     """Abstract base class for any URL-based file."""
 
     url: str
@@ -471,7 +452,7 @@ class DocumentUrl(FileUrl):
         val_json_bytes='base64',
     ),
 )
-class BinaryContent(_MediaTypeMixin):
+class BinaryContent:
     """Binary content, e.g. an audio or image file."""
 
     data: bytes
@@ -679,7 +660,7 @@ UploadedFileProviderName: TypeAlias = Literal['anthropic', 'openai', 'google-gla
 
 
 @pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
-class UploadedFile(_MediaTypeMixin):
+class UploadedFile:
     """A reference to a file uploaded to a provider's file storage by ID.
 
     This allows referencing files that have been uploaded via provider-specific file APIs
@@ -781,14 +762,15 @@ class UploadedFile(_MediaTypeMixin):
 
         The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
         """
-        if self.media_type_category == 'image':
-            return _image_format_lookup.get(self.media_type)
-        elif self.media_type_category == 'video':
-            return _video_format_lookup.get(self.media_type)
-        elif self.media_type_category == 'audio':
-            return _audio_format_lookup.get(self.media_type)
+        media_type = self.media_type
+        if media_type.startswith('image/'):
+            return _image_format_lookup.get(media_type)
+        elif media_type.startswith('video/'):
+            return _video_format_lookup.get(media_type)
+        elif media_type.startswith('audio/'):
+            return _audio_format_lookup.get(media_type)
         else:
-            return _document_format_lookup.get(self.media_type)
+            return _document_format_lookup.get(media_type)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -924,7 +906,7 @@ class UserPromptPart:
             elif isinstance(part, UploadedFile):
                 # UploadedFile references provider-hosted files by file_id (OTel GenAI spec FilePart)
                 # Infer modality from media_type - OTel spec defines: image, video, audio (or any string)
-                category = part.media_type_category
+                category = part.media_type.split('/', 1)[0]
                 if category in ('image', 'audio', 'video'):
                     modality = category
                 else:

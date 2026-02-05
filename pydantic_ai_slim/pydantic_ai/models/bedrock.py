@@ -891,12 +891,19 @@ class BedrockConverseModel(Model):
                         downloaded_item = await download_item(item, data_format='bytes', type_format='extension')
                         source = {'bytes': downloaded_item['data']}
 
+                    try:
+                        format = item.format
+                    except (KeyError, ValueError):
+                        # Unknown media type — fall back to raw subtype so the
+                        # validation inside _make_*_block produces a clear UserError.
+                        format = item.media_type.split('/', 1)[1]
+
                     if item.kind == 'image-url':
-                        content.append(_make_image_block(item.media_type_subtype, source))
+                        content.append(_make_image_block(format, source))
                     elif item.kind == 'document-url':
-                        content.append(_make_document_block(f'Document {next(document_count)}', item.format, source))
+                        content.append(_make_document_block(f'Document {next(document_count)}', format, source))
                     elif item.kind == 'video-url':  # pragma: no branch
-                        content.append(_make_video_block(item.media_type_subtype, source))
+                        content.append(_make_video_block(format, source))
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
                 elif isinstance(item, UploadedFile):
@@ -917,11 +924,11 @@ class BedrockConverseModel(Model):
                     if format is None:
                         raise UserError(f'Unsupported media type for Bedrock UploadedFile: {item.media_type}')
 
-                    if item.media_type_category == 'image':
+                    if item.media_type.startswith('image/'):
                         content.append(_make_image_block(format, source))
-                    elif item.media_type_category == 'video':
+                    elif item.media_type.startswith('video/'):
                         content.append(_make_video_block(format, source))
-                    elif item.media_type_category == 'audio':
+                    elif item.media_type.startswith('audio/'):
                         raise UserError('Audio files are not supported for Bedrock UploadedFile')
                     else:
                         content.append(_make_document_block(item.identifier, format, source))
