@@ -6,7 +6,15 @@ from unittest.mock import AsyncMock
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import BinaryContent, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
+from pydantic_ai import (
+    BinaryContent,
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
@@ -141,3 +149,41 @@ def test_assistant_text_history_complex():
     agent = Agent(model=MCPSamplingModel(fake_session(create_message)))
     result = agent.run_sync('1', message_history=history)
     assert result.output == snapshot('text content')
+
+
+def test_mcp_sampling_history_with_tool_return():
+    result = CreateMessageResult(
+        role='assistant', content=TextContent(type='text', text='text content'), model='test-model'
+    )
+    create_message = AsyncMock(return_value=result)
+    agent = Agent(model=MCPSamplingModel(fake_session(create_message)))
+
+    history = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='test_tool', content={'value': 1}, tool_call_id='tool-call-1'),
+            ],
+            timestamp=IsDatetime(),
+        )
+    ]
+
+    agent.run_sync('Hello', message_history=history)
+
+    sampling_messages = create_message.call_args.args[0]
+    assert [message.model_dump(by_alias=True) for message in sampling_messages] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': {
+                    'type': 'text',
+                    'text': 'Tool `test_tool` (id=tool-call-1) returned:\n{"value": 1}',
+                    'annotations': None,
+                    '_meta': None,
+                },
+            },
+            {
+                'role': 'user',
+                'content': {'type': 'text', 'text': 'Hello', 'annotations': None, '_meta': None},
+            },
+        ]
+    )
