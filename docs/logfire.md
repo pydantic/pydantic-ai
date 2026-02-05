@@ -69,7 +69,7 @@ from pydantic_ai import Agent
 logfire.configure()  # (1)!
 logfire.instrument_pydantic_ai()  # (2)!
 
-agent = Agent('openai:gpt-5', instructions='Be concise, reply with one sentence.')
+agent = Agent('openai:gpt-5.2', instructions='Be concise, reply with one sentence.')
 result = agent.run_sync('Where does "hello world" come from?')  # (3)!
 print(result.output)
 """
@@ -121,7 +121,7 @@ logfire.configure()
 logfire.instrument_pydantic_ai()
 logfire.instrument_httpx(capture_all=True)  # (1)!
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> The capital of France is Paris.
@@ -165,7 +165,7 @@ logfire.configure(send_to_logfire=False)  # (2)!
 logfire.instrument_pydantic_ai()
 logfire.instrument_httpx(capture_all=True)
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> Paris
@@ -218,7 +218,7 @@ tracer_provider.add_span_processor(span_processor)
 set_tracer_provider(tracer_provider)
 
 Agent.instrument_all()
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> Paris
@@ -267,7 +267,7 @@ from pydantic_ai import Agent
 
 logfire.configure()
 logfire.instrument_pydantic_ai(version=1, event_mode='logs')
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> The capital of France is Paris.
@@ -292,7 +292,7 @@ instrumentation_settings = InstrumentationSettings(
     logger_provider=LoggerProvider(),
 )
 
-agent = Agent('openai:gpt-5', instrument=instrumentation_settings)
+agent = Agent('openai:gpt-5.2', instrument=instrumentation_settings)
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
@@ -304,7 +304,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 
 settings = InstrumentationSettings()
-model = InstrumentedModel('openai:gpt-5', settings)
+model = InstrumentedModel('openai:gpt-5.2', settings)
 agent = Agent(model)
 ```
 
@@ -315,7 +315,7 @@ from pydantic_ai import Agent, InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(include_binary_content=False)
 
-agent = Agent('openai:gpt-5', instrument=instrumentation_settings)
+agent = Agent('openai:gpt-5.2', instrument=instrumentation_settings)
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
@@ -332,7 +332,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(include_content=False)
 
-agent = Agent('openai:gpt-5', instrument=instrumentation_settings)
+agent = Agent('openai:gpt-5.2', instrument=instrumentation_settings)
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
