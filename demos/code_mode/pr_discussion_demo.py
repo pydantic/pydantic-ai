@@ -188,17 +188,13 @@ async def main() -> None:
     logfire.configure(service_name='code-mode-demo')
     logfire.instrument_pydantic_ai()
 
-    print(f'CodeMode Demo: PR Discussion | Model: {MODEL}')
-
     github = create_github_mcp()
 
     async with github:
-        print('Running tool calling mode...')
         with logfire.span('demo_tool_calling'):
             trad = await run_tool_calling(github)
         log_metrics(trad)
 
-        print('Running code mode...')
         with logfire.span('demo_code_mode'):
             code = await run_code_mode(github)
         log_metrics(code)

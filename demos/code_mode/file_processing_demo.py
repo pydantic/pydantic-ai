@@ -229,16 +229,12 @@ async def main() -> None:
     logfire.configure(service_name='code-mode-files-demo')
     logfire.instrument_pydantic_ai()
 
-    print(f'CodeMode Demo: File Processing | Model: {MODEL}')
-
     toolset = create_toolset()
 
-    print('Running tool calling mode...')
     with logfire.span('demo_tool_calling'):
         trad = await run_tool_calling(toolset)
     log_metrics(trad)
 
-    print('Running code mode...')
     with logfire.span('demo_code_mode'):
         code = await run_code_mode(toolset)
     log_metrics(code)
