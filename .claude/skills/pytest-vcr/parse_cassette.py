@@ -42,9 +42,10 @@ def parse_cassette(path: Path, interaction_idx: int | None = None) -> None:
     indices = [interaction_idx] if interaction_idx is not None else range(len(interactions))
 
     for i in indices:
-        if i >= len(interactions):
+        if i < 0 or i >= len(interactions):
             print(f'Interaction {i} not found (only {len(interactions)} interactions)')
             continue
+
 
         interaction = interactions[i]
         req = interaction.get('request', {})
