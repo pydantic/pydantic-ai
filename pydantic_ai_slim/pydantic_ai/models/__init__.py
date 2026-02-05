@@ -1021,7 +1021,7 @@ class StreamedResponse(ABC):
     def get(self) -> ModelResponse:
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
         return ModelResponse(
-            parts=self._parts_manager.get_parts(cancelled=self._cancelled),
+            parts=self._parts_manager.get_parts(),
             model_name=self.model_name,
             timestamp=self.timestamp,
             usage=self.usage(),

@@ -943,9 +943,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             try:
                 async for event in events:
                     await send_stream.send(event)
-            except anyio.BrokenResourceError:  # pragma: no cover
+            except anyio.BrokenResourceError:
                 # Receiver/consumer closed, so we cancel the stream
-                if isinstance(events, AgentStream):
+                if isinstance(events, AgentStream):  # pragma: no branch
                     await events.cancel()
 
         async def run_agent() -> AgentRunResult[Any]:

@@ -107,14 +107,12 @@ class GraphAgentState:
                 and model_response.finish_reason == 'length'
                 and model_response.parts
                 and isinstance(tool_call := model_response.parts[-1], _messages.ToolCallPart)
+                and tool_call.args_incomplete
             ):
-                try:
-                    tool_call.args_as_dict()
-                except Exception:
-                    max_tokens = model_settings.get('max_tokens') if model_settings else None
-                    raise exceptions.IncompleteToolCall(
-                        f'Model token limit ({max_tokens or "provider default"}) exceeded while generating a tool call, resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
-                    )
+                max_tokens = model_settings.get('max_tokens') if model_settings else None
+                raise exceptions.IncompleteToolCall(
+                    f'Model token limit ({max_tokens or "provider default"}) exceeded while generating a tool call, resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
+                )
             message = f'Exceeded maximum retries ({max_result_retries}) for output validation'
             if error:
                 if isinstance(error, exceptions.UnexpectedModelBehavior) and error.__cause__ is not None:
