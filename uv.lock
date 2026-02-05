@@ -717,16 +717,16 @@ wheels = [
 
 [[package]]
 name = "boto3"
-version = "1.42.14"
+version = "1.42.39"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "botocore" },
     { name = "jmespath" },
     { name = "s3transfer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/09/72/e236ca627bc0461710685f5b7438f759ef3b4106e0e08dda08513a6539ab/boto3-1.42.14.tar.gz", hash = "sha256:a5d005667b480c844ed3f814a59f199ce249d0f5669532a17d06200c0a93119c", size = 112825, upload-time = "2025-12-19T20:27:15.325Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b8/ea/b96c77da49fed28744ee0347374d8223994a2b8570e76e8380a4064a8c4a/boto3-1.42.39.tar.gz", hash = "sha256:d03f82363314759eff7f84a27b9e6428125f89d8119e4588e8c2c1d79892c956", size = 112783, upload-time = "2026-01-30T20:38:31.226Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bb/ba/c657ea6f6d63563cc46748202fccd097b51755d17add00ebe4ea27580d06/boto3-1.42.14-py3-none-any.whl", hash = "sha256:bfcc665227bb4432a235cb4adb47719438d6472e5ccbf7f09512046c3f749670", size = 140571, upload-time = "2025-12-19T20:27:13.316Z" },
+    { url = "https://files.pythonhosted.org/packages/b2/c4/3493b5c86e32d6dd558b30d16b55503e24a6e6cd7115714bc102b247d26e/boto3-1.42.39-py3-none-any.whl", hash = "sha256:d9d6ce11df309707b490d2f5f785b761cfddfd6d1f665385b78c9d8ed097184b", size = 140606, upload-time = "2026-01-30T20:38:28.635Z" },
 ]
 
 [[package]]
@@ -750,16 +750,16 @@ bedrock-runtime = [
 
 [[package]]
 name = "botocore"
-version = "1.42.14"
+version = "1.42.39"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jmespath" },
     { name = "python-dateutil" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/35/3f/50c56f093c2c6ce6de1f579726598db1cf9a9cccd3bf8693f73b1cf5e319/botocore-1.42.14.tar.gz", hash = "sha256:cf5bebb580803c6cfd9886902ca24834b42ecaa808da14fb8cd35ad523c9f621", size = 14910547, upload-time = "2025-12-19T20:27:04.431Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ac/a6/3a34d1b74effc0f759f5ff4e91c77729d932bc34dd3207905e9ecbba1103/botocore-1.42.39.tar.gz", hash = "sha256:0f00355050821e91a5fe6d932f7bf220f337249b752899e3e4cf6ed54326249e", size = 14914927, upload-time = "2026-01-30T20:38:19.265Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ad/94/67a78a8d08359e779894d4b1672658a3c7fcce216b48f06dfbe1de45521d/botocore-1.42.14-py3-none-any.whl", hash = "sha256:efe89adfafa00101390ec2c371d453b3359d5f9690261bc3bd70131e0d453e8e", size = 14583247, upload-time = "2025-12-19T20:27:00.54Z" },
+    { url = "https://files.pythonhosted.org/packages/ef/71/9a2c88abb5fe47b46168b262254d5b5d635de371eba4bd01ea5c8c109575/botocore-1.42.39-py3-none-any.whl", hash = "sha256:9e0d0fed9226449cc26fcf2bbffc0392ac698dd8378e8395ce54f3ec13f81d58", size = 14591958, upload-time = "2026-01-30T20:38:14.814Z" },
 ]
 
 [[package]]
@@ -6420,6 +6420,7 @@ anthropic = [
 ]
 bedrock = [
     { name = "boto3" },
+    { name = "botocore" },
 ]
 cli = [
     { name = "argcomplete" },
@@ -6533,6 +6534,7 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.75.0" },
     { name = "argcomplete", marker = "extra == 'cli'", specifier = ">=3.5.0" },
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.42.14" },
+    { name = "botocore", marker = "extra == 'bedrock'", specifier = ">=1.42.14" },
     { name = "cohere", marker = "sys_platform != 'emscripten' and extra == 'cohere'", specifier = ">=5.18.0" },
     { name = "dbos", marker = "extra == 'dbos'", specifier = ">=2.10.0" },
     { name = "ddgs", marker = "extra == 'duckduckgo'", specifier = ">=9.0.0" },

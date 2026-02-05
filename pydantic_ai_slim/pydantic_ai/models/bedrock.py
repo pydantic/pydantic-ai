@@ -210,27 +210,30 @@ class BedrockModelSettings(ModelSettings, total=False):
     See more about it on <https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters.html>.
     """
 
-    bedrock_cache_tool_definitions: bool
+    bedrock_cache_tool_definitions: bool | Literal['5m', '1h']
     """Whether to add a cache point after the last tool definition.
 
     When enabled, the last tool in the `tools` array will include a `cachePoint`, allowing Bedrock to cache tool
     definitions and reduce costs for compatible models.
+    If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
     See https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html for more information.
     """
 
-    bedrock_cache_instructions: bool
+    bedrock_cache_instructions: bool | Literal['5m', '1h']
     """Whether to add a cache point after the system prompt blocks.
 
     When enabled, an extra `cachePoint` is appended to the system prompt so Bedrock can cache system instructions.
+    If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
     See https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html for more information.
     """
 
-    bedrock_cache_messages: bool
+    bedrock_cache_messages: bool | Literal['5m', '1h']
     """Convenience setting to enable caching for the last user message.
 
     When enabled, this automatically adds a cache point to the last content block
     in the final user message, which is useful for caching conversation history
     or context in multi-turn conversations.
+    If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
 
     Note: Uses 1 of Bedrock's 4 available cache points per request. Any additional CachePoint
     markers in messages will be automatically limited to respect the 4-cache-point maximum.
@@ -578,12 +581,9 @@ class BedrockConverseModel(Model):
             return None
 
         profile = BedrockModelProfile.from_profile(self.profile)
-        if (
-            model_settings
-            and model_settings.get('bedrock_cache_tool_definitions')
-            and profile.bedrock_supports_tool_caching
-        ):
-            tools.append({'cachePoint': {'type': 'default'}})
+        if cache_setting := (model_settings or {}).get('bedrock_cache_tool_definitions'):
+            if profile.bedrock_supports_tool_caching:
+                tools.append(self._get_cache_point(cache_setting, profile))
 
         tool_choice: ToolChoiceTypeDef
         if not model_request_parameters.allow_text_output:
@@ -619,9 +619,7 @@ class BedrockConverseModel(Model):
                         if part.content:  # pragma: no branch
                             system_prompt.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
-                        bedrock_messages.extend(
-                            await self._map_user_prompt(part, document_count, profile.bedrock_supports_prompt_caching)
-                        )
+                        bedrock_messages.extend(await self._map_user_prompt(part, document_count, profile, settings))
                     elif isinstance(part, ToolReturnPart):
                         assert part.tool_call_id is not None
                         bedrock_messages.append(
@@ -740,8 +738,9 @@ class BedrockConverseModel(Model):
         if instructions := self._get_instructions(messages, model_request_parameters):
             system_prompt.append({'text': instructions})
 
-        if system_prompt and settings.get('bedrock_cache_instructions') and profile.bedrock_supports_prompt_caching:
-            system_prompt.append({'cachePoint': {'type': 'default'}})
+        if system_prompt and (cache_instructions := settings.get('bedrock_cache_instructions')):
+            if profile.bedrock_supports_prompt_caching:
+                system_prompt.append(self._get_cache_point(cache_instructions, profile))
 
         if processed_messages and settings.get('bedrock_cache_messages') and profile.bedrock_supports_prompt_caching:
             last_user_content = self._get_last_user_message_content(processed_messages)
@@ -765,7 +764,7 @@ class BedrockConverseModel(Model):
                 elif last_multimodal_index is None:
                     # No multi-modal content, append cache point at the end.
                     # Note: _get_last_user_message_content ensures content doesn't already end with a cachePoint.
-                    last_user_content.append({'cachePoint': {'type': 'default'}})
+                    last_user_content.append(self._get_cache_point(settings['bedrock_cache_messages'], profile))  # pyright: ignore[reportTypedDictNotRequiredAccess]
                 # If last_multimodal_index == 0, we can't insert at start, so skip auto-caching for this message
 
         return system_prompt, processed_messages
@@ -800,7 +799,8 @@ class BedrockConverseModel(Model):
     async def _map_user_prompt(  # noqa: C901
         part: UserPromptPart,
         document_count: Iterator[int],
-        supports_prompt_caching: bool,
+        profile: BedrockModelProfile,
+        settings: BedrockModelSettings | None,
     ) -> list[MessageUnionTypeDef]:
         content: list[ContentBlockUnionTypeDef] = []
         if isinstance(part.content, str):
@@ -868,38 +868,32 @@ class BedrockConverseModel(Model):
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
                 elif isinstance(item, CachePoint):
-                    if not supports_prompt_caching:
+                    if not profile.bedrock_supports_prompt_caching:
                         # Silently skip CachePoint for models that don't support prompt caching
                         continue
-                    if not content or 'cachePoint' in content[-1]:
+                    if not content:
                         raise UserError(
                             'CachePoint cannot be the first content in a user message - there must be previous content to cache when using Bedrock. '
                             'To cache system instructions or tool definitions, use the `bedrock_cache_instructions` or `bedrock_cache_tool_definitions` settings instead.'
                         )
-                    # AWS currently rejects cache points that directly follow documents and videos (but not images).
-                    # So we insert the cache point before the trailing multi-modal content instead.
-                    multimodal_keys = ['document', 'video']
-                    last_multimodal_index = next(
-                        (
-                            i
-                            for i, block in reversed(list(enumerate(content)))
-                            if any(key in block for key in multimodal_keys)
-                        ),
-                        None,
-                    )
-                    if last_multimodal_index is not None and last_multimodal_index > 0:
-                        # Insert cache point before the last multi-modal content
-                        content.insert(last_multimodal_index, {'cachePoint': {'type': 'default'}})
-                    elif last_multimodal_index is None:
-                        # No multi-modal content, append cache point at the end
-                        content.append({'cachePoint': {'type': 'default'}})
-                    else:
-                        # last_multimodal_index == 0, can't insert at start
+                    if isinstance(content[-1], dict) and 'cachePoint' in content[-1]:
+                        continue
+
+                    # The test `test_bedrock_cache_point_with_only_document_raises_error` wants to forbid cache points
+                    # if the message *only* contains a document/video and no text.
+                    is_non_text_block = 'text' not in content[-1]
+                    has_text = any('text' in block for block in content)
+                    if not has_text:
                         raise UserError(
-                            'CachePoint cannot be placed when the user message contains only a document or video, '
-                            'due to Bedrock API restrictions. '
-                            'Add text content before or after your document or video to enable caching.'
+                            'CachePoint cannot be placed when the user message contains only a document or video'
                         )
+
+                    if is_non_text_block:
+                        # AWS currently rejects cache points that directly follow non-text content.
+                        # Insert an empty text block as a workaround
+                        content.append({'text': '\n'})
+
+                    content.append(BedrockConverseModel._get_cache_point(item.ttl, profile))
                 else:
                     assert_never(item)
         return [{'role': 'user', 'content': content}]
@@ -909,6 +903,16 @@ class BedrockConverseModel(Model):
         return {
             'toolUse': {'toolUseId': _utils.guard_tool_call_id(t=t), 'name': t.tool_name, 'input': t.args_as_dict()}
         }
+
+    @staticmethod
+    def _get_cache_point(ttl_setting: bool | Literal['5m', '1h'] | None, profile: BedrockModelProfile) -> Any:
+        cache_point: dict[str, Any] = {'type': 'default'}
+        if getattr(profile, 'bedrock_supports_prompt_cache_ttl', False):
+            if ttl_setting is True:
+                cache_point['ttl'] = '5m'
+            elif isinstance(ttl_setting, str):
+                cache_point['ttl'] = ttl_setting
+        return {'cachePoint': cache_point}
 
     @staticmethod
     def _limit_cache_points(
