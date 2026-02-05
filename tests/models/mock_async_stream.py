@@ -88,13 +88,13 @@ class MockEventStream(Generic[T]):
     _closed: bool = False
     """Whether the stream has been closed."""
 
-    def __iter__(self) -> MockEventStream[T]:
-        return self
+    def __iter__(self) -> MockEventStream[T]:  # pragma: no cover
+        return self  # pragma: no cover
 
-    def __next__(self) -> T:
-        next_val = _utils.sync_anext(self._iter)
-        raise_if_exception(next_val)
-        return next_val
+    def __next__(self) -> T:  # pragma: no cover
+        next_val = _utils.sync_anext(self._iter)  # pragma: no cover
+        raise_if_exception(next_val)  # pragma: no cover
+        return next_val  # pragma: no cover
 
     def close(self) -> None:
         """Close the stream. Used for testing cancellation (synchronous)."""

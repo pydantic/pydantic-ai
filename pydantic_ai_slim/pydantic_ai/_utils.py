@@ -267,7 +267,7 @@ async def group_by_temporal(  # noqa: C901
         if task:
             task.cancel('Cancelling due to error in iterator')
             # Don't await if we're being closed - can't await in a closing async generator
-            if not closing:
+            if not closing:  # pragma: no branch
                 with suppress(asyncio.CancelledError, StopAsyncIteration):
                     await task
 

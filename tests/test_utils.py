@@ -59,10 +59,10 @@ async def test_group_by_temporal_break_cancels_pending_task():
     async def yield_slowly() -> AsyncIterator[int]:
         yield 1
         await asyncio.sleep(10)  # Long delay to ensure task is pending when we break
-        yield 2
+        yield 2  # pragma: no cover
 
     async with group_by_temporal(yield_slowly(), soft_max_interval=0.01) as groups_iter:
-        async for group in groups_iter:
+        async for group in groups_iter:  # pragma: no branch
             assert group == [1]
             break  # Triggers inner finally block which cancels the pending task
 
@@ -73,7 +73,7 @@ async def test_group_by_temporal_aclose_triggers_generator_exit():
     async def yield_slowly() -> AsyncIterator[int]:
         yield 1
         await asyncio.sleep(10)
-        yield 2
+        yield 2  # pragma: no cover
 
     async with group_by_temporal(yield_slowly(), soft_max_interval=0.01) as groups_iter:
         groups_aiter = cast(AsyncGenerator[list[int]], aiter(groups_iter))
