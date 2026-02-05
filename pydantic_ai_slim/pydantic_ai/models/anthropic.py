@@ -70,6 +70,7 @@ try:
         AsyncStream,
         omit as OMIT,
     )
+    from anthropic.types.anthropic_beta_param import AnthropicBetaParam
     from anthropic.types.beta import (
         BetaBase64PDFSourceParam,
         BetaCacheControlEphemeralParam,
@@ -216,6 +217,14 @@ class AnthropicModelSettings(ModelSettings, total=False):
 
     Set to `False` to force a fresh container (ignore any `container_id` from history).
     Set to a dict (e.g. `{'id': 'container_xxx'}`) to explicitly specify a container.
+    """
+
+    anthropic_betas: list[AnthropicBetaParam]
+    """List of Anthropic beta features to enable for API requests.
+
+    Each item can be a known beta name (e.g. 'interleaved-thinking-2025-05-14') or a custom string.
+    Merged with auto-added betas (e.g. structured-outputs, builtin tools) and any betas from
+    extra_headers['anthropic-beta']. See the Anthropic docs for available beta features.
     """
 
 
@@ -458,6 +467,9 @@ class AnthropicModel(Model):
 
         if has_strict_tools or model_request_parameters.output_mode == 'native':
             betas.add('structured-outputs-2025-11-13')
+
+        if betas_from_setting := model_settings.get('anthropic_betas'):
+            betas.update(str(b) for b in betas_from_setting)
 
         if beta_header := extra_headers.pop('anthropic-beta', None):
             betas.update({stripped_beta for beta in beta_header.split(',') if (stripped_beta := beta.strip())})
