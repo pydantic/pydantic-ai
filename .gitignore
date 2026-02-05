@@ -24,6 +24,5 @@ node_modules/
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/pytest-vcr/
-!tests/CLAUDE.md
 /.cursor/
 /.devcontainer/
