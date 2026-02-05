@@ -804,9 +804,7 @@ class BedrockConverseModel(Model):
             last_user_content = self._get_last_user_message_content(processed_messages)
             if last_user_content is not None:
                 # Note: _get_last_user_message_content ensures content doesn't already end with a cachePoint.
-                _insert_cache_point_before_trailing_documents(
-                    last_user_content, skip_if_back_to_back=True
-                )
+                _insert_cache_point_before_trailing_documents(last_user_content, skip_if_back_to_back=True)
 
         return system_prompt, processed_messages
 
@@ -916,9 +914,7 @@ class BedrockConverseModel(Model):
                             'CachePoint cannot be the first content in a user message - there must be previous content to cache when using Bedrock. '
                             'To cache system instructions or tool definitions, use the `bedrock_cache_instructions` or `bedrock_cache_tool_definitions` settings instead.'
                         )
-                    _insert_cache_point_before_trailing_documents(
-                        content, raise_if_cannot_insert=True
-                    )
+                    _insert_cache_point_before_trailing_documents(content, raise_if_cannot_insert=True)
                 else:
                     assert_never(item)
         return [{'role': 'user', 'content': content}]
