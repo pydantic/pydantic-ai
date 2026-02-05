@@ -77,6 +77,9 @@ try:
         FunctionCallingConfigDict,
         FunctionCallingConfigMode,
         FunctionDeclarationDict,
+        FunctionResponseBlobDict,
+        FunctionResponseFileDataDict,
+        FunctionResponsePartDict,
         GenerateContentConfigDict,
         GenerateContentResponse,
         GenerationConfigDict,
@@ -691,27 +694,36 @@ class GoogleModel(Model):
     async def _map_tool_return(self, part: ToolReturnPart) -> list[PartDict]:
         """Map a `ToolReturnPart` to Google API format, handling multimodal content.
 
-        Iterates content directly to preserve order of mixed file/data content.
-        Data goes in `function_response`, files become separate parts that follow.
+        For Gemini 3+ models with supported MIME types, files are sent inside
+        `function_response.parts` for efficiency. Unsupported types become separate
+        parts after the function_response (fallback strategy).
+        See: https://ai.google.dev/gemini-api/docs/function-calling#multimodal-function-responses
         """
-        # TODO: Gemini 3+ supports multimodal parts inside FunctionResponseDict.parts field
-        # which could be more efficient than sending files as separate content parts.
-        # See: https://ai.google.dev/gemini-api/docs/function-calling#multimodal-function-responses
+        supported_mime_types = GoogleModelProfile.from_profile(self.profile).google_supported_mime_types_in_tool_returns
+
+        function_response_parts: list[FunctionResponsePartDict] = []
+        fallback_parts: list[PartDict] = []
+
+        for item in part.content_items:
+            if isinstance(item, (BinaryContent, FileUrl)):
+                if item.media_type in supported_mime_types:
+                    fr_part = await self._map_file_to_function_response_part(item)
+                    function_response_parts.append(fr_part)
+                else:
+                    file_part = await self._map_file_to_part(item)
+                    fallback_parts.append(file_part)
+
         result: list[PartDict] = [
             {
                 'function_response': {
                     'name': part.tool_name,
                     'response': part.model_response_object(),
                     'id': part.tool_call_id,
+                    'parts': function_response_parts or None,
                 }
             }
         ]
-
-        # Add multimodal files - iterate content directly to preserve relative file order
-        for item in part.content_items:
-            if isinstance(item, (BinaryContent, FileUrl)):
-                file_part = await self._map_file_to_part(item)
-                result.append(file_part)
+        result.extend(fallback_parts)
 
         return result
 
@@ -761,6 +773,36 @@ class GoogleModel(Model):
                 if isinstance(file, VideoUrl) and file.vendor_metadata:
                     part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
                 return part_dict  # pragma: lax no cover
+        else:
+            assert_never(file)
+
+    async def _map_file_to_function_response_part(self, file: FileUrl | BinaryContent) -> FunctionResponsePartDict:
+        """Map a multimodal file to FunctionResponsePartDict for Gemini 3+ native tool returns.
+
+        This format is simpler than PartDict - only inline_data or file_data, no video_metadata.
+        """
+        if isinstance(file, BinaryContent):
+            blob_dict: FunctionResponseBlobDict = {'data': file.data, 'mime_type': file.media_type}
+            return FunctionResponsePartDict(inline_data=blob_dict)
+        elif isinstance(file, VideoUrl) and (
+            file.is_youtube or (file.url.startswith('gs://') and self.system == 'google-vertex')
+        ):
+            file_data_dict: FunctionResponseFileDataDict = {'file_uri': file.url, 'mime_type': file.media_type}
+            return FunctionResponsePartDict(file_data=file_data_dict)
+        elif isinstance(file, FileUrl):
+            if file.force_download or (
+                self.system == 'google-gla'
+                and not file.url.startswith(r'https://generativelanguage.googleapis.com/v1beta/files')
+            ):
+                downloaded_item = await download_item(file, data_format='bytes')
+                blob_dict: FunctionResponseBlobDict = {
+                    'data': downloaded_item['data'],
+                    'mime_type': downloaded_item['data_type'],
+                }
+                return FunctionResponsePartDict(inline_data=blob_dict)
+            else:
+                file_data_dict: FunctionResponseFileDataDict = {'file_uri': file.url, 'mime_type': file.media_type}
+                return FunctionResponsePartDict(file_data=file_data_dict)  # pragma: lax no cover
         else:
             assert_never(file)
 

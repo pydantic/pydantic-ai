@@ -96,6 +96,10 @@ SUPPORT_MATRIX: dict[tuple[str, str], Expectation] = {
     ('google', 'document'): 'native',
     ('google', 'audio'): 'native',
     ('google', 'video'): 'native',
+    ('google_gemini3', 'image'): 'native',
+    ('google_gemini3', 'document'): 'native',
+    ('google_gemini3', 'audio'): 'native',
+    ('google_gemini3', 'video'): 'native',
     ('openai_chat', 'image'): 'fallback',
     ('openai_chat', 'document'): 'fallback',
     ('openai_chat', 'audio'): 'error',
@@ -400,6 +404,7 @@ MODEL_CONFIGS: dict[str, tuple[str, Any]] = {
     'anthropic': ('claude-sonnet-4-5', anthropic_available),
     'bedrock': ('us.amazon.nova-pro-v1:0', bedrock_available),
     'google': ('gemini-2.5-flash', google_available),
+    'google_gemini3': ('gemini-3-flash-preview', google_available),
     'openai_chat': ('gpt-5-mini', openai_available),
     'openai_responses': ('gpt-5-mini', openai_available),
     'groq': ('meta-llama/llama-4-maverick-17b-128e-instruct', groq_available),
@@ -419,7 +424,7 @@ def create_model(
     elif provider == 'bedrock':
         assert bedrock_provider is not None
         return BedrockConverseModel(model_name, provider=bedrock_provider)
-    elif provider == 'google':
+    elif provider in ('google', 'google_gemini3'):
         return GoogleModel(model_name, provider=GoogleProvider(api_key=api_keys['google']))
     elif provider == 'openai_chat':
         return OpenAIChatModel(model_name, provider=OpenAIProvider(api_key=api_keys['openai']))
@@ -573,19 +578,30 @@ FILE_TYPE_CLASSES: dict[str, tuple[type, ...]] = {
 def _is_file_type(item: Any, file_type: FileTypeType) -> bool:
     """Check if item matches the expected file type."""
     expected_classes = FILE_TYPE_CLASSES[file_type]
-    if isinstance(item, expected_classes) and isinstance(item, BinaryContent) and not isinstance(item, BinaryImage):
+    if not isinstance(item, expected_classes):
+        return False
+    if isinstance(item, BinaryImage):
+        return file_type == 'image'
+    if isinstance(item, ImageUrl):
+        return file_type == 'image'
+    if isinstance(item, BinaryContent):
         media = item.media_type
-        # Audio/video binary content errors for all models before reaching assertions
-        if file_type == 'document':  # pragma: no branch
+        if file_type == 'document':
             return media.startswith('application/')
         elif file_type == 'audio':
             return media.startswith('audio/')
         elif file_type == 'video':
             return media.startswith('video/')
-        elif file_type == 'image':
+        elif file_type == 'image':  # pragma: no cover
             return media.startswith('image/')
         else:
             assert_never(file_type)
+    if isinstance(item, DocumentUrl):
+        return file_type == 'document'
+    if isinstance(item, AudioUrl):
+        return file_type == 'audio'
+    if isinstance(item, VideoUrl):
+        return file_type == 'video'
     return False  # pragma: no cover
 
 
@@ -772,7 +788,11 @@ async def test_mixed_content_ordering(
     assert result.output, 'Expected non-empty response from model'
     if cassette_ctx:  # pragma: no branch
         if expectation == 'native':
-            if provider == 'google':
+            if provider == 'google_gemini3':
+                # Gemini 3 native: parts field appears before response in JSON
+                cassette_ctx.verify_ordering(('/9j/', '_9j_'), 'Here is the image:', 'metadata')
+            elif provider == 'google':
+                # Gemini 2.5 fallback: image as separate part after function_response
                 cassette_ctx.verify_ordering('Here is the image:', 'metadata', ('/9j/', '_9j_'))
             else:
                 cassette_ctx.verify_ordering('Here is the image:', ('/9j/', '_9j_'), 'metadata')
