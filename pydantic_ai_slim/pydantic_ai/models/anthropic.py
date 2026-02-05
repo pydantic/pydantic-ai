@@ -52,8 +52,10 @@ from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
+    'compaction': 'stop',
     'end_turn': 'stop',
     'max_tokens': 'length',
+    'model_context_window_exceeded': 'length',
     'stop_sequence': 'stop',
     'tool_use': 'tool_call',
     'pause_turn': 'stop',

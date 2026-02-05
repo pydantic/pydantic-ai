@@ -2816,6 +2816,7 @@ async def test_anthropic_opus_46_features(
 
 
 async def test_anthropic_opus_46_adaptive_thinking_rejects_tool_output(allow_model_requests: None):
+    """Verified in https://logfire-us.pydantic.dev/public-trace/ca9932da-b5ff-46f0-b277-9aeecc5f41e7?spanId=15a32e26f5020e62"""
     responses = [
         completion_message(
             [BetaTextBlock(text='Paris', type='text')],
