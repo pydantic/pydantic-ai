@@ -3,9 +3,11 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Annotated, Any, Literal
+from unittest.mock import MagicMock, patch
 
 import pydantic_core
 import pytest
+from griffe import DocstringSectionKind
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, TypeAdapter, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
@@ -31,6 +33,7 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
 )
+from pydantic_ai._griffe import doc_descriptions
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -2966,6 +2969,58 @@ Examples:
     Just some text\
 """
     )
+
+
+def test_griffe_parsing_edge_cases():
+    """
+    Test edge cases in griffe parsing that are difficult to trigger reliably
+    with standard docstrings across different environments.
+    """
+
+    class MockSection:
+        def __init__(self, kind: DocstringSectionKind, value: Any):
+            self.kind = kind
+            self.value = value
+
+    def dummy():
+        """Docstring."""
+
+    mock_sig = MagicMock()
+
+    # Standard string source/output tuples
+    with patch('griffe.Docstring.parse') as mock_parse:
+        mock_parse.return_value = [
+            MockSection(kind=DocstringSectionKind.text, value='Main description.'),
+            MockSection(
+                kind=DocstringSectionKind.examples, value=[('>>> code(1)', 'output1'), ('text_only_source', None)]
+            ),
+        ]
+
+        desc, _ = doc_descriptions(dummy, mock_sig, docstring_format='auto')
+
+        assert desc is not None
+        assert 'Main description.' in desc
+        assert 'Examples:' in desc
+        # Check indentation is applied
+        assert '    >>> code(1)' in desc
+        assert '    output1' in desc
+        assert '    text_only_source' in desc
+
+    # Empty Examples section
+    with patch('griffe.Docstring.parse') as mock_parse:
+        mock_parse.return_value = [
+            MockSection(kind=DocstringSectionKind.text, value='Main description.'),
+            MockSection(
+                kind=DocstringSectionKind.examples,
+                value=[],  # Empty value list -> examples_content is empty
+            ),
+        ]
+
+        desc, _ = doc_descriptions(dummy, mock_sig, docstring_format='auto')
+
+        # Should NOT append "Examples:" if content is empty
+        assert desc == 'Main description.'
+        assert 'Examples:' not in desc
 
 
 @pytest.mark.anyio
