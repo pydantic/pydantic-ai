@@ -12,7 +12,7 @@ from dirty_equals import HasRepr, IsNumber
 from inline_snapshot import snapshot
 from pydantic import BaseModel, TypeAdapter
 
-from ..conftest import IsStr, try_import
+from ..conftest import IsDatetime, IsStr, try_import
 from .utils import render_table
 
 with try_import() as imports_successful:
@@ -749,6 +749,7 @@ async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInpu
             ],
             span_id='0000000000000001',
             trace_id='00000000000000000000000000000001',
+            start_timestamp=IsDatetime(),
         )
     )
 

@@ -1,10 +1,12 @@
 from __future__ import annotations as _annotations
 
+import datetime
 from collections import defaultdict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from io import StringIO
 from typing import Any, Generic, Literal, Protocol, cast
+from urllib.parse import quote, urlencode
 
 from pydantic import BaseModel, TypeAdapter
 from rich.console import Console, Group, RenderableType
@@ -206,11 +208,41 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
     """The trace ID of the evaluation."""
     span_id: str | None = None
     """The span ID of the evaluation."""
+    start_timestamp: datetime.datetime | None = None
+    """The start timestamp of the evaluation span."""
 
     def averages(self) -> ReportCaseAggregate | None:
         if self.cases:
             return ReportCaseAggregate.average(self.cases)
         return None
+
+    def experiment_url(self, base_url: str | None = None) -> str | None:
+        """Build the Logfire experiment URL for this report.
+
+        Args:
+            base_url: The Logfire project base URL (e.g., 'https://logfire.pydantic.dev/myorg/myproject').
+                If not provided, attempts to read from logfire credentials.
+
+        Returns:
+            The full experiment URL, or None if required fields (trace_id, span_id, start_timestamp) are missing
+            or if base_url cannot be determined.
+        """
+        if self.trace_id is None or self.span_id is None or self.start_timestamp is None:
+            return None
+
+        if base_url is None:
+            base_url = _get_logfire_project_url()
+            if base_url is None:
+                return None
+
+        # Format timestamp as ISO 8601 with milliseconds
+        timestamp_str = (
+            self.start_timestamp.strftime('%Y-%m-%dT%H:%M:%S.') + f'{self.start_timestamp.microsecond // 1000:03d}Z'
+        )
+
+        # Build experiment identifier: {trace_id}-{span_id}-{timestamp}
+        experiment_id = f'{self.trace_id}-{self.span_id}-{quote(timestamp_str, safe="")}'
+        return f'{base_url.rstrip("/")}/evals/compare?{urlencode({"experiment": experiment_id}, safe="-%")}'
 
     def render(
         self,
@@ -1430,3 +1462,20 @@ class EvaluationRenderer:
         if self.include_total_duration:
             all_durations += [x.total_duration for x in all_cases]
         return _NumberRenderer.infer_from_config(self.duration_config, 'duration', all_durations)
+
+
+def _get_logfire_project_url() -> str | None:
+    """Get the Logfire project URL from credentials.
+
+    Returns:
+        The project URL if logfire is configured and credentials are available, otherwise None.
+    """
+    try:
+        from logfire._internal.config import GLOBAL_CONFIG, LogfireCredentials
+
+        creds = LogfireCredentials.load_creds_file(GLOBAL_CONFIG.data_dir)
+        if creds is not None:
+            return creds.project_url
+    except Exception:  # pragma: no cover
+        pass
+    return None
