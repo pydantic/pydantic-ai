@@ -132,5 +132,4 @@ class RestateMCPServer(WrapperToolset[Any]):
             raise ModelRetry(res.error)
         else:
             assert res.kind == 'output'
-            assert res.output is not None
             return res.output

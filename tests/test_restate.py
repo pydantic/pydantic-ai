@@ -302,7 +302,7 @@ async def test_restate_mcp_server_wrapping_and_agent_mcp_wrapping():
                         description=name,
                         parameters_json_schema={'type': 'object', 'properties': {'value': {}}, 'required': ['value']},
                     )
-                    for name in ('echo', 'retry', 'deferred', 'approval', 'user_error')
+                    for name in ('echo', 'none', 'retry', 'deferred', 'approval', 'user_error')
                 }
                 return {
                     name: ToolsetTool[Any](
@@ -330,6 +330,8 @@ async def test_restate_mcp_server_wrapping_and_agent_mcp_wrapping():
                     raise ApprovalRequired(metadata={'hello': 'world'})
                 elif name == 'user_error':
                     raise UserError('bad')
+                elif name == 'none':
+                    return None
                 return {'name': name, 'args': tool_args}
 
     fake_ctx = FakeRestateContext()
@@ -360,6 +362,13 @@ async def test_restate_mcp_server_wrapping_and_agent_mcp_wrapping():
     assert result == {'name': 'echo', 'args': {'value': 123}}
     assert fake_server.enter_calls == 2
     assert fake_server.exit_calls == 2
+
+    fake_ctx.calls.clear()
+    none_result = await restate_server.call_tool('none', {'value': 0}, ctx, tools['none'])
+    assert fake_ctx.calls == ['Calling mcp tool none']
+    assert none_result is None
+    assert fake_server.enter_calls == 3
+    assert fake_server.exit_calls == 3
 
     with pytest.raises(ModelRetry, match='nope'):
         await restate_server.call_tool('retry', {'value': 1}, ctx, tools['retry'])
