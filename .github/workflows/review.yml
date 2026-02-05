@@ -20,6 +20,16 @@ jobs:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 1
 
+      - name: Check for modified config files
+        run: |
+          CHANGED=$(gh pr diff ${{ github.event.pull_request.number }} --name-only)
+          if echo "$CHANGED" | grep -qiE '(^|/)AGENTS\.md$|(^|/)CLAUDE\.md$|(^|/)\.claude/'; then
+            echo "::error::PR modifies agent config files (AGENTS.md, CLAUDE.md, or .claude/). Skipping auto-review for security."
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
