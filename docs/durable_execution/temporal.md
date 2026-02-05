@@ -92,7 +92,7 @@ from pydantic_ai.durable_exec.temporal import (
 )
 
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     instructions="You're an expert in geography.",
     name='geography',  # (10)!
 )
@@ -218,7 +218,7 @@ class Deps:
 # Create models from different providers
 default_model = OpenAIResponsesModel('gpt-5.2')
 fast_model = AnthropicModel('claude-sonnet-4-5')
-reasoning_model = GoogleModel('gemini-2.5-pro')
+reasoning_model = GoogleModel('gemini-3-pro-preview')
 
 
 # Optional: provider factory for dynamic model configuration
@@ -260,7 +260,7 @@ class MultiModelWorkflow:
             result = await temporal_agent.run(prompt, model=fast_model)
         else:
             # Or pass a model string (uses provider_factory if set)
-            result = await temporal_agent.run(prompt, model='openai:gpt-4.1-mini')
+            result = await temporal_agent.run(prompt, model='openai:gpt-5-mini')
         return result.output
 ```
 

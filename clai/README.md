@@ -85,7 +85,7 @@ For more information on how to use it, see the [CLI documentation](https://ai.py
 Launch a web-based chat interface:
 
 ```bash
-clai web -m openai:gpt-5
+clai web -m openai:gpt-5.2
 ```
 
 ![Web Chat UI](https://ai.pydantic.dev/img/web-chat-ui.png)
@@ -97,7 +97,7 @@ You can also serve an existing agent. For example, if you have an agent defined 
 ```python
 from pydantic_ai import Agent
 
-my_agent = Agent('openai:gpt-5', instructions='You are a helpful assistant.')
+my_agent = Agent('openai:gpt-5.2', instructions='You are a helpful assistant.')
 ```
 
 Launch the web UI with:

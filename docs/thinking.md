@@ -29,7 +29,7 @@ To disable this, you can disable the [`OpenAIResponsesModelSettings.openai_send_
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5')
+model = OpenAIResponsesModel('gpt-5.2')
 settings = OpenAIResponsesModelSettings(
     openai_reasoning_effort='low',
     openai_reasoning_summary='detailed',
@@ -49,9 +49,26 @@ To enable thinking, use the [`AnthropicModelSettings.anthropic_thinking`][pydant
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 
-model = AnthropicModel('claude-sonnet-4-0')
+model = AnthropicModel('claude-sonnet-4-5')
 settings = AnthropicModelSettings(
     anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024},
+)
+agent = Agent(model, model_settings=settings)
+...
+```
+
+### Interleaved Thinking
+
+To enable [interleaved thinking](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#interleaved-thinking), you need to include the beta header in your model settings:
+
+```python {title="anthropic_interleaved_thinking.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+
+model = AnthropicModel('claude-sonnet-4-5')
+settings = AnthropicModelSettings(
+    anthropic_thinking={'type': 'enabled', 'budget_tokens': 10000},
+    extra_headers={'anthropic-beta': 'interleaved-thinking-2025-05-14'},
 )
 agent = Agent(model, model_settings=settings)
 ...
@@ -65,7 +82,7 @@ To enable thinking, use the [`GoogleModelSettings.google_thinking_config`][pydan
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 
-model = GoogleModel('gemini-2.5-pro')
+model = GoogleModel('gemini-3-pro-preview')
 settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True})
 agent = Agent(model, model_settings=settings)
 ...
@@ -173,7 +190,7 @@ To enable thinking, use the [`OpenRouterModelSettings.openrouter_reasoning`][pyd
 from pydantic_ai import Agent
 from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
 
-model = OpenRouterModel('openai/gpt-5')
+model = OpenRouterModel('openai/gpt-5.2')
 settings = OpenRouterModelSettings(openrouter_reasoning={'effort': 'high'})
 agent = Agent(model, model_settings=settings)
 ...
