@@ -1,0 +1,35 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Process tags: python, ai."}]}], "system": [], "inferenceConfig":
+      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "process_tags", "inputSchema": {"json": {"additionalProperties":
+      false, "properties": {"tags": {"items": {"type": "string"}, "minItems": 2, "type": "array"}}, "required": ["tags"],
+      "type": "object"}}, "strict": true}}], "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZThkNTg1ZjktMzRmMS00MjM4LWExZjctYzFmM2IxNjhmMDQ1
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '417'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '157'
+      content-type:
+      - application/json
+    parsed_body:
+      message: 'The model returned the following errors: tools.0.custom: For ''array'' type, ''minItems'' values other than
+        0 or 1 are not supported (got: [2, 5])'
+    status:
+      code: 400
+      message: Bad Request
+version: 1

@@ -1,0 +1,50 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Give me a datetime value for January 1st 2025 at noon UTC."}]}],
+      "system": [], "inferenceConfig": {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure": {"jsonSchema":
+      {"schema": "{\"properties\": {\"value\": {\"format\": \"date-time\", \"type\": \"string\"}}, \"required\": [\"value\"],
+      \"type\": \"object\", \"additionalProperties\": false}", "name": "FormatDateTime"}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZmRiZTc3YjMtNmM2ZC00YTYwLWEzYjYtOTRkMzFiYmM1MTQ3
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '444'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '379'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 1995
+      output:
+        message:
+          content:
+          - text: '{"value":"2025-01-01T12:00:00Z"}'
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 175
+        outputTokens: 20
+        serverToolUsage: {}
+        totalTokens: 195
+    status:
+      code: 200
+      message: OK
+version: 1

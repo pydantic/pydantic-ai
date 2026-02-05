@@ -1,0 +1,35 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Give me up to 5 fruits."}]}], "system": [], "inferenceConfig":
+      {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure": {"jsonSchema": {"schema": "{\"properties\":
+      {\"items\": {\"items\": {\"type\": \"string\"}, \"maxItems\": 5, \"type\": \"array\"}}, \"required\": [\"items\"], \"type\":
+      \"object\", \"additionalProperties\": false}", "name": "ArrayMaxItemsOnly"}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MjI2ZThhNTMtZmQ2OS00ZWExLWE3NjctMjM3YzA5M2E4MTU0
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '436'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '139'
+      content-type:
+      - application/json
+    parsed_body:
+      message: 'The model returned the following errors: output_config.format.schema: For ''array'' type, property ''maxItems''
+        is not supported'
+    status:
+      code: 400
+      message: Bad Request
+version: 1

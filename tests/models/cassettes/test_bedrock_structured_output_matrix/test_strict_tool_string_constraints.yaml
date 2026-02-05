@@ -1,0 +1,105 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Greet the user Alice."}]}], "system": [], "inferenceConfig":
+      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "greet_user", "inputSchema": {"json": {"additionalProperties": false,
+      "properties": {"username": {"maxLength": 50, "minLength": 2, "type": "string"}}, "required": ["username"], "type": "object"}},
+      "strict": true}}], "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        OTA1MzJmZTktMjhmYy00ZWI2LWIxNjAtZWMwMzBjMjk1MjA4
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '409'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '466'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 23121
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                username: Alice
+              name: greet_user
+              toolUseId: tooluse_TqItuftpphRfFxmJdlgNT5
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 575
+        outputTokens: 54
+        serverToolUsage: {}
+        totalTokens: 629
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Greet the user Alice."}]}, {"role": "assistant", "content":
+      [{"toolUse": {"toolUseId": "tooluse_TqItuftpphRfFxmJdlgNT5", "name": "greet_user", "input": {"username": "Alice"}}}]},
+      {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_TqItuftpphRfFxmJdlgNT5", "content": [{"text": "Hello,
+      Alice!"}], "status": "success"}}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name":
+      "greet_user", "inputSchema": {"json": {"additionalProperties": false, "properties": {"username": {"maxLength": 50, "minLength":
+      2, "type": "string"}}, "required": ["username"], "type": "object"}}, "strict": true}}], "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZGFhYTgyNGItOGQ5NS00ZTA3LWJlMGQtNzlmY2YwMjU0ZmFm
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '718'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '370'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 23809
+      output:
+        message:
+          content:
+          - text: "Hello, Alice! \U0001F44B"
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 645
+        outputTokens: 10
+        serverToolUsage: {}
+        totalTokens: 655
+    status:
+      code: 200
+      message: OK
+version: 1

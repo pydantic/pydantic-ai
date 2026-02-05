@@ -1,0 +1,50 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Give me the email address alice@example.com."}]}], "system":
+      [], "inferenceConfig": {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure": {"jsonSchema": {"schema":
+      "{\"properties\": {\"value\": {\"format\": \"email\", \"type\": \"string\"}}, \"required\": [\"value\"], \"type\": \"object\",
+      \"additionalProperties\": false}", "name": "FormatEmail"}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        M2I5YTJhYzctYTYxOC00ZDI5LWEwYzctNTk2NGI0OWVhNmQ3
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '423'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '376'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 3418
+      output:
+        message:
+          content:
+          - text: '{"value":"alice@example.com"}'
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 166
+        outputTokens: 12
+        serverToolUsage: {}
+        totalTokens: 178
+    status:
+      code: 200
+      message: OK
+version: 1

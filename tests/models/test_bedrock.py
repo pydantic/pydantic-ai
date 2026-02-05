@@ -1,11 +1,13 @@
 from __future__ import annotations as _annotations
 
 from datetime import date, datetime, timezone
+from enum import Enum
 from types import SimpleNamespace
-from typing import Any
+from typing import Annotated, Any, Literal
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
@@ -45,6 +47,7 @@ from pydantic_ai.messages import (
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.output import NativeOutput
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.providers import Provider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -3244,3 +3247,553 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
             ),
         ]
     )
+
+
+# =============================================================================
+# NATIVE STRUCTURED OUTPUT TESTS
+# =============================================================================
+
+
+async def test_bedrock_native_output_supported_model(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Claude Sonnet 4.5 via Bedrock: NativeOutput → outputConfig with json_schema."""
+
+    class CityInfo(BaseModel):
+        """Information about a city."""
+
+        model_config = {'extra': 'forbid'}
+        city: str
+        country: str
+        population: int
+
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+
+    result = await agent.run('What is the capital of France? Give me the city name, country, and population.')
+
+    assert isinstance(result.output, CityInfo)
+    assert result.output.city == 'Paris'
+    assert result.output.country == 'France'
+    assert result.output.population > 0
+
+
+def test_bedrock_native_output_strict_false_raises(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """NativeOutput(strict=False) → raises UserError."""
+
+    class CityInfo(BaseModel):
+        """Information about a city."""
+
+        model_config = {'extra': 'forbid'}
+        city: str
+        country: str
+        population: int
+
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    agent = Agent(model, output_type=NativeOutput(CityInfo, strict=False))
+
+    with pytest.raises(
+        UserError,
+        match='Setting `strict=False` on `output_type=NativeOutput\\(\\.\\.\\.\\)` is not allowed for Bedrock models.',
+    ):
+        agent.run_sync('Tell me about Paris')
+
+
+def test_bedrock_native_output_unsupported_model_raises(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Claude 3.5 Sonnet (not 4.5): NativeOutput → raises UserError (model doesn't support it)."""
+
+    class CityInfo(BaseModel):
+        """Information about a city."""
+
+        model_config = {'extra': 'forbid'}
+        city: str
+        country: str
+        population: int
+
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20241022-v2:0', provider=bedrock_provider)
+
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+
+    with pytest.raises(UserError, match='Native structured output is not supported by this model.'):
+        agent.run_sync('Tell me about Berlin')
+
+
+def test_bedrock_strict_tool_definition_supported_model(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Claude Sonnet 4.5 via Bedrock: strict=True → strict field in tool definition."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    tool_def = ToolDefinition(
+        name='get_weather',
+        description='Get the weather for a city',
+        parameters_json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']},
+        strict=True,
+    )
+
+    result = model._map_tool_definition(tool_def)  # pyright: ignore[reportPrivateUsage]
+
+    tool_spec = result['toolSpec']  # pyright: ignore[reportTypedDictNotRequiredAccess]
+    assert tool_spec['name'] == 'get_weather'
+    assert tool_spec['strict'] is True  # pyright: ignore[reportGeneralTypeIssues]
+
+
+def test_bedrock_strict_tool_definition_unsupported_model(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Claude 3.5 Sonnet: strict=True specified but not sent (model doesn't support it)."""
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20241022-v2:0', provider=bedrock_provider)
+
+    tool_def = ToolDefinition(
+        name='get_weather',
+        description='Get the weather for a city',
+        parameters_json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']},
+        strict=True,
+    )
+
+    result = model._map_tool_definition(tool_def)  # pyright: ignore[reportPrivateUsage]
+
+    tool_spec = result['toolSpec']  # pyright: ignore[reportTypedDictNotRequiredAccess]
+    assert tool_spec['name'] == 'get_weather'
+    # strict field should NOT be in the result for unsupported models
+    assert 'strict' not in tool_spec
+
+
+def test_bedrock_strict_tool_definition_none(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Any model: strict=None → no strict field."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    tool_def = ToolDefinition(
+        name='get_weather',
+        description='Get the weather for a city',
+        parameters_json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']},
+        strict=None,
+    )
+
+    result = model._map_tool_definition(tool_def)  # pyright: ignore[reportPrivateUsage]
+
+    tool_spec = result['toolSpec']  # pyright: ignore[reportTypedDictNotRequiredAccess]
+    assert tool_spec['name'] == 'get_weather'
+    # strict field should NOT be in the result when strict=None
+    assert 'strict' not in tool_spec
+
+
+@pytest.mark.vcr()
+async def test_bedrock_strict_tool_supported_model(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Claude Sonnet 4.5 via Bedrock: strict=True tool with API call."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    @agent.tool_plain(strict=True)
+    def get_weather(city: str) -> str:
+        return f'Weather in {city}: Sunny, 22°C'
+
+    result = await agent.run("What's the weather in Paris?")
+    assert 'Paris' in result.output or 'Sunny' in result.output or '22' in result.output
+
+
+@pytest.mark.vcr()
+async def test_bedrock_mixed_strict_tool_run(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Exercise both strict=True and strict=False tool definitions against Bedrock."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(
+        model,
+        system_prompt='Always call `country_source` first, then call `capital_lookup` with that result before replying.',
+    )
+
+    @agent.tool_plain(strict=True)
+    async def country_source() -> str:
+        return 'Japan'
+
+    capital_called = {'value': False}
+
+    @agent.tool_plain(strict=False)
+    async def capital_lookup(country: str) -> str:
+        capital_called['value'] = True
+        if country == 'Japan':
+            return 'Tokyo'
+        return f'Unknown capital for {country}'  # pragma: no cover
+
+    result = await agent.run('Use the registered tools and respond exactly as `Capital: <city>`.')
+    assert capital_called['value'] is True
+    assert result.output.startswith('Capital:')
+    assert any(
+        isinstance(part, ToolCallPart) and part.tool_name == 'capital_lookup'
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+    )
+
+
+async def test_bedrock_strict_tool_with_native_output(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Claude Sonnet 4.5 via Bedrock: strict=True tool + NativeOutput."""
+
+    class CityInfo(BaseModel):
+        """Information about a city."""
+
+        model_config = {'extra': 'forbid'}
+        city: str
+        country: str
+        population: int
+
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+
+    @agent.tool_plain(strict=True)
+    def lookup_population(city: str) -> int:
+        return 2_161_000 if city == 'Paris' else 1_000_000
+
+    result = await agent.run('Give me details about Paris including its population')
+
+    assert isinstance(result.output, CityInfo)
+    assert result.output.city == 'Paris'
+
+
+def test_bedrock_native_output_format_structure():
+    """Test that _native_output_format produces the correct AWS outputConfig structure."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class MockOutputObject:
+        json_schema: dict[str, Any]
+        name: str | None = None
+        description: str | None = None
+        strict: bool | None = None
+
+    params = ModelRequestParameters(
+        output_mode='native',
+        output_object=MockOutputObject(  # pyright: ignore[reportArgumentType]
+            json_schema={
+                'type': 'object',
+                'properties': {
+                    'city': {'type': 'string'},
+                    'country': {'type': 'string'},
+                },
+                'required': ['city', 'country'],
+            },
+            name='CityInfo',
+            description='Information about a city',
+        ),
+    )
+
+    result = BedrockConverseModel._native_output_format(params)  # pyright: ignore[reportPrivateUsage]
+
+    assert result is not None
+    assert result['textFormat']['type'] == 'json_schema'
+    assert 'structure' in result['textFormat']
+    assert 'jsonSchema' in result['textFormat']['structure']
+
+    json_schema_config = result['textFormat']['structure']['jsonSchema']
+    assert json_schema_config['name'] == 'CityInfo'
+    assert json_schema_config['description'] == 'Information about a city'
+    # AWS requires schema as JSON string, not dict
+    import json
+
+    schema_dict = json.loads(json_schema_config['schema'])
+    assert schema_dict['type'] == 'object'
+    assert 'city' in schema_dict['properties']
+
+
+def test_bedrock_native_output_format_auto_mode():
+    """Test that _native_output_format returns None for auto output mode."""
+    params = ModelRequestParameters(output_mode='auto')
+
+    result = BedrockConverseModel._native_output_format(params)  # pyright: ignore[reportPrivateUsage]
+
+    assert result is None
+
+
+def test_bedrock_native_output_format_without_name_description():
+    """Test that _native_output_format uses default name and omits description if not provided."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class MockOutputObject:
+        json_schema: dict[str, Any]
+        name: str | None = None
+        description: str | None = None
+        strict: bool | None = None
+
+    params = ModelRequestParameters(
+        output_mode='native',
+        output_object=MockOutputObject(  # pyright: ignore[reportArgumentType]
+            json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}},
+        ),
+    )
+
+    result = BedrockConverseModel._native_output_format(params)  # pyright: ignore[reportPrivateUsage]
+
+    assert result is not None
+    json_schema_config = result['textFormat']['structure']['jsonSchema']
+    assert 'schema' in json_schema_config
+
+
+class PersonWithConstraints(BaseModel):
+    """A person with constrained fields."""
+
+    name: Annotated[str, Field(min_length=2, max_length=100)]
+    email: Annotated[str, Field(pattern=r'^[\w.-]+@[\w.-]+\.\w+$')]
+    age: int
+
+
+class CityWithDefaults(BaseModel):
+    """City with default values."""
+
+    city: str
+    country: str = 'Unknown'
+    population: int = 0
+
+
+class NestedAddress(BaseModel):
+    """Address for nesting."""
+
+    street: str
+    city: str
+
+
+class PersonWithAddress(BaseModel):
+    """Person with nested address."""
+
+    name: str
+    address: NestedAddress
+
+
+class PersonOptionalFields(BaseModel):
+    """Person with optional fields (generates anyOf with null)."""
+
+    name: str
+    nickname: str | None = None
+
+
+class Priority(str, Enum):
+    """Priority level."""
+
+    LOW = 'low'
+    MEDIUM = 'medium'
+    HIGH = 'high'
+
+
+class TaskWithNumericalConstraints(BaseModel):
+    """Task with numerical constraints (minimum, maximum, multipleOf)."""
+
+    score: Annotated[float, Field(ge=0.0, le=100.0)]
+    rating: Annotated[int, Field(multiple_of=5)]
+    priority: Priority
+
+
+class TaggedItems(BaseModel):
+    """Items with array constraints (minItems > 1, maxItems)."""
+
+    tags: Annotated[list[str], Field(min_length=2, max_length=10)]
+    scores: Annotated[list[int], Field(min_length=1)]
+
+
+class ComplexEnumModel(BaseModel):
+    """Model with complex types in enum-like unions."""
+
+    status: Literal['active', 'inactive'] | int
+    name: str
+
+
+@pytest.mark.vcr()
+async def test_bedrock_native_output_with_constraints(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """NativeOutput with constrained fields (minLength, maxLength, pattern)."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model, output_type=NativeOutput(PersonWithConstraints))
+
+    result = await agent.run('Give me info about John Doe, email john@example.com, age 30.')
+
+    assert isinstance(result.output, PersonWithConstraints)
+    assert len(result.output.name) >= 2
+    assert result.output.age > 0
+
+
+@pytest.mark.vcr()
+async def test_bedrock_native_output_with_defaults(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """NativeOutput with default values in schema."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model, output_type=NativeOutput(CityWithDefaults))
+
+    result = await agent.run('Tell me about Tokyo, Japan with its population.')
+
+    assert isinstance(result.output, CityWithDefaults)
+    assert result.output.city == 'Tokyo'
+
+
+@pytest.mark.vcr()
+async def test_bedrock_native_output_nested_model(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """NativeOutput with nested model ($defs and $ref)."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model, output_type=NativeOutput(PersonWithAddress))
+
+    result = await agent.run('Give me info about Alice who lives at 123 Main St, Springfield.')
+
+    assert isinstance(result.output, PersonWithAddress)
+    assert isinstance(result.output.address, NestedAddress)
+    assert result.output.name == 'Alice'
+
+
+@pytest.mark.vcr()
+async def test_bedrock_native_output_optional_fields(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """NativeOutput with optional fields (anyOf with null)."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model, output_type=NativeOutput(PersonOptionalFields))
+
+    result = await agent.run('Tell me about Bob, whose nickname is Bobby.')
+
+    assert isinstance(result.output, PersonOptionalFields)
+    assert result.output.name == 'Bob'
+
+
+
+
+@pytest.mark.vcr()
+async def test_bedrock_native_output_numerical_constraints(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """NativeOutput with numeric constraints succeeds — transformer strips incompatible constraints."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model, output_type=NativeOutput(TaskWithNumericalConstraints))
+
+    result = await agent.run('Rate this task: score 85.5 out of 100, rating 15, priority high.')
+    assert isinstance(result.output, TaskWithNumericalConstraints)
+
+
+@pytest.mark.vcr()
+async def test_bedrock_native_output_array_constraints(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """NativeOutput with array constraints succeeds — transformer strips maxItems and minItems > 1."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model, output_type=NativeOutput(TaggedItems))
+
+    result = await agent.run('Give me tags ["python", "ai", "ml"] and scores [95, 87, 92].')
+    assert isinstance(result.output, TaggedItems)
+
+
+@pytest.mark.vcr()
+async def test_bedrock_native_output_complex_enum(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """NativeOutput with complex types in enum-like union (Literal | int)."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model, output_type=NativeOutput(ComplexEnumModel))
+
+    result = await agent.run('Give me a person named Alice with status "active".')
+
+    assert isinstance(result.output, ComplexEnumModel)
+    assert result.output.name == 'Alice'
+    assert result.output.status == 'active'
+
+
+@pytest.mark.vcr()
+async def test_bedrock_strict_tool_with_constraints(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """strict=True tool with string, numerical, and array constraints — transformer strips incompatible ones."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    @agent.tool_plain(strict=True)
+    def lookup_user(
+        username: Annotated[str, Field(min_length=2, max_length=50)],
+        age: Annotated[int, Field(ge=0, le=150)],
+        tags: Annotated[list[str], Field(min_length=2, max_length=5)],
+    ) -> str:
+        return f'User {username} (age {age}, tags: {", ".join(tags)}) found'
+
+    result = await agent.run('Look up user Alice, age 30, tags ["python", "ai"].')
+    assert 'Alice' in result.output
+
+
+@pytest.mark.vcr()
+async def test_bedrock_strict_tool_with_nested_schema(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """strict=True tool with nested model parameter."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    @agent.tool_plain(strict=True)
+    def register_person(name: str, address_street: str, address_city: str) -> str:
+        return f'Registered {name} at {address_street}, {address_city}'
+
+    result = await agent.run('Register Alice at 123 Main St, Springfield.')
+    assert 'Alice' in result.output
+
+
+@pytest.mark.vcr()
+async def test_bedrock_strict_false_tool_with_constraints(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """strict=False tool with string, numerical, and array constraints — schema sent untransformed."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    @agent.tool_plain(strict=False)
+    def lookup_user(
+        username: Annotated[str, Field(min_length=2, max_length=50)],
+        age: Annotated[int, Field(ge=0, le=150)],
+        tags: Annotated[list[str], Field(min_length=2, max_length=5)],
+    ) -> str:
+        return f'User {username} (age {age}, tags: {", ".join(tags)}) found'
+
+    result = await agent.run('Look up user Alice, age 30, tags ["python", "ai"].')
+    assert 'Alice' in result.output
+
+
+@pytest.mark.vcr()
+async def test_bedrock_default_strict_is_false(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Tool with strict=None (default) sends without strict — no auto-promotion to strict=True."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    @agent.tool_plain  # strict=None (default)
+    def constrained_tool(username: Annotated[str, Field(min_length=3)]) -> str:
+        return f'Hello, {username}'
+
+    result = await agent.run('Call the constrained tool with username "Alice".')
+    assert 'Alice' in result.output

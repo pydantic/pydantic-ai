@@ -1,0 +1,35 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Give me a value that is a multiple of 5."}]}], "system": [],
+      "inferenceConfig": {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure": {"jsonSchema": {"schema":
+      "{\"properties\": {\"value\": {\"multipleOf\": 5, \"type\": \"integer\"}}, \"required\": [\"value\"], \"type\": \"object\",
+      \"additionalProperties\": false}", "name": "MultipleOfOnly"}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZmU3ZmY4M2YtZmViOC00YWQ3LTk3ZDYtZDk3ODIzNjY4MmQ2
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '419'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '143'
+      content-type:
+      - application/json
+    parsed_body:
+      message: 'The model returned the following errors: output_config.format.schema: For ''integer'' type, property ''multipleOf''
+        is not supported'
+    status:
+      code: 400
+      message: Bad Request
+version: 1

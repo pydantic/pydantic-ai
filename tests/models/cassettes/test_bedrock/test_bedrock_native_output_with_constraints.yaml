@@ -1,0 +1,52 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Give me info about John Doe, email john@example.com, age 30."}]}],
+      "system": [], "inferenceConfig": {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure": {"jsonSchema":
+      {"schema": "{\"properties\": {\"name\": {\"maxLength\": 100, \"minLength\": 2, \"type\": \"string\"}, \"email\": {\"pattern\":
+      \"^[\\\\w.-]+@[\\\\w.-]+\\\\.\\\\w+$\", \"type\": \"string\"}, \"age\": {\"type\": \"integer\"}}, \"required\": [\"name\",
+      \"email\", \"age\"], \"type\": \"object\", \"additionalProperties\": false}", "name": "PersonWithConstraints", "description":
+      "A person with constrained fields."}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        OGU4MDlkNzgtYTFmMS00OTVkLWI3NzYtNTljNjRlNjQ2YWEz
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '656'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '408'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 1956
+      output:
+        message:
+          content:
+          - text: '{"name":"John Doe","email":"john@example.com","age":30}'
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 253
+        outputTokens: 22
+        serverToolUsage: {}
+        totalTokens: 275
+    status:
+      code: 200
+      message: OK
+version: 1
