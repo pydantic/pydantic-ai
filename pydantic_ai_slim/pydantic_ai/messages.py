@@ -728,6 +728,13 @@ _video_format_lookup: dict[str, VideoFormat] = {
     'video/3gpp': 'three_gp',
 }
 
+_kind_to_modality_lookup: dict[str, str] = {
+    'image-url': 'image',
+    'audio-url': 'audio',
+    'video-url': 'video',
+    'document-url': 'document',
+}
+
 
 @dataclass(repr=False)
 class UserPromptPart:
@@ -769,12 +776,21 @@ class UserPromptPart:
                     _otel_messages.TextPart(type='text', **({'content': part} if settings.include_content else {}))
                 )
             elif isinstance(part, ImageUrl | AudioUrl | DocumentUrl | VideoUrl):
-                parts.append(
-                    _otel_messages.MediaUrlPart(
-                        type=part.kind,
-                        **{'url': part.url} if settings.include_content else {},
+                if settings.version >= 4:
+                    parts.append(
+                        _otel_messages.UriPart(
+                            type='uri',
+                            modality=_kind_to_modality_lookup[part.kind],  # type: ignore[typeddict-item]
+                            **{'uri': part.url, 'mime_type': part.media_type} if settings.include_content else {},
+                        )
                     )
-                )
+                else:
+                    parts.append(
+                        _otel_messages.MediaUrlPart(
+                            type=part.kind,
+                            **{'url': part.url} if settings.include_content else {},
+                        )
+                    )
             elif isinstance(part, BinaryContent):
                 converted_part = _otel_messages.BinaryDataPart(type='binary', media_type=part.media_type)
                 if settings.include_content and settings.include_binary_content:
