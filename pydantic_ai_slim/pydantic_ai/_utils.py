@@ -259,10 +259,10 @@ async def group_by_temporal(  # noqa: C901
     closing = False
     try:
         yield async_iter_groups()
-    except GeneratorExit:  # pragma: no cover
-        closing = True
-        raise
-    finally:  # pragma: no cover
+    except GeneratorExit:
+        closing = True  # pragma: no cover
+        raise  # pragma: no cover
+    finally:
         # after iteration if a tasks still exists, cancel it, this will only happen if an error occurred
         if task:
             task.cancel('Cancelling due to error in iterator')

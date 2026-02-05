@@ -988,7 +988,7 @@ class StreamedResponse(ABC):
             )
 
         async for event in iterator:
-            if self._cancelled:  # pragma: no cover
+            if self._cancelled:
                 break
             if isinstance(event, PartStartEvent):
                 if last_start_event:
