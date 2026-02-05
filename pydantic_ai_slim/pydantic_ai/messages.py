@@ -1970,11 +1970,11 @@ class FunctionToolCallEvent:
 
     _: KW_ONLY
 
-    args_valid: bool
-    """Indicates whether the tool arguments are valid.
+    args_validated: bool = False
+    """Whether the tool arguments have been validated successfully.
 
-    - `True`: Schema validation passed AND custom validation passed (if configured)
-    - `False`: Schema validation failed OR custom validation failed
+    - `True`: Schema validation and custom validation (if configured) both passed; args are guaranteed valid.
+    - `False`: Validation was not performed, or validation failed. No guarantees about argument validity.
     """
 
     event_kind: Literal['function_tool_call'] = 'function_tool_call'

@@ -5386,7 +5386,7 @@ async def test_google_streaming_tool_call_thought_signature(
                     provider_name='google-gla',
                     provider_details={'thought_signature': IsStr()},
                 ),
-                args_valid=True,
+                args_validated=True,
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
