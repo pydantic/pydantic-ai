@@ -16,6 +16,11 @@ env:
 
 jobs:
   at-claude:
+    if: >-
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+        github.event.comment.author_association ||
+        github.event.review.author_association ||
+        github.event.issue.author_association)
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -24,9 +29,22 @@ jobs:
       id-token: write
       actions: read
     steps:
+      - name: Get PR info for fork support
+        if: github.event.issue.pull_request
+        id: pr-info
+        run: |
+          PR_DATA=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.issue.number }})
+          echo "pr_head_repo=$(echo "$PR_DATA" | jq -r '.head.repo.full_name')" >> $GITHUB_OUTPUT
+          echo "pr_head_ref=$(echo "$PR_DATA" | jq -r '.head.ref')" >> $GITHUB_OUTPUT
+          echo "is_fork=$(echo "$PR_DATA" | jq -r '.head.repo.fork')" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
+          repository: ${{ steps.pr-info.outputs.is_fork == 'true' && steps.pr-info.outputs.pr_head_repo || github.repository }}
+          ref: ${{ steps.pr-info.outputs.is_fork == 'true' && steps.pr-info.outputs.pr_head_ref || github.ref }}
           fetch-depth: 1
 
       - uses: astral-sh/setup-uv@v5
