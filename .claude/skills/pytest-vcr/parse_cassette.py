@@ -28,7 +28,6 @@ def truncate_base64(obj: object, max_len: int = 100) -> object:
 def parse_cassette(path: Path, interaction_idx: int | None = None) -> None:
     """Parse and print cassette contents."""
     with open(path) as f:
-    with open(path) as f:
         data = yaml.safe_load(f)
 
     if data is None:
@@ -73,7 +72,7 @@ def parse_cassette(path: Path, interaction_idx: int | None = None) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description='Parse VCR cassette files')
     parser.add_argument('cassette', type=Path, help='Path to cassette YAML file')
-    parser.add_argument('--interaction', '-i', type=int, help='Specific interaction index (0-based)')
+    parser.add_argument('--interaction', '-i', type=int, help='Specific interaction index (0-based). Omit to list all interactions.')
     args = parser.parse_args()
 
     if not args.cassette.exists():
