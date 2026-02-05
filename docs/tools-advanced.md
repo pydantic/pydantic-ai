@@ -438,7 +438,7 @@ When validation fails, the error message is sent back to the LLM as a retry prom
 
 The `args_validator` parameter is available on [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], [`Tool`][pydantic_ai.tools.Tool], [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema], and [`FunctionToolset`][pydantic_ai.toolsets.function.FunctionToolset]. Validators can be sync or async functions. When used with [`prepare`](#tool-prepare), the prepare function runs first to customize the tool definition, then `args_validator` runs at call time.
 
-The validation result is exposed via the `args_valid` field on [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent], allowing applications to track validation status when streaming events.
+The validation result is exposed via the `args_validated` field on [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent], allowing applications to track validation status when streaming events.
 
 ### Parallel tool calls & concurrency
 
