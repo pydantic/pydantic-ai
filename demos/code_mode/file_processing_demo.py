@@ -112,8 +112,8 @@ def create_toolset() -> FunctionToolset[None]:
 # =============================================================================
 
 
-def create_traditional_agent(toolset: FunctionToolset[None]) -> Agent[None, str]:
-    """Create agent with traditional tool calling."""
+def create_tool_calling_agent(toolset: FunctionToolset[None]) -> Agent[None, str]:
+    """Create agent with standard tool calling."""
     return Agent(
         MODEL,
         toolsets=[toolset],
@@ -189,12 +189,12 @@ def extract_metrics(result: AgentRunResult[str], mode: str) -> RunMetrics:
 # =============================================================================
 
 
-async def run_traditional(toolset: FunctionToolset[None]) -> RunMetrics:
-    """Run with traditional tool calling."""
-    with logfire.span('traditional_tool_calling'):
-        agent = create_traditional_agent(toolset)
+async def run_tool_calling(toolset: FunctionToolset[None]) -> RunMetrics:
+    """Run with standard tool calling."""
+    with logfire.span('tool_calling'):
+        agent = create_tool_calling_agent(toolset)
         result = await agent.run(PROMPT)
-    return extract_metrics(result, 'traditional')
+    return extract_metrics(result, 'tool_calling')
 
 
 async def run_code_mode(toolset: FunctionToolset[None]) -> RunMetrics:
@@ -236,14 +236,14 @@ async def main() -> None:
 
     toolset = create_toolset()
 
-    # Run Traditional
+    # Run Tool Calling
     print('\n' + '-' * 70)
-    print('Running TRADITIONAL tool calling...')
+    print('Running TOOL CALLING mode...')
     print('(1 list + N reads = 7+ roundtrips)')
     print('-' * 70)
 
-    with logfire.span('demo_traditional'):
-        trad = await run_traditional(toolset)
+    with logfire.span('demo_tool_calling'):
+        trad = await run_tool_calling(toolset)
     print_metrics(trad)
 
     # Run CodeMode

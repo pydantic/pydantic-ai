@@ -71,8 +71,8 @@ def create_github_mcp() -> MCPServerStreamableHTTP:
 # =============================================================================
 
 
-def create_traditional_agent(github: MCPServerStreamableHTTP) -> Agent[None, str]:
-    """Create agent with traditional tool calling."""
+def create_tool_calling_agent(github: MCPServerStreamableHTTP) -> Agent[None, str]:
+    """Create agent with standard tool calling."""
     return Agent(
         MODEL,
         toolsets=[github],
@@ -148,12 +148,12 @@ def extract_metrics(result: AgentRunResult[str], mode: str) -> RunMetrics:
 # =============================================================================
 
 
-async def run_traditional(github: MCPServerStreamableHTTP) -> RunMetrics:
-    """Run with traditional tool calling."""
-    with logfire.span('traditional_tool_calling'):
-        agent = create_traditional_agent(github)
+async def run_tool_calling(github: MCPServerStreamableHTTP) -> RunMetrics:
+    """Run with standard tool calling."""
+    with logfire.span('tool_calling'):
+        agent = create_tool_calling_agent(github)
         result = await agent.run(PROMPT)
-    return extract_metrics(result, 'traditional')
+    return extract_metrics(result, 'tool_calling')
 
 
 async def run_code_mode(github: MCPServerStreamableHTTP) -> RunMetrics:
@@ -195,14 +195,14 @@ async def main() -> None:
     github = create_github_mcp()
 
     async with github:
-        # Run Traditional
+        # Run Tool Calling
         print('\n' + '-' * 70)
-        print('Running TRADITIONAL tool calling...')
+        print('Running TOOL CALLING mode...')
         print('(Expect 20+ LLM roundtrips - one per tool call)')
         print('-' * 70)
 
-        with logfire.span('demo_traditional'):
-            trad = await run_traditional(github)
+        with logfire.span('demo_tool_calling'):
+            trad = await run_tool_calling(github)
         print_metrics(trad)
 
         # Run CodeMode
