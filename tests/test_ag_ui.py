@@ -1987,11 +1987,11 @@ async def test_event_stream_multiple_responses_with_tool_calls():
 
         yield FunctionToolCallEvent(
             part=ToolCallPart(tool_name='tool_call_1', args='{"query": "Hello world"}', tool_call_id='tool_call_1'),
-            args_validated=True,
+            args_valid=True,
         )
         yield FunctionToolCallEvent(
             part=ToolCallPart(tool_name='tool_call_2', args='{"query": "Goodbye world"}', tool_call_id='tool_call_2'),
-            args_validated=True,
+            args_valid=True,
         )
 
         yield FunctionToolResultEvent(
@@ -2031,11 +2031,11 @@ async def test_event_stream_multiple_responses_with_tool_calls():
 
         yield FunctionToolCallEvent(
             part=ToolCallPart(tool_name='tool_call_3', args='{"query": "Hello world"}', tool_call_id='tool_call_3'),
-            args_validated=True,
+            args_valid=True,
         )
         yield FunctionToolCallEvent(
             part=ToolCallPart(tool_name='tool_call_4', args='{"query": "Goodbye world"}', tool_call_id='tool_call_4'),
-            args_validated=True,
+            args_valid=True,
         )
 
         yield FunctionToolResultEvent(

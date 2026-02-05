@@ -913,8 +913,8 @@ async def process_tool_calls(  # noqa: C901
             output_parts.append(part)
         # Early strategy is chosen and final result is already set
         elif ctx.deps.end_strategy == 'early' and final_result:
-            args_validated = await tool_manager.validate_tool_args(call)
-            yield _messages.FunctionToolCallEvent(call, args_validated=args_validated)
+            args_valid = await tool_manager.validate_tool_args(call)
+            yield _messages.FunctionToolCallEvent(call, args_valid=args_valid)
             part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
                 content='Output tool not used - a final result was already processed.',
@@ -925,14 +925,14 @@ async def process_tool_calls(  # noqa: C901
         # Early strategy is chosen and final result is not yet set
         # Or exhaustive strategy is chosen
         else:
-            # Validate first to get accurate args_validated status
+            # Validate first to get accurate args_valid status
             try:
                 validated = await tool_manager.validate_tool_call(call)
             except exceptions.UnexpectedModelBehavior as e:
                 # Max retries exceeded
                 if final_result:
                     # If we already have a valid final result, skip without failing
-                    yield _messages.FunctionToolCallEvent(call, args_validated=False)
+                    yield _messages.FunctionToolCallEvent(call, args_valid=False)
                     part = _messages.ToolReturnPart(
                         tool_name=call.tool_name,
                         content='Output tool not used - output failed validation.',
@@ -947,12 +947,12 @@ async def process_tool_calls(  # noqa: C901
                     )
                     raise e  # pragma: lax no cover
 
-            if not validated.args_validated:
+            if not validated.args_valid:
                 # Validation failed
                 assert validated.validation_error is not None
                 if final_result:
                     # Already have a result, just note that this tool wasn't used
-                    yield _messages.FunctionToolCallEvent(call, args_validated=False)
+                    yield _messages.FunctionToolCallEvent(call, args_valid=False)
                     part = _messages.ToolReturnPart(
                         tool_name=call.tool_name,
                         content='Output tool not used - output failed validation.',
@@ -966,7 +966,7 @@ async def process_tool_calls(  # noqa: C901
                         error=validated.validation_error,
                         model_settings=ctx.deps.model_settings,
                     )
-                    yield _messages.FunctionToolCallEvent(call, args_validated=False)
+                    yield _messages.FunctionToolCallEvent(call, args_valid=False)
                     output_parts.append(validated.validation_error.tool_retry)
                     yield _messages.FunctionToolResultEvent(validated.validation_error.tool_retry)
             else:
@@ -977,7 +977,7 @@ async def process_tool_calls(  # noqa: C901
                     # Max retries exceeded during execution
                     if final_result:
                         # Already have a result, just note that this tool wasn't used
-                        yield _messages.FunctionToolCallEvent(call, args_validated=True)
+                        yield _messages.FunctionToolCallEvent(call, args_valid=True)
                         part = _messages.ToolReturnPart(
                             tool_name=call.tool_name,
                             content='Output tool not used - output failed validation.',
@@ -997,7 +997,7 @@ async def process_tool_calls(  # noqa: C901
                         ctx.state.increment_retries(
                             ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
                         )
-                    yield _messages.FunctionToolCallEvent(call, args_validated=True)
+                    yield _messages.FunctionToolCallEvent(call, args_valid=True)
                     output_parts.append(e.tool_retry)
                     yield _messages.FunctionToolResultEvent(e.tool_retry)
                 else:
@@ -1093,9 +1093,9 @@ async def process_tool_calls(  # noqa: C901
                     # Max retries exceeded - re-raise
                     raise
 
-                yield _messages.FunctionToolCallEvent(call, args_validated=validated.args_validated)
+                yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
 
-                if validated.args_validated:
+                if validated.args_valid:
                     # Validation passed - defer the call
                     if call in tool_calls_by_kind['external']:
                         deferred_calls['external'].append(call)
@@ -1175,10 +1175,10 @@ async def _call_tools(  # noqa: C901
         try:
             validated = await tool_manager.validate_tool_call(call)
         except exceptions.UnexpectedModelBehavior:
-            yield _messages.FunctionToolCallEvent(call, args_validated=False)
+            yield _messages.FunctionToolCallEvent(call, args_valid=False)
             raise
         validated_calls[call.tool_call_id] = validated
-        yield _messages.FunctionToolCallEvent(call, args_validated=validated.args_validated)
+        yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
 
     with tracer.start_as_current_span(
         'running tools',

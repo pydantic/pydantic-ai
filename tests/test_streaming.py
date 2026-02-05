@@ -2572,7 +2572,7 @@ async def test_unknown_tool_call_events():
                     args={'x': 5},
                     tool_call_id=IsStr(),
                 ),
-                args_validated=True,
+                args_valid=True,
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
@@ -2580,7 +2580,7 @@ async def test_unknown_tool_call_events():
                     args={'arg': 'value'},
                     tool_call_id=IsStr(),
                 ),
-                args_validated=False,
+                args_valid=False,
             ),
             FunctionToolResultEvent(
                 result=RetryPromptPart(
@@ -2633,7 +2633,7 @@ async def test_output_tool_validation_failure_events():
                     args={'bad_value': 'invalid'},
                     tool_call_id=IsStr(),
                 ),
-                args_validated=False,
+                args_valid=False,
             ),
             FunctionToolResultEvent(
                 result=RetryPromptPart(
@@ -2743,7 +2743,7 @@ def test_function_tool_event_tool_call_id_properties():
     """Ensure that the `tool_call_id` property on function tool events mirrors the underlying part's ID."""
     # Prepare a ToolCallPart with a fixed ID
     call_part = ToolCallPart(tool_name='sample_tool', args={'a': 1}, tool_call_id='call_id_123')
-    call_event = FunctionToolCallEvent(part=call_part, args_validated=True)
+    call_event = FunctionToolCallEvent(part=call_part, args_valid=True)
 
     # The event should expose the same `tool_call_id` as the part
     assert call_event.tool_call_id == call_part.tool_call_id == 'call_id_123'
@@ -2931,10 +2931,10 @@ async def test_deferred_tool_iter():
                 ),
             ),
             FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()), args_validated=True
+                part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()), args_valid=True
             ),
             FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr()), args_validated=True
+                part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr()), args_valid=True
             ),
         ]
     )
@@ -2989,10 +2989,10 @@ async def test_tool_raises_call_deferred_approval_required_iter():
                 ),
             ),
             FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()), args_validated=True
+                part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()), args_valid=True
             ),
             FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr()), args_validated=True
+                part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr()), args_valid=True
             ),
         ]
     )
@@ -3035,7 +3035,7 @@ async def test_run_event_stream_handler():
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
             ),
             FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_validated=True
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -3083,7 +3083,7 @@ def test_run_sync_event_stream_handler():
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
             ),
             FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_validated=True
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -3134,7 +3134,7 @@ async def test_run_stream_event_stream_handler():
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
             ),
             FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_validated=True
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -3179,7 +3179,7 @@ async def test_stream_tool_returning_user_content():
                 part=ToolCallPart(tool_name='get_image', args={}, tool_call_id='pyd_ai_tool_call_id__get_image'),
             ),
             FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()), args_validated=True
+                part=ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()), args_valid=True
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -3230,7 +3230,7 @@ async def test_run_stream_events():
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
             ),
             FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_validated=True
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(

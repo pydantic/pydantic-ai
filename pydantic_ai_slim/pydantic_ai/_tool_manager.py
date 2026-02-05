@@ -34,7 +34,7 @@ class ValidatedToolCall(Generic[AgentDepsT]):
 
     This separates validation from execution, allowing callers to:
     1. Know if validation passed before executing
-    2. Emit accurate `args_validated` status in events
+    2. Emit accurate `args_valid` status in events
     3. Handle validation failures differently from execution failures
     """
 
@@ -44,7 +44,7 @@ class ValidatedToolCall(Generic[AgentDepsT]):
     """The tool definition, or None if the tool is unknown."""
     ctx: RunContext[AgentDepsT]
     """The run context for this tool call."""
-    args_validated: bool
+    args_valid: bool
     """Whether argument validation (schema + custom validator) passed."""
     validated_args: dict[str, Any] | None = None
     """The validated arguments if validation passed, None otherwise."""
@@ -217,7 +217,7 @@ class ToolManager(Generic[AgentDepsT]):
         """Validate tool arguments without executing the tool.
 
         This method validates arguments BEFORE the tool is executed, allowing the caller to:
-        1. Emit FunctionToolCallEvent with accurate `args_validated` status
+        1. Emit FunctionToolCallEvent with accurate `args_valid` status
         2. Handle validation failures differently from execution failures
         3. Decide whether to execute or defer based on validation result
 
@@ -265,7 +265,7 @@ class ToolManager(Generic[AgentDepsT]):
                 call=call,
                 tool=None,
                 ctx=self.ctx,
-                args_validated=False,
+                args_valid=False,
                 validated_args=None,
                 validation_error=validation_error,
             )
@@ -278,7 +278,7 @@ class ToolManager(Generic[AgentDepsT]):
                 call=call,
                 tool=tool,
                 ctx=ctx,
-                args_validated=True,
+                args_valid=True,
                 validated_args=validated_args,
                 validation_error=None,
             )
@@ -317,7 +317,7 @@ class ToolManager(Generic[AgentDepsT]):
                 call=call,
                 tool=tool,
                 ctx=ctx,
-                args_validated=False,
+                args_valid=False,
                 validated_args=None,
                 validation_error=validation_error,
             )
@@ -341,7 +341,7 @@ class ToolManager(Generic[AgentDepsT]):
         """
         try:
             result = await self.validate_tool_call(call, allow_partial=allow_partial, wrap_validation_errors=True)
-            return result.args_validated
+            return result.args_valid
         except UnexpectedModelBehavior:
             return False
 
@@ -410,7 +410,7 @@ class ToolManager(Generic[AgentDepsT]):
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
         # If validation failed, raise the error
-        if not validated.args_validated:
+        if not validated.args_valid:
             assert validated.validation_error is not None
             raise validated.validation_error
 

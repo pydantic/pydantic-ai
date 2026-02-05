@@ -24,9 +24,9 @@ class _ExhaustiveTestInvalidOutput(BaseModel):
     count: int  # This field requires an int
 
 
-# Test 1: args_validator success - validator passes, args_validated=True
+# Test 1: args_validator success - validator passes, args_valid=True
 def test_args_validator_success():
-    """Test that args_validator runs before FunctionToolCallEvent and sets args_validated=True."""
+    """Test that args_validator runs before FunctionToolCallEvent and sets args_valid=True."""
     validator_called = False
 
     def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
@@ -75,9 +75,9 @@ def test_args_validator_failure():
     assert validator_calls >= 1
 
 
-# Test 3: args_validator not configured - args_validated=None
+# Test 3: args_validator not configured - schema validation still runs
 def test_args_validator_not_configured():
-    """Test backward compatibility - args_validated=None when no validator."""
+    """Test that tools work without a custom args_validator."""
     agent = Agent(
         TestModel(call_tools=['add_numbers']),
         deps_type=int,
@@ -248,13 +248,13 @@ async def test_args_validator_event_args_valid_field():
     add_number_events = [e for e in tool_call_events if e.part.tool_name == 'add_numbers']
     assert add_number_events, 'Should have events for add_numbers'
     for event in add_number_events:
-        assert event.args_validated is True
+        assert event.args_valid is True
 
 
-# Test 10: args_validated=False when validator fails
+# Test 10: args_valid=False when validator fails
 @pytest.mark.anyio
 async def test_args_validator_event_args_valid_false():
-    """Test that args_validated=False when validator fails."""
+    """Test that args_valid=False when validator fails."""
     validator_calls = 0
 
     def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
@@ -281,15 +281,15 @@ async def test_args_validator_event_args_valid_false():
     tool_call_events: list[FunctionToolCallEvent] = [e for e in events if isinstance(e, FunctionToolCallEvent)]
     assert len(tool_call_events) >= 1
 
-    # At least one event should have args_validated=False (the first call that fails validation)
-    args_valid_values = [e.args_validated for e in tool_call_events if e.part.tool_name == 'add_numbers']
+    # At least one event should have args_valid=False (the first call that fails validation)
+    args_valid_values = [e.args_valid for e in tool_call_events if e.part.tool_name == 'add_numbers']
     assert False in args_valid_values
 
 
-# Test 11: args_validated=True when no custom validator but schema passes
+# Test 11: args_valid=True when no custom validator but schema passes
 @pytest.mark.anyio
 async def test_args_validator_event_args_valid_no_custom_validator():
-    """Test that args_validated=True when no custom validator but schema validation passes."""
+    """Test that args_valid=True when no custom validator but schema validation passes."""
     agent = Agent(
         TestModel(call_tools=['add_numbers']),
         deps_type=int,
@@ -312,7 +312,7 @@ async def test_args_validator_event_args_valid_no_custom_validator():
     add_number_events = [e for e in tool_call_events if e.part.tool_name == 'add_numbers']
     assert add_number_events, 'Should have events for add_numbers'
     for event in add_number_events:
-        assert event.args_validated is True
+        assert event.args_valid is True
 
 
 # Test 12: tool_plain with args_validator
@@ -339,10 +339,10 @@ def test_args_validator_tool_plain():
     assert validator_called
 
 
-# Test 13: Schema validation failure (no custom validator) results in args_validated=False
+# Test 13: Schema validation failure (no custom validator) results in args_valid=False
 @pytest.mark.anyio
 async def test_schema_validation_failure_args_valid_false():
-    """Test that args_validated=False when Pydantic schema validation fails (no custom validator)."""
+    """Test that args_valid=False when Pydantic schema validation fails (no custom validator)."""
     from collections.abc import AsyncIterator
 
     from pydantic_ai.exceptions import UnexpectedModelBehavior
@@ -378,10 +378,10 @@ async def test_schema_validation_failure_args_valid_false():
     tool_call_events: list[FunctionToolCallEvent] = [e for e in events if isinstance(e, FunctionToolCallEvent)]
     assert len(tool_call_events) >= 1
 
-    # The first event should have args_validated=False due to schema validation failure
+    # The first event should have args_valid=False due to schema validation failure
     first_event = tool_call_events[0]
     assert first_event.part.tool_name == 'add_numbers'
-    assert first_event.args_validated is False
+    assert first_event.args_valid is False
 
 
 # Test 14: Max retries exceeded - validator always fails
@@ -576,7 +576,7 @@ def test_args_validator_context_retry():
 def test_exhaustive_strategy_second_output_schema_validation_fails():
     """Test exhaustive strategy when first output succeeds and second fails schema validation.
 
-    This tests the code path in _agent_graph.py lines 950-957 where args_validated=False
+    This tests the code path in _agent_graph.py lines 950-957 where args_valid=False
     when there's already a final_result.
     """
     from pydantic_ai._output import ToolOutput
@@ -770,10 +770,10 @@ async def test_external_tool_validation_failure():
 
     # Should have at least one tool call event
     assert tool_call_events, 'Should have at least one tool call event'
-    # The event should have args_validated=False due to schema validation failure
+    # The event should have args_valid=False due to schema validation failure
     external_events = [e for e in tool_call_events if e.part.tool_name == 'external_tool']
     assert external_events, 'Should have external tool events'
-    assert external_events[0].args_validated is False
+    assert external_events[0].args_valid is False
 
 
 # Test 23: args_validator called exactly once with correct context for ToolApproved deferred calls
