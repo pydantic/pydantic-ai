@@ -7,6 +7,7 @@ __pycache__
 /scratch/
 /.coverage
 env*/
+.env.vertex
 /TODO.md
 /postgres-data/
 .DS_Store
@@ -20,6 +21,10 @@ node_modules/
 .coverage*
 /test_tmp/
 .mcp.json
-.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/pytest-vcr/
+!tests/CLAUDE.md
 /.cursor/
 /.devcontainer/
