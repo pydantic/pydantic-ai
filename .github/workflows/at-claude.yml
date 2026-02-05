@@ -15,7 +15,7 @@ env:
   UV_FROZEN: "1"
 
 jobs:
-  at-claude:
+  get-pr-info:
     if: |
       (
         (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
@@ -27,15 +27,12 @@ jobs:
         github.event.review.author_association ||
         github.event.issue.author_association)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    permissions:
-      contents: write
-      pull-requests: write
-      issues: write
-      id-token: write
-      actions: read
+    outputs:
+      is_fork: ${{ steps.pr-info.outputs.is_fork }}
+      pr_head_repo: ${{ steps.pr-info.outputs.pr_head_repo }}
+      pr_head_ref: ${{ steps.pr-info.outputs.pr_head_ref }}
     steps:
-      - name: Get PR info for fork support
+      - name: Get PR info
         if: github.event.issue.pull_request || github.event.pull_request
         id: pr-info
         run: |
@@ -47,11 +44,21 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  at-claude:
+    needs: get-pr-info
+    if: needs.get-pr-info.outputs.is_fork != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
-          repository: ${{ steps.pr-info.outputs.is_fork == 'true' && steps.pr-info.outputs.pr_head_repo || github.repository }}
-          ref: ${{ steps.pr-info.outputs.is_fork == 'true' && steps.pr-info.outputs.pr_head_ref || github.ref }}
           fetch-depth: 1
 
       - uses: astral-sh/setup-uv@v5
@@ -70,3 +77,30 @@ jobs:
             actions: read
           claude_args: |
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr list:*),Bash(gh pr create:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh run view:*),Bash(gh run list:*),Bash(git log:*),Bash(git diff:*),Bash(git grep:*),Bash(git show:*),Bash(git status:*),Bash(git add:*),Bash(git checkout:*),Bash(git commit:*),Bash(git push:*),Bash(rg:*),Bash(ls:*),Bash(tree:*),Bash(grep:*),Bash(uv run:*),Bash(make:*)"
+
+  at-claude-fork:
+    needs: get-pr-info
+    if: needs.get-pr-info.outputs.is_fork == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Checkout fork repository
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ needs.get-pr-info.outputs.pr_head_repo }}
+          ref: ${{ needs.get-pr-info.outputs.pr_head_ref }}
+          fetch-depth: 1
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          additional_permissions: |
+            actions: read
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh run view:*),Bash(gh run list:*),Bash(git log:*),Bash(git diff:*),Bash(git grep:*),Bash(git show:*),Bash(git status:*),Bash(rg:*),Bash(ls:*),Bash(tree:*),Bash(grep:*)"
