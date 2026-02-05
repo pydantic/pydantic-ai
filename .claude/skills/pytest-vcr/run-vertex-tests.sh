@@ -20,8 +20,9 @@ if [ -z "$PROJECT" ]; then
 fi
 
 # Update .env.vertex with detected project
-sed -i '' "s/^export GOOGLE_PROJECT=.*/export GOOGLE_PROJECT=$PROJECT/" .env.vertex
-sed -i '' "s/^export GOOGLE_CLOUD_PROJECT=.*/export GOOGLE_CLOUD_PROJECT=$PROJECT/" .env.vertex
+sed -i.bak "s/^export GOOGLE_PROJECT=.*/export GOOGLE_PROJECT=$PROJECT/" .env.vertex && rm -f .env.vertex.bak
+sed -i.bak "s/^export GOOGLE_CLOUD_PROJECT=.*/export GOOGLE_CLOUD_PROJECT=$PROJECT/" .env.vertex && rm -f .env.vertex.bak
+
 
 # Source the updated .env.vertex
 source .env.vertex
