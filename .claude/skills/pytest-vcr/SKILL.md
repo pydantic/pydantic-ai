@@ -90,6 +90,8 @@ Base64 strings longer than 100 chars are truncated for readability.
 
 ## Vertex AI Tests
 
+Vertex tests use the `skip_unless_vertex` fixture from `tests/conftest.py` — they only run in CI or when `ENABLE_VERTEX=1` is set. `ENABLE_VERTEX=1` is only needed when recording/rewriting cassettes locally; during playback, cassettes replay without live auth. Add `skip_unless_vertex: None` as a parameter to any new vertex test.
+
 Vertex tests require special auth setup. Use the provided script:
 
 ```bash
