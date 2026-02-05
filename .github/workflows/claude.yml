@@ -1,4 +1,4 @@
-name: '@claude'
+name: Claude Code
 
 on:
   issue_comment:
@@ -15,12 +15,17 @@ env:
   UV_FROZEN: "1"
 
 jobs:
-  at-claude:
+  claude-code-action:
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+      (github.event_name == 'issues' && contains(github.event.issue.body, '@claude'))
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
-      issues: write
+      contents: read
+      pull-requests: read
+      issues: read
       id-token: write
       actions: read
     steps:
@@ -38,11 +43,13 @@ jobs:
 
       - run: make install
 
-      - uses: anthropics/claude-code-action@v1
+      - name: Run Claude PR Action
+        uses: anthropics/claude-code-action@beta
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          settings: .claude/settings.json
+          timeout_minutes: "60"
           additional_permissions: |
             actions: read
-          claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+          allowed_tools: |
+            Bash(make:*)
+            Bash(uv:*)
