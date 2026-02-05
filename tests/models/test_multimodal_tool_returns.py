@@ -579,7 +579,7 @@ def _is_file_type(item: Any, file_type: FileTypeType) -> bool:
     """Check if item matches the expected file type."""
     expected_classes = FILE_TYPE_CLASSES[file_type]
     if not isinstance(item, expected_classes):
-        return False
+        return False  # pragma: no cover
     if isinstance(item, BinaryImage):
         return file_type == 'image'
     if isinstance(item, ImageUrl):
