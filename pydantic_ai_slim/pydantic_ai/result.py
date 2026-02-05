@@ -342,8 +342,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 except Exception:
                     # Closing the stream mid-read can raise exceptions. Reraise if not cancelled.
                     if self._cancelled:  # pragma: no cover
-                        return
-                    raise  # pragma: no cover
+                        return  # pragma: no cover
+                    raise
 
             self._agent_stream_iterator = _cancellation_aware_iterator()
 

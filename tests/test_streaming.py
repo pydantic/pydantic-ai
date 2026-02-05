@@ -4210,7 +4210,7 @@ class TestIncompleteToolCallsNotSentToApi:
                         tool_calls_sent_to_model.append(part)  # pragma: no cover
 
         # The incomplete tool call should NOT be in the messages sent to the model
-        for tc in tool_calls_sent_to_model:  # pragma: no cover
+        for tc in tool_calls_sent_to_model:
             assert tc.args_incomplete is False, f'Incomplete tool call was sent to model: {tc}'  # pragma: no cover
             # Also verify the args are valid JSON
             tc.args_as_dict()  # Should not raise  # pragma: no cover
@@ -4412,11 +4412,11 @@ class TestCoverageEdgeCases:
         agent = Agent(FunctionModel(stream_function=stream_function))
 
         @agent.tool_plain
-        async def slow_tool() -> str:  # pragma: no cover
-            nonlocal tool_executed  # pragma: no cover
-            tool_executed = True  # pragma: no cover
+        async def slow_tool() -> str:
+            nonlocal tool_executed
+            tool_executed = True
             # Simulate some work
-            await asyncio.sleep(0.01)  # pragma: no cover
+            await asyncio.sleep(0.01)
             return 'tool result'  # pragma: no cover
 
         events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
@@ -4467,8 +4467,8 @@ class TestCoverageEdgeCases:
                 return 'https://test.example.com'  # pragma: no cover
 
             async def _get_event_iterator(self):
-                events_yielded.append('part_start')  # pragma: no cover
-                yield PartStartEvent(index=0, part=TextPart(content=''))  # pragma: no cover
+                events_yielded.append('part_start')
+                yield PartStartEvent(index=0, part=TextPart(content=''))
                 events_yielded.append('delta_1')  # pragma: no cover
                 yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='Hello'))  # pragma: no cover
                 events_yielded.append('delta_2')  # pragma: no cover

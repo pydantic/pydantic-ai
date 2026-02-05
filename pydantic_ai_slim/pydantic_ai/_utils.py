@@ -6,7 +6,7 @@ import inspect
 import re
 import time
 import uuid
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, fields, is_dataclass
@@ -20,6 +20,7 @@ from typing import (
     TypeAlias,
     TypeGuard,
     TypeVar,
+    cast,
     get_args,
     get_origin,
     overload,
@@ -255,15 +256,28 @@ async def group_by_temporal(  # noqa: C901
             if task and not task.done():
                 task.cancel()
 
-    # Track if we're being closed via GeneratorExit - in that case we can't await
+    # Track if we're being closed via GeneratorExit, in that case we can't await
     closing = False
+    # Track the inner generator so we can close it explicitly
+    inner_gen: AsyncIterator[list[T]] | None = None
     try:
-        yield async_iter_groups()
+        inner_gen = async_iter_groups()
+        yield inner_gen
     except GeneratorExit:
+        # This handles edge cases like GC finalization where the generator is closed
+        # without going through the normal async context manager exit path.
         closing = True  # pragma: no cover
         raise  # pragma: no cover
     finally:
-        # after iteration if a tasks still exists, cancel it, this will only happen if an error occurred
+        # Close the inner generator explicitly
+        # Without this, the GC may try to finalize the orphaned generator at script exit,
+        # leading to "RuntimeError: generator didn't stop after athrow()" because the generator
+        # is suspended at a yield inside a try/finally block.
+        if inner_gen is not None and not closing:  # pragma: no branch
+            with suppress(Exception):
+                # inner_gen is an async generator (has yield), so it has aclose()
+                await cast(AsyncGenerator[list[T], None], inner_gen).aclose()
+        # After iteration if a task still exists, cancel it, this will only happen if an error occurred
         if task:
             task.cancel('Cancelling due to error in iterator')
             # Don't await if we're being closed - can't await in a closing async generator
