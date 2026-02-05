@@ -695,3 +695,15 @@ def test_handle_part():
     event = manager.handle_part(vendor_part_id=None, part=part3)
     assert event == snapshot(PartStartEvent(index=1, part=part3))
     assert manager.get_parts() == snapshot([part2, part3])
+
+
+def test_get_part_by_vendor_id():
+    manager = ModelResponsePartsManager()
+
+    event = next(manager.handle_text_delta(vendor_part_id='content', content='hello'))
+    assert isinstance(event, PartStartEvent)
+
+    part = manager.get_part_by_vendor_id('content')
+    assert part == snapshot(TextPart(content='hello', part_kind='text'))
+
+    assert manager.get_part_by_vendor_id('missing') is None

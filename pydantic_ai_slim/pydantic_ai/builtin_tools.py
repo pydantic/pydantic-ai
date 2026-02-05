@@ -137,6 +137,7 @@ class WebSearchTool(AbstractBuiltinTool):
 
     * Anthropic, see <https://docs.anthropic.com/en/docs/build-with-claude/tool-use/web-search-tool#domain-filtering>
     * Groq, see <https://console.groq.com/docs/agentic-tooling#search-settings>
+    * OpenAI Responses, see <https://platform.openai.com/docs/guides/tools-web-search>
     * xAI, see <https://docs.x.ai/docs/guides/tools/search-tools#web-search-parameters>
     """
 

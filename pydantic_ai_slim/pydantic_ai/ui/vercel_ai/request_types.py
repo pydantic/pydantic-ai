@@ -1,7 +1,7 @@
 """Vercel AI request types (UI messages).
 
 Converted to Python from:
-https://github.com/vercel/ai/blob/ai%405.0.59/packages/ai/src/ui/ui-messages.ts
+https://github.com/vercel/ai/blob/ai%406.0.57/packages/ai/src/ui/ui-messages.ts
 """
 
 from abc import ABC
@@ -119,6 +119,7 @@ class ToolInputStreamingPart(BaseUIPart):
     state: Literal['input-streaming'] = 'input-streaming'
     input: Any | None = None
     provider_executed: bool | None = None
+    call_provider_metadata: ProviderMetadata | None = None
 
 
 class ToolInputAvailablePart(BaseUIPart):
@@ -171,6 +172,7 @@ class DynamicToolInputStreamingPart(BaseUIPart):
     tool_call_id: str
     state: Literal['input-streaming'] = 'input-streaming'
     input: Any | None = None
+    call_provider_metadata: ProviderMetadata | None = None
 
 
 class DynamicToolInputAvailablePart(BaseUIPart):
