@@ -826,3 +826,51 @@ def test_args_validator_not_double_called_for_approved_tools():
     # Validator should have been called exactly once with approved=True
     assert len(validator_calls) == 1
     assert validator_calls[0] == (0, True)  # retry=0, approved=True
+
+
+# Test 24: Early strategy - first output succeeds, second exceeds max retries (validate_tool_args path)
+def test_early_strategy_second_output_max_retries_exceeded():
+    """Test early strategy when first output succeeds and second exceeds max retries.
+
+    This tests the code path in _tool_manager.py validate_tool_args() where
+    UnexpectedModelBehavior is caught and returns False.
+    """
+    from pydantic_ai._output import ToolOutput
+    from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    def process_first(output: _ExhaustiveTestValidOutput) -> _ExhaustiveTestValidOutput:
+        """Process first output - will succeed."""
+        return output
+
+    def process_second(output: _ExhaustiveTestInvalidOutput) -> _ExhaustiveTestInvalidOutput:  # pragma: no cover
+        """Process second output - will never be called due to schema validation failure."""
+        return output
+
+    def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(
+            parts=[
+                # First output: valid schema
+                ToolCallPart('first_output', {'value': 'valid'}),
+                # Second output: invalid schema (count should be int, not string)
+                # Will fail schema validation and with output_retries=0, will exceed max retries
+                ToolCallPart('second_output', {'value': 'invalid', 'count': 'not_an_int'}),
+            ],
+        )
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=[
+            ToolOutput(process_first, name='first_output'),
+            ToolOutput(process_second, name='second_output'),
+        ],
+        end_strategy='early',
+        output_retries=0,  # Immediately exceed max retries on first validation failure
+    )
+
+    result = agent.run_sync('test early with max retries exceeded')
+
+    # Verify the result came from the first output tool
+    assert isinstance(result.output, _ExhaustiveTestValidOutput)
+    assert result.output.value == 'valid'
