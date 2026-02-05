@@ -125,7 +125,7 @@ def sanitize_filename(name: str, max_len: int) -> str:
 
 
 @customize_repr
-def _(value: bytes):  # pragma: no cover
+def _(value: bytes):
     """Use IsBytes() for large byte sequences in snapshots."""
     if len(value) > SNAPSHOT_BYTES_COLLAPSE_THRESHOLD:
         return 'IsBytes()'
@@ -279,9 +279,25 @@ try:
 
     logfire.DEFAULT_LOGFIRE_INSTANCE.config.ignore_no_config = True
 
+    @pytest.fixture(scope='session')
+    def _logfire_session(request: pytest.FixtureRequest):
+        if request.config.getoption('debug_with_logfire'):
+            logfire.configure(send_to_logfire='if-token-present', console=False)
+            logfire.instrument_httpx(capture_all=True)
+            with logfire.span('pytest session'):
+                yield
+            logfire.shutdown(flush=True)
+        else:
+            yield
+
     @pytest.fixture(autouse=True)
-    def fresh_logfire():
-        logfire.shutdown(flush=False)
+    async def fresh_logfire(request: pytest.FixtureRequest, _logfire_session: None, anyio_backend: str):
+        if request.config.getoption('debug_with_logfire'):
+            with logfire.span('test: {test_name}', test_name=request.node.name):
+                yield
+        else:
+            logfire.shutdown(flush=False)
+            yield
 
 except ImportError:
     pass
@@ -312,6 +328,13 @@ def pytest_addoption(parser: Any) -> None:
         dest='xai_proto_include_json',
         help='Include JSON representations in xAI proto cassette YAML files.',
     )
+    parser.addoption(
+        '--debug-with-logfire',
+        action='store_true',
+        default=False,
+        dest='debug_with_logfire',
+        help='Enable logfire tracing during tests for debugging.',
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -331,14 +354,18 @@ def mock_vcr_aiohttp_content(mocker: MockerFixture):
     mocker.patch('vcr.stubs.aiohttp_stubs.MockStream.set_exception', return_value=None)
 
 
-@pytest.fixture(scope='module')
-def vcr_config():
-    return {
+@pytest.fixture(scope='function')
+def vcr_config(request: pytest.FixtureRequest):
+    config: dict[str, Any] = {
         'ignore_localhost': True,
         # Note: additional header filtering is done inside the serializer
         'filter_headers': ['authorization', 'x-api-key'],
         'decode_compressed_response': True,
     }
+    if request.config.getoption('debug_with_logfire'):
+        logfire_hosts = ['logfire-us.pydantic.dev', 'logfire-api.pydantic.dev']
+        config.setdefault('ignore_hosts', []).extend(logfire_hosts)
+    return config
 
 
 @pytest.fixture(autouse=True)
@@ -472,11 +499,15 @@ def xai_api_key() -> str:
 
 
 @pytest.fixture(scope='function')  # Needs to be function scoped to get the request node name
-def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider]:
+def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider | None]:
     """xAI provider fixture backed by protobuf cassettes.
 
     Mirrors the `bedrock_provider` pattern: yields a provider, and callers can use `provider.client`.
+    Returns None for non-xAI tests to avoid loading cassettes unnecessarily.
     """
+    if 'xai' not in request.node.name:
+        yield None
+        return
 
     try:
         from pydantic_ai.providers.xai import XaiProvider
@@ -485,7 +516,8 @@ def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider]:
         pytest.skip('xai_sdk not installed')
 
     cassette_name = sanitize_filename(request.node.name, 240)
-    cassette_path = Path(__file__).parent / 'models' / 'cassettes' / 'test_xai' / f'{cassette_name}.xai.yaml'
+    test_module = cast(str, request.node.fspath.basename.replace('.py', ''))
+    cassette_path = Path(__file__).parent / 'models' / 'cassettes' / test_module / f'{cassette_name}.xai.yaml'
     record_mode: str | None
     try:
         # Provided by `pytest-recording` as `--record-mode=...` (dest is typically `record_mode`).
