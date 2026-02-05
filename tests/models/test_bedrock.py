@@ -2386,6 +2386,44 @@ async def test_bedrock_cache_messages_with_multiple_trailing_documents(
     )
 
 
+async def test_bedrock_cache_point_multiple_markers_with_documents_no_back_to_back(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Multiple CachePoints with trailing documents should not create back-to-back cache points.
+
+    When processing ['text', doc1, CachePoint(), doc2, CachePoint()], both documents form
+    a single trailing group. The first CachePoint is placed before the group, and the second
+    CachePoint is skipped to avoid back-to-back cachePoints.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Analyze these:',
+                        BinaryContent(data=b'Doc 1', media_type='text/plain'),
+                        CachePoint(),
+                        BinaryContent(data=b'Doc 2', media_type='text/plain'),
+                        CachePoint(),
+                    ]
+                )
+            ]
+        )
+    ]
+    _, bedrock_messages = await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
+    # Both docs are trailing, so first CachePoint goes before both.
+    # Second CachePoint is skipped to avoid back-to-back cachePoints.
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {'text': 'Analyze these:'},
+            {'cachePoint': {'type': 'default'}},
+            {'document': {'name': 'Document 1', 'format': 'txt', 'source': {'bytes': b'Doc 1'}}},
+            {'document': {'name': 'Document 2', 'format': 'txt', 'source': {'bytes': b'Doc 2'}}},
+        ]
+    )
+
+
 async def test_bedrock_cache_point_multiple_markers(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.anthropic.claude-3-5-haiku-20241022-v1:0', provider=bedrock_provider)
     messages: list[ModelMessage] = [

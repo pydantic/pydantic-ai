@@ -914,7 +914,9 @@ class BedrockConverseModel(Model):
                             'CachePoint cannot be the first content in a user message - there must be previous content to cache when using Bedrock. '
                             'To cache system instructions or tool definitions, use the `bedrock_cache_instructions` or `bedrock_cache_tool_definitions` settings instead.'
                         )
-                    _insert_cache_point_before_trailing_documents(content, raise_if_cannot_insert=True)
+                    _insert_cache_point_before_trailing_documents(
+                        content, raise_if_cannot_insert=True, skip_if_back_to_back=True
+                    )
                 else:
                     assert_never(item)
         return [{'role': 'user', 'content': content}]
