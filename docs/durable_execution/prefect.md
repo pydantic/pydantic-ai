@@ -61,7 +61,7 @@ Any agent can be wrapped in a [`PrefectAgent`][pydantic_ai.durable_exec.prefect.
 * Wraps [tool calls](../tools.md) as Prefect tasks (configurable per-tool).
 * Wraps [MCP communication](../mcp/client.md) as Prefect tasks.
 
-Event stream handlers are **automatically wrapped** by Prefect when running inside a Prefect flow. Each event from the stream is processed in a separate Prefect task for durability. You can customize the task behavior using the `event_stream_handler_task_config` parameter when creating the `PrefectAgent`. Do **not** manually decorate event stream handlers with `@task`. For examples, see the [streaming docs](../agents.md#streaming-all-events)
+Event stream handlers are **automatically wrapped** by Prefect when running inside a Prefect flow. Each event from the stream is processed in a separate Prefect task for durability. You can customize the task behavior using the `event_stream_handler_task_config` parameter when creating the `PrefectAgent`. Do **not** manually decorate event stream handlers with `@task`. For examples, see the [streaming docs](../agent.md#streaming-all-events)
 
 The original agent, model, and MCP server can still be used as normal outside the Prefect flow.
 
@@ -154,7 +154,7 @@ For real-time streaming behavior inside Prefect flows, you can set an [`event_st
 - **Outside a flow**: The handler receives events as they stream from the model
 - **Inside a flow**: Each event is wrapped as a Prefect task for durability, which may affect timing but ensures reliability
 
-The event stream handler function will receive the agent [run context][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools. For examples, see the [streaming docs](../agents.md#streaming-all-events).
+The event stream handler function will receive the agent [run context][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools. For examples, see the [streaming docs](../agent.md#streaming-all-events).
 
 ## Task Configuration
 
