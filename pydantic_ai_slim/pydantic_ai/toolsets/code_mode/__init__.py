@@ -456,7 +456,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             return await self.runtime.resume(
                 checkpoint,
                 callback,
-                cast(list[dict[str, Any]], interrupted_calls),
+                interrupted_calls,
                 completed_results=completed_results,
             )
         except CodeRuntimeError as e:

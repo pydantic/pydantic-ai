@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any, TypeAlias
 
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
+from pydantic_ai.toolsets.code_mode import InterruptedCall
 
 
 @dataclass(frozen=True)
@@ -120,7 +121,7 @@ class CodeRuntime(ABC):
         self,
         checkpoint: bytes,
         call_tool: ToolCallback,
-        interrupted_calls: list[dict[str, Any]],
+        interrupted_calls: list[InterruptedCall],
         completed_results: dict[int, Any] | None = None,
     ) -> Any:
         """Resume execution from a checkpoint with resolved results.

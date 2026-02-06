@@ -14,6 +14,7 @@ from pydantic_ai.runtime.abstract import (
     InterruptedToolCall,
     ToolCallback,
 )
+from pydantic_ai.toolsets.code_mode import InterruptedCall
 
 try:
     from pydantic_monty import (
@@ -186,7 +187,7 @@ class MontyRuntime(CodeRuntime):
         self,
         checkpoint: bytes,
         call_tool: ToolCallback,
-        interrupted_calls: list[dict[str, Any]],
+        interrupted_calls: list[InterruptedCall],
         completed_results: dict[int, Any] | None = None,
     ) -> Any:
         try:
