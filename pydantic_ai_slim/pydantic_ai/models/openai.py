@@ -645,6 +645,104 @@ class OpenAIChatModel(Model):
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters, model_settings_cast)
 
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> usage.RequestUsage:
+        """Count tokens for the given messages using tiktoken.
+
+        This implementation follows the approach from the OpenAI cookbook for counting tokens
+        in chat completions API calls. Unlike Google/Bedrock models, OpenAI doesn't provide
+        a server-side token counting API, so we use tiktoken locally.
+        """
+        check_allow_model_requests()
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
+
+        # Convert messages to OpenAI format
+        openai_messages = await self._map_messages(messages, model_request_parameters)
+
+        # Get tools if any
+        tools = self._get_tools(model_request_parameters)
+
+        # Count tokens using tiktoken in a thread pool
+        token_count = await _utils.run_in_executor(
+            self._count_tokens_sync, openai_messages, tools, self.model_name
+        )
+
+        return usage.RequestUsage(input_tokens=token_count)
+
+    @staticmethod
+    def _count_tokens_sync(
+        openai_messages: list[chat.ChatCompletionMessageParam],
+        tools: list[chat.ChatCompletionToolParam] | None,
+        model_name: str,
+    ) -> int:
+        """Synchronous token counting using tiktoken.
+
+        Based on: https://cookbook.openai.com/examples/how_to_count_tokens_with_tiktoken
+        """
+        import tiktoken
+
+        try:
+            encoding = tiktoken.encoding_for_model(model_name)
+        except KeyError:
+            # If model not found, fall back to cl100k_base (used by gpt-4, gpt-3.5-turbo, etc.)
+            encoding = tiktoken.get_encoding('cl100k_base')
+
+        # Token overhead per message and for reply priming
+        # Most models use 3 tokens per message for role/name/content separators
+        tokens_per_message = 3
+        tokens_per_name = 1
+        reply_priming_tokens = 3  # Every reply is primed with assistant tokens
+
+        total_tokens = reply_priming_tokens
+
+        # Count tokens in messages
+        for message in openai_messages:
+            total_tokens += tokens_per_message
+            for key, value in message.items():
+                if value is None:
+                    continue
+                if isinstance(value, str):
+                    total_tokens += len(encoding.encode(value))
+                elif key == 'name':
+                    total_tokens += tokens_per_name
+                elif key == 'content':
+                    # Handle list content (e.g., multimodal messages)
+                    if isinstance(value, list):
+                        for item in value:
+                            if isinstance(item, dict):
+                                if item.get('type') == 'text' and 'text' in item:
+                                    total_tokens += len(encoding.encode(item['text']))
+                                # Note: Image tokens are complex and model-specific
+                                # For now, we don't count them accurately
+                elif key == 'tool_calls':
+                    # Count tokens in tool calls
+                    if isinstance(value, list):
+                        for tool_call in value:
+                            if isinstance(tool_call, dict):
+                                if 'function' in tool_call:
+                                    func = tool_call['function']
+                                    if isinstance(func, dict):
+                                        if 'name' in func:
+                                            total_tokens += len(encoding.encode(func['name']))
+                                        if 'arguments' in func:
+                                            total_tokens += len(encoding.encode(func['arguments']))
+
+        # Count tokens in tool definitions
+        if tools:
+            for tool in tools:
+                # Convert tool definition to JSON string and count tokens
+                tool_json = json.dumps(tool)
+                total_tokens += len(encoding.encode(tool_json))
+
+        return total_tokens
+
     @overload
     async def _completions_create(
         self,

@@ -4405,3 +4405,69 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
     # Final usage should be from the last chunk (15 output tokens)
     # NOT the sum of all chunks (5+10+15+15 = 45 output tokens)
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=10, output_tokens=15))
+
+
+async def test_openai_count_tokens(allow_model_requests: None):
+    """Test token counting with tiktoken."""
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    # Simple message
+    messages = [ModelRequest.user_text_prompt('Hello, world!')]
+    params = ModelRequestParameters()
+
+    usage = await m.count_tokens(messages, None, params)
+
+    # Should have some input tokens (exact count depends on tiktoken)
+    assert usage.input_tokens > 0
+    assert usage.output_tokens is None
+
+
+async def test_openai_count_tokens_with_tools(allow_model_requests: None):
+    """Test token counting with tool definitions."""
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    # Message with a tool
+    tool_def = ToolDefinition(
+        name='test_tool',
+        description='A test tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+
+    messages = [ModelRequest.user_text_prompt('Use the tool')]
+    params = ModelRequestParameters(tools=[tool_def])
+
+    usage = await m.count_tokens(messages, None, params)
+
+    # Should have tokens for both message and tool definition
+    assert usage.input_tokens > 0
+
+    # Compare with a message without tools - should be more tokens with tools
+    params_no_tools = ModelRequestParameters()
+    usage_no_tools = await m.count_tokens(messages, None, params_no_tools)
+
+    assert usage.input_tokens > usage_no_tools.input_tokens
+
+
+async def test_openai_count_tokens_multimodal(allow_model_requests: None):
+    """Test token counting with multimodal content."""
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    # Message with text and image
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'What is in this image?',
+                        ImageUrl(url='https://example.com/image.jpg'),
+                    ]
+                )
+            ]
+        )
+    ]
+    params = ModelRequestParameters()
+
+    usage = await m.count_tokens(messages, None, params)
+
+    # Should count text tokens (images are not counted accurately in our implementation)
+    assert usage.input_tokens > 0
