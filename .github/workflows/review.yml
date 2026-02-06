@@ -3,6 +3,10 @@ on:
   pull_request_target:
     types: [opened, synchronize, labeled]
 
+concurrency:
+  group: review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
 
   review:
@@ -14,6 +18,10 @@ jobs:
       pull-requests: write
       actions: read
     steps:
+      - name: Wait for push activity to settle
+        if: github.event.action == 'synchronize'
+        run: sleep 900  # 15 minutes
+
       - uses: actions/checkout@v6
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
