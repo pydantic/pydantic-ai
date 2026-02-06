@@ -83,11 +83,11 @@ class ConfusionMatrixEvaluator(ReportEvaluator):
 class PrecisionRecallEvaluator(ReportEvaluator):
     """Computes a precision-recall curve from case data."""
 
-    score_from: Literal['scores', 'metrics'] = 'scores'
-    score_key: str = ''
-
-    positive_from: Literal['expected_output', 'assertions', 'labels'] = 'assertions'
+    score_key: str
+    positive_from: Literal['expected_output', 'assertions', 'labels']
     positive_key: str | None = None
+
+    score_from: Literal['scores', 'metrics'] = 'scores'
 
     title: str = 'Precision-Recall Curve'
     n_thresholds: int = 100

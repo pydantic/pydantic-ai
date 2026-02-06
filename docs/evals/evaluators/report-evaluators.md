@@ -170,10 +170,10 @@ PrecisionRecallEvaluator(
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `score_from` | `'scores' \| 'metrics'` | `'scores'` | Source for numeric scores |
-| `score_key` | `str` | `''` | Key in scores or metrics dict |
-| `positive_from` | `'expected_output' \| 'assertions' \| 'labels'` | `'assertions'` | Source for ground-truth binary labels |
+| `score_key` | `str` | _(required)_ | Key in scores or metrics dict |
+| `positive_from` | `'expected_output' \| 'assertions' \| 'labels'` | _(required)_ | Source for ground-truth binary labels |
 | `positive_key` | `str \| None` | `None` | Key in assertions or labels dict |
+| `score_from` | `'scores' \| 'metrics'` | `'scores'` | Source for numeric scores |
 | `title` | `str` | `'Precision-Recall Curve'` | Title shown in reports |
 | `n_thresholds` | `int` | `100` | Number of threshold points on the curve |
 
@@ -356,7 +356,6 @@ ConfusionMatrix(
 | `title` | `str` | Display name |
 | `class_labels` | `list[str]` | Ordered labels for both axes |
 | `matrix` | `list[list[int]]` | `matrix[expected][predicted]` = count |
-| `normalize` | `bool` | If `True`, normalize values per row |
 | `description` | `str \| None` | Optional longer description |
 
 ---

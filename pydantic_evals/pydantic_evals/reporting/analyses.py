@@ -15,8 +15,6 @@ class ConfusionMatrix(BaseModel):
     """Ordered list of class labels (used for both axes)."""
     matrix: list[list[int]]
     """matrix[expected_idx][predicted_idx] = count of cases."""
-    normalize: bool = False
-    """If True, values are normalized to [0, 1] per row."""
 
 
 class PrecisionRecallPoint(BaseModel):
