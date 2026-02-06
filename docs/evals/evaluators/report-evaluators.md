@@ -23,7 +23,17 @@ Pass report evaluators to `Dataset` via the `report_evaluators` parameter:
 
 ```python
 from pydantic_evals import Case, Dataset
-from pydantic_evals.evaluators import ConfusionMatrixEvaluator, PrecisionRecallEvaluator
+from pydantic_evals.evaluators import ConfusionMatrixEvaluator
+
+
+def my_classifier(text: str) -> str:
+    text = text.lower()
+    if 'cat' in text or 'meow' in text:
+        return 'cat'
+    elif 'dog' in text or 'bark' in text:
+        return 'dog'
+    return 'unknown'
+
 
 dataset = Dataset(
     cases=[
@@ -63,7 +73,7 @@ ConfusionMatrixEvaluator(
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `predicted_from` | `'expected_output' \| 'output' \| 'metadata' \| 'labels'` | `'labels'` | Source for predicted values |
+| `predicted_from` | `'expected_output' \| 'output' \| 'metadata' \| 'labels'` | `'output'` | Source for predicted values |
 | `predicted_key` | `str \| None` | `None` | Key to extract when using `metadata` or `labels` |
 | `expected_from` | `'expected_output' \| 'output' \| 'metadata' \| 'labels'` | `'expected_output'` | Source for expected/true values |
 | `expected_key` | `str \| None` | `None` | Key to extract when using `metadata` or `labels` |
@@ -470,6 +480,17 @@ from pydantic_evals.evaluators import (
 from pydantic_evals.reporting.analyses import ScalarResult
 
 
+def my_classifier(text: str) -> str:
+    text = text.lower()
+    if 'cat' in text or 'meow' in text:
+        return 'cat'
+    elif 'dog' in text or 'bark' in text:
+        return 'dog'
+    elif 'bird' in text or 'chirp' in text:
+        return 'bird'
+    return 'unknown'
+
+
 # Case-level evaluator: runs per case
 @dataclass
 class ConfidenceEvaluator(Evaluator):
@@ -523,11 +544,13 @@ dataset = Dataset(
 )
 
 report = dataset.evaluate_sync(my_classifier)
-print(report)
 
 # Access analyses programmatically
 for analysis in report.analyses:
     print(f'{analysis.type}: {analysis.title}')
+    #> confusion_matrix: Animal Classification
+    #> precision_recall: Precision-Recall Curve
+    #> scalar: Accuracy
 ```
 
 ## Next Steps

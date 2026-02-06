@@ -245,6 +245,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             name: Optional name for the dataset.
             cases: Sequence of test cases to include in the dataset.
             evaluators: Optional sequence of evaluators to apply to all cases in the dataset.
+            report_evaluators: Optional sequence of report evaluators that run on the full evaluation report.
         """
         case_names = set[str]()
         for case in cases:
@@ -363,16 +364,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                     report=report,
                     experiment_metadata=metadata,
                 )
-                for report_eval in self.report_evaluators:
-                    with logfire_span(
-                        'report_evaluator: {evaluator_name}',
-                        evaluator_name=report_eval.get_serialization_name(),
-                    ):
-                        result = await report_eval.evaluate_async(report_ctx)
-                        if isinstance(result, list):
-                            report.analyses.extend(result)
-                        else:
-                            report.analyses.append(result)
+                await _run_report_evaluators(self.report_evaluators, report_ctx, report)
 
             full_experiment_metadata: dict[str, Any] = {'n_cases': len(self.cases)}
             if metadata is not None:
@@ -1005,6 +997,28 @@ async def _run_task(
         attributes=task_run.attributes,
         metrics=task_run.metrics,
     )
+
+
+async def _run_report_evaluators(
+    report_evaluators: list[ReportEvaluator],
+    report_ctx: ReportEvaluatorContext[Any, Any, Any],
+    report: EvaluationReport[Any, Any, Any],
+) -> None:
+    """Run report evaluators and append their analyses to the report."""
+    for report_eval in report_evaluators:
+        with logfire_span(
+            'report_evaluator: {evaluator_name}',
+            evaluator_name=report_eval.get_serialization_name(),
+        ):
+            try:
+                result = await report_eval.evaluate_async(report_ctx)
+            except Exception:
+                traceback.print_exc()
+            else:
+                if isinstance(result, list):
+                    report.analyses.extend(result)
+                else:
+                    report.analyses.append(result)
 
 
 async def _run_task_and_evaluators(

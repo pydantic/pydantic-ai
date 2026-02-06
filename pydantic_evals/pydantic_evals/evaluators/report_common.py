@@ -17,7 +17,7 @@ from .report_evaluator import ReportEvaluator, ReportEvaluatorContext
 class ConfusionMatrixEvaluator(ReportEvaluator):
     """Computes a confusion matrix from case data."""
 
-    predicted_from: Literal['expected_output', 'output', 'metadata', 'labels'] = 'labels'
+    predicted_from: Literal['expected_output', 'output', 'metadata', 'labels'] = 'output'
     predicted_key: str | None = None
 
     expected_from: Literal['expected_output', 'output', 'metadata', 'labels'] = 'expected_output'
