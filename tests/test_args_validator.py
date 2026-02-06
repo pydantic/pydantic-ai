@@ -912,7 +912,7 @@ async def test_args_valid_none_for_tool_denied():
     from pydantic_ai.tools import DeferredToolResults, ToolDenied
 
     def my_validator(ctx: RunContext[int], x: int) -> None:
-        pass  # pragma: no cover
+        pass
 
     agent = Agent(
         TestModel(),
