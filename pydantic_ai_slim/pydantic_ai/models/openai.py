@@ -670,9 +670,7 @@ class OpenAIChatModel(Model):
         tools = self._get_tools(model_request_parameters)
 
         # Count tokens using tiktoken in a thread pool
-        token_count = await _utils.run_in_executor(
-            self._count_tokens_sync, openai_messages, tools, self.model_name
-        )
+        token_count = await _utils.run_in_executor(self._count_tokens_sync, openai_messages, tools, self.model_name)
 
         return usage.RequestUsage(input_tokens=token_count)
 
