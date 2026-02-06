@@ -508,7 +508,7 @@ def test_request_image_binary(transformers_multimodal_model: OutlinesModel, bina
 
 
 @skip_if_transformers_imports_unsuccessful
-def test_request_image_url(transformers_multimodal_model: OutlinesModel) -> None:
+def test_request_image_url(transformers_multimodal_model: OutlinesModel, disable_ssrf_protection_for_vcr: None) -> None:
     agent = Agent(transformers_multimodal_model)
     result = agent.run_sync(
         [

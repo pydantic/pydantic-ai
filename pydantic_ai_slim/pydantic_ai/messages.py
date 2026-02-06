@@ -116,6 +116,15 @@ Mostly normalized to OpenTelemetry semantic convention values. `incomplete` is a
 indicating the provider paused the turn and expects the client to continue with a follow-up request.
 """
 
+ForceDownloadMode: TypeAlias = bool | Literal['allow-local']
+"""Type for the force_download parameter on FileUrl subclasses.
+
+- `False`: The URL is sent directly to providers that support it. For providers that don't,
+  the file is downloaded with SSRF protection (blocks private IPs and cloud metadata).
+- `True`: The file is always downloaded with SSRF protection (blocks private IPs and cloud metadata).
+- `'allow-local'`: The file is always downloaded, allowing private IPs but still blocking cloud metadata.
+"""
+
 ProviderDetailsDelta: TypeAlias = dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None
 """Type for provider_details input: can be a static dict, a callback to update existing details, or None."""
 
@@ -172,11 +181,13 @@ class FileUrl(ABC):
 
     _: KW_ONLY
 
-    force_download: bool = False
-    """For OpenAI, Google APIs and xAI it:
+    force_download: ForceDownloadMode = False
+    """Controls whether the file is downloaded and how SSRF protection is applied:
 
-    * If True, the file is downloaded and the data is sent to the model as bytes.
-    * If False, the URL is sent directly to the model and no download is performed.
+    * If `False`, the URL is sent directly to providers that support it. For providers that don't,
+      the file is downloaded with SSRF protection (blocks private IPs and cloud metadata).
+    * If `True`, the file is always downloaded with SSRF protection (blocks private IPs and cloud metadata).
+    * If `'allow-local'`, the file is always downloaded, allowing private IPs but still blocking cloud metadata.
     """
 
     vendor_metadata: dict[str, Any] | None = None
@@ -204,7 +215,7 @@ class FileUrl(ABC):
         *,
         media_type: str | None = None,
         identifier: str | None = None,
-        force_download: bool = False,
+        force_download: ForceDownloadMode = False,
         vendor_metadata: dict[str, Any] | None = None,
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
@@ -268,7 +279,7 @@ class VideoUrl(FileUrl):
         *,
         media_type: str | None = None,
         identifier: str | None = None,
-        force_download: bool = False,
+        force_download: ForceDownloadMode = False,
         vendor_metadata: dict[str, Any] | None = None,
         kind: Literal['video-url'] = 'video-url',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
@@ -327,7 +338,7 @@ class AudioUrl(FileUrl):
         *,
         media_type: str | None = None,
         identifier: str | None = None,
-        force_download: bool = False,
+        force_download: ForceDownloadMode = False,
         vendor_metadata: dict[str, Any] | None = None,
         kind: Literal['audio-url'] = 'audio-url',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
@@ -374,7 +385,7 @@ class ImageUrl(FileUrl):
         *,
         media_type: str | None = None,
         identifier: str | None = None,
-        force_download: bool = False,
+        force_download: ForceDownloadMode = False,
         vendor_metadata: dict[str, Any] | None = None,
         kind: Literal['image-url'] = 'image-url',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
@@ -420,7 +431,7 @@ class DocumentUrl(FileUrl):
         *,
         media_type: str | None = None,
         identifier: str | None = None,
-        force_download: bool = False,
+        force_download: ForceDownloadMode = False,
         vendor_metadata: dict[str, Any] | None = None,
         kind: Literal['document-url'] = 'document-url',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
