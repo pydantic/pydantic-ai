@@ -13,15 +13,18 @@ Flow being tested:
 from __future__ import annotations
 
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved
 from pydantic_ai.toolsets.code_mode import CodeModeContext, CodeModeToolset
 from pydantic_ai.toolsets.function import FunctionToolset
+
+from ..conftest import IsBytes, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -67,19 +70,53 @@ r2 = await f2
     async with code_toolset:
         result = await agent.run('Do both', toolsets=[code_toolset])
 
-    assert isinstance(result.output, DeferredToolRequests)
-    # run_code is in approvals (not calls) because it needs approval to resume
-    assert len(result.output.approvals) == 1
-    assert result.output.approvals[0].tool_name == 'run_code'
-    run_code_call_id = result.output.approvals[0].tool_call_id
+    # Snapshot shows the full structure of the deferred result
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            calls=[],
+            approvals=[
+                ToolCallPart(
+                    tool_name='run_code',
+                    args={
+                        'code': """\
+f1 = sensitive_action(value=42)
+f2 = external_service(data="test")
+r1 = await f1
+r2 = await f2
+{"sensitive": r1, "external": r2}"""
+                    },
+                    tool_call_id='rc1',
+                )
+            ],
+            context={
+                'rc1': {
+                    'checkpoint': IsBytes(),
+                    'interrupted_calls': [
+                        {
+                            'call_id': IsStr(),
+                            'tool_name': 'sensitive_action',
+                            'args': (),
+                            'kwargs': {'value': 42},
+                            'type': 'approval',
+                        },
+                        {
+                            'call_id': IsStr(),
+                            'tool_name': 'external_service',
+                            'args': (),
+                            'kwargs': {'data': 'test'},
+                            'type': 'external',
+                        },
+                    ],
+                }
+            },
+            metadata={},
+        )
+    )
 
-    # Context contains checkpoint and nested call details (not metadata!)
-    assert run_code_call_id in result.output.context
-    # Use CodeModeContext for type-safe access to context fields
+    # Extract values needed for resume flow
+    assert isinstance(result.output, DeferredToolRequests)
+    run_code_call_id = result.output.approvals[0].tool_call_id
     ctx: CodeModeContext = result.output.context[run_code_call_id]  # type: ignore[assignment]
-    assert 'checkpoint' in ctx
-    assert 'interrupted_calls' in ctx
-    assert len(ctx['interrupted_calls']) == 2
 
     # Build results for nested calls - type-safe access to interrupted_calls
     nested_results: dict[str, object] = {}
@@ -109,7 +146,7 @@ r2 = await f2
             toolsets=[code_toolset],
         )
 
-    assert result.output == 'Both done!'
+    assert result.output == snapshot('Both done!')
 
 
 async def test_code_mode_resume_missing_context_error():
@@ -140,14 +177,42 @@ async def test_code_mode_resume_missing_context_error():
     async with code_toolset:
         result = await agent.run('Do it', toolsets=[code_toolset])
 
+    # Snapshot shows the full structure of the deferred result
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            calls=[],
+            approvals=[
+                ToolCallPart(
+                    tool_name='run_code',
+                    args={'code': 'await sensitive_action(value=42)'},
+                    tool_call_id='rc1',
+                )
+            ],
+            context={
+                'rc1': {
+                    'checkpoint': IsBytes(),
+                    'interrupted_calls': [
+                        {
+                            'call_id': IsStr(),
+                            'tool_name': 'sensitive_action',
+                            'args': (),
+                            'kwargs': {'value': 42},
+                            'type': 'approval',
+                        },
+                    ],
+                }
+            },
+            metadata={},
+        )
+    )
+
+    # Extract values needed for resume flow
     assert isinstance(result.output, DeferredToolRequests)
     run_code_call_id = result.output.approvals[0].tool_call_id
 
     # Run 2: Try to resume WITHOUT context - should error
-    from pydantic_ai.exceptions import UserError
-
     async with code_toolset:
-        with pytest.raises(UserError, match='Code mode resume requires context with checkpoint'):
+        with pytest.raises(UserError) as exc_info:
             await agent.run(
                 message_history=result.all_messages(),
                 deferred_tool_results=DeferredToolResults(
@@ -156,6 +221,10 @@ async def test_code_mode_resume_missing_context_error():
                 ),
                 toolsets=[code_toolset],
             )
+
+    assert str(exc_info.value) == snapshot(
+        'Code mode resume requires context with checkpoint. Pass back the original DeferredToolRequests.context[tool_call_id] with an added "results" key mapping call_id to ToolApproved(), ToolDenied(), or external result.'
+    )
 
 
 async def test_code_mode_resume_missing_results_error():
@@ -186,6 +255,36 @@ async def test_code_mode_resume_missing_results_error():
     async with code_toolset:
         result = await agent.run('Do it', toolsets=[code_toolset])
 
+    # Snapshot shows the full structure of the deferred result
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            calls=[],
+            approvals=[
+                ToolCallPart(
+                    tool_name='run_code',
+                    args={'code': 'await sensitive_action(value=42)'},
+                    tool_call_id='rc1',
+                )
+            ],
+            context={
+                'rc1': {
+                    'checkpoint': IsBytes(),
+                    'interrupted_calls': [
+                        {
+                            'call_id': IsStr(),
+                            'tool_name': 'sensitive_action',
+                            'args': (),
+                            'kwargs': {'value': 42},
+                            'type': 'approval',
+                        },
+                    ],
+                }
+            },
+            metadata={},
+        )
+    )
+
+    # Extract values needed for resume flow
     assert isinstance(result.output, DeferredToolRequests)
     run_code_call_id = result.output.approvals[0].tool_call_id
 
@@ -193,10 +292,8 @@ async def test_code_mode_resume_missing_results_error():
     original_context = result.output.context[run_code_call_id]
 
     # Run 2: Try to resume with context but MISSING results - should error
-    from pydantic_ai.exceptions import UserError
-
     async with code_toolset:
-        with pytest.raises(UserError, match='Code mode resume requires context with results'):
+        with pytest.raises(UserError) as exc_info:
             await agent.run(
                 message_history=result.all_messages(),
                 deferred_tool_results=DeferredToolResults(
@@ -210,3 +307,7 @@ async def test_code_mode_resume_missing_results_error():
                 ),
                 toolsets=[code_toolset],
             )
+
+    assert str(exc_info.value) == snapshot(
+        'Code mode resume requires context with results for nested calls. Add a "results" key to the context mapping call_id to ToolApproved(), ToolDenied(), or the external result.'
+    )

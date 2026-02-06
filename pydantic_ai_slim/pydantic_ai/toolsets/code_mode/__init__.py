@@ -470,9 +470,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         try:
             # Cast to list[dict[str, Any]] for runtime.resume signature compatibility
-            return await self.runtime.resume(
-                checkpoint, callback, cast(list[dict[str, Any]], interrupted_calls)
-            )
+            return await self.runtime.resume(checkpoint, callback, cast(list[dict[str, Any]], interrupted_calls))
         except CodeRuntimeError as e:
             raise ModelRetry(f'Runtime error in generated code:\n{e.message}')
 
