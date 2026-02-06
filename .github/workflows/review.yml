@@ -54,6 +54,7 @@ jobs:
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
+            PR AUTHOR: ${{ github.event.pull_request.user.login }} (${{ github.event.pull_request.author_association }})
 
             Review this pull request. The PR branch is already checked out in the current working directory.
 
@@ -69,14 +70,16 @@ jobs:
 
             Use the `TodoWrite` tool to track your progress through each of these stages.
 
-            Then identify any issues that have not already been pointed out in an existing unresolved comment:
+            Then identify any problems, confirmed or potential (that have not already been pointed out):
             - Any change that does not align with the project's standards, philosophy, or requirements for every contribution as stated in `AGENTS.md`.
             - Any change that does not match maintainer guidance in the issue or earlier PR comments on what an acceptable solution would look like.
             - Any change or design decision or tradeoff (in both behavior and API) that needs explicit consideration, discussion, or maintainer awareness and approval.
-            - Any line of code that does not abide by the concrete coding guidelines laid out in the relevant `AGENTS.md` file(s).
-            - Anything else that `AGENTS.md` suggests you should be calling out.
+            - Any line of code that violates the concrete guidelines/rules laid out in the relevant `AGENTS.md` file(s): the top-level guidelines apply to all changes, while directory-specific guidelines affect only the changes in that directory.
+            - Anything else that the responsibilities you are assigned in `AGENTS.md` suggest that you should be calling out: use your best judgment.
 
-            Note that another agent (Devin) is responsible for thoroughly reviewing the code for bugs, security issues, and edge cases -- those are not your focus.
+            Note that while another agent (Devin) is responsible for thoroughly reviewing the implementation for bugs, security issues, and edge cases,
+            _you_ are responsible for catching every violation of the repository's guidelines/rules listed in the `AGENTS.md` files.
+            Do not focus exclusively on high-level concerns, every line needs to meet our bar.
 
             Use the `TodoWrite` tool to track each identified issue before moving to submitting comments.
 
@@ -98,7 +101,6 @@ jobs:
             You are meant to be helpful to the contributor and the maintainer, so your comments should never add noise to the conversation:
             - Do not post a final summary comment; inline comments are sufficient.
             - Do not comment on lines that do not need improvement, maintainer awareness, or discussion; comments pointing out a good choice are just noise.
-            - Do not point out issues that have already been pointed out in an existing unresolved comment, even if it seems like the user ignored it; you're running on every push (with a 15 minute debounce), and the contributor may be addressing feedback in multiple back to back commits/pushes.
             - Do not post multiple comments for the same exact issue unless it shows up in different places.
 
             It bears repeating that you are the first line of defense against low-quality contributions and maintainer headaches, and you have a big role in ensuring that every contribution to this project meets or exceeds the high standards that the Pydantic brand is known and loved for.
