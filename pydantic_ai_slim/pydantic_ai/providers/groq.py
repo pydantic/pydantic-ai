@@ -37,7 +37,10 @@ _GROQ_NATIVE_OUTPUT_PROFILE = ModelProfile(
 """Profile for Groq models that support native structured output.
 
 Groq's API requires OpenAI-compatible JSON schema format with strict mode
-constraints (additionalProperties: false on all objects) for structured output."""
+constraints (additionalProperties: false on all objects) for structured output.
+
+Native output is preferred because some models (e.g. Llama 4) don't reliably
+produce tool-based structured output on Groq."""
 
 
 def groq_moonshotai_model_profile(model_name: str) -> ModelProfile | None:
