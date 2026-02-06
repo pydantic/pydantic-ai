@@ -10,7 +10,9 @@ concurrency:
 jobs:
 
   review:
-    if: contains(github.event.pull_request.labels.*.name, 'auto-review')
+    if: >-
+      (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'auto-review')) ||
+      (github.event.action == 'labeled' && github.event.label.name == 'auto-review')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -47,13 +49,15 @@ jobs:
             actions: read
           claude_args: |
             --model claude-opus-4-6
-            --allowedTools "TodoWrite,mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh run view:*),Bash(gh run list:*),Bash(gh api repos/:*),Bash(gh api graphql:*),Bash(git log:*),Bash(git diff:*),Bash(git grep:*),Bash(git show:*),Bash(git status:*),Bash(rg:*),Bash(ls:*),Bash(tree:*),Bash(grep:*),WebSearch,WebFetch"
+            --allowedTools "TodoWrite,mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh run view:*),Bash(gh run list:*),Bash(gh api:*),Bash(git log:*),Bash(git diff:*),Bash(git grep:*),Bash(git show:*),Bash(git status:*),Bash(jq:*),Bash(cat:*),Bash(rg:*),Bash(ls:*),Bash(tree:*),Bash(grep:*),WebSearch,WebFetch"
 
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
 
-            Review this pull request. The PR branch is already checked out in the current working directory. Use the `gh` CLI to read the PR and related issues and comments.
+            Review this pull request. The PR branch is already checked out in the current working directory.
+
+            Use the `gh` CLI to read the PR and related issues and comments. When using `gh api`, use the built-in `--jq` or `--template` flags for filtering/formatting since `jq` may not be available and `python3` is not allowed.
 
             Before you start:
             - Read the `CLAUDE.md` at the root (symlinked to `AGENTS.md`) to understand the project and your responsibility in helping drive this PR towards a good outcome for the project and all of its users, and lowering the review burden on maintainers.
