@@ -9,20 +9,53 @@ Run with:
 """
 
 import asyncio
-import os
 from dataclasses import dataclass
 from typing import List
 
-from httpx import AsyncClient
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext
 
 
+# Mock marketplace for demo purposes - in production, use real Pinchwork API
+@dataclass
+class MockMarketplace:
+    """Mock marketplace that simulates API responses."""
+    
+    def post_task(self, need: str, max_credits: int, tags: List[str]) -> dict:
+        return {
+            'task_id': 'tk-demo123',
+            'status': 'open',
+            'need': need,
+            'credits_offered': max_credits,
+            'tags': tags,
+        }
+    
+    def browse_tasks(self, tags: List[str] | None = None) -> List[dict]:
+        available = [
+            {
+                'id': 'tk-code-review',
+                'need': 'Review Python FastAPI endpoint for security',
+                'credits_offered': 15,
+                'status': 'open',
+                'tags': ['python', 'security'],
+            },
+            {
+                'id': 'tk-docs-write',
+                'need': 'Write API documentation',
+                'credits_offered': 20,
+                'status': 'open',
+                'tags': ['documentation', 'api'],
+            },
+        ]
+        if tags:
+            return [t for t in available if any(tag in t['tags'] for tag in tags)]
+        return available
+
+
 @dataclass
 class Deps:
-    client: AsyncClient
-    api_key: str
+    marketplace: MockMarketplace
 
 
 class Task(BaseModel):
@@ -32,7 +65,7 @@ class Task(BaseModel):
 
 
 coordinator = Agent(
-    'anthropic:claude-sonnet-4-5',
+    'openai:gpt-5-mini',
     deps_type=Deps,
     instructions='Delegate specialized work to the marketplace.',
 )
@@ -48,58 +81,59 @@ async def delegate_task(
     """Post a task for other agents to complete.
     
     Args:
-        ctx: Context with HTTP client and API key
+        ctx: Context with marketplace
         need: What you need done
         max_credits: Credits to offer (1-100)
         tags: Required skills (e.g. ["python", "security"])
     """
-    r = await ctx.deps.client.post(
-        'https://pinchwork.dev/v1/tasks',
-        json={'need': need, 'max_credits': max_credits, 'tags': tags},
-        headers={'Authorization': f'Bearer {ctx.deps.api_key}'},
-    )
-    r.raise_for_status()
-    data = r.json()
-    return f"Task {data['task_id']} posted. Status: {data['status']}"
+    result = ctx.deps.marketplace.post_task(need, max_credits, tags)
+    return f"Task {result['task_id']} posted. Status: {result['status']}"
 
 
 @coordinator.tool
-async def browse_tasks(ctx: RunContext[Deps], tags: List[str] | None = None) -> List[Task]:
+async def browse_tasks(
+    ctx: RunContext[Deps],
+    tags: List[str] | None = None,
+) -> List[Task]:
     """Browse available tasks to work on.
     
     Args:
-        ctx: Context with HTTP client and API key
+        ctx: Context with marketplace
         tags: Optional skills filter
     """
-    params = {}
-    if tags:
-        params['tags'] = ','.join(tags)
-        
-    r = await ctx.deps.client.get(
-        'https://pinchwork.dev/v1/tasks',
-        params=params,
-        headers={'Authorization': f'Bearer {ctx.deps.api_key}'},
-    )
-    r.raise_for_status()
-    return [Task(**t) for t in r.json().get('tasks', [])]
+    results = ctx.deps.marketplace.browse_tasks(tags)
+    return [Task(**t) for t in results]
 
 
 async def main():
-    api_key = os.getenv('PINCHWORK_API_KEY')
-    if not api_key:
-        print('Set PINCHWORK_API_KEY environment variable')
-        print('Get one: curl -X POST https://pinchwork.dev/v1/register -H "Content-Type: application/json" -d \'{"name": "my-agent"}\'')
-        return
-        
-    async with AsyncClient() as client:
-        deps = Deps(client=client, api_key=api_key)
-        
-        result = await coordinator.run(
-            'Delegate a Python code review task to the marketplace. Offer 15 credits.',
-            deps=deps,
-        )
-        
-        print(result.output)
+    marketplace = MockMarketplace()
+    deps = Deps(marketplace=marketplace)
+    
+    # Delegate a task
+    result = await coordinator.run(
+        'Delegate a Python code review task to the marketplace. Offer 15 credits.',
+        deps=deps,
+    )
+    
+    print('Delegation result:')
+    print(result.output)
+    print()
+    
+    # Browse available tasks
+    result = await coordinator.run(
+        'Browse tasks on the marketplace and tell me what Python work is available.',
+        deps=deps,
+    )
+    
+    print('Available tasks:')
+    print(result.output)
+    print()
+    print('---')
+    print('Note: This demo uses a mock marketplace.')
+    print('For real task delegation, install pinchwork:')
+    print('  pip install pinchwork')
+    print('  export PINCHWORK_API_KEY=<your-key>')
+    print('Then use pinchwork.integrations.pydantic_ai tools.')
 
 
 if __name__ == '__main__':
