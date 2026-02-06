@@ -921,8 +921,9 @@ class BedrockConverseModel(Model):
                         )
                     source = _parse_s3_source(item.file_id)
 
-                    format = item.format
-                    if format is None:
+                    try:
+                        format = item.format
+                    except ValueError:
                         raise UserError(f'Unsupported media type for Bedrock UploadedFile: {item.media_type}')
 
                     if item.media_type.startswith('image/'):

@@ -193,7 +193,7 @@ async def main():
 
     # Upload a file using the provider's client (Anthropic client)
     with open('document.pdf', 'rb') as f:
-        uploaded_file = await provider.client.beta.files.upload(file=f.read())
+        uploaded_file = await provider.client.beta.files.upload(file=f)
 
     # Reference the uploaded file, including the required beta header
     agent = Agent(model)
@@ -230,7 +230,7 @@ async def main():
 
     # Upload a file using the provider's client (OpenAI client)
     with open('document.pdf', 'rb') as f:
-        uploaded_file = await provider.client.files.create(file=f.read(), purpose='user_data')
+        uploaded_file = await provider.client.files.create(file=f, purpose='user_data')
 
     # Reference the uploaded file
     agent = Agent(model)
@@ -266,7 +266,7 @@ async def main():
 
     # Upload a file using the provider's client (Google GenAI client)
     with open('document.pdf', 'rb') as f:
-        file = provider.client.files.upload(file=f.read())
+        file = await provider.client.aio.files.upload(file=f)
         assert file.uri is not None
 
     # Reference the uploaded file by URI (media_type is optional for Google)
@@ -289,7 +289,7 @@ asyncio.run(main())
 For Bedrock, files must be uploaded to S3 separately (e.g., using [boto3](https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/s3/client/put_object.html)). The assumed role must have `s3:GetObject` permission on the bucket.
 
 !!! note "`media_type` may be required"
-    Bedrock requires `media_type` when the file extension is ambiguous or missing. For S3 URLs with clear extensions like `.pdf`, `.png`, etc., it can be inferred automatically,
+    Bedrock requires `media_type` when the file extension is ambiguous or missing. For S3 URLs with clear extensions like `.pdf`, `.png`, etc., it can be inferred automatically.
 
 ```py {title="uploaded_file_bedrock.py" test="skip"}
 import asyncio
@@ -340,7 +340,7 @@ async def main():
 
     # Upload a file using the provider's client (xAI client)
     with open('document.pdf', 'rb') as f:
-        uploaded_file = provider.client.files.upload(f.read(), filename='document.pdf')
+        uploaded_file = provider.client.files.upload(f, filename='document.pdf')
 
     # Reference the uploaded file
     agent = Agent(model)

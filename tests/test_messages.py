@@ -766,7 +766,8 @@ def test_uploaded_file_format():
     # Test with no media_type - defaults to 'application/octet-stream' which has no format
     uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic')
     assert uploaded_file.media_type == 'application/octet-stream'
-    assert uploaded_file.format is None
+    with pytest.raises(ValueError, match='Unknown media type'):
+        uploaded_file.format
 
     # Test with image media_type
     uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='image/png')
@@ -784,9 +785,10 @@ def test_uploaded_file_format():
     uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='application/pdf')
     assert uploaded_file.format == 'pdf'
 
-    # Test with unknown media_type - should return None
+    # Test with unknown media_type - should raise ValueError
     uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='application/custom')
-    assert uploaded_file.format is None
+    with pytest.raises(ValueError, match='Unknown media type'):
+        uploaded_file.format
 
 
 def test_uploaded_file_in_otel_message_parts():

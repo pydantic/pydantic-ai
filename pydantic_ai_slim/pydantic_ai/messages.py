@@ -755,22 +755,23 @@ class UploadedFile:
         return self._identifier or _multi_modal_content_identifier(self.file_id)
 
     @property
-    def format(self) -> str | None:
+    def format(self) -> str:
         """The file format based on media type.
-
-        Returns None if the media type is not recognized.
 
         The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
         """
         media_type = self.media_type
-        if media_type.startswith('image/'):
-            return _image_format_lookup.get(media_type)
-        elif media_type.startswith('video/'):
-            return _video_format_lookup.get(media_type)
-        elif media_type.startswith('audio/'):
-            return _audio_format_lookup.get(media_type)
-        else:
-            return _document_format_lookup.get(media_type)
+        try:
+            if media_type.startswith('image/'):
+                return _image_format_lookup[media_type]
+            elif media_type.startswith('video/'):
+                return _video_format_lookup[media_type]
+            elif media_type.startswith('audio/'):
+                return _audio_format_lookup[media_type]
+            else:
+                return _document_format_lookup[media_type]
+        except KeyError as e:
+            raise ValueError(f'Unknown media type: {media_type}') from e
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
