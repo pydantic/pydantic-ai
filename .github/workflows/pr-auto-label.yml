@@ -1,12 +1,8 @@
 name: PR Auto-Label
 
 on:
-  pull_request:
-    types: [opened, synchronize]
   pull_request_target:
-    types: [opened]
-  issue_comment:
-    types: [created]
+    types: [opened, synchronize]
 
 permissions:
   contents: read
@@ -16,7 +12,6 @@ permissions:
 jobs:
   size-label:
     name: Set Size Label
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Calculate PR size and set label
@@ -78,14 +73,25 @@ jobs:
 
   category-label:
     name: Set Category Label
-    if: github.event_name == 'pull_request_target' && github.event.action == 'opened'
+    if: github.event.action == 'opened'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       id-token: write
       contents: read
       issues: write
       pull-requests: write
     steps:
+      - name: Check for modified config files
+        run: |
+          CHANGED=$(gh pr diff ${{ github.event.pull_request.number }} --name-only --repo ${{ github.repository }})
+          if echo "$CHANGED" | grep -qiE '(^|/)AGENTS\.md$|(^|/)CLAUDE\.md$|(^|/)\.claude/'; then
+            echo "::error::PR modifies agent config files (AGENTS.md, CLAUDE.md, or .claude/). Skipping auto-labeling for security."
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Check if category label already exists
         id: check-label
         run: |
@@ -106,124 +112,27 @@ jobs:
 
       - name: Determine category label with Claude Code
         if: steps.check-label.outputs.has_label == 'false'
-        uses: anthropics/claude-code-action@beta
+        uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          timeout_minutes: "5"
-          direct_prompt: |
-            Analyze PR #${{ github.event.pull_request.number }} in ${{ github.repository }} and classify it.
+          allowed_non_write_users: '*'
+          claude_args: |
+            --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*)"
+          prompt: |
+            Classify PR #${{ github.event.pull_request.number }} in ${{ github.repository }} and add exactly one label.
 
-            First, fetch the PR details and diff:
-            - Use `gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }}` to see PR title/description
-            - Use `gh pr diff ${{ github.event.pull_request.number }} --repo ${{ github.repository }}` to see the changes
+            Run `gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }}` for the title and description.
+            Run `gh pr diff ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --name-only` for the changed files.
 
-            Then classify into exactly ONE category by adding the appropriate label:
-
-            - `bug`: Fixes something that isn't working correctly
-            - `feature`: Adds new functionality or capabilities
-            - `docs`: Documentation-only changes (no functional code changes)
-            - `chore`: Maintenance, refactoring, dev dependencies, CI/CD, or test-only changes
+            Categories:
+            - `bug`: Fixes broken behavior
+            - `feature`: New functionality
+            - `docs`: Documentation-only (no code changes)
+            - `chore`: CI, refactoring, dev dependencies, tests-only
             - `dependency`: Production dependency updates
 
-            Guidelines:
-            - Look at the actual files changed, not just the PR title
-            - If code AND docs are changed, prefer `feature` or `bug` over `docs`
-            - Test-only changes (without functional code) are `chore`
-            - Production dependency updates (in `[project.dependencies]` or `[project.optional-dependencies]`) are `dependency`
-            - Dev-only dependency updates (in `[dependency-groups]`) are `chore`
-            - CI/workflow changes are `chore`
-            - Refactoring without new functionality is `chore`
+            When both code and docs change, prefer `feature` or `bug` over `docs`.
+            If pyproject.toml files changed, check their diff to distinguish production deps (`dependency`) from dev-only deps in `[dependency-groups]` (`chore`).
 
-            After analyzing, add exactly ONE label using the GitHub API:
+            Add the label:
             gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels --method POST -f "labels[]=<category>"
-
-            Only output the gh command you ran and a brief explanation of why you chose that category.
-
-  add-label-from-comment:
-    name: Add Label from Comment
-    # Allows maintainers to override the auto-assigned category label via `/label <name>` comment.
-    # This job removes any existing category label before applying the new one,
-    # so `/label bug` on a PR labeled `chore` will replace `chore` with `bug`.
-    if: >-
-      github.event_name == 'issue_comment' &&
-      github.event.issue.pull_request &&
-      startsWith(github.event.comment.body, '/label ') &&
-      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Add label from comment
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const categoryLabels = ['bug', 'feature', 'docs', 'chore', 'dependency'];
-            const comment = context.payload.comment.body.trim();
-            const match = comment.match(/^\/label\s+(\S+)/);
-
-            if (!match) {
-              console.log('No label found in comment');
-              return;
-            }
-
-            const requestedLabel = match[1].toLowerCase();
-            const prNumber = context.payload.issue.number;
-
-            if (!categoryLabels.includes(requestedLabel)) {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                body: `❌ \`${requestedLabel}\` is not a valid label. Allowed labels are: ${categoryLabels.map(l => '\`' + l + '\`').join(', ')}`
-              });
-              return;
-            }
-
-            try {
-              // Remove any existing category labels before adding the new one
-              const { data: currentLabels } = await github.rest.issues.listLabelsOnIssue({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber
-              });
-
-              for (const label of currentLabels) {
-                if (categoryLabels.includes(label.name) && label.name !== requestedLabel) {
-                  await github.rest.issues.removeLabel({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    issue_number: prNumber,
-                    name: label.name
-                  });
-                }
-              }
-
-              // Add the requested label
-              await github.rest.issues.addLabels({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                labels: [requestedLabel]
-              });
-            } catch (error) {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                body: `❌ Failed to add label \`${requestedLabel}\`: ${error.message}`
-              });
-              return;
-            }
-
-            // React with +1 — outside the label try-catch so a reaction failure
-            // doesn't produce a misleading "Failed to add label" error
-            try {
-              await github.rest.reactions.createForIssueComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: context.payload.comment.id,
-                content: '+1'
-              });
-            } catch {
-              // Reaction is cosmetic; swallow the error
-            }
-
-            console.log(`✅ Set label: ${requestedLabel}`);
