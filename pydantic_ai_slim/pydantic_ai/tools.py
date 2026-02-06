@@ -245,7 +245,7 @@ enabling batch decisions and parallel execution of approved tools. Can be sync o
 The handler **must** return results for **all** deferred tool calls in the response.
 Missing results raise [`UserError`][pydantic_ai.exceptions.UserError].
 
-See [Inline Deferred Tool Handling](../deferred-tools.md#inline-deferred-tool-handling) for usage examples.
+See [Inline Handler](../deferred-tools.md#inline-handler) for usage examples.
 
 Usage: `DeferredToolHandler[AgentDepsT]`.
 """

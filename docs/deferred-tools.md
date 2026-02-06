@@ -31,6 +31,7 @@ When the model calls a tool that requires approval, the agent run will end with 
 For CLI agents, IDE extensions, and other interactive scenarios, you can provide a `deferred_tool_handler` callback that resolves approvals within a single agent run—no external loop or message history management required.
 
 The handler receives all deferred tool calls from a single model response as a batch, enabling batch decisions ("approve all reads, deny all writes"). It can be sync or async, and can be set at agent construction or per-run.
+When both are set, the per-run argument takes precedence; pass `deferred_tool_handler=None` to disable an agent-level default handler for a run.
 
 ```python {title="inline_approval.py"}
 from pydantic_ai import Agent, RunContext
@@ -75,6 +76,8 @@ print(result.output)
 ```
 
 The handler **must** return results for **all** deferred tool calls in the response; missing results raise [`UserError`][pydantic_ai.exceptions.UserError].
+
+Deferred metadata is not automatically passed through to tool execution in inline mode. If tools need metadata in [`RunContext.tool_call_metadata`][pydantic_ai.tools.RunContext.tool_call_metadata], copy `requests.metadata` into `DeferredToolResults.metadata`.
 
 ### Two-Run Pattern
 

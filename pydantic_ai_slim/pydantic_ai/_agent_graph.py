@@ -286,7 +286,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         return ModelRequestNode[DepsT, NodeRunEndT](request=next_message)
 
-    async def _handle_deferred_tool_results(  # noqa: C901
+    async def _handle_deferred_tool_results(
         self,
         deferred_tool_results: DeferredToolResults,
         messages: list[_messages.ModelMessage],
@@ -313,21 +313,10 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 'Tool call results were provided, but the message history does not contain any unprocessed tool calls.'
             )
 
-        tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None = None
-        tool_call_results = {}
-        for tool_call_id, approval in deferred_tool_results.approvals.items():
-            if approval is True:
-                approval = ToolApproved()
-            elif approval is False:
-                approval = ToolDenied()
-            tool_call_results[tool_call_id] = approval
-
-        if calls := deferred_tool_results.calls:
-            call_result_types = get_union_args(DeferredToolCallResult)
-            for tool_call_id, result in calls.items():
-                if not isinstance(result, call_result_types):
-                    result = _messages.ToolReturn(result)
-                tool_call_results[tool_call_id] = result
+        tool_call_results: dict[str, DeferredToolResult | Literal['skip']] = {}
+        tool_call_results.update(
+            _normalize_deferred_tool_results(deferred_tool_results.approvals, deferred_tool_results.calls)
+        )
 
         if last_model_request:
             for part in last_model_request.parts:
@@ -877,6 +866,28 @@ def build_validation_context(
         return validation_ctx
 
 
+def _normalize_deferred_tool_results(
+    approvals: dict[str, bool | ToolApproved | ToolDenied],
+    calls: dict[str, DeferredToolCallResult | Any],
+) -> dict[str, DeferredToolResult]:
+    """Normalize deferred tool approvals and external call results."""
+    normalized_results: dict[str, DeferredToolResult] = {}
+    for tool_call_id, approval in approvals.items():
+        if approval is True:
+            approval = ToolApproved()
+        elif approval is False:
+            approval = ToolDenied()
+        normalized_results[tool_call_id] = approval
+
+    call_result_types = get_union_args(DeferredToolCallResult)
+    for tool_call_id, call_result in calls.items():
+        if not isinstance(call_result, call_result_types):
+            call_result = _messages.ToolReturn(call_result)
+        normalized_results[tool_call_id] = call_result
+
+    return normalized_results
+
+
 async def process_tool_calls(  # noqa: C901
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
@@ -1068,20 +1079,9 @@ async def process_tool_calls(  # noqa: C901
                     while inspect.isawaitable(handler_results):  # pragma: no branch
                         handler_results = await handler_results
 
-                    handler_tool_call_results: dict[str, DeferredToolResult] = {}
-                    for tool_call_id, approval in handler_results.approvals.items():
-                        if approval is True:
-                            approval = ToolApproved()
-                        elif approval is False:
-                            approval = ToolDenied()
-                        handler_tool_call_results[tool_call_id] = approval
-
-                    if handler_calls := handler_results.calls:
-                        call_result_types = get_union_args(DeferredToolCallResult)
-                        for tool_call_id, call_result in handler_calls.items():
-                            if not isinstance(call_result, call_result_types):
-                                call_result = _messages.ToolReturn(call_result)
-                            handler_tool_call_results[tool_call_id] = call_result
+                    handler_tool_call_results = _normalize_deferred_tool_results(
+                        handler_results.approvals, handler_results.calls
+                    )
 
                     expected_tool_call_ids = {
                         *[call.tool_call_id for call in deferred_calls['external']],

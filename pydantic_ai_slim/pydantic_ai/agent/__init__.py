@@ -482,7 +482,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
-        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None = None,
+        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -503,7 +503,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: OutputSpec[RunOutputDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
-        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None = None,
+        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -524,7 +524,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: OutputSpec[Any] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
-        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None = None,
+        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -681,9 +681,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings = None
             tracer = NoOpTracer()
 
-        resolved_deferred_tool_handler = (
-            deferred_tool_handler if deferred_tool_handler is not None else self._deferred_tool_handler
-        )
+        if _utils.is_set(deferred_tool_handler):
+            resolved_deferred_tool_handler = deferred_tool_handler
+        else:
+            resolved_deferred_tool_handler = self._deferred_tool_handler
 
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,

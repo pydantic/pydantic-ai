@@ -6927,6 +6927,41 @@ async def test_deferred_tool_handler_missing_results_error():
         await agent.run('Delete a.txt', deferred_tool_handler=handler)
 
 
+async def test_deferred_tool_handler_none_disables_agent_default():
+    handler_calls: list[int] = []
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='delete_file', args={'path': 'a.txt'}, tool_call_id='delete_file_call')]
+            )
+        last_request = messages[-1]
+        assert isinstance(last_request, ModelRequest)
+        tool_return = next(part for part in last_request.parts if isinstance(part, ToolReturnPart))
+        return ModelResponse(parts=[TextPart(f'Done: {tool_return.content}')])
+
+    def handler(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        handler_calls.append(len(requests.approvals))
+        return DeferredToolResults(approvals={requests.approvals[0].tool_call_id: False})
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests], deferred_tool_handler=handler)
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:  # pragma: no cover
+        return f'deleted {path}'
+
+    with_default_handler = await agent.run('Delete a.txt')
+    assert with_default_handler.output == snapshot('Done: The tool call was denied.')
+    assert handler_calls == [1]
+
+    without_handler = await agent.run('Delete a.txt', deferred_tool_handler=None)
+    assert isinstance(without_handler.output, DeferredToolRequests)
+    assert without_handler.output.approvals == [
+        ToolCallPart(tool_name='delete_file', args={'path': 'a.txt'}, tool_call_id='delete_file_call')
+    ]
+    assert handler_calls == [1]
+
+
 async def test_deferred_tool_results_redefers():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
