@@ -53,9 +53,10 @@ def test_args_validator_success():
     assert validator_called
 
 
-# Test 2: args_validator failure - validator raises ModelRetry
-def test_args_validator_failure():
-    """Test that failed validation is handled correctly."""
+# Test 2: args_validator failure - validator raises ModelRetry, emits correct events on retry
+@pytest.mark.anyio
+async def test_args_validator_failure():
+    """Test that failed validation emits args_valid=False, retries with error message, then succeeds."""
     validator_calls = 0
 
     def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
@@ -69,15 +70,27 @@ def test_args_validator_failure():
         deps_type=int,
     )
 
-    @agent.tool(args_validator=my_validator)
+    @agent.tool(args_validator=my_validator, retries=2)
     def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
         """Add two numbers."""
         return x + y
 
-    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+    events: list[Any] = []
+    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
+        events.append(event)
 
-    # The validator should have been called at least once
-    assert validator_calls >= 1
+    tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'add_numbers']
+
+    # First call: validation fails → args_valid=False; retry: validation passes → args_valid=True
+    args_valid_values = [e.args_valid for e in tool_call_events]
+    assert args_valid_values[0] is False
+    assert args_valid_values[1] is True
+
+    # Verify retry prompt contains the validation error message
+    result_events = [e for e in events if isinstance(e, FunctionToolResultEvent)]
+    retry_results = [e for e in result_events if isinstance(e.result, RetryPromptPart)]
+    assert retry_results
+    assert 'x must be positive' in str(retry_results[0].result.content)
 
 
 # Test 3: args_validator not configured - schema validation still runs
@@ -833,12 +846,13 @@ def test_args_validator_not_double_called_for_approved_tools():
     assert validator_calls[0] == (0, True)  # retry=0, approved=True
 
 
-# Test 24: Early strategy - first output succeeds, second exceeds max retries (validate_tool_args path)
+# Test 24: Early strategy - first output succeeds, second exceeds max retries
 def test_early_strategy_second_output_max_retries_exceeded():
     """Test early strategy when first output succeeds and second exceeds max retries.
 
-    This tests the code path in _tool_manager.py validate_tool_args() where
-    UnexpectedModelBehavior is caught and returns False.
+    This tests the code path in _agent_graph.py where validate_tool_call() raises
+    UnexpectedModelBehavior (max retries exceeded) and it's caught gracefully
+    because a final result was already processed.
     """
     from pydantic_ai._output import ToolOutput
     from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
@@ -1112,38 +1126,3 @@ async def test_deferred_tool_validation_event_in_stream():
     assert tool_call_events[0].args_valid is True
 
 
-# Test 31: Full event sequence: validator fails then succeeds on retry
-@pytest.mark.anyio
-async def test_streaming_validator_failure_then_success():
-    """Test full event sequence when validator fails on first call but succeeds on retry."""
-    call_count = 0
-
-    def my_validator(ctx: RunContext[None], x: int) -> None:
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            raise ModelRetry('First attempt rejected')
-
-    agent = Agent(TestModel(call_tools=['my_tool']))
-
-    @agent.tool(args_validator=my_validator, retries=2)
-    def my_tool(ctx: RunContext[None], x: int) -> int:
-        """A tool."""
-        return x * 2
-
-    events: list[Any] = []
-    async for event in agent.run_stream_events('test'):
-        events.append(event)
-
-    tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
-
-    # First call: validation fails → args_valid=False; second call: validation passes → args_valid=True
-    args_valid_values = [e.args_valid for e in tool_call_events]
-    assert False in args_valid_values, 'First call should have args_valid=False'
-    assert True in args_valid_values, 'Retry call should have args_valid=True'
-
-    # Also verify a RetryPromptPart was emitted between the two calls
-    result_events = [e for e in events if isinstance(e, FunctionToolResultEvent)]
-    retry_results = [e for e in result_events if isinstance(e.result, RetryPromptPart)]
-    assert retry_results
-    assert 'First attempt rejected' in str(retry_results[0].result.content)

@@ -309,29 +309,6 @@ class ToolManager(Generic[AgentDepsT]):
                 validation_error=validation_error,
             )
 
-    async def validate_tool_args(
-        self,
-        call: ToolCallPart,
-        *,
-        allow_partial: bool = False,
-    ) -> bool:
-        """Validate tool arguments and return whether validation passed.
-
-        This is a convenience method that wraps validate_tool_call() for simple boolean checks.
-
-        Args:
-            call: The tool call part to validate.
-            allow_partial: Whether to allow partial validation of the tool arguments.
-
-        Returns:
-            True if validation passed, False otherwise.
-        """
-        try:
-            result = await self.validate_tool_call(call, allow_partial=allow_partial, wrap_validation_errors=True)
-            return result.args_valid
-        except UnexpectedModelBehavior:
-            return False
-
     async def execute_tool_call(
         self,
         validated: ToolCallValidation[AgentDepsT],
