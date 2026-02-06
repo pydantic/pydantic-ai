@@ -116,7 +116,10 @@ def tmp_path_cwd(tmp_path: Path):
 
 @pytest.mark.xdist_group(name='doc_tests')
 @pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
-    'ignore:`BuiltinToolCallEvent` is deprecated', 'ignore:`BuiltinToolResultEvent` is deprecated'
+    'ignore:`BuiltinToolCallEvent` is deprecated',
+    'ignore:`BuiltinToolResultEvent` is deprecated',
+    'ignore:.*joblib will operate in serial mode.*:UserWarning',
+    'ignore:CUDA initialization.*:UserWarning',
 )
 @pytest.mark.parametrize('example', find_filter_examples())
 def test_docs_examples(
@@ -191,6 +194,9 @@ def test_docs_examples(
     env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'testing')
     env.set('VOYAGE_API_KEY', 'testing')
     env.set('XAI_API_KEY', 'testing')
+    # Prevent platform-specific joblib multiprocessing warnings when sentence-transformers imports sklearn.
+    env.set('JOBLIB_MULTIPROCESSING', '0')
+    env.set('CUDA_VISIBLE_DEVICES', '')
 
     prefix_settings = example.prefix_settings()
     opt_test = prefix_settings.get('test', '')

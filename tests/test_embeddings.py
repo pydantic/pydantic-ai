@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import warnings
 from collections.abc import Iterator
 from decimal import Decimal
 from typing import Any, get_args
@@ -78,7 +79,12 @@ with try_import() as voyageai_imports_successful:
     from pydantic_ai.providers.voyageai import VoyageAIProvider
 
 with try_import() as sentence_transformers_imports_successful:
-    from sentence_transformers import SentenceTransformer
+    os.environ.setdefault('JOBLIB_MULTIPROCESSING', '0')
+    os.environ.setdefault('CUDA_VISIBLE_DEVICES', '')
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', message=r'.*joblib will operate in serial mode.*', category=UserWarning)
+        warnings.filterwarnings('ignore', message=r'CUDA initialization:.*', category=UserWarning)
+        from sentence_transformers import SentenceTransformer
 
     from pydantic_ai.embeddings.sentence_transformers import SentenceTransformerEmbeddingModel
 
@@ -1362,6 +1368,7 @@ class TestGoogle:
 
 
 @pytest.mark.skipif(not sentence_transformers_imports_successful(), reason='SentenceTransformers not installed')
+@pytest.mark.filterwarnings('ignore:CUDA initialization.*:UserWarning')
 class TestSentenceTransformers:
     @pytest.fixture(scope='session')
     def stsb_bert_tiny_model(self):
