@@ -6,6 +6,8 @@ by completing tasks.
 Run with:
 
     uv run -m pydantic_ai_examples.pinchwork_marketplace
+
+test: skip
 """
 
 import asyncio
