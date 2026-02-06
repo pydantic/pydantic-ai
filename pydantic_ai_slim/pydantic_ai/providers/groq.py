@@ -42,7 +42,8 @@ constraints (additionalProperties: false on all objects) for structured output."
 
 def groq_moonshotai_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an MoonshotAI model used with the Groq provider."""
-    return _GROQ_NATIVE_OUTPUT_PROFILE.update(moonshotai_model_profile(model_name))
+    base = moonshotai_model_profile(model_name) or ModelProfile()
+    return base.update(_GROQ_NATIVE_OUTPUT_PROFILE)
 
 
 def meta_groq_model_profile(model_name: str) -> ModelProfile | None:
