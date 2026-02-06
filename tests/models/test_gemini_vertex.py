@@ -157,9 +157,7 @@ async def test_url_input(
 
 @pytest.mark.vcr()
 async def test_url_input_force_download(
-    skip_unless_vertex: None, 
-    allow_model_requests: None,
-    disable_ssrf_protection_for_vcr: None
+    skip_unless_vertex: None, allow_model_requests: None, disable_ssrf_protection_for_vcr: None
 ) -> None:  # pragma: lax no cover
     provider = GoogleVertexProvider(project_id='pydantic-ai', region='us-central1')
     m = GeminiModel('gemini-2.0-flash', provider=provider)
