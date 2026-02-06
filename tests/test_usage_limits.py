@@ -468,15 +468,15 @@ def test_usage_limits_preserves_explicit_zero():
     limits = UsageLimits(output_tokens_limit=0, response_tokens_limit=456)
     assert limits.output_tokens_limit == 0
 
-    # When new arg is None, should use deprecated fallback
-    limits = UsageLimits(input_tokens_limit=None, request_tokens_limit=123)
+    # When new arg is not passed, should use deprecated fallback
+    limits = UsageLimits(request_tokens_limit=123)
     assert limits.input_tokens_limit == 123
 
-    limits = UsageLimits(output_tokens_limit=None, response_tokens_limit=456)
+    limits = UsageLimits(response_tokens_limit=456)
     assert limits.output_tokens_limit == 456
 
-    # When both are None, should be None
-    limits = UsageLimits(input_tokens_limit=None, request_tokens_limit=None)
+    # When neither is passed, should be None
+    limits = UsageLimits()
     assert limits.input_tokens_limit is None
 
     # When only new arg is set, should use it
