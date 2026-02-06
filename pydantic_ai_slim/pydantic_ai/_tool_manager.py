@@ -10,7 +10,7 @@ from typing import Any, Generic, Literal
 
 from opentelemetry.trace import Tracer
 from pydantic import ValidationError
-from typing_extensions import assert_never, deprecated
+from typing_extensions import deprecated
 
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
@@ -144,6 +144,22 @@ class ToolManager(Generic[AgentDepsT]):
         except KeyError:
             return None
 
+    def _check_max_retries(self, name: str, max_retries: int, error: Exception) -> None:
+        """Raise UnexpectedModelBehavior if the tool has exceeded its max retries."""
+        assert self.ctx is not None
+        if self.ctx.retries.get(name, 0) == max_retries:
+            raise UnexpectedModelBehavior(f'Tool {name!r} exceeded max retries count of {max_retries}') from error
+
+    @staticmethod
+    def _wrap_error_as_retry(name: str, call: ToolCallPart, error: ValidationError | ModelRetry) -> ToolRetryError:
+        """Convert a ValidationError or ModelRetry to a ToolRetryError with a RetryPromptPart."""
+        if isinstance(error, ValidationError):
+            content: list[Any] | str = error.errors(include_url=False, include_context=False)
+        else:
+            content = error.message
+        m = _messages.RetryPromptPart(tool_name=name, content=content, tool_call_id=call.tool_call_id)
+        return ToolRetryError(m)
+
     def _build_tool_context(
         self,
         call: ToolCallPart,
@@ -273,29 +289,10 @@ class ToolManager(Generic[AgentDepsT]):
                 validation_error=None,
             )
         except (ValidationError, ModelRetry) as e:
-            max_retries = tool.max_retries
-            current_retry = self.ctx.retries.get(name, 0)
-
-            if current_retry == max_retries:
-                raise UnexpectedModelBehavior(f'Tool {name!r} exceeded max retries count of {max_retries}') from e
+            self._check_max_retries(name, tool.max_retries, e)
 
             if wrap_validation_errors:
-                if isinstance(e, ValidationError):
-                    m = _messages.RetryPromptPart(
-                        tool_name=name,
-                        content=e.errors(include_url=False, include_context=False),
-                        tool_call_id=call.tool_call_id,
-                    )
-                    validation_error = ToolRetryError(m)
-                elif isinstance(e, ModelRetry):
-                    m = _messages.RetryPromptPart(
-                        tool_name=name,
-                        content=e.message,
-                        tool_call_id=call.tool_call_id,
-                    )
-                    validation_error = ToolRetryError(m)
-                else:
-                    assert_never(e)
+                validation_error = self._wrap_error_as_retry(name, call, e)
             else:
                 # Re-raise original error if not wrapping
                 raise
@@ -423,21 +420,9 @@ class ToolManager(Generic[AgentDepsT]):
                 validated.tool,
             )
         except ModelRetry as e:
-            # Tool raised ModelRetry during execution - check max retries
-            max_retries = validated.tool.max_retries
-            current_retry = self.ctx.retries.get(name, 0)
-
-            if current_retry == max_retries:
-                raise UnexpectedModelBehavior(f'Tool {name!r} exceeded max retries count of {max_retries}') from e
-
-            # Wrap in ToolRetryError for retry
-            m = _messages.RetryPromptPart(
-                tool_name=name,
-                content=e.message,
-                tool_call_id=validated.call.tool_call_id,
-            )
+            self._check_max_retries(name, validated.tool.max_retries, e)
             self.failed_tools.add(name)
-            raise ToolRetryError(m) from e
+            raise self._wrap_error_as_retry(name, validated.call, e) from e
 
         if usage is not None:
             usage.tool_calls += 1

@@ -995,9 +995,7 @@ async def test_args_valid_none_for_presupplied_tool_approved():
         events.append(event)
 
     # The FunctionToolCallEvent for the pre-supplied result should have args_valid=None
-    tool_call_events = [
-        e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool'
-    ]
+    tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
     assert tool_call_events
     assert tool_call_events[0].args_valid is None
 
@@ -1034,26 +1032,18 @@ async def test_args_valid_none_for_tool_denied():
     events: list[Any] = []
     async for event in agent.run_stream_events(
         message_history=messages,
-        deferred_tool_results=DeferredToolResults(
-            approvals={tool_call_id: ToolDenied('User denied this tool call')}
-        ),
+        deferred_tool_results=DeferredToolResults(approvals={tool_call_id: ToolDenied('User denied this tool call')}),
         deps=42,
     ):
         events.append(event)
 
     # FunctionToolCallEvent should have args_valid=None (pre-supplied result, no upfront validation)
-    tool_call_events = [
-        e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool'
-    ]
+    tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
     assert tool_call_events
     assert tool_call_events[0].args_valid is None
 
     # FunctionToolResultEvent should contain the denial message
-    result_events = [
-        e
-        for e in events
-        if isinstance(e, FunctionToolResultEvent) and e.result.tool_name == 'my_tool'
-    ]
+    result_events = [e for e in events if isinstance(e, FunctionToolResultEvent) and e.result.tool_name == 'my_tool']
     assert result_events
     assert result_events[0].result.content == 'User denied this tool call'
 
@@ -1083,9 +1073,7 @@ async def test_validation_error_message_in_retry_prompt():
 
     # Find FunctionToolResultEvent containing a RetryPromptPart
     retry_events = [
-        e
-        for e in events
-        if isinstance(e, FunctionToolResultEvent) and isinstance(e.result, RetryPromptPart)
+        e for e in events if isinstance(e, FunctionToolResultEvent) and isinstance(e.result, RetryPromptPart)
     ]
 
     assert retry_events, 'Should have at least one retry result event'
@@ -1118,9 +1106,7 @@ async def test_deferred_tool_validation_event_in_stream():
         events.append(event)
 
     # The tool call should have been validated before deferral
-    tool_call_events = [
-        e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool'
-    ]
+    tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
     assert tool_call_events
     # TestModel generates valid args (x=0 by default), so validation passes
     assert tool_call_events[0].args_valid is True
@@ -1149,9 +1135,7 @@ async def test_streaming_validator_failure_then_success():
     async for event in agent.run_stream_events('test'):
         events.append(event)
 
-    tool_call_events = [
-        e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool'
-    ]
+    tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
 
     # First call: validation fails → args_valid=False; second call: validation passes → args_valid=True
     args_valid_values = [e.args_valid for e in tool_call_events]
