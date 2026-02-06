@@ -462,10 +462,11 @@ def test_usage_unknown_provider():
 def test_usage_limits_preserves_explicit_zero():
     """Test that explicit 0 token limits are preserved and not replaced by deprecated fallbacks."""
     # When new arg is 0 and deprecated arg is non-zero, should use 0 (not fallback)
-    limits = UsageLimits(input_tokens_limit=0, request_tokens_limit=123)
+    # Using type: ignore since we're intentionally testing mixed deprecated/new args
+    limits = UsageLimits(input_tokens_limit=0, request_tokens_limit=123)  # type: ignore[call-overload]
     assert limits.input_tokens_limit == 0
 
-    limits = UsageLimits(output_tokens_limit=0, response_tokens_limit=456)
+    limits = UsageLimits(output_tokens_limit=0, response_tokens_limit=456)  # type: ignore[call-overload]
     assert limits.output_tokens_limit == 0
 
     # When new arg is not passed, should use deprecated fallback
