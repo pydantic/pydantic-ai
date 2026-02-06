@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from io import StringIO
 from typing import Any, Generic, Literal, Protocol, cast
@@ -31,6 +31,7 @@ __all__ = (
     'ReportCaseAdapter',
     'ReportCaseFailure',
     'ReportCaseFailureAdapter',
+    'ReportCaseGroup',
     'EvaluationRenderer',
     'RenderValueConfig',
     'RenderNumberConfig',
@@ -73,6 +74,10 @@ class ReportCase(Generic[InputsT, OutputT, MetadataT]):
     task_duration: float
     total_duration: float  # includes evaluator execution time
 
+    source_case_name: str | None = None
+    """The original case name before run-indexing. Serves as the aggregation key
+    for multi-run experiments. None when repeat == 1."""
+
     trace_id: str | None = None
     """The trace ID of the case span."""
     span_id: str | None = None
@@ -99,6 +104,9 @@ class ReportCaseFailure(Generic[InputsT, OutputT, MetadataT]):
     error_stacktrace: str
     """The stacktrace of the exception that caused the failure."""
 
+    source_case_name: str | None = None
+    """Same semantics as ReportCase.source_case_name."""
+
     trace_id: str | None = None
     """The trace ID of the case span."""
     span_id: str | None = None
@@ -107,6 +115,32 @@ class ReportCaseFailure(Generic[InputsT, OutputT, MetadataT]):
 
 ReportCaseAdapter = TypeAdapter(ReportCase[Any, Any, Any])
 ReportCaseFailureAdapter = TypeAdapter(ReportCaseFailure[Any, Any, Any])
+
+
+@dataclass(kw_only=True)
+class ReportCaseGroup(Generic[InputsT, OutputT, MetadataT]):
+    """Grouped results from running the same case multiple times.
+
+    This is a computed view, not stored data. Obtain via
+    EvaluationReport.case_groups().
+    """
+
+    name: str
+    """The original case name (shared across all runs)."""
+    inputs: InputsT
+    """The inputs (same for all runs)."""
+    metadata: MetadataT | None
+    """The metadata (same for all runs)."""
+    expected_output: OutputT | None
+    """The expected output (same for all runs)."""
+
+    runs: Sequence[ReportCase[InputsT, OutputT, MetadataT]]
+    """Individual run results."""
+    failures: Sequence[ReportCaseFailure[InputsT, OutputT, MetadataT]]
+    """Runs that failed with exceptions."""
+
+    summary: ReportCaseAggregate
+    """Aggregated statistics across runs."""
 
 
 class ReportCaseAggregate(BaseModel):
@@ -185,6 +219,76 @@ class ReportCaseAggregate(BaseModel):
             total_duration=average_total_duration,
         )
 
+    @staticmethod
+    def average_from_aggregates(aggregates: list[ReportCaseAggregate]) -> ReportCaseAggregate:
+        """Average across multiple aggregates (used for multi-run experiment summaries)."""
+        if not aggregates:
+            return ReportCaseAggregate(
+                name='Averages',
+                scores={},
+                labels={},
+                metrics={},
+                assertions=None,
+                task_duration=0.0,
+                total_duration=0.0,
+            )
+
+        # Average scores
+        all_score_keys: set[str] = set()
+        for a in aggregates:
+            all_score_keys.update(a.scores)
+        avg_scores: dict[str, float | int] = {}
+        for key in all_score_keys:
+            values = [a.scores[key] for a in aggregates if key in a.scores]
+            if values:
+                avg_scores[key] = sum(values) / len(values)
+
+        # Average metrics
+        all_metric_keys: set[str] = set()
+        for a in aggregates:
+            all_metric_keys.update(a.metrics)
+        avg_metrics: dict[str, float | int] = {}
+        for key in all_metric_keys:
+            values = [a.metrics[key] for a in aggregates if key in a.metrics]
+            if values:
+                avg_metrics[key] = sum(values) / len(values)
+
+        # Average labels (average the distribution dicts)
+        all_label_keys: set[str] = set()
+        for a in aggregates:
+            all_label_keys.update(a.labels)
+        avg_labels: dict[str, dict[str, float]] = {}
+        for key in all_label_keys:
+            combined: dict[str, float] = {}
+            count = 0
+            for a in aggregates:
+                if key in a.labels:
+                    count += 1
+                    for label_val, freq in a.labels[key].items():
+                        combined[label_val] = combined.get(label_val, 0.0) + freq
+            if count > 0:
+                avg_labels[key] = {k: v / count for k, v in combined.items()}
+
+        # Average assertions
+        assertion_values = [a.assertions for a in aggregates if a.assertions is not None]
+        avg_assertions: float | None = None
+        if assertion_values:
+            avg_assertions = sum(assertion_values) / len(assertion_values)
+
+        # Average durations
+        task_durs = [a.task_duration for a in aggregates]
+        total_durs = [a.total_duration for a in aggregates]
+
+        return ReportCaseAggregate(
+            name='Averages',
+            scores=avg_scores,
+            labels=avg_labels,
+            metrics=avg_metrics,
+            assertions=avg_assertions,
+            task_duration=sum(task_durs) / len(task_durs),
+            total_duration=sum(total_durs) / len(total_durs),
+        )
+
 
 @dataclass(kw_only=True)
 class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
@@ -207,8 +311,46 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
     span_id: str | None = None
     """The span ID of the evaluation."""
 
+    def case_groups(self) -> list[ReportCaseGroup[InputsT, OutputT, MetadataT]] | None:
+        """Group cases by source_case_name and compute per-group aggregates.
+
+        Returns None if no cases have source_case_name set (i.e., single-run experiment).
+        """
+        if not any(c.source_case_name for c in self.cases):
+            return None
+
+        groups: dict[
+            str,
+            tuple[list[ReportCase[InputsT, OutputT, MetadataT]], list[ReportCaseFailure[InputsT, OutputT, MetadataT]]],
+        ] = {}
+        for case in self.cases:
+            key = case.source_case_name or case.name
+            groups.setdefault(key, ([], []))[0].append(case)
+        for failure in self.failures:
+            key = failure.source_case_name or failure.name
+            groups.setdefault(key, ([], []))[1].append(failure)
+
+        result: list[ReportCaseGroup[InputsT, OutputT, MetadataT]] = []
+        for group_name, (runs, failures) in groups.items():
+            first = runs[0] if runs else None
+            result.append(
+                ReportCaseGroup(
+                    name=group_name,
+                    inputs=first.inputs if first else None,  # type: ignore[arg-type]
+                    metadata=first.metadata if first else None,
+                    expected_output=first.expected_output if first else None,
+                    runs=runs,  # type: ignore[arg-type]
+                    failures=failures,  # type: ignore[arg-type]
+                    summary=ReportCaseAggregate.average(list(runs)),
+                )
+            )
+        return result
+
     def averages(self) -> ReportCaseAggregate | None:
-        if self.cases:
+        groups = self.case_groups()
+        if groups is not None:
+            return ReportCaseAggregate.average_from_aggregates([g.summary for g in groups])
+        elif self.cases:
             return ReportCaseAggregate.average(self.cases)
         return None
 
