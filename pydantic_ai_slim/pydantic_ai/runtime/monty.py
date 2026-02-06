@@ -83,7 +83,7 @@ class MontyRuntime(CodeRuntime):
         """
         try:
             monty = Monty(code=code, external_functions=functions)
-            await self._type_check(code, signatures)
+            await self._type_check(code, signatures, functions)
         except MontyTypingError as e:
             raise CodeTypingError(e.display(format='concise'))
         except MontyRuntimeError as e:
@@ -103,9 +103,9 @@ class MontyRuntime(CodeRuntime):
 
         return monty_state.output
 
-    async def _type_check(self, code: str, signatures: list[str]):
+    async def _type_check(self, code: str, signatures: list[str], external_functions: list[str]):
         prefix_code = _build_type_check_prefix(signatures)
-        monty = Monty(code=code)
+        monty = Monty(code=code, external_functions=external_functions)
         monty.type_check(prefix_code=prefix_code)
 
     @staticmethod
