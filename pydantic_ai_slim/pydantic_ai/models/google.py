@@ -662,7 +662,7 @@ class GoogleModel(Model):
                 # We build `message_parts` first, then split into multiple content objects whenever we transition
                 # between function_response and non-function_response parts.
                 #
-                # TODO: Remove workaround when https://github.com/pydantic/pydantic-ai/issues/3763 is resolved
+                # TODO: Remove workaround when https://github.com/pydantic/pydantic-ai/issues/4210 is resolved
                 if message_parts:
                     content_parts: list[PartDict] = []
 

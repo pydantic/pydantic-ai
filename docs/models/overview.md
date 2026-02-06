@@ -50,7 +50,7 @@ Pydantic AI uses a few key terms to describe how it interacts with different LLM
   any other code changes just by swapping out the Model it uses. Model classes are named
   roughly in the format `<VendorSdk>Model`, for example, we have `OpenAIChatModel`, `AnthropicModel`, `GoogleModel`,
   etc. When using a Model class, you specify the actual LLM model name (e.g., `gpt-5`,
-  `claude-sonnet-4-5`, `gemini-2.5-flash`) as a parameter.
+  `claude-sonnet-4-5`, `gemini-3-flash-preview`) as a parameter.
 - **Provider**: This refers to provider-specific classes which handle the authentication and connections
   to an LLM vendor. Passing a non-default _Provider_ as a parameter to a Model is how you can ensure
   that your agent will make requests to a specific endpoint, or make use of a specific approach to
@@ -61,9 +61,9 @@ Pydantic AI uses a few key terms to describe how it interacts with different LLM
   constructed to get the best results, independent of the model and provider classes used.
   For example, different models have different restrictions on the JSON schemas that can be used for tools,
   and the same schema transformer needs to be used for Gemini models whether you're using `GoogleModel`
-  with model name `gemini-2.5-pro-preview`, or `OpenAIChatModel` with `OpenRouterProvider` and model name `google/gemini-2.5-pro-preview`.
+  with model name `gemini-3-pro-preview`, or `OpenAIChatModel` with `OpenRouterProvider` and model name `google/gemini-3-pro-preview`.
 
-When you instantiate an [`Agent`][pydantic_ai.Agent] with just a name formatted as `<provider>:<model>`, e.g. `openai:gpt-5` or `openrouter:google/gemini-2.5-pro-preview`,
+When you instantiate an [`Agent`][pydantic_ai.Agent] with just a name formatted as `<provider>:<model>`, e.g. `openai:gpt-5.2` or `openrouter:google/gemini-3-pro-preview`,
 Pydantic AI will automatically select the appropriate model class, provider, and profile.
 If you want to use a different provider or profile, you can instantiate a model class directly and pass in `provider` and/or `profile` arguments.
 
@@ -79,6 +79,74 @@ The best place to start is to review the source code for existing implementation
 
 For details on when we'll accept contributions adding new models to Pydantic AI, see the [contributing guidelines](../contributing.md#new-model-rules).
 
+## HTTP Request Concurrency
+
+You can limit the number of concurrent HTTP requests to a model using the
+[`ConcurrencyLimitedModel`][pydantic_ai.ConcurrencyLimitedModel] wrapper.
+This is useful for respecting rate limits or managing resource usage when running many agents in parallel.
+
+```python {title="model_concurrency.py"}
+import asyncio
+
+from pydantic_ai import Agent, ConcurrencyLimitedModel
+
+# Wrap a model with concurrency limiting
+model = ConcurrencyLimitedModel('openai:gpt-4o', limiter=5)
+
+# Multiple agents can share this rate-limited model
+agent = Agent(model)
+
+
+async def main():
+    # These will be rate-limited to 5 concurrent HTTP requests
+    results = await asyncio.gather(
+        *[agent.run(f'Question {i}') for i in range(20)]
+    )
+    print(len(results))
+    #> 20
+```
+
+The `limiter` parameter accepts:
+
+- An integer for simple limiting (e.g., `limiter=5`)
+- A [`ConcurrencyLimit`][pydantic_ai.ConcurrencyLimit] for advanced configuration with backpressure control
+- A [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for sharing limits across multiple models
+
+### Shared Concurrency Limits
+
+To share a concurrency limit across multiple models (e.g., different models from the same provider),
+you can create a [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] and pass it to
+multiple `ConcurrencyLimitedModel` instances:
+
+```python {title="shared_concurrency.py"}
+import asyncio
+
+from pydantic_ai import Agent, ConcurrencyLimitedModel, ConcurrencyLimiter
+
+# Create a shared limiter with a descriptive name
+shared_limiter = ConcurrencyLimiter(max_running=10, name='openai-pool')
+
+# Both models share the same concurrency limit
+model1 = ConcurrencyLimitedModel('openai:gpt-4o', limiter=shared_limiter)
+model2 = ConcurrencyLimitedModel('openai:gpt-4o-mini', limiter=shared_limiter)
+
+agent1 = Agent(model1)
+agent2 = Agent(model2)
+
+
+async def main():
+    # Total concurrent requests across both agents limited to 10
+    results = await asyncio.gather(
+        *[agent1.run(f'Question {i}') for i in range(10)],
+        *[agent2.run(f'Question {i}') for i in range(10)],
+    )
+    print(len(results))
+    #> 20
+```
+
+When instrumentation is enabled, requests waiting for a concurrency slot appear as spans with
+attributes showing the queue depth and configured limits. The `name` parameter on
+`ConcurrencyLimiter` helps identify shared limiters in traces.
 
 <!-- TODO(Marcelo): We need to create a section in the docs about reliability. -->
 
@@ -104,7 +172,7 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai import OpenAIChatModel
 
-openai_model = OpenAIChatModel('gpt-5')
+openai_model = OpenAIChatModel('gpt-5.2')
 anthropic_model = AnthropicModel('claude-sonnet-4-5')
 fallback_model = FallbackModel(openai_model, anthropic_model)
 
@@ -154,7 +222,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 
 # Configure each model with provider-specific optimal settings
 openai_model = OpenAIChatModel(
-    'gpt-5',
+    'gpt-5.2',
     settings=ModelSettings(temperature=0.7, max_tokens=1000)  # Higher creativity for OpenAI
 )
 anthropic_model = AnthropicModel(
@@ -188,7 +256,7 @@ contains all the exceptions encountered during the `run` execution.
     from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.openai import OpenAIChatModel
 
-    openai_model = OpenAIChatModel('gpt-5')
+    openai_model = OpenAIChatModel('gpt-5.2')
     anthropic_model = AnthropicModel('claude-sonnet-4-5')
     fallback_model = FallbackModel(openai_model, anthropic_model)
 
@@ -220,7 +288,7 @@ contains all the exceptions encountered during the `run` execution.
             print(exc)
 
 
-    openai_model = OpenAIChatModel('gpt-5')
+    openai_model = OpenAIChatModel('gpt-5.2')
     anthropic_model = AnthropicModel('claude-sonnet-4-5')
     fallback_model = FallbackModel(openai_model, anthropic_model)
 
@@ -235,4 +303,4 @@ By default, the `FallbackModel` only moves on to the next model if the current m
 passing a custom `fallback_on` argument to the `FallbackModel` constructor.
 
 !!! note
-    Validation errors (from [structured output](../output.md#structured-output) or [tool parameters](../tools.md)) do **not** trigger fallback. These errors use the [retry mechanism](../agents.md#reflection-and-self-correction) instead, which re-prompts the same model to try again. This is intentional: validation errors stem from the non-deterministic nature of LLMs and may succeed on retry, whereas API errors (4xx/5xx) generally indicate issues that won't resolve by retrying the same request.
+    Validation errors (from [structured output](../output.md#structured-output) or [tool parameters](../tools.md)) do **not** trigger fallback. These errors use the [retry mechanism](../agent.md#reflection-and-self-correction) instead, which re-prompts the same model to try again. This is intentional: validation errors stem from the non-deterministic nature of LLMs and may succeed on retry, whereas API errors (4xx/5xx) generally indicate issues that won't resolve by retrying the same request.
