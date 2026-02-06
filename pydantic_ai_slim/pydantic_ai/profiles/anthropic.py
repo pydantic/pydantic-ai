@@ -10,6 +10,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         'claude-sonnet-4-5',
         'claude-opus-4-1',
         'claude-opus-4-5',
+        'claude-opus-4-6',
     )
     """These models support both structured outputs and strict tool calling."""
     # TODO update when new models are released that support structured outputs
