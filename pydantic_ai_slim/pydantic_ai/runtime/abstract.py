@@ -59,15 +59,10 @@ class InterruptedToolCall:
 
 @dataclass
 class CodeInterruptedError(Exception):
-    interrupted_calls: list[InterruptedToolCall]  # These will be the exceptions within which we need to send back
+    interrupted_calls: list[InterruptedToolCall]
     checkpoint: bytes
-    call_id: str | None = None
 
 
-# TODO: Consider whether this should be Coroutine[Any, Any, Any] instead of Awaitable[Any].
-# Awaitable is broader (covers Coroutine, Task, Future, __await__ objects), but
-# Coroutine would allow asyncio.create_task() directly without ensure_future().
-# Check what callers actually pass and whether the extra flexibility is needed.
 ToolCallback: TypeAlias = Callable[[FunctionCall], Awaitable[Any]]
 
 

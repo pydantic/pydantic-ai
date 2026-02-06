@@ -266,16 +266,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     """
 
     runtime: CodeRuntime = field(default_factory=MontyRuntime)
-    # The user needs to provide a runtime to be used with the toolset. If not provided we will use Monty by default.
-    # At the moment we only support Monty as well, need to check if Modal or some other Sandbox can also be used with this.
     prompt_builder: Callable[..., str] = build_code_mode_prompt
     max_retries: int = 3
     tool_name_prefix: str | None = None
-    # TODO: description_handler is not serializable. For distributed execution scenarios,
-    # we may need an alternative approach (e.g., named handlers registered in a registry,
-    # or description processing at tool registration time rather than at signature generation).
-    # Claude added the above comment, yet to validate
-
     description_handler: DescriptionHandler | None = None
     _cached_signatures: list[str] = field(default_factory=lambda: [], init=False, repr=False)
     _name_mapping: ToolNameMapping = field(default_factory=ToolNameMapping, init=False, repr=False)
@@ -302,16 +295,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         self._cached_signatures = available_functions
 
-        # TODO: This dumps all tool signatures up-front, which can bloat context for large toolsets.
-        # Example: hundreds of MCP tools can push tens of thousands of tokens into the prompt,
-        # defeating the progressive-disclosure approach described in code-mode references.
-        # Consider: progressive discovery (list tool names first, fetch signatures on demand).
-        # David to look into this
         description = self.prompt_builder(signatures=available_functions)
-        # TODO: Ideally we'd use kind='output' to make the code result be the final answer
-        # without a second LLM call. However, output tools are treated differently by models -
-        # they expect to provide structured output directly, not execute code. We need a way
-        # to have a function tool whose result becomes the final output without another LLM call.
         return {
             _CODE_MODE_TOOL_NAME: _CodeModeTool(
                 toolset=self,
@@ -438,24 +422,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 'The checkpoint should be preserved from the original DeferredToolRequests.context.'
             )
 
-        # After validation, we can safely treat this as CodeModeContext
         context = cast(CodeModeContext, raw_context)
         interrupted_calls = context.get('interrupted_calls', [])
         results_map = context.get('results')
 
-        # GUARD: Validate results are provided
-        if results_map is None:
+        if not results_map:
             raise exceptions.UserError(
                 'Code mode resume requires context with results for nested calls. '
                 'Add a "results" key to the context mapping call_id to '
-                'ToolApproved(), ToolDenied(), or the external result.'
-            )
-
-        # GUARD: Validate all interrupted calls have results to prevent infinite loop
-        if not results_map:
-            raise exceptions.UserError(
-                'Code mode resume requires results for all interrupted calls. '
-                'Provide results in context["results"] mapping call_id to '
                 'ToolApproved(), ToolDenied(), or the external result.'
             )
 
@@ -478,9 +452,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         code = tool_args['code']
-        assert name == _CODE_MODE_TOOL_NAME
-        assert isinstance(tool, _CodeModeTool)
-        assert isinstance(code, str)
+        if name != _CODE_MODE_TOOL_NAME:
+            raise exceptions.UserError(f'CodeModeToolset.call_tool expected tool name {_CODE_MODE_TOOL_NAME!r}, got {name!r}')
+        if not isinstance(tool, _CodeModeTool):
+            raise exceptions.UserError(f'CodeModeToolset.call_tool expected _CodeModeTool, got {type(tool).__name__}')
+        if not isinstance(code, str):
+            raise exceptions.UserError(f'CodeModeToolset.call_tool expected code to be a string, got {type(code).__name__}')
 
         original_name_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         sanitized_to_original: dict[str, str] = {}

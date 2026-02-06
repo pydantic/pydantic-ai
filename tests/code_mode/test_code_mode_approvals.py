@@ -4,8 +4,8 @@ Flow being tested:
 1. LLM generates code that calls tools
 2. Tools raise ApprovalRequired/CallDeferred
 3. Monty bundles interrupted calls into CodeInterruptedError with checkpoint
-4. Code mode catches it and raises ApprovalRequired with checkpoint in metadata
-5. Agent returns DeferredToolRequests with run_code in approvals, nested call details in metadata
+4. Code mode catches it and raises ApprovalRequired with checkpoint in context
+5. Agent returns DeferredToolRequests with run_code in approvals, nested call details in context
 6. User approves run_code and provides nested call results in context['results']
 7. Agent resumes from checkpoint, approved tools execute, result returned
 """
@@ -32,7 +32,7 @@ pytestmark = pytest.mark.anyio
 async def test_code_mode_mixed_approval_and_deferred():
     """Test both ApprovalRequired and CallDeferred in parallel within code mode.
 
-    The run_code tool ends up in approvals, with nested call details in metadata.
+    The run_code tool ends up in approvals, with nested call details in context.
     User approves via approvals and provides nested results in context['results'].
     """
 

@@ -83,11 +83,7 @@ class MontyRuntime(CodeRuntime):
         """
         try:
             monty = Monty(code=code, external_functions=functions)
-            # Well first of all let us type check because Monty allows that
             await self._type_check(code, signatures)
-
-        # Consider adding raise from None to keep these errors short and helpful for the LLMs to fix the code?
-
         except MontyTypingError as e:
             raise CodeTypingError(e.display(format='concise'))
         except MontyRuntimeError as e:
@@ -95,13 +91,11 @@ class MontyRuntime(CodeRuntime):
         except MontySyntaxError as e:
             raise CodeSyntaxError(e.display())
 
-        # Code type checking worked so let us try to run it
         monty_state: MontyComplete | MontyFutureSnapshot | MontySnapshot | None = None
         tasks: dict[int, asyncio.Task[Any]] = {}
 
         try:
             monty_state = monty.start()
-            # Seperated in case we end up adding resume after all
             monty_state = await MontyRuntime._execution_loop(monty_state, tasks, call_tool)
 
         except MontyRuntimeError as e:
@@ -130,7 +124,6 @@ class MontyRuntime(CodeRuntime):
                     args=monty_state.args,
                     kwargs=monty_state.kwargs,
                 )
-                # Do an external tool call
                 tasks[monty_state.call_id] = asyncio.ensure_future(call_tool(call))
                 tool_call_id_to_call[monty_state.call_id] = call
 
@@ -154,7 +147,6 @@ class MontyRuntime(CodeRuntime):
 
                             except (CallDeferred, ApprovalRequired) as e:
                                 interrupted_calls.append(InterruptedToolCall(type=e, call=tool_call_id_to_call[cid]))
-                                # Do not raise here, club them together we will fire them all off in one go
                             except ModelRetry as e:
                                 for remaining in tasks.values():
                                     remaining.cancel()
@@ -169,13 +161,10 @@ class MontyRuntime(CodeRuntime):
                             del tasks[cid]
                             break
 
-                # IMPORTANT: Save checkpoint BEFORE advancing if there are interrupted calls
-                # The checkpoint needs to capture the state where Monty is waiting for these results
-                if len(interrupted_calls) > 0:
-                    # Save the checkpoint while Monty is still waiting for results
-                    # The interrupted_calls list tells us which calls need results from the user
+                # Save checkpoint BEFORE advancing if there are interrupted calls.
+                # The checkpoint captures the state where Monty is waiting for these results.
+                if interrupted_calls:
                     checkpoint = monty_state.dump()
-                    # TODO: We are going to lose some tasks and info though that are in flight at the moment
                     raise CodeInterruptedError(interrupted_calls=interrupted_calls, checkpoint=checkpoint)
 
                 monty_state = monty_state.resume(results=results)
