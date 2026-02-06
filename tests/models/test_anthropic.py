@@ -1557,7 +1557,9 @@ async def test_image_url_input(allow_model_requests: None, anthropic_api_key: st
     )
 
 
-async def test_image_url_input_force_download(allow_model_requests: None, anthropic_api_key: str):
+async def test_image_url_input_force_download(
+    allow_model_requests: None, anthropic_api_key: str, disable_ssrf_protection_for_vcr: None
+):
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
@@ -1919,7 +1921,9 @@ async def test_document_url_input(allow_model_requests: None, anthropic_api_key:
     )
 
 
-async def test_text_document_url_input(allow_model_requests: None, anthropic_api_key: str):
+async def test_text_document_url_input(
+    allow_model_requests: None, anthropic_api_key: str, disable_ssrf_protection_for_vcr: None
+):
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
