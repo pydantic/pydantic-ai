@@ -1,0 +1,92 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '308'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content:
+        - text: What type of configuration is this?
+          type: text
+        - text: |-
+            -----BEGIN FILE id="45a391" type="application/yaml"-----
+            version: "3"
+            services:
+              web:
+                image: nginx
+            -----END FILE id="45a391"-----
+          type: text
+        role: user
+      model: gpt-4o
+      stream: false
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1218'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '1676'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: The configuration you provided is a YAML file for Docker Compose. Docker Compose is a tool used for defining
+            and running multi-container Docker applications. In this specific configuration, the YAML file is specifying a
+            single service called `web`, which uses the `nginx` Docker image. The file starts with specifying the Compose
+            file version as "3", indicating the format version used for composing the services.
+          refusal: null
+          role: assistant
+      created: 1769190655
+      id: chatcmpl-D1Fb52cAhS0I5T514KLWFLTvsJHYv
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_a0e9480a2f
+      usage:
+        completion_tokens: 77
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 55
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 132
+    status:
+      code: 200
+      message: OK
+version: 1

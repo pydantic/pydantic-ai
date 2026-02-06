@@ -427,6 +427,34 @@ agent = Agent(model)
 ...
 ```
 
+#### Using Azure with the Responses API
+
+Azure AI Foundry also supports the OpenAI Responses API through [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]. This is particularly recommended when working with document inputs (`DocumentUrl` and `BinaryContent`), as Azure's Chat Completions API does not support these input types.
+
+??? example "Document processing with Azure using Responses API"
+    ```python
+    from pydantic_ai import Agent, BinaryContent
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.azure import AzureProvider
+
+    pdf_bytes = b'%PDF-1.4 ...'  # Your PDF content
+
+    model = OpenAIResponsesModel(
+        'gpt-5',
+        provider=AzureProvider(
+            azure_endpoint='your-azure-endpoint',
+            api_version='your-api-version',
+        ),
+    )
+    agent = Agent(model)
+    result = agent.run_sync([
+        'Summarize this document',
+        BinaryContent(data=pdf_bytes, media_type='application/pdf'),
+    ])
+    ```
+
+The Responses API provides the same functionality as the Chat Completions API, with additional features and better support for advanced input types. When using Azure, consider using `OpenAIResponsesModel` for the most comprehensive feature support.
+
 ### Vercel AI Gateway
 
 To use [Vercel's AI Gateway](https://vercel.com/docs/ai-gateway), first follow the [documentation](https://vercel.com/docs/ai-gateway) instructions on obtaining an API key or OIDC token.
