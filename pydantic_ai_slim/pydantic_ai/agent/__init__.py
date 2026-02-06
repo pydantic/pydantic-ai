@@ -1229,7 +1229,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
             args_validator: custom method to validate tool arguments before execution. The validator receives
                 the same typed parameters as the tool function, with `RunContext` as the first argument.
-                Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure.
+                Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
+                return `None` on success.
                 See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
@@ -1352,7 +1353,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
             args_validator: custom method to validate tool arguments before execution. The validator receives
                 the same typed parameters as the tool function, with `RunContext` as the first argument.
-                Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure.
+                Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
+                return `None` on success.
                 See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
