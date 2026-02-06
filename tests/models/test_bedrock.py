@@ -734,7 +734,9 @@ async def test_video_as_binary_content_input(
 
 
 @pytest.mark.vcr()
-async def test_image_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
+async def test_image_url_input(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, disable_ssrf_protection_for_vcr: None
+):
     m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
@@ -750,7 +752,9 @@ async def test_image_url_input(allow_model_requests: None, bedrock_provider: Bed
 
 
 @pytest.mark.vcr()
-async def test_video_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
+async def test_video_url_input(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, disable_ssrf_protection_for_vcr: None
+):
     m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
@@ -766,7 +770,9 @@ async def test_video_url_input(allow_model_requests: None, bedrock_provider: Bed
 
 
 @pytest.mark.vcr()
-async def test_document_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
+async def test_document_url_input(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, disable_ssrf_protection_for_vcr: None
+):
     m = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
@@ -779,7 +785,9 @@ async def test_document_url_input(allow_model_requests: None, bedrock_provider: 
 
 
 @pytest.mark.vcr()
-async def test_text_document_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
+async def test_text_document_url_input(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, disable_ssrf_protection_for_vcr: None
+):
     m = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
