@@ -25,6 +25,7 @@ from pydantic_ai import (
     ImageUrl,
     ModelAPIError,
     ModelHTTPError,
+    ModelMessage,
     ModelProfile,
     ModelRequest,
     ModelResponse,
@@ -4407,23 +4408,43 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=10, output_tokens=15))
 
 
-async def test_openai_count_tokens(allow_model_requests: None):
+async def test_openai_count_tokens(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
     """Test token counting with tiktoken."""
+    import tiktoken
+
+    class FakeEncoding:
+        def encode(self, s: str) -> list[int]:
+            return list(s.encode())
+
+    fake = FakeEncoding()
+    monkeypatch.setattr(tiktoken, 'encoding_for_model', lambda _m: fake)
+    monkeypatch.setattr(tiktoken, 'get_encoding', lambda _n: fake)
+
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
 
     # Simple message
-    messages = [ModelRequest.user_text_prompt('Hello, world!')]
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello, world!')]
     params = ModelRequestParameters()
 
-    usage = await m.count_tokens(messages, None, params)
+    result = await m.count_tokens(messages, None, params)
 
     # Should have some input tokens (exact count depends on tiktoken)
-    assert usage.input_tokens > 0
-    assert usage.output_tokens is None
+    assert result.input_tokens > 0
+    assert result.output_tokens == 0
 
 
-async def test_openai_count_tokens_with_tools(allow_model_requests: None):
+async def test_openai_count_tokens_with_tools(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
     """Test token counting with tool definitions."""
+    import tiktoken
+
+    class FakeEncoding:
+        def encode(self, s: str) -> list[int]:
+            return list(s.encode())
+
+    fake = FakeEncoding()
+    monkeypatch.setattr(tiktoken, 'encoding_for_model', lambda _m: fake)
+    monkeypatch.setattr(tiktoken, 'get_encoding', lambda _n: fake)
+
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
 
     # Message with a tool
@@ -4433,27 +4454,37 @@ async def test_openai_count_tokens_with_tools(allow_model_requests: None):
         parameters_json_schema={'type': 'object', 'properties': {}},
     )
 
-    messages = [ModelRequest.user_text_prompt('Use the tool')]
-    params = ModelRequestParameters(tools=[tool_def])
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Use the tool')]
+    params = ModelRequestParameters(function_tools=[tool_def])
 
-    usage = await m.count_tokens(messages, None, params)
+    result = await m.count_tokens(messages, None, params)
 
     # Should have tokens for both message and tool definition
-    assert usage.input_tokens > 0
+    assert result.input_tokens > 0
 
     # Compare with a message without tools - should be more tokens with tools
     params_no_tools = ModelRequestParameters()
-    usage_no_tools = await m.count_tokens(messages, None, params_no_tools)
+    result_no_tools = await m.count_tokens(messages, None, params_no_tools)
 
-    assert usage.input_tokens > usage_no_tools.input_tokens
+    assert result.input_tokens > result_no_tools.input_tokens
 
 
-async def test_openai_count_tokens_multimodal(allow_model_requests: None):
+async def test_openai_count_tokens_multimodal(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
     """Test token counting with multimodal content."""
+    import tiktoken
+
+    class FakeEncoding:
+        def encode(self, s: str) -> list[int]:
+            return list(s.encode())
+
+    fake = FakeEncoding()
+    monkeypatch.setattr(tiktoken, 'encoding_for_model', lambda _m: fake)
+    monkeypatch.setattr(tiktoken, 'get_encoding', lambda _n: fake)
+
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
 
     # Message with text and image
-    messages = [
+    messages: list[ModelMessage] = [
         ModelRequest(
             parts=[
                 UserPromptPart(
@@ -4467,7 +4498,7 @@ async def test_openai_count_tokens_multimodal(allow_model_requests: None):
     ]
     params = ModelRequestParameters()
 
-    usage = await m.count_tokens(messages, None, params)
+    result = await m.count_tokens(messages, None, params)
 
     # Should count text tokens (images are not counted accurately in our implementation)
-    assert usage.input_tokens > 0
+    assert result.input_tokens > 0

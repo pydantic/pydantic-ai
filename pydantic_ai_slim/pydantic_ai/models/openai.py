@@ -691,8 +691,12 @@ class OpenAIChatModel(Model):
         try:
             encoding = tiktoken.encoding_for_model(model_name)
         except KeyError:
-            # If model not found, fall back to cl100k_base (used by gpt-4, gpt-3.5-turbo, etc.)
-            encoding = tiktoken.get_encoding('cl100k_base')
+            # If model not found, fall back to o200k_base (used by modern chat models like gpt-4o).
+            # As a secondary fallback, use cl100k_base.
+            try:
+                encoding = tiktoken.get_encoding('o200k_base')
+            except KeyError:  # pragma: no cover
+                encoding = tiktoken.get_encoding('cl100k_base')
 
         # Token overhead per message and for reply priming
         # Most models use 3 tokens per message for role/name/content separators
@@ -705,40 +709,14 @@ class OpenAIChatModel(Model):
         # Count tokens in messages
         for message in openai_messages:
             total_tokens += tokens_per_message
-            for key, value in message.items():
-                if value is None:
-                    continue
-                if isinstance(value, str):
-                    total_tokens += len(encoding.encode(value))
-                elif key == 'name':
-                    total_tokens += tokens_per_name
-                elif key == 'content':
-                    # Handle list content (e.g., multimodal messages)
-                    if isinstance(value, list):
-                        for item in value:
-                            if isinstance(item, dict):
-                                if item.get('type') == 'text' and 'text' in item:
-                                    total_tokens += len(encoding.encode(item['text']))
-                                # Note: Image tokens are complex and model-specific
-                                # For now, we don't count them accurately
-                elif key == 'tool_calls':
-                    # Count tokens in tool calls
-                    if isinstance(value, list):
-                        for tool_call in value:
-                            if isinstance(tool_call, dict):
-                                if 'function' in tool_call:
-                                    func = tool_call['function']
-                                    if isinstance(func, dict):
-                                        if 'name' in func:
-                                            total_tokens += len(encoding.encode(func['name']))
-                                        if 'arguments' in func:
-                                            total_tokens += len(encoding.encode(func['arguments']))
+            total_tokens += _count_message_tokens(cast(dict[str, Any], message), encoding, tokens_per_name)
 
         # Count tokens in tool definitions
         if tools:
             for tool in tools:
-                # Convert tool definition to JSON string and count tokens
-                tool_json = json.dumps(tool)
+                # Convert tool definition to JSON string and count tokens.
+                # Use compact, deterministic JSON to avoid variability in token counts.
+                tool_json = json.dumps(tool, separators=(',', ':'), sort_keys=True)
                 total_tokens += len(encoding.encode(tool_json))
 
         return total_tokens
@@ -2840,6 +2818,63 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
+
+
+def _count_message_tokens(message: dict[str, Any], encoding: Any, tokens_per_name: int) -> int:
+    """Count tokens in a single OpenAI chat message dict.
+
+    Extracted as a module-level function so pyright can correctly resolve
+    dict[str, Any] value types (TypedDict union `.items()` produces `Unknown`).
+    """
+    tokens = 0
+    for key, value in message.items():
+        if value is None:
+            continue
+        # `name` is counted as text tokens plus an additional overhead token.
+        if key == 'name' and isinstance(value, str):
+            tokens += tokens_per_name
+            tokens += len(encoding.encode(value))
+        elif isinstance(value, str):
+            tokens += len(encoding.encode(value))
+        elif key == 'content':
+            tokens += _count_content_part_tokens(value, encoding)
+        elif key == 'tool_calls':
+            tokens += _count_tool_call_tokens(value, encoding)
+    return tokens
+
+
+def _count_content_part_tokens(value: Any, encoding: Any) -> int:
+    """Count tokens in a message content value (may be a list of content parts)."""
+    tokens = 0
+    if isinstance(value, list):
+        items = cast(list[Any], value)
+        for raw_item in items:
+            if isinstance(raw_item, dict):
+                item = cast(dict[str, Any], raw_item)
+                if item.get('type') == 'text':
+                    text = item.get('text')
+                    if isinstance(text, str):
+                        tokens += len(encoding.encode(text))
+            # Note: Image tokens are complex and model-specific.
+            # For now, we don't count them accurately.
+    return tokens
+
+
+def _count_tool_call_tokens(value: Any, encoding: Any) -> int:
+    """Count tokens in tool call entries."""
+    tokens = 0
+    if isinstance(value, list):
+        tool_calls = cast(list[Any], value)
+        for tc in tool_calls:
+            if isinstance(tc, dict) and 'function' in tc:
+                func = cast(dict[str, Any], tc['function'])
+                name = func.get('name')
+                if isinstance(name, str):
+                    tokens += len(encoding.encode(name))
+                arguments = func.get('arguments')
+                if isinstance(arguments, str):
+                    tokens += len(encoding.encode(arguments))
+    return tokens
 
 
 def _make_raw_content_updater(delta: str, index: int) -> Callable[[dict[str, Any] | None], dict[str, Any]]:
