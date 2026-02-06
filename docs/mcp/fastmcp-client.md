@@ -42,7 +42,7 @@ async def add(a: int, b: int) -> int:
 
 toolset = FastMCPToolset(fastmcp_server)
 
-agent = Agent('openai:gpt-5', toolsets=[toolset])
+agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 
 async def main():
     result = await agent.run('What is 7 plus 5?')
@@ -60,7 +60,7 @@ from pydantic_ai.toolsets.fastmcp import FastMCPToolset
 
 toolset = FastMCPToolset('http://localhost:8000/mcp')
 
-agent = Agent('openai:gpt-5', toolsets=[toolset])
+agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
@@ -86,7 +86,7 @@ mcp_config = {
 
 toolset = FastMCPToolset(mcp_config)
 
-agent = Agent('openai:gpt-5', toolsets=[toolset])
+agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
