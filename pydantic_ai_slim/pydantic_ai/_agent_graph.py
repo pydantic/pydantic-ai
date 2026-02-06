@@ -707,7 +707,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         return
                     elif output_schema.toolset:
                         alternatives.append('include your response in a tool call')
-                    else:
+                    elif ctx.deps.tool_manager.tool_defs:
                         alternatives.append('call a tool')
 
                     if output_schema.allows_image:
