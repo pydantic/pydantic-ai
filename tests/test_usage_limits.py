@@ -462,19 +462,19 @@ def test_usage_unknown_provider():
 def test_usage_limits_preserves_explicit_zero():
     """Test that explicit 0 token limits are preserved and not replaced by deprecated fallbacks."""
     # When input_tokens_limit=0 and deprecated request_tokens_limit is also set,
-    # the explicit 0 should be preserved (not overwritten by the deprecated fallback)
-    # pyright: ignore needed because we're intentionally using deprecated args for testing
-    limits = UsageLimits(input_tokens_limit=0, request_tokens_limit=123)  # pyright: ignore[reportDeprecated]
+    # the explicit 0 should be preserved (not overwritten by the deprecated fallback).
+    # We ignore type errors below because overloads don't allow mixing current and deprecated args.
+    limits = UsageLimits(input_tokens_limit=0, request_tokens_limit=123)  # pyright: ignore[reportCallIssue]
     assert limits.input_tokens_limit == 0
 
-    limits = UsageLimits(output_tokens_limit=0, response_tokens_limit=456)  # pyright: ignore[reportDeprecated]
+    limits = UsageLimits(output_tokens_limit=0, response_tokens_limit=456)  # pyright: ignore[reportCallIssue]
     assert limits.output_tokens_limit == 0
 
     # When only deprecated arg is passed, should use it as fallback
-    limits = UsageLimits(request_tokens_limit=123)  # pyright: ignore[reportDeprecated]
+    limits = UsageLimits(request_tokens_limit=123)  # pyright: ignore[reportCallIssue]
     assert limits.input_tokens_limit == 123
 
-    limits = UsageLimits(response_tokens_limit=456)  # pyright: ignore[reportDeprecated]
+    limits = UsageLimits(response_tokens_limit=456)  # pyright: ignore[reportCallIssue]
     assert limits.output_tokens_limit == 456
 
     # When neither is passed, should be None
