@@ -9,7 +9,12 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
-from pydantic_ai.messages import FunctionToolCallEvent
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    RetryPromptPart,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets.function import FunctionToolset
 
@@ -874,3 +879,287 @@ def test_early_strategy_second_output_max_retries_exceeded():
     # Verify the result came from the first output tool
     assert isinstance(result.output, _ExhaustiveTestValidOutput)
     assert result.output.value == 'valid'
+
+
+# Test 25: Streaming events via run_stream() event_stream_handler contain correct args_valid
+@pytest.mark.anyio
+async def test_args_validator_run_stream_event_handler():
+    """Test that args_valid is correctly set on FunctionToolCallEvent when using run_stream()."""
+    from collections.abc import AsyncIterable
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        pass  # Always succeeds
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    events: list[AgentStreamEvent] = []
+
+    async def handler(ctx: RunContext[int], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events.append(event)
+
+    async with agent.run_stream('call add_numbers', deps=42, event_stream_handler=handler) as result:
+        await result.get_output()
+
+    tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent)]
+    assert tool_call_events
+    for event in tool_call_events:
+        assert event.args_valid is True
+
+
+# Test 26: Event ordering - FunctionToolCallEvent always precedes FunctionToolResultEvent
+@pytest.mark.anyio
+async def test_event_ordering_call_before_result():
+    """Test that FunctionToolCallEvent is emitted before FunctionToolResultEvent for each tool call."""
+
+    def my_validator(ctx: RunContext[None], x: int) -> None:
+        pass
+
+    agent = Agent(TestModel(call_tools=['my_tool']))
+
+    @agent.tool(args_validator=my_validator)
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        """A tool."""
+        return x * 2
+
+    events: list[Any] = []
+    async for event in agent.run_stream_events('test'):
+        events.append(event)
+
+    # For each tool call ID, verify that FunctionToolCallEvent appears before FunctionToolResultEvent
+    call_ids_seen: set[str] = set()
+    result_ids_seen: set[str] = set()
+    for event in events:
+        if isinstance(event, FunctionToolCallEvent):
+            call_ids_seen.add(event.tool_call_id)
+            # Should not have seen a result for this ID yet
+            assert event.tool_call_id not in result_ids_seen, (
+                f'FunctionToolResultEvent for {event.tool_call_id} appeared before FunctionToolCallEvent'
+            )
+        elif isinstance(event, FunctionToolResultEvent):
+            result_id = event.result.tool_call_id
+            result_ids_seen.add(result_id)
+            # Should have already seen a call event for this ID
+            assert result_id in call_ids_seen, (
+                f'FunctionToolResultEvent for {result_id} appeared without prior FunctionToolCallEvent'
+            )
+
+    # Ensure we actually saw both event types
+    assert call_ids_seen
+    assert result_ids_seen
+
+
+# Test 27: args_valid=None for pre-supplied ToolApproved deferred results
+@pytest.mark.anyio
+async def test_args_valid_none_for_presupplied_tool_approved():
+    """Test that args_valid=None when re-running with ToolApproved (validation deferred to execution)."""
+    from pydantic_ai._output import DeferredToolRequests
+    from pydantic_ai.tools import DeferredToolResults, ToolApproved
+
+    def my_validator(ctx: RunContext[int], x: int) -> None:
+        pass
+
+    agent = Agent(
+        TestModel(),
+        deps_type=int,
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def my_tool(ctx: RunContext[int], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired()
+        return x * 42
+
+    # First run: tool requires approval
+    result = await agent.run('Hello', deps=42)
+    assert isinstance(result.output, DeferredToolRequests)
+    tool_call_id = result.output.approvals[0].tool_call_id
+
+    # Second run with ToolApproved: collect events
+    messages = result.all_messages()
+    events: list[Any] = []
+    async for event in agent.run_stream_events(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(approvals={tool_call_id: ToolApproved()}),
+        deps=42,
+    ):
+        events.append(event)
+
+    # The FunctionToolCallEvent for the pre-supplied result should have args_valid=None
+    tool_call_events = [
+        e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool'
+    ]
+    assert tool_call_events
+    assert tool_call_events[0].args_valid is None
+
+
+# Test 28: ToolDenied with args_validator - args_valid=None and denial message in result
+@pytest.mark.anyio
+async def test_args_valid_none_for_tool_denied():
+    """Test that args_valid=None for ToolDenied and the denial message appears in the result event."""
+    from pydantic_ai._output import DeferredToolRequests
+    from pydantic_ai.tools import DeferredToolResults, ToolDenied
+
+    def my_validator(ctx: RunContext[int], x: int) -> None:
+        pass  # pragma: no cover
+
+    agent = Agent(
+        TestModel(),
+        deps_type=int,
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def my_tool(ctx: RunContext[int], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired()
+        return x  # pragma: no cover
+
+    # First run: tool requires approval
+    result = await agent.run('Hello', deps=42)
+    assert isinstance(result.output, DeferredToolRequests)
+    tool_call_id = result.output.approvals[0].tool_call_id
+
+    # Second run with ToolDenied
+    messages = result.all_messages()
+    events: list[Any] = []
+    async for event in agent.run_stream_events(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(
+            approvals={tool_call_id: ToolDenied('User denied this tool call')}
+        ),
+        deps=42,
+    ):
+        events.append(event)
+
+    # FunctionToolCallEvent should have args_valid=None (pre-supplied result, no upfront validation)
+    tool_call_events = [
+        e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool'
+    ]
+    assert tool_call_events
+    assert tool_call_events[0].args_valid is None
+
+    # FunctionToolResultEvent should contain the denial message
+    result_events = [
+        e
+        for e in events
+        if isinstance(e, FunctionToolResultEvent) and e.result.tool_name == 'my_tool'
+    ]
+    assert result_events
+    assert result_events[0].result.content == 'User denied this tool call'
+
+
+# Test 29: Validation error message propagated in RetryPromptPart via streaming
+@pytest.mark.anyio
+async def test_validation_error_message_in_retry_prompt():
+    """Test that custom validation error message appears in the FunctionToolResultEvent."""
+    call_count = 0
+
+    def my_validator(ctx: RunContext[None], x: int) -> None:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise ModelRetry('x must be non-negative')
+
+    agent = Agent(TestModel(call_tools=['my_tool']))
+
+    @agent.tool(args_validator=my_validator, retries=2)
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        """A tool."""
+        return x
+
+    events: list[Any] = []
+    async for event in agent.run_stream_events('test'):
+        events.append(event)
+
+    # Find FunctionToolResultEvent containing a RetryPromptPart
+    retry_events = [
+        e
+        for e in events
+        if isinstance(e, FunctionToolResultEvent) and isinstance(e.result, RetryPromptPart)
+    ]
+
+    assert retry_events, 'Should have at least one retry result event'
+    assert isinstance(retry_events[0].result.content, str)
+    assert 'non-negative' in retry_events[0].result.content
+
+
+# Test 30: Deferred tool validation events in streaming - args_valid reflects validation status
+@pytest.mark.anyio
+async def test_deferred_tool_validation_event_in_stream():
+    """Test that deferred (requires_approval) tools emit FunctionToolCallEvent with correct args_valid."""
+    from pydantic_ai._output import DeferredToolRequests
+
+    def my_validator(ctx: RunContext[None], x: int) -> None:
+        if x > 100:
+            raise ModelRetry('x too large')
+
+    agent = Agent(
+        TestModel(),
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        raise ApprovalRequired()
+
+    # Collect events during the first run (where tool will be deferred)
+    events: list[Any] = []
+    async for event in agent.run_stream_events('test'):
+        events.append(event)
+
+    # The tool call should have been validated before deferral
+    tool_call_events = [
+        e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool'
+    ]
+    assert tool_call_events
+    # TestModel generates valid args (x=0 by default), so validation passes
+    assert tool_call_events[0].args_valid is True
+
+
+# Test 31: Full event sequence: validator fails then succeeds on retry
+@pytest.mark.anyio
+async def test_streaming_validator_failure_then_success():
+    """Test full event sequence when validator fails on first call but succeeds on retry."""
+    call_count = 0
+
+    def my_validator(ctx: RunContext[None], x: int) -> None:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise ModelRetry('First attempt rejected')
+
+    agent = Agent(TestModel(call_tools=['my_tool']))
+
+    @agent.tool(args_validator=my_validator, retries=2)
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        """A tool."""
+        return x * 2
+
+    events: list[Any] = []
+    async for event in agent.run_stream_events('test'):
+        events.append(event)
+
+    tool_call_events = [
+        e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool'
+    ]
+
+    # First call: validation fails → args_valid=False; second call: validation passes → args_valid=True
+    args_valid_values = [e.args_valid for e in tool_call_events]
+    assert False in args_valid_values, 'First call should have args_valid=False'
+    assert True in args_valid_values, 'Retry call should have args_valid=True'
+
+    # Also verify a RetryPromptPart was emitted between the two calls
+    result_events = [e for e in events if isinstance(e, FunctionToolResultEvent)]
+    retry_results = [e for e in result_events if isinstance(e.result, RetryPromptPart)]
+    assert retry_results
+    assert 'First attempt rejected' in str(retry_results[0].result.content)
