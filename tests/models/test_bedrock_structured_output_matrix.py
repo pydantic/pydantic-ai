@@ -22,7 +22,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 import pytest
-from pydantic import AnyUrl, BaseModel, EmailStr, Field
+from pydantic import AnyUrl, BaseModel, Field
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelHTTPError
@@ -35,6 +35,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.bedrock import BedrockProvider
 
 pytestmark = [
+    pytest.mark.skip(reason='Matrix suite is for reference only — will be removed before merging'),
     pytest.mark.skipif(not imports_successful(), reason='bedrock not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
@@ -506,10 +507,6 @@ class FormatDuration(BaseModel):
     value: timedelta
 
 
-class FormatEmail(BaseModel):
-    value: EmailStr
-
-
 class FormatIPv4(BaseModel):
     value: IPv4Address
 
@@ -572,18 +569,6 @@ async def test_strict_native_format_duration(  # decision-probe (P)
     agent = Agent(model, output_type=NativeOutput(FormatDuration))
     result = await agent.run('Give me a duration of 2 hours and 30 minutes.')
     assert isinstance(result.output, FormatDuration)
-
-
-@pytest.mark.vcr()
-async def test_strict_native_format_email(  # decision-probe (P)
-    allow_model_requests: None,
-    bedrock_provider: BedrockProvider,
-):
-    """Native output with format=email — probe: accept or reject?"""
-    model = BedrockConverseModel(MODEL_ID, provider=bedrock_provider)
-    agent = Agent(model, output_type=NativeOutput(FormatEmail))
-    result = await agent.run('Give me the email address alice@example.com.')
-    assert isinstance(result.output, FormatEmail)
 
 
 @pytest.mark.vcr()

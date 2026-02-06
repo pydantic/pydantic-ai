@@ -65,7 +65,6 @@ from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_ge
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 
-
 if TYPE_CHECKING:
     from botocore.eventstream import EventStream
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
@@ -467,9 +466,7 @@ class BedrockConverseModel(Model[BaseClient]):
     def _native_output_format(
         model_request_parameters: ModelRequestParameters,
     ) -> dict[str, Any] | None:
-        """Build outputConfig for native structured output.
-        See: https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
-        """
+        """Build outputConfig for native structured output. See: https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html."""
         if model_request_parameters.output_mode != 'native':
             return None
 
@@ -485,14 +482,7 @@ class BedrockConverseModel(Model[BaseClient]):
         if output_object.description:
             json_schema_config['description'] = output_object.description
 
-        return {
-            'textFormat': {
-                'type': 'json_schema',
-                'structure': {
-                    'jsonSchema': json_schema_config
-                }
-            }
-        }
+        return {'textFormat': {'type': 'json_schema', 'structure': {'jsonSchema': json_schema_config}}}
 
     async def request(
         self,
