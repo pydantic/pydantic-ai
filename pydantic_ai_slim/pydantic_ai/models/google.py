@@ -662,7 +662,7 @@ class GoogleModel(Model):
                 # We build `message_parts` first, then split into multiple content objects whenever we transition
                 # between function_response and non-function_response parts.
                 #
-                # TODO: Remove workaround when https://github.com/pydantic/pydantic-ai/issues/3763 is resolved
+                # TODO: Remove workaround when https://github.com/pydantic/pydantic-ai/issues/4210 is resolved
                 if message_parts:
                     content_parts: list[PartDict] = []
 
@@ -685,9 +685,10 @@ class GoogleModel(Model):
             else:
                 assert_never(m)
 
-        # Google GenAI requires at least one part in the message.
-        if not contents:
-            contents = [{'role': 'user', 'parts': [{'text': ''}]}]
+        # Google GenAI requires at least one user part in the message, and that function call turns
+        # come immediately after a user turn or after a function response turn.
+        if not contents or contents[0].get('role') == 'model':  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+            contents.insert(0, {'role': 'user', 'parts': [{'text': ''}]})
 
         if instructions := self._get_instructions(messages, model_request_parameters):
             system_parts.append({'text': instructions})
