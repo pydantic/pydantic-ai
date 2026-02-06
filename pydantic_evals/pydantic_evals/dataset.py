@@ -42,6 +42,7 @@ from .evaluators._run_evaluator import run_evaluator
 from .evaluators.common import DEFAULT_EVALUATORS
 from .evaluators.context import EvaluatorContext
 from .evaluators.evaluator import EvaluatorFailure
+from .evaluators.report_evaluator import ReportEvaluator, ReportEvaluatorContext
 from .evaluators.spec import EvaluatorSpec
 from .otel import SpanTree
 from .otel._context_subtree import context_subtree
@@ -227,6 +228,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     """List of test cases in the dataset."""
     evaluators: list[Evaluator[InputsT, OutputT, MetadataT]] = []
     """List of evaluators to be used on all cases in the dataset."""
+    report_evaluators: list[ReportEvaluator[InputsT, OutputT, MetadataT]] = Field(default=[], exclude=True)
+    """Evaluators that operate on the full report to produce experiment-wide analyses."""
 
     def __init__(
         self,
@@ -234,6 +237,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         name: str | None = None,
         cases: Sequence[Case[InputsT, OutputT, MetadataT]],
         evaluators: Sequence[Evaluator[InputsT, OutputT, MetadataT]] = (),
+        report_evaluators: Sequence[ReportEvaluator[InputsT, OutputT, MetadataT]] = (),
     ):
         """Initialize a new dataset with test cases and optional evaluators.
 
@@ -254,6 +258,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             name=name,
             cases=cases,
             evaluators=list(evaluators),
+            report_evaluators=list(report_evaluators),
         )
 
     # TODO in v2: Make everything not required keyword-only
@@ -350,6 +355,25 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 span_id=span_id,
                 trace_id=trace_id,
             )
+
+            # Run report evaluators
+            if self.report_evaluators:
+                report_ctx = ReportEvaluatorContext(
+                    name=name,
+                    report=report,
+                    experiment_metadata=metadata,
+                )
+                for report_eval in self.report_evaluators:
+                    with logfire_span(
+                        'report_evaluator: {evaluator_name}',
+                        evaluator_name=report_eval.get_serialization_name(),
+                    ):
+                        result = await report_eval.evaluate_async(report_ctx)
+                        if isinstance(result, list):
+                            report.analyses.extend(result)
+                        else:
+                            report.analyses.append(result)
+
             full_experiment_metadata: dict[str, Any] = {'n_cases': len(self.cases)}
             if metadata is not None:
                 full_experiment_metadata['metadata'] = metadata
@@ -358,6 +382,13 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 if averages.assertions is not None:
                     eval_span.set_attribute('assertion_pass_rate', averages.assertions)
             eval_span.set_attribute('logfire.experiment.metadata', full_experiment_metadata)
+
+            # Set analyses on the experiment span
+            if report.analyses:
+                eval_span.set_attribute(
+                    'logfire.experiment.analyses',
+                    [analysis.model_dump() for analysis in report.analyses],
+                )
         return report
 
     def evaluate_sync(

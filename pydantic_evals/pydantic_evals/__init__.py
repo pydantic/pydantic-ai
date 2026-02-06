@@ -7,10 +7,33 @@ This package provides functionality for:
 """
 
 from .dataset import Case, Dataset, increment_eval_metric, set_eval_attribute
+from .evaluators import ConfusionMatrixEvaluator, PrecisionRecallEvaluator, ReportEvaluator, ReportEvaluatorContext
+from .reporting.analyses import (
+    ConfusionMatrix,
+    PrecisionRecall,
+    PrecisionRecallCurve,
+    PrecisionRecallPoint,
+    ReportAnalysis,
+    ScalarResult,
+    TableResult,
+)
 
 __all__ = (
     'Case',
     'Dataset',
     'increment_eval_metric',
     'set_eval_attribute',
+    # Report evaluators
+    'ReportEvaluator',
+    'ReportEvaluatorContext',
+    'ConfusionMatrixEvaluator',
+    'PrecisionRecallEvaluator',
+    # Analysis types
+    'ConfusionMatrix',
+    'PrecisionRecall',
+    'PrecisionRecallCurve',
+    'PrecisionRecallPoint',
+    'ScalarResult',
+    'TableResult',
+    'ReportAnalysis',
 )
