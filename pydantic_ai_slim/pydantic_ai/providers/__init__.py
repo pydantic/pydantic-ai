@@ -50,6 +50,24 @@ class Provider(ABC, Generic[InterfaceClient]):
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}(name={self.name}, base_url={self.base_url})'  # pragma: lax no cover
 
+    # async def __aenter__(self) -> Self:
+    #     # Get current asyncio task.
+    #     async with self._enter_lock:
+    #         if self._entered_count == 0:
+    #             async with AsyncExitStack() as exit_stack:
+    #                 await exit_stack.enter_async_context(self._client)
+
+    #                 self._exit_stack = exit_stack.pop_all()
+    #         self._entered_count += 1
+    #     return self
+
+    # async def __aexit__(self, exc_type, exc_value, exc_tb):
+    #     async with self._enter_lock:
+    #         self._entered_count -= 1
+    #         if self._entered_count == 0 and self._exit_stack is not None:
+    #             await self._exit_stack.aclose()
+    #             self._exit_stack = None
+
 
 def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
     """Infers the provider class from the provider name."""
