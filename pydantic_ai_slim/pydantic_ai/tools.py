@@ -366,8 +366,9 @@ class Tool(Generic[ToolAgentDepsT]):
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
-            args_validator: custom method to validate tool arguments before execution. The validator receives
-                the same typed parameters as the tool function, with `RunContext` as the first argument.
+            args_validator: custom method to validate tool arguments after schema validation has passed,
+                before execution. The validator receives the already-validated and type-converted parameters,
+                with `RunContext` as the first argument.
                 Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
                 return `None` on success.
                 See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
@@ -432,8 +433,9 @@ class Tool(Generic[ToolAgentDepsT]):
             takes_ctx: An optional boolean parameter indicating whether the function
                 accepts the context object as an argument.
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
-            args_validator: custom method to validate tool arguments before execution. The validator receives
-                the same typed parameters as the tool function, with `RunContext` as the first argument.
+            args_validator: custom method to validate tool arguments after schema validation has passed,
+                before execution. The validator receives the already-validated and type-converted parameters,
+                with `RunContext` as the first argument.
                 Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
                 return `None` on success.
                 See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].

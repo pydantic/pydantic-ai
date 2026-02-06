@@ -244,18 +244,9 @@ class ToolManager(Generic[AgentDepsT]):
                 msg = 'No tools available.'
             error_msg = f'Unknown tool name: {name!r}. {msg}'
 
-            if wrap_validation_errors:
-                m = _messages.RetryPromptPart(
-                    tool_name=name,
-                    content=error_msg,
-                    tool_call_id=call.tool_call_id,
-                )
-                validation_error = ToolRetryError(m)
-            else:  # pragma: no cover
-                # Same as above but without the intermediate variable
-                validation_error = ToolRetryError(
-                    _messages.RetryPromptPart(tool_name=name, content=error_msg, tool_call_id=call.tool_call_id)
-                )
+            validation_error = ToolRetryError(
+                _messages.RetryPromptPart(tool_name=name, content=error_msg, tool_call_id=call.tool_call_id)
+            )
 
             if not allow_partial:  # pragma: no branch
                 self.failed_tools.add(name)
