@@ -32,6 +32,7 @@ from ._utils import dump_provider_metadata
 from .request_types import RequestData
 from .response_types import (
     BaseChunk,
+    DataChunk,
     DoneChunk,
     ErrorChunk,
     FileChunk,
@@ -252,17 +253,17 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         else:
             yield ToolOutputAvailableChunk(tool_call_id=part.tool_call_id, output=self._tool_return_output(part))
 
-        # Check for Vercel AI chunks returned by tool calls via metadata.
+        # Check for Vercel AI data chunks returned by tool calls via metadata.
         if isinstance(part, ToolReturnPart):
             possible_chunk = part.metadata or part.content
-            if isinstance(possible_chunk, BaseChunk):
+            if isinstance(possible_chunk, DataChunk):
                 yield possible_chunk
             elif isinstance(possible_chunk, str | bytes):  # pragma: no branch
                 # Avoid iterable check for strings and bytes.
                 pass
             elif isinstance(possible_chunk, Iterable):  # pragma: no branch
                 for item in possible_chunk:  # type: ignore[reportUnknownMemberType]
-                    if isinstance(item, BaseChunk):  # pragma: no branch
+                    if isinstance(item, DataChunk):  # pragma: no branch
                         yield item
 
     def _tool_return_output(self, part: BaseToolReturnPart) -> Any:

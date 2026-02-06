@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -60,7 +60,7 @@ from .request_types import (
     UIMessage,
     UIMessagePart,
 )
-from .response_types import BaseChunk
+from .response_types import BaseChunk, DataChunk
 
 if TYPE_CHECKING:
     pass
@@ -449,6 +449,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             call_provider_metadata=call_provider_metadata,
                         )
                     )
+                    # Check for Vercel AI data parts returned by tool calls via metadata.
+                    ui_parts.extend(_extract_data_ui_parts(tool_result))
                 elif isinstance(tool_result, RetryPromptPart):
                     error_text = tool_result.model_response()
                     ui_parts.append(
@@ -543,3 +545,20 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
                 assert_never(item)
 
     return ui_parts
+
+
+def _extract_data_ui_parts(tool_result: ToolReturnPart) -> list[DataUIPart]:
+    """Extract DataUIParts from ToolReturnPart metadata, mirroring the streaming path."""
+    possible = tool_result.metadata or tool_result.content
+    if isinstance(possible, DataChunk):
+        return [DataUIPart(type=possible.type, id=possible.id, data=possible.data)]
+    elif isinstance(possible, str | bytes):
+        # Avoid iterable check for strings and bytes.
+        return []
+    elif isinstance(possible, Iterable):
+        return [
+            DataUIPart(type=item.type, id=item.id, data=item.data)
+            for item in possible  # type: ignore[reportUnknownMemberType]
+            if isinstance(item, DataChunk)
+        ]
+    return []

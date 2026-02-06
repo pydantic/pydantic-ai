@@ -59,7 +59,16 @@ from pydantic_ai.ui.vercel_ai.request_types import (
     ToolOutputErrorPart,
     UIMessage,
 )
-from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, DataChunk, ToolInputStartChunk
+from pydantic_ai.ui.vercel_ai.response_types import (
+    BaseChunk,
+    DataChunk,
+    FinishChunk,
+    FinishStepChunk,
+    SourceUrlChunk,
+    StartChunk,
+    StartStepChunk,
+    ToolInputStartChunk,
+)
 
 from .conftest import IsDatetime, IsSameStr, IsStr, try_import
 
@@ -1765,6 +1774,80 @@ async def test_run_stream_tool_metadata_multiple_chunks():
     )
 
 
+async def test_run_stream_tool_metadata_ignores_non_data_chunks():
+    """Test that non-DataChunk BaseChunks in ToolReturnPart.metadata are ignored in the stream.
+
+    Only DataChunks should be yielded from tool metadata. Protocol control chunks
+    (StartChunk, FinishChunk, StartStepChunk, FinishStepChunk) and other non-data
+    chunks (SourceUrlChunk, ToolInputStartChunk) would break the UI state machine
+    if leaked into the stream.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='send_data', json_args='{}', tool_call_id='call_1')}
+        else:
+            yield 'Done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    async def send_data() -> ToolReturn:
+        return ToolReturn(
+            return_value='Data sent',
+            metadata=[
+                # Protocol control chunks — would break UI state if yielded
+                StartChunk(),
+                FinishChunk(),
+                StartStepChunk(),
+                FinishStepChunk(),
+                # Non-data content chunks
+                SourceUrlChunk(source_id='src_1', url='https://example.com', title='Example'),
+                ToolInputStartChunk(tool_call_id='fake', tool_name='fake'),
+                # The only chunk that should pass through
+                DataChunk(type='data-valid', data={'survived': True}),
+            ],
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Send data')])],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    # Only the DataChunk should appear — all control/non-data chunks are filtered out
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'call_1', 'toolName': 'send_data'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_1', 'inputTextDelta': '{}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'call_1',
+                'toolName': 'send_data',
+                'input': {},
+            },
+            {'type': 'tool-output-available', 'toolCallId': 'call_1', 'output': 'Data sent'},
+            {'type': 'data-valid', 'data': {'survived': True}},
+            {'type': 'finish-step'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'Done', 'id': IsStr()},
+            {'type': 'text-end', 'id': IsStr()},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
 async def test_event_stream_file():
     async def event_generator():
         yield PartStartEvent(index=0, part=FilePart(content=BinaryImage(data=b'fake', media_type='image/png')))
@@ -2544,6 +2627,303 @@ async def test_adapter_dump_messages_with_tools():
             },
         ]
     )
+
+
+async def test_adapter_dump_messages_with_tool_metadata_single_chunk():
+    """Test dumping messages where ToolReturnPart.metadata contains a single DataChunk."""
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Send data')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='send_data',
+                    args={},
+                    tool_call_id='call_1',
+                ),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='send_data',
+                    content='Data sent',
+                    tool_call_id='call_1',
+                    metadata=DataChunk(type='data-custom', data={'key': 'value'}),
+                )
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Done')]),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'user',
+                'metadata': None,
+                'parts': [{'type': 'text', 'text': 'Send data', 'state': 'done', 'provider_metadata': None}],
+            },
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {
+                        'type': 'dynamic-tool',
+                        'tool_name': 'send_data',
+                        'tool_call_id': 'call_1',
+                        'state': 'output-available',
+                        'input': '{}',
+                        'output': 'Data sent',
+                        'call_provider_metadata': None,
+                        'preliminary': None,
+                    },
+                    {
+                        'type': 'data-custom',
+                        'id': None,
+                        'data': {'key': 'value'},
+                    },
+                ],
+            },
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [{'type': 'text', 'text': 'Done', 'state': 'done', 'provider_metadata': None}],
+            },
+        ]
+    )
+
+
+async def test_adapter_dump_messages_with_tool_metadata_multiple_chunks():
+    """Test dumping messages where ToolReturnPart.metadata contains multiple DataChunks."""
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Send events')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='send_events',
+                    args={},
+                    tool_call_id='call_1',
+                ),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='send_events',
+                    content='Events sent',
+                    tool_call_id='call_1',
+                    metadata=[
+                        DataChunk(type='data-event1', data={'key1': 'value1'}),
+                        DataChunk(type='data-event2', data={'key2': 'value2'}),
+                    ],
+                )
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Done')]),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'user',
+                'metadata': None,
+                'parts': [{'type': 'text', 'text': 'Send events', 'state': 'done', 'provider_metadata': None}],
+            },
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {
+                        'type': 'dynamic-tool',
+                        'tool_name': 'send_events',
+                        'tool_call_id': 'call_1',
+                        'state': 'output-available',
+                        'input': '{}',
+                        'output': 'Events sent',
+                        'call_provider_metadata': None,
+                        'preliminary': None,
+                    },
+                    {
+                        'type': 'data-event1',
+                        'id': None,
+                        'data': {'key1': 'value1'},
+                    },
+                    {
+                        'type': 'data-event2',
+                        'id': None,
+                        'data': {'key2': 'value2'},
+                    },
+                ],
+            },
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [{'type': 'text', 'text': 'Done', 'state': 'done', 'provider_metadata': None}],
+            },
+        ]
+    )
+
+
+async def test_adapter_dump_messages_with_tool_metadata_ignores_non_data_chunks():
+    """Test that non-DataChunk BaseChunks in ToolReturnPart.metadata are ignored in dump_messages.
+
+    Mirrors test_run_stream_tool_metadata_ignores_non_data_chunks — both paths
+    should filter out protocol control chunks and non-data content chunks.
+    """
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Send data')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='send_data',
+                    args={},
+                    tool_call_id='call_1',
+                ),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='send_data',
+                    content='Data sent',
+                    tool_call_id='call_1',
+                    metadata=[
+                        # Protocol control chunks — would break UI state if included
+                        StartChunk(),
+                        FinishChunk(),
+                        StartStepChunk(),
+                        FinishStepChunk(),
+                        # Non-data content chunks
+                        SourceUrlChunk(source_id='src_1', url='https://example.com', title='Example'),
+                        ToolInputStartChunk(tool_call_id='fake', tool_name='fake'),
+                        # The only chunk that should be converted to DataUIPart
+                        DataChunk(type='data-valid', data={'survived': True}),
+                    ],
+                )
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Done')]),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    # Only the DataChunk should appear as a DataUIPart — all others are filtered out
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'user',
+                'metadata': None,
+                'parts': [{'type': 'text', 'text': 'Send data', 'state': 'done', 'provider_metadata': None}],
+            },
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {
+                        'type': 'dynamic-tool',
+                        'tool_name': 'send_data',
+                        'tool_call_id': 'call_1',
+                        'state': 'output-available',
+                        'input': '{}',
+                        'output': 'Data sent',
+                        'call_provider_metadata': None,
+                        'preliminary': None,
+                    },
+                    {
+                        'type': 'data-valid',
+                        'id': None,
+                        'data': {'survived': True},
+                    },
+                ],
+            },
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [{'type': 'text', 'text': 'Done', 'state': 'done', 'provider_metadata': None}],
+            },
+        ]
+    )
+
+
+async def test_stream_and_dump_messages_metadata_consistency():
+    """Test that streaming and dump_messages produce consistent DataChunk/DataUIPart data."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='send_data', json_args='{}', tool_call_id='call_1')}
+        else:
+            yield 'Done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    metadata_chunks = [
+        DataChunk(type='data-event1', data={'key1': 'value1'}),
+        DataChunk(type='data-event2', data={'key2': 'value2'}),
+    ]
+
+    @agent.tool_plain
+    async def send_data() -> ToolReturn:
+        return ToolReturn(return_value='Data sent', metadata=metadata_chunks)
+
+    # 1. Run the streaming path and extract data chunks from SSE events
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Send data')])],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    all_events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+        if '[DONE]' not in event
+    ]
+    stream_data_events = [e for e in all_events if e.get('type', '').startswith('data-')]
+
+    # 2. Build equivalent ModelMessages and run dump_messages
+    dump_messages = [
+        ModelRequest(parts=[UserPromptPart(content='Send data')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='send_data', args={}, tool_call_id='call_1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='send_data',
+                    content='Data sent',
+                    tool_call_id='call_1',
+                    metadata=metadata_chunks,
+                )
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Done')]),
+    ]
+    ui_messages = VercelAIAdapter.dump_messages(dump_messages)
+    dump_data_parts = [
+        part.model_dump()
+        for msg in ui_messages
+        for part in msg.parts
+        if part.model_dump().get('type', '').startswith('data-')
+    ]
+
+    # 3. Verify both paths produce the same data
+    assert len(stream_data_events) == len(dump_data_parts)
+    for stream_event, dump_part in zip(stream_data_events, dump_data_parts):
+        assert stream_event['type'] == dump_part['type']
+        assert stream_event['data'] == dump_part['data']
 
 
 async def test_adapter_dump_messages_with_builtin_tools():
