@@ -31,6 +31,7 @@ jobs:
           fetch-depth: 1
 
       - name: Check for modified config files
+        if: github.event.pull_request.head.repo.fork
         run: |
           CHANGED=$(gh pr diff ${{ github.event.pull_request.number }} --name-only --repo ${{ github.repository }})
           if echo "$CHANGED" | grep -qiE '(^|/)AGENTS\.md$|(^|/)CLAUDE\.md$|(^|/)\.claude/'; then
