@@ -849,7 +849,9 @@ It looks like someone is either reviewing footage on the monitor, or using it as
 """)
 
 
-async def test_google_model_image_url_input(allow_model_requests: None, google_provider: GoogleProvider):
+async def test_google_model_image_url_input(
+    allow_model_requests: None, google_provider: GoogleProvider, disable_ssrf_protection_for_vcr: None
+):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
@@ -862,7 +864,9 @@ async def test_google_model_image_url_input(allow_model_requests: None, google_p
     assert result.output == snapshot('That is a potato.')
 
 
-async def test_google_model_video_url_input(allow_model_requests: None, google_provider: GoogleProvider):
+async def test_google_model_video_url_input(
+    allow_model_requests: None, google_provider: GoogleProvider, disable_ssrf_protection_for_vcr: None
+):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
@@ -922,7 +926,9 @@ The video is an AI analyzing recent 404 HTTP responses using Logfire. It identif
 """)
 
 
-async def test_google_model_document_url_input(allow_model_requests: None, google_provider: GoogleProvider):
+async def test_google_model_document_url_input(
+    allow_model_requests: None, google_provider: GoogleProvider, disable_ssrf_protection_for_vcr: None
+):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
@@ -932,7 +938,9 @@ async def test_google_model_document_url_input(allow_model_requests: None, googl
     assert result.output == snapshot('The document appears to be a dummy PDF file.\n')
 
 
-async def test_google_model_text_document_url_input(allow_model_requests: None, google_provider: GoogleProvider):
+async def test_google_model_text_document_url_input(
+    allow_model_requests: None, google_provider: GoogleProvider, disable_ssrf_protection_for_vcr: None
+):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
@@ -2532,7 +2540,7 @@ async def test_google_url_input(
 )
 @pytest.mark.vcr()
 async def test_google_url_input_force_download(
-    allow_model_requests: None, vertex_provider: GoogleProvider
+    allow_model_requests: None, vertex_provider: GoogleProvider, disable_ssrf_protection_for_vcr: None
 ) -> None:  # pragma: lax no cover
     m = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
     agent = Agent(m)
@@ -2577,7 +2585,7 @@ async def test_google_gs_url_force_download_raises_user_error(allow_model_reques
     agent = Agent(m)
 
     url = ImageUrl(url='gs://pydantic-ai-dev/wikipedia_screenshot.png', force_download=True)
-    with pytest.raises(UserError, match='Downloading from protocol "gs://" is not supported.'):
+    with pytest.raises(ValueError, match='URL protocol "gs" is not allowed'):
         _ = await agent.run(['What is the main content of this URL?', url])
 
 
@@ -4882,6 +4890,7 @@ async def test_gcs_video_url_raises_error_on_google_gla():
 
     google-gla cannot access GCS buckets, so attempting to use gs:// URLs
     should fail with a helpful error message rather than a cryptic API error.
+    SSRF protection now catches non-http(s) protocols first.
     """
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
     # google-gla is the default for GoogleProvider with api_key, but be explicit
@@ -4889,7 +4898,7 @@ async def test_gcs_video_url_raises_error_on_google_gla():
 
     video = VideoUrl(url='gs://bucket/video.mp4')
 
-    with pytest.raises(UserError, match='Downloading from protocol "gs://" is not supported'):
+    with pytest.raises(ValueError, match='URL protocol "gs" is not allowed'):
         await model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
 
 
