@@ -3679,8 +3679,6 @@ async def test_bedrock_native_output_optional_fields(
     assert result.output.name == 'Bob'
 
 
-
-
 @pytest.mark.vcr()
 async def test_bedrock_native_output_numerical_constraints(
     allow_model_requests: None,
