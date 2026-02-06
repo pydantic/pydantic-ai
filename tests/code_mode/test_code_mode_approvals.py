@@ -73,7 +73,6 @@ r2 = await f2
     # Snapshot shows the full structure of the deferred result
     assert result.output == snapshot(
         DeferredToolRequests(
-            calls=[],
             approvals=[
                 ToolCallPart(
                     tool_name='run_code',
@@ -83,7 +82,8 @@ f1 = sensitive_action(value=42)
 f2 = external_service(data="test")
 r1 = await f1
 r2 = await f2
-{"sensitive": r1, "external": r2}"""
+{"sensitive": r1, "external": r2}\
+"""
                     },
                     tool_call_id='rc1',
                 )
@@ -107,9 +107,9 @@ r2 = await f2
                             'type': 'external',
                         },
                     ],
+                    'completed_results': {},
                 }
             },
-            metadata={},
         )
     )
 
@@ -130,6 +130,7 @@ r2 = await f2
     resume_ctx: CodeModeContext = {
         'checkpoint': ctx['checkpoint'],
         'interrupted_calls': ctx['interrupted_calls'],
+        'completed_results': ctx.get('completed_results', {}),
         'results': nested_results,
     }
     # No cast needed - Mapping accepts TypedDict
@@ -180,7 +181,6 @@ async def test_code_mode_resume_missing_context_error():
     # Snapshot shows the full structure of the deferred result
     assert result.output == snapshot(
         DeferredToolRequests(
-            calls=[],
             approvals=[
                 ToolCallPart(
                     tool_name='run_code',
@@ -200,9 +200,9 @@ async def test_code_mode_resume_missing_context_error():
                             'type': 'approval',
                         },
                     ],
+                    'completed_results': {},
                 }
             },
-            metadata={},
         )
     )
 
@@ -258,7 +258,6 @@ async def test_code_mode_resume_missing_results_error():
     # Snapshot shows the full structure of the deferred result
     assert result.output == snapshot(
         DeferredToolRequests(
-            calls=[],
             approvals=[
                 ToolCallPart(
                     tool_name='run_code',
@@ -278,9 +277,9 @@ async def test_code_mode_resume_missing_results_error():
                             'type': 'approval',
                         },
                     ],
+                    'completed_results': {},
                 }
             },
-            metadata={},
         )
     )
 
@@ -311,3 +310,107 @@ async def test_code_mode_resume_missing_results_error():
     assert str(exc_info.value) == snapshot(
         'Code mode resume requires context with results for nested calls. Add a "results" key to the context mapping call_id to ToolApproved(), ToolDenied(), or the external result.'
     )
+
+
+async def test_code_mode_mixed_success_and_interrupted():
+    """Test that calls which succeed before an interruption are NOT re-executed on resume.
+
+    3 parallel tools: 1 succeeds immediately, 1 needs approval, 1 is deferred.
+    On resume the successful call's result is fed back to Monty via completed_results,
+    avoiding double execution.
+    """
+    call_counts: dict[str, int] = {'fast': 0, 'sensitive': 0, 'external': 0}
+
+    def fast_lookup(key: str) -> str:
+        call_counts['fast'] += 1
+        return f'found:{key}'
+
+    def sensitive_action(ctx: RunContext[None], value: int) -> int:
+        call_counts['sensitive'] += 1
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired()
+        return value * 10
+
+    def external_service(data: str) -> str:
+        call_counts['external'] += 1
+        raise CallDeferred()
+
+    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset.add_function(fast_lookup, takes_ctx=False)
+    toolset.add_function(sensitive_action, takes_ctx=True)
+    toolset.add_function(external_service, takes_ctx=False)
+    code_toolset = CodeModeToolset(wrapped=toolset)
+
+    call_count = 0
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # Fire all three in parallel, then await
+            code = """\
+f1 = fast_lookup(key="abc")
+f2 = sensitive_action(value=42)
+f3 = external_service(data="test")
+r1 = await f1
+r2 = await f2
+r3 = await f3
+{"fast": r1, "sensitive": r2, "external": r3}"""
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': code}, tool_call_id='rc1')])
+        return ModelResponse(parts=[TextPart('All three done!')])
+
+    agent: Agent[None, str | DeferredToolRequests] = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    # Run 1: fast_lookup succeeds, the other two are interrupted
+    async with code_toolset:
+        result = await agent.run('Do all three', toolsets=[code_toolset])
+
+    assert isinstance(result.output, DeferredToolRequests)
+    assert call_counts == {'fast': 1, 'sensitive': 1, 'external': 1}
+
+    # Context should have completed_results for fast_lookup and interrupted_calls for the other two
+    run_code_call_id = result.output.approvals[0].tool_call_id
+    ctx: CodeModeContext = result.output.context[run_code_call_id]  # type: ignore[assignment]
+
+    assert len(ctx['interrupted_calls']) == 2
+    assert ctx.get('completed_results')  # Should have the fast_lookup result
+
+    interrupted_names = {ic['tool_name'] for ic in ctx['interrupted_calls']}
+    assert interrupted_names == {'sensitive_action', 'external_service'}
+
+    # Build results for interrupted calls
+    nested_results: dict[str, object] = {}
+    for ic in ctx['interrupted_calls']:
+        if ic['type'] == 'approval':
+            nested_results[ic['call_id']] = ToolApproved()
+        else:
+            nested_results[ic['call_id']] = 'ext_result'
+
+    # Build resume context preserving completed_results
+    resume_ctx: CodeModeContext = {
+        'checkpoint': ctx['checkpoint'],
+        'interrupted_calls': ctx['interrupted_calls'],
+        'completed_results': ctx.get('completed_results', {}),
+        'results': nested_results,
+    }
+    resume_context = {run_code_call_id: resume_ctx}
+
+    # Run 2: Resume — fast_lookup should NOT be called again
+    async with code_toolset:
+        result = await agent.run(
+            message_history=result.all_messages(),
+            deferred_tool_results=DeferredToolResults(
+                approvals={run_code_call_id: ToolApproved()},
+                context=resume_context,
+            ),
+            toolsets=[code_toolset],
+        )
+
+    assert result.output == snapshot('All three done!')
+
+    # Critical: fast_lookup was only called once (not re-executed on resume)
+    assert call_counts['fast'] == 1
+    # sensitive_action called twice: once to get ApprovalRequired, once approved
+    assert call_counts['sensitive'] == 2
+    # external_service called once (deferred, result provided directly)
+    assert call_counts['external'] == 1

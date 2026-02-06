@@ -163,9 +163,17 @@ class MontyRuntime(CodeRuntime):
 
                 # Save checkpoint BEFORE advancing if there are interrupted calls.
                 # The checkpoint captures the state where Monty is waiting for these results.
+                # Completed results are carried alongside so they can be replayed on resume
+                # without re-executing those calls (avoiding double execution / side effects).
                 if interrupted_calls:
+                    for remaining in tasks.values():
+                        remaining.cancel()
                     checkpoint = monty_state.dump()
-                    raise CodeInterruptedError(interrupted_calls=interrupted_calls, checkpoint=checkpoint)
+                    raise CodeInterruptedError(
+                        interrupted_calls=interrupted_calls,
+                        checkpoint=checkpoint,
+                        completed_results=results,
+                    )
 
                 monty_state = monty_state.resume(results=results)
 
@@ -174,15 +182,28 @@ class MontyRuntime(CodeRuntime):
 
         return monty_state
 
-    async def resume(self, checkpoint: bytes, call_tool: ToolCallback, interrupted_calls: list[dict[str, Any]]) -> Any:
+    async def resume(
+        self,
+        checkpoint: bytes,
+        call_tool: ToolCallback,
+        interrupted_calls: list[dict[str, Any]],
+        completed_results: dict[int, Any] | None = None,
+    ) -> Any:
         try:
-            tasks: dict[int, asyncio.Task[Any]] = {}
-            monty_state = MontyFutureSnapshot.load(checkpoint)
+            monty_state: MontyComplete | MontyFutureSnapshot | MontySnapshot = MontyFutureSnapshot.load(checkpoint)
 
-            # Fire tasks for each pending call using the interrupted_calls details.
-            # The callback has results_map populated, so these will resolve immediately
-            # (either returning a value directly, or executing approved tools).
-            pending_ids = monty_state.pending_call_ids or []
+            # Feed already-completed results to Monty first so those calls are not
+            # re-executed. Monty accepts partial results and returns a new snapshot
+            # for the remaining pending calls.
+            if completed_results:
+                monty_state = monty_state.resume(results=completed_results)
+                if isinstance(monty_state, MontyComplete):
+                    return monty_state.output
+
+            # Fire tasks for each interrupted call using the callback (which has
+            # results_map populated so these resolve to approved/denied/external results).
+            tasks: dict[int, asyncio.Task[Any]] = {}
+            pending_ids = monty_state.pending_call_ids if isinstance(monty_state, MontyFutureSnapshot) else []
             for ic in interrupted_calls:
                 call_id_int = int(ic['call_id'])
                 if call_id_int in pending_ids:

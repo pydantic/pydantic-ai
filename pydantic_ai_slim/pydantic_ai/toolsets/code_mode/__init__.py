@@ -70,6 +70,9 @@ class CodeModeContext(TypedDict):
     Attributes:
         checkpoint: Monty runtime checkpoint for resuming execution.
         interrupted_calls: List of nested tool calls that were interrupted.
+        completed_results: Results from calls that succeeded before the interruption.
+            Keyed by string call_id, values in Monty result format. Passed back on
+            resume so those calls are not re-executed.
         results: Map of call_id to result for each interrupted call. Required when resuming.
             Values can be: ToolApproved(), ToolDenied(message=...), or any external result.
 
@@ -84,6 +87,7 @@ class CodeModeContext(TypedDict):
         resume_ctx: CodeModeContext = {
             'checkpoint': ctx['checkpoint'],
             'interrupted_calls': ctx['interrupted_calls'],
+            'completed_results': ctx.get('completed_results', {}),
             'results': {ic['call_id']: ToolApproved() for ic in interrupted},
         }
         ```
@@ -91,6 +95,7 @@ class CodeModeContext(TypedDict):
 
     checkpoint: bytes
     interrupted_calls: list[InterruptedCall]
+    completed_results: NotRequired[dict[str, Any]]
     results: NotRequired[dict[str, Any]]
 
 
@@ -440,11 +445,20 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 'All interrupted calls must have a result (ToolApproved, ToolDenied, or value).'
             )
 
+        # Recover results from calls that completed before the interruption.
+        # Keys are converted back from str to int for Monty's result format.
+        completed_results_raw = context.get('completed_results', {})
+        completed_results = {int(k): v for k, v in completed_results_raw.items()} if completed_results_raw else None
+
         callback = self._make_tool_callback(tool, code_mode_tool_manager, sanitized_to_original, results_map)
 
         try:
-            # Cast to list[dict[str, Any]] for runtime.resume signature compatibility
-            return await self.runtime.resume(checkpoint, callback, cast(list[dict[str, Any]], interrupted_calls))
+            return await self.runtime.resume(
+                checkpoint,
+                callback,
+                cast(list[dict[str, Any]], interrupted_calls),
+                completed_results=completed_results,
+            )
         except CodeRuntimeError as e:
             raise ModelRetry(f'Runtime error in generated code:\n{e.message}')
 
@@ -506,5 +520,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             code_mode_context: CodeModeContext = {
                 'checkpoint': e.checkpoint,
                 'interrupted_calls': interrupted_calls,
+                'completed_results': {str(k): v for k, v in e.completed_results.items()},
             }
             raise ApprovalRequired(context=cast(dict[str, Any], code_mode_context))
