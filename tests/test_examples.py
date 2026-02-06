@@ -558,6 +558,11 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         args={'name': 'test', 'value': 42},
         tool_call_id='pyd_ai_tool_call_id',
     ),
+    'Delegate a Python code review task to the marketplace. Offer 15 credits.': ToolCallPart(
+        tool_name='delegate_task',
+        args={'need': 'Review Python code for security issues', 'max_credits': 15, 'tags': ['python', 'security']},
+        tool_call_id='pyd_ai_tool_call_id',
+    ),
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -565,6 +570,10 @@ tool_responses: dict[tuple[str, str], str] = {
         'weather_forecast',
         'The forecast in Paris on 2030-01-01 is 24°C and sunny.',
     ): 'It will be warm and sunny in Paris on Tuesday.',
+    (
+        'delegate_task',
+        'Task tk-abc123 posted. Status: open',
+    ): 'I have successfully delegated the Python code review task to the marketplace for 15 credits.',
 }
 
 
