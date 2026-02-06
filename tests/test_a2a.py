@@ -1,4 +1,6 @@
 import base64
+import uuid
+
 from datetime import timezone
 
 import anyio
