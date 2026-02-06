@@ -1162,9 +1162,6 @@ class BaseToolCallPart:
 
     This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
 
-    call_kind: Literal['normal', 'code-mode'] = 'normal'
-    # Maybe a call-kind of code-mode for visibility that this is a code mode tool call?
-
     def args_as_dict(self) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
 
