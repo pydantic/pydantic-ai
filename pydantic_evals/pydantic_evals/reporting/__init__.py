@@ -219,6 +219,9 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
     analyses: list[ReportAnalysis] = field(default_factory=list)
     """Experiment-wide analyses produced by report evaluators."""
 
+    report_evaluator_failures: list[EvaluatorFailure] = field(default_factory=list[EvaluatorFailure])
+    """Failures from report evaluators that raised exceptions."""
+
     experiment_metadata: dict[str, Any] | None = None
     """Metadata associated with the specific experiment represented by this report."""
     trace_id: str | None = None
@@ -350,6 +353,13 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         if self.analyses:
             for analysis in self.analyses:
                 console.print(_render_analysis(analysis))
+        if self.report_evaluator_failures:
+            console.print(
+                Text('\nReport Evaluator Failures:', style='bold red'),
+            )
+            for failure in self.report_evaluator_failures:
+                msg = f'  {failure.name}: {failure.error_message}'
+                console.print(Text(msg, style='red'))
         if include_errors and self.failures:  # pragma: no cover
             failures_table = self.failures_table(
                 include_input=include_input,

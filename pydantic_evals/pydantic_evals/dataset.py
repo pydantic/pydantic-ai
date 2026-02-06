@@ -1006,14 +1006,22 @@ async def _run_report_evaluators(
 ) -> None:
     """Run report evaluators and append their analyses to the report."""
     for report_eval in report_evaluators:
+        evaluator_name = report_eval.get_serialization_name()
         with logfire_span(
             'report_evaluator: {evaluator_name}',
-            evaluator_name=report_eval.get_serialization_name(),
+            evaluator_name=evaluator_name,
         ):
             try:
                 result = await report_eval.evaluate_async(report_ctx)
-            except Exception:
-                traceback.print_exc()
+            except Exception as e:
+                report.report_evaluator_failures.append(
+                    EvaluatorFailure(
+                        name=evaluator_name,
+                        error_message=f'{type(e).__name__}: {e}',
+                        error_stacktrace=traceback.format_exc(),
+                        source=EvaluatorSpec(name=evaluator_name, arguments=None),
+                    )
+                )
             else:
                 if isinstance(result, list):
                     report.analyses.extend(result)
