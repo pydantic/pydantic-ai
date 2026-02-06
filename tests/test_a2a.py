@@ -344,7 +344,7 @@ async def test_a2a_file_message_with_file_content(image_content):
         async with httpx.AsyncClient(transport=transport) as http_client:
             a2a_client = A2AClient(http_client=http_client)
 
-            base64_image = base64_image = base64.b64encode(image_content.data).decode('utf-8')
+            base64_image = base64.b64encode(image_content.data).decode('utf-8')
             
             message = Message(
                 role='user',
