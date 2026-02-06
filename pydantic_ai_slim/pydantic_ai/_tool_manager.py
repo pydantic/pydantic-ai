@@ -402,7 +402,10 @@ class ToolManager(Generic[AgentDepsT]):
     ) -> Any:
         """Execute a validated tool call without tracing.
 
-        Raises ToolRetryError if validation failed or if the tool raises ModelRetry.
+        Raises the stored validation error if validation previously failed,
+        otherwise executes the tool.
+
+        Raises ToolRetryError if the tool raises ModelRetry during execution.
         Raises UnexpectedModelBehavior if max retries exceeded.
         """
         if self.ctx is None:
