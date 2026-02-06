@@ -366,6 +366,94 @@ def test_output_validator():
     )
 
 
+def test_output_validator_retries():
+    """Test that ctx.retry and ctx.max_retries are correctly tracked in RunContext for output validators."""
+    retries_log: list[int] = []
+    max_retries_log: list[int] = []
+    target_retries = 3
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        # Always return the same value, let the validator control retries
+        args_json = '{"a": 1, "b": "foo"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(FunctionModel(return_model), output_type=Foo, output_retries=target_retries)
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+        retries_log.append(ctx.retry)
+        max_retries_log.append(ctx.max_retries)
+        # Succeed on the last retry
+        if ctx.retry == target_retries:
+            return o
+        else:
+            raise ModelRetry(f'Retry {ctx.retry}')
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, Foo)
+
+    # Should have been called target_retries + 1 times (0, 1, 2, 3)
+    assert retries_log == [0, 1, 2, 3]
+    assert max_retries_log == [target_retries] * (target_retries + 1)
+
+
+def test_output_function_retries():
+    """Test that ctx.retry and ctx.max_retries are correctly tracked in RunContext for output functions."""
+    retries_log: list[int] = []
+    max_retries_log: list[int] = []
+    target_retries = 3
+
+    def get_weather(ctx: RunContext[None], text: str) -> str:
+        retries_log.append(ctx.retry)
+        max_retries_log.append(ctx.max_retries)
+        if ctx.retry == target_retries:
+            return f'Weather: {text}'
+        else:
+            raise ModelRetry(f'Retry {ctx.retry}')
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='sunny')])
+
+    agent = Agent(FunctionModel(return_model), output_type=TextOutput(get_weather), output_retries=target_retries)
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'Weather: sunny'
+
+    # Should have been called target_retries + 1 times (0, 1, 2, 3)
+    assert retries_log == [0, 1, 2, 3]
+    assert max_retries_log == [target_retries] * (target_retries + 1)
+
+
+def test_tool_output_function_retries():
+    """Test that ctx.retry and ctx.max_retries are correctly tracked in RunContext for tool output functions."""
+    retries_log: list[int] = []
+    max_retries_log: list[int] = []
+    target_retries = 3
+
+    def get_weather(ctx: RunContext[None], city: str) -> str:
+        retries_log.append(ctx.retry)
+        max_retries_log.append(ctx.max_retries)
+        if ctx.retry == target_retries:
+            return f'Weather in {city}'
+        else:
+            raise ModelRetry(f'Retry {ctx.retry}')
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"city": "Mexico City"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(FunctionModel(return_model), output_type=get_weather, output_retries=target_retries)
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'Weather in Mexico City'
+
+    # Should have been called target_retries + 1 times (0, 1, 2, 3)
+    assert retries_log == [0, 1, 2, 3]
+    assert max_retries_log == [target_retries] * (target_retries + 1)
+
+
 class TestPartialOutput:
     """Tests for `ctx.partial_output` flag in output validators and output functions."""
 
@@ -3119,7 +3207,7 @@ def test_empty_response_with_finish_reason_length():
 def test_model_requests_blocked(env: TestEnv):
     try:
         env.set('GEMINI_API_KEY', 'foobar')
-        agent = Agent('google-gla:gemini-1.5-flash', output_type=tuple[str, str], defer_model_check=True)
+        agent = Agent('google-gla:gemini-3-flash-preview', output_type=tuple[str, str], defer_model_check=True)
 
         with pytest.raises(RuntimeError, match='Model requests are not allowed, since ALLOW_MODEL_REQUESTS is False'):
             agent.run_sync('Hello')
@@ -3129,7 +3217,7 @@ def test_model_requests_blocked(env: TestEnv):
 
 def test_override_model(env: TestEnv):
     env.set('GEMINI_API_KEY', 'foobar')
-    agent = Agent('google-gla:gemini-1.5-flash', output_type=tuple[int, str], defer_model_check=True)
+    agent = Agent('google-gla:gemini-3-flash-preview', output_type=tuple[int, str], defer_model_check=True)
 
     with agent.override(model='test'):
         result = agent.run_sync('Hello')
