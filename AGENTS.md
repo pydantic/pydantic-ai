@@ -33,7 +33,7 @@ Considering that the user's input does not necessarily match what the wider user
 - LLM provider API docs and SDK type definitions
 - other LLM/agent libraries' solutions to similar problems
 - Pydantic AI documentation on related features and established API patterns
-    - In particular, the docs on [agents](docs/agents.md), [dependency injection](docs/dependencies.md), [tools](docs/tools.md), [output](docs/output.md), and [message history](docs/message-history.md) are going to be relevant to many tasks.
+    - In particular, the docs on [agents](docs/agent.md), [dependency injection](docs/dependencies.md), [tools](docs/tools.md), [output](docs/output.md), and [message history](docs/message-history.md) are going to be relevant to many tasks.
 
 # Ensuring the task is ready for implementation
 
@@ -71,7 +71,7 @@ When you submit a PR, make sure you include the [PR template](.github/pull_reque
 
 The repo contains a `uv` workspace defining multiple Python packages:
 
-- `pydantic-ai-slim` in `pydantic_ai_slim/`: the [agent framework](docs/agents.md), including the `Agent` class and `Model` classes for each model provider/API
+- `pydantic-ai-slim` in `pydantic_ai_slim/`: the [agent framework](docs/agent.md), including the `Agent` class and `Model` classes for each model provider/API
     - This is a slim package with minimal dependencies and optional dependency groups for each model provider (e.g. `openai`, `anthropic`, `google`) or integration (e.g. `logfire`, `mcp`, `temporal`).
 - `pydantic-graph` in `pydantic_graph/`: the type-hint based [graph library](docs/graph.md) that powers the agent loop
 - `pydantic-evals` in `pydantic_evals/`: the [evaluation framework](docs/evals.md) for evaluating the arbitrary stochastic functions including LLMs and agents
@@ -87,10 +87,10 @@ The project uses:
 - `pre-commit`, can be installed with `uv tool install pre-commit`
 - `ruff` via `make lint` and `make format`
 - `pyright` via `make typecheck`
-- `pytest` in `/tests`, via `make test`, with:
+- `pytest` in `tests/`, via `make test`, with:
     - `inline-snapshot` for inline assertions
     - `pytest-recording` and `vcrpy` for recording and playing back requests to model APIs
-- `mkdocs` in `/docs`, via `make docs` and `make docs-serve`, served at <https://ai.pydantic.dev>, with:
+- `mkdocs` in `docs/`, via `make docs` and `make docs-serve`, served at <https://ai.pydantic.dev>, with:
     - `mkdocstrings-python` to generate API docs from docstrings and types
     - `mkdocs-material` to theme the docs
     - `tests/test_examples.py` to test all code examples in the docs (including docstrings)

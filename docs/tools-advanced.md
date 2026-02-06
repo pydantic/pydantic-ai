@@ -20,7 +20,7 @@ class User(BaseModel):
     age: int
 
 
-agent = Agent(model=OpenAIResponsesModel('gpt-5'))
+agent = Agent(model=OpenAIResponsesModel('gpt-5.2'))
 
 
 @agent.tool_plain
@@ -79,7 +79,7 @@ import time
 from pydantic_ai import Agent
 from pydantic_ai import ToolReturn, BinaryContent
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 
 @agent.tool_plain
 def click_and_capture(x: int, y: int) -> ToolReturn:
@@ -411,7 +411,7 @@ If a tool requires sequential/serial execution, you can pass the [`sequential`][
 Async functions are run on the event loop, while sync functions are offloaded to threads. To get the best performance, _always_ use an async function _unless_ you're doing blocking I/O (and there's no way to use a non-blocking library instead) or CPU-bound work (like `numpy` or `scikit-learn` operations), so that simple functions are not offloaded to threads unnecessarily.
 
 !!! note "Limiting tool executions"
-    You can cap tool executions within a run using [`UsageLimits(tool_calls_limit=...)`](agents.md#usage-limits). The counter increments only after a successful tool invocation. Output tools (used for [structured output](output.md)) are not counted in the `tool_calls` metric.
+    You can cap tool executions within a run using [`UsageLimits(tool_calls_limit=...)`](agent.md#usage-limits). The counter increments only after a successful tool invocation. Output tools (used for [structured output](output.md)) are not counted in the `tool_calls` metric.
 
 #### Output Tool Calls
 
