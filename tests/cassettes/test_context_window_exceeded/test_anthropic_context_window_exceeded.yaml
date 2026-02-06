@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1250135'
+      - '1250141'
       content-type:
       - application/json
       host:
@@ -11384,7 +11384,7 @@ interactions:
             word word word word word word word word word word word word word word word '
           type: text
         role: user
-      model: claude-3-5-haiku-latest
+      model: claude-haiku-4-5
       stream: false
     uri: https://gateway.pydantic.dev/proxy/anthropic/v1/messages?beta=true
   response:
@@ -11392,22 +11392,22 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '164'
+      - '172'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       nel:
       - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
       report-to:
-      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=lIB4KybW63mbxiwtwNRE7jmOZE%2FYfCIS2dHekmZ8UrAWFLPYFUk%2BzyyeyUlz13%2FHbsiqj7BX%2BJNGg8E2tXG6GFITZ%2BoP7ZEgAmEcWgn%2BJdDO2a4%3D"}]}'
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=Mythrg6KovcYUhlMRKl2YvsuuPcdOhVAT9NnDEbnixAM2ZqBM0tOpNW8mfOcWO%2BLulRy5A42N5VJCEg%2Bgrwr73l0%2BOZ0Tc%2FVjWQ8vAwsLLlHOgg%3D"}]}'
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
-      vary:
-      - accept-encoding
     parsed_body:
       error:
-        message: 'prompt is too long: 200021 tokens > 200000 maximum'
+        message: 'prompt is too long: 200027 tokens > 200000 maximum'
         type: invalid_request_error
-      request_id: req_011CXWpoBZy2CUmvvTEFsZ4A
+      request_id: req_011CXsbVC34PujYNC6P8wAbP
       type: error
     status:
       code: 400

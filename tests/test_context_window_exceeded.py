@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import shutil
-
 import pytest
 
 from pydantic_ai import Agent
@@ -27,7 +24,8 @@ with try_import() as groq_imports_successful:
     from pydantic_ai.providers.groq import GroqProvider
 
 with try_import() as google_imports_successful:
-    from pydantic_ai.models.google import GoogleModel  # pyright: ignore[reportUnusedImport] # noqa: F401
+    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as bedrock_imports_successful:
     from pydantic_ai.models.bedrock import BedrockConverseModel
@@ -57,14 +55,14 @@ async def test_openai_context_window_exceeded(allow_model_requests: None, openai
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 async def test_anthropic_context_window_exceeded(allow_model_requests: None, gateway_api_key: str):
     """Test that Anthropic context length exceeded errors raise ContextWindowExceeded."""
-    model = AnthropicModel('claude-3-5-haiku-latest', provider=gateway_provider('anthropic', api_key=gateway_api_key))
+    model = AnthropicModel('claude-haiku-4-5', provider=gateway_provider('anthropic', api_key=gateway_api_key))
     agent = Agent(model)
 
     with pytest.raises(ContextWindowExceeded) as exc_info:
         await agent.run(ANTHROPIC_HUGE_PROMPT)
 
     assert exc_info.value.status_code == 400
-    assert exc_info.value.model_name == 'claude-3-5-haiku-latest'
+    assert exc_info.value.model_name == 'claude-haiku-4-5'
 
 
 @pytest.mark.skipif(not groq_imports_successful(), reason='groq not installed')
@@ -81,13 +79,10 @@ async def test_groq_context_window_exceeded(allow_model_requests: None, groq_api
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='google-genai not installed')
-@pytest.mark.skipif(
-    not os.getenv('GOOGLE_APPLICATION_CREDENTIALS') and not shutil.which('gcloud'),
-    reason='Google credentials not available',
-)
-async def test_google_context_window_exceeded(allow_model_requests: None):
+async def test_google_context_window_exceeded(allow_model_requests: None, gemini_api_key: str):
     """Test that Google context length exceeded errors raise ContextWindowExceeded."""
-    agent = Agent('google-vertex:gemini-2.0-flash')
+    model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    agent = Agent(model)
 
     with pytest.raises(ContextWindowExceeded) as exc_info:
         await agent.run(GOOGLE_HUGE_PROMPT)
