@@ -561,7 +561,7 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
 
 
 @pytest.fixture()
-def skip_unless_vertex():
+def skip_unless_vertex():  # pragma: lax no cover
     if not os.getenv('CI', False) and not os.getenv('ENABLE_VERTEX', False):
         pytest.skip('Set ENABLE_VERTEX=1 or run in CI to enable vertex tests')
 

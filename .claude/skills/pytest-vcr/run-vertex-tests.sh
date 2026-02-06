@@ -24,8 +24,8 @@ unset GOOGLE_API_KEY GEMINI_API_KEY
 
 export GOOGLE_PROJECT="$PROJECT"
 export GOOGLE_CLOUD_PROJECT="$PROJECT"
-export GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION:-global}"
+export GOOGLE_LOCATION="${GOOGLE_LOCATION:-global}"
 
-echo "Vertex AI: project=$PROJECT location=$GOOGLE_CLOUD_LOCATION"
+echo "Vertex AI: project=$PROJECT location=$GOOGLE_LOCATION"
 
 ENABLE_VERTEX=1 uv run pytest "$@"

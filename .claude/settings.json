@@ -21,7 +21,8 @@
       "Bash(gh run view:*)",
       "Bash(gh run list:*)",
       "Bash(uv run:*)",
-      "Bash(make:*)"
+      "Bash(make:*)",
+      "Skill(pytest-vcr:*)"
     ],
     "ask": [
       "Bash(git add:*)",
