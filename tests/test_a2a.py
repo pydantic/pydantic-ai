@@ -1,4 +1,3 @@
-import uuid
 import base64
 from datetime import timezone
 
