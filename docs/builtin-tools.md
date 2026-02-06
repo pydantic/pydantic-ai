@@ -156,6 +156,12 @@ _(This example is complete, it can be run "as is")_
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
 
+!!! note "Anthropic Pause Turn"
+    When using server-side tools like web search or skills, Anthropic may pause mid-turn and return
+    a `pause_turn` stop reason. Pydantic AI handles this automatically by continuing the conversation
+    with a follow-up request (up to 5 times per run). See the
+    [Anthropic provider docs](models/anthropic.md#pause-turn-handling) for details.
+
 ## Code Execution Tool
 
 The [`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool] enables your agent to execute code

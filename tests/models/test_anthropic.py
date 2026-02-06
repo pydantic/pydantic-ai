@@ -46,7 +46,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
@@ -305,6 +305,22 @@ async def test_pause_turn_continues_run(allow_model_requests: None):
     assert isinstance(content_blocks, list)
     assert content_blocks[0]['type'] == 'text'
     assert content_blocks[0]['text'] == 'paused'
+
+
+async def test_pause_turn_exceeds_max_continuations(allow_model_requests: None):
+    """Test that exceeding 5 consecutive pause_turn responses raises UnexpectedModelBehavior."""
+    responses: list[BetaMessage | Exception] = []
+    for _ in range(6):
+        c = completion_message([BetaTextBlock(text='paused', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+        c.stop_reason = 'pause_turn'
+        responses.append(c)
+
+    mock_client = MockAnthropic.create_mock(responses)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum continuations'):
+        await agent.run('test prompt')
 
 
 async def test_pause_turn_web_search_vcr(allow_model_requests: None, anthropic_api_key: str):

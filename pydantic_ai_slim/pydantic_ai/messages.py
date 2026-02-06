@@ -112,8 +112,8 @@ FinishReason: TypeAlias = Literal[
 ]
 """Reason the model finished generating the response.
 
-Normalized to OpenTelemetry values where possible; `incomplete` indicates the provider paused the turn and
-expects the client to continue with a follow-up request.
+Mostly normalized to OpenTelemetry semantic convention values. `incomplete` is a Pydantic AI-specific value
+indicating the provider paused the turn and expects the client to continue with a follow-up request.
 """
 
 ProviderDetailsDelta: TypeAlias = dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None
