@@ -446,6 +446,54 @@ class AsyncAccuracy(ReportEvaluator):
         )
 ```
 
+## Serialization
+
+Report evaluators are serialized to and from YAML/JSON dataset files using the same format as
+case-level evaluators. This means datasets with report evaluators can be fully round-tripped
+through file serialization.
+
+**Example YAML dataset with report evaluators:**
+
+```yaml
+# yaml-language-server: $schema=./test_cases_schema.json
+name: classifier_eval
+cases:
+  - name: cat_test
+    inputs: The cat meows
+    expected_output: cat
+  - name: dog_test
+    inputs: The dog barks
+    expected_output: dog
+report_evaluators:
+  - ConfusionMatrixEvaluator
+  - PrecisionRecallEvaluator:
+      score_key: confidence
+      positive_from: assertions
+      positive_key: is_correct
+```
+
+Built-in report evaluators (`ConfusionMatrixEvaluator`, `PrecisionRecallEvaluator`) are
+recognized automatically. For custom report evaluators, pass them via `custom_report_evaluator_types`:
+
+```python {test="skip" lint="skip"}
+from pydantic_evals import Dataset
+
+dataset = Dataset[str, str, None].from_file(
+    'test_cases.yaml',
+    custom_report_evaluator_types=[MyCustomReportEvaluator],
+)
+```
+
+Similarly, when saving a dataset with custom report evaluators, pass them to `to_file` so the
+JSON schema includes them:
+
+```python {test="skip" lint="skip"}
+dataset.to_file(
+    'test_cases.yaml',
+    custom_report_evaluator_types=[MyCustomReportEvaluator],
+)
+```
+
 ## Viewing Analyses in Logfire
 
 When [Logfire is configured](../how-to/logfire-integration.md), analyses are automatically attached

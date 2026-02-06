@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import inspect
 from abc import abstractmethod
-from dataclasses import dataclass
+from dataclasses import MISSING, dataclass, fields
 from typing import Any, Generic
 
+from pydantic import ConfigDict, model_serializer
+from pydantic_core import to_jsonable_python
+from pydantic_core.core_schema import SerializationInfo
 from typing_extensions import TypeVar
 
+from pydantic_ai import _utils
+
 from ..reporting.analyses import ReportAnalysis
+from .spec import EvaluatorSpec
 
 InputsT = TypeVar('InputsT', default=Any, contravariant=True)
 OutputT = TypeVar('OutputT', default=Any, contravariant=True)
@@ -36,6 +42,13 @@ class ReportEvaluator(Generic[InputsT, OutputT, MetadataT]):
     or scalar statistics.
     """
 
+    __pydantic_config__ = ConfigDict(arbitrary_types_allowed=True)
+
+    @classmethod
+    def get_serialization_name(cls) -> str:
+        """Get the name used for serialization."""
+        return cls.__name__
+
     @abstractmethod
     def evaluate(
         self, ctx: ReportEvaluatorContext[InputsT, OutputT, MetadataT]
@@ -52,6 +65,40 @@ class ReportEvaluator(Generic[InputsT, OutputT, MetadataT]):
             return await output
         return output
 
-    def get_serialization_name(self) -> str:
-        """Get the name used for serialization."""
-        return type(self).__name__
+    @model_serializer(mode='plain')
+    def serialize(self, info: SerializationInfo) -> Any:
+        """Serialize this ReportEvaluator to a JSON-serializable form."""
+        return to_jsonable_python(
+            self.as_spec(),
+            context=info.context,
+            serialize_unknown=True,
+        )
+
+    def as_spec(self) -> EvaluatorSpec:
+        raw_arguments = self.build_serialization_arguments()
+
+        arguments: None | tuple[Any,] | dict[str, Any]
+        if len(raw_arguments) == 0:
+            arguments = None
+        elif len(raw_arguments) == 1:
+            arguments = (next(iter(raw_arguments.values())),)
+        else:
+            arguments = raw_arguments
+
+        return EvaluatorSpec(name=self.get_serialization_name(), arguments=arguments)
+
+    def build_serialization_arguments(self) -> dict[str, Any]:
+        """Build the arguments for serialization, excluding defaults."""
+        raw_arguments: dict[str, Any] = {}
+        for field in fields(self):
+            value = getattr(self, field.name)
+            if field.default is not MISSING:
+                if value == field.default:
+                    continue
+            if field.default_factory is not MISSING:
+                if value == field.default_factory():  # pragma: no branch
+                    continue
+            raw_arguments[field.name] = value
+        return raw_arguments
+
+    __repr__ = _utils.dataclasses_no_defaults_repr

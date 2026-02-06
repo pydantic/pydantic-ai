@@ -467,3 +467,90 @@ def test_report_rendering_includes_analyses():
 def test_evaluation_report_analyses_default():
     report = EvaluationReport(name='test', cases=[])
     assert report.analyses == []
+
+
+# --- ReportEvaluator serialization tests ---
+
+
+def test_report_evaluator_get_serialization_name():
+    """get_serialization_name works as classmethod and on instance."""
+    assert ConfusionMatrixEvaluator.get_serialization_name() == 'ConfusionMatrixEvaluator'
+    assert PrecisionRecallEvaluator.get_serialization_name() == 'PrecisionRecallEvaluator'
+    # Also works on instance
+    assert ConfusionMatrixEvaluator().get_serialization_name() == 'ConfusionMatrixEvaluator'
+
+
+def test_report_evaluator_as_spec_no_args():
+    """Report evaluator with all defaults produces spec with no arguments."""
+    from pydantic_evals.evaluators.spec import EvaluatorSpec
+
+    evaluator = ConfusionMatrixEvaluator()
+    spec = evaluator.as_spec()
+    assert isinstance(spec, EvaluatorSpec)
+    assert spec.name == 'ConfusionMatrixEvaluator'
+    assert spec.arguments is None
+
+
+def test_report_evaluator_as_spec_with_args():
+    """Report evaluator with non-default args produces spec with arguments."""
+    evaluator = ConfusionMatrixEvaluator(predicted_from='labels', predicted_key='pred', title='Custom CM')
+    spec = evaluator.as_spec()
+    assert spec.name == 'ConfusionMatrixEvaluator'
+    assert isinstance(spec.arguments, dict)
+    assert spec.arguments['predicted_from'] == 'labels'
+    assert spec.arguments['predicted_key'] == 'pred'
+    assert spec.arguments['title'] == 'Custom CM'
+
+
+def test_report_evaluator_as_spec_single_arg():
+    """Report evaluator with exactly one non-default arg uses tuple form."""
+    evaluator = ConfusionMatrixEvaluator(title='My Matrix')
+    spec = evaluator.as_spec()
+    assert spec.name == 'ConfusionMatrixEvaluator'
+    assert isinstance(spec.arguments, tuple)
+    assert spec.arguments == ('My Matrix',)
+
+
+def test_report_evaluator_build_serialization_arguments_excludes_defaults():
+    """ConfusionMatrixEvaluator with all defaults returns empty dict."""
+    evaluator = ConfusionMatrixEvaluator()
+    args = evaluator.build_serialization_arguments()
+    assert args == {}
+
+
+def test_report_evaluator_serializes_in_model_dump():
+    """Dataset with report evaluators includes them in model_dump output."""
+    dataset = Dataset[str, str, None](
+        cases=[Case(inputs='hello', expected_output='world')],
+        report_evaluators=[ConfusionMatrixEvaluator()],
+    )
+    dumped = dataset.model_dump(mode='json', context={'use_short_form': True})
+    assert 'report_evaluators' in dumped
+    assert dumped['report_evaluators'] == ['ConfusionMatrixEvaluator']
+
+
+def test_report_evaluator_serializes_with_args_in_model_dump():
+    """Dataset with report evaluators with args includes them in model_dump output."""
+    dataset = Dataset[str, str, None](
+        cases=[Case(inputs='hello', expected_output='world')],
+        report_evaluators=[ConfusionMatrixEvaluator(title='Custom')],
+    )
+    dumped = dataset.model_dump(mode='json', context={'use_short_form': True})
+    assert dumped['report_evaluators'] == [{'ConfusionMatrixEvaluator': 'Custom'}]
+
+
+def test_report_evaluator_repr():
+    """Custom @dataclass(repr=False) report evaluator inherits no-defaults repr."""
+
+    @dataclass(repr=False)
+    class CustomEvaluator(ReportEvaluator):
+        threshold: float = 0.5
+
+        def evaluate(self, ctx: ReportEvaluatorContext) -> ReportAnalysis:  # pragma: no cover
+            ...
+
+    evaluator = CustomEvaluator()
+    assert repr(evaluator).endswith('CustomEvaluator()')
+
+    evaluator_with_args = CustomEvaluator(threshold=0.8)
+    assert repr(evaluator_with_args).endswith('CustomEvaluator(threshold=0.8)')

@@ -12,6 +12,12 @@ from ..reporting.analyses import (
 )
 from .report_evaluator import ReportEvaluator, ReportEvaluatorContext
 
+__all__ = (
+    'ConfusionMatrixEvaluator',
+    'PrecisionRecallEvaluator',
+    'DEFAULT_REPORT_EVALUATORS',
+)
+
 
 @dataclass
 class ConfusionMatrixEvaluator(ReportEvaluator):
@@ -148,3 +154,9 @@ class PrecisionRecallEvaluator(ReportEvaluator):
             label = case.labels.get(self.positive_key)
             return bool(label.value) if label else None
         return None
+
+
+DEFAULT_REPORT_EVALUATORS: tuple[type[ReportEvaluator[Any, Any, Any]], ...] = (
+    ConfusionMatrixEvaluator,
+    PrecisionRecallEvaluator,
+)
