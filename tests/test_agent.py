@@ -6572,7 +6572,7 @@ async def test_thinking_only_response_retry():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Please return text or call a tool.',
+                        content='Please return text.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
@@ -6583,7 +6583,7 @@ async def test_thinking_only_response_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='Final answer')],
-                usage=RequestUsage(input_tokens=67, output_tokens=8),
+                usage=RequestUsage(input_tokens=63, output_tokens=8),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
