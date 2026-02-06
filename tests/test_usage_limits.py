@@ -461,15 +461,16 @@ def test_usage_unknown_provider():
 
 def test_usage_limits_preserves_explicit_zero():
     """Test that explicit 0 token limits are preserved and not replaced by deprecated fallbacks."""
-    # When new arg is 0 and deprecated arg is non-zero, should use 0 (not fallback)
-    # Using type: ignore since we're intentionally testing mixed deprecated/new args
-    limits = UsageLimits(input_tokens_limit=0, request_tokens_limit=123)  # type: ignore[call-overload]
+    # When input_tokens_limit=0 and deprecated request_tokens_limit is also set,
+    # the explicit 0 should be preserved (not overwritten by the deprecated fallback)
+    # pyright: ignore needed because type overloads don't allow mixing both args
+    limits = UsageLimits(input_tokens_limit=0, request_tokens_limit=123)  # pyright: ignore[call-overload]
     assert limits.input_tokens_limit == 0
 
-    limits = UsageLimits(output_tokens_limit=0, response_tokens_limit=456)  # type: ignore[call-overload]
+    limits = UsageLimits(output_tokens_limit=0, response_tokens_limit=456)  # pyright: ignore[call-overload]
     assert limits.output_tokens_limit == 0
 
-    # When new arg is not passed, should use deprecated fallback
+    # When only deprecated arg is passed, should use it as fallback
     limits = UsageLimits(request_tokens_limit=123)
     assert limits.input_tokens_limit == 123
 
@@ -480,6 +481,6 @@ def test_usage_limits_preserves_explicit_zero():
     limits = UsageLimits()
     assert limits.input_tokens_limit is None
 
-    # When only new arg is set, should use it
+    # When only current arg is set, should use it
     limits = UsageLimits(input_tokens_limit=100)
     assert limits.input_tokens_limit == 100
