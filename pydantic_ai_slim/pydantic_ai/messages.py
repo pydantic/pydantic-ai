@@ -502,7 +502,7 @@ class BinaryContent:
         compare=False, default=None
     )
     _media_type: Annotated[
-        AudioMediaType | ImageMediaType | DocumentMediaType | VideoMediaType | str | None,
+        AudioMediaType | ImageMediaType | DocumentMediaType | TextMediaType | VideoMediaType | str | None,
         pydantic.Field(alias='media_type', default=None, exclude=True),
     ] = field(compare=False, default=None)
     """The media type of the binary data."""
@@ -628,7 +628,9 @@ class BinaryContent:
         """Return the media type of the binary content."""
         return self._media_type or self._infer_media_type()
 
-    def _infer_media_type(self) -> AudioMediaType | ImageMediaType | DocumentMediaType | VideoMediaType | str:
+    def _infer_media_type(
+        self,
+    ) -> AudioMediaType | ImageMediaType | DocumentMediaType | TextMediaType | VideoMediaType | str:
         """Infer the media type of the file name."""
         if self.file_name:
             mime_type, _ = _mime_types.guess_type(self.file_name)
