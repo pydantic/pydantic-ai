@@ -7,7 +7,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        YjU3NDMxZDItOTA3ZS00MmU3LWIwNjQtMWMxNTY3ZjYyMWJm
+        YjVlODgyY2UtYjIzZS00ZGZkLWE4NzItNzQwOTg0ZDMyODk5
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -28,7 +28,7 @@ interactions:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 23736
+        latencyMs: 23788
       output:
         message:
           content:
@@ -36,7 +36,7 @@ interactions:
               input:
                 city: Paris
               name: get_weather
-              toolUseId: tooluse_Pe1c0o95NHDEUxlS9puB0a
+              toolUseId: tooluse_Ai4RrFg5DoPUXwVPPENClD
               type: tool_use
           role: assistant
       stopReason: tool_use
@@ -54,15 +54,15 @@ interactions:
       message: OK
 - request:
     body: '{"messages": [{"role": "user", "content": [{"text": "What''s the weather in Paris?"}]}, {"role": "assistant", "content":
-      [{"toolUse": {"toolUseId": "tooluse_Pe1c0o95NHDEUxlS9puB0a", "name": "get_weather", "input": {"city": "Paris"}}}]},
-      {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_Pe1c0o95NHDEUxlS9puB0a", "content": [{"text": "Weather
+      [{"toolUse": {"toolUseId": "tooluse_Ai4RrFg5DoPUXwVPPENClD", "name": "get_weather", "input": {"city": "Paris"}}}]},
+      {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_Ai4RrFg5DoPUXwVPPENClD", "content": [{"text": "Weather
       in Paris: Sunny, 22\u00b0C"}], "status": "success"}}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools":
       [{"toolSpec": {"name": "get_weather", "inputSchema": {"json": {"additionalProperties": false, "properties": {"city":
       {"type": "string"}}, "required": ["city"], "type": "object"}}, "strict": true}}], "toolChoice": {"auto": {}}}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        OTk1ZWMyNTgtYTFkMS00NWUwLWJkMmQtN2NlZTYyZmYxZDgw
+        NTM2MTBlMjctODA2Zi00YWQxLThiZWUtMjIyZTBkYTU4NjE1
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -78,16 +78,16 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '463'
+      - '461'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 2216
+        latencyMs: 1854
       output:
         message:
           content:
-          - text: The weather in Paris is currently sunny with a temperature of 22°C (approximately 72°F). It's a beautiful
+          - text: The current weather in Paris is sunny with a temperature of 22°C (approximately 72°F). It's a beautiful
               day!
           role: assistant
       stopReason: end_turn
