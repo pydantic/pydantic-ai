@@ -1,0 +1,238 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '676'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      model: openai/gpt-oss-120b
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '821'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: The capital of France is **Paris**.
+          reasoning: 'The user asks: "What is the capital of France?" Straightforward answer: Paris. No need for tools.'
+          role: assistant
+      created: 1770418699
+      id: chatcmpl-da0835bd-0236-4bb7-bdc3-7dd4c0ae225d
+      model: openai/gpt-oss-120b
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_6b677c2caf
+      usage:
+        completion_time: 0.090022373
+        completion_tokens: 42
+        completion_tokens_details:
+          reasoning_tokens: 24
+        prompt_time: 0.006995372
+        prompt_tokens: 159
+        queue_time: 0.178020405
+        total_time: 0.097017745
+        total_tokens: 201
+      usage_breakdown: null
+      x_groq:
+        id: req_01kgtjtyqpekxr0gj0qe3z3hw8
+        seed: 481747608
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1160'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=19O1eGEKlG1ZwAayph0XRPlkK93kFtJ1uPYGyId6tDU-1770418698.8659203-1.0.1.1-sL4idhoYgCFb_D1Nubsch1t1FD.3FbzNqPCjqpHWHKLtk6Z6_sSylpOi.llJZ.iLNzZKMSE2qMsMVfT9iqSFBjyFUe2.rpIC2A_zn2LYe6P8.QPQn18Owjf2xOlTa5Wo
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      - content: |-
+          <think>
+          The user asks: "What is the capital of France?" Straightforward answer: Paris. No need for tools.
+          </think>
+
+          The capital of France is **Paris**.
+        role: assistant
+      - content: |-
+          1 validation error:
+          ```json
+          [
+            {
+              "type": "json_invalid",
+              "loc": [],
+              "msg": "Invalid JSON: expected value at line 1 column 1",
+              "input": "The capital of France is **Paris**."
+            }
+          ]
+          ```
+
+          Fix the errors and try again.
+        role: user
+      model: openai/gpt-oss-120b
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '1325'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          reasoning: |-
+            The user shows a validation error indicating they expected JSON response, likely using the final_result function? The system expects JSON with fields city and country maybe. The developer provided function final_result with schema {city:string, country:string}. The user asks "What is the capital of France?" We should respond with JSON containing city: "Paris", country: "France". Use the final_result function.
+
+            We must call the function final_result.
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris","country":"France"}'
+              name: final_result
+            id: fc_50db02f1-eec1-4fd6-bc5c-76329b671254
+            type: function
+      created: 1770418699
+      id: chatcmpl-e6dd343d-a30d-42f4-95d1-af214bb62445
+      model: openai/gpt-oss-120b
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_6b677c2caf
+      usage:
+        completion_time: 0.255548785
+        completion_tokens: 121
+        completion_tokens_details:
+          reasoning_tokens: 87
+        prompt_time: 0.015751765
+        prompt_tokens: 274
+        queue_time: 0.004658768
+        total_time: 0.27130055
+        total_tokens: 395
+      usage_breakdown: null
+      x_groq:
+        id: req_01kgtjtz6wf5qvgv1kvnxyyz28
+        seed: 1527768082
+    status:
+      code: 200
+      message: OK
+version: 1

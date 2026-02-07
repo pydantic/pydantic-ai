@@ -1,0 +1,88 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '412'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      model: moonshotai/kimi-k2-instruct
+      n: 1
+      response_format:
+        json_schema:
+          name: CityLocation
+          schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+          strict: true
+        type: json_schema
+      stream: false
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '664'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: '{"city":"Paris","country":"France"}'
+          role: assistant
+      created: 1770418656
+      id: chatcmpl-61127624-2a26-440d-b9d6-79975ecc1227
+      model: moonshotai/kimi-k2-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_05df423bab
+      usage:
+        completion_time: 0.012836342
+        completion_tokens: 10
+        prompt_time: 0.016542654
+        prompt_tokens: 89
+        queue_time: 0.164691755
+        total_time: 0.029378996
+        total_tokens: 99
+      usage_breakdown: null
+      x_groq:
+        id: req_01kgtjsn8nfwmrcdqtwjzxzseg
+        seed: 103850468
+    status:
+      code: 200
+      message: OK
+version: 1
