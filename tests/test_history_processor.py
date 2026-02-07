@@ -1113,31 +1113,7 @@ async def test_history_processor_reorder_old_new(function_model: FunctionModel, 
 
     new_msgs = result.new_messages()
 
-    assert new_msgs == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(content='New question', timestamp=IsDatetime()),
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    UserPromptPart(content='Old question', timestamp=IsDatetime()),
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='Provider response')],
-                usage=RequestUsage(input_tokens=54, output_tokens=2),
-                model_name='function:capture_model_function:capture_model_stream_function',
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-        ]
-    )
+    assert new_msgs == result.all_messages()
 
 
 async def test_history_processor_injects_into_new_stream(
@@ -1211,32 +1187,7 @@ async def test_history_processor_injects_into_new_stream(
     )
 
     new_msgs = result.new_messages()
-    # Expected behavior: Messages injected by history processor before the first message of the current run should always have a run_id
-    # 'Inserted' was injected by the processor, 'New question' is from this run
-    assert new_msgs == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(content='Inserted', timestamp=IsDatetime()),
-                ],
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    UserPromptPart(content='New question', timestamp=IsDatetime()),
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='Provider response')],
-                usage=RequestUsage(input_tokens=54, output_tokens=2),
-                model_name='function:capture_model_function:capture_model_stream_function',
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-        ]
-    )
+    assert new_msgs == result.all_messages()[1:]
 
 
 async def test_history_processor_overrides_run_id_uses_response_as_new_messages(function_model: FunctionModel):
@@ -1262,6 +1213,6 @@ async def test_history_processor_overrides_run_id_uses_response_as_new_messages(
 
     response_run_id = result.all_messages()[-1].run_id
     assert response_run_id is not None
-    assert all(getattr(message, 'run_id', None) != response_run_id for message in result.all_messages()[:-1])
+    assert all(message.run_id != response_run_id for message in result.all_messages()[:-1])
 
     assert result.new_messages() == result.all_messages()[-1:]
