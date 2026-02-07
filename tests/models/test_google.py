@@ -2689,18 +2689,23 @@ async def test_google_extra_headers(allow_model_requests: None, google_provider:
 
 
 async def test_google_extra_headers_in_config(allow_model_requests: None):
+    from typing import cast
+
     m = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
     model_settings = GoogleModelSettings(extra_headers={'Extra-Header-Key': 'Extra-Header-Value'})
 
-    contents, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
         messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
         model_settings=model_settings,
         model_request_parameters=ModelRequestParameters(),
     )
 
-    http_headers = config['http_options']['headers']
-    assert http_headers['Extra-Header-Key'] == 'Extra-Header-Value'
-    assert http_headers['Content-Type'] == 'application/json'
+    # Cast to work around GenerateContentConfigDict having partially unknown types
+    # (same pattern as google.py:308)
+    config_dict = cast(dict[str, Any], config)
+    headers = config_dict['http_options']['headers']
+    assert headers['Extra-Header-Key'] == 'Extra-Header-Value'
+    assert headers['Content-Type'] == 'application/json'
 
 
 async def test_google_tool_output(allow_model_requests: None, google_provider: GoogleProvider):
