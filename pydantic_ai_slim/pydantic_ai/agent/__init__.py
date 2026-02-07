@@ -39,7 +39,7 @@ from .._agent_graph import (
 )
 from .._output import OutputToolset
 from .._tool_manager import ParallelExecutionMode, ToolManager
-from ..builtin_tools import AbstractBuiltinTool
+from ..builtin_tools import AbstractBuiltinTool, ToolSearchTool
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec
 from ..run import AgentRun, AgentRunResult
@@ -64,6 +64,7 @@ from ..toolsets._dynamic import (
     DynamicToolset,
     ToolsetFunc,
 )
+from ..toolsets._searchable import SearchableToolset
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
@@ -1166,6 +1167,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        defer_loading: bool = False,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -1185,6 +1187,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        defer_loading: bool = False,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -1236,6 +1239,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
+            defer_loading: Whether to defer loading this tool until it's discovered via tool search. Defaults to False.
         """
 
         def tool_decorator(
@@ -1257,6 +1261,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 requires_approval=requires_approval,
                 metadata=metadata,
                 timeout=timeout,
+                defer_loading=defer_loading,
             )
             return func_
 
@@ -1282,6 +1287,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        defer_loading: bool = False,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -1301,6 +1307,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        defer_loading: bool = False,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -1352,6 +1359,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
+            defer_loading: Whether to defer loading this tool until it's discovered via tool search. Defaults to False.
         """
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
@@ -1371,6 +1379,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 requires_approval=requires_approval,
                 metadata=metadata,
                 timeout=timeout,
+                defer_loading=defer_loading,
             )
             return func_
 
@@ -1530,6 +1539,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         toolset = toolset.visit_and_replace(copy_dynamic_toolsets)
 
+        if toolset.has_deferred_tools():
+            config = self._get_tool_search_config()
+            toolset = SearchableToolset(wrapped=toolset, max_results=config.max_results)
+
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)
 
@@ -1540,6 +1553,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolset = CombinedToolset([output_toolset, toolset])
 
         return toolset
+
+    def _get_tool_search_config(self) -> ToolSearchTool:
+        """Get the ToolSearchTool config from builtin tools, or return defaults."""
+        for tool in self._builtin_tools:
+            if isinstance(tool, ToolSearchTool):
+                return tool
+        return ToolSearchTool()
 
     @property
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:

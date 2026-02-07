@@ -20,6 +20,7 @@ __all__ = (
     'MemoryTool',
     'MCPServerTool',
     'FileSearchTool',
+    'ToolSearchTool',
     'BUILTIN_TOOL_TYPES',
     'DEPRECATED_BUILTIN_TOOLS',
     'SUPPORTED_BUILTIN_TOOLS',
@@ -462,6 +463,25 @@ class FileSearchTool(AbstractBuiltinTool):
     """
 
     kind: str = 'file_search'
+    """The kind of tool."""
+
+
+@dataclass(kw_only=True)
+class ToolSearchTool(AbstractBuiltinTool):
+    """Configuration for the tool search builtin tool (`SearchableToolset`).
+
+    When enabled, tools marked with `defer_loading=True` are not initially presented to the model.
+    Instead, a `search_tools` tool is provided that allows the model to discover available tools
+    by searching their names and descriptions.
+
+    This is useful when you have many tools and want to reduce the initial context size
+    while still allowing the model to discover and use the full set of tools as needed.
+    """
+
+    max_results: int = 5
+    """Maximum number of tools to return from a search query."""
+
+    kind: str = 'tool_search'
     """The kind of tool."""
 
 
