@@ -1347,6 +1347,30 @@ class OpenAIResponsesModel(Model):
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool})
 
+    async def compact_messages(
+        self,
+        messages: list[ModelRequest | ModelResponse],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        check_allow_model_requests()
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
+        response = await self._responses_compact(
+            messages, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
+        )
+
+        # Handle ModelResponse
+        if isinstance(response, ModelResponse):  # pragma: no cover
+            return response
+
+        if not response.output:  # pragma: no cover
+            raise UnexpectedModelBehavior('CompactedResponse returned with no output items')
+        compaction = response.output[-1]
+        return ModelResponse(parts=[], provider_name=self.system, provider_details=compaction.model_dump())
+
     async def request(
         self,
         messages: list[ModelRequest | ModelResponse],
@@ -1544,6 +1568,37 @@ class OpenAIResponsesModel(Model):
             if first_chunk.response.created_at
             else None,
         )
+
+    async def _responses_compact(
+        self,
+        messages: list[ModelRequest | ModelResponse],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters | None = None,
+    ) -> responses.CompactedResponse | ModelResponse:
+        previous_response_id = model_settings.get('openai_previous_response_id')
+        if previous_response_id == 'auto':
+            previous_response_id, messages = self._get_previous_response_id_and_new_messages(
+                messages, allow_no_new_messages=True
+            )
+
+        instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
+
+        try:
+            return await self.client.responses.compact(
+                input=openai_messages,
+                model=self.model_name,
+                instructions=instructions,
+                previous_response_id=previous_response_id or OMIT,
+            )
+        except APIStatusError as e:  # pragma: no cover
+            if model_response := _check_azure_content_filter(e, self.system, self.model_name):
+                return model_response
+
+            if (status_code := e.status_code) >= 400:
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+            raise  # pragma: lax no cover
+        except APIConnectionError as e:  # pragma: no cover
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
     @overload
     async def _responses_create(
@@ -1798,7 +1853,7 @@ class OpenAIResponsesModel(Model):
         }
 
     def _get_previous_response_id_and_new_messages(
-        self, messages: list[ModelMessage]
+        self, messages: list[ModelMessage], allow_no_new_messages: bool = False
     ) -> tuple[str | None, list[ModelMessage]]:
         # When `openai_previous_response_id` is set to 'auto', the most recent
         # `provider_response_id` from the message history is selected and all
@@ -1814,7 +1869,7 @@ class OpenAIResponsesModel(Model):
             else:
                 trimmed_messages.append(m)
 
-        if previous_response_id and trimmed_messages:
+        if previous_response_id and (allow_no_new_messages or trimmed_messages):
             return previous_response_id, list(reversed(trimmed_messages))
         else:
             return None, messages
@@ -1823,7 +1878,7 @@ class OpenAIResponsesModel(Model):
         self,
         messages: list[ModelMessage],
         model_settings: OpenAIResponsesModelSettings,
-        model_request_parameters: ModelRequestParameters,
+        model_request_parameters: ModelRequestParameters | None = None,
     ) -> tuple[str | Omit, list[responses.ResponseInputItemParam]]:
         """Maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam` i.e. the OpenAI Responses API input format.
 
@@ -1878,6 +1933,16 @@ class OpenAIResponsesModel(Model):
                 web_search_item: responses.ResponseFunctionWebSearchParam | None = None
                 file_search_item: responses.ResponseFileSearchToolCallParam | None = None
                 code_interpreter_item: responses.ResponseCodeInterpreterToolCallParam | None = None
+
+                if message.provider_details and message.provider_details.get('type') == 'compaction':
+                    compacted_response_item = responses.ResponseCompactionItemParamParam(
+                        id=message.provider_details['id'],
+                        encrypted_content=message.provider_details['encrypted_content'],
+                        type='compaction',
+                    )
+                    openai_messages.append(compacted_response_item)
+                    continue
+
                 for item in message.parts:
                     should_send_item_id = send_item_ids and (
                         item.provider_name == self.system
