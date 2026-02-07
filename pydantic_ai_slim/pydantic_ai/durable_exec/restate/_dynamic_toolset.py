@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, cast
 
 from pydantic import ValidationError
 from pydantic.errors import PydanticUserError
@@ -52,14 +52,17 @@ class RestateDynamicToolset(WrapperToolset[AgentDepsT]):
         self, wrapped: DynamicToolset[AgentDepsT], context: Context, *, disable_auto_wrapping_tools: bool = False
     ):
         super().__init__(wrapped)
-        self._wrapped = wrapped
         self._context = context
         self._call_options = RunOptions[RestateContextRunResult](serde=CONTEXT_RUN_SERDE)
         self._disable_auto_wrapping_tools = disable_auto_wrapping_tools
 
     @property
+    def _dynamic_toolset(self) -> DynamicToolset[AgentDepsT]:
+        return cast(DynamicToolset[AgentDepsT], self.wrapped)
+
+    @property
     def id(self) -> str | None:  # pragma: no cover
-        return self._wrapped.id
+        return self._dynamic_toolset.id
 
     async def __aenter__(self) -> Self:
         """No-op: underlying toolset I/O must occur inside `ctx.run_typed()` for durability."""
@@ -77,8 +80,8 @@ class RestateDynamicToolset(WrapperToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         async def get_tools_in_context() -> RestateDynamicGetToolsContextRunResult:
-            async with self._wrapped:
-                tools = await self._wrapped.get_tools(ctx)
+            async with self._dynamic_toolset:
+                tools = await self._dynamic_toolset.get_tools(ctx)
                 return RestateDynamicGetToolsContextRunResult(
                     output={
                         name: _ToolInfo(
@@ -103,12 +106,12 @@ class RestateDynamicToolset(WrapperToolset[AgentDepsT]):
         # If automatic tool wrapping is disabled, dynamic toolset *function tools* should be executed outside
         # ctx.run_typed so tool implementations can use the Restate context directly.
         if self._disable_auto_wrapping_tools and self._is_function_tool(tool):
-            async with self._wrapped:
-                tools = await self._wrapped.get_tools(ctx)
+            async with self._dynamic_toolset:
+                tools = await self._dynamic_toolset.get_tools(ctx)
                 real_tool = tools.get(name)
                 if real_tool is None:  # pragma: no cover
                     raise UserError(
-                        f'Tool {name!r} not found in dynamic toolset {self._wrapped.label}. '
+                        f'Tool {name!r} not found in dynamic toolset {self._dynamic_toolset.label}. '
                         'The dynamic toolset function may have returned a different toolset than expected.'
                     )
 
@@ -117,17 +120,17 @@ class RestateDynamicToolset(WrapperToolset[AgentDepsT]):
                 except ValidationError as e:
                     raise ModelRetry(str(e)) from e
 
-                return await self._wrapped.call_tool(name, args_dict, ctx, real_tool)
+                return await self._dynamic_toolset.call_tool(name, args_dict, ctx, real_tool)
 
         async def call_tool_in_context() -> RestateContextRunResult:
             # Re-instantiate the dynamic toolset inside the durable step so any underlying I/O happens
             # within `ctx.run_typed(...)`, and ensure resources are cleaned up afterwards.
-            async with self._wrapped:
-                tools = await self._wrapped.get_tools(ctx)
+            async with self._dynamic_toolset:
+                tools = await self._dynamic_toolset.get_tools(ctx)
                 real_tool = tools.get(name)
                 if real_tool is None:
                     raise TerminalError(
-                        f'Tool {name!r} not found in dynamic toolset {self._wrapped.label}. '
+                        f'Tool {name!r} not found in dynamic toolset {self._dynamic_toolset.label}. '
                         'The dynamic toolset function may have returned a different toolset than expected.'
                     )
 
@@ -138,7 +141,7 @@ class RestateDynamicToolset(WrapperToolset[AgentDepsT]):
                     return RestateContextRunResult(kind='model_retry', output=None, error=str(e))
 
                 try:
-                    output = await self._wrapped.call_tool(name, args_dict, ctx, real_tool)
+                    output = await self._dynamic_toolset.call_tool(name, args_dict, ctx, real_tool)
                     return RestateContextRunResult(kind='output', output=output, error=None)
                 except ModelRetry as e:
                     return RestateContextRunResult(kind='model_retry', output=None, error=e.message)

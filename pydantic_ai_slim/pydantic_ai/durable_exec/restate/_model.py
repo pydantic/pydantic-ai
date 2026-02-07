@@ -97,6 +97,9 @@ class RestateModelWrapper(WrapperModel):
 
         async def request_stream_run():
             try:
+                # `run_context` (and therefore `deps`) are captured in this closure.
+                # Unlike Temporal, Restate does not require serializing the run context across durable boundaries —
+                # only the returned `ModelResponse` is serialized via `MODEL_RESPONSE_SERDE`.
                 async with self.wrapped.request_stream(
                     messages,
                     model_settings,
@@ -106,6 +109,7 @@ class RestateModelWrapper(WrapperModel):
                     # Run the handler inside the durable step so any handler side effects are recorded/deduplicated
                     # by Restate. The handler should still be written to be idempotent since this step may be retried
                     # if it fails before completion.
+                    # Note: `streamed_response` yields `ModelResponseStreamEvent`, which is part of `AgentStreamEvent`.
                     await fn(run_context, streamed_response)
 
                     async for _ in streamed_response:

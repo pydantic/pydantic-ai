@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from pydantic.errors import PydanticUserError
 from typing_extensions import Self
@@ -34,13 +34,16 @@ class RestateFastMCPToolset(WrapperToolset[AgentDepsT]):
 
     def __init__(self, wrapped: FastMCPToolset[AgentDepsT], context: Context):
         super().__init__(wrapped)
-        self._wrapped = wrapped
         self._context = context
         self._options = RunOptions[RestateContextRunResult](serde=CONTEXT_RUN_SERDE)
 
     @property
+    def _fastmcp_toolset(self) -> FastMCPToolset[AgentDepsT]:
+        return cast(FastMCPToolset[AgentDepsT], self.wrapped)
+
+    @property
     def id(self) -> str | None:  # pragma: no cover
-        return self._wrapped.id
+        return self._fastmcp_toolset.id
 
     async def __aenter__(self) -> Self:
         """No-op: FastMCP connections must be opened inside `ctx.run_typed()` for durability."""
@@ -57,7 +60,7 @@ class RestateFastMCPToolset(WrapperToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         async def get_tools_in_context() -> RestateFastMCPGetToolsContextRunResult:
-            res = await self._wrapped.get_tools(ctx)
+            res = await self._fastmcp_toolset.get_tools(ctx)
             # ToolsetTool is not serializable as it holds a SchemaValidator
             # so we just return ToolDefinitions and reconstruct ToolsetTool outside of ctx.run_typed().
             return RestateFastMCPGetToolsContextRunResult(output={name: tool.tool_def for name, tool in res.items()})
@@ -67,7 +70,7 @@ class RestateFastMCPToolset(WrapperToolset[AgentDepsT]):
         return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.output.items()}
 
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
-        return self._wrapped.tool_for_tool_def(tool_def)
+        return self._fastmcp_toolset.tool_for_tool_def(tool_def)
 
     async def call_tool(
         self,
@@ -78,7 +81,7 @@ class RestateFastMCPToolset(WrapperToolset[AgentDepsT]):
     ) -> Any:
         async def call_tool_in_context() -> RestateContextRunResult:
             try:
-                output = await self._wrapped.call_tool(name, tool_args, ctx, tool)
+                output = await self._fastmcp_toolset.call_tool(name, tool_args, ctx, tool)
                 return RestateContextRunResult(kind='output', output=output, error=None)
             except ModelRetry as e:
                 return RestateContextRunResult(kind='model_retry', output=None, error=e.message)
