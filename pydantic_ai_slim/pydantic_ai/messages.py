@@ -107,9 +107,14 @@ FinishReason: TypeAlias = Literal[
     'length',
     'content_filter',
     'tool_call',
+    'incomplete',
     'error',
 ]
-"""Reason the model finished generating the response, normalized to OpenTelemetry values."""
+"""Reason the model finished generating the response.
+
+Mostly normalized to OpenTelemetry semantic convention values. `incomplete` is a Pydantic AI-specific value
+indicating the provider paused the turn and expects the client to continue with a follow-up request.
+"""
 
 ForceDownloadMode: TypeAlias = bool | Literal['allow-local']
 """Type for the force_download parameter on FileUrl subclasses.

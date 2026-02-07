@@ -58,7 +58,7 @@ _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
     'model_context_window_exceeded': 'length',
     'stop_sequence': 'stop',
     'tool_use': 'tool_call',
-    'pause_turn': 'stop',
+    'pause_turn': 'incomplete',
     'refusal': 'content_filter',
 }
 

@@ -90,6 +90,7 @@ class GraphAgentState:
     usage: _usage.RunUsage = dataclasses.field(default_factory=_usage.RunUsage)
     retries: int = 0
     run_step: int = 0
+    continuations: int = 0
     run_id: str = dataclasses.field(default_factory=lambda: str(uuid.uuid4()))
     metadata: dict[str, Any] | None = None
 
@@ -616,6 +617,30 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             output_schema = ctx.deps.output_schema
 
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
+                if self.model_response.finish_reason == 'incomplete':
+                    # Some providers (e.g. Anthropic pause_turn) pause mid-turn and expect us to continue.
+                    # Yield events for any builtin tool calls/results already in the response,
+                    # so stream consumers (UI, logging) can observe server-side tool activity.
+                    for part in self.model_response.parts:
+                        if isinstance(part, _messages.BuiltinToolCallPart):
+                            yield _messages.BuiltinToolCallEvent(part)  # pyright: ignore[reportDeprecated]
+                        elif isinstance(part, _messages.BuiltinToolReturnPart):
+                            yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
+
+                    max_continuations = 5
+                    ctx.state.continuations += 1
+                    if ctx.state.continuations > max_continuations:
+                        raise exceptions.UnexpectedModelBehavior(
+                            f'Exceeded maximum continuations ({max_continuations}) for incomplete responses'
+                        )
+
+                    run_context = build_run_context(ctx)
+                    instructions = await ctx.deps.get_instructions(run_context)
+                    self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
+                        _messages.ModelRequest(parts=[], instructions=instructions)
+                    )
+                    return
+
                 if not self.model_response.parts:
                     # Don't retry if the model returned an empty response because the token limit was exceeded, possibly during thinking.
                     if self.model_response.finish_reason == 'length':
