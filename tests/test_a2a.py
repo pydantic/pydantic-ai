@@ -1,6 +1,5 @@
 import base64
 import uuid
-
 from datetime import timezone
 
 import anyio
@@ -349,10 +348,7 @@ async def test_a2a_file_message_with_file_content(image_content: BinaryContent):
             message = Message(
                 role='user',
                 parts=[
-                    FilePart(
-                        file={'bytes': base64_image, 'mime_type': image_content.media_type},
-                        kind='file'
-                    ),
+                    FilePart(file={'bytes': base64_image, 'mime_type': image_content.media_type}, kind='file'),
                 ],
                 kind='message',
                 message_id=str(uuid.uuid4()),
@@ -371,7 +367,9 @@ async def test_a2a_file_message_with_file_content(image_content: BinaryContent):
                     'history': [
                         {
                             'role': 'user',
-                            'parts': [{'kind': 'file', 'file': {'bytes': base64_image, 'mime_type': image_content.media_type}}],
+                            'parts': [
+                                {'kind': 'file', 'file': {'bytes': base64_image, 'mime_type': image_content.media_type}}
+                            ],
                             'kind': 'message',
                             'message_id': IsStr(),
                             'context_id': IsStr(),
@@ -399,7 +397,12 @@ async def test_a2a_file_message_with_file_content(image_content: BinaryContent):
                         'history': [
                             {
                                 'role': 'user',
-                                'parts': [{'kind': 'file', 'file': {'bytes': base64_image, 'mime_type': image_content.media_type}}],
+                                'parts': [
+                                    {
+                                        'kind': 'file',
+                                        'file': {'bytes': base64_image, 'mime_type': image_content.media_type},
+                                    }
+                                ],
                                 'kind': 'message',
                                 'message_id': IsStr(),
                                 'context_id': IsStr(),
