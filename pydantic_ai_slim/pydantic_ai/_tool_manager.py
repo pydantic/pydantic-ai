@@ -14,6 +14,7 @@ from typing_extensions import assert_never, deprecated
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
 from ._run_context import AgentDepsT, RunContext
+from ._utils import validate_json_with_repair
 from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from .messages import ToolCallPart
 from .tools import ToolDefinition
@@ -198,13 +199,16 @@ class ToolManager(Generic[AgentDepsT]):
                 partial_output=allow_partial,
             )
 
-            pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
             validator = tool.args_validator
             if isinstance(call.args, str):
-                args_dict = validator.validate_json(
-                    call.args or '{}', allow_partial=pyd_allow_partial, context=ctx.validation_context
+                args_dict = validate_json_with_repair(
+                    validator,
+                    call.args or '{}',
+                    allow_partial=allow_partial,
+                    validation_context=ctx.validation_context,
                 )
             else:
+                pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
                 args_dict = validator.validate_python(
                     call.args or {}, allow_partial=pyd_allow_partial, context=ctx.validation_context
                 )
