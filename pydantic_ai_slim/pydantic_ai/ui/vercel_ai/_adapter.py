@@ -41,9 +41,6 @@ from ._event_stream import VercelAIEventStream
 from ._utils import dump_provider_metadata, load_provider_metadata
 from .request_types import (
     DataUIPart,
-    DynamicToolInputAvailablePart,
-    DynamicToolOutputAvailablePart,
-    DynamicToolOutputErrorPart,
     DynamicToolUIPart,
     FileUIPart,
     ProviderMetadata,
@@ -397,7 +394,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             ToolOutputErrorPart(
                                 type=tool_name,
                                 tool_call_id=part.tool_call_id,
-                                input=part.args_as_json_str(),
+                                input=part.args_as_dict(),
                                 error_text=error_text,
                                 state='output-error',
                                 provider_executed=True,
@@ -405,13 +402,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             )
                         )
                     else:
-                        content = builtin_return.model_response_str()
+                        output = builtin_return.model_response_object()
                         ui_parts.append(
                             ToolOutputAvailablePart(
                                 type=tool_name,
                                 tool_call_id=part.tool_call_id,
-                                input=part.args_as_json_str(),
-                                output=content,
+                                input=part.args_as_dict(),
+                                output=output.get('return_value', output),
                                 state='output-available',
                                 provider_executed=True,
                                 call_provider_metadata=combined_provider_meta,
@@ -425,7 +422,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         ToolInputAvailablePart(
                             type=tool_name,
                             tool_call_id=part.tool_call_id,
-                            input=part.args_as_json_str(),
+                            input=part.args_as_dict(),
                             state='input-available',
                             provider_executed=True,
                             call_provider_metadata=call_provider_metadata,
@@ -436,38 +433,42 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 call_provider_metadata = dump_provider_metadata(
                     id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
                 )
+                tool_type = f'tool-{part.tool_name}'
 
                 if isinstance(tool_result, ToolReturnPart):
-                    content = tool_result.model_response_str()
+                    output = tool_result.model_response_object()
                     ui_parts.append(
-                        DynamicToolOutputAvailablePart(
-                            tool_name=part.tool_name,
+                        ToolOutputAvailablePart(
+                            type=tool_type,
                             tool_call_id=part.tool_call_id,
-                            input=part.args_as_json_str(),
-                            output=content,
+                            input=part.args_as_dict(),
+                            output=output.get('return_value', output),
                             state='output-available',
+                            provider_executed=False,
                             call_provider_metadata=call_provider_metadata,
                         )
                     )
                 elif isinstance(tool_result, RetryPromptPart):
                     error_text = tool_result.model_response()
                     ui_parts.append(
-                        DynamicToolOutputErrorPart(
-                            tool_name=part.tool_name,
+                        ToolOutputErrorPart(
+                            type=tool_type,
                             tool_call_id=part.tool_call_id,
-                            input=part.args_as_json_str(),
+                            input=part.args_as_dict(),
                             error_text=error_text,
                             state='output-error',
+                            provider_executed=False,
                             call_provider_metadata=call_provider_metadata,
                         )
                     )
                 else:
                     ui_parts.append(
-                        DynamicToolInputAvailablePart(
-                            tool_name=part.tool_name,
+                        ToolInputAvailablePart(
+                            type=tool_type,
                             tool_call_id=part.tool_call_id,
-                            input=part.args_as_json_str(),
+                            input=part.args_as_dict(),
                             state='input-available',
+                            provider_executed=False,
                             call_provider_metadata=call_provider_metadata,
                         )
                     )
