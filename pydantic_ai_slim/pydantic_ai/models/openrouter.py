@@ -616,7 +616,6 @@ class OpenRouterModel(OpenAIChatModel):
     @override
     async def _map_video_url_item(self, item: VideoUrl) -> ChatCompletionContentPartParam:
         """Map a VideoUrl to a chat completion content part for OpenRouter."""
-        """
         video_url: dict[str, str] = {'url': item.url}
         if item.force_download:
             video_content = await download_item(item, data_format='base64_uri', type_format='extension')

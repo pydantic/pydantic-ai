@@ -1244,7 +1244,6 @@ class OpenAIChatModel(Model):
         """Map a single content item to a chat completion content part.
 
         Returns a chat completion content part, or None if the item should be filtered out.
-        """
 
         Args:
             item: The content item to map.
