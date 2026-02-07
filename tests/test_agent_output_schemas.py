@@ -240,35 +240,17 @@ async def test_image_output_json_schema():
             'properties': {
                 'data': {'format': 'base64url', 'title': 'Data', 'type': 'string'},
                 'media_type': {
-                    'anyOf': [
-                        {
-                            'enum': ['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac'],
-                            'type': 'string',
-                        },
-                        {'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], 'type': 'string'},
-                        {
-                            'enum': [
-                                'application/pdf',
-                                'text/plain',
-                                'text/csv',
-                                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                                'text/html',
-                                'text/markdown',
-                                'application/msword',
-                                'application/vnd.ms-excel',
-                            ],
-                            'type': 'string',
-                        },
-                        {'type': 'string'},
-                    ],
+                    'description': 'Return the media type of the binary content.',
+                    'readOnly': True,
                     'title': 'Media Type',
+                    'type': 'string',
                 },
                 'vendor_metadata': {
                     'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                     'default': None,
                     'title': 'Vendor Metadata',
                 },
+                'file_name': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'File Name'},
                 'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
                 'identifier': {
                     'description': """\
@@ -289,7 +271,7 @@ distinguish multiple files.\
                     'type': 'string',
                 },
             },
-            'required': ['data', 'media_type', 'identifier'],
+            'required': ['data', 'identifier', 'media_type'],
             'title': 'BinaryImage',
             'type': 'object',
         }
@@ -307,41 +289,20 @@ distinguish multiple files.\
                     'properties': {
                         'data': {'format': 'base64url', 'title': 'Data', 'type': 'string'},
                         'media_type': {
-                            'anyOf': [
-                                {
-                                    'enum': [
-                                        'audio/wav',
-                                        'audio/mpeg',
-                                        'audio/ogg',
-                                        'audio/flac',
-                                        'audio/aiff',
-                                        'audio/aac',
-                                    ],
-                                    'type': 'string',
-                                },
-                                {'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], 'type': 'string'},
-                                {
-                                    'enum': [
-                                        'application/pdf',
-                                        'text/plain',
-                                        'text/csv',
-                                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                                        'text/html',
-                                        'text/markdown',
-                                        'application/msword',
-                                        'application/vnd.ms-excel',
-                                    ],
-                                    'type': 'string',
-                                },
-                                {'type': 'string'},
-                            ],
+                            'description': 'Return the media type of the binary content.',
+                            'readOnly': True,
                             'title': 'Media Type',
+                            'type': 'string',
                         },
                         'vendor_metadata': {
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Vendor Metadata',
+                        },
+                        'file_name': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'File Name',
                         },
                         'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
                         'identifier': {
@@ -363,7 +324,7 @@ distinguish multiple files.\
                             'type': 'string',
                         },
                     },
-                    'required': ['data', 'media_type', 'identifier'],
+                    'required': ['data', 'identifier', 'media_type'],
                     'title': 'BinaryImage',
                     'type': 'object',
                 },
@@ -450,41 +411,20 @@ async def test_deferred_output_json_schema():
                     'properties': {
                         'data': {'format': 'base64url', 'title': 'Data', 'type': 'string'},
                         'media_type': {
-                            'anyOf': [
-                                {
-                                    'enum': [
-                                        'audio/wav',
-                                        'audio/mpeg',
-                                        'audio/ogg',
-                                        'audio/flac',
-                                        'audio/aiff',
-                                        'audio/aac',
-                                    ],
-                                    'type': 'string',
-                                },
-                                {'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], 'type': 'string'},
-                                {
-                                    'enum': [
-                                        'application/pdf',
-                                        'text/plain',
-                                        'text/csv',
-                                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                                        'text/html',
-                                        'text/markdown',
-                                        'application/msword',
-                                        'application/vnd.ms-excel',
-                                    ],
-                                    'type': 'string',
-                                },
-                                {'type': 'string'},
-                            ],
+                            'description': 'Return the media type of the binary content.',
+                            'readOnly': True,
                             'title': 'Media Type',
+                            'type': 'string',
                         },
                         'vendor_metadata': {
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Vendor Metadata',
+                        },
+                        'file_name': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'File Name',
                         },
                         'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
                         'identifier': {
@@ -506,7 +446,7 @@ distinguish multiple files.\
                             'type': 'string',
                         },
                     },
-                    'required': ['data', 'media_type', 'identifier'],
+                    'required': ['data', 'identifier', 'media_type'],
                     'title': 'BinaryImage',
                     'type': 'object',
                 },

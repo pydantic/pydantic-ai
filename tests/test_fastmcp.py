@@ -338,7 +338,9 @@ class TestFastMCPToolsetToolCalling:
             )
 
             assert result == snapshot(
-                BinaryContent(data=b'fake_image_data', media_type='image/png', identifier='427d68')
+                BinaryContent(
+                    data=b'fake_image_data', _media_type='image/png', media_type='image/png', identifier='427d68'
+                )
             )
 
     async def test_call_tool_with_audio_content(
@@ -354,7 +356,9 @@ class TestFastMCPToolsetToolCalling:
             result = await fastmcp_toolset.call_tool(name='audio_tool', tool_args={}, ctx=run_context, tool=audio_tool)
 
             assert result == snapshot(
-                BinaryContent(data=b'fake_audio_data', media_type='audio/mpeg', identifier='f1220f')
+                BinaryContent(
+                    data=b'fake_audio_data', _media_type='audio/mpeg', media_type='audio/mpeg', identifier='f1220f'
+                )
             )
 
     async def test_call_tool_with_text_content(
@@ -471,7 +475,11 @@ class TestFastMCPToolsetToolCalling:
                 tool=resource_tool_blob,
             )
 
-            assert result == snapshot(BinaryContent(data=b'Hello World', media_type='application/octet-stream'))
+            assert result == snapshot(
+                BinaryContent(
+                    data=b'Hello World', _media_type='application/octet-stream', media_type='application/octet-stream'
+                )
+            )
 
     async def test_call_tool_with_error_behavior_raise(
         self,
