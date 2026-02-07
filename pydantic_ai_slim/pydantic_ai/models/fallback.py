@@ -59,6 +59,10 @@ class FallbackModel(Model):
         return f'fallback:{",".join(model.model_name for model in self.models)}'
 
     @property
+    def model_id(self) -> str:
+        return f'fallback:{",".join(model.model_id for model in self.models)}'
+
+    @property
     def system(self) -> str:
         return f'fallback:{",".join(model.system for model in self.models)}'
 
