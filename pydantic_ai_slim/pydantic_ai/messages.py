@@ -232,16 +232,16 @@ class FileUrl(ABC):
         url_cls: type[FileUrl]
         if mime_type is None:
             raise ValueError(f'Could not infer media type from URL: {url}. Explicitly provide a `media_type` instead.')
-        elif mime_type.startswith('video/'):
+        elif mime_type in _video_format_lookup or mime_type.startswith('video/'):
             url_cls = VideoUrl
-        elif mime_type.startswith('audio/'):
+        elif mime_type in _audio_format_lookup or mime_type.startswith('audio/'):
             url_cls = AudioUrl
-        elif mime_type.startswith('image/'):
+        elif mime_type in _image_format_lookup or mime_type.startswith('image/'):
             url_cls = ImageUrl
         elif mime_type in _document_format_lookup:
             url_cls = DocumentUrl
-        elif mime_type.startswith('text/'):
-            url_cls = DocumentUrl  # Treat text files as documents
+        elif mime_type in _text_format_lookup or mime_type.startswith('text/'):
+            url_cls = DocumentUrl  # Link text files as documents
         else:
             raise ValueError(f'Could not classify file from URL: {url}.')
         return url_cls(
@@ -642,17 +642,17 @@ class BinaryContent:
     @property
     def is_audio(self) -> bool:
         """Return `True` if the media type is an audio type."""
-        return self.media_type.startswith('audio/')
+        return self.media_type in _audio_format_lookup or self.media_type.startswith('audio/')
 
     @property
     def is_image(self) -> bool:
         """Return `True` if the media type is an image type."""
-        return self.media_type.startswith('image/')
+        return self.media_type in _image_format_lookup or self.media_type.startswith('image/')
 
     @property
     def is_video(self) -> bool:
         """Return `True` if the media type is a video type."""
-        return self.media_type.startswith('video/')
+        return self.media_type in _video_format_lookup or self.media_type.startswith('video/')
 
     @property
     def is_document(self) -> bool:
@@ -662,7 +662,7 @@ class BinaryContent:
     @property
     def is_text(self) -> bool:
         """Return `True` if the media type is a text type."""
-        return self.media_type.startswith('text/')
+        return self.media_type in _text_format_lookup or self.media_type.startswith('text/')
 
     @property
     def format(self) -> str:
@@ -810,8 +810,23 @@ _video_format_lookup: dict[str, VideoFormat] = {
     'video/x-ms-wmv': 'wmv',
     'video/3gpp': 'three_gp',
 }
-
-_all_format_lookup = _document_format_lookup | _audio_format_lookup | _image_format_lookup | _video_format_lookup
+_text_format_lookup: dict[str, str] = {
+    'text/plain': 'txt',
+    'text/csv': 'csv',
+    'text/html': 'html',
+    'text/markdown': 'md',
+    'text/x-python': 'py',
+    'text/x-java-source': 'java',
+    'text/x-javascript': 'js',
+    'text/x-ruby': 'rb',
+    'application/json': 'json',
+    'application/xml': 'xml',
+    'application/yaml': 'yaml',
+    'application/toml': 'toml',
+}
+_all_format_lookup = (
+    _text_format_lookup | _document_format_lookup | _audio_format_lookup | _image_format_lookup | _video_format_lookup
+)
 
 
 @dataclass(repr=False)
@@ -1517,30 +1532,36 @@ class ModelResponse:
         body = new_event_body()
         for part in self.parts:
             if isinstance(part, ToolCallPart):
-                body.setdefault('tool_calls', []).append({
-                    'id': part.tool_call_id,
-                    'type': 'function',
-                    'function': {
-                        'name': part.tool_name,
-                        **({'arguments': part.args} if settings.include_content else {}),
-                    },
-                })
+                body.setdefault('tool_calls', []).append(
+                    {
+                        'id': part.tool_call_id,
+                        'type': 'function',
+                        'function': {
+                            'name': part.tool_name,
+                            **({'arguments': part.args} if settings.include_content else {}),
+                        },
+                    }
+                )
             elif isinstance(part, TextPart | ThinkingPart):
                 kind = part.part_kind
-                body.setdefault('content', []).append({
-                    'kind': kind,
-                    **({'text': part.content} if settings.include_content else {}),
-                })
+                body.setdefault('content', []).append(
+                    {
+                        'kind': kind,
+                        **({'text': part.content} if settings.include_content else {}),
+                    }
+                )
             elif isinstance(part, FilePart):
-                body.setdefault('content', []).append({
-                    'kind': 'binary',
-                    'media_type': part.content.media_type,
-                    **(
-                        {'binary_content': part.content.base64}
-                        if settings.include_content and settings.include_binary_content
-                        else {}
-                    ),
-                })
+                body.setdefault('content', []).append(
+                    {
+                        'kind': 'binary',
+                        'media_type': part.content.media_type,
+                        **(
+                            {'binary_content': part.content.base64}
+                            if settings.include_content and settings.include_binary_content
+                            else {}
+                        ),
+                    }
+                )
 
         if content := body.get('content'):
             text_content = content[0].get('text')
