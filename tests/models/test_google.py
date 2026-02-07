@@ -2688,6 +2688,21 @@ async def test_google_extra_headers(allow_model_requests: None, google_provider:
     assert result.output == snapshot('Hello there! How can I help you today?\n')
 
 
+async def test_google_extra_headers_in_config(allow_model_requests: None):
+    m = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model_settings = GoogleModelSettings(extra_headers={'Extra-Header-Key': 'Extra-Header-Value'})
+
+    contents, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    http_headers = config['http_options']['headers']
+    assert http_headers['Extra-Header-Key'] == 'Extra-Header-Value'
+    assert http_headers['Content-Type'] == 'application/json'
+
+
 async def test_google_tool_output(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
 

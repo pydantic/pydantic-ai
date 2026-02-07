@@ -11,6 +11,8 @@ interactions:
       - '86'
       content-type:
       - application/json
+      extra-header-key:
+      - Extra-Header-Value
       host:
       - generativelanguage.googleapis.com
     method: POST
