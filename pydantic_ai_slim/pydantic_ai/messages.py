@@ -570,7 +570,7 @@ class BinaryContent:
         return cls.narrow_type(cls(data=base64.b64decode(data), media_type=media_type))
 
     @classmethod
-    def from_path(cls, path: PathLike[str]) -> BinaryContent:
+    def from_path(cls, path: PathLike[str], media_type: str | None = None) -> BinaryContent:
         """Create a `BinaryContent` from a path.
 
         Raises:
@@ -581,7 +581,7 @@ class BinaryContent:
         if not path.exists():
             raise FileNotFoundError(f'File not found: {path}')
 
-        media_type = _mime_types.guess_type(path.name)[0]
+        media_type = media_type or _mime_types.guess_type(path.name)[0]
         if media_type is None:
             with path.open('rb') as f:
                 header = f.read(2048)  # Read the first 2048 bytes to check for a MIME type
