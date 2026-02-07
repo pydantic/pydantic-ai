@@ -827,6 +827,30 @@ def test_binary_content_from_path(tmp_path: Path):
         )
     )
 
+    # test unknown text file (should default to text/plain)
+    test_unknown_txt_file = tmp_path / 'unknown.unknownext'
+    test_unknown_txt_file.write_text('some content', encoding='utf-8')
+    binary_content = BinaryContent.from_path(test_unknown_txt_file)
+    assert binary_content == snapshot(
+        BinaryContent(
+            data=b'some content',
+            file_name='unknown.unknownext',
+            media_type='text/plain',
+        )
+    )
+
+    # test unknown binary file (should default to application/octet-stream)
+    test_unknown_bin_file = tmp_path / 'unknown.unknownbin'
+    test_unknown_bin_file.write_bytes(b'\x00\x01\x02\x03\x04\x07\x08')
+    binary_content = BinaryContent.from_path(test_unknown_bin_file)
+    assert binary_content == snapshot(
+        BinaryContent(
+            data=b'\x00\x01\x02\x03\x04\x07\x08',
+            file_name='unknown.unknownbin',
+            media_type='application/octet-stream',
+        )
+    )
+
 
 def test_tool_return_content_with_url_field_not_coerced_to_image_url():
     """Test that dicts with 'url' keys are not incorrectly coerced to ImageUrl.

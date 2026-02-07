@@ -46,6 +46,9 @@ _mime_types.add_type('text/x-asciidoc', '.asciidoc')
 
 # Image types
 _mime_types.add_type('image/webp', '.webp')
+_mime_types.add_type('image/heic', '.heic')
+_mime_types.add_type('image/heif', '.heif')
+
 # Video types
 _mime_types.add_type('video/3gpp', '.three_gp')
 _mime_types.add_type('video/x-matroska', '.mkv')
@@ -237,6 +240,8 @@ class FileUrl(ABC):
             url_cls = ImageUrl
         elif mime_type in _document_format_lookup:
             url_cls = DocumentUrl
+        elif mime_type.startswith('text/'):
+            url_cls = DocumentUrl  # Treat text files as documents
         else:
             raise ValueError(f'Could not classify file from URL: {url}.')
         return url_cls(
@@ -471,8 +476,6 @@ class BinaryContent:
 
     _: KW_ONLY
 
-    """The media type of the binary data."""
-
     vendor_metadata: dict[str, Any] | None = None
     """Vendor-specific metadata for the file.
 
@@ -492,12 +495,43 @@ class BinaryContent:
         AudioMediaType | ImageMediaType | DocumentMediaType | VideoMediaType | str | None,
         pydantic.Field(alias='media_type', default=None, exclude=True),
     ] = field(compare=False, default=None)
+    """The media type of the binary data."""
 
     kind: Literal['binary'] = 'binary'
     """Type identifier, this is available on all parts as a discriminator."""
 
     # `pydantic_dataclass` replaces `__init__` so this method is never used.
     # The signature is kept so that pyright/IDE hints recognize the `identifier` alias for the `_identifier` field.
+    @overload
+    def __init__(
+        self,
+        data: bytes,
+        *,
+        media_type: str,
+        identifier: str | None = None,
+        file_name: str | None = None,
+        vendor_metadata: dict[str, Any] | None = None,
+        kind: Literal['binary'] = 'binary',
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _identifier: str | None = None,
+        _media_type: str | None = None,
+    ) -> None: ...  # pragma: no cover
+
+    @overload
+    def __init__(
+        self,
+        data: bytes,
+        *,
+        file_name: str,
+        media_type: str | None = None,
+        identifier: str | None = None,
+        vendor_metadata: dict[str, Any] | None = None,
+        kind: Literal['binary'] = 'binary',
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _identifier: str | None = None,
+        _media_type: str | None = None,
+    ) -> None: ...  # pragma: no cover
+
     def __init__(
         self,
         data: bytes,
@@ -547,7 +581,17 @@ class BinaryContent:
         if not path.exists():
             raise FileNotFoundError(f'File not found: {path}')
 
-        return cls.narrow_type(cls(data=path.read_bytes(), file_name=path.name))
+        media_type = _mime_types.guess_type(path.name)[0]
+        if media_type is None:
+            with path.open('rb') as f:
+                header = f.read(2048)  # Read the first 2048 bytes to check for a MIME type
+            try:
+                header.decode('utf-8')  # If this succeeds, it's likely a text file
+                media_type = 'text/plain'  # Fallback to text if we can decode as UTF-8
+            except UnicodeDecodeError:
+                media_type = 'application/octet-stream'  # Fallback to binary if we can't decode as text
+
+        return cls.narrow_type(cls(data=path.read_bytes(), file_name=path.name, media_type=media_type))
 
     @pydantic.computed_field
     @property
@@ -623,7 +667,6 @@ class BinaryContent:
         """The file format of the binary content.
 
         Returns the file extension (without leading dot) based on the media type.
-        Uses cached extension from Magika if available, otherwise maps from media_type.
 
         Raises:
             ValueError: If file format cannot be inferred from media type.
@@ -658,7 +701,6 @@ class BinaryImage(BinaryContent):
         identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
         file_name: str | None = None,
-        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         kind: Literal['binary'] = 'binary',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _identifier: str | None = None,
