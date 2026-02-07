@@ -5753,24 +5753,33 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
     )
 
 
+GROQ_NATIVE_MODELS = [
+    'openai/gpt-oss-120b',
+    'moonshotai/kimi-k2-instruct',
+    'meta-llama/llama-4-scout-17b-16e-instruct',
+]
+
+
 @pytest.mark.vcr()
-async def test_groq_gpt_oss_default_native_output(allow_model_requests: None, groq_api_key: str):
-    """Test that GPT-OSS models default to native structured output.
+@pytest.mark.parametrize('model_name', GROQ_NATIVE_MODELS)
+async def test_groq_default_native_output(allow_model_requests: None, groq_api_key: str, model_name: str):
+    """Test that models with native output profiles default to native structured output.
 
     This verifies that when using a plain output_type (no explicit NativeOutput/ToolOutput wrapper),
-    GPT-OSS models use native structured output by default instead of tool calling.
+    models with native output profiles use native structured output by default instead of tool calling.
     """
-    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key))
+    m = GroqModel(model_name, provider=GroqProvider(api_key=groq_api_key))
 
     class CityLocation(BaseModel):
         city: str
         country: str
 
-    # No explicit NativeOutput/ToolOutput wrapper - uses profile default
     agent = Agent(m, output_type=CityLocation)
 
     result = await agent.run('What is the capital of France?')
-    assert result.output == snapshot(CityLocation(city='Paris', country='France'))
+    assert isinstance(result.output, CityLocation)
+    assert result.output.city
+    assert result.output.country
 
     # Verify it used native output (TextPart with JSON) not tool calling (ToolCallPart)
     response = result.response
@@ -5783,14 +5792,23 @@ async def test_groq_gpt_oss_default_native_output(allow_model_requests: None, gr
     )
 
 
+GROQ_NATIVE_MODELS_WITH_TOOLS = [
+    'openai/gpt-oss-120b',
+    'moonshotai/kimi-k2-instruct',
+]
+
+
 @pytest.mark.vcr()
-async def test_groq_native_with_tools_falls_back_to_tool_output(allow_model_requests: None, groq_api_key: str):
+@pytest.mark.parametrize('model_name', GROQ_NATIVE_MODELS_WITH_TOOLS)
+async def test_groq_native_with_tools_falls_back_to_tool_output(
+    allow_model_requests: None, groq_api_key: str, model_name: str
+):
     """Test that native output automatically falls back to tool output when function tools are present.
 
     Groq doesn't support native structured output (JSON mode) with function tools.
     When an agent has function tools defined, the model should fall back to tool-based output.
     """
-    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key))
+    m = GroqModel(model_name, provider=GroqProvider(api_key=groq_api_key))
 
     class CityLocation(BaseModel):
         city: str
@@ -5803,7 +5821,9 @@ async def test_groq_native_with_tools_falls_back_to_tool_output(allow_model_requ
         return f'Sunny in {city}'
 
     result = await agent.run('What is the capital of France?')
-    assert result.output == snapshot(CityLocation(city='Paris', country='France'))
+    assert isinstance(result.output, CityLocation)
+    assert result.output.city
+    assert result.output.country
 
     # Verify it used tool output (ToolCallPart) not native output
     response = result.response

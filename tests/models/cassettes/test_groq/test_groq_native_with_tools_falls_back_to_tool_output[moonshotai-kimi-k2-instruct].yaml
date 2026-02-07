@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '623'
+      - '684'
       content-type:
       - application/json
       host:
@@ -18,7 +18,7 @@ interactions:
       messages:
       - content: What is the capital of France?
         role: user
-      model: openai/gpt-oss-120b
+      model: moonshotai/kimi-k2-instruct
       n: 1
       stream: false
       tool_choice: auto
@@ -60,7 +60,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '794'
+      - '653'
       content-type:
       - application/json
       strict-transport-security:
@@ -75,30 +75,26 @@ interactions:
         index: 0
         logprobs: null
         message:
-          content: The capital of France is **Paris**.
-          reasoning: 'User asks: "What is the capital of France?" It''s a simple factual question. Answer: Paris. No need
-            for function calls.'
+          content: The capital of France is Paris.
           role: assistant
-      created: 1767887260
-      id: chatcmpl-84ae258d-c6ee-4335-896c-48be5aa25560
-      model: openai/gpt-oss-120b
+      created: 1770418669
+      id: chatcmpl-9d4042f1-7d0b-409a-ac83-a0ff79646eed
+      model: moonshotai/kimi-k2-instruct
       object: chat.completion
       service_tier: on_demand
-      system_fingerprint: fp_6b677c2caf
+      system_fingerprint: fp_05df423bab
       usage:
-        completion_time: 0.098937273
-        completion_tokens: 46
-        completion_tokens_details:
-          reasoning_tokens: 28
-        prompt_time: 0.006062933
-        prompt_tokens: 159
-        queue_time: 0.344541312
-        total_time: 0.105000206
-        total_tokens: 205
+        completion_time: 0.00311883
+        completion_tokens: 8
+        prompt_time: 0.033094247
+        prompt_tokens: 171
+        queue_time: 0.146024286
+        total_time: 0.036213077
+        total_tokens: 179
       usage_breakdown: null
       x_groq:
-        id: req_01kef4nj7ye1jat17em26gtxce
-        seed: 1786826309
+        id: req_01kgtjt1s0ea2rbx8ez3mrmjhq
+        seed: 1071772654
     status:
       code: 200
       message: OK
@@ -107,15 +103,15 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '1120'
+      - '1038'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=bJCtkdqpLUsKdCWKrhKsy18YR9eD1vIeqcnYlUdf5hQ-1767887260-1.0.1.1-EHWi_JNIxAPcfQk1DXRfg_5iONacG0Am688tB1P1nnyrRvHOVPZSXUQfRd2pMh1vPzearQ14ORk9Lqe.XYU9D.zHHJejqxQr7R1L_.nGL.c
+      - __cf_bm=Tp6r4nBk2SG0Ci7BmvIZr1tWUAI1eF9HoEHx3qqTPjg-1770418668.5112388-1.0.1.1-sg5GbP0L3zCRCBJkgntKkFjXqsoLXz2V4_OrGC1STtifAWJeHR4mebBytqjcsaxe3EQ54em5UTXB1rZzorFLKx0xyCQW9.2AE1NRqKfWcUXlFTBgY6Q4KnTmO7UPsgec
       host:
       - api.groq.com
     method: POST
@@ -123,12 +119,7 @@ interactions:
       messages:
       - content: What is the capital of France?
         role: user
-      - content: |-
-          <think>
-          User asks: "What is the capital of France?" It's a simple factual question. Answer: Paris. No need for function calls.
-          </think>
-
-          The capital of France is **Paris**.
+      - content: The capital of France is Paris.
         role: assistant
       - content: |-
           1 validation error:
@@ -138,14 +129,14 @@ interactions:
               "type": "json_invalid",
               "loc": [],
               "msg": "Invalid JSON: expected value at line 1 column 1",
-              "input": "The capital of France is **Paris**."
+              "input": "The capital of France is Paris."
             }
           ]
           ```
 
           Fix the errors and try again.
         role: user
-      model: openai/gpt-oss-120b
+      model: moonshotai/kimi-k2-instruct
       n: 1
       stream: false
       tool_choice: auto
@@ -187,7 +178,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1296'
+      - '929'
       content-type:
       - application/json
       strict-transport-security:
@@ -202,38 +193,33 @@ interactions:
         index: 0
         logprobs: null
         message:
-          reasoning: 'The user seems to be expecting a JSON output maybe due to a function call expectation? The system expects
-            a JSON output that matches some schema? There''s a function final_result expecting fields city and country. Probably
-            they want us to output JSON with city and country? The previous message gave plain text, causing validation error
-            expecting JSON. So we should respond using the final_result function with appropriate arguments: city: "Paris",
-            country: "France". Use function call.'
+          content: 'I understand now. You want me to use the final_result function to provide the answer in the required JSON
+            format. Let me do that:'
           role: assistant
           tool_calls:
           - function:
               arguments: '{"city":"Paris","country":"France"}'
               name: final_result
-            id: fc_b03ec646-f9b4-4e37-b0de-15174cd87b19
+            id: functions.final_result:0
             type: function
-      created: 1767887262
-      id: chatcmpl-822b57e3-5388-40d4-8867-439eeab36323
-      model: openai/gpt-oss-120b
+      created: 1770418670
+      id: chatcmpl-d061f09d-adf7-4868-ad4e-fa9a2feb11af
+      model: moonshotai/kimi-k2-instruct
       object: chat.completion
       service_tier: on_demand
-      system_fingerprint: fp_fe269835c7
+      system_fingerprint: fp_05df423bab
       usage:
-        completion_time: 0.266882605
-        completion_tokens: 126
-        completion_tokens_details:
-          reasoning_tokens: 92
-        prompt_time: 0.01291306
-        prompt_tokens: 278
-        queue_time: 1.498294347
-        total_time: 0.279795665
-        total_tokens: 404
+        completion_time: 0.261569974
+        completion_tokens: 51
+        prompt_time: 0.057774585
+        prompt_tokens: 250
+        queue_time: 0.617653942
+        total_time: 0.319344559
+        total_tokens: 301
       usage_breakdown: null
       x_groq:
-        id: req_01kef4njxxe1j84mgycnzfgqwm
-        seed: 2094443844
+        id: req_01kgtjt25ve8086j1trya66xa6
+        seed: 2020706010
     status:
       code: 200
       message: OK
