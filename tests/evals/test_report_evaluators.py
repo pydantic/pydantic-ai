@@ -777,3 +777,43 @@ async def test_report_evaluator_exception_during_evaluate():
     report = await dataset.evaluate(task, progress=False)
     assert len(report.report_evaluator_failures) == 1
     assert 'evaluator broke' in report.report_evaluator_failures[0].error_message
+
+
+async def test_report_evaluator_failure_does_not_block_others():
+    """When one report evaluator fails, subsequent evaluators still run."""
+
+    @dataclass
+    class BrokenEvaluator(ReportEvaluator):
+        def evaluate(self, ctx: ReportEvaluatorContext) -> ReportAnalysis:
+            raise RuntimeError('first evaluator broke')
+
+    @dataclass
+    class WorkingEvaluator(ReportEvaluator):
+        def evaluate(self, ctx: ReportEvaluatorContext) -> ScalarResult:
+            return ScalarResult(title='Count', value=len(ctx.report.cases))
+
+    dataset = Dataset[str, str, None](
+        cases=[Case(inputs='hello', expected_output='world')],
+        report_evaluators=[BrokenEvaluator(), WorkingEvaluator()],
+    )
+
+    async def task(inputs: str) -> str:
+        return inputs
+
+    report = await dataset.evaluate(task, progress=False)
+    # The broken evaluator's failure is captured
+    assert len(report.report_evaluator_failures) == 1
+    assert 'first evaluator broke' in report.report_evaluator_failures[0].error_message
+    # The working evaluator still ran and produced its analysis
+    assert len(report.analyses) == 1
+    assert isinstance(report.analyses[0], ScalarResult)
+    assert report.analyses[0].value == 1
+
+
+def test_builtin_report_evaluator_repr():
+    """Built-in report evaluators use the no-defaults repr."""
+    evaluator = ConfusionMatrixEvaluator()
+    assert repr(evaluator) == 'ConfusionMatrixEvaluator()'
+
+    evaluator_with_args = ConfusionMatrixEvaluator(predicted_from='labels', predicted_key='pred')
+    assert repr(evaluator_with_args) == "ConfusionMatrixEvaluator(predicted_from='labels', predicted_key='pred')"

@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
+from typing_extensions import assert_never
+
 from ..reporting import ReportCase
 from ..reporting.analyses import (
     ConfusionMatrix,
@@ -19,7 +21,7 @@ __all__ = (
 )
 
 
-@dataclass
+@dataclass(repr=False)
 class ConfusionMatrixEvaluator(ReportEvaluator):
     """Computes a confusion matrix from case data."""
 
@@ -77,10 +79,10 @@ class ConfusionMatrixEvaluator(ReportEvaluator):
                 raise ValueError("'key' is required when from_='labels'")
             label_result = case.labels.get(key)
             return label_result.value if label_result else None
-        return None  # pragma: no cover
+        assert_never(from_)
 
 
-@dataclass
+@dataclass(repr=False)
 class PrecisionRecallEvaluator(ReportEvaluator):
     """Computes a precision-recall curve from case data."""
 
@@ -154,7 +156,7 @@ class PrecisionRecallEvaluator(ReportEvaluator):
                 raise ValueError("'positive_key' is required when positive_from='labels'")
             label = case.labels.get(self.positive_key)
             return bool(label.value) if label else None
-        return None  # pragma: no cover
+        assert_never(self.positive_from)
 
 
 DEFAULT_REPORT_EVALUATORS: tuple[type[ReportEvaluator[Any, Any, Any]], ...] = (

@@ -11,7 +11,7 @@ from rich.console import Console, Group, RenderableType
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
-from typing_extensions import TypedDict, TypeVar
+from typing_extensions import TypedDict, TypeVar, assert_never
 
 from pydantic_evals._utils import UNSET, Unset
 
@@ -1493,5 +1493,5 @@ def _render_analysis(analysis: ConfusionMatrix | PrecisionRecall | ScalarResult 
         for row in analysis.rows:
             table.add_row(*[str(v) if v is not None else '' for v in row])
         return table
-    else:  # pragma: no cover
-        return Text(f'Unknown analysis type: {type(analysis).__name__}')
+    else:
+        assert_never(analysis)

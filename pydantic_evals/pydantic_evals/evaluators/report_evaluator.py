@@ -4,7 +4,7 @@ import inspect
 from abc import abstractmethod
 from collections.abc import Awaitable
 from dataclasses import MISSING, dataclass, fields
-from typing import Any, Generic, cast
+from typing import TYPE_CHECKING, Any, Generic, cast
 
 from pydantic import ConfigDict, model_serializer
 from pydantic_core import to_jsonable_python
@@ -15,6 +15,9 @@ from pydantic_ai import _utils
 
 from ..reporting.analyses import ReportAnalysis
 from .spec import EvaluatorSpec
+
+if TYPE_CHECKING:
+    from pydantic_evals.reporting import EvaluationReport
 
 InputsT = TypeVar('InputsT', default=Any, contravariant=True)
 OutputT = TypeVar('OutputT', default=Any, contravariant=True)
@@ -27,7 +30,7 @@ class ReportEvaluatorContext(Generic[InputsT, OutputT, MetadataT]):
 
     name: str
     """The experiment name."""
-    report: Any  # EvaluationReport[InputsT, OutputT, MetadataT] — use Any to avoid circular import
+    report: EvaluationReport[InputsT, OutputT, MetadataT]
     """The full evaluation report."""
     experiment_metadata: dict[str, Any] | None
     """Experiment-level metadata."""
