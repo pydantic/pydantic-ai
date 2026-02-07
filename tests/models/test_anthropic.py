@@ -8409,3 +8409,61 @@ Instructions content\
     # Verify user message is in anthropic_messages
     assert len(anthropic_messages) == 1
     assert anthropic_messages[0]['role'] == 'user'
+
+
+async def test_anthropic_streamed_response_cancel():
+    """Test that AnthropicStreamedResponse.cancel() closes the underlying stream."""
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.anthropic import AnthropicStreamedResponse
+
+    from .mock_async_stream import MockAsyncStream
+
+    # Create a mock stream
+    mock_stream: MockAsyncStream[BetaRawMessageStreamEvent] = MockAsyncStream(iter([]))
+
+    # Create the streamed response with the mock stream as _stream_to_close
+    response = AnthropicStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='claude-haiku-4-5',
+        _response=mock_stream,
+        _provider_name='anthropic',
+        _provider_url='https://api.anthropic.com',
+        _stream_to_close=mock_stream,  # pyright: ignore[reportArgumentType]
+    )
+
+    # Verify stream is not closed initially
+    assert mock_stream._closed is False  # pyright: ignore[reportPrivateUsage]
+
+    # Cancel the response
+    await response.cancel()
+
+    # Verify the stream was closed
+    assert mock_stream._closed is True  # pyright: ignore[reportPrivateUsage]
+    # Verify the response is marked as cancelled
+    assert response.is_cancelled is True
+
+
+async def test_anthropic_streamed_response_cancel_without_stream():
+    """Test that AnthropicStreamedResponse.cancel() works when _stream_to_close is None."""
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.anthropic import AnthropicStreamedResponse
+
+    from .mock_async_stream import MockAsyncStream
+
+    mock_stream: MockAsyncStream[BetaRawMessageStreamEvent] = MockAsyncStream(iter([]))
+
+    # Create the streamed response WITHOUT _stream_to_close
+    response = AnthropicStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='claude-haiku-4-5',
+        _response=mock_stream,
+        _provider_name='anthropic',
+        _provider_url='https://api.anthropic.com',
+        # _stream_to_close is None by default
+    )
+
+    # Cancel should work without error even when _stream_to_close is None
+    await response.cancel()
+
+    # Verify the response is marked as cancelled
+    assert response.is_cancelled is True

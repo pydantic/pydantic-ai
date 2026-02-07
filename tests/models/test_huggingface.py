@@ -1090,3 +1090,55 @@ async def test_cache_point_filtering():
     # CachePoint should be filtered out
     assert msg['role'] == 'user'
     assert len(msg['content']) == 1  # pyright: ignore[reportUnknownArgumentType]
+
+
+async def test_huggingface_streamed_response_cancel():
+    """Test that HuggingFaceStreamedResponse.cancel() closes the underlying stream."""
+
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.huggingface import HuggingFaceStreamedResponse
+    from pydantic_ai.profiles.openai import openai_model_profile
+
+    from .mock_async_stream import MockAsyncStream
+
+    mock_stream: MockAsyncStream[ChatCompletionStreamOutput] = MockAsyncStream(iter([]))
+
+    response = HuggingFaceStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='meta-llama/Llama-3.1-8B-Instruct',
+        _model_profile=openai_model_profile('meta-llama/Llama-3.1-8B-Instruct'),
+        _response=mock_stream,
+        _provider_name='huggingface',
+        _provider_url='https://api-inference.huggingface.co',
+        _stream_to_close=mock_stream,
+    )
+
+    assert mock_stream._closed is False  # pyright: ignore[reportPrivateUsage]
+    await response.cancel()
+    assert mock_stream._closed is True  # pyright: ignore[reportPrivateUsage]
+    assert response.is_cancelled is True
+
+
+async def test_huggingface_streamed_response_cancel_without_stream():
+    """Test that HuggingFaceStreamedResponse.cancel() works when _stream_to_close is None."""
+
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.huggingface import HuggingFaceStreamedResponse
+    from pydantic_ai.profiles.openai import openai_model_profile
+
+    from .mock_async_stream import MockAsyncStream
+
+    mock_stream: MockAsyncStream[ChatCompletionStreamOutput] = MockAsyncStream(iter([]))
+
+    response = HuggingFaceStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='meta-llama/Llama-3.1-8B-Instruct',
+        _model_profile=openai_model_profile('meta-llama/Llama-3.1-8B-Instruct'),
+        _response=mock_stream,
+        _provider_name='huggingface',
+        _provider_url='https://api-inference.huggingface.co',
+        # _stream_to_close is None by default
+    )
+
+    await response.cancel()
+    assert response.is_cancelled is True

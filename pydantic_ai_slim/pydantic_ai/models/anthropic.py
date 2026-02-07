@@ -615,6 +615,7 @@ class AnthropicModel(Model):
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
+            _stream_to_close=response,
         )
 
     def _get_tools(
@@ -1211,6 +1212,13 @@ class AnthropicStreamedResponse(StreamedResponse):
     _provider_name: str
     _provider_url: str
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _stream_to_close: AsyncStream[BetaRawMessageStreamEvent] | None = field(default=None)
+
+    async def cancel(self) -> None:
+        """Cancel the streaming response and close the underlying HTTP connection."""
+        await super().cancel()
+        if self._stream_to_close is not None:
+            await self._stream_to_close.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         current_block: BetaContentBlock | None = None

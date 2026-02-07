@@ -1260,6 +1260,18 @@ class BaseToolCallPart:
         else:
             return bool(self.args)
 
+    @property
+    def args_incomplete(self) -> bool:
+        """Whether the arguments are incomplete (can't be parsed as valid JSON).
+
+        Incomplete arguments can occur when the agent run is cancelled or interrupted.
+        """
+        try:
+            self.args_as_dict()
+            return False
+        except Exception:
+            return True
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
@@ -1346,6 +1358,9 @@ class ModelResponse:
 
     metadata: dict[str, Any] | None = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
+    incomplete: bool = False
+    """Whether the response was cancelled/incomplete."""
 
     @property
     def text(self) -> str | None:
