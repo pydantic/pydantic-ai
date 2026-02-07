@@ -52,7 +52,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
 from pydantic_ai.output import PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDenied, ToolDefinition
 from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
 
@@ -3325,3 +3325,385 @@ async def test_get_output_after_stream_output():
             ),
         ]
     )
+
+
+async def test_args_validator_failure_events():
+    """Test that failed validation emits args_valid=False, retries with error message, then succeeds."""
+    validator_calls = 0
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal validator_calls
+        validator_calls += 1
+        if validator_calls == 1:
+            raise ModelRetry('Validation failed: x must be positive')
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=my_validator, retries=2)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    events: list[Any] = []
+    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
+        events.append(event)
+
+    tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'add_numbers']
+
+    # First call: validation fails -> args_valid=False; retry: validation passes -> args_valid=True
+    args_valid_values = [e.args_valid for e in tool_call_events]
+    assert args_valid_values[0] is False
+    assert args_valid_values[1] is True
+
+    # Verify retry prompt contains the validation error message
+    result_events = [e for e in events if isinstance(e, FunctionToolResultEvent)]
+    retry_results = [e for e in result_events if isinstance(e.result, RetryPromptPart)]
+    assert retry_results
+    assert 'x must be positive' in str(retry_results[0].result.content)
+
+
+async def test_args_validator_event_args_valid_field():
+    """Test that FunctionToolCallEvent has args_valid field set correctly."""
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        pass  # Always succeeds
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    events: list[Any] = []
+    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
+        events.append(event)
+
+    tool_call_events: list[FunctionToolCallEvent] = [e for e in events if isinstance(e, FunctionToolCallEvent)]
+    assert len(tool_call_events) >= 1
+
+    add_number_events = [e for e in tool_call_events if e.part.tool_name == 'add_numbers']
+    assert add_number_events, 'Should have events for add_numbers'
+    for event in add_number_events:
+        assert event.args_valid is True
+
+
+async def test_args_validator_event_args_valid_no_custom_validator():
+    """Test that args_valid=True when no custom validator but schema validation passes."""
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    events: list[Any] = []
+    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
+        events.append(event)
+
+    tool_call_events: list[FunctionToolCallEvent] = [e for e in events if isinstance(e, FunctionToolCallEvent)]
+    assert len(tool_call_events) >= 1
+
+    add_number_events = [e for e in tool_call_events if e.part.tool_name == 'add_numbers']
+    assert add_number_events, 'Should have events for add_numbers'
+    for event in add_number_events:
+        assert event.args_valid is True
+
+
+async def test_schema_validation_failure_args_valid_false():
+    """Test that args_valid=False when Pydantic schema validation fails (no custom validator)."""
+
+    def return_invalid_args(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+        """Return a tool call with invalid arguments (wrong type)."""
+        return ModelResponse(parts=[ToolCallPart(tool_name='add_numbers', args={'x': 'not_an_int', 'y': 2})])
+
+    async def stream_invalid_args(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        """Stream a tool call with invalid arguments."""
+        yield {0: DeltaToolCall(name='add_numbers')}
+        yield {0: DeltaToolCall(json_args='{"x": "not_an_int", "y": 2}')}
+
+    agent = Agent(FunctionModel(return_invalid_args, stream_function=stream_invalid_args), deps_type=int)
+
+    @agent.tool
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:  # pragma: no cover
+        """Add two numbers."""
+        return x + y
+
+    events: list[Any] = []
+    try:
+        async for event in agent.run_stream_events('call add_numbers', deps=42):  # pragma: no branch
+            events.append(event)
+    except UnexpectedModelBehavior:
+        pass  # Expected when max retries exceeded
+
+    tool_call_events: list[FunctionToolCallEvent] = [e for e in events if isinstance(e, FunctionToolCallEvent)]
+    assert len(tool_call_events) >= 1
+
+    first_event = tool_call_events[0]
+    assert first_event.part.tool_name == 'add_numbers'
+    assert first_event.args_valid is False
+
+
+async def test_external_tool_validation_failure():
+    """Test that external tool validation failure is handled correctly."""
+    from dataclasses import replace as dataclass_replace
+
+    from pydantic_core import SchemaValidator, core_schema
+
+    from pydantic_ai._output import DeferredToolRequests
+    from pydantic_ai._run_context import RunContext as RC
+    from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
+
+    # Create a schema validator that requires 'value' field of type string
+    strict_schema = core_schema.typed_dict_schema(
+        {
+            'value': core_schema.typed_dict_field(core_schema.str_schema(), required=True),
+        },
+    )
+    STRICT_VALIDATOR = SchemaValidator(schema=strict_schema)
+
+    class StrictExternalToolset(AbstractToolset[None]):
+        """A custom external toolset with strict validation."""
+
+        tool_defs: list[ToolDefinition]
+
+        def __init__(self, tool_defs: list[ToolDefinition]):
+            self.tool_defs = tool_defs
+
+        @property
+        def id(self) -> str | None:  # pragma: no cover
+            return 'strict_external'
+
+        async def get_tools(self, ctx: RC[None]) -> dict[str, ToolsetTool[None]]:
+            return {
+                tool_def.name: ToolsetTool(
+                    toolset=self,
+                    tool_def=dataclass_replace(tool_def, kind='external'),
+                    max_retries=1,  # Allow 1 retry so validation failure doesn't raise immediately
+                    args_validator=STRICT_VALIDATOR,
+                )
+                for tool_def in self.tool_defs
+            }
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RC[None], tool: ToolsetTool[None]
+        ) -> Any:  # pragma: no cover
+            raise NotImplementedError('External tools cannot be called directly')
+
+    async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        # Call external tool with invalid arguments (missing required 'value' field)
+        yield {0: DeltaToolCall(name='external_tool', json_args='{"wrong_field": 123}')}
+
+    # Create an external tool definition
+    external_tool_def = ToolDefinition(
+        name='external_tool',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'value': {'type': 'string'}},
+            'required': ['value'],
+        },
+    )
+
+    agent: Agent[None, str | DeferredToolRequests] = Agent(
+        FunctionModel(stream_function=stream_function),
+        output_type=[str, DeferredToolRequests],
+        toolsets=[StrictExternalToolset(tool_defs=[external_tool_def])],
+    )
+
+    events: list[Any] = []
+    try:
+        async for event in agent.run_stream_events('test external tool validation'):  # pragma: no branch
+            events.append(event)
+    except Exception:
+        pass  # May fail due to validation errors
+
+    tool_call_events: list[FunctionToolCallEvent] = [e for e in events if isinstance(e, FunctionToolCallEvent)]
+
+    assert tool_call_events, 'Should have at least one tool call event'
+    external_events = [e for e in tool_call_events if e.part.tool_name == 'external_tool']
+    assert external_events, 'Should have external tool events'
+    assert external_events[0].args_valid is False
+
+
+async def test_args_validator_run_stream_event_handler():
+    """Test that args_valid is correctly set on FunctionToolCallEvent when using run_stream()."""
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        pass  # Always succeeds
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    events: list[AgentStreamEvent] = []
+
+    async def handler(ctx: RunContext[int], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events.append(event)
+
+    async with agent.run_stream('call add_numbers', deps=42, event_stream_handler=handler) as result:
+        await result.get_output()
+
+    tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent)]
+    assert tool_call_events
+    for event in tool_call_events:
+        assert event.args_valid is True
+
+
+async def test_event_ordering_call_before_result():
+    """Test that FunctionToolCallEvent is emitted before FunctionToolResultEvent for each tool call."""
+
+    def my_validator(ctx: RunContext[None], x: int) -> None:
+        pass
+
+    agent = Agent(TestModel(call_tools=['my_tool']))
+
+    @agent.tool(args_validator=my_validator)
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        """A tool."""
+        return x * 2
+
+    events: list[Any] = []
+    async for event in agent.run_stream_events('test'):
+        events.append(event)
+
+    call_ids_seen: set[str] = set()
+    result_ids_seen: set[str] = set()
+    for event in events:
+        if isinstance(event, FunctionToolCallEvent):
+            call_ids_seen.add(event.tool_call_id)
+            assert event.tool_call_id not in result_ids_seen, (
+                f'FunctionToolResultEvent for {event.tool_call_id} appeared before FunctionToolCallEvent'
+            )
+        elif isinstance(event, FunctionToolResultEvent):
+            result_id = event.result.tool_call_id
+            result_ids_seen.add(result_id)
+            assert result_id in call_ids_seen, (
+                f'FunctionToolResultEvent for {result_id} appeared without prior FunctionToolCallEvent'
+            )
+
+    assert call_ids_seen
+    assert result_ids_seen
+
+
+async def test_args_valid_none_for_presupplied_tool_approved():
+    """Test that args_valid=None when re-running with ToolApproved (validation deferred to execution)."""
+
+    def my_validator(ctx: RunContext[int], x: int) -> None:
+        pass
+
+    agent = Agent(
+        TestModel(),
+        deps_type=int,
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def my_tool(ctx: RunContext[int], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired()
+        return x * 42
+
+    # First run: tool requires approval
+    result = await agent.run('Hello', deps=42)
+    assert isinstance(result.output, DeferredToolRequests)
+    tool_call_id = result.output.approvals[0].tool_call_id
+
+    # Second run with ToolApproved: collect events
+    messages = result.all_messages()
+    events: list[Any] = []
+    async for event in agent.run_stream_events(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(approvals={tool_call_id: ToolApproved()}),
+        deps=42,
+    ):
+        events.append(event)
+
+    # The FunctionToolCallEvent for the pre-supplied result should have args_valid=None
+    tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
+    assert tool_call_events
+    assert tool_call_events[0].args_valid is None
+
+
+async def test_args_valid_none_for_tool_denied():
+    """Test that args_valid=None for ToolDenied and the denial message appears in the result event."""
+
+    def my_validator(ctx: RunContext[int], x: int) -> None:
+        pass
+
+    agent = Agent(
+        TestModel(),
+        deps_type=int,
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def my_tool(ctx: RunContext[int], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired()
+        return x  # pragma: no cover
+
+    # First run: tool requires approval
+    result = await agent.run('Hello', deps=42)
+    assert isinstance(result.output, DeferredToolRequests)
+    tool_call_id = result.output.approvals[0].tool_call_id
+
+    # Second run with ToolDenied
+    messages = result.all_messages()
+    events: list[Any] = []
+    async for event in agent.run_stream_events(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(approvals={tool_call_id: ToolDenied('User denied this tool call')}),
+        deps=42,
+    ):
+        events.append(event)
+
+    # FunctionToolCallEvent should have args_valid=None (pre-supplied result, no upfront validation)
+    tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
+    assert tool_call_events
+    assert tool_call_events[0].args_valid is None
+
+    # FunctionToolResultEvent should contain the denial message
+    result_events = [e for e in events if isinstance(e, FunctionToolResultEvent) and e.result.tool_name == 'my_tool']
+    assert result_events
+    assert result_events[0].result.content == 'User denied this tool call'
+
+
+async def test_deferred_tool_validation_event_in_stream():
+    """Test that deferred (requires_approval) tools emit FunctionToolCallEvent with correct args_valid."""
+
+    def my_validator(ctx: RunContext[None], x: int) -> None:
+        pass
+
+    agent = Agent(
+        TestModel(),
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        raise ApprovalRequired()
+
+    events: list[Any] = []
+    async for event in agent.run_stream_events('test'):
+        events.append(event)
+
+    tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
+    assert tool_call_events
+    # TestModel generates valid args (x=0 by default), so validation passes
+    assert tool_call_events[0].args_valid is True

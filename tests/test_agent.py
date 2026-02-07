@@ -3308,6 +3308,13 @@ class OutputType(BaseModel):
     value: str
 
 
+class OutputTypeWithCount(BaseModel):
+    """Result type with an additional int field, used to test schema validation failures."""
+
+    value: str
+    count: int
+
+
 class TestMultipleToolCalls:
     """Tests for scenarios where multiple tool calls are made in a single response."""
 
@@ -4452,6 +4459,112 @@ class TestMultipleToolCalls:
                 ),
             ]
         )
+
+    def test_exhaustive_strategy_second_output_schema_validation_fails(self):
+        """Test exhaustive strategy when first output succeeds and second fails schema validation."""
+        output_tools_called: list[str] = []
+
+        def process_first(output: OutputType) -> OutputType:
+            output_tools_called.append('first')
+            return output
+
+        def process_second(output: OutputTypeWithCount) -> OutputTypeWithCount:  # pragma: no cover
+            output_tools_called.append('second')
+            return output
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('first_output', {'value': 'valid'}),
+                    ToolCallPart('second_output', {'value': 'invalid', 'count': 'not_an_int'}),
+                ],
+            )
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[
+                ToolOutput(process_first, name='first_output'),
+                ToolOutput(process_second, name='second_output'),
+            ],
+            end_strategy='exhaustive',
+        )
+
+        result = agent.run_sync('test exhaustive with schema validation failure')
+
+        assert isinstance(result.output, OutputType)
+        assert result.output.value == 'valid'
+        assert output_tools_called == ['first']
+
+    def test_exhaustive_strategy_second_output_max_retries_exceeded(self):
+        """Test exhaustive strategy when first output succeeds and second exceeds max retries."""
+        output_tools_called: list[str] = []
+
+        def process_first(output: OutputType) -> OutputType:
+            output_tools_called.append('first')
+            return output
+
+        def process_second(output: OutputTypeWithCount) -> OutputTypeWithCount:  # pragma: no cover
+            output_tools_called.append('second')
+            return output
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('first_output', {'value': 'valid'}),
+                    ToolCallPart('second_output', {'value': 'invalid', 'count': 'not_an_int'}),
+                ],
+            )
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[
+                ToolOutput(process_first, name='first_output'),
+                ToolOutput(process_second, name='second_output'),
+            ],
+            end_strategy='exhaustive',
+            output_retries=0,
+        )
+
+        result = agent.run_sync('test exhaustive with max retries exceeded')
+
+        assert isinstance(result.output, OutputType)
+        assert result.output.value == 'valid'
+        assert output_tools_called == ['first']
+
+    def test_early_strategy_second_output_max_retries_exceeded(self):
+        """Test early strategy when first output succeeds and second exceeds max retries."""
+
+        def process_first(output: OutputType) -> OutputType:
+            return output
+
+        def process_second(output: OutputTypeWithCount) -> OutputTypeWithCount:  # pragma: no cover
+            return output
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('first_output', {'value': 'valid'}),
+                    ToolCallPart('second_output', {'value': 'invalid', 'count': 'not_an_int'}),
+                ],
+            )
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[
+                ToolOutput(process_first, name='first_output'),
+                ToolOutput(process_second, name='second_output'),
+            ],
+            end_strategy='early',
+            output_retries=0,
+        )
+
+        result = agent.run_sync('test early with max retries exceeded')
+
+        assert isinstance(result.output, OutputType)
+        assert result.output.value == 'valid'
 
     # NOTE: When changing tests in this class:
     # 1. Follow the existing order

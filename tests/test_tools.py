@@ -2983,3 +2983,382 @@ def test_tool_call_metadata_not_available_for_unapproved_calls():
     # For regular tool calls (not via ToolApproved), metadata should be None
     assert len(received_metadata) == 1
     assert received_metadata[0] is None
+
+
+def test_args_validator_success():
+    """Test that args_validator runs before tool execution."""
+    validator_called = False
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal validator_called
+        validator_called = True
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+    assert validator_called
+
+
+def test_args_validator_not_configured():
+    """Test that tools work without a custom args_validator."""
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+
+@pytest.mark.anyio
+async def test_args_validator_async():
+    """Test async validator functions work correctly."""
+    validator_called = False
+
+    async def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal validator_called
+        validator_called = True
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=my_validator)
+    async def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    await agent.run('call add_numbers with x=1 and y=2', deps=42)
+
+    assert validator_called
+
+
+def test_args_validator_with_deps():
+    """Test that validator uses RunContext.deps."""
+    deps_value = None
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal deps_value
+        deps_value = ctx.deps
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+    assert deps_value == 42
+
+
+def test_args_validator_tool_direct():
+    """Test via Tool() direct instantiation."""
+    validator_called = False
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal validator_called
+        validator_called = True
+
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    tool = Tool(add_numbers, args_validator=my_validator)
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+        tools=[tool],
+    )
+
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+    assert validator_called
+
+
+def test_args_validator_toolset():
+    """Test via FunctionToolset."""
+    validator_called = False
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal validator_called
+        validator_called = True
+
+    toolset = FunctionToolset[int]()
+
+    @toolset.tool(args_validator=my_validator)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+        toolsets=[toolset],
+    )
+
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+    assert validator_called
+
+
+def test_args_validator_tool_plain():
+    """Test args_validator with tool_plain decorator."""
+    validator_called = False
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal validator_called
+        validator_called = True
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool_plain(args_validator=my_validator)
+    def add_numbers(x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+    assert validator_called
+
+
+def test_args_validator_max_retries_exceeded():
+    """Test that UnexpectedModelBehavior is raised when validator always fails and max retries is exceeded."""
+
+    def always_fail_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        raise ModelRetry('Always fails')
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=always_fail_validator, retries=2)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:  # pragma: no cover
+        """Add two numbers."""
+        return x + y
+
+    with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries'):
+        agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+
+def test_args_validator_tool_from_schema():
+    """Test Tool.from_schema() with args_validator parameter."""
+    validator_called = False
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal validator_called
+        validator_called = True
+
+    def add_numbers(ctx: RunContext[int], **kwargs: Any) -> int:
+        """Add two numbers."""
+        return kwargs['x'] + kwargs['y']
+
+    json_schema = {
+        'type': 'object',
+        'properties': {
+            'x': {'type': 'integer'},
+            'y': {'type': 'integer'},
+        },
+        'required': ['x', 'y'],
+    }
+
+    tool = Tool.from_schema(
+        add_numbers,
+        name='add_numbers',
+        description='Add two numbers',
+        json_schema=json_schema,
+        takes_ctx=True,
+        args_validator=my_validator,
+    )
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+        tools=[tool],
+    )
+
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+    assert validator_called
+
+
+def test_args_validator_with_prepare():
+    """Test that args_validator works together with prepare function."""
+    validator_called = False
+    prepare_called = False
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal validator_called
+        validator_called = True
+
+    async def my_prepare(ctx: RunContext[int], tool_def: ToolDefinition) -> ToolDefinition:
+        nonlocal prepare_called
+        prepare_called = True
+        return tool_def
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=my_validator, prepare=my_prepare)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+    assert prepare_called
+    assert validator_called
+
+
+def test_args_validator_multiple_tools():
+    """Test that multiple tools can have different validators that work independently."""
+    add_validator_calls = 0
+    multiply_validator_calls = 0
+
+    def add_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal add_validator_calls
+        add_validator_calls += 1
+
+    def multiply_validator(ctx: RunContext[int], a: int, b: int) -> None:
+        nonlocal multiply_validator_calls
+        multiply_validator_calls += 1
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers', 'multiply_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=add_validator)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    @agent.tool(args_validator=multiply_validator)
+    def multiply_numbers(ctx: RunContext[int], a: int, b: int) -> int:
+        """Multiply two numbers."""
+        return a * b
+
+    agent.run_sync('call both tools', deps=42)
+
+    assert add_validator_calls >= 1
+    assert multiply_validator_calls >= 1
+
+
+def test_args_validator_context_tool_name():
+    """Test that validator can access tool_name from RunContext."""
+    captured_tool_name = None
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal captured_tool_name
+        captured_tool_name = ctx.tool_name
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+    assert captured_tool_name == 'add_numbers'
+
+
+def test_args_validator_context_retry():
+    """Test that validator can access retry count from RunContext."""
+    retry_values: list[int] = []
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        retry_values.append(ctx.retry)
+        if len(retry_values) == 1:
+            raise ModelRetry('First attempt fails')
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=my_validator, retries=2)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+    # First attempt: retry=0, raises ModelRetry; Second attempt: retry=1, succeeds
+    assert retry_values == [0, 1]
+
+
+def test_args_validator_not_double_called_for_approved_tools():
+    """Test that args_validator is called exactly once for ToolApproved deferred tool calls.
+
+    When a tool requires approval and is later re-run with ToolApproved, the validator
+    should only be called once (during handle_call with approved=True), not twice.
+    """
+    validator_calls: list[tuple[int, bool]] = []
+
+    def my_validator(ctx: RunContext[int], x: int) -> None:
+        validator_calls.append((ctx.retry, ctx.tool_call_approved))
+
+    agent = Agent(
+        TestModel(),
+        deps_type=int,
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def my_tool(ctx: RunContext[int], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired()
+        return x * 42
+
+    # First run: tool requires approval, gets deferred
+    result = agent.run_sync('Hello', deps=42)
+    assert isinstance(result.output, DeferredToolRequests)
+    assert len(result.output.approvals) == 1
+    tool_call_id = result.output.approvals[0].tool_call_id
+
+    # Validator should have been called once during the first run
+    assert len(validator_calls) == 1
+    assert validator_calls[0] == (0, False)  # retry=0, approved=False
+
+    # Second run: re-run with ToolApproved
+    validator_calls.clear()
+    messages = result.all_messages()
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(approvals={tool_call_id: ToolApproved()}),
+        deps=42,
+    )
+
+    # Validator should have been called exactly once with approved=True
+    assert len(validator_calls) == 1
+    assert validator_calls[0] == (0, True)  # retry=0, approved=True
