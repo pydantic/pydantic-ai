@@ -31,10 +31,8 @@ from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
 from ._utils import dump_provider_metadata
 from .request_types import (
-    DynamicToolUIPart,
     RequestData,
-    ToolApprovalResponded,
-    ToolUIPart,
+    iter_tool_approval_responses,
 )
 from .response_types import (
     BaseChunk,
@@ -95,17 +93,11 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     @cached_property
     def _denied_tool_ids(self) -> set[str]:
         """Get the set of tool_call_ids that were denied by the user."""
-        denied: set[str] = set()
-        for msg in self.run_input.messages:
-            if msg.role == 'assistant':
-                for part in msg.parts:
-                    if (
-                        isinstance(part, ToolUIPart | DynamicToolUIPart)
-                        and isinstance(part.approval, ToolApprovalResponded)
-                        and not part.approval.approved
-                    ):
-                        denied.add(part.tool_call_id)
-        return denied
+        return {
+            tool_call_id
+            for tool_call_id, approval in iter_tool_approval_responses(self.run_input.messages)
+            if not approval.approved
+        }
 
     @property
     def response_headers(self) -> Mapping[str, str] | None:

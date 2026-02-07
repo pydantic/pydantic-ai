@@ -52,6 +52,7 @@ from ._utils import dump_provider_metadata, load_provider_metadata
 from .request_types import (
     DataUIPart,
     DynamicToolInputAvailablePart,
+    iter_tool_approval_responses,
     DynamicToolOutputAvailablePart,
     DynamicToolOutputErrorPart,
     DynamicToolUIPart,
@@ -63,7 +64,6 @@ from .request_types import (
     SourceUrlUIPart,
     StepStartUIPart,
     TextUIPart,
-    ToolApprovalResponded,
     ToolInputAvailablePart,
     ToolOutputAvailablePart,
     ToolOutputErrorPart,
@@ -227,18 +227,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         if self.sdk_version < 6:
             return None
         approvals: dict[str, bool | DeferredToolApprovalResult] = {}
-        for msg in self.run_input.messages:
-            if msg.role == 'assistant':
-                for part in msg.parts:
-                    if isinstance(part, ToolUIPart | DynamicToolUIPart) and isinstance(
-                        part.approval, ToolApprovalResponded
-                    ):
-                        if part.approval.approved:
-                            approvals[part.tool_call_id] = True
-                        elif part.approval.reason:
-                            approvals[part.tool_call_id] = ToolDenied(message=part.approval.reason)
-                        else:
-                            approvals[part.tool_call_id] = False
+        for tool_call_id, approval in iter_tool_approval_responses(self.run_input.messages):
+            if approval.approved:
+                approvals[tool_call_id] = True
+            elif approval.reason:
+                approvals[tool_call_id] = ToolDenied(message=approval.reason)
+            else:
+                approvals[tool_call_id] = False
         return DeferredToolResults(approvals=approvals) if approvals else None
 
     @cached_property
