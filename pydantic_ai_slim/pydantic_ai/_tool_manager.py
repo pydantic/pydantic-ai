@@ -253,12 +253,17 @@ class ToolManager(Generic[AgentDepsT]):
         tool = self.tools.get(name)
 
         # Handle unknown tool
+        # Handle unknown tool
         if tool is None:
             if self.tools:
                 msg = f'Available tools: {", ".join(f"{name!r}" for name in self.tools.keys())}'
             else:
                 msg = 'No tools available.'
             error_msg = f'Unknown tool name: {name!r}. {msg}'
+
+            max_retries = self.default_max_retries
+            if self.ctx.retries.get(name, 0) == max_retries:
+                raise UnexpectedModelBehavior(f'Tool {name!r} exceeded max retries count of {max_retries}')
 
             validation_error = ToolRetryError(
                 _messages.RetryPromptPart(tool_name=name, content=error_msg, tool_call_id=call.tool_call_id)
