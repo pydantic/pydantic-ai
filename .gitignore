@@ -21,6 +21,7 @@ node_modules/
 /test_tmp/
 .mcp.json
 .claude/*
+!.claude/settings.json
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/pytest-vcr/

@@ -78,18 +78,21 @@ For snapshot-based expectations per case:
 from inline_snapshot import snapshot
 
 EXPECTATIONS: dict[tuple[str, bool], str] = {
-    (provider, stream): snapshot(),
+    ('openai', False): snapshot(),
+    ('openai', True): snapshot(),
+    ('anthropic', False): snapshot(),
+    ('anthropic', True): snapshot(),
 }
 
 @pytest.mark.parametrize('provider', ['openai', 'anthropic'], indirect=True)
 @pytest.mark.parametrize('stream', [False, True])
-async def test_feature_with_snapshots(provider: str, stream: bool):
+async def test_feature_with_snapshots(provider: str, stream: bool, request: pytest.FixtureRequest):
     agent = Agent(provider)
     result = await agent.run('hello')
 
+    provider_name = request.node.callspec.params['provider']
     # snapshots auto-fill per parameter combination
-    assert result.all_messages() == expected
-```
+    assert result.all_messages() == EXPECTATIONS[(provider_name, stream)]
 
 ## VCR Workflow
 
@@ -137,7 +140,7 @@ async def test_something(model: Model):
 
 ## Assertion Helpers
 
-#### From `conftest.py`
+### From `conftest.py`
 - `IsNow(tz=timezone.utc)` - datetime within 10 seconds of now
 - `IsStr()` - any string, supports `regex=r'...'`
 - `IsDatetime()` - any datetime
@@ -147,7 +150,7 @@ async def test_something(model: Model):
 - `IsList()` - any list
 - `IsInstance(SomeClass)` - instance of class
 
-#### Custom helpers
+### Custom helpers
 - `IsSameStr()` - asserts same string value across multiple uses in one assertion
   ```python
   assert events == [

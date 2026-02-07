@@ -46,7 +46,6 @@ def parse_cassette(path: Path, interaction_idx: int | None = None) -> None:
             print(f'Interaction {i} not found (only {len(interactions)} interactions)')
             continue
 
-
         interaction = interactions[i]
         req = interaction.get('request', {})
         resp = interaction.get('response', {})
