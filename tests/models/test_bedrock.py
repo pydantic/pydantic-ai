@@ -3970,7 +3970,7 @@ async def test_bedrock_native_output_supported_model(
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city":"Paris","country":"France","population":2161000}')],
-                usage=RequestUsage(input_tokens=220, output_tokens=18),
+                usage=RequestUsage(input_tokens=210, output_tokens=18),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -4092,7 +4092,7 @@ async def test_bedrock_strict_tool_supported_model(
 
     result = await agent.run("What's the weather in Paris?")
     assert result.output == snapshot(
-        "The weather in Paris is currently sunny with a temperature of 22°C (approximately 72°F). It's a beautiful day!"
+        "The current weather in Paris is sunny with a temperature of 22°C (approximately 72°F). It's a beautiful day!"
     )
     assert result.all_messages() == snapshot(
         [
@@ -4102,11 +4102,7 @@ async def test_bedrock_strict_tool_supported_model(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='get_weather', args={'city': 'Paris'}, tool_call_id='tooluse_Pe1c0o95NHDEUxlS9puB0a'
-                    )
-                ],
+                parts=[ToolCallPart(tool_name='get_weather', args={'city': 'Paris'}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=560, output_tokens=53),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
@@ -4121,7 +4117,7 @@ async def test_bedrock_strict_tool_supported_model(
                     ToolReturnPart(
                         tool_name='get_weather',
                         content='Weather in Paris: Sunny, 22°C',
-                        tool_call_id='tooluse_Pe1c0o95NHDEUxlS9puB0a',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -4131,7 +4127,7 @@ async def test_bedrock_strict_tool_supported_model(
             ModelResponse(
                 parts=[
                     TextPart(
-                        content="The weather in Paris is currently sunny with a temperature of 22°C (approximately 72°F). It's a beautiful day!"
+                        content="The current weather in Paris is sunny with a temperature of 22°C (approximately 72°F). It's a beautiful day!"
                     )
                 ],
                 usage=RequestUsage(input_tokens=637, output_tokens=31),
@@ -4189,10 +4185,12 @@ async def test_bedrock_mixed_strict_tool_run(
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content="I'll help you find the capital city using the available tools."),
-                    ToolCallPart(tool_name='country_source', args={}, tool_call_id='tooluse_STLMaLEiNRom57cfdrFTUR'),
+                    TextPart(
+                        content="I'll help you find the capital city. Let me use the tools to get this information."
+                    ),
+                    ToolCallPart(tool_name='country_source', args={}, tool_call_id=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=628, output_tokens=50),
+                usage=RequestUsage(input_tokens=628, output_tokens=56),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -4206,7 +4204,7 @@ async def test_bedrock_mixed_strict_tool_run(
                     ToolReturnPart(
                         tool_name='country_source',
                         content='Japan',
-                        tool_call_id='tooluse_STLMaLEiNRom57cfdrFTUR',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -4218,10 +4216,10 @@ async def test_bedrock_mixed_strict_tool_run(
                     ToolCallPart(
                         tool_name='capital_lookup',
                         args={'country': 'Japan'},
-                        tool_call_id='tooluse_3esY2lu6K6crP1Q6gLr6Ve',
+                        tool_call_id=IsStr(),
                     )
                 ],
-                usage=RequestUsage(input_tokens=691, output_tokens=53),
+                usage=RequestUsage(input_tokens=697, output_tokens=53),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -4235,7 +4233,7 @@ async def test_bedrock_mixed_strict_tool_run(
                     ToolReturnPart(
                         tool_name='capital_lookup',
                         content='Tokyo',
-                        tool_call_id='tooluse_3esY2lu6K6crP1Q6gLr6Ve',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -4244,7 +4242,7 @@ async def test_bedrock_mixed_strict_tool_run(
             ),
             ModelResponse(
                 parts=[TextPart(content='Capital: Tokyo')],
-                usage=RequestUsage(input_tokens=757, output_tokens=6),
+                usage=RequestUsage(input_tokens=763, output_tokens=6),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -4288,10 +4286,10 @@ async def test_bedrock_strict_tool_with_native_output(
                     ToolCallPart(
                         tool_name='lookup_population',
                         args={'city': 'Paris'},
-                        tool_call_id='tooluse_XulLE5cYCrCDSSYhBjQ9IM',
+                        tool_call_id=IsStr(),
                     )
                 ],
-                usage=RequestUsage(input_tokens=757, output_tokens=53),
+                usage=RequestUsage(input_tokens=747, output_tokens=53),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -4305,7 +4303,7 @@ async def test_bedrock_strict_tool_with_native_output(
                     ToolReturnPart(
                         tool_name='lookup_population',
                         content=2161000,
-                        tool_call_id='tooluse_XulLE5cYCrCDSSYhBjQ9IM',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -4314,7 +4312,7 @@ async def test_bedrock_strict_tool_with_native_output(
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Paris", "country": "France", "population": 2161000}')],
-                usage=RequestUsage(input_tokens=826, output_tokens=23),
+                usage=RequestUsage(input_tokens=816, output_tokens=23),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -4372,7 +4370,7 @@ def test_bedrock_native_output_format_auto_mode():
 
 
 def test_bedrock_native_output_format_without_name_description():
-    """Test that _native_output_format uses default name and omits description if not provided."""
+    """Test that _native_output_format uses default name when not provided and omits description."""
     params = ModelRequestParameters(
         output_mode='native',
         output_object=OutputObjectDefinition(
@@ -4384,6 +4382,8 @@ def test_bedrock_native_output_format_without_name_description():
 
     assert result is not None
     json_schema_config = result['textFormat']['structure']['jsonSchema']
+    assert json_schema_config['name'] == 'final_result'
+    assert 'description' not in json_schema_config
     assert 'schema' in json_schema_config
 
 

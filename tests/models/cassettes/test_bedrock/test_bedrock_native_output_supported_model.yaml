@@ -4,16 +4,16 @@ interactions:
       and population."}]}], "system": [], "inferenceConfig": {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure":
       {"jsonSchema": {"schema": "{\"additionalProperties\": false, \"properties\": {\"city\": {\"type\": \"string\"}, \"country\":
       {\"type\": \"string\"}, \"population\": {\"type\": \"integer\"}}, \"required\": [\"city\", \"country\", \"population\"],
-      \"title\": \"CityInfo\", \"type\": \"object\"}", "name": "CityInfo", "description": "Information about a city."}}}}}'
+      \"type\": \"object\"}", "name": "CityInfo", "description": "Information about a city."}}}}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        YTMyZmZjMWEtMDNmMy00ZWU4LWE0Y2ItNThmMWFmOWM4OWJi
+        MGE0OTBjN2YtMDU0Yi00ZmY2LWIyNzAtMWY0MWY1NjYyYzVi
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '605'
+      - '580'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -29,7 +29,7 @@ interactions:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 2000
+        latencyMs: 1631
       output:
         message:
           content:
@@ -41,10 +41,10 @@ interactions:
         cacheReadInputTokens: 0
         cacheWriteInputTokenCount: 0
         cacheWriteInputTokens: 0
-        inputTokens: 220
+        inputTokens: 210
         outputTokens: 18
         serverToolUsage: {}
-        totalTokens: 238
+        totalTokens: 228
     status:
       code: 200
       message: OK

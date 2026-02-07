@@ -10,7 +10,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        MWY3MDk2M2YtNzlmNi00MTY2LTk3NjQtYjJlMmFjZDgwOTc1
+        MDllODY0ZGItNzhmZC00YjJmLTljOGMtYzBkODIxZDk4MDQ3
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -31,7 +31,7 @@ interactions:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1763
+        latencyMs: 1874
       output:
         message:
           content:
