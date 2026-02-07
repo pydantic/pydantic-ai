@@ -83,6 +83,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Check for modified config files
+        if: github.event.pull_request.head.repo.fork
         run: |
           CHANGED=$(gh pr diff ${{ github.event.pull_request.number }} --name-only --repo ${{ github.repository }})
           if echo "$CHANGED" | grep -qiE '(^|/)AGENTS\.md$|(^|/)CLAUDE\.md$|(^|/)\.claude/'; then
@@ -117,7 +118,7 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           allowed_non_write_users: '*'
           claude_args: |
-            --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*)"
+            --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels:*)"
           prompt: |
             Classify PR #${{ github.event.pull_request.number }} in ${{ github.repository }} and add exactly one label.
 
