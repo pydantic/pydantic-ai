@@ -12,7 +12,7 @@ The is_strict_compatible flag is set based on the strict parameter:
 
 from __future__ import annotations as _annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 import pytest
 from inline_snapshot import snapshot
@@ -422,6 +422,80 @@ def test_strict_true_description_appended():
                 },
             },
             'required': ['score'],
+            'additionalProperties': False,
+        }
+    )
+
+
+def test_strict_true_preserves_default_values():
+    """With strict=True, default values are preserved — Bedrock accepts these."""
+
+    class CityWithDefaults(BaseModel):
+        city: str
+        country: str = 'Unknown'
+        population: int = 0
+
+    transformer = BedrockJsonSchemaTransformer(CityWithDefaults.model_json_schema(), strict=True)
+    transformed = transformer.walk()
+
+    assert transformer.is_strict_compatible is True
+    assert transformed == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'city': {'type': 'string'},
+                'country': {'default': 'Unknown', 'type': 'string'},
+                'population': {'default': 0, 'type': 'integer'},
+            },
+            'required': ['city'],
+            'additionalProperties': False,
+        }
+    )
+
+
+def test_strict_true_preserves_any_of_with_null():
+    """With strict=True, anyOf with null type (optional fields) is preserved — Bedrock accepts these."""
+
+    class PersonOptional(BaseModel):
+        name: str
+        nickname: str | None = None
+
+    transformer = BedrockJsonSchemaTransformer(PersonOptional.model_json_schema(), strict=True)
+    transformed = transformer.walk()
+
+    assert transformer.is_strict_compatible is True
+    assert transformed == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'name': {'type': 'string'},
+                'nickname': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+            },
+            'required': ['name'],
+            'additionalProperties': False,
+        }
+    )
+
+
+def test_strict_true_preserves_literal_unions():
+    """With strict=True, Literal union types are preserved via anyOf — Bedrock accepts these."""
+
+    class StatusModel(BaseModel):
+        status: Literal['active', 'inactive'] | int
+
+    transformer = BedrockJsonSchemaTransformer(StatusModel.model_json_schema(), strict=True)
+    transformed = transformer.walk()
+
+    assert transformer.is_strict_compatible is True
+    assert transformed == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'status': {
+                    'anyOf': [{'enum': ['active', 'inactive'], 'type': 'string'}, {'type': 'integer'}],
+                },
+            },
+            'required': ['status'],
             'additionalProperties': False,
         }
     )

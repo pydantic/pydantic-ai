@@ -18,8 +18,6 @@ from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.providers import Provider
 
-_sentinel = object()
-
 try:
     import boto3
     from botocore.client import BaseClient
@@ -34,13 +32,13 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-_STRICT_INCOMPATIBLE_KEYS = [
+_STRICT_INCOMPATIBLE_KEYS = (
     'minimum',
     'maximum',
     'exclusiveMinimum',
     'exclusiveMaximum',
     'multipleOf',
-]
+)
 
 
 @dataclass(init=False)
@@ -83,16 +81,14 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
 
         if schema_type in ('number', 'integer'):
             for key in _STRICT_INCOMPATIBLE_KEYS:
-                value = schema.get(key, _sentinel)
-                if value is not _sentinel:
-                    incompatible[key] = value
+                if key in schema:
+                    incompatible[key] = schema[key]
 
         elif schema_type == 'array':
             if 'maxItems' in schema:
                 incompatible['maxItems'] = schema['maxItems']
-            min_items = schema.get('minItems', _sentinel)
-            if min_items is not _sentinel and min_items > 1:
-                incompatible['minItems'] = min_items
+            if 'minItems' in schema and schema['minItems'] > 1:
+                incompatible['minItems'] = schema['minItems']
 
         # Strip incompatible keys only when strict=True
         if incompatible and self.strict is True:
