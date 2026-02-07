@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import inspect
 from abc import abstractmethod
+from collections.abc import Awaitable
 from dataclasses import MISSING, dataclass, fields
-from typing import Any, Generic
+from typing import Any, Generic, cast
 
 from pydantic import ConfigDict, model_serializer
 from pydantic_core import to_jsonable_python
@@ -52,7 +53,7 @@ class ReportEvaluator(Generic[InputsT, OutputT, MetadataT]):
     @abstractmethod
     def evaluate(
         self, ctx: ReportEvaluatorContext[InputsT, OutputT, MetadataT]
-    ) -> ReportAnalysis | list[ReportAnalysis]:
+    ) -> ReportAnalysis | list[ReportAnalysis] | Awaitable[ReportAnalysis | list[ReportAnalysis]]:
         """Evaluate the full report and return experiment-wide analysis/analyses."""
         ...
 
@@ -61,9 +62,9 @@ class ReportEvaluator(Generic[InputsT, OutputT, MetadataT]):
     ) -> ReportAnalysis | list[ReportAnalysis]:
         """Evaluate, handling both sync and async implementations."""
         output = self.evaluate(ctx)
-        if inspect.isawaitable(output):
+        if inspect.iscoroutine(output):
             return await output
-        return output
+        return cast('ReportAnalysis | list[ReportAnalysis]', output)
 
     @model_serializer(mode='plain')
     def serialize(self, info: SerializationInfo) -> Any:

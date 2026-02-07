@@ -1493,5 +1493,5 @@ def _render_analysis(analysis: ConfusionMatrix | PrecisionRecall | ScalarResult 
         for row in analysis.rows:
             table.add_row(*[str(v) if v is not None else '' for v in row])
         return table
-    else:
+    else:  # pragma: no cover
         return Text(f'Unknown analysis type: {type(analysis).__name__}')

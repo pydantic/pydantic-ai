@@ -343,7 +343,7 @@ def test_custom_report_evaluator():
     @dataclass
     class AccuracyEvaluator(ReportEvaluator):
         def evaluate(self, ctx: ReportEvaluatorContext) -> ScalarResult:
-            if not ctx.report.cases:
+            if not ctx.report.cases:  # pragma: no cover
                 return ScalarResult(title='Accuracy', value=0.0, unit='%')
             correct = sum(1 for case in ctx.report.cases if case.output == case.expected_output)
             accuracy = correct / len(ctx.report.cases) * 100
@@ -376,7 +376,7 @@ async def test_dataset_with_report_evaluators():
         def evaluate(self, ctx: EvaluatorContext[TaskInput, str, None]) -> EvaluatorOutput:
             if ctx.expected_output is not None:
                 return ctx.output == ctx.expected_output
-            return True
+            return True  # pragma: no cover
 
     dataset = Dataset[TaskInput, str, None](
         cases=[
@@ -560,3 +560,220 @@ def test_report_evaluator_repr():
 
     evaluator_with_args = CustomEvaluator(threshold=0.8)
     assert repr(evaluator_with_args).endswith('CustomEvaluator(threshold=0.8)')
+
+
+# --- Additional coverage tests ---
+
+
+def test_confusion_matrix_evaluator_metadata_non_dict():
+    """ConfusionMatrixEvaluator with metadata_from but non-dict metadata returns str(metadata)."""
+    cases = [
+        _make_report_case('c1', expected_output='A', metadata='some_string'),
+    ]
+    report = _make_report(cases)
+
+    evaluator = ConfusionMatrixEvaluator(
+        predicted_from='metadata',
+        predicted_key=None,
+        expected_from='expected_output',
+    )
+    ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
+    result = evaluator.evaluate(ctx)
+
+    assert isinstance(result, ConfusionMatrix)
+    assert result.class_labels == ['A', 'some_string']
+    assert result.matrix == [[0, 1], [0, 0]]
+
+
+def test_precision_recall_evaluator_skips_missing_scores():
+    """PrecisionRecallEvaluator skips cases missing score or positive data."""
+    cases = [
+        _make_report_case('c1', scores={'confidence': 0.9}, assertions={'is_correct': True}),
+        _make_report_case('c2', scores={}, assertions={'is_correct': False}),  # missing score
+        _make_report_case('c3', scores={'confidence': 0.3}, assertions={}),  # missing assertion
+    ]
+    report = _make_report(cases)
+
+    evaluator = PrecisionRecallEvaluator(
+        score_key='confidence',
+        positive_from='assertions',
+        positive_key='is_correct',
+    )
+    ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
+    result = evaluator.evaluate(ctx)
+
+    assert isinstance(result, PrecisionRecall)
+    assert len(result.curves) == 1
+    # Only case c1 should have been used (1 scored case)
+
+
+def test_precision_recall_evaluator_positive_from_expected_output():
+    """PrecisionRecallEvaluator with positive_from='expected_output'."""
+    cases = [
+        _make_report_case('c1', scores={'conf': 0.9}, expected_output='yes'),
+        _make_report_case('c2', scores={'conf': 0.1}, expected_output=''),
+        _make_report_case('c3', scores={'conf': 0.5}, expected_output=None),  # skipped
+    ]
+    report = _make_report(cases)
+
+    evaluator = PrecisionRecallEvaluator(
+        score_key='conf',
+        positive_from='expected_output',
+    )
+    ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
+    result = evaluator.evaluate(ctx)
+
+    assert isinstance(result, PrecisionRecall)
+    assert len(result.curves) == 1
+
+
+def test_precision_recall_evaluator_positive_from_labels():
+    """PrecisionRecallEvaluator with positive_from='labels'."""
+    cases = [
+        _make_report_case('c1', scores={'conf': 0.9}, labels={'is_pos': 'yes'}),
+        _make_report_case('c2', scores={'conf': 0.1}, labels={'is_pos': ''}),
+    ]
+    report = _make_report(cases)
+
+    evaluator = PrecisionRecallEvaluator(
+        score_key='conf',
+        positive_from='labels',
+        positive_key='is_pos',
+    )
+    ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
+    result = evaluator.evaluate(ctx)
+
+    assert isinstance(result, PrecisionRecall)
+    assert len(result.curves) == 1
+
+
+async def test_async_report_evaluator():
+    """Async report evaluator is awaited through evaluate_async."""
+
+    @dataclass
+    class AsyncEvaluator(ReportEvaluator):
+        async def evaluate(self, ctx: ReportEvaluatorContext) -> ScalarResult:
+            return ScalarResult(title='Async Result', value=42)
+
+    evaluator = AsyncEvaluator()
+    report = _make_report([_make_report_case('c1', output='x')])
+    ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
+    result = await evaluator.evaluate_async(ctx)
+
+    assert isinstance(result, ScalarResult)
+    assert result.value == 42
+
+
+def test_report_evaluator_build_serialization_arguments_with_default_factory():
+    """build_serialization_arguments handles fields with default_factory."""
+    from dataclasses import field as dc_field
+
+    @dataclass
+    class EvalWithFactory(ReportEvaluator):
+        tags: list[str] = dc_field(default_factory=list[str])
+
+        def evaluate(self, ctx: ReportEvaluatorContext) -> ReportAnalysis:  # pragma: no cover
+            ...
+
+    # Default value (empty list) — should be excluded
+    evaluator = EvalWithFactory()
+    args = evaluator.build_serialization_arguments()
+    assert args == {}
+
+    # Non-default value — should be included
+    evaluator_with_tags = EvalWithFactory(tags=['a', 'b'])
+    args = evaluator_with_tags.build_serialization_arguments()
+    assert args == {'tags': ['a', 'b']}
+
+
+def test_report_rendering_with_failures():
+    """Report rendering includes report_evaluator_failures."""
+    from pydantic_evals.evaluators.evaluator import EvaluatorFailure
+    from pydantic_evals.evaluators.spec import EvaluatorSpec
+
+    report = _make_report([_make_report_case('c1', output='x', expected_output='x')])
+    report.report_evaluator_failures = [
+        EvaluatorFailure(
+            name='BrokenEvaluator',
+            error_message='ValueError: something went wrong',
+            error_stacktrace='Traceback ...',
+            source=EvaluatorSpec(name='BrokenEvaluator', arguments=None),
+        ),
+    ]
+
+    rendered = report.render(width=120)
+    assert 'Report Evaluator Failures:' in rendered
+    assert 'BrokenEvaluator' in rendered
+    assert 'something went wrong' in rendered
+
+
+def test_report_rendering_scalar_without_unit():
+    """ScalarResult rendering without a unit."""
+    report = _make_report([_make_report_case('c1', output='x', expected_output='x')])
+    report.analyses = [
+        ScalarResult(title='Count', value=10),
+    ]
+
+    rendered = report.render(width=120)
+    assert 'Count: 10' in rendered
+
+
+def test_report_rendering_precision_recall():
+    """PrecisionRecall rendering."""
+    from pydantic_evals.reporting.analyses import PrecisionRecallCurve, PrecisionRecallPoint
+
+    report = _make_report([_make_report_case('c1', output='x', expected_output='x')])
+    report.analyses = [
+        PrecisionRecall(
+            title='PR Curve',
+            curves=[
+                PrecisionRecallCurve(
+                    name='test_curve',
+                    points=[PrecisionRecallPoint(threshold=0.5, precision=0.8, recall=0.7)],
+                    auc=0.75,
+                ),
+            ],
+        ),
+    ]
+
+    rendered = report.render(width=120)
+    assert 'PR Curve' in rendered
+    assert 'test_curve' in rendered
+    assert 'AUC=0.7500' in rendered
+
+
+def test_report_rendering_table_result():
+    """TableResult rendering."""
+    report = _make_report([_make_report_case('c1', output='x', expected_output='x')])
+    report.analyses = [
+        TableResult(
+            title='Summary Table',
+            columns=['Name', 'Value'],
+            rows=[['accuracy', 0.95], ['f1', 0.9]],
+        ),
+    ]
+
+    rendered = report.render(width=120)
+    assert 'Summary Table' in rendered
+    assert 'accuracy' in rendered
+
+
+async def test_report_evaluator_exception_during_evaluate():
+    """Report evaluator that raises an exception records a failure."""
+
+    @dataclass
+    class BrokenEvaluator(ReportEvaluator):
+        def evaluate(self, ctx: ReportEvaluatorContext) -> ReportAnalysis:
+            raise RuntimeError('evaluator broke')
+
+    dataset = Dataset[str, str, None](
+        cases=[Case(inputs='hello', expected_output='world')],
+        report_evaluators=[BrokenEvaluator()],
+    )
+
+    async def task(inputs: str) -> str:
+        return inputs
+
+    report = await dataset.evaluate(task, progress=False)
+    assert len(report.report_evaluator_failures) == 1
+    assert 'evaluator broke' in report.report_evaluator_failures[0].error_message

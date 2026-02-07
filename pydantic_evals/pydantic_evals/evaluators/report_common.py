@@ -77,7 +77,7 @@ class ConfusionMatrixEvaluator(ReportEvaluator):
                 raise ValueError("'key' is required when from_='labels'")
             label_result = case.labels.get(key)
             return label_result.value if label_result else None
-        return None
+        return None  # pragma: no cover
 
 
 @dataclass
@@ -154,7 +154,7 @@ class PrecisionRecallEvaluator(ReportEvaluator):
                 raise ValueError("'positive_key' is required when positive_from='labels'")
             label = case.labels.get(self.positive_key)
             return bool(label.value) if label else None
-        return None
+        return None  # pragma: no cover
 
 
 DEFAULT_REPORT_EVALUATORS: tuple[type[ReportEvaluator[Any, Any, Any]], ...] = (

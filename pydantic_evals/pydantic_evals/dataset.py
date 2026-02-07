@@ -777,7 +777,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             cases: list[Case]
             if evaluator_schema_types:  # pragma: no branch
                 evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore  # noqa: UP007
-            if report_evaluator_schema_types:
+            if report_evaluator_schema_types:  # pragma: no branch
                 report_evaluators: list[Union[tuple(report_evaluator_schema_types)]] = []  # pyright: ignore  # noqa: UP007
 
         json_schema = Dataset.model_json_schema()

@@ -1883,7 +1883,7 @@ async def test_custom_report_evaluator_round_trip(tmp_path: Path):
     class MyAccuracy(ReportEvaluator):
         threshold: float = 0.5
 
-        def evaluate(self, ctx: ReportEvaluatorContext) -> ScalarResult:
+        def evaluate(self, ctx: ReportEvaluatorContext) -> ScalarResult:  # pragma: no cover
             return ScalarResult(title='Accuracy', value=100.0)
 
     dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
@@ -1929,4 +1929,59 @@ def test_invalid_report_evaluator_type():
     with pytest.raises(ValueError, match='must be decorated with `@dataclass`'):
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_dict(
             {'cases': []}, custom_report_evaluator_types=(NotADataclass,)
+        )
+
+
+async def test_from_text_with_unknown_report_evaluator():
+    """Loading a YAML with an unknown report evaluator name raises an error."""
+    yaml_text = """\
+cases:
+  - name: c1
+    inputs:
+      query: hello
+report_evaluators:
+  - NonExistentEvaluator
+"""
+    with pytest.raises(ExceptionGroup, match='error.*loading evaluators'):
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(yaml_text)
+
+
+async def test_from_text_with_invalid_report_evaluator_args():
+    """Loading a report evaluator with invalid constructor args raises an error."""
+    yaml_text = """\
+cases:
+  - name: c1
+    inputs:
+      query: hello
+report_evaluators:
+  - ConfusionMatrixEvaluator:
+      nonexistent_param: true
+"""
+    with pytest.raises(ExceptionGroup, match='error.*loading evaluators'):
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(yaml_text)
+
+
+async def test_duplicate_report_evaluator_class_name():
+    """Duplicate custom report evaluator class names raise an error."""
+    from pydantic_evals.evaluators import ReportEvaluator, ReportEvaluatorContext
+    from pydantic_evals.reporting.analyses import ScalarResult
+
+    @dataclass
+    class DupeEvaluator(ReportEvaluator):
+        def evaluate(self, ctx: ReportEvaluatorContext) -> ScalarResult:  # pragma: no cover
+            return ScalarResult(title='x', value=0)
+
+    @dataclass
+    class DupeEvaluator2(ReportEvaluator):
+        def evaluate(self, ctx: ReportEvaluatorContext) -> ScalarResult:  # pragma: no cover
+            return ScalarResult(title='x', value=0)
+
+        @classmethod
+        def get_serialization_name(cls) -> str:
+            return 'DupeEvaluator'
+
+    with pytest.raises(ValueError, match='Duplicate report evaluator class name'):
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_dict(
+            {'cases': []},
+            custom_report_evaluator_types=(DupeEvaluator, DupeEvaluator2),
         )
