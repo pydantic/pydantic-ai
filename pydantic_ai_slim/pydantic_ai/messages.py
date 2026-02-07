@@ -586,6 +586,8 @@ class BinaryContent:
             with path.open('rb') as f:
                 header = f.read(2048)  # Read the first 2048 bytes to check for a MIME type
             try:
+                if b'\x00' in header:
+                    raise UnicodeDecodeError('Binary file detected', header, 0, len(header), 'null byte found')
                 header.decode(encoding='utf-8', errors='strict')  # If this succeeds, it's likely a text file
                 media_type = 'text/plain'  # Fallback to text if we can decode as UTF-8
             except UnicodeDecodeError:
@@ -1515,36 +1517,30 @@ class ModelResponse:
         body = new_event_body()
         for part in self.parts:
             if isinstance(part, ToolCallPart):
-                body.setdefault('tool_calls', []).append(
-                    {
-                        'id': part.tool_call_id,
-                        'type': 'function',
-                        'function': {
-                            'name': part.tool_name,
-                            **({'arguments': part.args} if settings.include_content else {}),
-                        },
-                    }
-                )
+                body.setdefault('tool_calls', []).append({
+                    'id': part.tool_call_id,
+                    'type': 'function',
+                    'function': {
+                        'name': part.tool_name,
+                        **({'arguments': part.args} if settings.include_content else {}),
+                    },
+                })
             elif isinstance(part, TextPart | ThinkingPart):
                 kind = part.part_kind
-                body.setdefault('content', []).append(
-                    {
-                        'kind': kind,
-                        **({'text': part.content} if settings.include_content else {}),
-                    }
-                )
+                body.setdefault('content', []).append({
+                    'kind': kind,
+                    **({'text': part.content} if settings.include_content else {}),
+                })
             elif isinstance(part, FilePart):
-                body.setdefault('content', []).append(
-                    {
-                        'kind': 'binary',
-                        'media_type': part.content.media_type,
-                        **(
-                            {'binary_content': part.content.base64}
-                            if settings.include_content and settings.include_binary_content
-                            else {}
-                        ),
-                    }
-                )
+                body.setdefault('content', []).append({
+                    'kind': 'binary',
+                    'media_type': part.content.media_type,
+                    **(
+                        {'binary_content': part.content.base64}
+                        if settings.include_content and settings.include_binary_content
+                        else {}
+                    ),
+                })
 
         if content := body.get('content'):
             text_content = content[0].get('text')

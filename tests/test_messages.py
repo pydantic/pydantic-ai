@@ -844,7 +844,9 @@ def test_binary_content_from_path(tmp_path: Path):
     test_unknown_bin_file.write_bytes(b'\x00\x01\x02\x03\x04\x07\x08')
     binary_content = BinaryContent.from_path(test_unknown_bin_file)
     assert binary_content == snapshot(
-        BinaryContent(data=b'\x00\x01\x02\x03\x04\x07\x08', file_name='unknown.unknownbin', _media_type='text/plain')
+        BinaryContent(
+            data=b'\x00\x01\x02\x03\x04\x07\x08', file_name='unknown.unknownbin', _media_type='application/octet-stream'
+        )
     )
 
 
