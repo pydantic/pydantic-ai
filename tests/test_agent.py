@@ -6572,6 +6572,81 @@ async def test_thinking_only_response_retry():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
+                        content='Please return text.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='You are a helpful assistant.',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Final answer')],
+                usage=RequestUsage(input_tokens=63, output_tokens=8),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_thinking_only_response_retry_with_tools():
+    """Test that 'call a tool' appears in retry message only when function tools are registered."""
+    from pydantic_ai import ThinkingPart
+    from pydantic_ai.models.function import FunctionModel
+
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+
+        if call_count == 1:
+            return ModelResponse(
+                parts=[ThinkingPart(content='Let me think about this...')],
+                model_name='thinking-test-model',
+            )
+        else:
+            return ModelResponse(
+                parts=[TextPart(content='Final answer')],
+                model_name='thinking-test-model',
+            )
+
+    model = FunctionModel(model_function)
+    agent = Agent(model, instructions='You are a helpful assistant.')
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        """Get the weather for a city."""
+        return f'Sunny in {city}'
+
+    result = await agent.run('Hello')
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                instructions='You are a helpful assistant.',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ThinkingPart(content='Let me think about this...')],
+                usage=RequestUsage(input_tokens=51, output_tokens=6),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
                         content='Please return text or call a tool.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
