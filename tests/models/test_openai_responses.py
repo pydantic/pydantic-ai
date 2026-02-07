@@ -7183,7 +7183,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Please return text or call a tool.',
+                        content='Please return text.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
