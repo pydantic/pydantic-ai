@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from typing import Literal
 
 from pydantic import TypeAdapter
@@ -44,6 +44,11 @@ class TavilySearchTool:
     client: AsyncTavilyClient
     """The Tavily search client."""
 
+    _: KW_ONLY
+
+    max_results: int | None = None
+    """The maximum number of results. If None, the Tavily default is used."""
+
     async def __call__(
         self,
         query: str,
@@ -71,22 +76,24 @@ class TavilySearchTool:
             search_depth=search_deep,
             topic=topic,
             time_range=time_range,  # pyright: ignore[reportArgumentType]
+            max_results=self.max_results,  # pyright: ignore[reportArgumentType]
             include_domains=include_domains,  # pyright: ignore[reportArgumentType]
             exclude_domains=exclude_domains,  # pyright: ignore[reportArgumentType]
         )
         return tavily_search_ta.validate_python(results['results'])
 
 
-def tavily_search_tool(api_key: str):
+def tavily_search_tool(api_key: str, *, max_results: int | None = None):
     """Creates a Tavily search tool.
 
     Args:
         api_key: The Tavily API key.
 
             You can get one by signing up at [https://app.tavily.com/home](https://app.tavily.com/home).
+        max_results: The maximum number of results. If None, the Tavily default is used.
     """
     return Tool[Any](
-        TavilySearchTool(client=AsyncTavilyClient(api_key)).__call__,
+        TavilySearchTool(client=AsyncTavilyClient(api_key), max_results=max_results).__call__,
         name='tavily_search',
         description='Searches Tavily for the given query and returns the results.',
     )

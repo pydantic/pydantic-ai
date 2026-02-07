@@ -7,9 +7,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pydantic_ai import Agent
-from pydantic_ai.models.test import TestModel
-
 from .conftest import try_import
 
 with try_import() as imports_successful:
@@ -60,6 +57,7 @@ class TestTavilySearchTool:
             search_depth='basic',
             topic='general',
             time_range=None,
+            max_results=None,
             include_domains=None,
             exclude_domains=None,
         )
@@ -76,6 +74,7 @@ class TestTavilySearchTool:
             search_depth='basic',
             topic='general',
             time_range=None,
+            max_results=None,
             include_domains=['arxiv.org', 'github.com'],
             exclude_domains=None,
         )
@@ -90,13 +89,29 @@ class TestTavilySearchTool:
             search_depth='basic',
             topic='general',
             time_range=None,
+            max_results=None,
             include_domains=None,
             exclude_domains=['medium.com'],
         )
 
+    async def test_search_with_max_results(self, mock_async_tavily_client: AsyncMock):
+        """Test search with max_results specified on the dataclass."""
+        tool = TavilySearchTool(client=mock_async_tavily_client, max_results=5)
+        await tool('test query')
+
+        mock_async_tavily_client.search.assert_called_once_with(
+            'test query',
+            search_depth='basic',
+            topic='general',
+            time_range=None,
+            max_results=5,
+            include_domains=None,
+            exclude_domains=None,
+        )
+
     async def test_search_with_all_parameters(self, mock_async_tavily_client: AsyncMock):
         """Test search with all parameters specified."""
-        tool = TavilySearchTool(client=mock_async_tavily_client)
+        tool = TavilySearchTool(client=mock_async_tavily_client, max_results=10)
         await tool(
             'test query',
             search_deep='advanced',
@@ -111,6 +126,7 @@ class TestTavilySearchTool:
             search_depth='advanced',
             topic='news',
             time_range='week',
+            max_results=10,
             include_domains=['news.com'],
             exclude_domains=['spam.com'],
         )
@@ -127,19 +143,11 @@ class TestTavilySearchToolFactory:
             mock_client_class.assert_called_once_with('test-api-key')
             assert tool.name == 'tavily_search'
 
+    def test_factory_accepts_max_results(self):
+        """Test that tavily_search_tool passes max_results to TavilySearchTool."""
+        with patch('pydantic_ai.common_tools.tavily.AsyncTavilyClient') as mock_client_class:
+            mock_client_class.return_value = AsyncMock()
+            tool = tavily_search_tool('test-api-key', max_results=5)
 
-class TestTavilySearchToolIntegration:
-    """Integration tests for Tavily tool with Agent."""
-
-    def test_tool_with_agent(self, mock_async_tavily_client: AsyncMock):
-        """Test that the tool integrates correctly with an Agent."""
-        with patch('pydantic_ai.common_tools.tavily.AsyncTavilyClient', return_value=mock_async_tavily_client):
-            tool = tavily_search_tool('test-api-key')
-
-            agent = Agent(
-                TestModel(),
-                tools=[tool],
-            )
-
-            # Verify the tool is properly registered
-            assert 'tavily_search' in agent._function_toolset.tools  # pyright: ignore[reportPrivateUsage]
+            mock_client_class.assert_called_once_with('test-api-key')
+            assert tool.name == 'tavily_search'

@@ -154,7 +154,7 @@ assert api_key is not None
 
 agent = Agent(
     'openai:o3-mini',
-    tools=[tavily_search_tool(api_key)],
+    tools=[tavily_search_tool(api_key, max_results=5)],
     instructions=(
         'Search for information and return the results. '
         'When searching for academic content, use include_domains to limit results to arxiv.org.'
