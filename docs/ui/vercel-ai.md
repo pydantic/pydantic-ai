@@ -84,3 +84,38 @@ async def chat(request: Request) -> Response:
     sse_event_stream = adapter.encode_stream(event_stream)
     return StreamingResponse(sse_event_stream, media_type=accept)
 ```
+
+### Data Chunks
+
+Pydantic AI tools can send [Vercel AI data stream chunks](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol) by returning a
+[`ToolReturn`](../tools-advanced.md#advanced-tool-returns) object with a
+[`BaseChunk`][pydantic_ai.ui.vercel_ai.response_types.BaseChunk] (or a list of chunks) as `metadata`.
+This is useful for attaching structured data to the frontend alongside the tool result, such as source URLs or custom data payloads.
+
+```python {title="vercel_ai_tool_chunks.py"}
+from pydantic_ai import Agent, ToolReturn
+from pydantic_ai.ui.vercel_ai.response_types import DataChunk, SourceUrlChunk
+
+agent = Agent('openai:gpt-5.2')
+
+
+@agent.tool_plain
+async def search_docs(query: str) -> ToolReturn:
+    return ToolReturn(
+        return_value=f'Found 2 results for "{query}"',
+        metadata=[
+            SourceUrlChunk(
+                source_id='doc-1',
+                url='https://example.com/docs/intro',
+                title='Introduction',
+            ),
+            DataChunk(
+                type='data-search-results',
+                data={'query': query, 'count': 2},
+            ),
+        ],
+    )
+```
+
+!!! warning
+    Avoid emitting protocol control chunks such as `StartChunk`, `FinishChunk`, `StartStepChunk`, or `FinishStepChunk` from tool metadata — these are managed by the adapter and injecting them out of order will corrupt the stream state machine, likely causing UI errors on the frontend.

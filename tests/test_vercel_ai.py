@@ -62,11 +62,7 @@ from pydantic_ai.ui.vercel_ai.request_types import (
 from pydantic_ai.ui.vercel_ai.response_types import (
     BaseChunk,
     DataChunk,
-    FinishChunk,
-    FinishStepChunk,
     SourceUrlChunk,
-    StartChunk,
-    StartStepChunk,
     ToolInputStartChunk,
 )
 
@@ -1774,13 +1770,10 @@ async def test_run_stream_tool_metadata_multiple_chunks():
     )
 
 
-async def test_run_stream_tool_metadata_ignores_non_data_chunks():
-    """Test that non-DataChunk BaseChunks in ToolReturnPart.metadata are ignored in the stream.
+async def test_run_stream_tool_metadata_yields_all_base_chunks():
+    """Test that all BaseChunk subclasses in ToolReturnPart.metadata are yielded to the stream.
 
-    Only DataChunks should be yielded from tool metadata. Protocol control chunks
-    (StartChunk, FinishChunk, StartStepChunk, FinishStepChunk) and other non-data
-    chunks (SourceUrlChunk, ToolInputStartChunk) would break the UI state machine
-    if leaked into the stream.
+    Users are responsible for only emitting chunk types that make sense in context.
     """
 
     async def stream_function(
@@ -1798,15 +1791,7 @@ async def test_run_stream_tool_metadata_ignores_non_data_chunks():
         return ToolReturn(
             return_value='Data sent',
             metadata=[
-                # Protocol control chunks — would break UI state if yielded
-                StartChunk(),
-                FinishChunk(),
-                StartStepChunk(),
-                FinishStepChunk(),
-                # Non-data content chunks
                 SourceUrlChunk(source_id='src_1', url='https://example.com', title='Example'),
-                ToolInputStartChunk(tool_call_id='fake', tool_name='fake'),
-                # The only chunk that should pass through
                 DataChunk(type='data-valid', data={'survived': True}),
             ],
         )
@@ -1821,7 +1806,6 @@ async def test_run_stream_tool_metadata_ignores_non_data_chunks():
         async for event in adapter.encode_stream(adapter.run_stream())
     ]
 
-    # Only the DataChunk should appear — all control/non-data chunks are filtered out
     assert events == snapshot(
         [
             {'type': 'start'},
@@ -1835,6 +1819,7 @@ async def test_run_stream_tool_metadata_ignores_non_data_chunks():
                 'input': {},
             },
             {'type': 'tool-output-available', 'toolCallId': 'call_1', 'output': 'Data sent'},
+            {'type': 'source-url', 'sourceId': 'src_1', 'url': 'https://example.com', 'title': 'Example'},
             {'type': 'data-valid', 'data': {'survived': True}},
             {'type': 'finish-step'},
             {'type': 'start-step'},
@@ -2775,11 +2760,12 @@ async def test_adapter_dump_messages_with_tool_metadata_multiple_chunks():
     )
 
 
-async def test_adapter_dump_messages_with_tool_metadata_ignores_non_data_chunks():
-    """Test that non-DataChunk BaseChunks in ToolReturnPart.metadata are ignored in dump_messages.
+async def test_adapter_dump_messages_with_tool_metadata_all_base_chunks():
+    """Test that all BaseChunk subclasses in ToolReturnPart.metadata are converted in dump_messages.
 
-    Mirrors test_run_stream_tool_metadata_ignores_non_data_chunks — both paths
-    should filter out protocol control chunks and non-data content chunks.
+    Mirrors test_run_stream_tool_metadata_yields_all_base_chunks — both paths
+    should support all BaseChunk types. Chunks with known UI part equivalents
+    are converted; others are skipped.
     """
     messages = [
         ModelRequest(parts=[UserPromptPart(content='Send data')]),
@@ -2799,15 +2785,7 @@ async def test_adapter_dump_messages_with_tool_metadata_ignores_non_data_chunks(
                     content='Data sent',
                     tool_call_id='call_1',
                     metadata=[
-                        # Protocol control chunks — would break UI state if included
-                        StartChunk(),
-                        FinishChunk(),
-                        StartStepChunk(),
-                        FinishStepChunk(),
-                        # Non-data content chunks
                         SourceUrlChunk(source_id='src_1', url='https://example.com', title='Example'),
-                        ToolInputStartChunk(tool_call_id='fake', tool_name='fake'),
-                        # The only chunk that should be converted to DataUIPart
                         DataChunk(type='data-valid', data={'survived': True}),
                     ],
                 )
@@ -2819,7 +2797,6 @@ async def test_adapter_dump_messages_with_tool_metadata_ignores_non_data_chunks(
     ui_messages = VercelAIAdapter.dump_messages(messages)
     ui_message_dicts = [msg.model_dump() for msg in ui_messages]
 
-    # Only the DataChunk should appear as a DataUIPart — all others are filtered out
     assert ui_message_dicts == snapshot(
         [
             {
@@ -2842,6 +2819,13 @@ async def test_adapter_dump_messages_with_tool_metadata_ignores_non_data_chunks(
                         'output': 'Data sent',
                         'call_provider_metadata': None,
                         'preliminary': None,
+                    },
+                    {
+                        'type': 'source-url',
+                        'source_id': 'src_1',
+                        'url': 'https://example.com',
+                        'title': 'Example',
+                        'provider_metadata': None,
                     },
                     {
                         'type': 'data-valid',

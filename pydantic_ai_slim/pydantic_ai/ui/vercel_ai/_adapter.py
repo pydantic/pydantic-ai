@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -38,7 +38,7 @@ from ...output import OutputDataT
 from ...tools import AgentDepsT
 from .. import MessagesBuilder, UIAdapter, UIEventStream
 from ._event_stream import VercelAIEventStream
-from ._utils import dump_provider_metadata, load_provider_metadata
+from ._utils import dump_provider_metadata, iter_metadata_chunks, load_provider_metadata
 from .request_types import (
     DataUIPart,
     DynamicToolInputAvailablePart,
@@ -60,7 +60,7 @@ from .request_types import (
     UIMessage,
     UIMessagePart,
 )
-from .response_types import BaseChunk, DataChunk
+from .response_types import BaseChunk, DataChunk, FileChunk, SourceDocumentChunk, SourceUrlChunk
 
 if TYPE_CHECKING:
     pass
@@ -449,8 +449,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             call_provider_metadata=call_provider_metadata,
                         )
                     )
-                    # Check for Vercel AI data parts returned by tool calls via metadata.
-                    ui_parts.extend(_extract_data_ui_parts(tool_result))
+                    # Check for Vercel AI chunks returned by tool calls via metadata.
+                    ui_parts.extend(_extract_metadata_ui_parts(tool_result))
                 elif isinstance(tool_result, RetryPromptPart):
                     error_text = tool_result.model_response()
                     ui_parts.append(
@@ -547,18 +547,31 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
     return ui_parts
 
 
-def _extract_data_ui_parts(tool_result: ToolReturnPart) -> list[DataUIPart]:
-    """Extract DataUIParts from ToolReturnPart metadata, mirroring the streaming path."""
-    possible = tool_result.metadata or tool_result.content
-    if isinstance(possible, DataChunk):
-        return [DataUIPart(type=possible.type, id=possible.id, data=possible.data)]
-    elif isinstance(possible, str | bytes):
-        # Avoid iterable check for strings and bytes.
-        return []
-    elif isinstance(possible, Iterable):
-        return [
-            DataUIPart(type=item.type, id=item.id, data=item.data)
-            for item in possible  # type: ignore[reportUnknownMemberType]
-            if isinstance(item, DataChunk)
-        ]
-    return []
+def _extract_metadata_ui_parts(tool_result: ToolReturnPart) -> list[UIMessagePart]:
+    """Extract UI parts from BaseChunks in ToolReturnPart metadata, mirroring the streaming path."""
+    parts: list[UIMessagePart] = []
+    for chunk in iter_metadata_chunks(tool_result):
+        if isinstance(chunk, DataChunk):
+            parts.append(DataUIPart(type=chunk.type, id=chunk.id, data=chunk.data))
+        elif isinstance(chunk, SourceUrlChunk):
+            parts.append(
+                SourceUrlUIPart(
+                    source_id=chunk.source_id,
+                    url=chunk.url,
+                    title=chunk.title,
+                    provider_metadata=chunk.provider_metadata,
+                )
+            )
+        elif isinstance(chunk, SourceDocumentChunk):
+            parts.append(
+                SourceDocumentUIPart(
+                    source_id=chunk.source_id,
+                    media_type=chunk.media_type,
+                    title=chunk.title,
+                    filename=chunk.filename,
+                    provider_metadata=chunk.provider_metadata,
+                )
+            )
+        elif isinstance(chunk, FileChunk):
+            parts.append(FileUIPart(url=chunk.url, media_type=chunk.media_type))
+    return parts

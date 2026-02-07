@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterable, Mapping
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import KW_ONLY, dataclass
 from typing import Any, Literal
 
@@ -28,11 +28,10 @@ from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT
 from .. import UIEventStream
-from ._utils import dump_provider_metadata
+from ._utils import dump_provider_metadata, iter_metadata_chunks
 from .request_types import RequestData
 from .response_types import (
     BaseChunk,
-    DataChunk,
     DoneChunk,
     ErrorChunk,
     FileChunk,
@@ -253,18 +252,13 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         else:
             yield ToolOutputAvailableChunk(tool_call_id=part.tool_call_id, output=self._tool_return_output(part))
 
-        # Check for Vercel AI data chunks returned by tool calls via metadata.
+        # ToolOutputAvailableChunk/ToolOutputErrorChunk.output may hold user parts
+        # (e.g. text, images) that Vercel AI does not currently have chunk types for.
+
+        # Check for Vercel AI chunks returned by tool calls via metadata.
         if isinstance(part, ToolReturnPart):
-            possible_chunk = part.metadata or part.content
-            if isinstance(possible_chunk, DataChunk):
-                yield possible_chunk
-            elif isinstance(possible_chunk, str | bytes):  # pragma: no branch
-                # Avoid iterable check for strings and bytes.
-                pass
-            elif isinstance(possible_chunk, Iterable):  # pragma: no branch
-                for item in possible_chunk:  # type: ignore[reportUnknownMemberType]
-                    if isinstance(item, DataChunk):  # pragma: no branch
-                        yield item
+            for chunk in iter_metadata_chunks(part):
+                yield chunk
 
     def _tool_return_output(self, part: BaseToolReturnPart) -> Any:
         output = part.model_response_object()
