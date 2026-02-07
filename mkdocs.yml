@@ -18,7 +18,7 @@ nav:
 
   - Documentation:
       - Core Concepts:
-          - agents.md
+          - Agents: agent.md
           - dependencies.md
           - tools.md
           - output.md
@@ -135,6 +135,7 @@ nav:
           - api/agent.md
           - api/builtin_tools.md
           - api/common_tools.md
+          - api/concurrency.md
           - api/direct.md
           - api/durable_exec.md
           - api/embeddings.md
@@ -358,7 +359,7 @@ plugins:
         Concepts documentation:
           - a2a.md
           - ag-ui.md
-          - agents.md
+          - Agents: agent.md
           - builtin-tools.md
           - dependencies.md
           - deferred-tools.md
