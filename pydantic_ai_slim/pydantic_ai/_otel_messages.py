@@ -37,6 +37,19 @@ class MediaUrlPart(TypedDict):
     url: NotRequired[str]
 
 
+class UriPart(TypedDict):
+    """Part type for URIs following OpenTelemetry GenAI semantic conventions.
+
+    Used in instrumentation version 4+ to align with the GenAI spec:
+    https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/#multimodal-inputs-example
+    """
+
+    type: Literal['uri']
+    modality: Literal['image', 'audio', 'video', 'document']
+    uri: NotRequired[str]
+    mime_type: NotRequired[str]
+
+
 class BinaryDataPart(TypedDict):
     type: Literal['binary']
     media_type: str
@@ -48,7 +61,9 @@ class ThinkingPart(TypedDict):
     content: NotRequired[str]
 
 
-MessagePart: TypeAlias = 'TextPart | ToolCallPart | ToolCallResponsePart | MediaUrlPart | BinaryDataPart | ThinkingPart'
+MessagePart: TypeAlias = (
+    'TextPart | ToolCallPart | ToolCallResponsePart | MediaUrlPart | UriPart | BinaryDataPart | ThinkingPart'
+)
 
 
 Role = Literal['system', 'user', 'assistant']

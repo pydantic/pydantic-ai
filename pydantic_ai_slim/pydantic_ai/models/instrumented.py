@@ -92,7 +92,7 @@ class InstrumentationSettings:
     event_mode: Literal['attributes', 'logs'] = 'attributes'
     include_binary_content: bool = True
     include_content: bool = True
-    version: Literal[1, 2, 3] = DEFAULT_INSTRUMENTATION_VERSION
+    version: Literal[1, 2, 3, 4] = DEFAULT_INSTRUMENTATION_VERSION
 
     def __init__(
         self,
@@ -101,7 +101,7 @@ class InstrumentationSettings:
         meter_provider: MeterProvider | None = None,
         include_binary_content: bool = True,
         include_content: bool = True,
-        version: Literal[1, 2, 3] = DEFAULT_INSTRUMENTATION_VERSION,
+        version: Literal[1, 2, 3, 4] = DEFAULT_INSTRUMENTATION_VERSION,
         event_mode: Literal['attributes', 'logs'] = 'attributes',
         logger_provider: LoggerProvider | None = None,
     ):
@@ -125,6 +125,10 @@ class InstrumentationSettings:
                     - `gen_ai.system_instructions` for instructions passed to the agent.
                     - `gen_ai.input.messages` and `gen_ai.output.messages` on model request spans.
                     - `pydantic_ai.all_messages` on agent run spans.
+                Version 3 is the same as version 2, with additional support for thinking tokens.
+                Version 4 uses the GenAI semantic conventions for multimodal inputs:
+                    https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/#multimodal-inputs-example
+                    Image, audio, video, and document URLs are logged with type='uri', modality, uri, and mime_type fields.
             event_mode: The mode for emitting events in version 1.
                 If `'attributes'`, events are attached to the span as attributes.
                 If `'logs'`, events are emitted as OpenTelemetry log-based events.
