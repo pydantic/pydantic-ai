@@ -233,7 +233,7 @@ class FileUrl(ABC):
         *,
         media_type: str | None = None,
         identifier: str | None = None,
-        force_download: bool = False,
+        force_download: ForceDownloadMode = False,
         vendor_metadata: dict[str, Any] | None = None,
     ) -> FileUrl:
         mime_type = media_type or _mime_types.guess_type(url)[0]
