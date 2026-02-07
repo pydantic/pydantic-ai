@@ -376,6 +376,11 @@ async def test_openrouter_video_url_public_api(
 
     This test validates the complete end-to-end flow using the public API,
     ensuring VideoUrl works correctly with OpenRouter models.
+
+    To record the VCR cassette and populate the snapshot (first-time setup):
+    - Set OPENROUTER_API_KEY to a valid key.
+    - Run: uv run pytest tests/models/test_openrouter.py::test_openrouter_video_url_public_api --record-mode=rewrite --inline-snapshot=create
+    - After that, the test passes without an API key by replaying the cassette.
     """
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('google/gemini-2.5-flash', provider=provider)
@@ -389,7 +394,15 @@ async def test_openrouter_video_url_public_api(
     )
 
     assert isinstance(result.output, str)
-    assert result.output == snapshot()  # Will be populated when run with --record-mode=once
+    assert result.output == snapshot("""\
+This video features a giant panda in an enclosure designed to resemble its natural habitat. The enclosure includes:
+- **Rocks and terrain:** Various sized rocks create a textured landscape.
+- **Bamboo:** Fresh bamboo shoots are scattered around, which the panda is seen eating.
+- **Background mural:** A painted mural on the back wall depicts a mountainous, green landscape, enhancing the immersive feel of the habitat.
+- **Window:** A clear window is visible in the upper part of the background, likely part of the viewing area for visitors.
+- **Enrichment toy:** A large, round, light brown object (possibly a ball or feeder) is seen on the rocks, likely an enrichment toy for the panda.
+- **Panda:** The main subject is a black and white giant panda, which is actively eating bamboo at the bottom right of the frame, occasionally looking up.\
+""")
 
 
 async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_api_key: str) -> None:
