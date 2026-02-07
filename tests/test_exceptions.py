@@ -15,6 +15,7 @@ from pydantic_ai.exceptions import (
     IncompleteToolCall,
     ModelAPIError,
     ModelHTTPError,
+    ToolFailed,
     ToolRetryError,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
@@ -27,6 +28,8 @@ from pydantic_ai.messages import RetryPromptPart
     'exc_factory',
     [
         lambda: ModelRetry('test'),
+        lambda: ToolFailed('test'),
+        lambda: ToolFailed('test', disable=True),
         lambda: CallDeferred(),
         lambda: ApprovalRequired(),
         lambda: UserError('test'),
@@ -40,6 +43,8 @@ from pydantic_ai.messages import RetryPromptPart
     ],
     ids=[
         'ModelRetry',
+        'ToolFailed',
+        'ToolFailed-disable',
         'CallDeferred',
         'ApprovalRequired',
         'UserError',
@@ -108,3 +113,33 @@ def test_tool_retry_error_str_with_value_error_type():
     assert str(error) == (
         "1 validation error for 'my_tool'\nfield\n  Value error, must not be foo [type=value_error, input_value='foo']"
     )
+
+
+def test_tool_failed_defaults():
+    """Test ToolFailed default values."""
+    exc = ToolFailed('Tool error')
+    assert exc.message == 'Tool error'
+    assert exc.disable is False
+    assert str(exc) == 'Tool error'
+
+
+def test_tool_failed_with_disable():
+    """Test ToolFailed with disable=True."""
+    exc = ToolFailed('Tool broken', disable=True)
+    assert exc.message == 'Tool broken'
+    assert exc.disable is True
+    assert str(exc) == 'Tool broken'
+
+
+def test_tool_failed_equality():
+    """Test ToolFailed equality and hashing."""
+    exc1 = ToolFailed('test', disable=False)
+    exc2 = ToolFailed('test', disable=False)
+    exc3 = ToolFailed('test', disable=True)
+    exc4 = ToolFailed('different', disable=False)
+
+    assert exc1 == exc2
+    assert exc1 != exc3
+    assert exc1 != exc4
+    assert hash(exc1) == hash(exc2)
+    assert hash(exc1) != hash(exc3)
