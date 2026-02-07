@@ -48,7 +48,7 @@ class TestTavilySearchTool:
     """Tests for TavilySearchTool."""
 
     async def test_basic_search(self, mock_async_tavily_client: AsyncMock):
-        """Test basic search without domain filtering."""
+        """Test basic search with default parameters."""
         tool = TavilySearchTool(client=mock_async_tavily_client)
         results = await tool('test query')
 
@@ -95,9 +95,9 @@ class TestTavilySearchTool:
         )
 
     async def test_search_with_max_results(self, mock_async_tavily_client: AsyncMock):
-        """Test search with max_results specified on the dataclass."""
-        tool = TavilySearchTool(client=mock_async_tavily_client, max_results=5)
-        await tool('test query')
+        """Test search with max_results specified."""
+        tool = TavilySearchTool(client=mock_async_tavily_client)
+        await tool('test query', max_results=5)
 
         mock_async_tavily_client.search.assert_called_once_with(
             'test query',
@@ -111,12 +111,13 @@ class TestTavilySearchTool:
 
     async def test_search_with_all_parameters(self, mock_async_tavily_client: AsyncMock):
         """Test search with all parameters specified."""
-        tool = TavilySearchTool(client=mock_async_tavily_client, max_results=10)
+        tool = TavilySearchTool(client=mock_async_tavily_client)
         await tool(
             'test query',
             search_deep='advanced',
             topic='news',
             time_range='week',
+            max_results=10,
             include_domains=['news.com'],
             exclude_domains=['spam.com'],
         )
@@ -143,11 +144,25 @@ class TestTavilySearchToolFactory:
             mock_client_class.assert_called_once_with('test-api-key')
             assert tool.name == 'tavily_search'
 
-    def test_factory_accepts_max_results(self):
-        """Test that tavily_search_tool passes max_results to TavilySearchTool."""
-        with patch('pydantic_ai.common_tools.tavily.AsyncTavilyClient') as mock_client_class:
-            mock_client_class.return_value = AsyncMock()
-            tool = tavily_search_tool('test-api-key', max_results=5)
+    def test_no_params_bound_exposes_all_in_schema(self):
+        """Test that with no factory params, all parameters appear in the tool schema."""
+        with patch('pydantic_ai.common_tools.tavily.AsyncTavilyClient'):
+            tool = tavily_search_tool('test-api-key')
 
-            mock_client_class.assert_called_once_with('test-api-key')
-            assert tool.name == 'tavily_search'
+            schema_props = tool.function_schema.json_schema['properties']
+            assert 'max_results' in schema_props
+            assert 'include_domains' in schema_props
+            assert 'exclude_domains' in schema_props
+
+    def test_bound_params_hidden_from_schema(self):
+        """Test that factory-provided params are excluded from the tool schema via partial."""
+        with patch('pydantic_ai.common_tools.tavily.AsyncTavilyClient'):
+            tool = tavily_search_tool('test-api-key', max_results=5, include_domains=['arxiv.org'])
+
+            schema_props = tool.function_schema.json_schema['properties']
+            assert 'max_results' not in schema_props
+            assert 'include_domains' not in schema_props
+            # exclude_domains was not bound, so it should still be visible
+            assert 'exclude_domains' in schema_props
+            # query should always be visible
+            assert 'query' in schema_props

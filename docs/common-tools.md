@@ -139,9 +139,11 @@ Feel free to click on the links to dive deeper into each story!
 """
 ```
 
-### Domain Filtering
+### Configuring Parameters
 
-The Tavily search tool exposes `include_domains` and `exclude_domains` parameters that the LLM can use to filter search results. When you instruct the agent appropriately, it will use these parameters:
+The `tavily_search_tool` factory accepts optional parameters that control search behavior. Any parameter provided to the factory is **fixed for all searches and hidden from the LLM's tool schema**. Parameters left as `None` remain available for the LLM to set per-call.
+
+For example, you can lock in `max_results` and `include_domains` at tool creation time while still letting the LLM control `exclude_domains`:
 
 ```py {title="tavily_domain_filtering.py"}
 import os
@@ -154,11 +156,8 @@ assert api_key is not None
 
 agent = Agent(
     'openai:o3-mini',
-    tools=[tavily_search_tool(api_key, max_results=5)],
-    instructions=(
-        'Search for information and return the results. '
-        'When searching for academic content, use include_domains to limit results to arxiv.org.'
-    ),
+    tools=[tavily_search_tool(api_key, max_results=5, include_domains=['arxiv.org'])],
+    instructions='Search for information and return the results.',
 )
 
 result = agent.run_sync(
