@@ -52,7 +52,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
 from pydantic_ai.output import PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDenied, ToolDefinition
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
 
