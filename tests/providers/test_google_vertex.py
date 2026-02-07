@@ -162,11 +162,8 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
     mocker.patch('pydantic_ai.providers.google_vertex.google.auth.default', return_value=return_value)
 
 
-@pytest.mark.skipif(
-    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
-)
 @pytest.mark.vcr()
-async def test_vertexai_provider(allow_model_requests: None):  # pragma: lax no cover
+async def test_vertexai_provider(skip_unless_vertex: None, allow_model_requests: None):  # pragma: lax no cover
     m = GeminiModel('gemini-2.0-flash', provider='google-vertex')
     agent = Agent(m)
 
