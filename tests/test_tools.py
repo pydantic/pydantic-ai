@@ -1076,6 +1076,10 @@ def test_schema_generator():
 
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
+    # my_tool_2 uses GenerateJsonSchema (not GenerateToolJsonSchema), so Pydantic 2.12+
+    # adds additionalProperties: True while <2.12 omits it
+    # we pop it so asserts are consistent across versions
+    json_schema[1]['parameters_json_schema'].pop('additionalProperties', None)
     assert json_schema == snapshot(
         [
             {

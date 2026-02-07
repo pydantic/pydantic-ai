@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
@@ -379,188 +381,201 @@ async def test_override_output_json_schema():
     assert agent.output_json_schema(output_type=output_type) == snapshot({'type': 'boolean'})
 
 
+def normalize_schema_for_pydantic_version(schema: dict[str, Any]) -> dict[str, Any]:
+    """Strip `description` fields from JSON schemas to normalize across Pydantic versions.
+
+    Pydantic 2.12+ inconsistently includes/drops `description` on dataclass schemas depending on
+    whether `__pydantic_complete__` is set, so we strip all descriptions to make assertions stable.
+    """
+
+    def _strip(obj: dict[str, Any] | list[Any] | str | int | float | bool | None) -> Any:
+        if isinstance(obj, dict):
+            return {k: _strip(v) for k, v in obj.items() if k != 'description'}
+        if isinstance(obj, list):
+            return [_strip(item) for item in obj]
+        return obj
+
+    return cast(dict[str, Any], _strip(schema))
+
+
 async def test_deferred_output_json_schema():
     agent = Agent('test', output_type=[str, DeferredToolRequests])
-    assert agent.output_json_schema() == snapshot(
-        {
-            'anyOf': [
-                {'type': 'string'},
-                {
-                    'properties': {
-                        'calls': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Calls', 'type': 'array'},
-                        'approvals': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Approvals', 'type': 'array'},
-                        'metadata': {
-                            'additionalProperties': {'additionalProperties': True, 'type': 'object'},
-                            'title': 'Metadata',
-                            'type': 'object',
+    assert normalize_schema_for_pydantic_version(agent.output_json_schema()) == normalize_schema_for_pydantic_version(
+        snapshot(
+            {
+                'anyOf': [
+                    {'type': 'string'},
+                    {
+                        'properties': {
+                            'calls': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Calls', 'type': 'array'},
+                            'approvals': {
+                                'items': {'$ref': '#/$defs/ToolCallPart'},
+                                'title': 'Approvals',
+                                'type': 'array',
+                            },
+                            'metadata': {
+                                'additionalProperties': {'additionalProperties': True, 'type': 'object'},
+                                'title': 'Metadata',
+                                'type': 'object',
+                            },
                         },
+                        'title': 'DeferredToolRequests',
+                        'type': 'object',
                     },
-                    'title': 'DeferredToolRequests',
-                    'type': 'object',
+                ],
+                '$defs': {
+                    'ToolCallPart': {
+                        'properties': {
+                            'tool_name': {'title': 'Tool Name', 'type': 'string'},
+                            'args': {
+                                'anyOf': [
+                                    {'type': 'string'},
+                                    {'additionalProperties': True, 'type': 'object'},
+                                    {'type': 'null'},
+                                ],
+                                'default': None,
+                                'title': 'Args',
+                            },
+                            'tool_call_id': {'title': 'Tool Call Id', 'type': 'string'},
+                            'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Id'},
+                            'provider_name': {
+                                'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                'default': None,
+                                'title': 'Provider Name',
+                            },
+                            'provider_details': {
+                                'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                'default': None,
+                                'title': 'Provider Details',
+                            },
+                            'part_kind': {
+                                'const': 'tool-call',
+                                'default': 'tool-call',
+                                'title': 'Part Kind',
+                                'type': 'string',
+                            },
+                        },
+                        'required': ['tool_name'],
+                        'title': 'ToolCallPart',
+                        'type': 'object',
+                    }
                 },
-            ],
-            '$defs': {
-                'ToolCallPart': {
-                    'description': 'A tool call from a model.',
-                    'properties': {
-                        'tool_name': {'title': 'Tool Name', 'type': 'string'},
-                        'args': {
-                            'anyOf': [
-                                {'type': 'string'},
-                                {'additionalProperties': True, 'type': 'object'},
-                                {'type': 'null'},
-                            ],
-                            'default': None,
-                            'title': 'Args',
-                        },
-                        'tool_call_id': {'title': 'Tool Call Id', 'type': 'string'},
-                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Id'},
-                        'provider_name': {
-                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Provider Name',
-                        },
-                        'provider_details': {
-                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Provider Details',
-                        },
-                        'part_kind': {
-                            'const': 'tool-call',
-                            'default': 'tool-call',
-                            'title': 'Part Kind',
-                            'type': 'string',
-                        },
-                    },
-                    'required': ['tool_name'],
-                    'title': 'ToolCallPart',
-                    'type': 'object',
-                }
-            },
-        }
+            }
+        )
     )
 
     # special case of only BinaryImage and DeferredToolRequests
     agent = Agent('test', output_type=[BinaryImage, DeferredToolRequests])
-    assert agent.output_json_schema() == snapshot(
-        {
-            'anyOf': [
-                {
-                    'description': "Binary content that's guaranteed to be an image.",
-                    'properties': {
-                        'data': {'format': 'base64url', 'title': 'Data', 'type': 'string'},
-                        'media_type': {
-                            'anyOf': [
-                                {
-                                    'enum': [
-                                        'audio/wav',
-                                        'audio/mpeg',
-                                        'audio/ogg',
-                                        'audio/flac',
-                                        'audio/aiff',
-                                        'audio/aac',
-                                    ],
-                                    'type': 'string',
-                                },
-                                {'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], 'type': 'string'},
-                                {
-                                    'enum': [
-                                        'application/pdf',
-                                        'text/plain',
-                                        'text/csv',
-                                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                                        'text/html',
-                                        'text/markdown',
-                                        'application/msword',
-                                        'application/vnd.ms-excel',
-                                    ],
-                                    'type': 'string',
-                                },
-                                {'type': 'string'},
-                            ],
-                            'title': 'Media Type',
+    assert normalize_schema_for_pydantic_version(agent.output_json_schema()) == normalize_schema_for_pydantic_version(
+        snapshot(
+            {
+                'anyOf': [
+                    {
+                        'properties': {
+                            'data': {'format': 'base64url', 'title': 'Data', 'type': 'string'},
+                            'media_type': {
+                                'anyOf': [
+                                    {
+                                        'enum': [
+                                            'audio/wav',
+                                            'audio/mpeg',
+                                            'audio/ogg',
+                                            'audio/flac',
+                                            'audio/aiff',
+                                            'audio/aac',
+                                        ],
+                                        'type': 'string',
+                                    },
+                                    {'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], 'type': 'string'},
+                                    {
+                                        'enum': [
+                                            'application/pdf',
+                                            'text/plain',
+                                            'text/csv',
+                                            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                            'text/html',
+                                            'text/markdown',
+                                            'application/msword',
+                                            'application/vnd.ms-excel',
+                                        ],
+                                        'type': 'string',
+                                    },
+                                    {'type': 'string'},
+                                ],
+                                'title': 'Media Type',
+                            },
+                            'vendor_metadata': {
+                                'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                'default': None,
+                                'title': 'Vendor Metadata',
+                            },
+                            'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
+                            'identifier': {
+                                'readOnly': True,
+                                'title': 'Identifier',
+                                'type': 'string',
+                            },
                         },
-                        'vendor_metadata': {
-                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Vendor Metadata',
-                        },
-                        'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
-                        'identifier': {
-                            'description': """\
-Identifier for the binary content, such as a unique ID.
-
-This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
-and the tool can look up the file in question by iterating over the message history and finding the matching `BinaryContent`.
-
-This identifier is only automatically passed to the model when the `BinaryContent` is returned by a tool.
-If you're passing the `BinaryContent` as a user message, it's up to you to include a separate text part with the identifier,
-e.g. "This is file <identifier>:" preceding the `BinaryContent`.
-
-It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
-distinguish multiple files.\
-""",
-                            'readOnly': True,
-                            'title': 'Identifier',
-                            'type': 'string',
-                        },
+                        'required': ['data', 'media_type', 'identifier'],
+                        'title': 'BinaryImage',
+                        'type': 'object',
                     },
-                    'required': ['data', 'media_type', 'identifier'],
-                    'title': 'BinaryImage',
-                    'type': 'object',
+                    {
+                        'properties': {
+                            'calls': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Calls', 'type': 'array'},
+                            'approvals': {
+                                'items': {'$ref': '#/$defs/ToolCallPart'},
+                                'title': 'Approvals',
+                                'type': 'array',
+                            },
+                            'metadata': {
+                                'additionalProperties': {'additionalProperties': True, 'type': 'object'},
+                                'title': 'Metadata',
+                                'type': 'object',
+                            },
+                        },
+                        'title': 'DeferredToolRequests',
+                        'type': 'object',
+                    },
+                ],
+                '$defs': {
+                    'ToolCallPart': {
+                        'properties': {
+                            'tool_name': {'title': 'Tool Name', 'type': 'string'},
+                            'args': {
+                                'anyOf': [
+                                    {'type': 'string'},
+                                    {'additionalProperties': True, 'type': 'object'},
+                                    {'type': 'null'},
+                                ],
+                                'default': None,
+                                'title': 'Args',
+                            },
+                            'tool_call_id': {'title': 'Tool Call Id', 'type': 'string'},
+                            'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Id'},
+                            'provider_name': {
+                                'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                'default': None,
+                                'title': 'Provider Name',
+                            },
+                            'provider_details': {
+                                'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                'default': None,
+                                'title': 'Provider Details',
+                            },
+                            'part_kind': {
+                                'const': 'tool-call',
+                                'default': 'tool-call',
+                                'title': 'Part Kind',
+                                'type': 'string',
+                            },
+                        },
+                        'required': ['tool_name'],
+                        'title': 'ToolCallPart',
+                        'type': 'object',
+                    }
                 },
-                {
-                    'properties': {
-                        'calls': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Calls', 'type': 'array'},
-                        'approvals': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Approvals', 'type': 'array'},
-                        'metadata': {
-                            'additionalProperties': {'additionalProperties': True, 'type': 'object'},
-                            'title': 'Metadata',
-                            'type': 'object',
-                        },
-                    },
-                    'title': 'DeferredToolRequests',
-                    'type': 'object',
-                },
-            ],
-            '$defs': {
-                'ToolCallPart': {
-                    'description': 'A tool call from a model.',
-                    'properties': {
-                        'tool_name': {'title': 'Tool Name', 'type': 'string'},
-                        'args': {
-                            'anyOf': [
-                                {'type': 'string'},
-                                {'additionalProperties': True, 'type': 'object'},
-                                {'type': 'null'},
-                            ],
-                            'default': None,
-                            'title': 'Args',
-                        },
-                        'tool_call_id': {'title': 'Tool Call Id', 'type': 'string'},
-                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Id'},
-                        'provider_name': {
-                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Provider Name',
-                        },
-                        'provider_details': {
-                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Provider Details',
-                        },
-                        'part_kind': {
-                            'const': 'tool-call',
-                            'default': 'tool-call',
-                            'title': 'Part Kind',
-                            'type': 'string',
-                        },
-                    },
-                    'required': ['tool_name'],
-                    'title': 'ToolCallPart',
-                    'type': 'object',
-                }
-            },
-        }
+            }
+        )
     )
