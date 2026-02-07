@@ -73,7 +73,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsNow, IsStr, TestEnv
+from .conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
 
@@ -5186,15 +5186,29 @@ def test_tool_return_part_binary_content_serialization():
 
     tool_return = ToolReturnPart(tool_name='test_tool', content=binary_content, tool_call_id='test_call_123')
 
-    assert tool_return.model_response_object() == snapshot(
-        {
-            'data': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzgAAAAASUVORK5CYII=',
-            'media_type': 'image/png',
-            'vendor_metadata': None,
-            'kind': 'binary',
-            'identifier': '14a01a',
-        }
-    )
+    assert tool_return.model_response_object() == snapshot({})
+
+
+def test_tool_return_part_list_structure_preserved():
+    """Test that model_response_object preserves list structure when content is a list."""
+    single_dict = {'result': 'found'}
+    single_item_list = [{'result': 'found'}]
+    multi_item_list = [{'a': 1}, {'b': 2}]
+
+    # Single dict content gets unwrapped as before
+    tool_return_dict = ToolReturnPart(tool_name='test', content=single_dict, tool_call_id='tc1')
+    assert tool_return_dict.model_response_object() == snapshot({'result': 'found'})
+    assert tool_return_dict.model_response_str() == snapshot('{"result":"found"}')
+
+    # Single-item list content preserves list structure
+    tool_return_single_list = ToolReturnPart(tool_name='test', content=single_item_list, tool_call_id='tc2')
+    assert tool_return_single_list.model_response_object() == snapshot({'return_value': [{'result': 'found'}]})
+    assert tool_return_single_list.model_response_str() == snapshot('[{"result":"found"}]')
+
+    # Multi-item list content is also preserved
+    tool_return_multi_list = ToolReturnPart(tool_name='test', content=multi_item_list, tool_call_id='tc3')
+    assert tool_return_multi_list.model_response_object() == snapshot({'return_value': [{'a': 1}, {'b': 2}]})
+    assert tool_return_multi_list.model_response_str() == snapshot('[{"a":1},{"b":2}]')
 
 
 def test_tool_returning_binary_content_directly():
@@ -5243,21 +5257,10 @@ def test_tool_returning_binary_content_with_identifier():
             parts=[
                 ToolReturnPart(
                     tool_name='get_image',
-                    content='See file image_id_1',
+                    content=IsInstance(BinaryContent),
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                UserPromptPart(
-                    content=[
-                        'This is file image_id_1:',
-                        BinaryContent(
-                            data=b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82',
-                            media_type='image/png',
-                            _identifier='image_id_1',
-                        ),
-                    ],
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
+                    timestamp=IsDatetime(),
+                )
             ],
             timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
@@ -5292,25 +5295,15 @@ def test_tool_returning_file_url_with_identifier():
             parts=[
                 ToolReturnPart(
                     tool_name='get_files',
-                    content=['See file img_001', 'See file vid_002', 'See file aud_003', 'See file doc_004'],
-                    tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                UserPromptPart(
                     content=[
-                        'This is file img_001:',
-                        ImageUrl(url='https://example.com/image.jpg', _identifier='img_001', identifier='img_001'),
-                        'This is file vid_002:',
-                        VideoUrl(url='https://example.com/video.mp4', _identifier='vid_002', identifier='vid_002'),
-                        'This is file aud_003:',
-                        AudioUrl(url='https://example.com/audio.mp3', _identifier='aud_003', identifier='aud_003'),
-                        'This is file doc_004:',
-                        DocumentUrl(
-                            url='https://example.com/document.pdf', _identifier='doc_004', identifier='doc_004'
-                        ),
+                        ImageUrl(url='https://example.com/image.jpg', _identifier='img_001'),
+                        VideoUrl(url='https://example.com/video.mp4', _identifier='vid_002'),
+                        AudioUrl(url='https://example.com/audio.mp3', _identifier='aud_003'),
+                        DocumentUrl(url='https://example.com/document.pdf', _identifier='doc_004'),
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                )
             ],
             timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
@@ -5912,40 +5905,6 @@ def test_many_multimodal_tool_response():
     with pytest.raises(
         UserError,
         match="The return value of tool 'analyze_data' contains invalid nested `ToolReturn` objects. `ToolReturn` should be used directly.",
-    ):
-        agent.run_sync('Please analyze the data')
-
-
-def test_multimodal_tool_response_nested():
-    """Test ToolReturn with custom content and tool return."""
-
-    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if len(messages) == 1:
-            return ModelResponse(parts=[TextPart('Starting analysis'), ToolCallPart('analyze_data', {})])
-        else:
-            return ModelResponse(  # pragma: no cover
-                parts=[
-                    TextPart('Analysis completed'),
-                ]
-            )
-
-    agent = Agent(FunctionModel(llm))
-
-    @agent.tool_plain
-    def analyze_data() -> ToolReturn:
-        return ToolReturn(
-            return_value=ImageUrl('https://example.com/chart.jpg'),
-            content=[
-                'Here are the analysis results:',
-                ImageUrl('https://example.com/chart.jpg'),
-                'The chart shows positive trends.',
-            ],
-            metadata={'foo': 'bar'},
-        )
-
-    with pytest.raises(
-        UserError,
-        match="The `return_value` of tool 'analyze_data' contains invalid nested `MultiModalContent` objects. Please use `content` instead.",
     ):
         agent.run_sync('Please analyze the data')
 

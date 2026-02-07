@@ -894,3 +894,9 @@ def test_tool_return_content_nested_multimodal():
     assert isinstance(reloaded_content['images'][0], ImageUrl)
     assert isinstance(reloaded_content['documents'][0], DocumentUrl)
     assert reloaded_content['regular_data'] == [{'url': '/api/path', 'id': 123, 'name': 'test'}]
+
+
+def test_iter_message_parts_empty():
+    from pydantic_ai.messages import iter_message_parts
+
+    assert list(iter_message_parts([], ModelRequest, UserPromptPart)) == []

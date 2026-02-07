@@ -1,0 +1,165 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '396'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_file
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '504'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - id: toolu_01M5zBnLhNJhsGADPqqozJMq
+        input: {}
+        name: get_file
+        type: tool_use
+      id: msg_013S7Kwo6nVTi4XJt1A3h18t
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 558
+        output_tokens: 36
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '764'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
+          type: text
+        role: user
+      - content:
+        - id: toolu_01M5zBnLhNJhsGADPqqozJMq
+          input: {}
+          name: get_file
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - source:
+              type: url
+              url: https://www.gstatic.com/webp/gallery3/1.png
+            type: image
+          is_error: false
+          tool_use_id: toolu_01M5zBnLhNJhsGADPqqozJMq
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_file
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1095'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: I received a beautiful image of a golden-orange rose. The flower appears to be fresh with water droplets visible
+          on its petals, giving it a dewy, just-bloomed appearance. The rose is shown at an angle that displays the elegant
+          spiral of its petals, ranging from deep golden-orange to lighter peachy-yellow tones. There's also a small pink
+          rosebud visible at the top of the image on the stem, along with some green leaves. The image has a clean white background,
+          which makes the warm colors of the rose really stand out. The composition is artistic and the lighting emphasizes
+          the soft, velvety texture of the rose petals and the moisture droplets on them.
+        type: text
+      id: msg_01AceGvRFcRVQNNkFPXffvi1
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 786
+        output_tokens: 150
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

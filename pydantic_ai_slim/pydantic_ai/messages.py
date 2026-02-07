@@ -5,13 +5,13 @@ import hashlib
 import mimetypes
 import os
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, TypeGuard, TypeVar, cast, overload
 from urllib.parse import urlparse
 
 import pydantic
@@ -674,6 +674,12 @@ MultiModalContent = Annotated[
 ]
 """Union of all multi-modal content types with a discriminator for Pydantic validation."""
 
+
+def is_multi_modal_content(obj: Any) -> TypeGuard[MultiModalContent]:
+    """Check if obj is a MultiModalContent type, enabling type narrowing."""
+    return isinstance(obj, MULTI_MODAL_CONTENT_TYPES)
+
+
 UserContent: TypeAlias = str | MultiModalContent | CachePoint
 
 
@@ -841,19 +847,94 @@ class BaseToolReturnPart:
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
 
+    def _split_content(self) -> tuple[list[Any], list[MultiModalContent]]:
+        """Split content into non-file and file parts.
+
+        Returns a tuple of (`non_files`, `files`) to ensure both `files` and
+        `content_excluding_files` stay in sync when content structure changes.
+        """
+        if is_multi_modal_content(self.content):
+            return [], [self.content]
+        elif isinstance(self.content, list):
+            non_files: list[Any] = []
+            files: list[MultiModalContent] = []
+            for p in self.content:  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+                if is_multi_modal_content(p):
+                    files.append(p)
+                else:
+                    non_files.append(p)
+            return non_files, files
+        return [self.content], []
+
+    @property
+    def files(self) -> list[MultiModalContent]:
+        """The multimodal file parts from `content`.
+
+        Returns only `MultiModalContent` objects (`ImageUrl`, `AudioUrl`, `DocumentUrl`,
+        `VideoUrl`, `BinaryContent`), filtering out any text/json parts.
+
+        This allows model implementations to handle files separately from data, sending
+        files natively where supported or as separate user messages when needed.
+        """
+        return self._split_content()[1]
+
+    @property
+    def content_excluding_files(self) -> list[Any]:
+        """Non-file content items from `content`, preserving original structure.
+
+        Filters out `MultiModalContent` objects (images, audio, documents, videos) and
+        returns remaining items (strings, dicts, etc.) as a list. Used by `model_response_str()`
+        and `model_response_object()` to serialize the data portion separately from files.
+        """
+        return self._split_content()[0]
+
+    @property
+    def content_items(self) -> list[ToolReturnContent]:
+        """Return content as a flat list for iteration.
+
+        If content is already a list, returns it directly. Otherwise wraps single values in a list.
+        This provides a consistent iteration interface regardless of whether `content` is a single
+        value or a list.
+        """
+        if isinstance(self.content, list):
+            return self.content  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+        return [self.content]
+
     def model_response_str(self) -> str:
-        """Return a string representation of the content for the model."""
-        if isinstance(self.content, str):
-            return self.content
+        """Return a string representation of the data content for the model.
+
+        This excludes multimodal files - use `.files` to get those separately.
+        """
+        data = self.content_excluding_files
+        if not data:
+            return ''
+        # Unwrap single-item list only if original content was not explicitly a list
+        if len(data) == 1 and not isinstance(self.content, list):
+            value = data[0]
         else:
-            return tool_return_ta.dump_json(self.content).decode()
+            value = data
+        if isinstance(value, str):
+            return value
+        return tool_return_ta.dump_json(value).decode()
 
     def model_response_object(self) -> dict[str, Any]:
-        """Return a dictionary representation of the content, wrapping non-dict types appropriately."""
-        # gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict
-        json_content = tool_return_ta.dump_python(self.content, mode='json')
-        if isinstance(json_content, dict):
-            return json_content  # type: ignore[reportUnknownReturn]
+        """Return a dictionary representation of the data content, wrapping non-dict types appropriately.
+
+        This excludes multimodal files - use `files` to get those separately.
+        Gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict.
+        """
+        data = self.content_excluding_files
+        if not data:
+            return {}
+        # Unwrap single-item list only if original content was not explicitly a list
+        # This preserves semantic meaning when tools intentionally return single-item lists
+        if len(data) == 1 and not isinstance(self.content, list):
+            value = data[0]
+        else:
+            value = data
+        json_content = tool_return_ta.dump_python(value, mode='json')
+        if _utils.is_str_dict(json_content):
+            return json_content
         else:
             return {'return_value': json_content}
 
@@ -1479,6 +1560,8 @@ class ModelResponse:
         return result
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        from .models.instrumented import InstrumentedModel
+
         parts: list[_otel_messages.MessagePart] = []
         for part in self.parts:
             if isinstance(part, TextPart):
@@ -1505,8 +1588,6 @@ class ModelResponse:
                 if isinstance(part, BuiltinToolCallPart):
                     call_part['builtin'] = True
                 if settings.include_content and part.args is not None:
-                    from .models.instrumented import InstrumentedModel
-
                     if isinstance(part.args, str):
                         call_part['arguments'] = part.args
                     else:
@@ -1521,8 +1602,6 @@ class ModelResponse:
                     builtin=True,
                 )
                 if settings.include_content and part.content is not None:  # pragma: no branch
-                    from .models.instrumented import InstrumentedModel
-
                     return_part['result'] = InstrumentedModel.serialize_any(part.content)
 
                 parts.append(return_part)
@@ -2064,3 +2143,38 @@ HandleResponseEvent = Annotated[
 
 AgentStreamEvent = Annotated[ModelResponseStreamEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')]
 """An event in the agent stream: model response stream events and response-handling events."""
+
+_RequestPartT = TypeVar('_RequestPartT', bound=SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart)
+_ResponsePartT = TypeVar(
+    '_ResponsePartT',
+    bound=TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart,
+)
+
+
+@overload
+def iter_message_parts(
+    messages: Sequence[ModelMessage],
+    message_type: type[ModelRequest],
+    part_type: type[_RequestPartT],
+) -> Iterator[_RequestPartT]: ...
+
+
+@overload
+def iter_message_parts(
+    messages: Sequence[ModelMessage],
+    message_type: type[ModelResponse],
+    part_type: type[_ResponsePartT],
+) -> Iterator[_ResponsePartT]: ...
+
+
+def iter_message_parts(
+    messages: Sequence[ModelMessage],
+    message_type: type[ModelRequest] | type[ModelResponse],
+    part_type: type[_RequestPartT] | type[_ResponsePartT],
+) -> Iterator[_RequestPartT | _ResponsePartT]:
+    """Iterate over all parts of a given type in messages of a given type."""
+    for msg in messages:
+        if isinstance(msg, message_type):
+            for part in msg.parts:
+                if isinstance(part, part_type):
+                    yield part

@@ -1,0 +1,127 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '409'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Use the get_file tool now to retrieve a video file, then describe what you received.
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_file
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2564'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '1075'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1769814188
+      created_at: 1769814187
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0d522b1152e544c400697d38abb5ac819c8004c6cee46ccaf6
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpfTisRdEr2cGMr47GI__itCaqT5UC8EuvgSjDRW2PmLAm2NIg64OqJD002xY9ENZmEkaQAXhxdAWF4NVK81g2TvYQ2u6VLfySJ9Tq5j0vFWaH0sdwTlZmAiPzkGlkFj2-Tg5iYbV_8A5GlqRC-6ZGLn1-mvaSNwzIVWSeQFLPbORyYTbbQNbcBqeYid3IqV81BGPYCA9VM1GmsS6kcAcqbM6bctnZtYTjEgVVKQsp5m5YH5LBhkThJ-uDIv-rgA7LiLETUk8H6EVgbN7SOupk_eZA8VOWujiRK_LuyBNQkkeiXUvqtTSZKQmj-LPzP5jy4rPQD1rsVkJT1TpmNr6Yt_rN3phUvPk56taYU_8YI6VvN0jcDxTxa1TxGNcz1Lkb_yzT4p9O3ClO5nsf1lhedyzxgzq8TWt4VoKXsrGHV6bxIrIKBb96hH26xV2b1eQGVixverBWdg5O5b0zQzNU07C8r_xWnUPSqDm5j1fyrcc8flk4M10HGiIGPb_kCv-i3jiGPn5j-qU-lXYF1oMQfeAQK0bJob4SAEVwtxp447P3erI84mGa19v45kzJSHHVga8SpXXAk9wG_eV0kCB31IrXOw8QfD9yh1YyahQB_tNnVDxVuEmPkp1BBR0JAStxghB5p_Fbyu9UkJ-Ys42MhWgauIjjFVl_WoRpPhInVpLWo7dqk6jJiLKybSd7c7tY835R4CYhkM5nxrQysTEXU7DTtOYjLcqiiTmeAIzvbyX_GR6cyh94a7UGqOFQda9cSrh53Xz8XziM7sCMUWPQjYuoXOs-uM-k8zrxLOuXto43fm8SbwaUd1IFzw_mwXwi9senXU16P6EJeGwbk-GRNe4FBi1N3tVjZ_xDjivcxlu0My1CYCl6AV3CgUK0PWQq66GkQO_poaNuMWzpiVW1r6saVsIx7xQ-zOeIdhHoEiRk8dePilgGmME6RGt5k2E0oW6HPzRhwNT6WVu_Mn3jSQmFksEQO7x_0Qs6phinxNiROo47lBs2fThyqqdEVTg1q-n0
+        id: rs_0d522b1152e544c400697d38ac3750819c8dc2e68f56946b0d
+        summary: []
+        type: reasoning
+      - arguments: '{}'
+        call_id: call_DZPEk2rizzy6Rp5Af8b7E9uz
+        id: fc_0d522b1152e544c400697d38ac9d74819cb71ad94225babb9f
+        name: get_file
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_file
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 47
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 49
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 96
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

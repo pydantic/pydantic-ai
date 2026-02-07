@@ -7,14 +7,18 @@ from dataclasses import KW_ONLY, dataclass
 from typing import Any, Literal
 
 from pydantic_core import to_json
+from typing_extensions import assert_never
 
 from ...messages import (
     BaseToolReturnPart,
+    BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FilePart,
+    FileUrl,
     FinishReason as PydanticFinishReason,
     FunctionToolResultEvent,
+    MultiModalContent,
     RetryPromptPart,
     TextPart,
     TextPartDelta,
@@ -255,5 +259,31 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
 
     def _tool_return_output(self, part: BaseToolReturnPart) -> Any:
         output = part.model_response_object()
-        # Unwrap the return value from the output dictionary if it exists
-        return output.get('return_value', output)
+        result = output.get('return_value', output)
+
+        if not part.files:
+            return result
+
+        file_descriptions = [_describe_file(f) for f in part.files]
+
+        if isinstance(result, str):
+            return result + '\n' + '\n'.join(file_descriptions)
+        elif isinstance(result, dict):
+            merged: dict[str, Any] = {**result, 'files': file_descriptions}
+            return merged
+        elif isinstance(result, list):
+            return [*result, {'files': file_descriptions}]
+        elif not result:
+            return '\n'.join(file_descriptions)
+        else:
+            return result
+
+
+def _describe_file(file: MultiModalContent) -> str:
+    """Return a human-readable description of a file."""
+    if isinstance(file, FileUrl):
+        return f'[File: {file.url}]'
+    elif isinstance(file, BinaryContent):
+        return f'[File: {file.media_type}]'
+    else:
+        assert_never(file)
