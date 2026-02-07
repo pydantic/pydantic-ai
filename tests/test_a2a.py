@@ -345,7 +345,7 @@ async def test_a2a_file_message_with_file_content():
             message = Message(
                 role='user',
                 parts=[
-                    FilePart(file={'bytes': 'foo', 'mime_type': 'text/plain'}, kind='file'),
+                    FilePart(file={'bytes': 'Zm9v', 'mime_type': 'text/plain'}, kind='file'),  # 'foo' base64-encoded
                 ],
                 kind='message',
                 message_id=str(uuid.uuid4()),
@@ -364,7 +364,7 @@ async def test_a2a_file_message_with_file_content():
                     'history': [
                         {
                             'role': 'user',
-                            'parts': [{'kind': 'file', 'file': {'bytes': 'foo', 'mime_type': 'text/plain'}}],
+                            'parts': [{'kind': 'file', 'file': {'bytes': 'Zm9v', 'mime_type': 'text/plain'}}],
                             'kind': 'message',
                             'message_id': IsStr(),
                             'context_id': IsStr(),
@@ -392,7 +392,7 @@ async def test_a2a_file_message_with_file_content():
                         'history': [
                             {
                                 'role': 'user',
-                                'parts': [{'kind': 'file', 'file': {'bytes': 'foo', 'mime_type': 'text/plain'}}],
+                                'parts': [{'kind': 'file', 'file': {'bytes': 'Zm9v', 'mime_type': 'text/plain'}}],
                                 'kind': 'message',
                                 'message_id': IsStr(),
                                 'context_id': IsStr(),
