@@ -1321,8 +1321,8 @@ async def _call_tool(
                     instrumentation_version=tool_manager.ctx.instrumentation_version,
                     usage=tool_manager.ctx.usage,
                 )
-            else:  # pragma: no cover
-                tool_result = await tool_manager.handle_call(tool_call)
+            else:
+                raise RuntimeError('Expected validated tool call')  # should never happen
         elif isinstance(tool_call_result, ToolApproved):
             if tool_call_result.override_args is not None:
                 tool_call = dataclasses.replace(tool_call, args=tool_call_result.override_args)
