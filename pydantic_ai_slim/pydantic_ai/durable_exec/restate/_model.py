@@ -103,6 +103,9 @@ class RestateModelWrapper(WrapperModel):
                     model_request_parameters,
                     run_context,
                 ) as streamed_response:
+                    # Run the handler inside the durable step so any handler side effects are recorded/deduplicated
+                    # by Restate. The handler should still be written to be idempotent since this step may be retried
+                    # if it fails before completion.
                     await fn(run_context, streamed_response)
 
                     async for _ in streamed_response:
