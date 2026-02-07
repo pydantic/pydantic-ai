@@ -586,7 +586,7 @@ class BinaryContent:
             with path.open('rb') as f:
                 header = f.read(2048)  # Read the first 2048 bytes to check for a MIME type
             try:
-                header.decode('utf-8')  # If this succeeds, it's likely a text file
+                header.decode(encoding='utf-8', errors='strict')  # If this succeeds, it's likely a text file
                 media_type = 'text/plain'  # Fallback to text if we can decode as UTF-8
             except UnicodeDecodeError:
                 media_type = 'application/octet-stream'  # Fallback to binary if we can't decode as text
