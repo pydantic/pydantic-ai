@@ -787,7 +787,7 @@ class ToolReturn:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-_document_format_lookup: dict[DocumentMediaType, DocumentFormat] = {
+_document_format_lookup: dict[DocumentMediaType | str, DocumentFormat] = {
     'application/pdf': 'pdf',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
@@ -796,7 +796,7 @@ _document_format_lookup: dict[DocumentMediaType, DocumentFormat] = {
     'application/vnd.ms-excel': 'xls',
     'application/vnd.ms-powerpoint': 'ppt',
 }
-_audio_format_lookup: dict[AudioMediaType, AudioFormat] = {
+_audio_format_lookup: dict[AudioMediaType | str, AudioFormat] = {
     'audio/mpeg': 'mp3',
     'audio/wav': 'wav',
     'audio/flac': 'flac',
@@ -804,7 +804,7 @@ _audio_format_lookup: dict[AudioMediaType, AudioFormat] = {
     'audio/aiff': 'aiff',
     'audio/aac': 'aac',
 }
-_image_format_lookup: dict[ImageMediaType, ImageFormat] = {
+_image_format_lookup: dict[ImageMediaType | str, ImageFormat] = {
     'image/jpeg': 'jpeg',
     'image/png': 'png',
     'image/gif': 'gif',
@@ -812,7 +812,7 @@ _image_format_lookup: dict[ImageMediaType, ImageFormat] = {
     'image/heic': 'heic',
     'image/heif': 'heif',
 }
-_video_format_lookup: dict[VideoMediaType, VideoFormat] = {
+_video_format_lookup: dict[VideoMediaType | str, VideoFormat] = {
     'video/x-matroska': 'mkv',
     'video/quicktime': 'mov',
     'video/mp4': 'mp4',
@@ -822,7 +822,7 @@ _video_format_lookup: dict[VideoMediaType, VideoFormat] = {
     'video/x-ms-wmv': 'wmv',
     'video/3gpp': 'three_gp',
 }
-_text_format_lookup: dict[TextMediaType, TextFormat] = {
+_text_format_lookup: dict[TextMediaType | str, TextFormat] = {
     'text/plain': 'txt',
     'text/csv': 'csv',
     'text/html': 'html',
