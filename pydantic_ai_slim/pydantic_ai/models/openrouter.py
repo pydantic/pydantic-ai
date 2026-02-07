@@ -18,7 +18,7 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterProvider
 from ..settings import ModelSettings
-from . import ModelRequestParameters
+from . import ModelRequestParameters, download_item
 
 try:
     from openai import APIError, AsyncOpenAI
@@ -619,8 +619,6 @@ class OpenRouterModel(OpenAIChatModel):
         """
         video_url: dict[str, str] = {'url': item.url}
         if item.force_download:
-            from . import download_item
-
             video_content = await download_item(item, data_format='base64_uri', type_format='extension')
             video_url['url'] = video_content['data']
         # OpenRouter extends OpenAI's API to support video_url, but it's not in the OpenAI client types.
