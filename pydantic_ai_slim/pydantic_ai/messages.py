@@ -76,17 +76,25 @@ _mime_types.add_type('application/xml', '.xml')
 
 
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac']
-ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/heic', 'image/heif']
 DocumentMediaType: TypeAlias = Literal[
     'application/pdf',
-    'text/plain',
-    'text/csv',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'text/html',
-    'text/markdown',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     'application/msword',
     'application/vnd.ms-excel',
+    'application/vnd.ms-powerpoint',
+]
+TextMediaType: TypeAlias = Literal[
+    'text/plain',
+    'text/csv',
+    'text/html',
+    'text/markdown',
+    'application/xml',
+    'application/yaml',
+    'application/toml',
+    'application/json',
 ]
 VideoMediaType: TypeAlias = Literal[
     'video/x-matroska',
@@ -100,10 +108,10 @@ VideoMediaType: TypeAlias = Literal[
 ]
 
 AudioFormat: TypeAlias = Literal['wav', 'mp3', 'oga', 'flac', 'aiff', 'aac']
-ImageFormat: TypeAlias = Literal['jpeg', 'png', 'gif', 'webp']
-DocumentFormat: TypeAlias = Literal['csv', 'doc', 'docx', 'html', 'md', 'pdf', 'txt', 'xls', 'xlsx']
+ImageFormat: TypeAlias = Literal['jpeg', 'png', 'gif', 'webp', 'heic', 'heif']
+DocumentFormat: TypeAlias = Literal['doc', 'docx', 'pdf', 'txt', 'xls', 'xlsx', 'ppt', 'pptx']
 VideoFormat: TypeAlias = Literal['mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp']
-
+TextFormat: TypeAlias = Literal['csv', 'html', 'md', 'yaml', 'toml', 'json', 'xml', 'txt']
 FinishReason: TypeAlias = Literal[
     'stop',
     'length',
@@ -777,14 +785,12 @@ class ToolReturn:
 
 _document_format_lookup: dict[str, DocumentFormat] = {
     'application/pdf': 'pdf',
-    'text/plain': 'txt',
-    'text/csv': 'csv',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
-    'text/html': 'html',
-    'text/markdown': 'md',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
     'application/msword': 'doc',
     'application/vnd.ms-excel': 'xls',
+    'application/vnd.ms-powerpoint': 'ppt',
 }
 _audio_format_lookup: dict[str, AudioFormat] = {
     'audio/mpeg': 'mp3',
@@ -799,6 +805,8 @@ _image_format_lookup: dict[str, ImageFormat] = {
     'image/png': 'png',
     'image/gif': 'gif',
     'image/webp': 'webp',
+    'image/heic': 'heic',
+    'image/heif': 'heif',
 }
 _video_format_lookup: dict[str, VideoFormat] = {
     'video/x-matroska': 'mkv',
@@ -810,15 +818,11 @@ _video_format_lookup: dict[str, VideoFormat] = {
     'video/x-ms-wmv': 'wmv',
     'video/3gpp': 'three_gp',
 }
-_text_format_lookup: dict[str, str] = {
+_text_format_lookup: dict[str, TextFormat] = {
     'text/plain': 'txt',
     'text/csv': 'csv',
     'text/html': 'html',
     'text/markdown': 'md',
-    'text/x-python': 'py',
-    'text/x-java-source': 'java',
-    'text/x-javascript': 'js',
-    'text/x-ruby': 'rb',
     'application/json': 'json',
     'application/xml': 'xml',
     'application/yaml': 'yaml',
