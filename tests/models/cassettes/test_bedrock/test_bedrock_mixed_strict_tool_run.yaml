@@ -9,7 +9,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        YTk1NmFmODMtNWVkNi00OWFjLWE5MGMtZjIyNjFmNzI2NDNh
+        ZmJlN2RiZTktOTM0NS00ODkyLWIzOGMtMGYyZTkzYTRhZWJk
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -25,20 +25,20 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '526'
+      - '546'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 2507
+        latencyMs: 2207
       output:
         message:
           content:
-          - text: I'll help you find the capital city using the available tools.
+          - text: I'll help you find the capital city. Let me use the tools to get this information.
           - toolUse:
               input: {}
               name: country_source
-              toolUseId: tooluse_STLMaLEiNRom57cfdrFTUR
+              toolUseId: tooluse_Ou7eD0LChHfdSVDLplymSE
               type: tool_use
           role: assistant
       stopReason: tool_use
@@ -48,31 +48,31 @@ interactions:
         cacheWriteInputTokenCount: 0
         cacheWriteInputTokens: 0
         inputTokens: 628
-        outputTokens: 50
+        outputTokens: 56
         serverToolUsage: {}
-        totalTokens: 678
+        totalTokens: 684
     status:
       code: 200
       message: OK
 - request:
     body: '{"messages": [{"role": "user", "content": [{"text": "Use the registered tools and respond exactly as `Capital:
-      <city>`."}]}, {"role": "assistant", "content": [{"text": "I''ll help you find the capital city using the available tools."},
-      {"toolUse": {"toolUseId": "tooluse_STLMaLEiNRom57cfdrFTUR", "name": "country_source", "input": {}}}]}, {"role": "user",
-      "content": [{"toolResult": {"toolUseId": "tooluse_STLMaLEiNRom57cfdrFTUR", "content": [{"text": "Japan"}], "status":
-      "success"}}]}], "system": [{"text": "Always call `country_source` first, then call `capital_lookup` with that result
-      before replying."}], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "country_source", "inputSchema":
-      {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}, "strict": true}}, {"toolSpec": {"name":
-      "capital_lookup", "inputSchema": {"json": {"additionalProperties": false, "properties": {"country": {"type": "string"}},
-      "required": ["country"], "type": "object"}}}}], "toolChoice": {"auto": {}}}}'
+      <city>`."}]}, {"role": "assistant", "content": [{"text": "I''ll help you find the capital city. Let me use the tools
+      to get this information."}, {"toolUse": {"toolUseId": "tooluse_Ou7eD0LChHfdSVDLplymSE", "name": "country_source", "input":
+      {}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_Ou7eD0LChHfdSVDLplymSE", "content": [{"text":
+      "Japan"}], "status": "success"}}]}], "system": [{"text": "Always call `country_source` first, then call `capital_lookup`
+      with that result before replying."}], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "country_source",
+      "inputSchema": {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}, "strict": true}}, {"toolSpec":
+      {"name": "capital_lookup", "inputSchema": {"json": {"additionalProperties": false, "properties": {"country": {"type":
+      "string"}}, "required": ["country"], "type": "object"}}}}], "toolChoice": {"auto": {}}}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        OWEzZTUxM2YtNjgxMS00ZjkyLTllMTgtYThmODdiYzQxYWE2
+        ZDMzNzU4ZDktNDQwYy00ZTA1LTkzNWMtMTFkNWEwZWM0OTVk
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '1029'
+      - '1049'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -83,12 +83,12 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '468'
+      - '469'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 2689
+        latencyMs: 32384
       output:
         message:
           content:
@@ -96,7 +96,7 @@ interactions:
               input:
                 country: Japan
               name: capital_lookup
-              toolUseId: tooluse_3esY2lu6K6crP1Q6gLr6Ve
+              toolUseId: tooluse_T0T7Cteu2CCU2hgbIP1Uq2
               type: tool_use
           role: assistant
       stopReason: tool_use
@@ -105,34 +105,35 @@ interactions:
         cacheReadInputTokens: 0
         cacheWriteInputTokenCount: 0
         cacheWriteInputTokens: 0
-        inputTokens: 691
+        inputTokens: 697
         outputTokens: 53
         serverToolUsage: {}
-        totalTokens: 744
+        totalTokens: 750
     status:
       code: 200
       message: OK
 - request:
     body: '{"messages": [{"role": "user", "content": [{"text": "Use the registered tools and respond exactly as `Capital:
-      <city>`."}]}, {"role": "assistant", "content": [{"text": "I''ll help you find the capital city using the available tools."},
-      {"toolUse": {"toolUseId": "tooluse_STLMaLEiNRom57cfdrFTUR", "name": "country_source", "input": {}}}]}, {"role": "user",
-      "content": [{"toolResult": {"toolUseId": "tooluse_STLMaLEiNRom57cfdrFTUR", "content": [{"text": "Japan"}], "status":
-      "success"}}]}, {"role": "assistant", "content": [{"toolUse": {"toolUseId": "tooluse_3esY2lu6K6crP1Q6gLr6Ve", "name":
-      "capital_lookup", "input": {"country": "Japan"}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_3esY2lu6K6crP1Q6gLr6Ve",
-      "content": [{"text": "Tokyo"}], "status": "success"}}]}], "system": [{"text": "Always call `country_source` first, then
-      call `capital_lookup` with that result before replying."}], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec":
-      {"name": "country_source", "inputSchema": {"json": {"additionalProperties": false, "properties": {}, "type": "object"}},
-      "strict": true}}, {"toolSpec": {"name": "capital_lookup", "inputSchema": {"json": {"additionalProperties": false, "properties":
-      {"country": {"type": "string"}}, "required": ["country"], "type": "object"}}}}], "toolChoice": {"auto": {}}}}'
+      <city>`."}]}, {"role": "assistant", "content": [{"text": "I''ll help you find the capital city. Let me use the tools
+      to get this information."}, {"toolUse": {"toolUseId": "tooluse_Ou7eD0LChHfdSVDLplymSE", "name": "country_source", "input":
+      {}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_Ou7eD0LChHfdSVDLplymSE", "content": [{"text":
+      "Japan"}], "status": "success"}}]}, {"role": "assistant", "content": [{"toolUse": {"toolUseId": "tooluse_T0T7Cteu2CCU2hgbIP1Uq2",
+      "name": "capital_lookup", "input": {"country": "Japan"}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId":
+      "tooluse_T0T7Cteu2CCU2hgbIP1Uq2", "content": [{"text": "Tokyo"}], "status": "success"}}]}], "system": [{"text": "Always
+      call `country_source` first, then call `capital_lookup` with that result before replying."}], "inferenceConfig": {},
+      "toolConfig": {"tools": [{"toolSpec": {"name": "country_source", "inputSchema": {"json": {"additionalProperties": false,
+      "properties": {}, "type": "object"}}, "strict": true}}, {"toolSpec": {"name": "capital_lookup", "inputSchema": {"json":
+      {"additionalProperties": false, "properties": {"country": {"type": "string"}}, "required": ["country"], "type": "object"}}}}],
+      "toolChoice": {"auto": {}}}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        NWVlNjBmZGQtOTBkNy00OGY5LTkyNGQtZjYwYjZlZDg4ZTZm
+        YzFiOTI0ODQtZDFiMC00ZGQwLWIwNmUtNDQ5MGYzMjE2Mzc2
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '1333'
+      - '1353'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -148,7 +149,7 @@ interactions:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1579
+        latencyMs: 1646
       output:
         message:
           content:
@@ -160,10 +161,10 @@ interactions:
         cacheReadInputTokens: 0
         cacheWriteInputTokenCount: 0
         cacheWriteInputTokens: 0
-        inputTokens: 757
+        inputTokens: 763
         outputTokens: 6
         serverToolUsage: {}
-        totalTokens: 763
+        totalTokens: 769
     status:
       code: 200
       message: OK

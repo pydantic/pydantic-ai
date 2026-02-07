@@ -41,6 +41,7 @@ from pydantic_ai import (
     _utils,
     usage,
 )
+from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
@@ -396,11 +397,10 @@ class BedrockConverseModel(Model):
         output_object = model_request_parameters.output_object
 
         json_schema_config: dict[str, Any] = {
+            'name': output_object.name or DEFAULT_OUTPUT_TOOL_NAME,
             'schema': json.dumps(output_object.json_schema),
         }
 
-        if output_object.name:
-            json_schema_config['name'] = output_object.name
         if output_object.description:
             json_schema_config['description'] = output_object.description
 
