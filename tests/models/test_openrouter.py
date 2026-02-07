@@ -303,7 +303,7 @@ async def test_openrouter_video_url_force_download() -> None:
     provider = OpenRouterProvider(api_key='test-key')
     model = OpenRouterModel('google/gemini-3-flash-preview', provider=provider)
 
-    with patch('pydantic_ai.models.download_item', new_callable=AsyncMock) as mock_download:
+    with patch('pydantic_ai.models.openrouter.download_item', new_callable=AsyncMock) as mock_download:
         mock_download.return_value = {
             'data': 'data:video/mp4;base64,AAAA',
             'data_type': 'mp4',
@@ -344,7 +344,7 @@ async def test_openrouter_video_url_no_force_download() -> None:
     provider = OpenRouterProvider(api_key='test-key')
     model = OpenRouterModel('google/gemini-3-flash-preview', provider=provider)
 
-    with patch('pydantic_ai.models.download_item', new_callable=AsyncMock) as mock_download:
+    with patch('pydantic_ai.models.openrouter.download_item', new_callable=AsyncMock) as mock_download:
         messages = [
             ModelRequest(
                 parts=[
