@@ -40,7 +40,7 @@ class RestateFastMCPToolset(WrapperToolset[AgentDepsT]):
 
     @property
     def id(self) -> str | None:  # pragma: no cover
-        return self.wrapped.id
+        return self._wrapped.id
 
     async def __aenter__(self) -> Self:
         """No-op: FastMCP connections must be opened inside `ctx.run_typed()` for durability."""
@@ -67,8 +67,7 @@ class RestateFastMCPToolset(WrapperToolset[AgentDepsT]):
         return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.output.items()}
 
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
-        assert isinstance(self.wrapped, FastMCPToolset)
-        return self.wrapped.tool_for_tool_def(tool_def)
+        return self._wrapped.tool_for_tool_def(tool_def)
 
     async def call_tool(
         self,

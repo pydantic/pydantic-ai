@@ -59,7 +59,7 @@ class RestateDynamicToolset(WrapperToolset[AgentDepsT]):
 
     @property
     def id(self) -> str | None:  # pragma: no cover
-        return self.wrapped.id
+        return self._wrapped.id
 
     async def __aenter__(self) -> Self:
         """No-op: underlying toolset I/O must occur inside `ctx.run_typed()` for durability."""
