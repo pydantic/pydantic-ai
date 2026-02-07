@@ -757,6 +757,7 @@ def test_binary_content_from_path(tmp_path: Path):
         BinaryContent(
             data=b'<think>about trains</think>',
             file_name='test.xml',
+            _media_type='application/xml',
             media_type='application/xml',
         )
     )
@@ -766,19 +767,13 @@ def test_binary_content_from_path(tmp_path: Path):
     with pytest.raises(FileNotFoundError, match='File not found:'):
         BinaryContent.from_path(non_existent_file)
 
-    # test file with unknown media type
-    with pytest.raises(ValueError, match='Could not infer media type from file name: test.unknownext'):
-        test_unknown_file = tmp_path / 'test.unknownext'
-        test_unknown_file.write_text('some content', encoding='utf-8')
-        binary_content = BinaryContent.from_path(test_unknown_file)
-
     # test string path
     test_txt_file = tmp_path / 'test.txt'
     test_txt_file.write_text('just some text', encoding='utf-8')
     string_path = test_txt_file.as_posix()
     binary_content = BinaryContent.from_path(string_path)  # pyright: ignore[reportArgumentType]
     assert binary_content == snapshot(
-        BinaryContent(data=b'just some text', file_name='test.txt', media_type='text/plain')
+        BinaryContent(data=b'just some text', file_name='test.txt', _media_type='text/plain', media_type='text/plain')
     )
 
     # test image file
@@ -800,7 +795,9 @@ def test_binary_content_from_path(tmp_path: Path):
     test_yaml_file.write_text('key: value', encoding='utf-8')
     binary_content = BinaryContent.from_path(test_yaml_file)
     assert binary_content == snapshot(
-        BinaryContent(data=b'key: value', file_name='config.yaml', media_type='application/yaml')
+        BinaryContent(
+            data=b'key: value', file_name='config.yaml', _media_type='application/yaml', media_type='application/yaml'
+        )
     )
 
     # test yml file (alternative extension)
@@ -811,6 +808,7 @@ def test_binary_content_from_path(tmp_path: Path):
         BinaryContent(
             data=b'version: "3"',
             file_name='docker-compose.yml',
+            _media_type='application/yaml',
             media_type='application/yaml',
         )
     )
@@ -823,6 +821,7 @@ def test_binary_content_from_path(tmp_path: Path):
         BinaryContent(
             data=b'[project]\nname = "test"',
             file_name='pyproject.toml',
+            _media_type='application/toml',
             media_type='application/toml',
         )
     )
@@ -835,6 +834,7 @@ def test_binary_content_from_path(tmp_path: Path):
         BinaryContent(
             data=b'some content',
             file_name='unknown.unknownext',
+            _media_type='text/plain',
             media_type='text/plain',
         )
     )
@@ -844,11 +844,7 @@ def test_binary_content_from_path(tmp_path: Path):
     test_unknown_bin_file.write_bytes(b'\x00\x01\x02\x03\x04\x07\x08')
     binary_content = BinaryContent.from_path(test_unknown_bin_file)
     assert binary_content == snapshot(
-        BinaryContent(
-            data=b'\x00\x01\x02\x03\x04\x07\x08',
-            file_name='unknown.unknownbin',
-            media_type='application/octet-stream',
-        )
+        BinaryContent(data=b'\x00\x01\x02\x03\x04\x07\x08', file_name='unknown.unknownbin', _media_type='text/plain')
     )
 
 
