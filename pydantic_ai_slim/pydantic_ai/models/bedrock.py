@@ -712,7 +712,6 @@ class BedrockConverseModel(Model[BaseClient]):
         tools: list[ToolTypeDef] = list(tool_config['tools']) if tool_config else []
         self._limit_cache_points(system_prompt, bedrock_messages, tools)
 
-        # Add native structured output support
         if output_config := self._native_output_format(model_request_parameters):
             params['outputConfig'] = output_config  # type: ignore[typeddict-unknown-key]
 
