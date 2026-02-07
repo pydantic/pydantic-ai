@@ -7,11 +7,15 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
+from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 from typing_extensions import assert_never
 
+from ...agent import AbstractAgent
+from ...agent.abstract import AgentMetadata, Instructions
+from ...builtin_tools import AbstractBuiltinTool
 from ...messages import (
     AudioUrl,
     BinaryContent,
@@ -34,9 +38,15 @@ from ...messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ...output import OutputDataT
-from ...tools import AgentDepsT
+from ...models import KnownModelName, Model
+from ...output import OutputDataT, OutputSpec
+from ...settings import ModelSettings
+from ...tools import AgentDepsT, DeferredToolApprovalResult, DeferredToolResults, ToolDenied
+from ...toolsets import AbstractToolset
+from ...usage import RunUsage, UsageLimits
 from .. import MessagesBuilder, UIAdapter, UIEventStream
+from .._adapter import DispatchDepsT, DispatchOutputDataT
+from .._event_stream import OnCompleteFunc
 from ._event_stream import VercelAIEventStream
 from ._utils import dump_provider_metadata, load_provider_metadata
 from .request_types import (
@@ -59,12 +69,13 @@ from .request_types import (
     ToolUIPart,
     UIMessage,
     UIMessagePart,
+    iter_tool_approval_responses,
 )
 from .response_types import BaseChunk
 
 if TYPE_CHECKING:
-    pass
-
+    from starlette.requests import Request
+    from starlette.responses import Response
 
 __all__ = ['VercelAIAdapter']
 
@@ -77,16 +88,153 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
     _: KW_ONLY
     sdk_version: Literal[5, 6] = 5
-    """Vercel AI SDK version to target. Default is 5 for backwards compatibility."""
+    """Vercel AI SDK version to target. Default is 5 for backwards compatibility.
+
+    Setting `sdk_version=6` enables tool approval streaming for human-in-the-loop workflows.
+    """
 
     @classmethod
     def build_run_input(cls, body: bytes) -> RequestData:
         """Build a Vercel AI run input object from the request body."""
         return request_data_ta.validate_json(body)
 
+    @classmethod
+    async def from_request(
+        cls,
+        request: Request,
+        *,
+        agent: AbstractAgent[AgentDepsT, OutputDataT],
+        sdk_version: Literal[5, 6] = 5,
+    ) -> VercelAIAdapter[AgentDepsT, OutputDataT]:
+        """Create a Vercel AI adapter from a request.
+
+        Args:
+            request: The incoming Starlette/FastAPI request.
+            agent: The Pydantic AI agent to run.
+            sdk_version: Vercel AI SDK version. Set to 6 to enable tool approval streaming.
+        """
+        return cls(
+            agent=agent,
+            run_input=cls.build_run_input(await request.body()),
+            accept=request.headers.get('accept'),
+            sdk_version=sdk_version,
+        )
+
+    @classmethod
+    async def dispatch_request(
+        cls,
+        request: Request,
+        *,
+        agent: AbstractAgent[DispatchDepsT, DispatchOutputDataT],
+        sdk_version: Literal[5, 6] = 5,
+        message_history: Sequence[ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        model: Model | KnownModelName | str | None = None,
+        instructions: Instructions[DispatchDepsT] = None,
+        deps: DispatchDepsT = None,
+        output_type: OutputSpec[Any] | None = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: UsageLimits | None = None,
+        usage: RunUsage | None = None,
+        metadata: AgentMetadata[DispatchDepsT] | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        on_complete: OnCompleteFunc[BaseChunk] | None = None,
+    ) -> Response:
+        """Handle a Vercel AI HTTP request by running the agent and returning a streaming response.
+
+        Extends the base [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] with
+        Vercel AI-specific parameters.
+
+        Args:
+            request: The incoming Starlette/FastAPI request.
+            agent: The Pydantic AI agent to run.
+            sdk_version: Vercel AI SDK version. Set to 6 to enable tool approval streaming.
+            message_history: History of the conversation so far.
+            deferred_tool_results: Optional results for deferred tool calls in the message history.
+            model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            instructions: Optional additional instructions to use for this run.
+            deps: Optional dependencies to use for this run.
+            output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
+                output validators since output validators would expect an argument that matches the agent's output type.
+            model_settings: Optional settings to use for this model's request.
+            usage_limits: Optional limits on model request count or token usage.
+            usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
+                [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
+            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            toolsets: Optional additional toolsets for this run.
+            builtin_tools: Optional additional builtin tools to use for this run.
+            on_complete: Optional callback function called when the agent run completes successfully.
+                The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult]
+                and can optionally yield additional Vercel AI events.
+
+        Returns:
+            A streaming Starlette response with Vercel AI events encoded per the request's `Accept` header value.
+        """
+        try:
+            from starlette.responses import Response
+        except ImportError as e:  # pragma: no cover
+            raise ImportError(
+                'Please install the `starlette` package to use `dispatch_request()` method, '
+                'you can use the `ui` optional group — `pip install "pydantic-ai-slim[ui]"`'
+            ) from e
+
+        try:
+            # The DepsT and OutputDataT come from `agent`, not from `cls`; the cast is necessary to explain this to pyright
+            adapter = cast(
+                VercelAIAdapter[DispatchDepsT, DispatchOutputDataT],
+                await cls.from_request(
+                    request,
+                    agent=cast(AbstractAgent[AgentDepsT, OutputDataT], agent),
+                    sdk_version=sdk_version,
+                ),
+            )
+        except ValidationError as e:  # pragma: no cover
+            return Response(
+                content=e.json(),
+                media_type='application/json',
+                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            )
+
+        return adapter.streaming_response(
+            adapter.run_stream(
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                deps=deps,
+                output_type=output_type,
+                model=model,
+                instructions=instructions,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                usage=usage,
+                metadata=metadata,
+                infer_name=infer_name,
+                toolsets=toolsets,
+                builtin_tools=builtin_tools,
+                on_complete=on_complete,
+            ),
+        )
+
     def build_event_stream(self) -> UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
         """Build a Vercel AI event stream transformer."""
         return VercelAIEventStream(self.run_input, accept=self.accept, sdk_version=self.sdk_version)
+
+    @cached_property
+    def deferred_tool_results(self) -> DeferredToolResults | None:
+        """Extract deferred tool results from Vercel AI messages with approval responses."""
+        if self.sdk_version < 6:
+            return None
+        approvals: dict[str, bool | DeferredToolApprovalResult] = {}
+        for tool_call_id, approval in iter_tool_approval_responses(self.run_input.messages):
+            if approval.approved:
+                approvals[tool_call_id] = True
+            elif approval.reason:
+                approvals[tool_call_id] = ToolDenied(message=approval.reason)
+            else:
+                approvals[tool_call_id] = False
+        return DeferredToolResults(approvals=approvals) if approvals else None
 
     @cached_property
     def messages(self) -> list[ModelMessage]:

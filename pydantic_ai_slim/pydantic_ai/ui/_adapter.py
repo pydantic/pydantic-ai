@@ -174,6 +174,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         """Frontend state from the protocol-specific run input."""
         return None
 
+    @cached_property
+    def deferred_tool_results(self) -> DeferredToolResults | None:
+        """Deferred tool results extracted from the request, used for tool approval workflows."""
+        return None
+
     def transform_stream(
         self,
         stream: AsyncIterator[NativeEvent],
@@ -246,6 +251,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         if toolset:
             output_type = [output_type or self.agent.output_type, DeferredToolRequests]
             toolsets = [*(toolsets or []), toolset]
+
+        if deferred_tool_results is None:
+            deferred_tool_results = self.deferred_tool_results
 
         if isinstance(deps, StateHandler):
             raw_state = self.state or {}
