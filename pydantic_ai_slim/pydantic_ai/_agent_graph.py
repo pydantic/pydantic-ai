@@ -1101,8 +1101,9 @@ async def process_tool_calls(  # noqa: C901
                     else:
                         deferred_calls['unapproved'].append(call)
                 else:
-                    # Validation failed - execute to create trace span and get error.
-                    # Tool-specific retries are already tracked by validate_tool_call() via failed_tools.
+                    # Validation failed — no tool is actually executed here. We call
+                    # execute_tool_call so the validation error is raised inside a trace span.
+                    # Retries are already tracked by validate_tool_call() via failed_tools.
                     include_content = (
                         ctx.deps.instrumentation_settings is not None
                         and ctx.deps.instrumentation_settings.include_content
