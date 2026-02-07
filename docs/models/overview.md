@@ -353,12 +353,17 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
+!!! warning "Solo response handlers replace default exception fallback"
+    When you pass a single response handler as `fallback_on` (as above), it **replaces** the default `(ModelAPIError,)` exception fallback entirely. This means API errors (4xx/5xx) will propagate as exceptions instead of triggering fallback to the next model.
+
+    To keep exception-based fallback alongside a response handler, pass them together as a list — see the [mixed example below](#combining-handlers).
+
 !!! note "Why check finish reasons explicitly?"
     By default, Pydantic AI only rejects responses with **0 parts** (no content) and finish reasons `'length'` or `'content_filter'` — these raise exceptions immediately. Empty responses with other finish reasons (including `'error'`) trigger a retry instead.
 
     For non-empty responses, **all finish reasons are accepted** — even `'error'` — because the response may contain partial results or useful information. This is why explicit checking via `fallback_on` is useful: it allows you to inspect the response content and make semantic decisions about whether to accept it or fallback to another model.
 
-    See the [agent graph implementation](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/_agent_graph.py#L619-L673) for details on default finish reason handling.
+    See the [agent graph implementation](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/_agent_graph.py) for details on default finish reason handling.
 
 #### Built-in Tool Failure Example
 
@@ -409,7 +414,12 @@ Pydantic AI is a Python agent framework for building production-grade LLM applic
 """
 ```
 
+!!! warning "Solo response handlers replace default exception fallback"
+    As with the finish reason example above, passing a single response handler as `fallback_on` **replaces** the default `(ModelAPIError,)` exception fallback. To keep both, combine them in a list as shown below.
+
 Response handlers receive the [`ModelResponse`][pydantic_ai.messages.ModelResponse] returned by the model and should return `True` to trigger fallback to the next model, or `False` to accept the response.
+
+#### Combining Handlers { #combining-handlers }
 
 You can combine exception types, exception handlers, and response handlers in a single list:
 

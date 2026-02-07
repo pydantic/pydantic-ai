@@ -12,7 +12,7 @@ from inspect import Parameter, signature
 from typing import TYPE_CHECKING, Any, Concatenate, cast, get_origin
 
 from pydantic import ConfigDict
-from pydantic._internal import _decorators, _generate_schema
+from pydantic._internal import _decorators, _generate_schema, _typing_extra
 from pydantic._internal._config import ConfigWrapper
 from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
@@ -22,7 +22,7 @@ from typing_extensions import ParamSpec, TypeIs, TypeVar, get_type_hints
 
 from ._griffe import doc_descriptions
 from ._run_context import RunContext
-from ._utils import check_object_json_schema, get_first_param_type, is_async_callable, is_model_like, run_in_executor
+from ._utils import check_object_json_schema, is_async_callable, is_model_like, run_in_executor
 
 if TYPE_CHECKING:
     from .tools import DocstringFormat, ObjectJsonSchema
@@ -231,6 +231,45 @@ R = TypeVar('R')
 WithCtx = Callable[Concatenate[RunContext[Any], P], R]
 WithoutCtx = Callable[P, R]
 TargetCallable = WithCtx[P, R] | WithoutCtx[P, R]
+
+
+def get_first_param_type(callable_obj: Callable[..., Any]) -> Any | None:
+    """Get the type annotation of the first parameter of a callable.
+
+    Handles regular functions, methods, and callable classes with __call__.
+    Uses Pydantic internals to properly resolve type hints including forward references.
+
+    Args:
+        callable_obj: The callable to inspect.
+
+    Returns:
+        The type annotation of the first parameter, or None if it cannot be determined.
+    """
+    try:
+        sig = signature(callable_obj)
+    except ValueError:
+        return None
+
+    try:
+        first_param_name = next(iter(sig.parameters.keys()))
+    except StopIteration:
+        return None
+
+    # See https://github.com/pydantic/pydantic/pull/11451 for a similar implementation in Pydantic
+    callable_for_hints = callable_obj
+    if not isinstance(callable_obj, _decorators._function_like):  # pyright: ignore[reportPrivateUsage]
+        call_func = getattr(type(callable_obj), '__call__', None)
+        if call_func is not None:
+            callable_for_hints = call_func
+        else:
+            return None  # pragma: no cover
+
+    try:
+        type_hints = _typing_extra.get_function_type_hints(_decorators.unwrap_wrapped_function(callable_for_hints))
+    except Exception:
+        return None
+
+    return type_hints.get(first_param_name)
 
 
 def _takes_ctx(callable_obj: TargetCallable[P, R]) -> TypeIs[WithCtx[P, R]]:  # pyright: ignore[reportUnusedFunction]

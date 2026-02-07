@@ -10,8 +10,9 @@ from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, overload
 from opentelemetry.trace import get_current_span
 from typing_extensions import assert_never
 
+from pydantic_ai._function_schema import get_first_param_type
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._utils import get_first_param_type, is_async_callable
+from pydantic_ai._utils import is_async_callable
 from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..exceptions import FallbackExceptionGroup, ModelAPIError
