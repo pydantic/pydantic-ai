@@ -1354,6 +1354,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     def to_a2a(
         self,
         *,
+        deps: AgentDepsT = None,
         storage: Storage | None = None,
         broker: Broker | None = None,
         # Agent card
@@ -1387,11 +1388,31 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```bash
         uvicorn app:app --host 0.0.0.0 --port 8000
         ```
+
+        Args:
+            deps: Optional dependencies to use for agent runs.
+            storage: Storage backend for tasks and context.
+            broker: Message broker for task distribution.
+            name: Agent name for the card.
+            url: Agent URL.
+            version: Agent version.
+            description: Agent description.
+            provider: Agent provider information.
+            skills: List of agent skills.
+            debug: Enable debug mode.
+            routes: Additional routes.
+            middleware: Starlette middleware.
+            exception_handlers: Exception handlers.
+            lifespan: Lifespan context manager.
+
+        Returns:
+            A FastA2A application.
         """
         from .._a2a import agent_to_a2a
 
         return agent_to_a2a(
             self,
+            deps=deps,
             storage=storage,
             broker=broker,
             name=name,
