@@ -1252,7 +1252,7 @@ class OpenAIResponsesModel(Model):
         messages: list[ModelRequest | ModelResponse],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ):
+    ) -> ModelResponse:
         check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
