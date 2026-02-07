@@ -90,15 +90,14 @@ async def chat(request: Request) -> Response:
 !!! note
     Tool approval requires AI SDK UI v6 or later on the frontend.
 
-Pydantic AI supports human-in-the-loop tool approval workflows with AI SDK UI, allowing users to approve or deny tool executions before they run. See the [deferred tool calls documentation](../deferred-tools.md) for details on setting up tools that require approval.
+Pydantic AI supports human-in-the-loop tool approval workflows with AI SDK UI, allowing users to approve or deny tool executions before they run. See the [deferred tool calls documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for details on setting up tools that require approval.
 
-To enable tool approval streaming, set `sdk_version=6` when creating the adapter:
+To enable tool approval streaming, pass `sdk_version=6` to `dispatch_request`:
 
 ```py {test="skip" lint="skip"}
 @app.post('/chat')
 async def chat(request: Request) -> Response:
-    adapter = await VercelAIAdapter.from_request(request, agent=agent, sdk_version=6)
-    return adapter.streaming_response(adapter.run_stream())
+    return await VercelAIAdapter.dispatch_request(request, agent=agent, sdk_version=6)
 ```
 
 When `sdk_version=6`, the adapter will:
