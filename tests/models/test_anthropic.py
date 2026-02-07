@@ -2031,6 +2031,37 @@ async def test_multiple_uploaded_files(allow_model_requests: None) -> None:
     )
 
 
+async def test_uploaded_file_image(allow_model_requests: None) -> None:
+    """Test that UploadedFile with image media type is mapped to an image block."""
+    c = completion_message(
+        [BetaTextBlock(text='The image shows a cat.', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=6),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(
+        ['Describe this image', UploadedFile(file_id='file-img123', provider_name='anthropic', media_type='image/png')]
+    )
+
+    assert result.output == 'The image shows a cat.'
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = completion_kwargs['messages']
+    assert messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Describe this image', 'type': 'text'},
+                    {'source': {'file_id': 'file-img123', 'type': 'file'}, 'type': 'image'},
+                ],
+            }
+        ]
+    )
+
+
 async def test_uploaded_file_wrong_provider(allow_model_requests: None) -> None:
     """Test that UploadedFile with wrong provider raises an error."""
     c = completion_message(

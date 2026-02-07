@@ -26,7 +26,6 @@ from ..messages import (
     FinishReason,
     ImageUrl,
     ModelMessage,
-    UploadedFile,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
@@ -37,6 +36,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
