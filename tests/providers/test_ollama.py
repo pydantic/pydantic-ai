@@ -12,7 +12,7 @@ from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_mode
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+from pydantic_ai.profiles.openai import OpenAIModelProfile, OpenAIJsonSchemaTransformer
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
 from ..conftest import TestEnv, try_import
@@ -126,3 +126,10 @@ def test_ollama_provider_model_profile(mocker: MockerFixture):
     unknown_profile = provider.model_profile('unknown-model')
     assert unknown_profile is not None
     assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+
+    # Ollama native structured output uses `format` with raw JSON schema; strict mode is not supported (issue #4116)
+    for model in ('llama3.2', 'qwen3', 'unknown-model'):
+        profile = provider.model_profile(model)
+        assert profile is not None
+        openai_profile = OpenAIModelProfile.from_profile(profile)
+        assert openai_profile.openai_supports_strict_tool_definition is False
