@@ -93,6 +93,7 @@ async def test_feature_with_snapshots(provider: str, stream: bool, request: pyte
     provider_name = request.node.callspec.params['provider']
     # snapshots auto-fill per parameter combination
     assert result.all_messages() == EXPECTATIONS[(provider_name, stream)]
+```
 
 ## VCR Workflow
 
