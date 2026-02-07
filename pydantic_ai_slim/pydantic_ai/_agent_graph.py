@@ -518,11 +518,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
         original_history = ctx.state.message_history[:]
+        # Detect if we're reusing the last history request (a "no-prompt run")
+        reused_history_request = ctx.deps.new_message_index == len(original_history)
         message_history = await _process_message_history(original_history, ctx.deps.history_processors, run_context)
+        if message_history[-1].run_id is None:
+            message_history[-1].run_id = ctx.state.run_id
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
         ctx.state.message_history[:] = message_history
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
-        ctx.deps.new_message_index -= len(original_history) - len(message_history)
+        ctx.deps.new_message_index = (
+            len(message_history) if reused_history_request else _first_run_id_index(message_history, ctx.state.run_id)
+        )
 
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
         # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.
@@ -1400,6 +1406,14 @@ async def _process_message_history(
         messages[-1].timestamp = now_utc()
 
     return messages
+
+
+def _first_run_id_index(messages: list[_messages.ModelMessage], run_id: str) -> int:
+    """Return the index of the first message for the current run, or len(messages) if none are found."""
+    for index, message in enumerate(messages):
+        if message.run_id == run_id:
+            return index
+    return len(messages)
 
 
 def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
