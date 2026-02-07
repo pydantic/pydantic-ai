@@ -3144,6 +3144,18 @@ def test_unknown_tool_multiple_retries():
     )
 
 
+def test_unknown_tool_per_tool_retries_exceeded():
+    """When output_retries > retries, the per-tool retry limit fires before the agent-level one."""
+
+    def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
+
+    agent = Agent(FunctionModel(empty), retries=1, output_retries=5)
+
+    with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 1"):
+        agent.run_sync('Hello')
+
+
 def test_tool_exceeds_token_limit_error():
     def return_incomplete_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         resp = ModelResponse(parts=[ToolCallPart('dummy_tool', args='{"foo": "bar",')])
