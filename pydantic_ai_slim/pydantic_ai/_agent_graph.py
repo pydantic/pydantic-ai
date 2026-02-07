@@ -18,7 +18,7 @@ from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
-from pydantic_ai._tool_manager import ToolManager
+from pydantic_ai._tool_manager import ToolCallValidation, ToolManager
 from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, now_utc, run_in_executor
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_graph import BaseNode, GraphRunContext
@@ -924,14 +924,34 @@ async def process_tool_calls(  # noqa: C901
         # Early strategy is chosen and final result is not yet set
         # Or exhaustive strategy is chosen
         else:
+            # Validate first to get accurate args_valid status
             try:
-                result_data = await tool_manager.handle_call(call)
+                validated = await tool_manager.validate_tool_call(call)
             except exceptions.UnexpectedModelBehavior as e:
-                # If we already have a valid final result, don't fail the entire run
-                # This allows exhaustive strategy to complete successfully when at least one output tool is valid
+                # Max retries exceeded
                 if final_result:
-                    # If output tool fails when we already have a final result, skip it without retrying
-                    yield _messages.FunctionToolCallEvent(call)
+                    # If we already have a valid final result, skip without failing
+                    yield _messages.FunctionToolCallEvent(call, args_valid=False)
+                    part = _messages.ToolReturnPart(
+                        tool_name=call.tool_name,
+                        content='Output tool not used - output failed validation.',
+                        tool_call_id=call.tool_call_id,
+                    )
+                    output_parts.append(part)
+                    yield _messages.FunctionToolResultEvent(part)
+                    continue
+                else:
+                    ctx.state.increment_retries(
+                        ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                    )
+                    raise e  # pragma: lax no cover
+
+            if not validated.args_valid:
+                # Validation failed
+                assert validated.validation_error is not None
+                if final_result:
+                    # Already have a result, just note that this tool wasn't used
+                    yield _messages.FunctionToolCallEvent(call, args_valid=False)
                     part = _messages.ToolReturnPart(
                         tool_name=call.tool_name,
                         content='Output tool not used - output failed validation.',
@@ -940,32 +960,56 @@ async def process_tool_calls(  # noqa: C901
                     output_parts.append(part)
                     yield _messages.FunctionToolResultEvent(part)
                 else:
-                    # No valid result yet, so this is a real failure
                     ctx.state.increment_retries(
-                        ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                        ctx.deps.max_result_retries,
+                        error=validated.validation_error,
+                        model_settings=ctx.deps.model_settings,
                     )
-                    raise e  # pragma: lax no cover
-            except ToolRetryError as e:
-                # If we already have a valid final result, don't increment retries for invalid output tools
-                # This allows the run to succeed if at least one output tool returned a valid result
-                if not final_result:
-                    ctx.state.increment_retries(
-                        ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
-                    )
-                yield _messages.FunctionToolCallEvent(call)
-                output_parts.append(e.tool_retry)
-                yield _messages.FunctionToolResultEvent(e.tool_retry)
+                    yield _messages.FunctionToolCallEvent(call, args_valid=False)
+                    output_parts.append(validated.validation_error.tool_retry)
+                    yield _messages.FunctionToolResultEvent(validated.validation_error.tool_retry)
             else:
-                part = _messages.ToolReturnPart(
-                    tool_name=call.tool_name,
-                    content='Final result processed.',
-                    tool_call_id=call.tool_call_id,
-                )
-                output_parts.append(part)
+                # Validation passed - execute the tool
+                try:
+                    result_data = await tool_manager.execute_tool_call(validated)
+                except exceptions.UnexpectedModelBehavior as e:
+                    # Max retries exceeded during execution
+                    if final_result:
+                        # Already have a result, just note that this tool wasn't used
+                        yield _messages.FunctionToolCallEvent(call, args_valid=True)
+                        part = _messages.ToolReturnPart(
+                            tool_name=call.tool_name,
+                            content='Output tool not used - output failed validation.',
+                            tool_call_id=call.tool_call_id,
+                        )
+                        output_parts.append(part)
+                        yield _messages.FunctionToolResultEvent(part)
+                    else:
+                        ctx.state.increment_retries(
+                            ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                        )
+                        raise e  # pragma: lax no cover
+                except ToolRetryError as e:
+                    # Execution failed (e.g., ModelRetry from inside the tool)
+                    # If we already have a valid final result, don't increment retries
+                    if not final_result:
+                        ctx.state.increment_retries(
+                            ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                        )
+                    yield _messages.FunctionToolCallEvent(call, args_valid=True)
+                    output_parts.append(e.tool_retry)
+                    yield _messages.FunctionToolResultEvent(e.tool_retry)
+                else:
+                    part = _messages.ToolReturnPart(
+                        tool_name=call.tool_name,
+                        content='Final result processed.',
+                        tool_call_id=call.tool_call_id,
+                    )
+                    output_parts.append(part)
 
-                # In both `early` and `exhaustive` modes, use the first output tool's result as the final result
-                if not final_result:
-                    final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
+                    # In both `early` and `exhaustive` modes, use the first output tool's result as the final result
+                    if not final_result:
+                        final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
 
     # Then, we handle function tool calls
     calls_to_run: list[_messages.ToolCallPart] = []
@@ -1038,11 +1082,48 @@ async def process_tool_calls(  # noqa: C901
                         )
                     )
         elif calls:
-            deferred_calls['external'].extend(tool_calls_by_kind['external'])
-            deferred_calls['unapproved'].extend(tool_calls_by_kind['unapproved'])
-
+            # Validate deferred tools before deferring them
+            # If validation fails, trace the error and add retry prompt
+            # If validation passes, just emit event and defer
             for call in calls:
-                yield _messages.FunctionToolCallEvent(call)
+                try:
+                    validated = await tool_manager.validate_tool_call(call)
+                except exceptions.UnexpectedModelBehavior:
+                    # Max retries exceeded - re-raise
+                    raise
+
+                yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
+
+                if validated.args_valid:
+                    # Validation passed - defer the call
+                    if call in tool_calls_by_kind['external']:
+                        deferred_calls['external'].append(call)
+                    else:
+                        deferred_calls['unapproved'].append(call)
+                else:
+                    # Validation failed — no tool is actually executed here. We call
+                    # execute_tool_call so the validation error is raised inside a trace span.
+                    # Retries are already tracked by validate_tool_call() via failed_tools.
+                    include_content = (
+                        ctx.deps.instrumentation_settings is not None
+                        and ctx.deps.instrumentation_settings.include_content
+                    )
+                    instrumentation_version = (
+                        ctx.deps.instrumentation_settings.version
+                        if ctx.deps.instrumentation_settings
+                        else DEFAULT_INSTRUMENTATION_VERSION
+                    )
+                    try:
+                        await tool_manager.execute_tool_call(
+                            validated,
+                            tracer=ctx.deps.tracer,
+                            include_content=include_content,
+                            instrumentation_version=instrumentation_version,
+                            usage=ctx.state.usage,
+                        )
+                    except ToolRetryError as e:
+                        output_parts.append(e.tool_retry)
+                        yield _messages.FunctionToolResultEvent(e.tool_retry)
 
     if not final_result and deferred_calls:
         if not ctx.deps.output_schema.allows_deferred_tools:
@@ -1083,8 +1164,21 @@ async def _call_tools(  # noqa: C901
         projected_usage.tool_calls += len(tool_calls)
         usage_limits.check_before_tool_call(projected_usage)
 
+    # Validate and emit FunctionToolCallEvent for each tool, storing results to avoid double validation.
+    # Skip upfront validation for calls with pre-supplied deferred results (e.g. ToolApproved):
+    # those will be validated with correct context (approved=True, metadata) in _call_tool via handle_call.
+    validated_calls: dict[str, ToolCallValidation[DepsT]] = {}
     for call in tool_calls:
-        yield _messages.FunctionToolCallEvent(call)
+        if call.tool_call_id in tool_call_results:
+            yield _messages.FunctionToolCallEvent(call)
+            continue
+        try:
+            validated = await tool_manager.validate_tool_call(call)
+        except exceptions.UnexpectedModelBehavior:
+            yield _messages.FunctionToolCallEvent(call, args_valid=False)
+            raise
+        validated_calls[call.tool_call_id] = validated
+        yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
 
     with tracer.start_as_current_span(
         'running tools',
@@ -1128,7 +1222,13 @@ async def _call_tools(  # noqa: C901
         if parallel_execution_mode == 'sequential':
             for index, call in enumerate(tool_calls):
                 if event := await handle_call_or_result(
-                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), tool_call_metadata),
+                    _call_tool(
+                        tool_manager,
+                        call,
+                        tool_call_results.get(call.tool_call_id),
+                        tool_call_metadata,
+                        validated_calls.get(call.tool_call_id),
+                    ),
                     index,
                 ):
                     yield event
@@ -1136,7 +1236,13 @@ async def _call_tools(  # noqa: C901
         else:
             tasks = [
                 asyncio.create_task(
-                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), tool_call_metadata),
+                    _call_tool(
+                        tool_manager,
+                        call,
+                        tool_call_results.get(call.tool_call_id),
+                        tool_call_metadata,
+                        validated_calls.get(call.tool_call_id),
+                    ),
                     name=call.tool_name,
                 )
                 for call in tool_calls
@@ -1198,10 +1304,21 @@ async def _call_tool(
     tool_call: _messages.ToolCallPart,
     tool_call_result: DeferredToolResult | None,
     tool_call_metadata: dict[str, dict[str, Any]] | None,
+    validated: ToolCallValidation[DepsT] | None = None,
 ) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]:
     try:
         if tool_call_result is None:
-            tool_result = await tool_manager.handle_call(tool_call)
+            if validated is not None:
+                assert tool_manager.ctx is not None
+                tool_result = await tool_manager.execute_tool_call(
+                    validated,
+                    tracer=tool_manager.ctx.tracer,
+                    include_content=tool_manager.ctx.trace_include_content,
+                    instrumentation_version=tool_manager.ctx.instrumentation_version,
+                    usage=tool_manager.ctx.usage,
+                )
+            else:
+                raise RuntimeError('Expected validated tool call')  # pragma: no cover
         elif isinstance(tool_call_result, ToolApproved):
             if tool_call_result.override_args is not None:
                 tool_call = dataclasses.replace(tool_call, args=tool_call_result.override_args)
