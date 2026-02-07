@@ -28,6 +28,20 @@ class RestateContextRunResult:
 CONTEXT_RUN_SERDE = PydanticTypeAdapter(RestateContextRunResult)
 
 
+def unwrap_context_run_result(res: RestateContextRunResult) -> Any:
+    """Convert a durable step result back into tool-control-flow exceptions."""
+    if res.kind == 'call_deferred':
+        raise CallDeferred(metadata=res.metadata)
+    elif res.kind == 'approval_required':
+        raise ApprovalRequired(metadata=res.metadata)
+    elif res.kind == 'model_retry':
+        assert res.error is not None
+        raise ModelRetry(res.error)
+    else:
+        assert res.kind == 'output'
+        return res.output
+
+
 class RestateContextRunToolSet(WrapperToolset[AgentDepsT]):
     """A toolset that automatically wraps tool calls with restate's `ctx.run_typed()`."""
 
@@ -57,17 +71,7 @@ class RestateContextRunToolSet(WrapperToolset[AgentDepsT]):
                 raise TerminalError(str(e)) from e
 
         res = await self._context.run_typed(f'Calling {name}', action, self.options)
-
-        if res.kind == 'call_deferred':
-            raise CallDeferred(metadata=res.metadata)
-        elif res.kind == 'approval_required':
-            raise ApprovalRequired(metadata=res.metadata)
-        elif res.kind == 'model_retry':
-            assert res.error is not None
-            raise ModelRetry(res.error)
-        else:
-            assert res.kind == 'output'
-            return res.output
+        return unwrap_context_run_result(res)
 
     def visit_and_replace(
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]

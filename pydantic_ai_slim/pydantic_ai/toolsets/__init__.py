@@ -1,4 +1,4 @@
-from ._dynamic import DynamicToolset, ToolsetFunc
+from ._dynamic import ToolsetFunc
 from .abstract import AbstractToolset, ToolsetTool
 from .approval_required import ApprovalRequiredToolset
 from .combined import CombinedToolset
@@ -12,7 +12,6 @@ from .wrapper import WrapperToolset
 
 __all__ = (
     'AbstractToolset',
-    'DynamicToolset',
     'ToolsetFunc',
     'ToolsetTool',
     'CombinedToolset',

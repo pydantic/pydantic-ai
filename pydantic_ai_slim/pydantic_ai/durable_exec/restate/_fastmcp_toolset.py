@@ -16,7 +16,7 @@ from pydantic_ai.toolsets.wrapper import WrapperToolset
 
 from ._restate_types import Context, RunOptions, TerminalError
 from ._serde import PydanticTypeAdapter
-from ._toolset import CONTEXT_RUN_SERDE, RestateContextRunResult
+from ._toolset import CONTEXT_RUN_SERDE, RestateContextRunResult, unwrap_context_run_result
 
 
 @dataclass
@@ -91,14 +91,4 @@ class RestateFastMCPToolset(WrapperToolset[AgentDepsT]):
                 raise TerminalError(str(e)) from e
 
         res = await self._context.run_typed(f'Calling fastmcp tool {name}', call_tool_in_context, self._options)
-
-        if res.kind == 'call_deferred':
-            raise CallDeferred(metadata=res.metadata)
-        elif res.kind == 'approval_required':
-            raise ApprovalRequired(metadata=res.metadata)
-        elif res.kind == 'model_retry':
-            assert res.error is not None
-            raise ModelRetry(res.error)
-        else:
-            assert res.kind == 'output'
-            return res.output
+        return unwrap_context_run_result(res)

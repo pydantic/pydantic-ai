@@ -20,7 +20,7 @@ from pydantic_ai.durable_exec.restate._toolset import RestateContextRunToolSet
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolsets import DynamicToolset
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -225,7 +225,7 @@ async def test_restate_agent_event_stream_handler_and_iter():
     # Tool execution is still durable by default.
     assert 'Calling plus_one' in fake_ctx.calls
     # Tool/model events are executed via ctx.run_typed() per event.
-    assert 'run event' in fake_ctx.calls
+    assert any(call.startswith('handle event:') for call in fake_ctx.calls)
     assert seen_event_kinds
 
     fake_ctx.calls.clear()
@@ -245,6 +245,9 @@ async def test_restate_agent_restrictions():
 
     agent = Agent(TestModel())
     restate_agent = RestateAgent(agent, fake_ctx)
+
+    with pytest.raises(TerminalError, match=r'agent\.run_sync\(\)'):
+        restate_agent.run_sync('x')
 
     with pytest.raises(TerminalError, match='cannot be set at agent run time'):
         await restate_agent.run('x', model=TestModel())
@@ -605,16 +608,16 @@ async def test_restate_fastmcp_toolset_maps_control_flow_exceptions_and_user_err
         return {'value': value}
 
     # Placeholder tool implementations; behavior is overridden by `RaisingFastMCPToolset`.
-    def retry() -> None:
+    def retry() -> None:  # pragma: no cover
         raise RuntimeError('not used')
 
-    def deferred() -> None:
+    def deferred() -> None:  # pragma: no cover
         raise RuntimeError('not used')
 
-    def approval() -> None:
+    def approval() -> None:  # pragma: no cover
         raise RuntimeError('not used')
 
-    def user_error() -> None:
+    def user_error() -> None:  # pragma: no cover
         raise RuntimeError('not used')
 
     mcp.tool(echo)
@@ -622,17 +625,6 @@ async def test_restate_fastmcp_toolset_maps_control_flow_exceptions_and_user_err
     mcp.tool(deferred)
     mcp.tool(approval)
     mcp.tool(user_error)
-
-    # These tools should never be called by the toolset wrapper, but we execute them here
-    # so they don't reduce test coverage.
-    with pytest.raises(RuntimeError, match='not used'):
-        retry()
-    with pytest.raises(RuntimeError, match='not used'):
-        deferred()
-    with pytest.raises(RuntimeError, match='not used'):
-        approval()
-    with pytest.raises(RuntimeError, match='not used'):
-        user_error()
 
     class RaisingFastMCPToolset(FastMCPToolset[Any]):
         async def call_tool(
@@ -692,16 +684,13 @@ async def test_restate_agent_wraps_fastmcp_toolset_and_disables_event_handler_wr
 
     mcp = FastMCP('test')
 
-    def echo(value: int) -> dict[str, Any]:
+    def echo(value: int) -> dict[str, Any]:  # pragma: no cover
         return {'value': value}
 
     mcp.tool(echo)
 
-    async def handler(_: RunContext[Any], __: AsyncIterable[AgentStreamEvent]) -> None:
+    async def handler(_: RunContext[Any], __: AsyncIterable[AgentStreamEvent]) -> None:  # pragma: no cover
         return None
-
-    assert echo(123) == {'value': 123}
-    await handler(_run_ctx(), cast(AsyncIterable[AgentStreamEvent], []))
 
     toolset = FastMCPToolset(mcp, id='fastmcp')
     agent = Agent(TestModel(call_tools=[]), toolsets=[toolset])

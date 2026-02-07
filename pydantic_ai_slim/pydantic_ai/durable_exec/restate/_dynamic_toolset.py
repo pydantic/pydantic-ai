@@ -10,7 +10,7 @@ from typing_extensions import Self
 
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
-from pydantic_ai.toolsets import DynamicToolset
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -18,7 +18,7 @@ from pydantic_ai.toolsets.wrapper import WrapperToolset
 
 from ._restate_types import Context, RunOptions, TerminalError
 from ._serde import PydanticTypeAdapter
-from ._toolset import CONTEXT_RUN_SERDE, RestateContextRunResult
+from ._toolset import CONTEXT_RUN_SERDE, RestateContextRunResult, unwrap_context_run_result
 
 _RESTATE_DYNAMIC_ORIGIN_KEY = '__pydantic_ai_restate_dynamic_origin'
 
@@ -42,7 +42,7 @@ DYNAMIC_GET_TOOLS_SERDE = PydanticTypeAdapter(RestateDynamicGetToolsContextRunRe
 
 
 class RestateDynamicToolset(WrapperToolset[AgentDepsT]):
-    """A durable wrapper for [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset].
+    """A durable wrapper for [`DynamicToolset`][pydantic_ai.toolsets._dynamic.DynamicToolset].
 
     Restate durability requirement: the dynamic function may do I/O (e.g. return an MCP toolset),
     so both tool discovery and tool calls must happen inside `ctx.run_typed(...)`.
@@ -150,17 +150,7 @@ class RestateDynamicToolset(WrapperToolset[AgentDepsT]):
                     raise TerminalError(str(e)) from e
 
         res = await self._context.run_typed(f'Calling dynamic tool {name}', call_tool_in_context, self._call_options)
-
-        if res.kind == 'call_deferred':
-            raise CallDeferred(metadata=res.metadata)
-        elif res.kind == 'approval_required':
-            raise ApprovalRequired(metadata=res.metadata)
-        elif res.kind == 'model_retry':
-            assert res.error is not None
-            raise ModelRetry(res.error)
-        else:
-            assert res.kind == 'output'
-            return res.output
+        return unwrap_context_run_result(res)
 
     def _tool_for_tool_info(self, tool_info: _ToolInfo) -> ToolsetTool[AgentDepsT]:
         """Create a `ToolsetTool` from a `_ToolInfo` for use outside durable steps.

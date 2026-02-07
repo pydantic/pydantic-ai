@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 
 T = TypeVar('T')
 
-__all__ = ['T', 'Context', 'RunOptions', 'TerminalError', 'Serde']
+__all__ = ['Context', 'RunOptions', 'TerminalError', 'Serde']
 
 
 if TYPE_CHECKING:

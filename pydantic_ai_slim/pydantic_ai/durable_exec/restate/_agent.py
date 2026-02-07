@@ -17,7 +17,7 @@ from pydantic_ai.result import StreamedRunResult
 from pydantic_ai.run import AgentRun, AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, BuiltinToolFunc, DeferredToolResults, RunContext
-from pydantic_ai.toolsets import DynamicToolset
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.abstract import AbstractToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
@@ -29,67 +29,17 @@ from ._toolset import RestateContextRunToolSet
 
 
 class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
-    """An agent that integrates with Restate framework for building resilient applications.
+    """Durable wrapper for running an agent inside a Restate handler.
 
-    This agent wraps an existing agent with Restate context capabilities, providing
-    automatic retries and durable execution for all operations. By default, tool calls
-    are automatically wrapped with Restate's execution model.
+    This ensures I/O-bound operations (model calls, MCP/FastMCP tool calls, and tool execution)
+    run inside `restate.Context.run_typed(...)` so Restate can retry/deduplicate them durably.
 
-    Example:
-        ```python
-        import restate
-
-        from pydantic_ai import Agent
-        from pydantic_ai.durable_exec.restate import RestateAgent
-
-        weather_agent = Agent('openai:gpt-5')
-        weather = restate.Service('weather')
-
-        @weather.handler()
-        async def get_weather(ctx: restate.Context, city: str) -> str:
-            agent = RestateAgent(weather_agent, restate_context=ctx)
-            result = await agent.run(f'What is the weather in {city}?')
-            return result.output
-        ```
-
-        See `docs/durable_execution/restate.md` for more details.
-
-    For advanced scenarios, you can disable automatic tool wrapping by setting
-    `disable_auto_wrapping_tools=True`. This allows direct usage of Restate context
-    within your tools for features like RPC calls, timers, and multi-step operations.
-
-    When automatic wrapping is disabled, function tools will NOT be automatically executed
-    within Restate's `ctx.run()` context, giving you full control over how the
-    Restate context is used within your tool implementations.
-    But model calls, and MCP tool calls will still be automatically wrapped.
-
-    Example:
-       ...
-
-       @dataclass
-       class WeatherDeps:
-            ...
-            restate_context: Context
-
-       weather_agent = Agent(..., deps_type=WeatherDeps, ...)
-
-       @weather_agent.tool
-       async def get_lat_lng(ctx: RunContext[WeatherDeps], location_description: str) -> LatLng:
-            restate_context = ctx.deps.restate_context
-            lat = await restate_context.run(...) # <---- note the direct usage of the restate context
-            lng = await restate_context.run(...)
-            return LatLng(lat, lng)
-
-
-       weather = restate.Service('weather')
-
-       @weather.handler()
-       async def get_weather(ctx: restate.Context, city: str):
-            agent = RestateAgent(weather_agent, restate_context=ctx)
-            result = await agent.run(f'What is the weather in {city}?', deps=WeatherDeps(restate_context=ctx, ...))
-            return result.output
-       ...
-
+    Notes:
+    - `run_stream()` and `run_stream_events()` are not supported in Restate handlers. Use an
+      `event_stream_handler` and call `run()` instead.
+    - If `disable_auto_wrapping_tools=True`, function tools are executed outside `run_typed` so tools
+      can use the Restate context directly.
+    - See `docs/durable_execution/restate.md` for usage examples.
     """
 
     def __init__(
@@ -99,6 +49,7 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         *,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         disable_auto_wrapping_tools: bool = False,
+        max_attempts: int | None = 3,
     ):
         super().__init__(wrapped)
         if not isinstance(wrapped.model, Model):
@@ -112,7 +63,10 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         model_event_stream_handler = event_stream_handler or super().event_stream_handler
         self._model = RestateModelWrapper(
-            wrapped.model, restate_context, event_stream_handler=model_event_stream_handler, max_attempts=3
+            wrapped.model,
+            restate_context,
+            event_stream_handler=model_event_stream_handler,
+            max_attempts=max_attempts,
         )
 
         def set_context(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
@@ -180,11 +134,19 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         if handler is None:
             return
         async for event in stream:
+            event_kind = getattr(event, 'event_kind', 'event')
+            event_ = event
 
-            async def single_event():
-                yield event
+            # Wrap each event in its own durable step (similar to Temporal's per-event activity),
+            # so event handler side effects are retried/deduplicated at event granularity.
 
-            await self.restate_context.run_typed('run event', lambda: handler(ctx, single_event()))
+            async def call_handler() -> None:
+                async def single_event() -> AsyncIterator[AgentStreamEvent]:
+                    yield event_
+
+                await handler(ctx, single_event())
+
+            await self.restate_context.run_typed(f'handle event: {event_kind}', call_handler)
 
     @property
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
@@ -253,43 +215,9 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AgentRunResult[Any]:
-        """Run the agent with a user prompt in async mode.
+        """Run the agent durably inside a Restate handler.
 
-        This method builds an internal agent graph (using system prompts, tools and result schemas) and then
-        runs the graph to completion. The result of the run is returned.
-
-        Example:
-        ```python
-        from pydantic_ai import Agent
-
-        agent = Agent('openai:gpt-4o')
-
-        async def main():
-            agent_run = await agent.run('What is the capital of France?')
-            print(agent_run.output)
-            #> The capital of France is Paris.
-        ```
-
-        Args:
-            user_prompt: User input to start/continue the conversation.
-            output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
-                output validators since output validators would expect an argument that matches the agent's output type.
-            message_history: History of the conversation so far.
-            deferred_tool_results: Optional results for deferred tool calls in the message history.
-            model: Optional model to use for this run, required if `model` was not set when creating the agent.
-            instructions: Optional instructions to use for this run.
-            deps: Optional dependencies to use for this run.
-            model_settings: Optional settings to use for this model's request.
-            usage_limits: Optional limits on model request count or token usage.
-            usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
-            metadata: Optional metadata for this run.
-            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-            toolsets: Optional additional toolsets for this run.
-            builtin_tools: Optional additional builtin tools for this run.
-            event_stream_handler: Optional event stream handler to use for this run.
-
-        Returns:
-            The result of the run.
+        `model` and `event_stream_handler` must be configured when creating `RestateAgent`.
         """
         if model is not None:
             raise TerminalError(
@@ -318,6 +246,71 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 event_stream_handler=self.event_stream_handler,
                 **_deprecated_kwargs,
             )
+
+    @overload
+    def run_sync(
+        self,
+        user_prompt: str | Sequence[UserContent] | None = None,
+        *,
+        output_type: None = None,
+        message_history: Sequence[ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: UsageLimits | None = None,
+        usage: RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+    ) -> AgentRunResult[OutputDataT]: ...
+
+    @overload
+    def run_sync(
+        self,
+        user_prompt: str | Sequence[UserContent] | None = None,
+        *,
+        output_type: OutputSpec[RunOutputDataT],
+        message_history: Sequence[ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: UsageLimits | None = None,
+        usage: RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+    ) -> AgentRunResult[RunOutputDataT]: ...
+
+    def run_sync(
+        self,
+        user_prompt: str | Sequence[UserContent] | None = None,
+        *,
+        output_type: OutputSpec[RunOutputDataT] | None = None,
+        message_history: Sequence[ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: UsageLimits | None = None,
+        usage: RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+    ) -> AgentRunResult[Any]:
+        raise TerminalError(
+            '`agent.run_sync()` cannot be used inside a restate handler. Use `await agent.run()` instead.'
+        )
 
     @overload
     def run_stream(
@@ -382,41 +375,7 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AsyncIterator[StreamedRunResult[AgentDepsT, Any]]:
-        """Run the agent with a user prompt in async mode, returning a streamed response.
-
-        Example:
-        ```python
-        from pydantic_ai import Agent
-
-        agent = Agent('openai:gpt-4o')
-
-        async def main():
-            async with agent.run_stream('What is the capital of the UK?') as response:
-                print(await response.get_output())
-                #> The capital of the UK is London.
-        ```
-
-        Args:
-            user_prompt: User input to start/continue the conversation.
-            output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
-                output validators since output validators would expect an argument that matches the agent's output type.
-            message_history: History of the conversation so far.
-            deferred_tool_results: Optional results for deferred tool calls in the message history.
-            model: Optional model to use for this run, required if `model` was not set when creating the agent.
-            instructions: Optional instructions to use for this run.
-            deps: Optional dependencies to use for this run.
-            model_settings: Optional settings to use for this model's request.
-            usage_limits: Optional limits on model request count or token usage.
-            usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
-            metadata: Optional metadata for this run.
-            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-            toolsets: Optional additional toolsets for this run.
-            builtin_tools: Optional additional builtin tools for this run.
-            event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
-
-        Returns:
-            The result of the run.
-        """
+        """Not supported in Restate handlers. Use `event_stream_handler` and `run()` instead."""
         raise TerminalError(
             '`agent.run_stream()` cannot be used inside a restate handler. '
             'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
