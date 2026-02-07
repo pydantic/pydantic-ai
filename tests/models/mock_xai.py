@@ -610,6 +610,52 @@ def create_web_search_response(
     return _build_response_with_outputs(response_id=f'grok-{tool_call_id}', outputs=outputs)
 
 
+def create_x_search_response(
+    query: str,
+    content: ToolCallOutputType | None = None,
+    *,
+    tool_call_id: str = 'x_search_001',
+    assistant_text: str,
+) -> chat_types.Response:
+    """Create a Response with X search tool outputs.
+
+    Args:
+        query: The X/Twitter search query.
+        content: The content returned from X search (optional).
+        tool_call_id: The ID of the tool call.
+        assistant_text: Text for the final assistant message (required to match real API).
+
+    Example:
+        >>> response = create_x_search_response(
+        ...     query='@pydantic latest updates',
+        ...     content={'results': [{'text': 'PydanticAI 0.1 released!'}]},
+        ...     assistant_text='Found posts about PydanticAI.',
+        ... )
+    """
+    tool_type = chat_pb2.ToolCallType.TOOL_CALL_TYPE_X_SEARCH_TOOL
+    actual_content = _get_example_tool_output(tool_type, content)
+    outputs = _create_builtin_tool_outputs(
+        tool_name='x_search',
+        arguments={'query': query},
+        content=actual_content,
+        tool_call_id=tool_call_id,
+        tool_type=tool_type,
+        initial_status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
+    )
+    # Add final assistant message (matching real API behavior)
+    outputs.append(
+        chat_pb2.CompletionOutput(
+            index=len(outputs),
+            finish_reason=sample_pb2.FinishReason.REASON_STOP,
+            message=chat_pb2.CompletionMessage(
+                role=chat_pb2.MessageRole.ROLE_ASSISTANT,
+                content=assistant_text,
+            ),
+        )
+    )
+    return _build_response_with_outputs(response_id=f'grok-{tool_call_id}', outputs=outputs)
+
+
 def create_mcp_server_response(
     server_id: str,
     tool_name: str,

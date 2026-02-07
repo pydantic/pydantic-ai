@@ -13,7 +13,7 @@ from typing_extensions import assert_never
 from .. import _utils
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
-from ..builtin_tools import CodeExecutionTool, MCPServerTool, WebSearchTool
+from ..builtin_tools import CodeExecutionTool, MCPServerTool, WebSearchTool, XSearchTool
 from ..exceptions import UnexpectedModelBehavior, UserError
 from ..messages import (
     AudioUrl,
@@ -58,7 +58,7 @@ try:
     from xai_sdk import AsyncClient
     from xai_sdk.chat import assistant, file, image, system, tool, tool_result, user
     from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
-    from xai_sdk.tools import code_execution, get_tool_call_type, mcp, web_search  # x_search not yet supported
+    from xai_sdk.tools import code_execution, get_tool_call_type, mcp, web_search, x_search
     from xai_sdk.types.model import ChatModel
 except ImportError as _import_error:
     raise ImportError(
@@ -138,6 +138,12 @@ class XaiModelSettings(ModelSettings, total=False):
     Corresponds to the `mcp_call.outputs` value of the `include` parameter in the Responses API.
     """
 
+    xai_include_x_search_output: bool
+    """Whether to include the X search results in the response.
+
+    Corresponds to the `x_search_call.outputs` value of the `include` parameter in the Responses API.
+    """
+
 
 # Mapping of XaiModelSettings keys to xAI SDK parameter names.
 # Most keys are the same, but some differ (e.g., 'stop_sequences' -> 'stop').
@@ -201,7 +207,7 @@ class XaiModel(Model):
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type]:
         """Return the set of builtin tool types this model can handle."""
-        return frozenset({WebSearchTool, CodeExecutionTool, MCPServerTool})
+        return frozenset({WebSearchTool, CodeExecutionTool, MCPServerTool, XSearchTool})
 
     async def _map_messages(
         self,
@@ -386,6 +392,16 @@ class XaiModel(Model):
                     arguments=item.args_as_json_str(),
                 ),
             )
+        elif item.tool_name == XSearchTool.kind:
+            return chat_types.chat_pb2.ToolCall(
+                id=item.tool_call_id,
+                type=chat_types.chat_pb2.TOOL_CALL_TYPE_X_SEARCH_TOOL,
+                status=chat_types.chat_pb2.TOOL_CALL_STATUS_COMPLETED,
+                function=chat_types.chat_pb2.FunctionCall(
+                    name=XSearchTool.kind,
+                    arguments=item.args_as_json_str(),
+                ),
+            )
         elif item.tool_name.startswith(MCPServerTool.kind):
             # Extract server label from tool_name (format: 'mcp_server:server_label')
             server_label = item.tool_name.split(':', 1)[1] if ':' in item.tool_name else item.tool_name
@@ -535,7 +551,8 @@ class XaiModel(Model):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT)
         if model_settings.get('xai_include_inline_citations'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS)
-        # x_search not yet supported
+        if model_settings.get('xai_include_x_search_output'):
+            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT)
         # collections_search not yet supported (could be mapped to file search)
         if model_settings.get('xai_include_mcp_output'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT)
@@ -932,6 +949,20 @@ def _map_tools(model_request_parameters: ModelRequestParameters) -> list[chat_ty
     ]
 
 
+def _parse_date(value: datetime | str) -> datetime:
+    """Parse a date value to datetime object.
+
+    Args:
+        value: A datetime object or ISO8601 formatted string (e.g., '2024-01-01').
+
+    Returns:
+        A datetime object.
+    """
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(value)
+
+
 def _get_builtin_tools(model_request_parameters: ModelRequestParameters) -> list[chat_types.chat_pb2.Tool]:
     """Convert pydantic_ai built-in tools to xAI SDK server-side tools."""
     tools: list[chat_types.chat_pb2.Tool] = []
@@ -965,12 +996,28 @@ def _get_builtin_tools(model_request_parameters: ModelRequestParameters) -> list
                     extra_headers=builtin_tool.headers,
                 )
             )
+        elif isinstance(builtin_tool, XSearchTool):
+            # xAI x_search supports:
+            # - from_date, to_date (datetime objects)
+            # - allowed_x_handles, excluded_x_handles
+            # - enable_image_understanding, enable_video_understanding
+            from_date = _parse_date(builtin_tool.from_date) if builtin_tool.from_date else None
+            to_date = _parse_date(builtin_tool.to_date) if builtin_tool.to_date else None
+            tools.append(
+                x_search(
+                    from_date=from_date,
+                    to_date=to_date,
+                    allowed_x_handles=builtin_tool.allowed_x_handles,
+                    excluded_x_handles=builtin_tool.excluded_x_handles,
+                    enable_image_understanding=builtin_tool.enable_image_understanding,
+                    enable_video_understanding=builtin_tool.enable_video_understanding,
+                )
+            )
         else:  # pragma: no cover
             # Defensive fallback - validation in models/__init__.py catches unsupported tools earlier
             raise UserError(
                 f'`{builtin_tool.__class__.__name__}` is not supported by `XaiModel`. '
-                f'Supported built-in tools: WebSearchTool, CodeExecutionTool, MCPServerTool. '
-                f'If XSearchTool should be supported, please file an issue.'
+                f'Supported built-in tools: WebSearchTool, CodeExecutionTool, MCPServerTool, XSearchTool. '
             )
     return tools
 
@@ -997,8 +1044,10 @@ def _get_builtin_tool_name(tool_call: chat_types.chat_pb2.ToolCall) -> str:
         function_name = tool_call.function.name
         server_label = function_name.split('.', 1)[0] if '.' in function_name else function_name
         return f'{MCPServerTool.kind}:{server_label}'
+    elif tool_type == 'x_search_tool':
+        return XSearchTool.kind
     else:
-        # x_search, collections_search, or unknown - use function name
+        # collections_search or unknown - use function name
         return tool_call.function.name
 
 
@@ -1015,7 +1064,7 @@ def _map_server_side_tools_used_to_name(server_side_tool: usage_pb2.ServerSideTo
         usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH: WebSearchTool.kind,
         usage_pb2.SERVER_SIDE_TOOL_CODE_EXECUTION: CodeExecutionTool.kind,
         usage_pb2.SERVER_SIDE_TOOL_MCP: MCPServerTool.kind,
-        usage_pb2.SERVER_SIDE_TOOL_X_SEARCH: 'x_search',
+        usage_pb2.SERVER_SIDE_TOOL_X_SEARCH: XSearchTool.kind,
         usage_pb2.SERVER_SIDE_TOOL_COLLECTIONS_SEARCH: 'collections_search',
         usage_pb2.SERVER_SIDE_TOOL_VIEW_IMAGE: 'view_image',
         usage_pb2.SERVER_SIDE_TOOL_VIEW_X_VIDEO: 'view_x_video',
