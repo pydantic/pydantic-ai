@@ -1820,6 +1820,7 @@ class OpenAIResponsesModel(Model):
                         type='compaction',
                     )
                     openai_messages.append(compacted_response_item)
+                    continue
 
                 for item in message.parts:
                     should_send_item_id = send_item_ids and (
