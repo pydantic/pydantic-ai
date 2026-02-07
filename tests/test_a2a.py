@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -335,7 +336,7 @@ async def test_a2a_file_message_with_file():
             )
 
 
-async def test_a2a_file_message_with_file_content(image_content):
+async def test_a2a_file_message_with_file_content(image_content: BinaryContent):
     agent = Agent(model=model, output_type=tuple[str, str])
     app = agent.to_a2a()
 
@@ -345,7 +346,6 @@ async def test_a2a_file_message_with_file_content(image_content):
             a2a_client = A2AClient(http_client=http_client)
 
             base64_image = base64.b64encode(image_content.data).decode('utf-8')
-            
             message = Message(
                 role='user',
                 parts=[
