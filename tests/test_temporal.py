@@ -47,6 +47,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
+from pydantic_ai.messages import UploadedFile
 from pydantic_ai.models import Model, ModelRequestParameters, cached_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -2421,6 +2422,54 @@ async def test_document_url_serialization_preserves_media_type(allow_model_reque
         )
         assert output == snapshot(
             DocumentUrl(url='https://example.com/doc/12345', _media_type='application/pdf', _identifier='eb8998')
+        )
+
+
+# ============================================================================
+# UploadedFile Serialization Test - Verifies that UploadedFile with custom
+# media_type is properly serialized through Temporal activities
+# ============================================================================
+
+uploaded_file_agent = Agent(
+    TestModel(
+        custom_output_args={
+            'file_id': 'file-abc123',
+            'provider_name': 'openai',
+            'media_type': 'image/png',
+            'identifier': 'file-1',
+        }
+    ),
+    name='uploaded_file_agent',
+    output_type=UploadedFile,
+)
+
+uploaded_file_temporal_agent = TemporalAgent(uploaded_file_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class UploadedFileAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> UploadedFile:
+        result = await uploaded_file_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_uploaded_file_serialization_preserves_media_type(allow_model_requests: None, client: Client):
+    """Test that `UploadedFile` with custom `media_type` is preserved through Temporal serialization."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[UploadedFileAgentWorkflow],
+        plugins=[AgentPlugin(uploaded_file_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            UploadedFileAgentWorkflow.run,
+            args=['Return a file reference'],
+            id=UploadedFileAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot(
+            UploadedFile(file_id='file-abc123', provider_name='openai', _media_type='image/png', _identifier='file-1')
         )
 
 
