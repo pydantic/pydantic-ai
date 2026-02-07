@@ -1234,16 +1234,7 @@ class OpenAIChatModel(Model):
     async def _map_video_url_item(self, item: VideoUrl) -> ChatCompletionContentPartParam:  # pragma: no cover
         """Map a VideoUrl to a chat completion content part.
 
-        This method can be overridden by subclasses (e.g., OpenRouterModel) to support VideoUrl.
-
-        Args:
-            item: The VideoUrl item to map.
-
-        Returns:
-            A chat completion content part.
-
-        Raises:
-            NotImplementedError: VideoUrl is not supported for OpenAI.
+        Raises NotImplementedError by default. Override in subclasses to support VideoUrl.
         """
         raise NotImplementedError('VideoUrl is not supported for OpenAI')
 
@@ -1252,8 +1243,8 @@ class OpenAIChatModel(Model):
     ) -> ChatCompletionContentPartParam | None:
         """Map a single content item to a chat completion content part.
 
-        This method can be overridden by subclasses to handle additional content types
-        (e.g., VideoUrl for OpenRouter) before calling super() for other types.
+        Returns a chat completion content part, or None if the item should be filtered out.
+        """
 
         Args:
             item: The content item to map.

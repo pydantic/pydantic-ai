@@ -615,16 +615,7 @@ class OpenRouterModel(OpenAIChatModel):
 
     @override
     async def _map_video_url_item(self, item: VideoUrl) -> ChatCompletionContentPartParam:
-        """Map a VideoUrl to a chat completion content part for OpenRouter.
-
-        OpenRouter supports video_url content parts, which the OpenAI client doesn't support.
-        This method handles VideoUrl by creating the appropriate content part structure.
-
-        Args:
-            item: The VideoUrl item to map.
-
-        Returns:
-            A chat completion content part with video_url type.
+        """Map a VideoUrl to a chat completion content part for OpenRouter."""
         """
         video_url: dict[str, str] = {'url': item.url}
         if item.force_download:
