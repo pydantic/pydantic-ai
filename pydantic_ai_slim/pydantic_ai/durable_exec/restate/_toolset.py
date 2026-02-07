@@ -42,7 +42,7 @@ def unwrap_context_run_result(res: RestateContextRunResult) -> Any:
         return res.output
 
 
-class RestateContextRunToolSet(WrapperToolset[AgentDepsT]):
+class RestateContextRunToolset(WrapperToolset[AgentDepsT]):
     """A toolset that automatically wraps tool calls with restate's `ctx.run_typed()`."""
 
     def __init__(self, wrapped: AbstractToolset[AgentDepsT], context: Context):

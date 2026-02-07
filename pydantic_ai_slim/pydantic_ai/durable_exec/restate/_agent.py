@@ -25,7 +25,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 from ._dynamic_toolset import RestateDynamicToolset
 from ._model import RestateModelWrapper
 from ._restate_types import Context, TerminalError
-from ._toolset import RestateContextRunToolSet
+from ._toolset import RestateContextRunToolset
 
 
 class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
@@ -51,6 +51,16 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         disable_auto_wrapping_tools: bool = False,
         max_attempts: int | None = 3,
     ):
+        """Wrap an agent to run durably inside a Restate handler.
+
+        Args:
+            wrapped: The agent to wrap.
+            restate_context: The Restate handler context (`restate.Context`).
+            event_stream_handler: Optional event stream handler. Must be set at creation time, not at `run()` time.
+            disable_auto_wrapping_tools: If `True`, function tools are executed outside `ctx.run_typed()`, allowing
+                tools to use the Restate context directly. Model calls and MCP/FastMCP tool calls are still wrapped.
+            max_attempts: Maximum retry attempts for durable model calls. `None` uses the Restate default.
+        """
         super().__init__(wrapped)
         if not isinstance(wrapped.model, Model):
             raise TerminalError(
@@ -72,7 +82,7 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         def set_context(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             """Set the Restate context for the toolset, wrapping tools if needed."""
             if isinstance(toolset, FunctionToolset) and not disable_auto_wrapping_tools:
-                return RestateContextRunToolSet(toolset, restate_context)
+                return RestateContextRunToolset(toolset, restate_context)
 
             # Dynamic toolsets may resolve to I/O toolsets; ensure tool discovery and calls are durable.
             if isinstance(toolset, DynamicToolset):
@@ -110,6 +120,7 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     def _restate_overrides(self) -> Iterator[None]:
         with (
             super().override(model=self._model, toolsets=self._toolsets, tools=[]),
+            # Restate tool calls use `ctx.run_typed(...)`, which should not be executed concurrently within a handler.
             self.parallel_tool_call_execution_mode('sequential'),
         ):
             yield
@@ -125,9 +136,9 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             return None
         if self._disable_auto_wrapping_tools:
             return handler
-        return self.wrapped_event_stream_handler
+        return self._wrapped_event_stream_handler
 
-    async def wrapped_event_stream_handler(
+    async def _wrapped_event_stream_handler(
         self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[AgentStreamEvent]
     ) -> None:
         handler = self._event_stream_handler or super().event_stream_handler

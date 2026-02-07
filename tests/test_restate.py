@@ -16,7 +16,7 @@ from pydantic_ai import Agent, RunContext, ToolDefinition
 from pydantic_ai.durable_exec.restate import RestateAgent
 from pydantic_ai.durable_exec.restate._model import RestateModelWrapper
 from pydantic_ai.durable_exec.restate._serde import PydanticTypeAdapter
-from pydantic_ai.durable_exec.restate._toolset import RestateContextRunToolSet
+from pydantic_ai.durable_exec.restate._toolset import RestateContextRunToolset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.test import TestModel
@@ -89,7 +89,7 @@ async def test_restate_context_run_toolset_success_and_error_mapping():
     ctx = _run_ctx()
     tools = await toolset.get_tools(ctx)
 
-    wrapped = RestateContextRunToolSet(toolset, fake_ctx)
+    wrapped = RestateContextRunToolset(toolset, fake_ctx)
 
     assert await wrapped.call_tool('ok', {}, ctx, tools['ok']) == 'ok'
     assert 'Calling ok' in fake_ctx.calls
@@ -775,7 +775,7 @@ async def test_restate_agent_misc_properties_and_wrapped_event_handler_noop_and_
     with pytest.raises(StopAsyncIteration):
         await stream.__anext__()
 
-    await restate_agent.wrapped_event_stream_handler(_run_ctx(), stream)
+    assert restate_agent.event_stream_handler is None
 
     with pytest.raises(TerminalError, match='cannot be set at agent run time'):
         async with restate_agent.iter('go', model=TestModel(call_tools=[])):
