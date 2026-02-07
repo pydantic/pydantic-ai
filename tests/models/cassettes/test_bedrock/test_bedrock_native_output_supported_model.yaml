@@ -1,0 +1,51 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France? Give me the city name, country,
+      and population."}]}], "system": [], "inferenceConfig": {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure":
+      {"jsonSchema": {"schema": "{\"additionalProperties\": false, \"properties\": {\"city\": {\"type\": \"string\"}, \"country\":
+      {\"type\": \"string\"}, \"population\": {\"type\": \"integer\"}}, \"required\": [\"city\", \"country\", \"population\"],
+      \"type\": \"object\"}", "name": "CityInfo", "description": "Information about a city."}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MGE0OTBjN2YtMDU0Yi00ZmY2LWIyNzAtMWY0MWY1NjYyYzVi
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '580'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '409'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 1631
+      output:
+        message:
+          content:
+          - text: '{"city":"Paris","country":"France","population":2161000}'
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 210
+        outputTokens: 18
+        serverToolUsage: {}
+        totalTokens: 228
+    status:
+      code: 200
+      message: OK
+version: 1
