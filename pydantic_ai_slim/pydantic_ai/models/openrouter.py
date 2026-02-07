@@ -9,12 +9,7 @@ from typing_extensions import TypedDict, assert_never, override
 
 from ..exceptions import ModelHTTPError
 from ..messages import (
-    AudioUrl,
-    BinaryContent,
-    CachePoint,
-    DocumentUrl,
     FinishReason,
-    ImageUrl,
     ModelResponseStreamEvent,
     ThinkingPart,
     VideoUrl,
