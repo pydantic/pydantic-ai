@@ -37,8 +37,8 @@ class GoogleProvider(Provider[Client]):
     def client(self) -> Client:
         return self._client
 
-    @staticmethod
-    def model_profile(model_name: str) -> ModelProfile | None:
+    @classmethod
+    def model_profile(cls, model_name: str) -> ModelProfile | None:
         return google_model_profile(model_name)
 
     @overload

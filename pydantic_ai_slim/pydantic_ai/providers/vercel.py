@@ -42,8 +42,8 @@ class VercelProvider(Provider[AsyncOpenAI]):
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    @staticmethod
-    def model_profile(model_name: str) -> ModelProfile | None:
+    @classmethod
+    def model_profile(cls, model_name: str) -> ModelProfile | None:
         provider_to_profile = {
             'anthropic': anthropic_model_profile,
             'bedrock': amazon_model_profile,

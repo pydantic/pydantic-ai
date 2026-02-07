@@ -1136,6 +1136,11 @@ def infer_model_profile(model: str) -> ModelProfile:
     if provider is None:
         return DEFAULT_PROFILE
 
+    if provider.startswith('gateway/'):
+        from ..providers.gateway import normalize_gateway_provider
+
+        provider = normalize_gateway_provider(provider)
+
     try:
         provider_class = infer_provider_class(provider)
     except ValueError:

@@ -32,8 +32,8 @@ class XaiProvider(Provider[AsyncClient]):
     def client(self) -> AsyncClient:
         return self._client
 
-    @staticmethod
-    def model_profile(model_name: str) -> ModelProfile | None:
+    @classmethod
+    def model_profile(cls, model_name: str) -> ModelProfile | None:
         return grok_model_profile(model_name)
 
     @overload

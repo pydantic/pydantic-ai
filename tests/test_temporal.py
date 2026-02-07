@@ -3388,8 +3388,20 @@ def test_temporal_model_profile_with_unknown_provider() -> None:
         assert temporal_model.profile is DEFAULT_PROFILE
 
 
-def test_temporal_model_prepare_request_with_unregistered_model_string() -> None:
-    """Test prepare_request uses inferred profile for unregistered model strings."""
+@pytest.mark.parametrize(
+    'model_id',
+    [
+        'openai:gpt-5',
+        'gateway/openai:gpt-5',
+    ],
+)
+def test_temporal_model_prepare_request_with_unregistered_model_string(model_id: str) -> None:
+    """Test prepare_request uses inferred profile for unregistered model strings.
+
+    Verifies that the OpenAI json_schema_transformer is applied to function tool
+    schemas (adding additionalProperties: false) when using an OpenAI model string,
+    both directly and via gateway/.
+    """
     default_model = TestModel(custom_output_text='default')
     temporal_model = TemporalModel(
         default_model,
@@ -3398,8 +3410,18 @@ def test_temporal_model_prepare_request_with_unregistered_model_string() -> None
         deps_type=type(None),
     )
 
+    tool_def = ToolDefinition(
+        name='my_tool',
+        description='A test tool',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'x': {'type': 'integer'}},
+            'required': ['x'],
+        },
+    )
+
     model_request_params = ModelRequestParameters(
-        function_tools=[],
+        function_tools=[tool_def],
         builtin_tools=[],
         output_mode='text',
         allow_text_output=True,
@@ -3407,13 +3429,13 @@ def test_temporal_model_prepare_request_with_unregistered_model_string() -> None
         output_object=None,
     )
 
-    # With an unregistered model string (not in models registry), prepare_request
-    # should use Model.prepare_request with the inferred profile
-    with temporal_model.using_model('openai:gpt-5'):
+    # With an unregistered model string, prepare_request should use the inferred
+    # profile's json_schema_transformer (OpenAI adds additionalProperties: false)
+    with temporal_model.using_model(model_id):
         _, params = temporal_model.prepare_request(None, model_request_params)
-        # The call should succeed and return valid parameters
-        assert params is not None
         assert params.output_mode == 'text'
+        assert len(params.function_tools) == 1
+        assert params.function_tools[0].parameters_json_schema['additionalProperties'] is False
 
 
 # Tests for BinaryContent and DocumentUrl serialization in Temporal

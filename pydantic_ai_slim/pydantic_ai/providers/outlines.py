@@ -30,8 +30,8 @@ class OutlinesProvider(Provider[Any]):
             + 'with a set of different underlying models.'
         )
 
-    @staticmethod
-    def model_profile(model_name: str) -> ModelProfile | None:
+    @classmethod
+    def model_profile(cls, model_name: str) -> ModelProfile | None:
         """The model profile for the named model, if available."""
         return ModelProfile(
             supports_tools=False,

@@ -339,6 +339,12 @@ class TemporalModel(WrapperModel):
             return infer_model_profile(current)
         return current.profile
 
+    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
+        current = self._current_model()
+        if isinstance(current, str):
+            return Model.customize_request_parameters(self, model_request_parameters)
+        return current.customize_request_parameters(model_request_parameters)
+
     def prepare_request(
         self,
         model_settings: ModelSettings | None,
