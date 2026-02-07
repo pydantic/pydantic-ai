@@ -4,7 +4,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, cast
+from typing import Any, Literal, cast, overload
 
 import pydantic_core
 from httpx import Timeout
@@ -72,6 +72,7 @@ try:
         CompletionEvent as MistralCompletionEvent,
         FinishReason as MistralFinishReason,
         Messages as MistralMessages,
+        ResponseFormat,
         SDKError,
         Tool as MistralTool,
         ToolCall as MistralToolCall,
@@ -123,7 +124,7 @@ def _check_context_window_exceeded(e: SDKError, model_name: str) -> ContextWindo
     body = _utils.as_dict(e.body)
     if body is None and isinstance(e.body, str):
         try:
-            body = pydantic_core.from_json(e.body)
+            body = _utils.as_dict(pydantic_core.from_json(e.body))
         except ValueError:
             pass
     if body:
@@ -223,7 +224,10 @@ class MistralModel(Model):
             model_request_parameters,
         )
         response = await self._completions_create(
-            messages, cast(MistralModelSettings, model_settings or {}), model_request_parameters
+            messages=messages,
+            stream=False,
+            model_settings=cast(MistralModelSettings, model_settings or {}),
+            model_request_parameters=model_request_parameters,
         )
         model_response = self._process_response(response)
         return model_response
@@ -242,37 +246,94 @@ class MistralModel(Model):
             model_settings,
             model_request_parameters,
         )
-        response = await self._stream_completions_create(
-            messages, cast(MistralModelSettings, model_settings or {}), model_request_parameters
+        response = await self._completions_create(
+            messages=messages,
+            stream=True,
+            model_settings=cast(MistralModelSettings, model_settings or {}),
+            model_request_parameters=model_request_parameters,
         )
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
 
+    @overload
     async def _completions_create(
         self,
+        *,
         messages: list[ModelMessage],
+        stream: Literal[True],
         model_settings: MistralModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> MistralChatCompletionResponse:
-        """Make a non-streaming request to the model."""
+    ) -> MistralEventStreamAsync[MistralCompletionEvent]: ...
+
+    @overload
+    async def _completions_create(
+        self,
+        *,
+        messages: list[ModelMessage],
+        stream: Literal[False],
+        model_settings: MistralModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> MistralChatCompletionResponse: ...
+
+    async def _completions_create(
+        self,
+        *,
+        messages: list[ModelMessage],
+        stream: bool,
+        model_settings: MistralModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> MistralChatCompletionResponse | MistralEventStreamAsync[MistralCompletionEvent]:
+        mistral_messages = await self._map_messages(messages, model_request_parameters)
+
+        if model_request_parameters.output_tools and not model_request_parameters.function_tools:
+            # TODO: Port to native "manual JSON" mode
+            parameters_json_schemas = [tool.parameters_json_schema for tool in model_request_parameters.output_tools]
+            user_output_format_message = self._generate_user_output_format(parameters_json_schemas)
+            mistral_messages.append(user_output_format_message)
+
         # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
         # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
         try:
-            response = await self.client.chat.complete_async(
-                model=str(self._model_name),
-                messages=await self._map_messages(messages, model_request_parameters),
-                n=1,
-                tools=self._map_function_and_output_tools_definition(model_request_parameters) or UNSET,
-                tool_choice=self._get_tool_choice(model_request_parameters),
-                stream=False,
-                max_tokens=model_settings.get('max_tokens', UNSET),
-                temperature=model_settings.get('temperature', UNSET),
-                top_p=model_settings.get('top_p', 1),
-                timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
-                random_seed=model_settings.get('seed', UNSET),
-                stop=model_settings.get('stop_sequences', None),
-                http_headers={'User-Agent': get_user_agent()},
-            )
+            if stream:
+                response_format: ResponseFormat | None = None
+                if model_request_parameters.output_tools and not model_request_parameters.function_tools:
+                    # TODO: Should be able to use json_schema now:
+                    # https://docs.mistral.ai/capabilities/structured-output/custom_structured_output/
+                    response_format = ResponseFormat(type='json_object')
+                response = await self.client.chat.stream_async(
+                    model=str(self._model_name),
+                    messages=mistral_messages,
+                    n=1,
+                    tools=self._map_function_and_output_tools_definition(model_request_parameters) or UNSET,
+                    tool_choice=self._get_tool_choice(model_request_parameters),
+                    stream=True,
+                    response_format=response_format,
+                    max_tokens=model_settings.get('max_tokens', UNSET),
+                    temperature=model_settings.get('temperature', UNSET),
+                    top_p=model_settings.get('top_p', 1),
+                    timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
+                    presence_penalty=model_settings.get('presence_penalty'),
+                    frequency_penalty=model_settings.get('frequency_penalty'),
+                    random_seed=model_settings.get('seed', UNSET),
+                    stop=model_settings.get('stop_sequences', None),
+                    http_headers={'User-Agent': get_user_agent()},
+                )
+            else:
+                response = await self.client.chat.complete_async(
+                    model=str(self._model_name),
+                    messages=mistral_messages,
+                    n=1,
+                    tools=self._map_function_and_output_tools_definition(model_request_parameters) or UNSET,
+                    tool_choice=self._get_tool_choice(model_request_parameters),
+                    stream=False,
+                    max_tokens=model_settings.get('max_tokens', UNSET),
+                    temperature=model_settings.get('temperature', UNSET),
+                    top_p=model_settings.get('top_p', 1),
+                    timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
+                    random_seed=model_settings.get('seed', UNSET),
+                    stop=model_settings.get('stop_sequences', None),
+                    http_headers={'User-Agent': get_user_agent()},
+                )
         except SDKError as e:
             if ctx_exc := _check_context_window_exceeded(e, self.model_name):
                 raise ctx_exc from e
@@ -280,71 +341,6 @@ class MistralModel(Model):
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
-        assert response, 'A unexpected empty response from Mistral.'
-        return response
-
-    async def _stream_completions_create(
-        self,
-        messages: list[ModelMessage],
-        model_settings: MistralModelSettings,
-        model_request_parameters: ModelRequestParameters,
-    ) -> MistralEventStreamAsync[MistralCompletionEvent]:
-        """Create a streaming completion request to the Mistral model."""
-        response: MistralEventStreamAsync[MistralCompletionEvent] | None
-        mistral_messages = await self._map_messages(messages, model_request_parameters)
-
-        # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
-        # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
-        if model_request_parameters.function_tools:
-            # Function Calling
-            response = await self.client.chat.stream_async(
-                model=str(self._model_name),
-                messages=mistral_messages,
-                n=1,
-                tools=self._map_function_and_output_tools_definition(model_request_parameters) or UNSET,
-                tool_choice=self._get_tool_choice(model_request_parameters),
-                temperature=model_settings.get('temperature', UNSET),
-                top_p=model_settings.get('top_p', 1),
-                max_tokens=model_settings.get('max_tokens', UNSET),
-                timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
-                presence_penalty=model_settings.get('presence_penalty'),
-                frequency_penalty=model_settings.get('frequency_penalty'),
-                stop=model_settings.get('stop_sequences', None),
-                http_headers={'User-Agent': get_user_agent()},
-            )
-
-        elif model_request_parameters.output_tools:
-            # TODO: Port to native "manual JSON" mode
-            # Json Mode
-            parameters_json_schemas = [tool.parameters_json_schema for tool in model_request_parameters.output_tools]
-            user_output_format_message = self._generate_user_output_format(parameters_json_schemas)
-            mistral_messages.append(user_output_format_message)
-
-            response = await self.client.chat.stream_async(
-                model=str(self._model_name),
-                messages=mistral_messages,
-                response_format={
-                    'type': 'json_object'
-                },  # TODO: Should be able to use json_schema now: https://docs.mistral.ai/capabilities/structured-output/custom_structured_output/, https://github.com/mistralai/client-python/blob/bc4adf335968c8a272e1ab7da8461c9943d8e701/src/mistralai/extra/utils/response_format.py#L9
-                stream=True,
-                temperature=model_settings.get('temperature', UNSET),
-                top_p=model_settings.get('top_p', 1),
-                max_tokens=model_settings.get('max_tokens', UNSET),
-                timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
-                presence_penalty=model_settings.get('presence_penalty'),
-                frequency_penalty=model_settings.get('frequency_penalty'),
-                stop=model_settings.get('stop_sequences', None),
-                http_headers={'User-Agent': get_user_agent()},
-            )
-
-        else:
-            # Stream Mode
-            response = await self.client.chat.stream_async(
-                model=str(self._model_name),
-                messages=mistral_messages,
-                stream=True,
-                http_headers={'User-Agent': get_user_agent()},
-            )
         assert response, 'A unexpected empty response from Mistral.'
         return response
 
