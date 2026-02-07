@@ -3302,3 +3302,61 @@ async def test_get_output_after_stream_output():
             ),
         ]
     )
+
+
+async def test_stream_text_early_break_cleanup_delta():
+    """Breaking out of `stream_text(delta=True)` triggers proper async generator cleanup.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4204
+    The `aclosing` wrapper in `_stream_response_text` ensures `aclose()` propagates
+    through the nested generator chain so cleanup happens in the same async context,
+    preventing `RuntimeError: async generator raised StopAsyncIteration`.
+    """
+    cleanup_called = False
+
+    async def sf(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal cleanup_called
+        try:
+            for chunk in ['Hello', ' ', 'world', '!', ' More', ' text']:
+                yield chunk
+        finally:
+            # This finally block runs when aclose() is called on the generator.
+            # If aclosing() properly propagates aclose() through the nested generator chain
+            # (stream_text -> _stream_response_text -> _stream_text_deltas -> ... -> sf),
+            # this executes synchronously during the break, in the same async context.
+            # Without aclosing(), the generator becomes orphaned and cleanup is deferred
+            # to GC, which may run in a different async context and raise RuntimeError.
+            cleanup_called = True
+
+    agent = Agent(FunctionModel(stream_function=sf))
+
+    async with agent.run_stream('test') as result:
+        async for _text in result.stream_text(delta=True, debounce_by=None):
+            break
+
+    assert cleanup_called, 'stream function cleanup should have been called by aclosing propagation'
+
+
+async def test_stream_text_early_break_cleanup_no_delta():
+    """Breaking out of `stream_text(delta=False)` triggers proper async generator cleanup.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4204
+    """
+    cleanup_called = False
+
+    async def sf(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal cleanup_called
+        try:
+            for chunk in ['Hello', ' ', 'world', '!', ' More', ' text']:
+                yield chunk
+        finally:
+            # See test_stream_text_early_break_cleanup_delta for detailed explanation.
+            cleanup_called = True
+
+    agent = Agent(FunctionModel(stream_function=sf))
+
+    async with agent.run_stream('test') as result:
+        async for _text in result.stream_text(delta=False, debounce_by=None):
+            break
+
+    assert cleanup_called, 'stream function cleanup should have been called by aclosing propagation'
