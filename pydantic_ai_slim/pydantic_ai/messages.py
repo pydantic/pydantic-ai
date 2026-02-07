@@ -457,12 +457,14 @@ class DocumentUrl(FileUrl):
     ) -> None: ...  # pragma: no cover
 
     @property
-    def format(self) -> DocumentFormat | str:
+    def format(self) -> DocumentFormat | TextFormat | str:
         """The file format of the document.
 
         The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
         """
-        return _document_format_lookup.get(self.media_type) or super().format
+        return (
+            _document_format_lookup.get(self.media_type) or _text_format_lookup.get(self.media_type) or super().format
+        )
 
 
 @pydantic_dataclass(
