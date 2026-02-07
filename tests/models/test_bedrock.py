@@ -3491,6 +3491,20 @@ async def test_video_url_unsupported_format(bedrock_provider: BedrockProvider):
         await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
 
 
+async def test_document_url_unsupported_format(bedrock_provider: BedrockProvider):
+    """Test that DocumentUrl with unsupported document format raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+
+    doc_url = DocumentUrl(url='s3://bucket/file.rtf', media_type='application/rtf')
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['Summarize this document', doc_url])]),
+    ]
+
+    with pytest.raises(UserError, match='Unsupported document format: rtf'):
+        await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+
 async def test_uploaded_file_unsupported_video_media_type(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):

@@ -26,6 +26,7 @@ from ..messages import (
     FinishReason,
     ImageUrl,
     ModelMessage,
+    UploadedFile,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
@@ -512,6 +513,8 @@ class GroqModel(Model):
                         raise RuntimeError('Only images are supported for binary content in Groq.')
                 elif isinstance(item, DocumentUrl):  # pragma: no cover
                     raise RuntimeError('DocumentUrl is not supported in Groq.')
+                elif isinstance(item, UploadedFile):  # pragma: no cover
+                    raise NotImplementedError('UploadedFile is not supported by Groq.')
                 else:  # pragma: no cover
                     raise RuntimeError(f'Unsupported content type: {type(item)}')
 

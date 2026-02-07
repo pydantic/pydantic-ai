@@ -23,6 +23,7 @@ from ..messages import (
     FinishReason,
     ImageUrl,
     ModelMessage,
+    UploadedFile,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
@@ -607,6 +608,8 @@ class MistralModel(Model):
                         raise RuntimeError('DocumentUrl other than PDF is not supported in Mistral.')
                 elif isinstance(item, VideoUrl):
                     raise RuntimeError('VideoUrl is not supported in Mistral.')
+                elif isinstance(item, UploadedFile):  # pragma: no cover
+                    raise NotImplementedError('UploadedFile is not supported by Mistral.')
                 else:  # pragma: no cover
                     raise RuntimeError(f'Unsupported content type: {type(item)}')
         return MistralUserMessage(content=content)

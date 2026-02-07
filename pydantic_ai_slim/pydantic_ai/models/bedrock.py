@@ -101,7 +101,7 @@ def _make_video_block(format: str, source: DocumentSourceTypeDef) -> ContentBloc
 
 
 def _make_document_block(name: str, format: str, source: DocumentSourceTypeDef) -> ContentBlockUnionTypeDef:
-    if format not in _SUPPORTED_DOCUMENT_FORMATS:  # pragma: no cover
+    if format not in _SUPPORTED_DOCUMENT_FORMATS:
         raise UserError(f'Unsupported document format: {format}')
     return {'document': {'name': name, 'format': format, 'source': source}}
 

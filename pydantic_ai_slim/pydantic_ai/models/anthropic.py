@@ -88,6 +88,7 @@ try:
         BetaContentBlock,
         BetaContentBlockParam,
         BetaFileDocumentSourceParam,
+        BetaFileImageSourceParam,
         BetaImageBlockParam,
         BetaInputJSONDelta,
         BetaJSONOutputFormatParam,
@@ -1142,10 +1143,16 @@ class AnthropicModel(Model):
                             f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with AnthropicModel. '
                             f'Expected `provider_name` to be `{self.system!r}`.'
                         )
-                    yield BetaRequestDocumentBlockParam(
-                        source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
-                        type='document',
-                    )
+                    if item.media_type.startswith('image/'):
+                        yield BetaImageBlockParam(
+                            source=BetaFileImageSourceParam(file_id=item.file_id, type='file'),
+                            type='image',
+                        )
+                    else:
+                        yield BetaRequestDocumentBlockParam(
+                            source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
+                            type='document',
+                        )
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 

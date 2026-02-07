@@ -25,6 +25,7 @@ from ..messages import (
     FilePart,
     ImageUrl,
     ModelMessage,
+    UploadedFile,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
@@ -451,6 +452,8 @@ class OutlinesModel(Model):
                                 elif isinstance(item, BinaryContent) and item.is_image:
                                     image = self._create_PIL_image(item.data, item.media_type)
                                     outlines_input.append(Image(image))
+                                elif isinstance(item, UploadedFile):
+                                    raise NotImplementedError('UploadedFile is not supported by Outlines.')
                                 else:
                                     raise UserError(
                                         'Each element of the content sequence must be a string, an `ImageUrl`'

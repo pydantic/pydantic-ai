@@ -550,7 +550,7 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
             elif isinstance(item, ImageUrl | AudioUrl | VideoUrl | DocumentUrl):
                 ui_parts.append(FileUIPart(url=item.url, media_type=item.media_type))
             elif isinstance(item, UploadedFile):
-                media_type = item.media_type or 'application/octet-stream'
+                media_type = item.media_type
                 # Store uploaded file info in provider_metadata for round-trip support
                 provider_metadata = dump_provider_metadata(
                     uploaded_file_id=item.file_id, provider_name=item.provider_name

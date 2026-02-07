@@ -340,7 +340,7 @@ async def main():
 
     # Upload a file using the provider's client (xAI client)
     with open('document.pdf', 'rb') as f:
-        uploaded_file = provider.client.files.upload(f, filename='document.pdf')
+        uploaded_file = await provider.client.files.upload(f, filename='document.pdf')
 
     # Reference the uploaded file
     agent = Agent(model)
