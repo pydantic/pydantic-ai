@@ -471,6 +471,11 @@ def xai_api_key() -> str:
     return os.getenv('XAI_API_KEY', 'mock-api-key')
 
 
+@pytest.fixture(scope='session')
+def gateway_api_key() -> str:
+    return os.getenv('PYDANTIC_AI_GATEWAY_API_KEY', 'mock-api-key')
+
+
 @pytest.fixture(scope='function')  # Needs to be function scoped to get the request node name
 def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider]:
     """xAI provider fixture backed by protobuf cassettes.

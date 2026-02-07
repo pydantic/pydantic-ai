@@ -27,6 +27,7 @@ __all__ = (
     'ConcurrencyLimitExceeded',
     'ModelAPIError',
     'ModelHTTPError',
+    'ContextWindowExceeded',
     'ContentFilterError',
     'IncompleteToolCall',
     'FallbackExceptionGroup',
@@ -189,6 +190,38 @@ class ModelHTTPError(ModelAPIError):
         self.body = body
         message = f'status_code: {status_code}, model_name: {model_name}, body: {body}'
         super().__init__(model_name=model_name, message=message)
+
+
+class ContextWindowExceeded(UnexpectedModelBehavior):
+    """Raised when the model's context window limit is exceeded."""
+
+    model_name: str
+    """The model name that raised the error."""
+
+    status_code: int
+    """The HTTP status code returned by the API."""
+
+    input_tokens: int | None
+    """Number of input tokens that caused the error, if available."""
+
+    context_window: int | None
+    """The model's context window limit, if available."""
+
+    def __init__(
+        self,
+        status_code: int,
+        model_name: str,
+        body: object | None = None,
+        *,
+        input_tokens: int | None = None,
+        context_window: int | None = None,
+    ):
+        self.model_name = model_name
+        self.status_code = status_code
+        self.input_tokens = input_tokens
+        self.context_window = context_window
+        body_str = str(body) if body is not None else None
+        super().__init__(message=f'Context window exceeded for {model_name}', body=body_str)
 
 
 class FallbackExceptionGroup(ExceptionGroup[Any]):

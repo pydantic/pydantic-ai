@@ -29,7 +29,7 @@ from ..builtin_tools import (
     MCPServerTool,
     WebSearchTool,
 )
-from ..exceptions import UserError
+from ..exceptions import ContextWindowExceeded, UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -296,6 +296,26 @@ def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAI
     """
     for setting in profile.openai_unsupported_model_settings:
         model_settings.pop(setting, None)
+
+
+def _check_context_window_exceeded(e: APIStatusError, model_name: str) -> ContextWindowExceeded | None:
+    """Check if the error is a context window exceeded error and return the appropriate exception."""
+    if e.status_code != 400:
+        return None
+    if body := _utils.as_dict(e.body):
+        if body.get('code') == 'context_length_exceeded':
+            return ContextWindowExceeded(
+                status_code=e.status_code,
+                model_name=model_name,
+                body=e.body,
+            )
+        if (error := _utils.as_dict(body.get('error'))) and error.get('code') == 'context_length_exceeded':
+            return ContextWindowExceeded(
+                status_code=e.status_code,
+                model_name=model_name,
+                body=e.body,
+            )
+    return None
 
 
 class OpenAIChatModelSettings(ModelSettings, total=False):
@@ -737,6 +757,8 @@ class OpenAIChatModel(Model):
         except APIStatusError as e:
             if model_response := _check_azure_content_filter(e, self.system, self.model_name):
                 return model_response
+            if ctx_exc := _check_context_window_exceeded(e, self.model_name):
+                raise ctx_exc from e
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
@@ -1676,7 +1698,8 @@ class OpenAIResponsesModel(Model):
         except APIStatusError as e:
             if model_response := _check_azure_content_filter(e, self.system, self.model_name):
                 return model_response
-
+            if ctx_exc := _check_context_window_exceeded(e, self.model_name):
+                raise ctx_exc from e
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
