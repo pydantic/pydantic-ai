@@ -349,7 +349,7 @@ class HuggingFaceModel(Model):
                         pass
                     else:
                         assert_never(item)
-                message_param = ChatCompletionInputMessage(role='assistant')  # type: ignore
+                message_param = ChatCompletionInputMessage(role='assistant')
                 if texts:
                     # Note: model responses from this model should only have one text item, so the following
                     # shouldn't merge multiple texts into one unless you switch models between runs:
@@ -361,7 +361,7 @@ class HuggingFaceModel(Model):
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
             system_prompt_count = sum(1 for m in hf_messages if getattr(m, 'role', None) == 'system')
-            hf_messages.insert(system_prompt_count, ChatCompletionInputMessage(content=instructions, role='system'))  # type: ignore
+            hf_messages.insert(system_prompt_count, ChatCompletionInputMessage(content=instructions, role='system'))
         return hf_messages
 
     @staticmethod
@@ -434,11 +434,11 @@ class HuggingFaceModel(Model):
                 if isinstance(item, str):
                     content.append(ChatCompletionInputMessageChunk(type='text', text=item))  # type: ignore
                 elif isinstance(item, ImageUrl):
-                    url = ChatCompletionInputURL(url=item.url)  # type: ignore
+                    url = ChatCompletionInputURL(url=item.url)
                     content.append(ChatCompletionInputMessageChunk(type='image_url', image_url=url))  # type: ignore
                 elif isinstance(item, BinaryContent):
                     if item.is_image:
-                        url = ChatCompletionInputURL(url=item.data_uri)  # type: ignore
+                        url = ChatCompletionInputURL(url=item.data_uri)
                         content.append(ChatCompletionInputMessageChunk(type='image_url', image_url=url))  # type: ignore
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
