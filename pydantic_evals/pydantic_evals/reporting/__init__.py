@@ -216,7 +216,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
     )
     """The failures in the report. These are cases where task execution raised an exception."""
 
-    analyses: list[ReportAnalysis] = field(default_factory=list)
+    analyses: list[ReportAnalysis] = field(default_factory=list[ReportAnalysis])
     """Experiment-wide analyses produced by report evaluators."""
 
     report_evaluator_failures: list[EvaluatorFailure] = field(default_factory=list[EvaluatorFailure])

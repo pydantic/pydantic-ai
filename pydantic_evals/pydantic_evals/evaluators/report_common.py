@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from ..reporting import ReportCase
 from ..reporting.analyses import (
@@ -68,7 +68,8 @@ class ConfusionMatrixEvaluator(ReportEvaluator):
             return str(case.output) if case.output is not None else None
         elif from_ == 'metadata':
             if key is not None and isinstance(case.metadata, dict):
-                val = case.metadata.get(key)
+                metadata_dict = cast(dict[str, Any], case.metadata)  # pyright: ignore[reportUnknownMemberType]
+                val = metadata_dict.get(key)
                 return str(val) if val is not None else None
             return str(case.metadata) if case.metadata is not None else None
         elif from_ == 'labels':

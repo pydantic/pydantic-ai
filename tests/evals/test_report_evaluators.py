@@ -62,7 +62,7 @@ def test_confusion_matrix_serialization():
     assert data['matrix'] == [[5, 2], [1, 8]]
 
     # Round-trip through discriminated union
-    adapter = TypeAdapter(ReportAnalysis)
+    adapter: TypeAdapter[ReportAnalysis] = TypeAdapter(ReportAnalysis)
     restored = adapter.validate_python(data)
     assert isinstance(restored, ConfusionMatrix)
     assert restored.class_labels == ['cat', 'dog']
@@ -75,7 +75,7 @@ def test_precision_recall_serialization():
     data = pr.model_dump()
     assert data['type'] == 'precision_recall'
 
-    adapter = TypeAdapter(ReportAnalysis)
+    adapter: TypeAdapter[ReportAnalysis] = TypeAdapter(ReportAnalysis)
     restored = adapter.validate_python(data)
     assert isinstance(restored, PrecisionRecall)
 
@@ -86,7 +86,7 @@ def test_scalar_result_serialization():
     assert data['type'] == 'scalar'
     assert data['value'] == 0.95
 
-    adapter = TypeAdapter(ReportAnalysis)
+    adapter: TypeAdapter[ReportAnalysis] = TypeAdapter(ReportAnalysis)
     restored = adapter.validate_python(data)
     assert isinstance(restored, ScalarResult)
     assert restored.title == 'Accuracy'
@@ -101,7 +101,7 @@ def test_table_result_serialization():
     data = tr.model_dump()
     assert data['type'] == 'table'
 
-    adapter = TypeAdapter(ReportAnalysis)
+    adapter: TypeAdapter[ReportAnalysis] = TypeAdapter(ReportAnalysis)
     restored = adapter.validate_python(data)
     assert isinstance(restored, TableResult)
     assert len(restored.rows) == 2
@@ -119,12 +119,14 @@ def _make_report_case(
     assertions: dict[str, Any] | None = None,
     metrics: dict[str, float | int] | None = None,
     metadata: Any = None,
-) -> ReportCase:
+) -> ReportCase[Any, Any, Any]:
     from pydantic_evals.evaluators.evaluator import EvaluationResult
     from pydantic_evals.evaluators.spec import EvaluatorSpec
 
-    def _make_eval_result(key: str, val: Any) -> EvaluationResult:
-        return EvaluationResult(name=key, value=val, reason=None, source=EvaluatorSpec(name='test', arguments=None))
+    _source = EvaluatorSpec(name='test', arguments=None)
+
+    def _make_eval_result(key: str, val: Any) -> Any:
+        return EvaluationResult(name=key, value=val, reason=None, source=_source)
 
     return ReportCase(
         name=name,
@@ -412,7 +414,7 @@ async def test_dataset_with_report_evaluators():
 async def test_dataset_report_evaluator_returns_list():
     @dataclass
     class MultiAnalysisEvaluator(ReportEvaluator):
-        def evaluate(self, ctx: ReportEvaluatorContext) -> list[ScalarResult]:
+        def evaluate(self, ctx: ReportEvaluatorContext) -> list[ReportAnalysis]:
             n = len(ctx.report.cases)
             return [
                 ScalarResult(title='Total Cases', value=n),
@@ -433,10 +435,14 @@ async def test_dataset_report_evaluator_returns_list():
     report = await dataset.evaluate(task, progress=False)
 
     assert len(report.analyses) == 2
-    assert report.analyses[0].title == 'Total Cases'  # type: ignore[union-attr]
-    assert report.analyses[0].value == 2  # type: ignore[union-attr]
-    assert report.analyses[1].title == 'Case Count Squared'  # type: ignore[union-attr]
-    assert report.analyses[1].value == 4  # type: ignore[union-attr]
+    first = report.analyses[0]
+    second = report.analyses[1]
+    assert isinstance(first, ScalarResult)
+    assert first.title == 'Total Cases'
+    assert first.value == 2
+    assert isinstance(second, ScalarResult)
+    assert second.title == 'Case Count Squared'
+    assert second.value == 4
 
 
 # --- Rendering test ---
