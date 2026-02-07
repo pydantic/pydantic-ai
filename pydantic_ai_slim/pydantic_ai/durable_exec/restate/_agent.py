@@ -527,7 +527,14 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
     ) -> AsyncIterator[AgentStreamEvent | AgentRunResultEvent[Any]]:
-        raise TerminalError(
-            '`agent.run_stream_events()` cannot be used inside a restate handler. '
-            'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
-        )
+        # Match the base agent's overload-friendly pattern: return an async generator.
+        async def _event_stream() -> AsyncIterator[AgentStreamEvent | AgentRunResultEvent[Any]]:
+            raise TerminalError(
+                '`agent.run_stream_events()` cannot be used inside a restate handler. '
+                'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+            )
+
+            if False:  # pragma: no cover
+                yield
+
+        return _event_stream()

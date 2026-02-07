@@ -265,7 +265,7 @@ async def test_restate_agent_restrictions():
             pass
 
     with pytest.raises(TerminalError, match=r'agent\.run_stream_events\(\)'):
-        restate_agent.run_stream_events('x')
+        await anext(restate_agent.run_stream_events('x'))
 
 
 @pytest.mark.anyio
