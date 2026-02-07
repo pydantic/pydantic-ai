@@ -29,7 +29,7 @@ from . import _output, _system_prompt, exceptions, messages as _messages, models
 from ._run_context import set_current_run_context
 from .exceptions import ToolRetryError
 from .output import OutputDataT, OutputSpec
-from .settings import ModelSettings
+from .settings import ModelSettings, ToolOrOutput
 from .tools import (
     BuiltinToolFunc,
     DeferredToolCallResult,
@@ -532,6 +532,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_request_parameters = await _prepare_request_parameters(ctx)
 
         model_settings = ctx.deps.model_settings
+        self._validate_tool_choice(model_settings)
         usage = ctx.state.usage
         if ctx.deps.usage_limits.count_tokens_before_request:
             # Copy to avoid modifying the original usage object with the counted usage
@@ -562,6 +563,24 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self._result = CallToolsNode(response)
 
         return self._result
+
+    @staticmethod
+    def _validate_tool_choice(model_settings: ModelSettings | None) -> None:
+        """Validate that tool_choice won't prevent the agent from completing.
+
+        `'required'` and `list[str]` exclude output tools, so the agent could never
+        produce a final response. These settings are only valid for direct model requests.
+        """
+        if model_settings:
+            tool_choice = model_settings.get('tool_choice')
+            if tool_choice == 'required' or (
+                isinstance(tool_choice, list) and not isinstance(tool_choice, ToolOrOutput)
+            ):
+                raise exceptions.UserError(
+                    f'`tool_choice={tool_choice!r}` prevents the agent from producing a final response '
+                    f'because output tools are excluded. Use `ToolOrOutput` to combine specific tools '
+                    f'with output capability, or use `model.request()` for direct model calls.'
+                )
 
     __repr__ = dataclasses_no_defaults_repr
 
