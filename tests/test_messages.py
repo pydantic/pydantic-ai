@@ -367,7 +367,7 @@ def test_binary_content_infer_media_type_error():
         bc = BinaryContent(data=b'test', file_name='test.unknownext123')
         bc.media_type
     with pytest.raises(ValueError, match='Media type could not be inferred. Please provide a media type or file name.'):
-        bc = BinaryContent(data=b'test')
+        bc = BinaryContent(data=b'test')  # type: ignore[call-arg]
         bc.media_type
 
 
