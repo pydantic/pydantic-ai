@@ -1,0 +1,139 @@
+name: PR Auto-Label
+
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  issues: write        # Required for GitHub Issues API (PR labels)
+  pull-requests: write # Required for PR operations
+
+jobs:
+  size-label:
+    name: Set Size Label
+    runs-on: ubuntu-latest
+    steps:
+      - name: Calculate PR size and set label
+        run: |
+          # Fetch file changes for this PR
+          FILES=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files --paginate | jq -s 'add')
+
+          # Calculate lines by category (excluding uv.lock and cassettes)
+          CODE=$(echo "$FILES" | jq '[.[] | select(
+            (.filename | (startswith("tests/") or startswith("docs/") or endswith(".md")) | not) and
+            (.filename != "uv.lock") and
+            (.filename | contains("/cassettes/") | not)
+          ) | .additions + .deletions] | add // 0')
+
+          DOCS=$(echo "$FILES" | jq '[.[] | select(
+            (.filename | (startswith("docs/") or endswith(".md"))) and
+            (.filename != "uv.lock") and
+            (.filename | contains("/cassettes/") | not)
+          ) | .additions + .deletions] | add // 0')
+
+          TESTS=$(echo "$FILES" | jq '[.[] | select(
+            (.filename | startswith("tests/")) and
+            (.filename | contains("/cassettes/") | not) and
+            (.filename | endswith(".md") | not)
+          ) | .additions + .deletions] | add // 0')
+
+          # Calculate weighted score: code + 50% docs + 50% tests
+          SCORE=$((CODE + DOCS / 2 + TESTS / 2))
+
+          echo "Code: $CODE, Docs: $DOCS, Tests: $TESTS"
+          echo "Weighted score: $SCORE"
+
+          # Determine size label based on cutoffs
+          if [ $SCORE -le 100 ]; then
+            SIZE="size: S"
+          elif [ $SCORE -le 500 ]; then
+            SIZE="size: M"
+          elif [ $SCORE -le 1500 ]; then
+            SIZE="size: L"
+          else
+            SIZE="size: XL"
+          fi
+
+          echo "Size: $SIZE"
+
+          # Remove any existing size labels (except the one we're setting) via API
+          for label in "size: S" "size: M" "size: L" "size: XL"; do
+            if [ "$label" != "$SIZE" ]; then
+              gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/${label}" --method DELETE 2>/dev/null || true
+            fi
+          done
+
+          # Add the new size label via API
+          gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels" --method POST -f "labels[]=$SIZE"
+
+          echo "Set label: $SIZE (score: $SCORE)"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  category-label:
+    name: Set Category Label
+    if: github.event.action == 'opened'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Check for modified config files
+        if: github.event.pull_request.head.repo.fork
+        run: |
+          CHANGED=$(gh pr diff ${{ github.event.pull_request.number }} --name-only --repo ${{ github.repository }})
+          if echo "$CHANGED" | grep -qiE '(^|/)AGENTS\.md$|(^|/)CLAUDE\.md$|(^|/)\.claude/'; then
+            echo "::error::PR modifies agent config files (AGENTS.md, CLAUDE.md, or .claude/). Skipping auto-labeling for security."
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check if category label already exists
+        id: check-label
+        run: |
+          LABELS=$(gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --json labels --jq '.labels[].name')
+          CATEGORY_LABELS=("bug" "feature" "docs" "chore" "dependency")
+
+          for label in "${CATEGORY_LABELS[@]}"; do
+            if echo "$LABELS" | grep -q "^${label}$"; then
+              echo "has_label=true" >> $GITHUB_OUTPUT
+              echo "PR already has category label: $label"
+              exit 0
+            fi
+          done
+
+          echo "has_label=false" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Determine category label with Claude Code
+        if: steps.check-label.outputs.has_label == 'false'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          allowed_non_write_users: '*'
+          claude_args: |
+            --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels:*)"
+          prompt: |
+            Classify PR #${{ github.event.pull_request.number }} in ${{ github.repository }} and add exactly one label.
+
+            Run `gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }}` for the title and description.
+            Run `gh pr diff ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --name-only` for the changed files.
+
+            Categories:
+            - `bug`: Fixes broken behavior
+            - `feature`: New functionality
+            - `docs`: Documentation-only (no code changes)
+            - `chore`: CI, refactoring, dev dependencies, tests-only
+            - `dependency`: Production dependency updates
+
+            When both code and docs change, prefer `feature` or `bug` over `docs`.
+            If pyproject.toml files changed, check their diff to distinguish production deps (`dependency`) from dev-only deps in `[dependency-groups]` (`chore`).
+
+            Add the label:
+            gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels --method POST -f "labels[]=<category>"
