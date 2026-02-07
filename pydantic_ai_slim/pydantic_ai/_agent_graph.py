@@ -223,7 +223,6 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             return await self._handle_deferred_tool_results(self.deferred_tool_results, messages, ctx)
 
         next_message: _messages.ModelRequest | None = None
-        reuse_history_request = False
 
         run_context: RunContext[DepsT] | None = None
         instructions: str | None = None
@@ -233,7 +232,6 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 # Drop last message from history and reuse its parts
                 messages.pop()
                 next_message = _messages.ModelRequest(parts=last_message.parts)
-                reuse_history_request = True
 
                 # Extract `UserPromptPart` content from the popped message and add to `ctx.deps.prompt`
                 user_prompt_parts = [part for part in last_message.parts if isinstance(part, _messages.UserPromptPart)]
@@ -284,7 +282,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         if not messages and not next_message.parts and not next_message.instructions:
             raise exceptions.UserError('No message history, user prompt, or instructions provided')
 
-        return ModelRequestNode[DepsT, NodeRunEndT](request=next_message, reuse_history_request=reuse_history_request)
+        return ModelRequestNode[DepsT, NodeRunEndT](request=next_message)
 
     async def _handle_deferred_tool_results(  # noqa: C901
         self,
@@ -440,7 +438,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that makes a request to the model using the last message in state.message_history."""
 
     request: _messages.ModelRequest
-    reuse_history_request: bool = False
 
     _result: CallToolsNode[DepsT, NodeRunEndT] | None = field(repr=False, init=False, default=None)
     _did_stream: bool = field(repr=False, init=False, default=False)
@@ -521,6 +518,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
         original_history = ctx.state.message_history[:]
+        # Detect if we're reusing the last history request (a "no-prompt run")
+        reused_history_request = ctx.deps.new_message_index == len(original_history)
         message_history = await _process_message_history(original_history, ctx.deps.history_processors, run_context)
         if message_history[-1].run_id is None:
             message_history[-1].run_id = ctx.state.run_id
@@ -528,9 +527,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.message_history[:] = message_history
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index = (
-            len(message_history)
-            if self.reuse_history_request
-            else _first_run_id_index(message_history, ctx.state.run_id)
+            len(message_history) if reused_history_request else _first_run_id_index(message_history, ctx.state.run_id)
         )
 
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
@@ -1414,7 +1411,7 @@ async def _process_message_history(
 def _first_run_id_index(messages: list[_messages.ModelMessage], run_id: str) -> int:
     """Return the index of the first message for the current run, or len(messages) if none are found."""
     for index, message in enumerate(messages):
-        if getattr(message, 'run_id', None) == run_id:
+        if message.run_id == run_id:
             return index
     return len(messages)
 
