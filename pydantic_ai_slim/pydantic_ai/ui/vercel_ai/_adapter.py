@@ -15,6 +15,7 @@ from typing_extensions import assert_never
 
 from ...agent import AbstractAgent
 from ...agent.abstract import AgentMetadata, Instructions
+from ...builtin_tools import AbstractBuiltinTool
 from ...messages import (
     AudioUrl,
     BinaryContent,
@@ -37,7 +38,6 @@ from ...messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ...builtin_tools import AbstractBuiltinTool
 from ...models import KnownModelName, Model
 from ...output import OutputDataT, OutputSpec
 from ...settings import ModelSettings
@@ -52,7 +52,6 @@ from ._utils import dump_provider_metadata, load_provider_metadata
 from .request_types import (
     DataUIPart,
     DynamicToolInputAvailablePart,
-    iter_tool_approval_responses,
     DynamicToolOutputAvailablePart,
     DynamicToolOutputErrorPart,
     DynamicToolUIPart,
@@ -70,6 +69,7 @@ from .request_types import (
     ToolUIPart,
     UIMessage,
     UIMessagePart,
+    iter_tool_approval_responses,
 )
 from .response_types import BaseChunk
 
