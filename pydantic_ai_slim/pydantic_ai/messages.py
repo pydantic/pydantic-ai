@@ -109,7 +109,7 @@ VideoMediaType: TypeAlias = Literal[
 
 AudioFormat: TypeAlias = Literal['wav', 'mp3', 'oga', 'flac', 'aiff', 'aac']
 ImageFormat: TypeAlias = Literal['jpeg', 'png', 'gif', 'webp', 'heic', 'heif']
-DocumentFormat: TypeAlias = Literal['doc', 'docx', 'pdf', 'txt', 'xls', 'xlsx', 'ppt', 'pptx']
+DocumentFormat: TypeAlias = Literal['doc', 'docx', 'pdf', 'xls', 'xlsx', 'ppt', 'pptx']
 VideoFormat: TypeAlias = Literal['mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp']
 TextFormat: TypeAlias = Literal['csv', 'html', 'md', 'yaml', 'toml', 'json', 'xml', 'txt']
 FinishReason: TypeAlias = Literal[
