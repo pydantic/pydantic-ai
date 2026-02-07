@@ -913,12 +913,7 @@ async def process_tool_calls(  # noqa: C901
             output_parts.append(part)
         # Early strategy is chosen and final result is already set
         elif ctx.deps.end_strategy == 'early' and final_result:
-            try:
-                validated = await tool_manager.validate_tool_call(call)
-                args_valid = validated.args_valid
-            except exceptions.UnexpectedModelBehavior:
-                args_valid = False
-            yield _messages.FunctionToolCallEvent(call, args_valid=args_valid)
+            yield _messages.FunctionToolCallEvent(call)
             part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
                 content='Output tool not used - a final result was already processed.',
