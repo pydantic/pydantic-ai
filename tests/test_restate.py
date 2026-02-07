@@ -356,6 +356,7 @@ async def test_restate_mcp_server_wrapping_and_agent_mcp_wrapping():
     tools = await restate_server.get_tools(ctx)
     assert fake_ctx.calls == ['get mcp tools']
     assert 'echo' in tools
+    assert tools['echo'].toolset is restate_server
     assert fake_server.enter_calls == 1
     assert fake_server.exit_calls == 1
 
@@ -580,6 +581,7 @@ async def test_restate_fastmcp_toolset_wrapping_smoke():
     tools = await durable_toolset.get_tools(ctx)
     assert 'get fastmcp tools' in fake_ctx.calls
     assert 'echo' in tools
+    assert tools['echo'].toolset is durable_toolset
     assert toolset.enter_calls == 1
     assert toolset.exit_calls == 1
 
@@ -776,6 +778,7 @@ async def test_restate_agent_misc_properties_and_wrapped_event_handler_noop_and_
         await stream.__anext__()
 
     assert restate_agent.event_stream_handler is None
+    await cast(Any, restate_agent)._wrapped_event_stream_handler(_run_ctx(), stream)
 
     with pytest.raises(TerminalError, match='cannot be set at agent run time'):
         async with restate_agent.iter('go', model=TestModel(call_tools=[])):

@@ -70,7 +70,14 @@ class RestateFastMCPToolset(WrapperToolset[AgentDepsT]):
         return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.output.items()}
 
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
-        return self._fastmcp_toolset.tool_for_tool_def(tool_def)
+        # Wrap the underlying tool so `tool.toolset` points at the Restate wrapper.
+        tool = self._fastmcp_toolset.tool_for_tool_def(tool_def)
+        return ToolsetTool(
+            toolset=self,
+            tool_def=tool.tool_def,
+            max_retries=tool.max_retries,
+            args_validator=tool.args_validator,
+        )
 
     async def call_tool(
         self,
