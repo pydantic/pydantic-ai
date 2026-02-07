@@ -1,0 +1,624 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '297'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Use the text editor tool to create hello.py with a single line: print("Hello, world!")'
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - name: str_replace_based_edit_tool
+        type: text_editor_20250728
+        max_characters: 10000
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '642'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: I'll create hello.py with the requested line.
+        type: text
+      - id: toolu_01CreateHello
+        input:
+          command: create
+          path: hello.py
+          file_text: 'print("Hello, world!")'
+        name: str_replace_based_edit_tool
+        type: tool_use
+      id: msg_01CreateHello
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 321
+        output_tokens: 58
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '706'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Use the text editor tool to create hello.py with a single line: print("Hello, world!")'
+          type: text
+        role: user
+      - content:
+        - text: I'll create hello.py with the requested line.
+          type: text
+        - id: toolu_01CreateHello
+          input:
+            command: create
+            path: hello.py
+            file_text: 'print("Hello, world!")'
+          name: str_replace_based_edit_tool
+          type: tool_use
+        role: assistant
+      - content:
+        - content: 'File created: hello.py'
+          is_error: false
+          tool_use_id: toolu_01CreateHello
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - name: str_replace_based_edit_tool
+        type: text_editor_20250728
+        max_characters: 10000
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '458'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: 'File created: hello.py'
+        type: text
+      id: msg_01CreateHelloResult
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 372
+        output_tokens: 16
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '286'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Use the text editor tool to change hello.py so it prints: Hello, Pydantic AI!'
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - name: str_replace_based_edit_tool
+        type: text_editor_20250728
+        max_characters: 10000
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '705'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: I'll update hello.py to print the new greeting.
+        type: text
+      - id: toolu_01EditHello
+        input:
+          command: str_replace
+          path: hello.py
+          old_str: 'print("Hello, world!")'
+          new_str: 'print("Hello, Pydantic AI!")'
+        name: str_replace_based_edit_tool
+        type: tool_use
+      id: msg_01EditHello
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 332
+        output_tokens: 64
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '724'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Use the text editor tool to change hello.py so it prints: Hello, Pydantic AI!'
+          type: text
+        role: user
+      - content:
+        - text: I'll update hello.py to print the new greeting.
+          type: text
+        - id: toolu_01EditHello
+          input:
+            command: str_replace
+            path: hello.py
+            old_str: 'print("Hello, world!")'
+            new_str: 'print("Hello, Pydantic AI!")'
+          name: str_replace_based_edit_tool
+          type: tool_use
+        role: assistant
+      - content:
+        - content: 'File updated: hello.py'
+          is_error: false
+          tool_use_id: toolu_01EditHello
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - name: str_replace_based_edit_tool
+        type: text_editor_20250728
+        max_characters: 10000
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '454'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: 'File updated: hello.py'
+        type: text
+      id: msg_01EditHelloResult
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 380
+        output_tokens: 16
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '280'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Use the text editor tool to insert a new string in hello.py: # Demo file'
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - name: str_replace_based_edit_tool
+        type: text_editor_20250728
+        max_characters: 10000
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '664'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: I'll insert the header line at the top of hello.py.
+        type: text
+      - id: toolu_01InsertHello
+        input:
+          command: insert
+          path: hello.py
+          insert_line: 0
+          new_str: "# Demo file\n"
+        name: str_replace_based_edit_tool
+        type: tool_use
+      id: msg_01InsertHello
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 325
+        output_tokens: 63
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '720'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Use the text editor tool to insert a new string in hello.py: # Demo file'
+          type: text
+        role: user
+      - content:
+        - text: I'll insert the header line at the top of hello.py.
+          type: text
+        - id: toolu_01InsertHello
+          input:
+            command: insert
+            path: hello.py
+            insert_line: 0
+            new_str: "# Demo file\n"
+          name: str_replace_based_edit_tool
+          type: tool_use
+        role: assistant
+      - content:
+        - content: 'Text inserted in hello.py at line 0'
+          is_error: false
+          tool_use_id: toolu_01InsertHello
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - name: str_replace_based_edit_tool
+        type: text_editor_20250728
+        max_characters: 10000
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '478'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: 'Text inserted in hello.py at line 0'
+        type: text
+      id: msg_01InsertHelloResult
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 374
+        output_tokens: 18
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '245'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Use the text editor tool to view hello.py'
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - name: str_replace_based_edit_tool
+        type: text_editor_20250728
+        max_characters: 10000
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '606'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: I'll view hello.py.
+        type: text
+      - id: toolu_01ViewHello
+        input:
+          command: view
+          path: hello.py
+        name: str_replace_based_edit_tool
+        type: tool_use
+      id: msg_01ViewHello
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 310
+        output_tokens: 46
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '640'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Use the text editor tool to view hello.py'
+          type: text
+        role: user
+      - content:
+        - text: I'll view hello.py.
+          type: text
+        - id: toolu_01ViewHello
+          input:
+            command: view
+            path: hello.py
+          name: str_replace_based_edit_tool
+          type: tool_use
+        role: assistant
+      - content:
+        - content: |-
+            1: # Demo file
+            2: print("Hello, Pydantic AI!")
+          is_error: false
+          tool_use_id: toolu_01ViewHello
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - name: str_replace_based_edit_tool
+        type: text_editor_20250728
+        max_characters: 10000
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '509'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: |-
+          1: # Demo file
+          2: print("Hello, Pydantic AI!")
+        type: text
+      id: msg_01ViewHelloResult
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 352
+        output_tokens: 28
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1
