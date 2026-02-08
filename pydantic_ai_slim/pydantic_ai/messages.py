@@ -728,7 +728,7 @@ _video_format_lookup: dict[str, VideoFormat] = {
     'video/3gpp': 'three_gp',
 }
 
-_kind_to_modality_lookup: dict[str, str] = {
+_kind_to_modality_lookup: dict[str, Literal['image', 'audio', 'video', 'document']] = {
     'image-url': 'image',
     'audio-url': 'audio',
     'video-url': 'video',
@@ -780,7 +780,7 @@ class UserPromptPart:
                     parts.append(
                         _otel_messages.UriPart(
                             type='uri',
-                            modality=_kind_to_modality_lookup[part.kind],  # type: ignore[typeddict-item]
+                            modality=_kind_to_modality_lookup[part.kind],
                             **{'uri': part.url, 'mime_type': part.media_type} if settings.include_content else {},
                         )
                     )
