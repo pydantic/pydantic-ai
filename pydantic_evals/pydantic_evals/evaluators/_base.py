@@ -16,15 +16,25 @@ from .spec import EvaluatorSpec
 
 
 class _StrictABCMeta(ABCMeta):
-    """An ABC-like metaclass that goes further and disallows even defining abstract subclasses."""
+    """An ABC-like metaclass that disallows defining subclasses with unimplemented inherited abstract methods.
+
+    Unlike standard ABCMeta (which allows abstract subclasses and only errors at instantiation),
+    this metaclass raises TypeError at class definition time if a subclass inherits abstract methods
+    without implementing them. Classes that define their own new abstract methods are allowed, since
+    they are intentionally creating a new abstract layer (e.g. Evaluator and ReportEvaluator).
+    """
 
     def __new__(mcls, name: str, bases: tuple[type, ...], namespace: dict[str, Any], /, **kwargs: Any):
         result = super().__new__(mcls, name, bases, namespace, **kwargs)
-        # Check if this class is a proper subclass of a _StrictABC instance
         is_proper_subclass = any(isinstance(c, _StrictABCMeta) for c in result.__mro__[1:])
         if is_proper_subclass and result.__abstractmethods__:
-            abstractmethods = ', '.join([f'{m!r}' for m in result.__abstractmethods__])
-            raise TypeError(f'{name} must implement all abstract methods: {abstractmethods}')
+            # Only error on abstract methods inherited from a parent but not implemented.
+            # Methods defined in this class's own namespace are intentionally abstract (new abstract layer).
+            own_abstracts = frozenset(m for m in result.__abstractmethods__ if m in namespace)
+            inherited_unimplemented = result.__abstractmethods__ - own_abstracts
+            if inherited_unimplemented:
+                abstractmethods = ', '.join(f'{m!r}' for m in inherited_unimplemented)
+                raise TypeError(f'{name} must implement all abstract methods: {abstractmethods}')
         return result
 
 

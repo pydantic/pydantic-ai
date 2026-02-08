@@ -14,6 +14,11 @@ from ._base import BaseEvaluator
 if TYPE_CHECKING:
     from pydantic_evals.reporting import EvaluationReport
 
+__all__ = (
+    'ReportEvaluator',
+    'ReportEvaluatorContext',
+)
+
 InputsT = TypeVar('InputsT', default=Any, contravariant=True)
 OutputT = TypeVar('OutputT', default=Any, contravariant=True)
 MetadataT = TypeVar('MetadataT', default=Any, contravariant=True)

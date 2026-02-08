@@ -77,15 +77,37 @@ def test_evaluation_result():
 
 def test_strict_abc_meta():
     """Test _StrictABCMeta metaclass."""
-    # Test that abstract methods must be implemented
-    with pytest.raises(TypeError) as exc_info:
+    from abc import abstractmethod
+
+    from pydantic_evals.evaluators.report_evaluator import ReportEvaluator
+
+    # Subclasses that don't implement inherited abstract methods are rejected at definition time
+    with pytest.raises(TypeError, match="must implement all abstract methods.*'evaluate'"):
 
         @dataclass
         class InvalidEvaluator(Evaluator[Any, Any, Any]):  # pyright: ignore[reportUnusedClass]
             pass
 
-    assert 'must implement all abstract methods' in str(exc_info.value)
-    assert 'evaluate' in str(exc_info.value)
+    with pytest.raises(TypeError, match="must implement all abstract methods.*'evaluate'"):
+
+        @dataclass
+        class InvalidReportEvaluator(ReportEvaluator[Any, Any, Any]):  # pyright: ignore[reportUnusedClass]
+            pass
+
+    # Subclasses that add new abstract methods but don't implement inherited ones are also rejected
+    with pytest.raises(TypeError, match="must implement all abstract methods.*'evaluate'"):
+
+        @dataclass
+        class PartialAbstract(Evaluator[Any, Any, Any]):  # pyright: ignore[reportUnusedClass]
+            @abstractmethod
+            def other(self) -> None: ...
+
+    # Classes that define their own abstract methods (new abstract layers) are allowed
+    # — this is how Evaluator and ReportEvaluator themselves work
+    assert hasattr(Evaluator, '__abstractmethods__')
+    assert 'evaluate' in Evaluator.__abstractmethods__
+    assert hasattr(ReportEvaluator, '__abstractmethods__')
+    assert 'evaluate' in ReportEvaluator.__abstractmethods__
 
 
 if TYPE_CHECKING or imports_successful():  # pragma: no branch
