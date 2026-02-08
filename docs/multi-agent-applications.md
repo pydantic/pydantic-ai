@@ -26,14 +26,14 @@ You'll generally want to pass [`ctx.usage`][pydantic_ai.tools.RunContext.usage] 
 from pydantic_ai import Agent, RunContext, UsageLimits
 
 joke_selection_agent = Agent(  # (1)!
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     instructions=(
         'Use the `joke_factory` to generate some jokes, then choose the best. '
         'You must return just a single joke.'
     ),
 )
 joke_generation_agent = Agent(  # (2)!
-    'google-gla:gemini-2.5-flash', output_type=list[str]
+    'google-gla:gemini-3-flash-preview', output_type=list[str]
 )
 
 
@@ -98,7 +98,7 @@ class ClientAndKey:  # (1)!
 
 
 joke_selection_agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     deps_type=ClientAndKey,  # (2)!
     instructions=(
         'Use the `joke_factory` tool to generate some jokes on the given subject, '
@@ -106,7 +106,7 @@ joke_selection_agent = Agent(
     ),
 )
 joke_generation_agent = Agent(
-    'google-gla:gemini-2.5-flash',
+    'google-gla:gemini-3-flash-preview',
     deps_type=ClientAndKey,  # (4)!
     output_type=list[str],
     instructions=(
@@ -198,7 +198,7 @@ class Failed(BaseModel):
 
 
 flight_search_agent = Agent[None, FlightDetails | Failed](  # (1)!
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     output_type=FlightDetails | Failed,  # type: ignore
     instructions=(
         'Use the "flight_search" tool to find a flight '
@@ -246,7 +246,7 @@ class SeatPreference(BaseModel):
 
 # This agent is responsible for extracting the user's seat selection
 seat_preference_agent = Agent[None, SeatPreference | Failed](  # (5)!
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     output_type=SeatPreference | Failed,  # type: ignore
     instructions=(
         "Extract the user's seat preference. "
