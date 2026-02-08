@@ -736,6 +736,19 @@ _kind_to_modality_lookup: dict[str, Literal['image', 'audio', 'video', 'document
 }
 
 
+def _infer_modality_from_media_type(media_type: str) -> Literal['image', 'audio', 'video', 'document'] | None:
+    """Infer modality from media type for OTel GenAI semantic conventions."""
+    if media_type.startswith('image/'):
+        return 'image'
+    elif media_type.startswith('audio/'):
+        return 'audio'
+    elif media_type.startswith('video/'):
+        return 'video'
+    elif media_type.startswith('application/') or media_type.startswith('text/'):
+        return 'document'
+    return None
+
+
 @dataclass(repr=False)
 class UserPromptPart:
     """A user prompt, generally written by the end user.
@@ -792,10 +805,21 @@ class UserPromptPart:
                         )
                     )
             elif isinstance(part, BinaryContent):
-                converted_part = _otel_messages.BinaryDataPart(type='binary', media_type=part.media_type)
-                if settings.include_content and settings.include_binary_content:
-                    converted_part['content'] = part.base64
-                parts.append(converted_part)
+                if settings.version >= 4:
+                    blob_part = _otel_messages.BlobPart(type='blob')
+                    modality = _infer_modality_from_media_type(part.media_type)
+                    if modality is not None:
+                        blob_part['modality'] = modality
+                    if settings.include_content:
+                        blob_part['mime_type'] = part.media_type
+                        if settings.include_binary_content:
+                            blob_part['content'] = part.base64
+                    parts.append(blob_part)
+                else:
+                    converted_part = _otel_messages.BinaryDataPart(type='binary', media_type=part.media_type)
+                    if settings.include_content and settings.include_binary_content:
+                        converted_part['content'] = part.base64
+                    parts.append(converted_part)
             elif isinstance(part, CachePoint):
                 # CachePoint is a marker, not actual content - skip it for otel
                 pass
