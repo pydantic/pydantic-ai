@@ -42,6 +42,8 @@ from .evaluators._run_evaluator import run_evaluator
 from .evaluators.common import DEFAULT_EVALUATORS
 from .evaluators.context import EvaluatorContext
 from .evaluators.evaluator import EvaluatorFailure
+from .evaluators.report_common import DEFAULT_REPORT_EVALUATORS
+from .evaluators.report_evaluator import ReportEvaluator, ReportEvaluatorContext
 from .evaluators.spec import EvaluatorSpec
 from .otel import SpanTree
 from .otel._context_subtree import context_subtree
@@ -101,6 +103,7 @@ class _DatasetModel(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forb
     name: str | None = None
     cases: list[_CaseModel[InputsT, OutputT, MetadataT]]
     evaluators: list[EvaluatorSpec] = Field(default_factory=list[EvaluatorSpec])
+    report_evaluators: list[EvaluatorSpec] = Field(default_factory=list[EvaluatorSpec])
 
 
 @dataclass(init=False)
@@ -227,6 +230,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     """List of test cases in the dataset."""
     evaluators: list[Evaluator[InputsT, OutputT, MetadataT]] = []
     """List of evaluators to be used on all cases in the dataset."""
+    report_evaluators: list[ReportEvaluator[InputsT, OutputT, MetadataT]] = []
+    """Evaluators that operate on the full report to produce experiment-wide analyses."""
 
     def __init__(
         self,
@@ -234,6 +239,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         name: str | None = None,
         cases: Sequence[Case[InputsT, OutputT, MetadataT]],
         evaluators: Sequence[Evaluator[InputsT, OutputT, MetadataT]] = (),
+        report_evaluators: Sequence[ReportEvaluator[InputsT, OutputT, MetadataT]] = (),
     ):
         """Initialize a new dataset with test cases and optional evaluators.
 
@@ -241,6 +247,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             name: Optional name for the dataset.
             cases: Sequence of test cases to include in the dataset.
             evaluators: Optional sequence of evaluators to apply to all cases in the dataset.
+            report_evaluators: Optional sequence of report evaluators that run on the full evaluation report.
         """
         case_names = set[str]()
         for case in cases:
@@ -254,6 +261,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             name=name,
             cases=cases,
             evaluators=list(evaluators),
+            report_evaluators=list(report_evaluators),
         )
 
     # TODO in v2: Make everything not required keyword-only
@@ -350,6 +358,16 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 span_id=span_id,
                 trace_id=trace_id,
             )
+
+            # Run report evaluators
+            if self.report_evaluators:
+                report_ctx = ReportEvaluatorContext(
+                    name=name,
+                    report=report,
+                    experiment_metadata=metadata,
+                )
+                await _run_report_evaluators(self.report_evaluators, report_ctx, report)
+
             full_experiment_metadata: dict[str, Any] = {'n_cases': len(self.cases)}
             if metadata is not None:
                 full_experiment_metadata['metadata'] = metadata
@@ -358,6 +376,13 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 if averages.assertions is not None:
                     eval_span.set_attribute('assertion_pass_rate', averages.assertions)
             eval_span.set_attribute('logfire.experiment.metadata', full_experiment_metadata)
+
+            # Set analyses on the experiment span
+            if report.analyses:
+                eval_span.set_attribute(
+                    'logfire.experiment.analyses',
+                    [analysis.model_dump() for analysis in report.analyses],
+                )
         return report
 
     def evaluate_sync(
@@ -493,6 +518,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         path: Path | str,
         fmt: Literal['yaml', 'json'] | None = None,
         custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
+        custom_report_evaluator_types: Sequence[type[ReportEvaluator[InputsT, OutputT, MetadataT]]] = (),
     ) -> Self:
         """Load a dataset from a file.
 
@@ -502,6 +528,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 Must be either 'yaml' or 'json'.
             custom_evaluator_types: Custom evaluator classes to use when deserializing the dataset.
                 These are additional evaluators beyond the default ones.
+            custom_report_evaluator_types: Custom report evaluator classes to use when deserializing the dataset.
+                These are additional report evaluators beyond the default ones.
 
         Returns:
             A new Dataset instance loaded from the file.
@@ -515,7 +543,13 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
         raw = Path(path).read_text(encoding='utf-8')
         try:
-            return cls.from_text(raw, fmt=fmt, custom_evaluator_types=custom_evaluator_types, default_name=path.stem)
+            return cls.from_text(
+                raw,
+                fmt=fmt,
+                custom_evaluator_types=custom_evaluator_types,
+                custom_report_evaluator_types=custom_report_evaluator_types,
+                default_name=path.stem,
+            )
         except ValidationError as e:  # pragma: no cover
             raise ValueError(f'{path} contains data that does not match the schema for {cls.__name__}:\n{e}.') from e
 
@@ -525,6 +559,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         contents: str,
         fmt: Literal['yaml', 'json'] = 'yaml',
         custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
+        custom_report_evaluator_types: Sequence[type[ReportEvaluator[InputsT, OutputT, MetadataT]]] = (),
         *,
         default_name: str | None = None,
     ) -> Self:
@@ -535,6 +570,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             fmt: Format of the content. Must be either 'yaml' or 'json'.
             custom_evaluator_types: Custom evaluator classes to use when deserializing the dataset.
                 These are additional evaluators beyond the default ones.
+            custom_report_evaluator_types: Custom report evaluator classes to use when deserializing the dataset.
+                These are additional report evaluators beyond the default ones.
             default_name: Default name of the dataset, to be used if not specified in the serialized contents.
 
         Returns:
@@ -545,17 +582,22 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         """
         if fmt == 'yaml':
             loaded = yaml.safe_load(contents)
-            return cls.from_dict(loaded, custom_evaluator_types, default_name=default_name)
+            return cls.from_dict(
+                loaded, custom_evaluator_types, custom_report_evaluator_types, default_name=default_name
+            )
         else:
             dataset_model_type = cls._serialization_type()
             dataset_model = dataset_model_type.model_validate_json(contents)
-            return cls._from_dataset_model(dataset_model, custom_evaluator_types, default_name)
+            return cls._from_dataset_model(
+                dataset_model, custom_evaluator_types, custom_report_evaluator_types, default_name
+            )
 
     @classmethod
     def from_dict(
         cls,
         data: dict[str, Any],
         custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
+        custom_report_evaluator_types: Sequence[type[ReportEvaluator[InputsT, OutputT, MetadataT]]] = (),
         *,
         default_name: str | None = None,
     ) -> Self:
@@ -565,6 +607,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             data: Dictionary representation of the dataset.
             custom_evaluator_types: Custom evaluator classes to use when deserializing the dataset.
                 These are additional evaluators beyond the default ones.
+            custom_report_evaluator_types: Custom report evaluator classes to use when deserializing the dataset.
+                These are additional report evaluators beyond the default ones.
             default_name: Default name of the dataset, to be used if not specified in the data.
 
         Returns:
@@ -575,13 +619,16 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         """
         dataset_model_type = cls._serialization_type()
         dataset_model = dataset_model_type.model_validate(data)
-        return cls._from_dataset_model(dataset_model, custom_evaluator_types, default_name)
+        return cls._from_dataset_model(
+            dataset_model, custom_evaluator_types, custom_report_evaluator_types, default_name
+        )
 
     @classmethod
     def _from_dataset_model(
         cls,
         dataset_model: _DatasetModel[InputsT, OutputT, MetadataT],
         custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
+        custom_report_evaluator_types: Sequence[type[ReportEvaluator[InputsT, OutputT, MetadataT]]] = (),
         default_name: str | None = None,
     ) -> Self:
         """Create a Dataset from a _DatasetModel.
@@ -589,12 +636,14 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         Args:
             dataset_model: The _DatasetModel to convert.
             custom_evaluator_types: Custom evaluator classes to register for deserialization.
+            custom_report_evaluator_types: Custom report evaluator classes to register for deserialization.
             default_name: Default name of the dataset, to be used if the value is `None` in the provided model.
 
         Returns:
             A new Dataset instance created from the _DatasetModel.
         """
         registry = _get_registry(custom_evaluator_types)
+        report_evaluator_registry = _get_report_evaluator_registry(custom_report_evaluator_types)
 
         cases: list[Case[InputsT, OutputT, MetadataT]] = []
         errors: list[ValueError] = []
@@ -606,6 +655,15 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 errors.append(e)
                 continue
             dataset_evaluators.append(dataset_evaluator)
+
+        report_evaluators: list[ReportEvaluator] = []
+        for spec in dataset_model.report_evaluators:
+            try:
+                report_evaluator = _load_report_evaluator_from_registry(report_evaluator_registry, spec)
+            except ValueError as e:
+                errors.append(e)
+                continue
+            report_evaluators.append(report_evaluator)
 
         for row in dataset_model.cases:
             evaluators: list[Evaluator] = []
@@ -626,7 +684,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             cases.append(row)
         if errors:
             raise ExceptionGroup(f'{len(errors)} error(s) loading evaluators from registry', errors[:3])
-        result = cls(name=dataset_model.name, cases=cases)
+        result = cls(name=dataset_model.name, cases=cases, report_evaluators=report_evaluators)
         if result.name is None:
             result.name = default_name
         result.evaluators = dataset_evaluators
@@ -638,6 +696,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         fmt: Literal['yaml', 'json'] | None = None,
         schema_path: Path | str | None = DEFAULT_SCHEMA_PATH_TEMPLATE,
         custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
+        custom_report_evaluator_types: Sequence[type[ReportEvaluator[InputsT, OutputT, MetadataT]]] = (),
     ):
         """Save the dataset to a file.
 
@@ -648,6 +707,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             schema_path: Path to save the JSON schema to. If None, no schema will be saved.
                 Can be a string template with {stem} which will be replaced with the dataset filename stem.
             custom_evaluator_types: Custom evaluator classes to include in the schema.
+            custom_report_evaluator_types: Custom report evaluator classes to include in the schema.
         """
         path = Path(path)
         fmt = self._infer_fmt(path, fmt)
@@ -664,7 +724,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 schema_ref = str(_get_relative_path_reference(schema_path, path))
             else:  # pragma: no cover
                 schema_ref = str(schema_path)
-            self._save_schema(schema_path, custom_evaluator_types)
+            self._save_schema(schema_path, custom_evaluator_types, custom_report_evaluator_types)
 
         context: dict[str, Any] = {'use_short_form': True}
         if fmt == 'yaml':
@@ -683,6 +743,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     def model_json_schema_with_evaluators(
         cls,
         custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
+        custom_report_evaluator_types: Sequence[type[ReportEvaluator[InputsT, OutputT, MetadataT]]] = (),
     ) -> dict[str, Any]:
         """Generate a JSON schema for this dataset type, including evaluator details.
 
@@ -690,49 +751,15 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
         Args:
             custom_evaluator_types: Custom evaluator classes to include in the schema.
+            custom_report_evaluator_types: Custom report evaluator classes to include in the schema.
 
         Returns:
             A dictionary representing the JSON schema.
         """
-        # Note: this function could maybe be simplified now that Evaluators are always dataclasses
-        registry = _get_registry(custom_evaluator_types)
-
-        evaluator_schema_types: list[Any] = []
-        for name, evaluator_class in registry.items():
-            type_hints = _typing_extra.get_function_type_hints(evaluator_class)
-            type_hints.pop('return', None)
-            required_type_hints: dict[str, Any] = {}
-
-            for p in inspect.signature(evaluator_class).parameters.values():
-                type_hints.setdefault(p.name, Any)
-                if p.default is not p.empty:
-                    type_hints[p.name] = NotRequired[type_hints[p.name]]
-                else:
-                    required_type_hints[p.name] = type_hints[p.name]
-
-            def _make_typed_dict(cls_name_prefix: str, fields: dict[str, Any]) -> Any:
-                td = TypedDict(f'{cls_name_prefix}_{name}', fields)  # pyright: ignore[reportArgumentType]
-                config = ConfigDict(extra='forbid', arbitrary_types_allowed=True)
-                # TODO: Replace with pydantic.with_config once pydantic 2.11 is the min supported version
-                td.__pydantic_config__ = config  # pyright: ignore[reportAttributeAccessIssue]
-                return td
-
-            # Shortest form: just the call name
-            if len(type_hints) == 0 or not required_type_hints:
-                evaluator_schema_types.append(Literal[name])
-
-            # Short form: can be called with only one parameter
-            if len(type_hints) == 1:
-                [type_hint_type] = type_hints.values()
-                evaluator_schema_types.append(_make_typed_dict('short_evaluator', {name: type_hint_type}))
-            elif len(required_type_hints) == 1:  # pragma: no branch
-                [type_hint_type] = required_type_hints.values()
-                evaluator_schema_types.append(_make_typed_dict('short_evaluator', {name: type_hint_type}))
-
-            # Long form: multiple parameters, possibly required
-            if len(type_hints) > 1:
-                params_td = _make_typed_dict('evaluator_params', type_hints)
-                evaluator_schema_types.append(_make_typed_dict('evaluator', {name: params_td}))
+        evaluator_schema_types = _build_evaluator_schema_types(_get_registry(custom_evaluator_types))
+        report_evaluator_schema_types = _build_evaluator_schema_types(
+            _get_report_evaluator_registry(custom_report_evaluator_types)
+        )
 
         in_type, out_type, meta_type = cls._params()
 
@@ -750,6 +777,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             cases: list[Case]
             if evaluator_schema_types:  # pragma: no branch
                 evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore  # noqa: UP007
+            if report_evaluator_schema_types:  # pragma: no branch
+                report_evaluators: list[Union[tuple(report_evaluator_schema_types)]] = []  # pyright: ignore  # noqa: UP007
 
         json_schema = Dataset.model_json_schema()
         # See `_add_json_schema` below, since `$schema` is added to the JSON, it has to be supported in the JSON
@@ -758,16 +787,20 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
     @classmethod
     def _save_schema(
-        cls, path: Path | str, custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = ()
+        cls,
+        path: Path | str,
+        custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
+        custom_report_evaluator_types: Sequence[type[ReportEvaluator[InputsT, OutputT, MetadataT]]] = (),
     ):
         """Save the JSON schema for this dataset type to a file.
 
         Args:
             path: Path to save the schema to.
             custom_evaluator_types: Custom evaluator classes to include in the schema.
+            custom_report_evaluator_types: Custom report evaluator classes to include in the schema.
         """
         path = Path(path)
-        json_schema = cls.model_json_schema_with_evaluators(custom_evaluator_types)
+        json_schema = cls.model_json_schema_with_evaluators(custom_evaluator_types, custom_report_evaluator_types)
         schema_content = to_json(json_schema, indent=2).decode() + '\n'
         if not path.exists() or path.read_text(encoding='utf-8') != schema_content:  # pragma: no branch
             path.write_text(schema_content, encoding='utf-8')
@@ -974,6 +1007,36 @@ async def _run_task(
         attributes=task_run.attributes,
         metrics=task_run.metrics,
     )
+
+
+async def _run_report_evaluators(
+    report_evaluators: list[ReportEvaluator],
+    report_ctx: ReportEvaluatorContext[Any, Any, Any],
+    report: EvaluationReport[Any, Any, Any],
+) -> None:
+    """Run report evaluators and append their analyses to the report."""
+    for report_eval in report_evaluators:
+        evaluator_name = report_eval.get_serialization_name()
+        with logfire_span(
+            'report_evaluator: {evaluator_name}',
+            evaluator_name=evaluator_name,
+        ):
+            try:
+                result = await report_eval.evaluate_async(report_ctx)
+            except Exception as e:
+                report.report_evaluator_failures.append(
+                    EvaluatorFailure(
+                        name=evaluator_name,
+                        error_message=f'{type(e).__name__}: {e}',
+                        error_stacktrace=traceback.format_exc(),
+                        source=report_eval.as_spec(),
+                    )
+                )
+            else:
+                if isinstance(result, list):
+                    report.analyses.extend(result)
+                else:
+                    report.analyses.append(result)
 
 
 async def _run_task_and_evaluators(
@@ -1221,3 +1284,115 @@ def _load_evaluator_from_registry(
     except Exception as e:
         case_detail = f'case {case_name!r}' if case_name is not None else 'dataset'
         raise ValueError(f'Failed to instantiate evaluator {spec.name!r} for {case_detail}: {e}') from e
+
+
+def _get_report_evaluator_registry(
+    custom_report_evaluator_types: Sequence[type[ReportEvaluator[InputsT, OutputT, MetadataT]]],
+) -> Mapping[str, type[ReportEvaluator[InputsT, OutputT, MetadataT]]]:
+    """Create a registry of report evaluator types from default and custom report evaluators.
+
+    Args:
+        custom_report_evaluator_types: Additional report evaluator classes to include in the registry.
+
+    Returns:
+        A mapping from report evaluator names to report evaluator classes.
+    """
+    registry: dict[str, type[ReportEvaluator[InputsT, OutputT, MetadataT]]] = {}
+
+    for evaluator_class in custom_report_evaluator_types:
+        if not issubclass(evaluator_class, ReportEvaluator):
+            raise ValueError(
+                f'All custom report evaluator classes must be subclasses of ReportEvaluator, but {evaluator_class} is not'
+            )
+        if '__dataclass_fields__' not in evaluator_class.__dict__:
+            raise ValueError(
+                f'All custom report evaluator classes must be decorated with `@dataclass`, but {evaluator_class} is not'
+            )
+        name = evaluator_class.get_serialization_name()
+        if name in registry:
+            raise ValueError(f'Duplicate report evaluator class name: {name!r}')
+        registry[name] = evaluator_class
+
+    for evaluator_class in DEFAULT_REPORT_EVALUATORS:
+        registry.setdefault(evaluator_class.get_serialization_name(), evaluator_class)
+
+    return registry
+
+
+def _load_report_evaluator_from_registry(
+    registry: Mapping[str, type[ReportEvaluator[InputsT, OutputT, MetadataT]]],
+    spec: EvaluatorSpec,
+) -> ReportEvaluator[InputsT, OutputT, MetadataT]:
+    """Load a report evaluator from the registry based on a specification.
+
+    Args:
+        registry: Mapping from report evaluator names to report evaluator classes.
+        spec: Specification of the report evaluator to load.
+
+    Returns:
+        An initialized report evaluator instance.
+
+    Raises:
+        ValueError: If the report evaluator name is not found in the registry.
+    """
+    evaluator_class = registry.get(spec.name)
+    if evaluator_class is None:
+        raise ValueError(
+            f'Report evaluator {spec.name!r} is not in the provided `custom_report_evaluator_types`. Valid choices: {list(registry.keys())}.'
+            f' If you are trying to use a custom report evaluator, you must include its type in the `custom_report_evaluator_types` argument.'
+        )
+    try:
+        return evaluator_class(*spec.args, **spec.kwargs)
+    except Exception as e:
+        raise ValueError(f'Failed to instantiate report evaluator {spec.name!r}: {e}') from e
+
+
+def _build_evaluator_schema_types(registry: Mapping[str, type[Any]]) -> list[Any]:
+    """Build a list of schema types for evaluators from a registry.
+
+    This is used to generate the JSON schema for both case-level and report-level evaluators.
+
+    Args:
+        registry: Mapping from evaluator names to evaluator classes.
+
+    Returns:
+        A list of types suitable for use in a Union for JSON schema generation.
+    """
+    schema_types: list[Any] = []
+    for name, evaluator_class in registry.items():
+        type_hints = _typing_extra.get_function_type_hints(evaluator_class)
+        type_hints.pop('return', None)
+        required_type_hints: dict[str, Any] = {}
+
+        for p in inspect.signature(evaluator_class).parameters.values():
+            type_hints.setdefault(p.name, Any)
+            if p.default is not p.empty:
+                type_hints[p.name] = NotRequired[type_hints[p.name]]
+            else:
+                required_type_hints[p.name] = type_hints[p.name]
+
+        def _make_typed_dict(cls_name_prefix: str, fields: dict[str, Any]) -> Any:
+            td = TypedDict(f'{cls_name_prefix}_{name}', fields)  # pyright: ignore[reportArgumentType]
+            config = ConfigDict(extra='forbid', arbitrary_types_allowed=True)
+            # TODO: Replace with pydantic.with_config once pydantic 2.11 is the min supported version
+            td.__pydantic_config__ = config  # pyright: ignore[reportAttributeAccessIssue]
+            return td
+
+        # Shortest form: just the call name
+        if len(type_hints) == 0 or not required_type_hints:
+            schema_types.append(Literal[name])
+
+        # Short form: can be called with only one parameter
+        if len(type_hints) == 1:
+            [type_hint_type] = type_hints.values()
+            schema_types.append(_make_typed_dict('short_evaluator', {name: type_hint_type}))
+        elif len(required_type_hints) == 1:  # pragma: no branch
+            [type_hint_type] = required_type_hints.values()
+            schema_types.append(_make_typed_dict('short_evaluator', {name: type_hint_type}))
+
+        # Long form: multiple parameters, possibly required
+        if len(type_hints) > 1:
+            params_td = _make_typed_dict('evaluator_params', type_hints)
+            schema_types.append(_make_typed_dict('evaluator', {name: params_td}))
+
+    return schema_types

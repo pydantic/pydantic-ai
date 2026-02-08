@@ -70,6 +70,7 @@ nav:
           - Built-in Evaluators: evals/evaluators/built-in.md
           - LLM Judge: evals/evaluators/llm-judge.md
           - Custom Evaluators: evals/evaluators/custom.md
+          - Report Evaluators: evals/evaluators/report-evaluators.md
           - Span-Based: evals/evaluators/span-based.md
       - How-To Guides:
           - Logfire Integration: evals/how-to/logfire-integration.md

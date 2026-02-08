@@ -200,10 +200,21 @@ async def test_evaluator_serialization():
     assert adapter.dump_python(evaluator, context=None) == snapshot({'arguments': None, 'name': 'ExampleEvaluator'})
     assert adapter.dump_python(evaluator, context={'use_short_form': True}) == snapshot('ExampleEvaluator')
 
-    # Test with a single non-default value
+    # Test with a single non-default value (first field) — uses tuple form
     evaluator = ExampleEvaluator(value=100)
     assert adapter.dump_python(evaluator, context=None) == snapshot({'arguments': [100], 'name': 'ExampleEvaluator'})
     assert adapter.dump_python(evaluator, context={'use_short_form': True}) == snapshot({'ExampleEvaluator': 100})
+
+    # Test with a single non-default value (non-first field) — uses dict form
+    evaluator = ExampleEvaluator(optional='test')
+    spec = evaluator.as_spec()
+    assert spec.arguments == {'optional': 'test'}
+    assert adapter.dump_python(evaluator, context=None) == snapshot(
+        {'arguments': {'optional': 'test'}, 'name': 'ExampleEvaluator'}
+    )
+    assert adapter.dump_python(evaluator, context={'use_short_form': True}) == snapshot(
+        {'ExampleEvaluator': {'optional': 'test'}}
+    )
 
     # Test with multiple non-default values
     evaluator = ExampleEvaluator(value=100, optional='test', default_value=True)
