@@ -1,9 +1,10 @@
 """Utilities for handling Pydantic AI and Vercel data streams."""
 
+from collections.abc import Iterable, Iterator
 from typing import Any
 
-from pydantic_ai.messages import ProviderDetailsDelta
-from pydantic_ai.ui.vercel_ai.response_types import ProviderMetadata
+from pydantic_ai.messages import ProviderDetailsDelta, ToolReturnPart
+from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, ProviderMetadata
 
 __all__ = []
 
@@ -43,3 +44,27 @@ def dump_provider_metadata(
         return {wrapper_key: filtered} if filtered else None
     else:
         return filtered if filtered else None
+
+
+def iter_metadata_chunks(tool_result: ToolReturnPart) -> Iterator[BaseChunk]:
+    """Iterate over BaseChunks from ToolReturnPart metadata or content.
+
+    Used by both the streaming path (``_event_stream.py``) and the dump path
+    (``_adapter.py``) to extract user-supplied chunks from tool return metadata.
+
+    Args:
+        tool_result: The tool return part to extract chunks from.
+
+    Yields:
+        BaseChunk instances found in the metadata/content.
+    """
+    possible = tool_result.metadata or tool_result.content
+    if isinstance(possible, BaseChunk):
+        yield possible
+    elif isinstance(possible, str | bytes):  # pragma: no branch
+        # Avoid iterable check for strings and bytes.
+        pass
+    elif isinstance(possible, Iterable):  # pragma: no branch
+        for item in possible:  # type: ignore[reportUnknownMemberType]
+            if isinstance(item, BaseChunk):  # pragma: no branch
+                yield item
