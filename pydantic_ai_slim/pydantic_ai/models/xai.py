@@ -949,20 +949,6 @@ def _map_tools(model_request_parameters: ModelRequestParameters) -> list[chat_ty
     ]
 
 
-def _parse_date(value: datetime | str) -> datetime:
-    """Parse a date value to datetime object.
-
-    Args:
-        value: A datetime object or ISO8601 formatted string (e.g., '2024-01-01').
-
-    Returns:
-        A datetime object.
-    """
-    if isinstance(value, datetime):
-        return value
-    return datetime.fromisoformat(value)
-
-
 def _get_builtin_tools(model_request_parameters: ModelRequestParameters) -> list[chat_types.chat_pb2.Tool]:
     """Convert pydantic_ai built-in tools to xAI SDK server-side tools."""
     tools: list[chat_types.chat_pb2.Tool] = []
@@ -997,12 +983,9 @@ def _get_builtin_tools(model_request_parameters: ModelRequestParameters) -> list
                 )
             )
         elif isinstance(builtin_tool, XSearchTool):
-            # xAI x_search supports:
-            # - from_date, to_date (datetime objects)
-            # - allowed_x_handles, excluded_x_handles
-            # - enable_image_understanding, enable_video_understanding
-            from_date = _parse_date(builtin_tool.from_date) if builtin_tool.from_date else None
-            to_date = _parse_date(builtin_tool.to_date) if builtin_tool.to_date else None
+            # from_date/to_date are normalized to datetime in XSearchTool.__post_init__
+            from_date = builtin_tool.from_date if isinstance(builtin_tool.from_date, datetime) else None
+            to_date = builtin_tool.to_date if isinstance(builtin_tool.to_date, datetime) else None
             tools.append(
                 x_search(
                     from_date=from_date,

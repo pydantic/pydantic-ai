@@ -17,7 +17,7 @@ Across these tests, we verify:
 from __future__ import annotations as _annotations
 
 import json
-from datetime import timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -2006,16 +2006,46 @@ async def test_xai_builtin_x_search_tool(allow_model_requests: None):
     result = await agent.run('What are people saying about PydanticAI on X?')
     assert result.output == 'Found posts about PydanticAI.'
 
-    # Verify the builtin tool call and result appear in message history
-    messages = result.all_messages()
-    assert len(messages) == 2
-    assert isinstance(messages[0], ModelRequest)
-    assert isinstance(messages[1], ModelResponse)
-
-    # Verify the response contains the x_search tool call and result
-    response_parts = messages[1].parts
-    assert any(isinstance(part, BuiltinToolCallPart) and part.tool_name == 'x_search' for part in response_parts)
-    assert any(isinstance(part, BuiltinToolReturnPart) and part.tool_name == 'x_search' for part in response_parts)
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What are people saying about PydanticAI on X?',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='x_search',
+                        args={'query': '@pydantic latest AI news'},
+                        tool_call_id=IsStr(),
+                        provider_name='xai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='x_search',
+                        content={'results': [{'text': 'PydanticAI 0.1 released!', 'author': '@pydantic'}]},
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='xai',
+                    ),
+                    TextPart(content='Found posts about PydanticAI.'),
+                ],
+                usage=RequestUsage(),
+                model_name=XAI_NON_REASONING_MODEL,
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_url='https://api.x.ai/v1',
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_xai_builtin_x_search_tool_with_handles(allow_model_requests: None):
@@ -2038,18 +2068,19 @@ async def test_xai_builtin_x_search_tool_with_handles(allow_model_requests: None
     # Verify tools were registered with allowed_x_handles
     kwargs = get_mock_chat_create_kwargs(mock_client)
     assert len(kwargs) == 1
-    assert 'tools' in kwargs[0]
     tools = kwargs[0]['tools']
     assert len(tools) == 1
-    # Verify the x_search tool configuration
-    assert tools[0]['x_search'] is not None
-    assert tools[0]['x_search'].get('allowed_x_handles') == ['OpenAI', 'AnthropicAI']
+    assert tools[0]['x_search'] == snapshot(
+        {
+            'allowed_x_handles': ['OpenAI', 'AnthropicAI'],
+            'enable_image_understanding': False,
+            'enable_video_understanding': False,
+        }
+    )
 
 
 async def test_xai_builtin_x_search_tool_with_date_range(allow_model_requests: None):
     """Test xAI's built-in x_search tool with date filtering."""
-    from datetime import datetime
-
     response = create_x_search_response(
         query='PydanticAI release',
         content={'results': []},
@@ -2062,7 +2093,7 @@ async def test_xai_builtin_x_search_tool_with_date_range(allow_model_requests: N
         builtin_tools=[
             XSearchTool(
                 from_date=datetime(2024, 1, 1),
-                to_date='2024-12-31',  # Test string parsing
+                to_date=date(2024, 12, 31),  # Test date normalization
             )
         ],
     )
@@ -2075,9 +2106,14 @@ async def test_xai_builtin_x_search_tool_with_date_range(allow_model_requests: N
     assert len(kwargs) == 1
     tools = kwargs[0]['tools']
     assert len(tools) == 1
-    # The x_search tool should have from_date and to_date configured
-    x_search_config = tools[0].get('x_search', {})
-    assert x_search_config is not None
+    assert tools[0]['x_search'] == snapshot(
+        {
+            'from_date': '2024-01-01T00:00:00Z',
+            'to_date': '2024-12-31T00:00:00Z',
+            'enable_image_understanding': False,
+            'enable_video_understanding': False,
+        }
+    )
 
 
 def test_x_search_tool_validation():
@@ -4285,6 +4321,7 @@ async def test_xai_include_settings(allow_model_requests: None):
         'xai_include_code_execution_output': True,
         'xai_include_web_search_output': True,
         'xai_include_inline_citations': True,
+        'xai_include_x_search_output': True,
         'xai_include_mcp_output': True,
     }
     result = await agent.run('Hello', model_settings=settings)
@@ -4304,6 +4341,7 @@ async def test_xai_include_settings(allow_model_requests: None):
                     chat_pb2.IncludeOption.INCLUDE_OPTION_CODE_EXECUTION_CALL_OUTPUT,
                     chat_pb2.IncludeOption.INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT,
                     chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS,
+                    chat_pb2.IncludeOption.INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT,
                     chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT,
                 ],
             }

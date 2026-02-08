@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 from abc import ABC
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Any, Literal, Union
 
 import pydantic
@@ -196,11 +196,11 @@ class XSearchTool(AbstractBuiltinTool):
     excluded_x_handles: list[str] | None = None
     """If provided, posts from these X handles will be excluded (max 10)."""
 
-    from_date: datetime | str | None = None
-    """Date filter for start date. Accepts datetime object or ISO8601 string (e.g., '2024-01-01')."""
+    from_date: datetime | date | None = None
+    """Date filter for start date."""
 
-    to_date: datetime | str | None = None
-    """Date filter for end date. Accepts datetime object or ISO8601 string (e.g., '2024-12-31')."""
+    to_date: datetime | date | None = None
+    """Date filter for end date."""
 
     enable_image_understanding: bool = False
     """Enable image analysis from X posts."""
@@ -212,12 +212,17 @@ class XSearchTool(AbstractBuiltinTool):
     """The kind of tool."""
 
     def __post_init__(self) -> None:
-        if self.allowed_x_handles and self.excluded_x_handles:
+        if self.allowed_x_handles is not None and self.excluded_x_handles is not None:
             raise ValueError('Cannot specify both allowed_x_handles and excluded_x_handles')
         if self.allowed_x_handles and len(self.allowed_x_handles) > 10:
             raise ValueError('allowed_x_handles cannot contain more than 10 handles')
         if self.excluded_x_handles and len(self.excluded_x_handles) > 10:
             raise ValueError('excluded_x_handles cannot contain more than 10 handles')
+        # Normalize date to datetime for downstream consumers
+        if isinstance(self.from_date, date) and not isinstance(self.from_date, datetime):
+            self.from_date = datetime(self.from_date.year, self.from_date.month, self.from_date.day)
+        if isinstance(self.to_date, date) and not isinstance(self.to_date, datetime):
+            self.to_date = datetime(self.to_date.year, self.to_date.month, self.to_date.day)
 
 
 @dataclass(kw_only=True)

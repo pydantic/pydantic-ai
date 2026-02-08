@@ -197,7 +197,7 @@ agent = Agent(
         XSearchTool(
             allowed_x_handles=['OpenAI', 'AnthropicAI', 'xaboratory'],  # Only search posts from these handles (max 10)
             from_date=datetime(2024, 1, 1),  # Filter posts from this date
-            to_date='2024-12-31',  # Also accepts ISO8601 strings
+            to_date=datetime(2024, 12, 31),  # Filter posts until this date
             enable_image_understanding=True,  # Enable image analysis
             enable_video_understanding=True,  # Enable video analysis
         )
@@ -219,8 +219,8 @@ _(This example is complete, it can be run "as is")_
 |-----------|------|-------------|
 | `allowed_x_handles` | `list[str] \| None` | Only include posts from these X handles (max 10). Cannot be used with `excluded_x_handles`. |
 | `excluded_x_handles` | `list[str] \| None` | Exclude posts from these X handles (max 10). Cannot be used with `allowed_x_handles`. |
-| `from_date` | `datetime \| str \| None` | Start date filter. Accepts datetime or ISO8601 string (e.g., '2024-01-01'). |
-| `to_date` | `datetime \| str \| None` | End date filter. Accepts datetime or ISO8601 string (e.g., '2024-12-31'). |
+| `from_date` | `datetime \| date \| None` | Start date filter. Accepts `datetime` or `date` objects. |
+| `to_date` | `datetime \| date \| None` | End date filter. Accepts `datetime` or `date` objects. |
 | `enable_image_understanding` | `bool` | Enable image analysis from X posts (default: False). |
 | `enable_video_understanding` | `bool` | Enable video analysis from X content (default: False). |
 
