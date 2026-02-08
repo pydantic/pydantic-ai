@@ -240,8 +240,7 @@ class ReportCaseAggregate(BaseModel):
         avg_scores: dict[str, float | int] = {}
         for key in all_score_keys:
             values = [a.scores[key] for a in aggregates if key in a.scores]
-            if values:
-                avg_scores[key] = sum(values) / len(values)
+            avg_scores[key] = sum(values) / len(values)
 
         # Average metrics
         all_metric_keys: set[str] = set()
@@ -250,8 +249,7 @@ class ReportCaseAggregate(BaseModel):
         avg_metrics: dict[str, float | int] = {}
         for key in all_metric_keys:
             values = [a.metrics[key] for a in aggregates if key in a.metrics]
-            if values:
-                avg_metrics[key] = sum(values) / len(values)
+            avg_metrics[key] = sum(values) / len(values)
 
         # Average labels (average the distribution dicts)
         all_label_keys: set[str] = set()
@@ -266,8 +264,7 @@ class ReportCaseAggregate(BaseModel):
                     count += 1
                     for label_val, freq in a.labels[key].items():
                         combined[label_val] = combined.get(label_val, 0.0) + freq
-            if count > 0:
-                avg_labels[key] = {k: v / count for k, v in combined.items()}
+            avg_labels[key] = {k: v / count for k, v in combined.items()}
 
         # Average assertions
         assertion_values = [a.assertions for a in aggregates if a.assertions is not None]

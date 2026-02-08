@@ -17,6 +17,7 @@ with try_import() as imports_successful:
         EvaluationReport,
         ReportCase,
         ReportCaseAggregate,
+        ReportCaseFailure,
     )
 
     @dataclass
@@ -139,7 +140,7 @@ async def test_repeat_invalid_value():
     """repeat < 1 should raise ValueError."""
 
     async def task(inputs: str) -> str:
-        return inputs
+        return inputs  # pragma: no cover
 
     dataset = Dataset(cases=[Case(inputs='hello')])
     with pytest.raises(ValueError, match='repeat must be >= 1'):
@@ -411,3 +412,45 @@ def test_report_case_group_fields():
     assert len(group.runs) == 2
     assert len(group.failures) == 0
     assert group.summary.task_duration == 0.125
+
+
+def test_case_groups_with_failures():
+    """case_groups() should correctly group failures by source_case_name."""
+    mock_evaluator_spec = AlwaysPass().as_spec()
+    case1 = ReportCase(
+        name='case1 [1/2]',
+        inputs='hello',
+        output='HELLO',
+        expected_output=None,
+        metadata=None,
+        metrics={},
+        attributes={},
+        scores={},
+        labels={},
+        assertions={
+            'AlwaysPass': EvaluationResult(name='AlwaysPass', value=True, reason=None, source=mock_evaluator_spec)
+        },
+        task_duration=0.1,
+        total_duration=0.2,
+        source_case_name='case1',
+    )
+    failure1 = ReportCaseFailure(
+        name='case1 [2/2]',
+        inputs='hello',
+        metadata=None,
+        expected_output=None,
+        error_message='something went wrong',
+        error_stacktrace='Traceback ...',
+        source_case_name='case1',
+    )
+
+    report = EvaluationReport(name='test', cases=[case1], failures=[failure1])
+    groups = report.case_groups()
+    assert groups is not None
+    assert len(groups) == 1
+
+    group = groups[0]
+    assert group.name == 'case1'
+    assert len(group.runs) == 1
+    assert len(group.failures) == 1
+    assert group.failures[0].error_message == 'something went wrong'
