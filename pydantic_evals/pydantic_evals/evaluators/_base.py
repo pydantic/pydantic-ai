@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from abc import ABCMeta
 from dataclasses import MISSING, dataclass, fields
 from typing import Any
 
@@ -14,8 +15,21 @@ from pydantic_ai import _utils
 from .spec import EvaluatorSpec
 
 
+class _StrictABCMeta(ABCMeta):
+    """An ABC-like metaclass that goes further and disallows even defining abstract subclasses."""
+
+    def __new__(mcls, name: str, bases: tuple[type, ...], namespace: dict[str, Any], /, **kwargs: Any):
+        result = super().__new__(mcls, name, bases, namespace, **kwargs)
+        # Check if this class is a proper subclass of a _StrictABC instance
+        is_proper_subclass = any(isinstance(c, _StrictABCMeta) for c in result.__mro__[1:])
+        if is_proper_subclass and result.__abstractmethods__:
+            abstractmethods = ', '.join([f'{m!r}' for m in result.__abstractmethods__])
+            raise TypeError(f'{name} must implement all abstract methods: {abstractmethods}')
+        return result
+
+
 @dataclass(repr=False)
-class BaseEvaluator:
+class BaseEvaluator(metaclass=_StrictABCMeta):
     """Shared serialization, spec-building, and repr logic for Evaluator and ReportEvaluator."""
 
     __pydantic_config__ = ConfigDict(arbitrary_types_allowed=True)

@@ -366,7 +366,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                     report=report,
                     experiment_metadata=metadata,
                 )
-                await _run_report_evaluators(self.report_evaluators, report_ctx, report)
+                await _run_report_evaluators(self.report_evaluators, report_ctx)
 
             full_experiment_metadata: dict[str, Any] = {'n_cases': len(self.cases)}
             if metadata is not None:
@@ -1012,9 +1012,9 @@ async def _run_task(
 async def _run_report_evaluators(
     report_evaluators: list[ReportEvaluator],
     report_ctx: ReportEvaluatorContext[Any, Any, Any],
-    report: EvaluationReport[Any, Any, Any],
 ) -> None:
     """Run report evaluators and append their analyses to the report."""
+    report = report_ctx.report
     for report_eval in report_evaluators:
         evaluator_name = report_eval.get_serialization_name()
         with logfire_span(

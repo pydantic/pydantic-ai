@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from abc import ABCMeta, abstractmethod
+from abc import abstractmethod
 from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass
 from typing import Any, Generic, cast
@@ -115,21 +115,8 @@ MetadataT = TypeVar('MetadataT', default=Any, contravariant=True)
 """Type variable for the metadata type of the task being evaluated."""
 
 
-class _StrictABCMeta(ABCMeta):
-    """An ABC-like metaclass that goes further and disallows even defining abstract subclasses."""
-
-    def __new__(mcls, name: str, bases: tuple[type, ...], namespace: dict[str, Any], /, **kwargs: Any):
-        result = super().__new__(mcls, name, bases, namespace, **kwargs)
-        # Check if this class is a proper subclass of a _StrictABC instance
-        is_proper_subclass = any(isinstance(c, _StrictABCMeta) for c in result.__mro__[1:])
-        if is_proper_subclass and result.__abstractmethods__:
-            abstractmethods = ', '.join([f'{m!r}' for m in result.__abstractmethods__])
-            raise TypeError(f'{name} must implement all abstract methods: {abstractmethods}')
-        return result
-
-
 @dataclass(repr=False)
-class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
+class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
     """Base class for all evaluators.
 
     Evaluators can assess the performance of a task in a variety of ways, as a function of the EvaluatorContext.
