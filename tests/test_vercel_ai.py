@@ -2802,6 +2802,8 @@ async def test_adapter_dump_messages_with_tool_metadata_all_base_chunks():
                             source_id='doc_1', media_type='application/pdf', title='Doc', filename='doc.pdf'
                         ),
                         FileChunk(url='https://example.com/file.png', media_type='image/png'),
+                        # Unknown chunk type — should be silently skipped by _extract_metadata_ui_parts
+                        ToolInputStartChunk(tool_call_id='call_x', tool_name='other'),
                         DataChunk(type='data-valid', data={'survived': True}),
                     ],
                 )
