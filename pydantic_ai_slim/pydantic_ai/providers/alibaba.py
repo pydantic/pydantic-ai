@@ -44,7 +44,7 @@ class AlibabaProvider(Provider[AsyncOpenAI]):
         openai_profile = OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(base_profile)
 
         # For backwards compatibility
-        if self._uses_audio_uri is None:
+        if use_audio_uri is None:
             use_audio_uri = 'omni' in model_name.lower()
 
         # To be more flexible on using audio URI for any Alibaba models
