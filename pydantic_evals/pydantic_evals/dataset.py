@@ -1029,7 +1029,7 @@ async def _run_report_evaluators(
                         name=evaluator_name,
                         error_message=f'{type(e).__name__}: {e}',
                         error_stacktrace=traceback.format_exc(),
-                        source=EvaluatorSpec(name=evaluator_name, arguments=None),
+                        source=report_eval.as_spec(),
                     )
                 )
             else:
