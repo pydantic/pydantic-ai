@@ -436,6 +436,8 @@ def _get_example_tool_output(
                 'url': 'https://linear.app/team/issue/PROJ-123/example-issue',
             }
         ]
+    elif tool_type == chat_pb2.ToolCallType.TOOL_CALL_TYPE_X_SEARCH_TOOL:
+        return {'results': [{'text': 'Example X/Twitter post', 'author': '@example'}]}
     else:  # pragma: no cover
         # Unknown tool type - return empty dict as fallback
         return {}
