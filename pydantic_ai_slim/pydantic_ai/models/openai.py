@@ -1422,20 +1422,15 @@ class OpenAIResponsesModel(Model):
         )
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
 
+        # Validate that we have something meaningful to count tokens for
+        if not messages and not settings.get('openai_previous_response_id'):
+            raise UserError('Cannot count tokens without any messages or a previous response ID.')
+
         request_input = await self._build_request_input(
             messages,
             settings,
             model_request_parameters,
         )
-
-        # Validate that we have something meaningful to count tokens for
-        if (
-            request_input.instructions is OMIT
-            and not request_input.previous_response_id
-            and len(request_input.messages) == 1
-            and request_input.messages[0].get('content') == ''
-        ):
-            raise UserError('Cannot count tokens without any messages or a previous response ID.')
 
         request_params = self._build_responses_request_params(request_input, settings)
 
@@ -1690,6 +1685,10 @@ class OpenAIResponsesModel(Model):
             )
             instructions = OMIT
 
+        # When there are no input messages and we're not reusing a previous response,
+        # the OpenAI API will reject a request without any input,
+        # even if there are instructions.
+        # To avoid this provide an explicit empty user message.
         if not openai_messages and not previous_response_id:
             openai_messages.append(
                 responses.EasyInputMessageParam(
@@ -1820,8 +1819,6 @@ class OpenAIResponsesModel(Model):
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
-            if stream:
-                return response
             return response
         except APIStatusError as e:
             if model_response := _check_azure_content_filter(e, self.system, self.model_name):

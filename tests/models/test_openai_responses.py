@@ -35,6 +35,7 @@ from pydantic_ai import (
     ToolCallPartDelta,
     ToolReturnPart,
     UnexpectedModelBehavior,
+    UsageLimitExceeded,
     UserError,
     UserPromptPart,
     capture_run_messages,
@@ -50,7 +51,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, TestEnv, try_import
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
@@ -9997,6 +9998,34 @@ async def test_responses_count_tokens_with_tools(allow_model_requests: None, ope
     )
 
     assert result.input_tokens == snapshot(51)
+
+
+async def test_responses_usage_limit_exceeded(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model)
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match=r'The next request would exceed the input_tokens_limit of 9 \(input_tokens=18\)',
+    ):
+        await agent.run(
+            'The quick brown fox jumps over the lazy dog.',
+            usage_limits=UsageLimits(input_tokens_limit=9, count_tokens_before_request=True),
+        )
+
+
+async def test_responses_usage_limit_not_exceeded(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model)
+
+    result = await agent.run(
+        'The quick brown fox jumps over the lazy dog.',
+        usage_limits=UsageLimits(input_tokens_limit=25, count_tokens_before_request=True),
+    )
+    assert result.output == snapshot(
+        "That's a classic pangram! It contains every letter of the English alphabet"
+        " at least once. It's commonly used for testing fonts, typewriters, and keyboards."
+    )
 
 
 async def test_openai_include_raw_annotations_non_streaming(allow_model_requests: None, openai_api_key: str):
