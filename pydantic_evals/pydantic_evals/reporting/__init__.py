@@ -313,7 +313,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
 
         Returns None if no cases have source_case_name set (i.e., single-run experiment).
         """
-        if not any(c.source_case_name for c in self.cases):
+        if not any(c.source_case_name for c in self.cases) and not any(f.source_case_name for f in self.failures):
             return None
 
         groups: dict[
@@ -1498,7 +1498,9 @@ class EvaluationRenderer:
 
         if self.include_averages:  # pragma: no branch
             report_average = report.averages()
-            baseline_average = baseline.averages()
+            # Use filtered baseline_cases (only cases matching the report), not baseline.averages()
+            # which would include all baseline cases even those not in the report.
+            baseline_average = ReportCaseAggregate.average(baseline_cases) if baseline_cases else None
             if report_average and baseline_average:  # pragma: no branch
                 table.add_row(*case_renderer.build_diff_aggregate_row(report_average, baseline_average))
 
