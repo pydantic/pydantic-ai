@@ -76,6 +76,7 @@ nav:
           - Dataset Management: evals/how-to/dataset-management.md
           - Dataset Serialization: evals/how-to/dataset-serialization.md
           - Concurrency & Performance: evals/how-to/concurrency.md
+          - Multi-Run Evaluation: evals/how-to/multi-run.md
           - Retry Strategies: evals/how-to/retry-strategies.md
           - Metrics & Attributes: evals/how-to/metrics-attributes.md
       - Examples:

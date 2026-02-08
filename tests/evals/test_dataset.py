@@ -247,6 +247,7 @@ async def test_evaluate_async(
                 }
             },
             'span_id': '0000000000000003',
+            'source_case_name': None,
             'task_duration': 1.0,
             'total_duration': 10.0,
             'trace_id': '00000000000000000000000000000001',
@@ -300,6 +301,7 @@ async def test_evaluate_sync(
                 }
             },
             'span_id': '0000000000000003',
+            'source_case_name': None,
             'task_duration': IsNumber(),  # the runtime behavior is not deterministic due to threading
             'total_duration': IsNumber(),  # the runtime behavior is not deterministic due to threading
             'trace_id': '00000000000000000000000000000001',
@@ -381,6 +383,7 @@ async def test_evaluate_with_retried_task_and_evaluator(
                 }
             },
             'span_id': '0000000000000003',
+            'source_case_name': None,
             'task_duration': 1.0,
             'total_duration': 19.0,
             'trace_id': '00000000000000000000000000000001',
@@ -434,6 +437,7 @@ async def test_evaluate_with_concurrency(
                 }
             },
             'span_id': '0000000000000003',
+            'source_case_name': None,
             'task_duration': 1.0,
             'total_duration': 5.0,
             'trace_id': '00000000000000000000000000000001',
