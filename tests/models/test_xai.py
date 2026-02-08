@@ -2143,6 +2143,11 @@ def test_x_search_tool_validation():
     assert tool.allowed_x_handles is None
     assert tool.excluded_x_handles is None
 
+    # date objects are normalized to datetime
+    tool = XSearchTool(from_date=date(2024, 6, 1), to_date=date(2024, 12, 31))
+    assert tool.from_date == datetime(2024, 6, 1)
+    assert tool.to_date == datetime(2024, 12, 31)
+
 
 async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_provider: XaiProvider):
     """Test xAI's built-in code_execution tool (non-streaming, recorded via proto cassette)."""
