@@ -38,18 +38,17 @@ class AlibabaProvider(Provider[AsyncOpenAI]):
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
         base_profile = qwen_model_profile(model_name)
-        use_audio_uri = self._uses_audio_uri
 
         # Wrap/merge into OpenAIModelProfile
         openai_profile = OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(base_profile)
 
         # For backwards compatibility
-        if use_audio_uri is None:
-            use_audio_uri = 'omni' in model_name.lower()
+        if self._uses_audio_uri is None:
+            self._uses_audio_uri = 'omni' in model_name.lower()
 
         # To be more flexible on using audio URI for any Alibaba models
-        if use_audio_uri:
-            openai_profile = OpenAIModelProfile(openai_chat_audio_input_encoding='uri').update(openai_profile)
+        if self._uses_audio_uri:
+            openai_profile.openai_chat_audio_input_encoding = 'uri'
 
         return openai_profile
 
