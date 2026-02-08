@@ -329,7 +329,9 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
 
         result: list[ReportCaseGroup[InputsT, OutputT, MetadataT]] = []
         for group_name, (runs, failures) in groups.items():
-            first = runs[0] if runs else None
+            first: ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT] | None = (
+                runs[0] if runs else failures[0] if failures else None
+            )
             result.append(
                 ReportCaseGroup(
                     name=group_name,
@@ -1497,9 +1499,9 @@ class EvaluationRenderer:
             table.add_row(*row)
 
         if self.include_averages:  # pragma: no branch
-            report_average = report.averages()
-            # Use filtered baseline_cases (only cases matching the report), not baseline.averages()
-            # which would include all baseline cases even those not in the report.
+            # Use flat averaging for both sides to keep the diff symmetric.
+            # baseline_cases is already filtered to only cases matching the report.
+            report_average = ReportCaseAggregate.average(report_cases) if report_cases else None
             baseline_average = ReportCaseAggregate.average(baseline_cases) if baseline_cases else None
             if report_average and baseline_average:  # pragma: no branch
                 table.add_row(*case_renderer.build_diff_aggregate_row(report_average, baseline_average))
