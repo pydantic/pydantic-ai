@@ -614,6 +614,9 @@ async def model_logic(  # noqa: C901
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'reason': '-', 'pass': True, 'score': 1.0})]
             )
+        elif m.content.startswith('Question '):
+            # Handle concurrency example prompts like "Question 0", "Question 1", etc.
+            return ModelResponse(parts=[TextPart(f'Answer to {m.content}')])
         elif m.content == 'What time is it?':
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='get_current_time', args={}, tool_call_id='pyd_ai_tool_call_id')]

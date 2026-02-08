@@ -55,7 +55,7 @@ from pydantic_ai import Agent
 from pydantic_ai.ui import SSE_CONTENT_TYPE
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5', instructions='Be fun!')
+agent = Agent('openai:gpt-5.2', instructions='Be fun!')
 
 app = FastAPI()
 
@@ -80,7 +80,7 @@ async def run_agent(request: Request) -> Response:
 ```
 
 1. [`AGUIAdapter.build_run_input()`][pydantic_ai.ui.ag_ui.AGUIAdapter.build_run_input] takes the request body as bytes and returns an AG-UI [`RunAgentInput`](https://docs.ag-ui.com/sdk/python/core/types#runagentinput) object. You can also use the [`AGUIAdapter.from_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.from_request] class method to build an adapter directly from a request.
-2. [`AGUIAdapter.run_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream] runs the agent and returns a stream of AG-UI events. It supports the same optional arguments as [`Agent.run_stream_events()`](../agents.md#running-agents), including `deps`. You can also use [`AGUIAdapter.run_stream_native()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream_native] to run the agent and return a stream of Pydantic AI events instead, which can then be transformed into AG-UI events using [`AGUIAdapter.transform_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.transform_stream].
+2. [`AGUIAdapter.run_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream] runs the agent and returns a stream of AG-UI events. It supports the same optional arguments as [`Agent.run_stream_events()`](../agent.md#running-agents), including `deps`. You can also use [`AGUIAdapter.run_stream_native()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream_native] to run the agent and return a stream of Pydantic AI events instead, which can then be transformed into AG-UI events using [`AGUIAdapter.transform_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.transform_stream].
 3. [`AGUIAdapter.encode_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.encode_stream] encodes the stream of AG-UI events as strings according to the accept header value. You can also use [`AGUIAdapter.streaming_response()`][pydantic_ai.ui.ag_ui.AGUIAdapter.streaming_response] to generate a streaming response directly from the AG-UI event stream returned by `run_stream()`.
 
 Since `app` is an ASGI application, it can be used with any ASGI server:
@@ -103,7 +103,7 @@ from starlette.responses import Response
 from pydantic_ai import Agent
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5', instructions='Be fun!')
+agent = Agent('openai:gpt-5.2', instructions='Be fun!')
 
 app = FastAPI()
 
@@ -130,7 +130,7 @@ This example uses [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp] to turn the agen
 from pydantic_ai import Agent
 from pydantic_ai.ui.ag_ui.app import AGUIApp
 
-agent = Agent('openai:gpt-5', instructions='Be fun!')
+agent = Agent('openai:gpt-5.2', instructions='Be fun!')
 app = AGUIApp(agent)
 ```
 
@@ -196,7 +196,7 @@ class DocumentState(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     instructions='Be fun!',
     deps_type=StateDeps[DocumentState],
 )
@@ -237,7 +237,7 @@ class DocumentState(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     instructions='Be fun!',
     deps_type=StateDeps[DocumentState],
 )
