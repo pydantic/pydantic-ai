@@ -260,7 +260,7 @@ class ReportCaseAggregate(BaseModel):
             combined: dict[str, float] = {}
             count = 0
             for a in aggregates:
-                if key in a.labels:
+                if key in a.labels:  # pragma: no branch
                     count += 1
                     for label_val, freq in a.labels[key].items():
                         combined[label_val] = combined.get(label_val, 0.0) + freq
@@ -346,7 +346,8 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
     def averages(self) -> ReportCaseAggregate | None:
         groups = self.case_groups()
         if groups is not None:
-            return ReportCaseAggregate.average_from_aggregates([g.summary for g in groups])
+            non_empty_summaries = [g.summary for g in groups if g.runs]
+            return ReportCaseAggregate.average_from_aggregates(non_empty_summaries) if non_empty_summaries else None
         elif self.cases:
             return ReportCaseAggregate.average(self.cases)
         return None
@@ -1496,9 +1497,10 @@ class EvaluationRenderer:
             table.add_row(*row)
 
         if self.include_averages:  # pragma: no branch
-            report_average = ReportCaseAggregate.average(report_cases)
-            baseline_average = ReportCaseAggregate.average(baseline_cases)
-            table.add_row(*case_renderer.build_diff_aggregate_row(report_average, baseline_average))
+            report_average = report.averages()
+            baseline_average = baseline.averages()
+            if report_average and baseline_average:
+                table.add_row(*case_renderer.build_diff_aggregate_row(report_average, baseline_average))
 
         return table
 
