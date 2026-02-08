@@ -39,7 +39,8 @@ class CohereProvider(Provider[AsyncClientV2]):
     def v1_client(self) -> AsyncClient | None:
         return self._v1_client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @classmethod
+    def model_profile(cls, model_name: str) -> ModelProfile | None:
         return cohere_model_profile(model_name)
 
     def __init__(
