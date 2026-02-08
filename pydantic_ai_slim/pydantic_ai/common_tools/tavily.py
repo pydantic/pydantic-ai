@@ -94,7 +94,7 @@ def tavily_search_tool(
     max_results: int | None = _UNSET,
     include_domains: list[str] | None = _UNSET,
     exclude_domains: list[str] | None = _UNSET,
-):
+) -> Tool[Any]:
     """Creates a Tavily search tool.
 
     Any parameter provided here will be fixed for all searches and hidden from the LLM's
