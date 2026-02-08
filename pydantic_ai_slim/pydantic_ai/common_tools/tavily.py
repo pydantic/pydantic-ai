@@ -88,8 +88,8 @@ class TavilySearchTool:
 def tavily_search_tool(
     api_key: str,
     *,
-    search_deep: Literal['basic', 'advanced'] | None = _UNSET,
-    topic: Literal['general', 'news'] | None = _UNSET,
+    search_deep: Literal['basic', 'advanced'] = _UNSET,
+    topic: Literal['general', 'news'] = _UNSET,
     time_range: Literal['day', 'week', 'month', 'year', 'd', 'w', 'm', 'y'] | None = _UNSET,
     max_results: int | None = _UNSET,
     include_domains: list[str] | None = _UNSET,

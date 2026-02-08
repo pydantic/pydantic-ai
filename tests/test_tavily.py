@@ -7,10 +7,15 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from pydantic_ai._run_context import RunContext
+from pydantic_ai.usage import RunUsage
+
 from .conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.common_tools.tavily import TavilySearchTool, tavily_search_tool
+
+from pydantic_ai.models.test import TestModel
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='tavily-python not installed')
 
@@ -176,3 +181,31 @@ class TestTavilySearchToolFactory:
             assert 'exclude_domains' not in schema_props
             # query should always be visible
             assert 'query' in schema_props
+
+    async def test_factory_bound_params_forwarded_at_call_time(self, mock_tavily_response: dict[str, Any]):
+        """Test that factory-bound params are forwarded to the Tavily client through FunctionSchema.call."""
+        mock_client = AsyncMock()
+        mock_client.search = AsyncMock(return_value=mock_tavily_response)
+
+        with patch('pydantic_ai.common_tools.tavily.AsyncTavilyClient', return_value=mock_client):
+            tool = tavily_search_tool(
+                'test-api-key',
+                max_results=5,
+                include_domains=['arxiv.org'],
+            )
+
+        ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+        # Simulate LLM providing only the unbound params
+        result = await tool.function_schema.call({'query': 'transformer architectures'}, ctx)
+
+        mock_client.search.assert_called_once_with(
+            'transformer architectures',
+            search_depth='basic',
+            topic='general',
+            time_range=None,
+            max_results=5,
+            include_domains=['arxiv.org'],
+            exclude_domains=None,
+        )
+        assert len(result) == 2
+        assert result[0]['title'] == 'Test Result 1'
