@@ -250,6 +250,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         include_errors: bool = True,
         include_error_stacktrace: bool = False,
         include_evaluator_failures: bool = True,
+        include_analyses: bool = True,
         input_config: RenderValueConfig | None = None,
         metadata_config: RenderValueConfig | None = None,
         output_config: RenderValueConfig | None = None,
@@ -280,6 +281,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             include_errors=include_errors,
             include_error_stacktrace=include_error_stacktrace,
             include_evaluator_failures=include_evaluator_failures,
+            include_analyses=include_analyses,
             input_config=input_config,
             metadata_config=metadata_config,
             output_config=output_config,
@@ -308,6 +310,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         include_errors: bool = True,
         include_error_stacktrace: bool = False,
         include_evaluator_failures: bool = True,
+        include_analyses: bool = True,
         input_config: RenderValueConfig | None = None,
         metadata_config: RenderValueConfig | None = None,
         output_config: RenderValueConfig | None = None,
@@ -350,10 +353,10 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         if metadata_panel:
             renderable = Group(metadata_panel, renderable)
         console.print(renderable)
-        if self.analyses:
+        if include_analyses and self.analyses:
             for analysis in self.analyses:
                 console.print(_render_analysis(analysis))
-        if self.report_evaluator_failures:
+        if include_evaluator_failures and self.report_evaluator_failures:
             console.print(
                 Text('\nReport Evaluator Failures:', style='bold red'),
             )

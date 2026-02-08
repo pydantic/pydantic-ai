@@ -139,9 +139,10 @@ class PrecisionRecallEvaluator(ReportEvaluator):
         if self.score_from == 'scores':
             result = case.scores.get(self.score_key)
             return float(result.value) if result else None
-        else:
+        elif self.score_from == 'metrics':
             val = case.metrics.get(self.score_key)
             return float(val) if val is not None else None
+        assert_never(self.score_from)
 
     def _get_positive(self, case: ReportCase[Any, Any, Any]) -> bool | None:
         if self.positive_from == 'expected_output':

@@ -4,6 +4,16 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Discriminator
 
+__all__ = (
+    'ConfusionMatrix',
+    'PrecisionRecall',
+    'PrecisionRecallCurve',
+    'PrecisionRecallPoint',
+    'ReportAnalysis',
+    'ScalarResult',
+    'TableResult',
+)
+
 
 class ConfusionMatrix(BaseModel):
     """A confusion matrix comparing expected vs predicted labels across cases."""

@@ -271,7 +271,14 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
         if len(raw_arguments) == 0:
             arguments = None
         elif len(raw_arguments) == 1:
-            arguments = (next(iter(raw_arguments.values())),)
+            # Only use the compact tuple form if the single non-default field is the first
+            # dataclass field, since the tuple form passes the value as the first positional arg.
+            first_field_name = fields(self)[0].name
+            key = next(iter(raw_arguments))
+            if key == first_field_name:
+                arguments = (raw_arguments[key],)
+            else:
+                arguments = raw_arguments
         else:
             arguments = raw_arguments
 

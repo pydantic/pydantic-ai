@@ -467,6 +467,38 @@ def test_report_rendering_includes_analyses():
     assert 'CM' in rendered
 
 
+def test_report_rendering_include_analyses_false():
+    cases = [
+        _make_report_case('c1', output='cat', expected_output='cat'),
+    ]
+    report = _make_report(cases)
+    report.analyses = [
+        ScalarResult(title='Accuracy', value=100.0, unit='%'),
+    ]
+
+    rendered = report.render(width=120, include_analyses=False)
+    assert 'Accuracy: 100.0 %' not in rendered
+
+
+def test_report_rendering_include_evaluator_failures_false():
+    from pydantic_evals.evaluators.evaluator import EvaluatorFailure
+    from pydantic_evals.evaluators.spec import EvaluatorSpec
+
+    report = _make_report([_make_report_case('c1', output='x', expected_output='x')])
+    report.report_evaluator_failures = [
+        EvaluatorFailure(
+            name='BrokenEvaluator',
+            error_message='ValueError: oops',
+            error_stacktrace='Traceback ...',
+            source=EvaluatorSpec(name='BrokenEvaluator', arguments=None),
+        ),
+    ]
+
+    rendered = report.render(width=120, include_evaluator_failures=False)
+    assert 'Report Evaluator Failures' not in rendered
+    assert 'BrokenEvaluator' not in rendered
+
+
 # --- EvaluationReport.analyses default ---
 
 
@@ -508,13 +540,23 @@ def test_report_evaluator_as_spec_with_args():
     assert spec.arguments['title'] == 'Custom CM'
 
 
-def test_report_evaluator_as_spec_single_arg():
-    """Report evaluator with exactly one non-default arg uses tuple form."""
+def test_report_evaluator_as_spec_single_arg_non_first_field():
+    """Report evaluator with one non-default arg that isn't the first field uses dict form."""
     evaluator = ConfusionMatrixEvaluator(title='My Matrix')
     spec = evaluator.as_spec()
     assert spec.name == 'ConfusionMatrixEvaluator'
+    # title is not the first field, so dict form is used to preserve the field name
+    assert isinstance(spec.arguments, dict)
+    assert spec.arguments == {'title': 'My Matrix'}
+
+
+def test_report_evaluator_as_spec_single_arg_first_field():
+    """Report evaluator with one non-default arg that is the first field uses tuple form."""
+    evaluator = ConfusionMatrixEvaluator(predicted_from='labels')
+    spec = evaluator.as_spec()
+    assert spec.name == 'ConfusionMatrixEvaluator'
     assert isinstance(spec.arguments, tuple)
-    assert spec.arguments == ('My Matrix',)
+    assert spec.arguments == ('labels',)
 
 
 def test_report_evaluator_build_serialization_arguments_excludes_defaults():
@@ -542,7 +584,7 @@ def test_report_evaluator_serializes_with_args_in_model_dump():
         report_evaluators=[ConfusionMatrixEvaluator(title='Custom')],
     )
     dumped = dataset.model_dump(mode='json', context={'use_short_form': True})
-    assert dumped['report_evaluators'] == [{'ConfusionMatrixEvaluator': 'Custom'}]
+    assert dumped['report_evaluators'] == [{'ConfusionMatrixEvaluator': {'title': 'Custom'}}]
 
 
 def test_report_evaluator_repr():
