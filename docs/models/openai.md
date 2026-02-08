@@ -351,6 +351,25 @@ agent = Agent(model)
 ...
 ```
 
+When sending an audio file to an Alibaba model (e.g., `Omni` or `ASR` models) in OpenAI compatible mode, a base64 encoded data URI is required by setting `uses_audio_uri=True`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.alibaba import AlibabaProvider
+
+model = OpenAIChatModel(
+    'qwen3-asr-flash',
+    provider=AlibabaProvider(
+        api_key='your-api-key',
+        base_url='https://dashscope.aliyuncs.com/compatible-mode/v1',  # China region
+        uses_audio_uri=True
+    ),
+)
+agent = Agent(model)
+...
+```
+
 ### Ollama
 
 Pydantic AI supports both self-hosted [Ollama](https://ollama.com/) servers (running locally or remotely) and [Ollama Cloud](https://ollama.com/cloud).

@@ -4,7 +4,6 @@ import os
 from typing import overload
 
 import httpx
-from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
@@ -43,9 +42,13 @@ class AlibabaProvider(Provider[AsyncOpenAI]):
         # Wrap/merge into OpenAIModelProfile
         openai_profile = OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(base_profile)
 
-        # For Qwen Omni models, force URI audio input encoding
-        if 'omni' in model_name.lower():
-            openai_profile = OpenAIModelProfile(openai_chat_audio_input_encoding='uri').update(openai_profile)
+        # For backwards compatibility
+        if self._uses_audio_uri is None:
+            self._uses_audio_uri = 'omni' in model_name.lower()
+
+        # To be more flexible on using audio URI for any Alibaba models
+        if self._uses_audio_uri:
+            openai_profile.openai_chat_audio_input_encoding = 'uri'
 
         return openai_profile
 
@@ -53,10 +56,17 @@ class AlibabaProvider(Provider[AsyncOpenAI]):
     def __init__(self) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, base_url: str | None = None) -> None: ...
+    def __init__(self, *, api_key: str, base_url: str | None = None, uses_audio_uri: bool | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, base_url: str | None = None, http_client: httpx.AsyncClient) -> None: ...
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str | None = None,
+        uses_audio_uri: bool | None = None,
+        http_client: httpx.AsyncClient,
+    ) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -68,7 +78,10 @@ class AlibabaProvider(Provider[AsyncOpenAI]):
         base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: httpx.AsyncClient | None = None,
+        uses_audio_uri: bool | None = None,
     ) -> None:
+        self._uses_audio_uri = uses_audio_uri
+
         if openai_client is not None:
             self._client = openai_client
             self._base_url = str(openai_client.base_url)
