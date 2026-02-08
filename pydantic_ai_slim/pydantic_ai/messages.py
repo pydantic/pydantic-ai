@@ -790,13 +790,18 @@ class UserPromptPart:
                 )
             elif isinstance(part, ImageUrl | AudioUrl | DocumentUrl | VideoUrl):
                 if settings.version >= 4:
-                    parts.append(
-                        _otel_messages.UriPart(
-                            type='uri',
-                            modality=_kind_to_modality_lookup[part.kind],
-                            **{'uri': part.url, 'mime_type': part.media_type} if settings.include_content else {},
-                        )
-                    )
+                    uri_data: dict[str, Any] = {
+                        'type': 'uri',
+                        'modality': _kind_to_modality_lookup[part.kind],
+                    }
+                    if settings.include_content:
+                        uri_data['uri'] = part.url
+                        try:
+                            uri_data['mime_type'] = part.media_type
+                        except ValueError:
+                            # Could not infer media type from URL - omit mime_type field
+                            pass
+                    parts.append(_otel_messages.UriPart(**uri_data))
                 else:
                     parts.append(
                         _otel_messages.MediaUrlPart(
