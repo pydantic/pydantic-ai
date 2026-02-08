@@ -1,0 +1,107 @@
+name: Auto Review
+on:
+  pull_request_target:
+    types: [opened, synchronize, labeled]
+
+concurrency:
+  group: review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+
+  review:
+    if: >-
+      (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'auto-review')) ||
+      (github.event.action == 'labeled' && github.event.label.name == 'auto-review')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: read
+    steps:
+      - name: Wait for push activity to settle
+        if: github.event.action == 'synchronize'
+        run: sleep 900  # 15 minutes
+
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 1
+
+      - name: Check for modified config files
+        if: github.event.pull_request.head.repo.fork
+        run: |
+          CHANGED=$(gh pr diff ${{ github.event.pull_request.number }} --name-only --repo ${{ github.repository }})
+          if echo "$CHANGED" | grep -qiE '(^|/)AGENTS\.md$|(^|/)CLAUDE\.md$|(^|/)\.claude/'; then
+            echo "::error::PR modifies agent config files (AGENTS.md, CLAUDE.md, or .claude/). Skipping auto-review for security."
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          allowed_non_write_users: '*'
+          additional_permissions: |
+            actions: read
+          claude_args: |
+            --model claude-opus-4-6
+            --allowedTools "TodoWrite,mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh run view:*),Bash(gh run list:*),Bash(gh api:*),Bash(git log:*),Bash(git diff:*),Bash(git grep:*),Bash(git show:*),Bash(git status:*),Bash(jq:*),Bash(cat:*),Bash(rg:*),Bash(ls:*),Bash(tree:*),Bash(grep:*),WebSearch,WebFetch"
+
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+            PR AUTHOR: ${{ github.event.pull_request.user.login }} (${{ github.event.pull_request.author_association }})
+
+            Review this pull request. The PR branch is already checked out in the current working directory.
+
+            Use the `gh` CLI to read the PR and related issues and comments. When using `gh api`, use the built-in `--jq` or `--template` flags for filtering/formatting since `jq` may not be available and `python3` is not allowed.
+
+            Before you start:
+            - Read the `CLAUDE.md` at the root (symlinked to `AGENTS.md`) to understand the project and your responsibility in helping drive this PR towards a good outcome for the project and all of its users, and lowering the review burden on maintainers.
+            - Read the version policy in `docs/version-policy.md` to understand what constitutes a breaking change.
+            - Read all related issues and their comments to understand the context of the PR and maintainer input on what an acceptable solution would look like.
+            - Read all existing top-level PR comments and inline review comments so that you don't point out things that another user, bot, or you yourself have already pointed out.
+            - Read the directory-specific `AGENTS.md` files for any directories that had changes.
+            - Read all changes, excluding generated files like `uv.lock` and `tests/*/cassettes/*`.
+
+            Use the `TodoWrite` tool to track your progress through each of these stages.
+
+            Then identify any problems, confirmed or potential (that have not already been pointed out):
+            - Any change that does not align with the project's standards, philosophy, or requirements for every contribution as stated in `AGENTS.md`.
+            - Any change that does not match maintainer guidance in the issue or earlier PR comments on what an acceptable solution would look like.
+            - Any change or design decision or tradeoff (in both behavior and API) that needs explicit consideration, discussion, or maintainer awareness and approval.
+            - Any line of code that violates the concrete guidelines/rules laid out in the relevant `AGENTS.md` file(s): the top-level guidelines apply to all changes, while directory-specific guidelines affect only the changes in that directory.
+            - Anything else that the responsibilities you are assigned in `AGENTS.md` suggest that you should be calling out: use your best judgment.
+
+            Note that while another agent (Devin) is responsible for thoroughly reviewing the implementation for bugs, security issues, and edge cases,
+            _you_ are responsible for catching every violation of the repository's guidelines/rules listed in the `AGENTS.md` files.
+            Do not focus exclusively on high-level concerns, every line needs to meet our bar.
+
+            Use the `TodoWrite` tool to track each identified issue before moving to submitting comments.
+
+            Finally, for each identified issue:
+            - Consider if it is still relevant now that you have the full context of the PR, or whether it duplicates another issue or existing unresolved review comment.
+            - If it is determined to be worth a new comment, use `mcp__github_inline_comment__create_inline_comment` to attach the feedback to a specific line of code.
+              - Include the reasoning, but don't quote specific rules from the `AGENTS.md` files.
+              - Include a concrete suggestion if appropriate, using GitHub suggestion code snippets for concrete code changes.
+              - Include a ping to the maintainer (`@DouweM`) on any change that requires further discussion or approval.
+              - If the same issue shows up in multiple places, post a comment on each instance but have later comments refer the first comment.
+            - Use `gh pr comment` only for important feedback that doesn't relate to a specific line or file, not for a summary of feedback you've already posted inline.
+
+            Your comments should be:
+            - actionable: they should request a change, flag a concern that needs discussion, and/or suggest an improvement; don't comment on positive aspects of the PR like "excellent design choices".
+            - concise and to the point: don't use unnecessary emojis, lists, or subheadings; 1 to 3 paragraphs are pretty much always enough.
+            - friendly without being sycophantic: use the tone and language of a helpful and encouraging project maintainer, but no need to compliment the author on positive aspects of the PR or point out changes that are good.
+            - non-repetitive: don't repeat things pointed out in earlier review comments, unless they are marked as resolved and the problem persists without a satisfactory resolution (like a maintainer comment saying the comment does not need to be addressed).
+
+            You are meant to be helpful to the contributor and the maintainer, so your comments should never add noise to the conversation:
+            - Do not post a final summary comment; inline comments are sufficient.
+            - Do not comment on lines that do not need improvement, maintainer awareness, or discussion; comments pointing out a good choice are just noise.
+            - Do not post multiple comments for the same exact issue unless it shows up in different places.
+
+            It bears repeating that you are the first line of defense against low-quality contributions and maintainer headaches, and you have a big role in ensuring that every contribution to this project meets or exceeds the high standards that the Pydantic brand is known and loved for.
