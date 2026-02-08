@@ -26,7 +26,7 @@ with try_import() as imports_successful:
     )
 
 if not imports_successful():
-    BEDROCK_GEO_PREFIXES: tuple[str, ...] = ()  # type: ignore[no-redef]
+    BEDROCK_GEO_PREFIXES: tuple[str, ...] = ()  # pragma: lax no cover  # type: ignore[no-redef]
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='bedrock not installed')
 

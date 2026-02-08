@@ -35,7 +35,7 @@ _mime_types = MimeTypes()
 _mime_types.read_windows_registry()
 for file in mimetypes.knownfiles:
     if os.path.isfile(file):
-        _mime_types.read(file)
+        _mime_types.read(file)  # pragma: lax no cover
 # TODO check for added mimetypes in Python 3.11 when dropping support for Python 3.10:
 # Document types
 _mime_types.add_type('application/rtf', '.rtf')
@@ -52,6 +52,7 @@ _mime_types.add_type('image/webp', '.webp')
 _mime_types.add_type('video/3gpp', '.three_gp')
 _mime_types.add_type('video/x-matroska', '.mkv')
 _mime_types.add_type('video/x-ms-wmv', '.wmv')
+_mime_types.add_type('video/x-flv', '.flv')
 
 # Audio types
 # NOTE: aac is platform specific (linux: audio/x-aac, macos: audio/aac) but x-aac is deprecated https://mimetype.io/audio/aac
@@ -67,6 +68,9 @@ _mime_types.add_type('application/yaml', '.yaml')
 _mime_types.add_type('application/yaml', '.yml')
 # TOML: RFC 9519 (https://www.rfc-editor.org/rfc/rfc9519.html)
 _mime_types.add_type('application/toml', '.toml')
+
+# XML is recognized as `text/xml` on some systems, but it needs to be `application/xml` per RFC 7303 (https://www.rfc-editor.org/rfc/rfc7303.html)
+_mime_types.add_type('application/xml', '.xml')
 
 
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac']
@@ -106,6 +110,15 @@ FinishReason: TypeAlias = Literal[
     'error',
 ]
 """Reason the model finished generating the response, normalized to OpenTelemetry values."""
+
+ForceDownloadMode: TypeAlias = bool | Literal['allow-local']
+"""Type for the force_download parameter on FileUrl subclasses.
+
+- `False`: The URL is sent directly to providers that support it. For providers that don't,
+  the file is downloaded with SSRF protection (blocks private IPs and cloud metadata).
+- `True`: The file is always downloaded with SSRF protection (blocks private IPs and cloud metadata).
+- `'allow-local'`: The file is always downloaded, allowing private IPs but still blocking cloud metadata.
+"""
 
 ProviderDetailsDelta: TypeAlias = dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None
 """Type for provider_details input: can be a static dict, a callback to update existing details, or None."""
@@ -163,11 +176,13 @@ class FileUrl(ABC):
 
     _: KW_ONLY
 
-    force_download: bool = False
-    """For OpenAI, Google APIs and xAI it:
+    force_download: ForceDownloadMode = False
+    """Controls whether the file is downloaded and how SSRF protection is applied:
 
-    * If True, the file is downloaded and the data is sent to the model as bytes.
-    * If False, the URL is sent directly to the model and no download is performed.
+    * If `False`, the URL is sent directly to providers that support it. For providers that don't,
+      the file is downloaded with SSRF protection (blocks private IPs and cloud metadata).
+    * If `True`, the file is always downloaded with SSRF protection (blocks private IPs and cloud metadata).
+    * If `'allow-local'`, the file is always downloaded, allowing private IPs but still blocking cloud metadata.
     """
 
     vendor_metadata: dict[str, Any] | None = None
@@ -195,7 +210,7 @@ class FileUrl(ABC):
         *,
         media_type: str | None = None,
         identifier: str | None = None,
-        force_download: bool = False,
+        force_download: ForceDownloadMode = False,
         vendor_metadata: dict[str, Any] | None = None,
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
@@ -259,7 +274,7 @@ class VideoUrl(FileUrl):
         *,
         media_type: str | None = None,
         identifier: str | None = None,
-        force_download: bool = False,
+        force_download: ForceDownloadMode = False,
         vendor_metadata: dict[str, Any] | None = None,
         kind: Literal['video-url'] = 'video-url',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
@@ -318,7 +333,7 @@ class AudioUrl(FileUrl):
         *,
         media_type: str | None = None,
         identifier: str | None = None,
-        force_download: bool = False,
+        force_download: ForceDownloadMode = False,
         vendor_metadata: dict[str, Any] | None = None,
         kind: Literal['audio-url'] = 'audio-url',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
@@ -365,7 +380,7 @@ class ImageUrl(FileUrl):
         *,
         media_type: str | None = None,
         identifier: str | None = None,
-        force_download: bool = False,
+        force_download: ForceDownloadMode = False,
         vendor_metadata: dict[str, Any] | None = None,
         kind: Literal['image-url'] = 'image-url',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
@@ -411,7 +426,7 @@ class DocumentUrl(FileUrl):
         *,
         media_type: str | None = None,
         identifier: str | None = None,
-        force_download: bool = False,
+        force_download: ForceDownloadMode = False,
         vendor_metadata: dict[str, Any] | None = None,
         kind: Literal['document-url'] = 'document-url',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
@@ -651,7 +666,14 @@ class CachePoint:
     * Anthropic (automatically omitted for Bedrock, as it does not support explicit TTL). See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
 
 
-MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
+MULTI_MODAL_CONTENT_TYPES = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent)
+"""Tuple of multi-modal content types for use with isinstance() checks."""
+
+MultiModalContent = Annotated[
+    ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent, pydantic.Discriminator('kind')
+]
+"""Union of all multi-modal content types with a discriminator for Pydantic validation."""
+
 UserContent: TypeAlias = str | MultiModalContent | CachePoint
 
 

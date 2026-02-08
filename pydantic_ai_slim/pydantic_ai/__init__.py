@@ -21,6 +21,12 @@ from .builtin_tools import (
     WebSearchUserLocation,
     XSearchTool,
 )
+from .concurrency import (
+    AbstractConcurrencyLimiter,
+    AnyConcurrencyLimit,
+    ConcurrencyLimit,
+    ConcurrencyLimiter,
+)
 from .embeddings import (
     Embedder,
     EmbeddingModel,
@@ -31,6 +37,7 @@ from .exceptions import (
     AgentRunError,
     ApprovalRequired,
     CallDeferred,
+    ConcurrencyLimitExceeded,
     FallbackExceptionGroup,
     IncompleteToolCall,
     ModelAPIError,
@@ -94,6 +101,7 @@ from .messages import (
     VideoMediaType,
     VideoUrl,
 )
+from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
 from .profiles import (
     DEFAULT_PROFILE,
@@ -136,10 +144,18 @@ __all__ = (
     'EmbeddingModel',
     'EmbeddingSettings',
     'EmbeddingResult',
+    # concurrency
+    'AbstractConcurrencyLimiter',
+    'AnyConcurrencyLimit',
+    'ConcurrencyLimit',
+    'ConcurrencyLimitedModel',
+    'ConcurrencyLimiter',
+    'limit_model_concurrency',
     # exceptions
     'AgentRunError',
     'CallDeferred',
     'ApprovalRequired',
+    'ConcurrencyLimitExceeded',
     'ModelRetry',
     'ModelAPIError',
     'ModelHTTPError',
