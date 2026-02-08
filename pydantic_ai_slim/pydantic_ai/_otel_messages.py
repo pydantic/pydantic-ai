@@ -56,13 +56,26 @@ class BinaryDataPart(TypedDict):
     content: NotRequired[str]
 
 
+class BlobPart(TypedDict):
+    """Part type for inline binary data following OpenTelemetry GenAI semantic conventions.
+
+    Used in instrumentation version 4+ to align with the GenAI spec:
+    https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/#multimodal-inputs-example
+    """
+
+    type: Literal['blob']
+    modality: NotRequired[Literal['image', 'audio', 'video', 'document']]
+    mime_type: NotRequired[str]
+    content: NotRequired[str]
+
+
 class ThinkingPart(TypedDict):
     type: Literal['thinking']
     content: NotRequired[str]
 
 
 MessagePart: TypeAlias = (
-    'TextPart | ToolCallPart | ToolCallResponsePart | MediaUrlPart | UriPart | BinaryDataPart | ThinkingPart'
+    'TextPart | ToolCallPart | ToolCallResponsePart | MediaUrlPart | UriPart | BinaryDataPart | BlobPart | ThinkingPart'
 )
 
 
