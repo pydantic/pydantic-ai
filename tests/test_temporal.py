@@ -3442,7 +3442,9 @@ def test_temporal_model_customize_request_parameters_with_registered_model() -> 
     """Test customize_request_parameters delegates to the currently active registered model."""
 
     class _CustomizingTestModel(TestModel):
-        def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
+        def customize_request_parameters(
+            self, model_request_parameters: ModelRequestParameters
+        ) -> ModelRequestParameters:
             return ModelRequestParameters(output_mode='tool', allow_text_output=False)
 
     default_model = TestModel(custom_output_text='default')

@@ -63,7 +63,9 @@ def test_wrapper_model_customize_request_parameters_delegation():
     """Test that WrapperModel delegates request parameter customization to wrapped model."""
 
     class _CustomizingTestModel(TestModel):
-        def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
+        def customize_request_parameters(
+            self, model_request_parameters: ModelRequestParameters
+        ) -> ModelRequestParameters:
             return ModelRequestParameters(output_mode='tool', allow_text_output=False)
 
     wrapper = WrapperModel(_CustomizingTestModel())
