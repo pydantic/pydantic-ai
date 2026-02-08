@@ -159,12 +159,18 @@ class TestTavilySearchToolFactory:
         with patch('pydantic_ai.common_tools.tavily.AsyncTavilyClient'):
             tool = tavily_search_tool(
                 'test-api-key',
+                search_deep='advanced',
+                topic='news',
+                time_range='week',
                 max_results=5,
                 include_domains=['arxiv.org'],
                 exclude_domains=['medium.com'],
             )
 
             schema_props = tool.function_schema.json_schema['properties']
+            assert 'search_deep' not in schema_props
+            assert 'topic' not in schema_props
+            assert 'time_range' not in schema_props
             assert 'max_results' not in schema_props
             assert 'include_domains' not in schema_props
             assert 'exclude_domains' not in schema_props
