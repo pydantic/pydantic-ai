@@ -1354,6 +1354,88 @@ def test_messages_to_otel_messages_multimodal_v4_no_content():
     )
 
 
+def test_messages_to_otel_messages_binary_content_v4():
+    """Test that version 4 uses blob format with modality for BinaryContent."""
+    image_data = BinaryContent(data=b'fake image data', media_type='image/png')
+    audio_data = BinaryContent(data=b'fake audio data', media_type='audio/mpeg')
+    video_data = BinaryContent(data=b'fake video data', media_type='video/mp4')
+    doc_data = BinaryContent(data=b'fake doc data', media_type='application/pdf')
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Analyze these files',
+                        image_data,
+                        audio_data,
+                        video_data,
+                        doc_data,
+                    ]
+                )
+            ],
+            timestamp=IsDatetime(),
+        ),
+    ]
+    settings = InstrumentationSettings(version=4)
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'Analyze these files'},
+                    {
+                        'type': 'blob',
+                        'modality': 'image',
+                        'mime_type': 'image/png',
+                        'content': image_data.base64,
+                    },
+                    {
+                        'type': 'blob',
+                        'modality': 'audio',
+                        'mime_type': 'audio/mpeg',
+                        'content': audio_data.base64,
+                    },
+                    {
+                        'type': 'blob',
+                        'modality': 'video',
+                        'mime_type': 'video/mp4',
+                        'content': video_data.base64,
+                    },
+                    {
+                        'type': 'blob',
+                        'modality': 'document',
+                        'mime_type': 'application/pdf',
+                        'content': doc_data.base64,
+                    },
+                ],
+            }
+        ]
+    )
+
+
+def test_messages_to_otel_messages_binary_content_v4_no_content():
+    """Test that version 4 with include_content=False omits mime_type and content for BinaryContent."""
+    image_data = BinaryContent(data=b'fake image data', media_type='image/png')
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content=['Analyze this', image_data])],
+            timestamp=IsDatetime(),
+        ),
+    ]
+    settings = InstrumentationSettings(version=4, include_content=False)
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text'},
+                    {'type': 'blob', 'modality': 'image'},
+                ],
+            }
+        ]
+    )
+
+
 def test_messages_to_otel_events_without_binary_content(document_content: BinaryContent):
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content=['user_prompt6', document_content])], timestamp=IsDatetime()),

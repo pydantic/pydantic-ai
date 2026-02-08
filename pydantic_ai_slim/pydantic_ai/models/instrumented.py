@@ -128,7 +128,8 @@ class InstrumentationSettings:
                 Version 3 is the same as version 2, with additional support for thinking tokens.
                 Version 4 is the same as version 3, with GenAI semantic conventions for multimodal inputs:
                     https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/#multimodal-inputs-example
-                    Image, audio, video, and document URLs are logged with type='uri', modality, uri, and mime_type fields.
+                    Media URLs are logged with type='uri', modality, uri, and mime_type fields.
+                    Inline binary content is logged with type='blob', modality, mime_type, and content fields.
             event_mode: The mode for emitting events in version 1.
                 If `'attributes'`, events are attached to the span as attributes.
                 If `'logs'`, events are emitted as OpenTelemetry log-based events.
