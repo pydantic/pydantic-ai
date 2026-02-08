@@ -10,6 +10,7 @@ from typing_extensions import TypeVar
 
 from ..reporting.analyses import ReportAnalysis
 from ._base import BaseEvaluator
+from .evaluator import _StrictABCMeta  # pyright: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
     from pydantic_evals.reporting import EvaluationReport
@@ -32,7 +33,7 @@ class ReportEvaluatorContext(Generic[InputsT, OutputT, MetadataT]):
 
 
 @dataclass(repr=False)
-class ReportEvaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
+class ReportEvaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
     """Base class for experiment-wide evaluators that analyze full reports.
 
     Unlike case-level Evaluators which assess individual task outputs,
