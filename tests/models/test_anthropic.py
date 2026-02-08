@@ -1,11 +1,12 @@
 from __future__ import annotations as _annotations
 
+import datetime
 import json
 import os
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import timezone
 from decimal import Decimal
 from functools import cached_property
 from typing import Annotated, Any, TypeVar, cast
@@ -71,6 +72,7 @@ with try_import() as imports_successful:
         BetaContentBlock,
         BetaDirectCaller,
         BetaInputJSONDelta,
+        BetaMCPToolResultBlock,
         BetaMemoryTool20250818CreateCommand,
         BetaMemoryTool20250818DeleteCommand,
         BetaMemoryTool20250818InsertCommand,
@@ -134,6 +136,510 @@ def test_init():
     assert m.model_name == 'claude-haiku-4-5'
     assert m.system == 'anthropic'
     assert m.base_url == 'https://api.anthropic.com'
+
+
+async def test_anthropic_message_roundtrip():
+    """Roundtrip test: PydanticAI -> Anthropic -> PydanticAI with snapshot comparison."""
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='foobar'))
+    run_id = 'test-run-id-123'
+
+    original_messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='You are a helpful assistant.'),
+                UserPromptPart(content='Hello, can you help me?'),
+            ],
+            run_id=run_id,
+        ),
+        ModelResponse(
+            parts=[TextPart(content='Hello! How can I help you today?')],
+            provider_name='anthropic',
+            model_name='claude-haiku-4-5',
+            run_id=run_id,
+        ),
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='search', content='Found 5 results', tool_call_id='tool_001')],
+            run_id=run_id,
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(content='Let me search for that.'),
+                ToolCallPart(tool_name='search_database', args={'query': 'data'}, tool_call_id='tool_002'),
+            ],
+            provider_name='anthropic',
+            model_name='claude-haiku-4-5',
+            run_id=run_id,
+        ),
+        ModelRequest(
+            parts=[RetryPromptPart(content='Connection timeout', tool_name='search', tool_call_id='tool_002')],
+            run_id=run_id,
+        ),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Let me think...', signature='sig_123', provider_name='anthropic'),
+                TextPart(content='Based on my analysis...'),
+            ],
+            provider_name='anthropic',
+            model_name='claude-haiku-4-5',
+            run_id=run_id,
+        ),
+        ModelResponse(
+            parts=[
+                ThinkingPart(id='redacted_001', content='', signature='encrypted_data', provider_name='anthropic'),
+                TextPart(content='I have processed your request.'),
+            ],
+            provider_name='anthropic',
+            model_name='claude-haiku-4-5',
+            run_id=run_id,
+        ),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name=WebSearchTool.kind,
+                    args={'query': 'latest news'},
+                    tool_call_id='builtin_001',
+                    provider_name='anthropic',
+                )
+            ],
+            provider_name='anthropic',
+            model_name='claude-haiku-4-5',
+            run_id=run_id,
+        ),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name=CodeExecutionTool.kind,
+                    args={'code': 'print(1+1)'},
+                    tool_call_id='builtin_002',
+                    provider_name='anthropic',
+                )
+            ],
+            provider_name='anthropic',
+            model_name='claude-haiku-4-5',
+            run_id=run_id,
+        ),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name=WebFetchTool.kind,
+                    args={'url': 'https://example.com'},
+                    tool_call_id='builtin_003',
+                    provider_name='anthropic',
+                )
+            ],
+            provider_name='anthropic',
+            model_name='claude-haiku-4-5',
+            run_id=run_id,
+        ),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name=f'{MCPServerTool.kind}:my_server',
+                    args={'action': 'call_tool', 'tool_name': 'fetch_data', 'tool_args': {'id': '123'}},
+                    tool_call_id='mcp_001',
+                    provider_name='anthropic',
+                )
+            ],
+            provider_name='anthropic',
+            model_name='claude-haiku-4-5',
+            run_id=run_id,
+        ),
+        ModelResponse(
+            parts=[
+                BuiltinToolReturnPart(
+                    tool_name=WebSearchTool.kind,
+                    content=[{'type': 'web_search_result', 'title': 'News', 'url': 'https://news.com'}],
+                    tool_call_id='builtin_001',
+                    provider_name='anthropic',
+                )
+            ],
+            provider_name='anthropic',
+            model_name='claude-haiku-4-5',
+            run_id=run_id,
+        ),
+        ModelResponse(
+            parts=[
+                BuiltinToolReturnPart(
+                    tool_name=CodeExecutionTool.kind,
+                    content={'return_code': 0, 'content': [{'type': 'text', 'text': '2'}]},
+                    tool_call_id='builtin_002',
+                    provider_name='anthropic',
+                )
+            ],
+            provider_name='anthropic',
+            model_name='claude-haiku-4-5',
+            run_id=run_id,
+        ),
+        ModelResponse(
+            parts=[
+                BuiltinToolReturnPart(
+                    tool_name=WebFetchTool.kind,
+                    content={'type': 'web_fetch', 'url': 'https://example.com', 'content': 'Hello'},
+                    tool_call_id='builtin_003',
+                    provider_name='anthropic',
+                )
+            ],
+            provider_name='anthropic',
+            model_name='claude-haiku-4-5',
+            run_id=run_id,
+        ),
+        ModelResponse(
+            parts=[
+                BuiltinToolReturnPart(
+                    tool_name=f'{MCPServerTool.kind}:my_server',
+                    content={'content': 'MCP result data', 'is_error': False},
+                    tool_call_id='mcp_001',
+                    provider_name='anthropic',
+                )
+            ],
+            provider_name='anthropic',
+            model_name='claude-haiku-4-5',
+            run_id=run_id,
+        ),
+    ]
+
+    # Forward conversion: PydanticAI -> Anthropic
+    system_prompt, anthropic_msgs = await m.to_anthropic_messages(original_messages)
+
+    # Reverse conversion: Anthropic -> PydanticAI
+    roundtrip_messages = m.from_anthropic_messages(
+        cast(list[Any], anthropic_msgs), system_prompt=system_prompt, run_id=run_id
+    )
+
+    # Snapshot the Anthropic format
+    assert (system_prompt, anthropic_msgs) == snapshot(
+        (
+            'You are a helpful assistant.',
+            [
+                {'content': [{'text': 'Hello, can you help me?', 'type': 'text'}], 'role': 'user'},
+                {'content': [{'text': 'Hello! How can I help you today?', 'type': 'text'}], 'role': 'assistant'},
+                {
+                    'content': [
+                        {
+                            'content': 'Found 5 results',
+                            'is_error': False,
+                            'tool_use_id': 'tool_001',
+                            'type': 'tool_result',
+                        }
+                    ],
+                    'role': 'user',
+                },
+                {
+                    'content': [
+                        {'text': 'Let me search for that.', 'type': 'text'},
+                        {
+                            'id': 'tool_002',
+                            'input': {'query': 'data'},
+                            'name': 'search_database',
+                            'type': 'tool_use',
+                        },
+                    ],
+                    'role': 'assistant',
+                },
+                {
+                    'content': [
+                        {
+                            'content': """\
+Connection timeout
+
+Fix the errors and try again.\
+""",
+                            'is_error': True,
+                            'tool_use_id': 'tool_002',
+                            'type': 'tool_result',
+                        }
+                    ],
+                    'role': 'user',
+                },
+                {
+                    'content': [
+                        {'signature': 'sig_123', 'thinking': 'Let me think...', 'type': 'thinking'},
+                        {'text': 'Based on my analysis...', 'type': 'text'},
+                    ],
+                    'role': 'assistant',
+                },
+                {
+                    'content': [
+                        {'thinking': '', 'signature': 'encrypted_data', 'type': 'thinking'},
+                        {'text': 'I have processed your request.', 'type': 'text'},
+                    ],
+                    'role': 'assistant',
+                },
+                {
+                    'content': [
+                        {
+                            'id': 'builtin_001',
+                            'input': {'query': 'latest news'},
+                            'name': 'web_search',
+                            'type': 'server_tool_use',
+                        }
+                    ],
+                    'role': 'assistant',
+                },
+                {
+                    'content': [
+                        {
+                            'id': 'builtin_002',
+                            'input': {'code': 'print(1+1)'},
+                            'name': 'code_execution',
+                            'type': 'server_tool_use',
+                        }
+                    ],
+                    'role': 'assistant',
+                },
+                {
+                    'content': [
+                        {
+                            'id': 'builtin_003',
+                            'input': {'url': 'https://example.com'},
+                            'name': 'web_fetch',
+                            'type': 'server_tool_use',
+                        }
+                    ],
+                    'role': 'assistant',
+                },
+                {
+                    'content': [
+                        {
+                            'id': 'mcp_001',
+                            'input': {'id': '123'},
+                            'name': 'fetch_data',
+                            'server_name': 'my_server',
+                            'type': 'mcp_tool_use',
+                        }
+                    ],
+                    'role': 'assistant',
+                },
+                {
+                    'content': [
+                        {
+                            'content': [{'type': 'web_search_result', 'title': 'News', 'url': 'https://news.com'}],
+                            'tool_use_id': 'builtin_001',
+                            'type': 'web_search_tool_result',
+                        }
+                    ],
+                    'role': 'assistant',
+                },
+                {
+                    'content': [
+                        {
+                            'content': {'content': [{'text': '2', 'type': 'text'}], 'return_code': 0},
+                            'tool_use_id': 'builtin_002',
+                            'type': 'code_execution_tool_result',
+                        }
+                    ],
+                    'role': 'assistant',
+                },
+                {
+                    'content': [
+                        {
+                            'content': {'content': 'Hello', 'type': 'web_fetch', 'url': 'https://example.com'},
+                            'tool_use_id': 'builtin_003',
+                            'type': 'web_fetch_tool_result',
+                        }
+                    ],
+                    'role': 'assistant',
+                },
+                {
+                    'content': [
+                        BetaMCPToolResultBlock(
+                            content='MCP result data', is_error=False, tool_use_id='mcp_001', type='mcp_tool_result'
+                        )
+                    ],
+                    'role': 'assistant',
+                },
+            ],
+        )
+    )
+
+    # Snapshot the roundtrip result - compare messages using IsNow() for timestamps
+    assert roundtrip_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful assistant.', timestamp=IsNow(tz=timezone.utc)),
+                    UserPromptPart(content='Hello, can you help me?', timestamp=IsNow(tz=timezone.utc)),
+                ],
+                run_id='test-run-id-123',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Hello! How can I help you today?')],
+                model_name='claude-haiku-4-5',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='anthropic',
+                run_id='test-run-id-123',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='unknown',
+                        content='Found 5 results',
+                        tool_call_id='tool_001',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                run_id='test-run-id-123',
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Let me search for that.'),
+                    ToolCallPart(tool_name='search_database', args={'query': 'data'}, tool_call_id='tool_002'),
+                ],
+                model_name='claude-haiku-4-5',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='anthropic',
+                run_id='test-run-id-123',
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Connection timeout\n\nFix the errors and try again.',
+                        tool_name='unknown',
+                        tool_call_id='tool_002',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                run_id='test-run-id-123',
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content='Let me think...', signature='sig_123', provider_name='anthropic'),
+                    TextPart(content='Based on my analysis...'),
+                ],
+                model_name='claude-haiku-4-5',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='anthropic',
+                run_id='test-run-id-123',
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content='', signature='encrypted_data', provider_name='anthropic'),
+                    TextPart(content='I have processed your request.'),
+                ],
+                model_name='claude-haiku-4-5',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='anthropic',
+                run_id='test-run-id-123',
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'latest news'},
+                        tool_call_id='builtin_001',
+                        provider_name='anthropic',
+                    )
+                ],
+                model_name='claude-haiku-4-5',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='anthropic',
+                run_id='test-run-id-123',
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={'code': 'print(1+1)'},
+                        tool_call_id='builtin_002',
+                        provider_name='anthropic',
+                    )
+                ],
+                model_name='claude-haiku-4-5',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='anthropic',
+                run_id='test-run-id-123',
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_fetch',
+                        args={'url': 'https://example.com'},
+                        tool_call_id='builtin_003',
+                        provider_name='anthropic',
+                    )
+                ],
+                model_name='claude-haiku-4-5',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='anthropic',
+                run_id='test-run-id-123',
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:my_server',
+                        args={'action': 'call_tool', 'tool_name': 'fetch_data', 'tool_args': {'id': '123'}},
+                        tool_call_id='mcp_001',
+                        provider_name='anthropic',
+                    )
+                ],
+                model_name='claude-haiku-4-5',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='anthropic',
+                run_id='test-run-id-123',
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content=[{'type': 'web_search_result', 'title': 'News', 'url': 'https://news.com'}],
+                        tool_call_id='builtin_001',
+                        timestamp=IsNow(tz=timezone.utc),
+                        provider_name='anthropic',
+                    )
+                ],
+                model_name='claude-haiku-4-5',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='anthropic',
+                run_id='test-run-id-123',
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={'return_code': 0, 'content': [{'type': 'text', 'text': '2'}]},
+                        tool_call_id='builtin_002',
+                        timestamp=IsNow(tz=timezone.utc),
+                        provider_name='anthropic',
+                    )
+                ],
+                model_name='claude-haiku-4-5',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='anthropic',
+                run_id='test-run-id-123',
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolReturnPart(
+                        tool_name='web_fetch',
+                        content={'type': 'web_fetch', 'url': 'https://example.com', 'content': 'Hello'},
+                        tool_call_id='builtin_003',
+                        timestamp=IsNow(tz=timezone.utc),
+                        provider_name='anthropic',
+                    )
+                ],
+                model_name='claude-haiku-4-5',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='anthropic',
+                run_id='test-run-id-123',
+            ),
+            # Note: MCP server name is lost in roundtrip (BetaMCPToolResultBlock doesn't carry server_name)
+            ModelResponse(
+                parts=[
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:',
+                        content={'content': 'MCP result data', 'is_error': False},
+                        tool_call_id='mcp_001',
+                        timestamp=IsNow(tz=timezone.utc),
+                        provider_name='anthropic',
+                    )
+                ],
+                model_name='claude-haiku-4-5',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='anthropic',
+                run_id='test-run-id-123',
+            ),
+        ]
+    )
 
 
 @dataclass

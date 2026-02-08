@@ -78,6 +78,38 @@ agent = Agent(model)
 ...
 ```
 
+## Converting Messages to Anthropic Format
+
+The [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] provides a public method to convert PydanticAI messages to the Anthropic SDK format. This is useful for debugging, logging, or making direct API calls:
+
+```python {test="skip"}
+import asyncio
+
+from pydantic_ai import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.models.anthropic import AnthropicModel
+
+model = AnthropicModel('claude-sonnet-4-5')
+
+messages = [
+    ModelRequest(parts=[UserPromptPart(content='Hello')]),
+    ModelResponse(parts=[TextPart(content='Hi!')]),
+]
+
+
+async def main():
+    system_prompt, anthropic_messages = await model.to_anthropic_messages(messages)
+    print(anthropic_messages)
+    """
+    [
+        {'role': 'user', 'content': [{'text': 'Hello', 'type': 'text'}]},
+        {'role': 'assistant', 'content': [{'text': 'Hi!', 'type': 'text'}]},
+    ]
+    """
+
+
+asyncio.run(main())
+```
+
 ## Cloud Platform Integrations
 
 You can use Anthropic models through cloud platforms by passing a custom client to [`AnthropicProvider`][pydantic_ai.providers.anthropic.AnthropicProvider].
