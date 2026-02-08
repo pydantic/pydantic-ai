@@ -249,6 +249,37 @@ async def test_bedrock_count_tokens_non_http_error():
     )
 
 
+async def test_bedrock_count_tokens_arn_error():
+    """Test that count_tokens raises a helpful error when given an ARN-based model identifier."""
+    # Create a stub provider (actual client doesn't matter since we catch the error before making a request)
+    stub_client = _StubBedrockClient(ClientError({'Error': {'Code': 'test'}}, 'count_tokens'))
+    provider = _StubBedrockProvider(stub_client)
+
+    # Test with application inference profile ARN
+    model = BedrockConverseModel(
+        'arn:aws:bedrock:eu-west-1:123456789:application-inference-profile/my-profile',
+        provider=provider,
+    )
+    params = ModelRequestParameters()
+
+    with pytest.raises(UserError) as exc_info:
+        await model.count_tokens([ModelRequest.user_text_prompt('hi')], None, params)
+
+    assert 'Bedrock count_tokens API does not support ARN-based model identifiers' in str(exc_info.value)
+    assert 'application inference profiles' in str(exc_info.value)
+
+    # Test with foundation model ARN
+    model = BedrockConverseModel(
+        'arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-opus-20240229-v1:0',
+        provider=provider,
+    )
+
+    with pytest.raises(UserError) as exc_info:
+        await model.count_tokens([ModelRequest.user_text_prompt('hi')], None, params)
+
+    assert 'Bedrock count_tokens API does not support ARN-based model identifiers' in str(exc_info.value)
+
+
 async def test_bedrock_stream_non_http_error():
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse_stream')
     model = _bedrock_model_with_client_error(error)

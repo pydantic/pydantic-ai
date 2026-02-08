@@ -392,6 +392,16 @@ class BedrockConverseModel(Model):
 
         Check the actual supported models on <https://docs.aws.amazon.com/bedrock/latest/userguide/count-tokens.html>
         """
+        # Bedrock count_tokens API only accepts model IDs, not ARNs
+        if self.model_name.startswith('arn:'):
+            raise UserError(
+                f'Bedrock count_tokens API does not support ARN-based model identifiers. '
+                f'Got: {self.model_name!r}\n'
+                f'The count_tokens API only accepts foundational model IDs (e.g., '
+                f'"anthropic.claude-haiku-4-5-20251001-v1:0"), not application inference profiles or '
+                f'other ARN-based identifiers. Please use a foundational model ID instead.'
+            )
+
         model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
         settings = cast(BedrockModelSettings, model_settings or {})
         system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters, settings)
