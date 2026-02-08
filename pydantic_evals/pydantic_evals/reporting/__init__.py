@@ -1499,7 +1499,7 @@ class EvaluationRenderer:
         if self.include_averages:  # pragma: no branch
             report_average = report.averages()
             baseline_average = baseline.averages()
-            if report_average and baseline_average:
+            if report_average and baseline_average:  # pragma: no branch
                 table.add_row(*case_renderer.build_diff_aggregate_row(report_average, baseline_average))
 
         return table
