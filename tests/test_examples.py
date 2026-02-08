@@ -560,7 +560,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         tool_call_id='pyd_ai_tool_call_id',
     ),
     'Find recent papers about transformer architectures': (
-        'Here are some recent papers about transformer architectures from arxiv.org and github.com:\n'
+        'Here are some recent papers about transformer architectures from arxiv.org:\n'
         '\n'
         '1. "Attention Is All You Need" - The foundational paper on the Transformer model.\n'
         '2. "FlashAttention: Fast and Memory-Efficient Exact Attention" - Proposes an IO-aware attention algorithm.'

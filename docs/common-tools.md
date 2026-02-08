@@ -165,7 +165,7 @@ result = agent.run_sync(
 )
 print(result.output)
 """
-Here are some recent papers about transformer architectures from arxiv.org and github.com:
+Here are some recent papers about transformer architectures from arxiv.org:
 
 1. "Attention Is All You Need" - The foundational paper on the Transformer model.
 2. "FlashAttention: Fast and Memory-Efficient Exact Attention" - Proposes an IO-aware attention algorithm.
