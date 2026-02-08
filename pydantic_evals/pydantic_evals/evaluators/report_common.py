@@ -69,10 +69,12 @@ class ConfusionMatrixEvaluator(ReportEvaluator):
         elif from_ == 'output':
             return str(case.output) if case.output is not None else None
         elif from_ == 'metadata':
-            if key is not None and isinstance(case.metadata, dict):
-                metadata_dict = cast(dict[str, Any], case.metadata)  # pyright: ignore[reportUnknownMemberType]
-                val = metadata_dict.get(key)
-                return str(val) if val is not None else None
+            if key is not None:
+                if isinstance(case.metadata, dict):
+                    metadata_dict = cast(dict[str, Any], case.metadata)  # pyright: ignore[reportUnknownMemberType]
+                    val = metadata_dict.get(key)
+                    return str(val) if val is not None else None
+                return None  # key requested but metadata isn't a dict — skip this case
             return str(case.metadata) if case.metadata is not None else None
         elif from_ == 'labels':
             if key is None:

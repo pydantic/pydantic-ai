@@ -627,6 +627,28 @@ def test_confusion_matrix_evaluator_metadata_non_dict():
     assert result.matrix == [[0, 1], [0, 0]]
 
 
+def test_confusion_matrix_evaluator_metadata_key_with_non_dict():
+    """ConfusionMatrixEvaluator with metadata key but non-dict metadata skips the case."""
+    cases = [
+        _make_report_case('c1', expected_output='A', metadata='some_string'),
+        _make_report_case('c2', expected_output='B', metadata={'pred': 'B'}),
+    ]
+    report = _make_report(cases)
+
+    evaluator = ConfusionMatrixEvaluator(
+        predicted_from='metadata',
+        predicted_key='pred',
+        expected_from='expected_output',
+    )
+    ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
+    result = evaluator.evaluate(ctx)
+
+    assert isinstance(result, ConfusionMatrix)
+    # c1 should be skipped (non-dict metadata with key), only c2 used
+    assert result.class_labels == ['B']
+    assert result.matrix == [[1]]
+
+
 def test_precision_recall_evaluator_skips_missing_scores():
     """PrecisionRecallEvaluator skips cases missing score or positive data."""
     cases = [
