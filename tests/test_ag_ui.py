@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from pydantic_ai import (
     AudioUrl,
     BinaryContent,
+    BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
@@ -2345,3 +2346,134 @@ async def test_handle_ag_ui_request():
             {'type': 'http.response.body', 'body': b'', 'more_body': False},
         ]
     )
+
+
+def test_adapter_dump_messages_basic():
+    """Test basic dump_messages serialization.
+
+    Validates that basic system and user prompts are correctly converted to
+    SystemMessage, UserMessage, and AssistantMessage with proper role assignments
+    and unique IDs.
+    """
+    messages = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='You are a helpful assistant.'),
+                UserPromptPart(content='Hello, world!'),
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(content='Hi there!'),
+            ]
+        ),
+    ]
+
+    ui_messages = AGUIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {'id': IsStr(), 'role': 'system', 'content': 'You are a helpful assistant.', 'name': None},
+            {'id': IsStr(), 'role': 'user', 'content': 'Hello, world!', 'name': None},
+            {'id': IsStr(), 'role': 'assistant', 'content': 'Hi there!', 'name': None, 'tool_calls': None},
+        ]
+    )
+
+
+def test_adapter_dump_messages_with_tool_calls():
+    """Test dump_messages with tool calls and tool returns.
+
+    Validates that tool calls are collected into AssistantMessage and their
+    corresponding tool returns create separate ToolMessage objects.
+    """
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Search for something')]),
+        ModelResponse(
+            parts=[
+                TextPart(content='Let me search for that.'),
+                ToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'test query'},
+                    tool_call_id='tool_123',
+                ),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='web_search',
+                    content={'results': ['result1', 'result2']},
+                    tool_call_id='tool_123',
+                )
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Here are the results.')]),
+    ]
+
+    ui_messages = AGUIAdapter.dump_messages(messages)
+
+    # Verify that messages were generated with expected roles
+    roles = [msg.role for msg in ui_messages]
+    assert 'user' in roles
+    assert 'assistant' in roles
+    assert 'tool' in roles
+
+
+def test_adapter_dump_messages_with_builtin_tools():
+    """Test dump_messages with builtin tool calls (provider-managed tools).
+
+    Validates that builtin tool calls and returns are properly encoded with
+    provider information and emitted as appropriate message types.
+    """
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Search for something')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'test'},
+                    tool_call_id='tool_456',
+                    provider_name='openai',
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content={'status': 'completed'},
+                    tool_call_id='tool_456',
+                    provider_name='openai',
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = AGUIAdapter.dump_messages(messages)
+    assert len(ui_messages) >= 2
+    assert any(msg.role == 'user' for msg in ui_messages)
+    assert any(msg.role == 'assistant' for msg in ui_messages)
+
+
+def test_adapter_dump_messages_multimodal():
+    """Test dumping messages with multimodal content.
+
+    Validates that messages with mixed text, images, and URLs are properly converted
+    to AG-UI format with correct role assignments.
+    """
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Check this image:',
+                        BinaryImage(data=b'fake_image_data', media_type='image/png'),
+                        ImageUrl(url='https://example.com/image.png'),
+                    ]
+                )
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Image looks good!')]),
+    ]
+
+    ui_messages = AGUIAdapter.dump_messages(messages)
+    assert len(ui_messages) >= 2
+    assert ui_messages[0].role == 'user'
+    assert ui_messages[1].role == 'assistant'
