@@ -62,6 +62,8 @@ from pydantic_ai.ui.vercel_ai.request_types import (
 from pydantic_ai.ui.vercel_ai.response_types import (
     BaseChunk,
     DataChunk,
+    FileChunk,
+    SourceDocumentChunk,
     SourceUrlChunk,
     ToolInputStartChunk,
 )
@@ -1792,6 +1794,8 @@ async def test_run_stream_tool_metadata_yields_all_base_chunks():
             return_value='Data sent',
             metadata=[
                 SourceUrlChunk(source_id='src_1', url='https://example.com', title='Example'),
+                SourceDocumentChunk(source_id='doc_1', media_type='application/pdf', title='Doc', filename='doc.pdf'),
+                FileChunk(url='https://example.com/file.png', media_type='image/png'),
                 DataChunk(type='data-valid', data={'survived': True}),
             ],
         )
@@ -1820,6 +1824,14 @@ async def test_run_stream_tool_metadata_yields_all_base_chunks():
             },
             {'type': 'tool-output-available', 'toolCallId': 'call_1', 'output': 'Data sent'},
             {'type': 'source-url', 'sourceId': 'src_1', 'url': 'https://example.com', 'title': 'Example'},
+            {
+                'type': 'source-document',
+                'sourceId': 'doc_1',
+                'mediaType': 'application/pdf',
+                'title': 'Doc',
+                'filename': 'doc.pdf',
+            },
+            {'type': 'file', 'url': 'https://example.com/file.png', 'mediaType': 'image/png'},
             {'type': 'data-valid', 'data': {'survived': True}},
             {'type': 'finish-step'},
             {'type': 'start-step'},
@@ -2786,6 +2798,10 @@ async def test_adapter_dump_messages_with_tool_metadata_all_base_chunks():
                     tool_call_id='call_1',
                     metadata=[
                         SourceUrlChunk(source_id='src_1', url='https://example.com', title='Example'),
+                        SourceDocumentChunk(
+                            source_id='doc_1', media_type='application/pdf', title='Doc', filename='doc.pdf'
+                        ),
+                        FileChunk(url='https://example.com/file.png', media_type='image/png'),
                         DataChunk(type='data-valid', data={'survived': True}),
                     ],
                 )
@@ -2825,6 +2841,21 @@ async def test_adapter_dump_messages_with_tool_metadata_all_base_chunks():
                         'source_id': 'src_1',
                         'url': 'https://example.com',
                         'title': 'Example',
+                        'provider_metadata': None,
+                    },
+                    {
+                        'type': 'source-document',
+                        'source_id': 'doc_1',
+                        'media_type': 'application/pdf',
+                        'title': 'Doc',
+                        'filename': 'doc.pdf',
+                        'provider_metadata': None,
+                    },
+                    {
+                        'type': 'file',
+                        'media_type': 'image/png',
+                        'filename': None,
+                        'url': 'https://example.com/file.png',
                         'provider_metadata': None,
                     },
                     {
