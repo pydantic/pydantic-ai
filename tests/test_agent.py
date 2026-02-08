@@ -6620,7 +6620,7 @@ async def test_thinking_only_response_retry_with_tools():
     @agent.tool_plain
     def get_weather(city: str) -> str:
         """Get the weather for a city."""
-        return f'Sunny in {city}'
+        return f'Sunny in {city}'  # pragma: no cover
 
     result = await agent.run('Hello')
 
