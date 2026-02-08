@@ -3438,6 +3438,30 @@ def test_temporal_model_prepare_request_with_unregistered_model_string(model_id:
         assert params.function_tools[0].parameters_json_schema['additionalProperties'] is False
 
 
+def test_temporal_model_customize_request_parameters_with_registered_model() -> None:
+    """Test customize_request_parameters delegates to the currently active registered model."""
+
+    class _CustomizingTestModel(TestModel):
+        def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
+            return ModelRequestParameters(output_mode='tool', allow_text_output=False)
+
+    default_model = TestModel(custom_output_text='default')
+    alternate_model = _CustomizingTestModel(custom_output_text='alternate')
+    temporal_model = TemporalModel(
+        default_model,
+        activity_name_prefix='test__customize_registered',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alternate': alternate_model},
+    )
+
+    with temporal_model.using_model('alternate'):
+        customized = temporal_model.customize_request_parameters(ModelRequestParameters())
+
+    assert customized.output_mode == 'tool'
+    assert customized.allow_text_output is False
+
+
 # Tests for BinaryContent and DocumentUrl serialization in Temporal
 # This is a regression test for #3702 (BinaryContent) and verifies that FileUrl
 # instances (like DocumentUrl) with explicit media_type are properly preserved.
