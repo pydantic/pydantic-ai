@@ -151,33 +151,26 @@ class WebSearchTool(AbstractBuiltinTool):
     * Anthropic
     """
 
-    engine: Literal['native', 'exa'] | None = None
-    """Which search engine to use with OpenRouter.
+    provider_metadata: dict[str, dict[str, Any]] | None = None
+    """Provider-specific metadata for web search configuration.
 
-    - `'native'`: Uses the provider's native web search when available (OpenAI, Anthropic, Perplexity, xAI).
-    - `'exa'`: Uses Exa search for all other providers.
+    This field allows you to pass provider-specific settings that are not part of the common interface.
 
-    If not specified, OpenRouter will automatically select the best engine.
+    Example for OpenRouter:
+        ```python
+        from pydantic_ai import WebSearchTool
 
-    Supported by:
-
-    * OpenRouter
-    """
-
-    max_results: int | None = None
-    """Maximum number of search results to return with OpenRouter. Defaults to 5.
-
-    Supported by:
-
-    * OpenRouter
-    """
-
-    search_prompt: str | None = None
-    """Custom prompt for attaching web search results with OpenRouter.
-
-    Supported by:
-
-    * OpenRouter
+        WebSearchTool(
+            search_context_size='high',
+            provider_metadata={
+                'openrouter': {
+                    'engine': 'exa',  # 'native' or 'exa'
+                    'max_results': 3,  # Maximum number of search results
+                    'search_prompt': 'Search for recent news'  # Custom prompt
+                }
+            }
+        )
+        ```
     """
 
     kind: str = 'web_search'
