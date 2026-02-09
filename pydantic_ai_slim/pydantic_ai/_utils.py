@@ -20,7 +20,6 @@ from typing import (
     TypeAlias,
     TypeGuard,
     TypeVar,
-    cast,
     get_args,
     get_origin,
     overload,
