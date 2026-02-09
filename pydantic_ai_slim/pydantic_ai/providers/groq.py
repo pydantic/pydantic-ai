@@ -10,7 +10,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
-from pydantic_ai.profiles.groq import GroqModelProfile, groq_model_profile
+from pydantic_ai.profiles.groq import groq_model_profile
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
@@ -65,7 +65,7 @@ def groq_gpt_oss_model_profile(model_name: str) -> ModelProfile:
     with 100% schema adherence.
     """
     base = harmony_model_profile(model_name)
-    return GroqModelProfile.from_profile(base.update(_GROQ_NATIVE_OUTPUT_PROFILE))
+    return base.update(_GROQ_NATIVE_OUTPUT_PROFILE)
 
 
 class GroqProvider(Provider[AsyncGroq]):
