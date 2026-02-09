@@ -981,7 +981,7 @@ async def process_tool_calls(  # noqa: C901
                         ctx.state.increment_retries(
                             ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
                         )
-                        raise e  # pragma: lax no cover
+                        raise  # pragma: lax no cover
                 except ToolRetryError as e:
                     # Execution failed (e.g., ModelRetry from inside the tool)
                     # If we already have a valid final result, don't increment retries
