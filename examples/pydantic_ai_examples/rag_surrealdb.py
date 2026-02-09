@@ -173,9 +173,6 @@ async def build_search_db():
     sections = sections_ta.validate_json(response.content)
 
     async with database_connect(True) as db:
-        with logfire.span('create schema'):
-            await db.query(DB_SCHEMA)
-
         missing_sections: list[DocsSection] = []
         for section in sections:
             url = section.url()
@@ -316,7 +313,7 @@ if __name__ == '__main__':
         uvicorn.run(app, host='127.0.0.1', port=7932)
     else:
         print(
-            'uv run --extra examples -m pydantic_ai_exampls.rag_surrealdb build|search',
+            'uv run --extra examples -m pydantic_ai_examples.rag_surrealdb build|search',
             file=sys.stderr,
         )
         sys.exit(1)
