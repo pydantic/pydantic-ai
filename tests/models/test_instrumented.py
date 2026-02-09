@@ -2062,7 +2062,12 @@ def test_messages_to_otel_messages_cache_point_v4():
                 'role': 'user',
                 'parts': [
                     {'type': 'text', 'content': 'text'},
-                    {'type': 'uri', 'modality': 'image', 'mime_type': 'image/jpeg', 'uri': 'https://example.com/image.jpg'},
+                    {
+                        'type': 'uri',
+                        'modality': 'image',
+                        'mime_type': 'image/jpeg',
+                        'uri': 'https://example.com/image.jpg',
+                    },
                 ],
             }
         ]
