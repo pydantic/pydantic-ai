@@ -9,7 +9,7 @@ on:
   pull_request: {}
 
 env:
-  COLUMNS: 150
+  COLUMNS: 300
   UV_PYTHON: 3.12
   UV_FROZEN: "1"
 
