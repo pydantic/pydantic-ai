@@ -38,7 +38,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """LLM usage associated with the run."""
     prompt: str | Sequence[_messages.UserContent] | None = None
     """The original user prompt passed to the run."""
-    messages: list[_messages.ModelMessage] = field(default_factory=list)
+    messages: list[_messages.ModelMessage] = field(default_factory=list[_messages.ModelMessage])
     """Messages exchanged in the conversation so far."""
     model_settings: ModelSettings | None = None
     """The model settings used for this run."""
@@ -52,16 +52,24 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """Whether to include the content of the messages in the trace."""
     instrumentation_version: int = DEFAULT_INSTRUMENTATION_VERSION
     """Instrumentation settings version, if instrumentation is enabled."""
-    retries: dict[str, int] = field(default_factory=dict)
+    retries: dict[str, int] = field(default_factory=dict[str, int])
     """Number of retries for each tool so far."""
     tool_call_id: str | None = None
     """The ID of the tool call."""
     tool_name: str | None = None
     """Name of the tool being called."""
     retry: int = 0
-    """Number of retries of this tool so far."""
+    """Number of retries so far.
+
+    For tool calls, this is the number of retries of the specific tool.
+    For output validation, this is the number of output validation retries.
+    """
     max_retries: int = 0
-    """The maximum number of retries of this tool."""
+    """The maximum number of retries allowed.
+
+    For tool calls, this is the maximum retries for the specific tool.
+    For output validation, this is the maximum output validation retries.
+    """
     run_step: int = 0
     """The current step in the run."""
     tool_call_approved: bool = False

@@ -120,7 +120,7 @@ async def turn_on_strict_if_openai(
         return [replace(tool_def, strict=True) for tool_def in tool_defs]
     return tool_defs
 
-agent = Agent('openai:gpt-4o', prepare_tools=turn_on_strict_if_openai)
+agent = Agent('openai:gpt-5.2', prepare_tools=turn_on_strict_if_openai)
 ```
 
 Usage `ToolsPrepareFunc[AgentDepsT]`.
@@ -156,11 +156,11 @@ class DeferredToolRequests:
     See [deferred tools docs](../deferred-tools.md#deferred-tools) for more information.
     """
 
-    calls: list[ToolCallPart] = field(default_factory=list)
+    calls: list[ToolCallPart] = field(default_factory=list[ToolCallPart])
     """Tool calls that require external execution."""
-    approvals: list[ToolCallPart] = field(default_factory=list)
+    approvals: list[ToolCallPart] = field(default_factory=list[ToolCallPart])
     """Tool calls that require human-in-the-loop approval."""
-    metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
+    metadata: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     """Metadata for deferred tool calls, keyed by `tool_call_id`."""
 
 
@@ -222,11 +222,13 @@ class DeferredToolResults:
     See [deferred tools docs](../deferred-tools.md#deferred-tools) for more information.
     """
 
-    calls: dict[str, DeferredToolCallResult | Any] = field(default_factory=dict)
+    calls: dict[str, DeferredToolCallResult | Any] = field(default_factory=dict[str, DeferredToolCallResult | Any])
     """Map of tool call IDs to results for tool calls that required external execution."""
-    approvals: dict[str, bool | DeferredToolApprovalResult] = field(default_factory=dict)
+    approvals: dict[str, bool | DeferredToolApprovalResult] = field(
+        default_factory=dict[str, bool | DeferredToolApprovalResult]
+    )
     """Map of tool call IDs to results for tool calls that required human-in-the-loop approval."""
-    metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
+    metadata: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     """Metadata for deferred tool calls, keyed by `tool_call_id`. Each value will be available in the tool's RunContext as `tool_call_metadata`."""
 
 

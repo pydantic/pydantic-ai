@@ -26,14 +26,14 @@ You'll generally want to pass [`ctx.usage`][pydantic_ai.tools.RunContext.usage] 
 from pydantic_ai import Agent, RunContext, UsageLimits
 
 joke_selection_agent = Agent(  # (1)!
-    'openai:gpt-5',
-    system_prompt=(
+    'openai:gpt-5.2',
+    instructions=(
         'Use the `joke_factory` to generate some jokes, then choose the best. '
         'You must return just a single joke.'
     ),
 )
 joke_generation_agent = Agent(  # (2)!
-    'google-gla:gemini-2.5-flash', output_type=list[str]
+    'google-gla:gemini-3-flash-preview', output_type=list[str]
 )
 
 
@@ -53,7 +53,7 @@ result = joke_selection_agent.run_sync(
 print(result.output)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
 print(result.usage())
-#> RunUsage(input_tokens=204, output_tokens=24, requests=3, tool_calls=1)
+#> RunUsage(input_tokens=166, output_tokens=24, requests=3, tool_calls=1)
 ```
 
 1. The "parent" or controlling agent.
@@ -98,18 +98,18 @@ class ClientAndKey:  # (1)!
 
 
 joke_selection_agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     deps_type=ClientAndKey,  # (2)!
-    system_prompt=(
+    instructions=(
         'Use the `joke_factory` tool to generate some jokes on the given subject, '
         'then choose the best. You must return just a single joke.'
     ),
 )
 joke_generation_agent = Agent(
-    'google-gla:gemini-2.5-flash',
+    'google-gla:gemini-3-flash-preview',
     deps_type=ClientAndKey,  # (4)!
     output_type=list[str],
-    system_prompt=(
+    instructions=(
         'Use the "get_jokes" tool to get some jokes on the given subject, '
         'then extract each joke into a list.'
     ),
@@ -144,7 +144,7 @@ async def main():
         print(result.output)
         #> Did you hear about the toothpaste scandal? They called it Colgate.
         print(result.usage())  # (6)!
-        #> RunUsage(input_tokens=309, output_tokens=32, requests=4, tool_calls=2)
+        #> RunUsage(input_tokens=221, output_tokens=32, requests=4, tool_calls=2)
 ```
 
 1. Define a dataclass to hold the client and API key dependencies.
@@ -198,9 +198,9 @@ class Failed(BaseModel):
 
 
 flight_search_agent = Agent[None, FlightDetails | Failed](  # (1)!
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     output_type=FlightDetails | Failed,  # type: ignore
-    system_prompt=(
+    instructions=(
         'Use the "flight_search" tool to find a flight '
         'from the given origin to the given destination.'
     ),
@@ -246,9 +246,9 @@ class SeatPreference(BaseModel):
 
 # This agent is responsible for extracting the user's seat selection
 seat_preference_agent = Agent[None, SeatPreference | Failed](  # (5)!
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     output_type=SeatPreference | Failed,  # type: ignore
-    system_prompt=(
+    instructions=(
         "Extract the user's seat preference. "
         'Seats A and F are window seats. '
         'Row 1 is the front row and has extra leg room. '

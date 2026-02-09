@@ -116,7 +116,7 @@ dev = [
     "mcp-run-python>=0.0.20",
     "brotli>=1.2.0",
 ]
-lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
+lint = ["mypy>=1.11.2", "pyright>=1.1.408", "ruff>=0.14.14"]
 docs = [
     "pydantic-ai[a2a]",
     "black>=24.10.0",
