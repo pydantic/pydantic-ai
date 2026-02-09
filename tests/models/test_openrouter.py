@@ -910,9 +910,13 @@ async def test_openrouter_web_search_with_settings(openrouter_api_key: str) -> N
     model_request_parameters = ModelRequestParameters(
         builtin_tools=[
             WebSearchTool(
-                engine='exa',
-                max_results=3,
-                search_prompt='Search for recent news',
+                provider_metadata={
+                    'openrouter': {
+                        'engine': 'exa',
+                        'max_results': 3,
+                        'search_prompt': 'Search for recent news',
+                    }
+                }
             )
         ],
     )
@@ -982,7 +986,7 @@ async def test_openrouter_prepare_request_loop_with_non_websearch_first(openrout
     model = OpenRouterModel('openai/gpt-4.1', provider=provider)
 
     non_web_tool = Mock(spec=[])
-    web_tool = WebSearchTool(search_context_size='medium', engine='native')
+    web_tool = WebSearchTool(search_context_size='medium', provider_metadata={'openrouter': {'engine': 'native'}})
 
     model_request_parameters = ModelRequestParameters(
         builtin_tools=[non_web_tool, web_tool],

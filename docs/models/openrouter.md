@@ -80,7 +80,7 @@ OpenRouter supports web search via its [plugins](https://openrouter.ai/docs/guid
 
 ### Web Search Parameters
 
-You can customize the web search behavior using parameters on [`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool]:
+You can customize the web search behavior using the `provider_metadata` field on [`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool]:
 
 ```python
 from pydantic_ai import Agent
@@ -89,8 +89,13 @@ from pydantic_ai.models.openrouter import OpenRouterModel
 
 tool = WebSearchTool(
     search_context_size='high',
-    engine='exa',
-    max_results=3,
+    provider_metadata={
+        'openrouter': {
+            'engine': 'exa',
+            'max_results': 3,
+            'search_prompt': 'Search for recent news'
+        }
+    }
 )
 model = OpenRouterModel('openai/gpt-5')
 agent = Agent(
@@ -100,8 +105,8 @@ agent = Agent(
 result = agent.run_sync('What is the latest news in AI?')
 ```
 
-Available OpenRouter-specific parameters:
+Available OpenRouter-specific parameters (passed via `provider_metadata['openrouter']`):
 
-- [`engine`][pydantic_ai.builtin_tools.WebSearchTool.engine]: `'native'` or `'exa'`. Native uses the provider's built-in search (OpenAI, Anthropic, Perplexity, xAI), Exa is used for other providers.
-- [`max_results`][pydantic_ai.builtin_tools.WebSearchTool.max_results]: Maximum number of search results (defaults to 5).
-- [`search_prompt`][pydantic_ai.builtin_tools.WebSearchTool.search_prompt]: Custom prompt for attaching web search results.
+- `engine`: `'native'` or `'exa'`. Native uses the provider's built-in search (OpenAI, Anthropic, Perplexity, xAI), Exa is used for other providers.
+- `max_results`: Maximum number of search results (defaults to 5).
+- `search_prompt`: Custom prompt for attaching web search results.
