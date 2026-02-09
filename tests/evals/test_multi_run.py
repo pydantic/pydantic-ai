@@ -28,7 +28,7 @@ with try_import() as imports_successful:
         evaluation_name: str = 'score'
 
         def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
-            return float(ctx.output)  # type: ignore[arg-type]
+            return float(ctx.output)  # type: ignore[arg-type]  # pragma: no cover
 
     @dataclass
     class AlwaysPass(Evaluator[object, object, object]):
