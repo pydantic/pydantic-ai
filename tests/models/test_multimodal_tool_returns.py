@@ -123,14 +123,24 @@ FileTypeType = Literal['image', 'document', 'audio', 'video']
 
 @dataclass
 class ExpectError:
-    """Expected error for a provider/file_type/content_source/return_style combination."""
+    """Expected error for a provider/file_type/content_source/return_style combination.
+
+    When `content_source` or `return_style` is None, the error applies to all values
+    of that dimension. When specified, the error only applies to that specific value.
+    """
 
     provider: str
+    """Provider name matching `MODEL_CONFIGS` keys."""
     file_type: FileTypeType
+    """File type that triggers this error."""
     content_source: str | None = None
+    """Content source filter, or None to match all sources."""
     return_style: str | None = None
+    """Return style filter, or None to match all styles."""
     error_type: type[Exception] = RuntimeError
+    """Expected exception type."""
     match: str | None = None
+    """Regex pattern to match against the error message."""
 
 
 ERROR_DETAILS: list[ExpectError] = [

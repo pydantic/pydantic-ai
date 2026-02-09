@@ -574,7 +574,7 @@ def _has_multimodal_content(part: ToolReturnPart, content_type: type) -> bool:
     """Check if a ToolReturnPart contains multimodal content of the given type."""
     if isinstance(part.content, content_type):
         return True
-    if isinstance(part.content, list):
+    elif isinstance(part.content, list):
         return any(isinstance(item, content_type) for item in part.content)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
     return False  # pragma: no cover
 

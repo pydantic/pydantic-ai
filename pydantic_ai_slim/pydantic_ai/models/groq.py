@@ -474,6 +474,7 @@ class GroqModel(Model):
         return response_format_param
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
+        file_content: list[UserContent] = []
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
@@ -481,7 +482,6 @@ class GroqModel(Model):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
                 tool_content_parts: list[str] = []
-                file_content: list[UserContent] = []
 
                 for item in part.content_items:
                     if isinstance(item, (BinaryContent, ImageUrl)):
@@ -511,8 +511,6 @@ class GroqModel(Model):
                     tool_call_id=_guard_tool_call_id(t=part),
                     content='\n'.join(tool_content_parts) if tool_content_parts else '',
                 )
-                if file_content:
-                    yield await self._map_user_prompt(UserPromptPart(content=file_content))
             elif isinstance(part, RetryPromptPart):  # pragma: no branch
                 if part.tool_name is None:
                     yield chat.ChatCompletionUserMessageParam(  # pragma: no cover
@@ -524,6 +522,8 @@ class GroqModel(Model):
                         tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
+        if file_content:
+            yield await self._map_user_prompt(UserPromptPart(content=file_content))
 
     async def _map_user_prompt(self, part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:
         content: str | list[chat.ChatCompletionContentPartParam]

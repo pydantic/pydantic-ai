@@ -10,6 +10,7 @@ from pydantic_core import to_json
 from typing_extensions import assert_never
 
 from ...messages import (
+    RETURN_VALUE_KEY,
     BaseToolReturnPart,
     BinaryContent,
     BuiltinToolCallPart,
@@ -259,7 +260,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
 
     def _tool_return_output(self, part: BaseToolReturnPart) -> Any:
         output = part.model_response_object()
-        result = output.get('return_value', output)
+        result = output[RETURN_VALUE_KEY] if list(output.keys()) == [RETURN_VALUE_KEY] else output
 
         if not part.files:
             return result

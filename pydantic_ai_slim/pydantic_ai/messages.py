@@ -11,7 +11,7 @@ from datetime import datetime
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, TypeGuard, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, TypeGuard, TypeVar, cast, get_args, overload
 from urllib.parse import urlparse
 
 import pydantic
@@ -666,13 +666,13 @@ class CachePoint:
     * Anthropic (automatically omitted for Bedrock, as it does not support explicit TTL). See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
 
 
-MULTI_MODAL_CONTENT_TYPES = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent)
-"""Tuple of multi-modal content types for use with isinstance() checks."""
-
 MultiModalContent = Annotated[
     ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent, pydantic.Discriminator('kind')
 ]
 """Union of all multi-modal content types with a discriminator for Pydantic validation."""
+
+MULTI_MODAL_CONTENT_TYPES: tuple[type, ...] = get_args(get_args(MultiModalContent)[0])
+"""Tuple of multi-modal content types for use with isinstance() checks, derived from `MultiModalContent`."""
 
 
 def is_multi_modal_content(obj: Any) -> TypeGuard[MultiModalContent]:
@@ -688,9 +688,9 @@ class ToolReturn:
     """A structured return value for tools that need to provide both a return value and custom content to the model.
 
     This class allows tools to return complex responses that include:
-    - A return value for actual tool return
-    - Custom content (including multi-modal content) to be sent to the model as a UserPromptPart
-    - Optional metadata for application use
+    - A `return_value` for the actual tool return
+    - Custom `content` (including multi-modal content) to be sent to the model as a `UserPromptPart`
+    - Optional `metadata` for application use
     """
 
     return_value: ToolReturnContent
@@ -699,7 +699,7 @@ class ToolReturn:
     _: KW_ONLY
 
     content: str | Sequence[UserContent] | None = None
-    """The content to be sent to the model as a UserPromptPart."""
+    """The content to be sent to the model as a `UserPromptPart`."""
 
     metadata: Any = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
@@ -806,6 +806,9 @@ class UserPromptPart:
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
+
+RETURN_VALUE_KEY = 'return_value'
+"""Key used to wrap non-dict tool return values in `model_response_object()`."""
 
 tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
     Any, config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
@@ -936,7 +939,7 @@ class BaseToolReturnPart:
         if _utils.is_str_dict(json_content):
             return json_content
         else:
-            return {'return_value': json_content}
+            return {RETURN_VALUE_KEY: json_content}
 
     def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
         body: AnyValue = {

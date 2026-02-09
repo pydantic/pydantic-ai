@@ -1124,6 +1124,7 @@ class OpenAIChatModel(Model):
         return tool_param
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
+        file_content: list[UserContent] = []
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 system_prompt_role = OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role
@@ -1136,10 +1137,7 @@ class OpenAIChatModel(Model):
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                # OpenAI Chat API only supports string content in tool messages
-                # Iterate content directly to preserve order and add file identifiers
                 tool_content_parts: list[str] = []
-                file_content: list[UserContent] = []
 
                 for item in part.content_items:
                     if isinstance(item, (BinaryContent, ImageUrl, AudioUrl, DocumentUrl, VideoUrl)):
@@ -1147,7 +1145,7 @@ class OpenAIChatModel(Model):
                         file_content.append(f'This is file {item.identifier}:')
                         file_content.append(item)
                     elif isinstance(item, str):
-                        if item:  # Skip empty strings
+                        if item:
                             tool_content_parts.append(item)
                     else:
                         tool_content_parts.append(tool_return_ta.dump_json(item).decode())
@@ -1157,10 +1155,6 @@ class OpenAIChatModel(Model):
                     tool_call_id=_guard_tool_call_id(t=part),
                     content='\n'.join(tool_content_parts) if tool_content_parts else '',
                 )
-                # Send files as separate user message with identifiers
-                if file_content:
-                    user_prompt = UserPromptPart(content=file_content)
-                    yield await self._map_user_prompt(user_prompt)
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
                     yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
@@ -1172,6 +1166,8 @@ class OpenAIChatModel(Model):
                     )
             else:
                 assert_never(part)
+        if file_content:
+            yield await self._map_user_prompt(UserPromptPart(content=file_content))
 
     async def _map_user_prompt(self, part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:  # noqa: C901
         profile = OpenAIModelProfile.from_profile(self.profile)

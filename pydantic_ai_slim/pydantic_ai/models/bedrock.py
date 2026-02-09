@@ -704,47 +704,37 @@ class BedrockConverseModel(Model):
                         tool_result_content: list[Any] = []
                         sibling_content: list[ContentBlockUnionTypeDef] = []
 
-                        # Iterate content directly to preserve order of mixed file/data content
                         for item in part.content_items:
-                            if isinstance(item, BinaryContent):
+                            if isinstance(item, (BinaryContent, ImageUrl, DocumentUrl, VideoUrl)):
                                 file_block = await self._map_file_to_content_block(item, document_count)
                                 if file_block is not None:
                                     if 'image' in file_block:
                                         tool_result_content.append(file_block)
                                     elif 'document' in file_block:
+                                        tool_result_content.append({'text': f'See file {item.identifier}.'})
+                                        sibling_content.append({'text': f'This is file {item.identifier}:'})
                                         sibling_content.append({'document': file_block['document']})
                                     elif 'video' in file_block:
+                                        tool_result_content.append({'text': f'See file {item.identifier}.'})
+                                        sibling_content.append({'text': f'This is file {item.identifier}:'})
                                         sibling_content.append({'video': file_block['video']})
                                     else:
                                         assert_never(file_block)
-                                else:
+                                elif isinstance(item, BinaryContent):
                                     raise NotImplementedError(
                                         f'Unsupported binary content type for Bedrock tool returns: {item.media_type}'
                                     )
-                            elif isinstance(item, (ImageUrl, DocumentUrl, VideoUrl)):
-                                file_block = await self._map_file_to_content_block(item, document_count)
-                                if file_block is not None:  # pragma: no branch
-                                    if 'image' in file_block:
-                                        tool_result_content.append(file_block)
-                                    elif 'document' in file_block:
-                                        sibling_content.append({'document': file_block['document']})
-                                    elif 'video' in file_block:
-                                        sibling_content.append({'video': file_block['video']})
-                                    else:
-                                        assert_never(file_block)
                             elif isinstance(item, AudioUrl):
                                 raise NotImplementedError('AudioUrl is not supported for Bedrock tool returns')
                             else:
-                                # Data content (str, dict, etc.) - serialize based on profile
                                 if isinstance(item, str):
-                                    if item:  # Skip empty strings
+                                    if item:
                                         tool_result_content.append({'text': item})
                                 elif profile.bedrock_tool_result_format == 'text':
                                     tool_result_content.append({'text': tool_return_ta.dump_json(item).decode()})
                                 else:
                                     tool_result_content.append({'json': item})
 
-                        # Ensure we have at least some content
                         if not tool_result_content:
                             if profile.bedrock_tool_result_format == 'text':
                                 tool_result_content.append({'text': ''})
@@ -760,9 +750,6 @@ class BedrockConverseModel(Model):
                                 }
                             }
                         ]
-                        # Bedrock requires a text block when documents are present as siblings
-                        if any('document' in block for block in sibling_content):
-                            user_content.append({'text': 'Additional file from tool result:'})
                         user_content.extend(sibling_content)
                         bedrock_messages.append({'role': 'user', 'content': user_content})
                     elif isinstance(part, RetryPromptPart):
