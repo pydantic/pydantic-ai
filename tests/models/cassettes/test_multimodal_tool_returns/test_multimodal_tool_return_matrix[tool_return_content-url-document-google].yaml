@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '722'
+      - '723'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=626
+      - gfet4t7; dur=1266
       transfer-encoding:
       - chunked
       vary:
@@ -54,13 +54,13 @@ interactions:
           - functionCall:
               args: {}
               name: get_file
-            thoughtSignature: Cq0BAb4+9vsNZO7eABH8JThxcBz4bFIhKVCz18PjzdKbnaSMQpkySAw9APUvE/Co6/yKdLnSNbTBzLOZ7oIFatoee36fKQKI9cqKM+lwifFpwSihSclgfU+rW+nGFeO7JJUzo88YxgMKFMKpr3z5qvMxJzinDpilinKF3Q/HyX1Krq4AX2KY6lpbWizuVvLLyyc3jB10sFtCjjXg4SHOmDlK5D6otNX5TscuGLvIIdM=
+            thoughtSignature: Cq0BAb4+9vsTGVK6LYvlo10qm7/+t/ssUClOXL5/44YBSzmUHlcuiVh5LaNZRnJiqAjH9vD/dGpget/nWxRn4/zR1L2waTvkhQCNamzGIZCBLrJXUuX8I7t8dfgSmtvY5C2vrKsVA7giA0ugEYfXZHkgYqksR6W52g+VYhbt2WIxWZlYYgP9wJqc85A/dcq0ij1dtGE30/zSEy44qTscwh5gNb1oz2gMTJ+zHnWr6CY=
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: HRCKaYAQv-nPsg_2nv34DQ
+      responseId: EiyKabWNIurVz7IP2Zv5qA0
       usageMetadata:
         candidatesTokenCount: 10
         promptTokenCount: 41
@@ -84,7 +84,7 @@ interactions:
       host:
       - pdfobject.com
     method: GET
-    uri: https://185.199.111.153/pdf/sample.pdf
+    uri: https://pdfobject.com/pdf/sample.pdf
   response:
     body:
       string: !!binary |
@@ -424,7 +424,7 @@ interactions:
       access-control-allow-origin:
       - '*'
       age:
-      - '109'
+      - '236'
       cache-control:
       - max-age=600
       connection:
@@ -467,13 +467,13 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_b086478d952d49699788d9a01c47c480
+            id: pyd_ai_b0d236f1f0724fe8a3083ccab7ccdfd5
             name: get_file
-          thoughtSignature: Cq0BAb4-9vsNZO7eABH8JThxcBz4bFIhKVCz18PjzdKbnaSMQpkySAw9APUvE_Co6_yKdLnSNbTBzLOZ7oIFatoee36fKQKI9cqKM-lwifFpwSihSclgfU-rW-nGFeO7JJUzo88YxgMKFMKpr3z5qvMxJzinDpilinKF3Q_HyX1Krq4AX2KY6lpbWizuVvLLyyc3jB10sFtCjjXg4SHOmDlK5D6otNX5TscuGLvIIdM=
+          thoughtSignature: Cq0BAb4-9vsTGVK6LYvlo10qm7_-t_ssUClOXL5_44YBSzmUHlcuiVh5LaNZRnJiqAjH9vD_dGpget_nWxRn4_zR1L2waTvkhQCNamzGIZCBLrJXUuX8I7t8dfgSmtvY5C2vrKsVA7giA0ugEYfXZHkgYqksR6W52g-VYhbt2WIxWZlYYgP9wJqc85A_dcq0ij1dtGE30_zSEy44qTscwh5gNb1oz2gMTJ-zHnWr6CY=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_b086478d952d49699788d9a01c47c480
+            id: pyd_ai_b0d236f1f0724fe8a3083ccab7ccdfd5
             name: get_file
             response:
               return_value: File attached
@@ -500,11 +500,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '589'
+      - '577'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1599
+      - gfet4t7; dur=2242
       transfer-encoding:
       - chunked
       vary:
@@ -515,22 +515,22 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: I received a PDF document titled "Sample PDF". It contains placeholder text (Lorem ipsum) across four paragraphs.
-              The document also includes the phrase "This is a simple PDF file. Fun fun fun."
+          - text: I received a document titled "Sample PDF". It's described as "a simple PDF file. Fun fun fun." The document
+              contains several paragraphs of Latin-like placeholder text (Lorem ipsum).
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: HhCKaf7xNcrQz7IPndPh4Q0
+      responseId: FSyKac-WBKqGz7IPiLDM-Qk
       usageMetadata:
-        candidatesTokenCount: 40
+        candidatesTokenCount: 39
         promptTokenCount: 328
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 70
         - modality: DOCUMENT
           tokenCount: 258
-        totalTokenCount: 368
+        totalTokenCount: 367
     status:
       code: 200
       message: OK

@@ -38,7 +38,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '569'
+      - '603'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -51,11 +51,11 @@ interactions:
       content:
       - text: I'll retrieve the file for you now.
         type: text
-      - id: toolu_0142SvZCts4sfZT4zXw8hV8J
+      - id: toolu_01M3HSsyQfBS8BGR7DeAyFNX
         input: {}
         name: get_file
         type: tool_use
-      id: msg_01Y9DTx2KU93CtNC4HbBf8n1
+      id: msg_01UUskrPMwSEnYQsACDSc8g5
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -67,105 +67,9 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
+        inference_geo: not_available
         input_tokens: 558
         output_tokens: 46
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '917'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Use the get_file tool now to retrieve a video file, then describe what you received.
-          type: text
-        role: user
-      - content:
-        - text: I'll retrieve the file for you now.
-          type: text
-        - id: toolu_0142SvZCts4sfZT4zXw8hV8J
-          input: {}
-          name: get_file
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: File attached
-            type: text
-          is_error: false
-          tool_use_id: toolu_0142SvZCts4sfZT4zXw8hV8J
-          type: tool_result
-        - text: '[Video URL not supported by Anthropic: https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4]'
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties: {}
-          type: object
-        name: get_file
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '1340'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    parsed_body:
-      content:
-      - text: |-
-          I received a video file titled "ForBiggerBlazes.mp4" from Google's sample video collection.
-
-          **What I can tell you about this video:**
-
-          This appears to be a short promotional or demonstration video. Based on the filename and source (Google's sample video bucket), this is likely one of Google's standard test videos used for development and demonstration purposes.
-
-          The file is an MP4 video file, which is a common digital multimedia container format. The title "ForBiggerBlazes" suggests it might be related to outdoor/adventure content or possibly a promotional piece, though without being able to play the video directly, I can confirm it's a valid video file that was successfully retrieved from the storage location.
-
-          This type of sample video is commonly used by developers for testing video playback functionality, streaming capabilities, or as placeholder content in applications.
-        type: text
-      id: msg_01EMp9YNCx9F56yWU2ZBNPL6
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        input_tokens: 661
-        output_tokens: 184
         service_tier: standard
     status:
       code: 200

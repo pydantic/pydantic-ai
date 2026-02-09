@@ -38,7 +38,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '506'
+      - '540'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -49,11 +49,11 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - id: toolu_01ACvjpVGSMEkFvB2MSC4Tec
+      - id: toolu_01JPiYRg5YH3kq9zwgCtaZLh
         input: {}
         name: get_images
         type: tool_use
-      id: msg_017HbnfLGmAMzzkpjmMkbcKE
+      id: msg_01BR1tGdJfeFbHrNAuuvpw5h
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -65,6 +65,7 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
+        inference_geo: not_available
         input_tokens: 562
         output_tokens: 36
         service_tier: standard
@@ -94,7 +95,7 @@ interactions:
           type: text
         role: user
       - content:
-        - id: toolu_01ACvjpVGSMEkFvB2MSC4Tec
+        - id: toolu_01JPiYRg5YH3kq9zwgCtaZLh
           input: {}
           name: get_images
           type: tool_use
@@ -111,7 +112,7 @@ interactions:
               url: https://www.gstatic.com/webp/gallery3/1.png
             type: image
           is_error: false
-          tool_use_id: toolu_01ACvjpVGSMEkFvB2MSC4Tec
+          tool_use_id: toolu_01JPiYRg5YH3kq9zwgCtaZLh
           type: tool_result
         role: user
       model: claude-sonnet-4-5
@@ -131,7 +132,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '443'
+      - '477'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -144,7 +145,7 @@ interactions:
       content:
       - text: Kiwi
         type: text
-      id: msg_01TDu3z8Sfh1mSTkaqp8S14c
+      id: msg_01552pzopA6f7mpFW1eznkj2
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
@@ -156,6 +157,7 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
+        inference_geo: not_available
         input_tokens: 1265
         output_tokens: 7
         service_tier: standard

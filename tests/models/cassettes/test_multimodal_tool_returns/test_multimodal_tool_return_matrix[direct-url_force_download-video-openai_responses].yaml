@@ -40,13 +40,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2757'
+      - '2588'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '1863'
+      - '1168'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -59,11 +59,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1769797611
-      created_at: 1769797609
+      completed_at: 1770662853
+      created_at: 1770662852
       error: null
       frequency_penalty: 0.0
-      id: resp_082f669ea924738700697cf7e97e74819796496bf148ddc763
+      id: resp_0c40a2c38cf930b600698a2bc49354819caa3daa59710897f1
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -72,13 +72,13 @@ interactions:
       model: gpt-5-mini-2025-08-07
       object: response
       output:
-      - encrypted_content: gAAAAABpfPfrxKgu9L5bKH9ikCt9j3BoO7QTua4NPmnyJEY56hsPMY4_CLE7rT0nK1JgKLpUZsTcVkeK6FX-uR21miLntmz0kihGOWFsIUgtTzk1CIYOL4xtZ8LMuL9BvFGdC_2FnV4lR940RotjfI9dUSoxmiNne_JRH39NIVUtd9p349ZZrTw6aXbqUPCaMgiXashQOWAlkefSwRD6l_-3UQ-jwVaPwLA1VMgLro7elfwuUR3sPjziOmCagF1cmWg8aVOefO79dFndurTeS2f8bj9uMXMTaKeuwf8DOoIwtA2Fo8wWGTdut-ZV4NFwvd2sQcGESVd8mHi1myjV75HWzkuGgvB2tCQNjAHjp59_XFvPp3bfgRXkMdAdIV62i0nEJEY90ayE8UuaSXlD_-KuAUe8Zswr0f7x193-iGJp1oyQFzGMLjPhj5Mi4bjAnYAaUAQXLPa5cHIWh-2EaouPx_XiLmUo7K7E4814CCx_2it1LbtZB3JUFVRZFVvKQU34ovZWcuPfYCG10PPFAlPvTGYJ9V0wFffVx9ku1b6Bl7wF2h-JPBGTptQV9F5-jYKtD6_RjPUKJGWJYFsKiE2bEhayng-YK6rx6rG0DCd1Op01qmk7XClctSMzWjXPhDZFqG3n_DkANZl9LIfAIFrTzCiSGsmq1kKxxFoD2cotj4Js0LDQw_u7TCdrvtHUAj5RMHoEb5UVE1zq4Cy9vt_rReLMRCfHL5SoxKbMyV3o3uZD7F44Mq3m5JNTpQBazSg8De3gHEAqSJ8uc6MQytKiWAH2Eh0zXG1QSuMftoxHomtmHP0qwqf7X1PxD4i-r7cyqtSnOrCx1j6znZHarynE8mkL6OgM3KbffDf8BP_QosQB2M2rVpIm7UaSGVCOPbQa4xh8WzNRtw6V9RhH8ZP3Y32cLLcCfDHhS9UfFyfu0WqmxDCdwDP2d2ROuFbLd60QuruPyZD75DOW9gYDWRxk4AS__ZZgjEoRk9DPJrK7fX4AhJxL1aEsHE2fza2iK0rx7cSxP3MG3Qn-gLWxHj6eY5SHkxljN-ziYr0w6iUdsX-tELQRnbKwS8RxKQ26fIxqaKdb55yoPpckAwYqC5K9ZGTMIWuJlCUGdKDzIbOP-3aIx97FFh4_XGGIMLJlQJSMD89vQV74bqDOpff-LGoV033J7ncPHtZ8Y1WaQWohar71kirEOOMuP8hDIERuZZAJsRxGQ6yb
-        id: rs_082f669ea924738700697cf7e9c7f48197b1011e9690ee0608
+      - encrypted_content: gAAAAABpiivFceIParlG2cjFs9bRVRwsCy6pDe24VNzcwPEAViSblzjpPUJTR5d7H_fnha-CoM5a85SI4F5xej_prHCl5QyRnJ6tQA_3m0dj8orHFUVoQ0cebzzf2Llf7yMoxR_OU5zaKw5RzRbqlqK5QglxbH1Ij7g8JIqOxhWsH58O3OauzWLilVwS6dJBWXxhR-7DvxrKXyzwyCw-OLz0hUiZDsJpL3m0kOs7eEKPr6Nxbr7oqP5HDJRgRswTdeVKtoQnssXH7YrnIEh8kj_9tgzikG5bYErupQ9TQ9Z0q_nWFqBXpSJR_xHquGbc_S3VzcJBNk-UC9oGpuA6vTPrrom6Xzknx8A0CivxkjsZM-0MJM5aUX2jFOrPlIiNr9eE3q_K_FooRUZ6Tie2I_ICDIS76C5nGEIB48xecSUqp3KGoRnWyQUddTvv95Mb65VjS-7iqO-v7_0WcNRGi4mzgf2lRGsxCuoky_10wB_b_Fh3LlSpALkXK6qBGxpnMmiQDAYhCQJH75J8uHUWlJWlqOzyKYFaLNm8Pj2AKHsqaFLJT_XpmAcXVJoiV0T9waYFxNuO-tWd6MEs9o0BaWf1ILr3Zbblf7YWE0i2coT0HaFvC_pRF54ET_9ldIQk-Wlp73IMOSAGj-j0NF4nilSetl5gyOdw57oemc0V7B4-TDoaZufyK8SLn4U49ZDFgjpDIvmiwIb7UrcViCK-MCezJYXtCAvk_fq2Wpz7WxXbAomnTkUCuri6wWsvTM2-ql4lUmE3C-yLxYuoB8n9jdTuI1IFVj912lp-XtYzZvIf9FXK8OclfGTiT3rVDZ3m8dLPp-zBT3kl6fahfnIvlmAlxj8jElnjGhfqCJLqsOOQxlUZUWfQabBwMflx7Uzm2IyQ7bhy7Ufqm6-9k7arwN0W5r1HeuP-F1XxEtD9OlDL_8MSi6ghf9kbmz8NorRJuLxFFnIsw_6uvdcspiNHJ_uw0Q4kSCLOJ9dTyTFZk5IgMA14xksUiBobcRVhuAaI4kB-KKdyKmVZnXljW7SWsmD1Md0D4c_okQ==
+        id: rs_0c40a2c38cf930b600698a2bc4e12c819ca2488576e5c61870
         summary: []
         type: reasoning
       - arguments: '{}'
-        call_id: call_HeghPod9SAOsDDmqUKXKRjEB
-        id: fc_082f669ea924738700697cf7eaf6c88197adffbee5425560b4
+        call_id: call_aGUOVdEPlP9K1huF6OcHymU7
+        id: fc_0c40a2c38cf930b600698a2bc58d84819ca22cea007682814f
         name: get_file
         status: completed
         type: function_call
@@ -116,10 +116,10 @@ interactions:
         input_tokens: 47
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 79
+        output_tokens: 50
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 126
+        total_tokens: 97
       user: null
     status:
       code: 200

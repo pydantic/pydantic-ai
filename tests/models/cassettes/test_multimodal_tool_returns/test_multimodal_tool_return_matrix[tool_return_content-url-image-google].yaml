@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '900'
+      - '1713'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1557
+      - gfet4t7; dur=1947
       transfer-encoding:
       - chunked
       vary:
@@ -54,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_file
-            thoughtSignature: CrICAb4+9vthYDBHQfmjwjVh0sO9H68ATeDtL0egBxWKijCcZF0SVypwfIe7oOiBx1MZDSZAZOOX10nORe9F3KQSu5QvcpcQjCNsfwB3a5pOyn0h7xoRLS5W9m68mgoqhrvEVAOKODzeYwLa5aetu8UkQV3qUcn4ObRlPF094SgIEapCmkAHOuER61MfD7+CldfdIZpfN7odFWMjXIlfYYho3rCWnBGXGOTp1Tum/jgoASRM/Aye45BY0RY2OYhVcBlgLiqvLWdA0+RApqOtCoNUJYgzCEjEPJQUvvViVY4nMFGDY7VEKi08/55VgTmkqJvODFbKD0nMteYsMvpxq/GcDubocI/ZoJvCB9QkB0c4jCu2gEAPb57fxHnaErADH9ve/vVLWNwTTcCJUw9nSbr8jo0n
+            thoughtSignature: CpEHAb4+9vui1ajbMxT4Txo5yj2HUSNkIl0G9x31R+vTwG5GN2/qyJhc0n2lYJN1gbzkQmqO1Y9l4+HT7EL3PKTdd2bM7OsbaFJPVRTVhIysusMFxbvXsRWP3a2EL2/W/Yfl/bKOlndTESgpvA2zx1y9b5NlNSW3ySS5NmCYeZdMiq4CLR/Yw9d+oIuQ3lTFSe95HgNn6EPOd7nQMpipBU8V9+hdA3qh2gK0gJzBbVSdsKuCRvNxR+0lK5Vb2QYtFqXT7HEDbwAjmPmh7fHXMA8zOd3o4xKPIhMBvEcXIP95DjAROuDn0hNGTrPk5FV1xzVzAj4JvGE6m3CWMtSpyFrveQHJHUmkzpOVbJrkh40bfQ8CBE9UANLvwslghGGQNuGNQ8xDiJTKvvex44M6sisujbvXLnpBokBan3PYYbYhKp0PoMIKV0LXR2mx8pW7k6yQhmcfGdd06b1VrQy/dnk4iAq0z/0yG9zEV6PSCSegUTW1VLVjT3BWYco0aptxKUnYXt2Qi7HuW1ziKA6o1fn4Vwcjs/phZMs/+AwjANrntvLIYedKUrjC9nfxrVmv4HFoBOMp/A0szw6deqwyB/6tvLM0tWQUzaNZ194ghH5ESdi76htJhwEHhyG1OMRySP/mGGQlzk1X33uLQ6d77rBAbzGkAj483wvlk0WKo0yOn3QGEXfoKoeWW67ezY7OHvIt6fq4GZl4gAHwovwi8WyEYrXFK7RNJwGZSvbv6LkRKYQRK5o1fdecLk1hZR7u/L/J31Zd9l4awFSfH6vcjKab2cEx2SfEjBpPOzjguLRFvYN7yEoz+MvF4+QeI4iBdtEqwyit2k8mf+G2laO7W1CF2JTcgFmcC1+aJQ4JhJKPuIVokGTPY62sR8ELJDXnQ4IeilCidFdUcjFHeczNDcuctCjDQbaNoiD6Xv+SbyTAIeXzyuN5khDL9nk9SyTPym4dI7IR2cZtpiT0qSMQuifLVhcq0r95a1k6sdjZLZGmJ5W/nBnADPO4bWi73ZY3NV+UnDjPJOKdJWvGcmEJO0zPFIvk3dUIdH1tuenk0NAlYbZjgEDuoZ4LIiUTyzak0Zk2BvwKqWlizEwI2acBNnzKZyZdiIVl7AP52b5msOFfYWHL2Gq6ln3HS+DybyiBlJAPmCwi+25Ygms3Bmx3ZFyQyVg59m1TpYEoK3viCuY3WfnWqyjYSIqL2WUYP2Keq0F5Dg==
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: BhCKab_QFqLTz7IPyr71gAU
+      responseId: 2iuKacLPGOnkz7IPh9WJ0Ac
       usageMetadata:
         candidatesTokenCount: 10
         promptTokenCount: 41
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 41
-        thoughtsTokenCount: 66
-        totalTokenCount: 117
+        thoughtsTokenCount: 212
+        totalTokenCount: 263
     status:
       code: 200
       message: OK
@@ -84,7 +84,7 @@ interactions:
       host:
       - www.gstatic.com
     method: GET
-    uri: https://172.217.30.195/webp/gallery3/1.png
+    uri: https://www.gstatic.com/webp/gallery3/1.png
   response:
     body:
       string: !!binary |
@@ -2081,7 +2081,7 @@ interactions:
       accept-ranges:
       - bytes
       age:
-      - '178'
+      - '7302'
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       cache-control:
@@ -2116,7 +2116,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '152310'
+      - '153122'
       content-type:
       - application/json
       host:
@@ -2130,13 +2130,13 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_fe6d215ab45d4f188b522570b2d23b5e
+            id: pyd_ai_d20be96094024896a04a7008e566fee6
             name: get_file
-          thoughtSignature: CrICAb4-9vthYDBHQfmjwjVh0sO9H68ATeDtL0egBxWKijCcZF0SVypwfIe7oOiBx1MZDSZAZOOX10nORe9F3KQSu5QvcpcQjCNsfwB3a5pOyn0h7xoRLS5W9m68mgoqhrvEVAOKODzeYwLa5aetu8UkQV3qUcn4ObRlPF094SgIEapCmkAHOuER61MfD7-CldfdIZpfN7odFWMjXIlfYYho3rCWnBGXGOTp1Tum_jgoASRM_Aye45BY0RY2OYhVcBlgLiqvLWdA0-RApqOtCoNUJYgzCEjEPJQUvvViVY4nMFGDY7VEKi08_55VgTmkqJvODFbKD0nMteYsMvpxq_GcDubocI_ZoJvCB9QkB0c4jCu2gEAPb57fxHnaErADH9ve_vVLWNwTTcCJUw9nSbr8jo0n
+          thoughtSignature: CpEHAb4-9vui1ajbMxT4Txo5yj2HUSNkIl0G9x31R-vTwG5GN2_qyJhc0n2lYJN1gbzkQmqO1Y9l4-HT7EL3PKTdd2bM7OsbaFJPVRTVhIysusMFxbvXsRWP3a2EL2_W_Yfl_bKOlndTESgpvA2zx1y9b5NlNSW3ySS5NmCYeZdMiq4CLR_Yw9d-oIuQ3lTFSe95HgNn6EPOd7nQMpipBU8V9-hdA3qh2gK0gJzBbVSdsKuCRvNxR-0lK5Vb2QYtFqXT7HEDbwAjmPmh7fHXMA8zOd3o4xKPIhMBvEcXIP95DjAROuDn0hNGTrPk5FV1xzVzAj4JvGE6m3CWMtSpyFrveQHJHUmkzpOVbJrkh40bfQ8CBE9UANLvwslghGGQNuGNQ8xDiJTKvvex44M6sisujbvXLnpBokBan3PYYbYhKp0PoMIKV0LXR2mx8pW7k6yQhmcfGdd06b1VrQy_dnk4iAq0z_0yG9zEV6PSCSegUTW1VLVjT3BWYco0aptxKUnYXt2Qi7HuW1ziKA6o1fn4Vwcjs_phZMs_-AwjANrntvLIYedKUrjC9nfxrVmv4HFoBOMp_A0szw6deqwyB_6tvLM0tWQUzaNZ194ghH5ESdi76htJhwEHhyG1OMRySP_mGGQlzk1X33uLQ6d77rBAbzGkAj483wvlk0WKo0yOn3QGEXfoKoeWW67ezY7OHvIt6fq4GZl4gAHwovwi8WyEYrXFK7RNJwGZSvbv6LkRKYQRK5o1fdecLk1hZR7u_L_J31Zd9l4awFSfH6vcjKab2cEx2SfEjBpPOzjguLRFvYN7yEoz-MvF4-QeI4iBdtEqwyit2k8mf-G2laO7W1CF2JTcgFmcC1-aJQ4JhJKPuIVokGTPY62sR8ELJDXnQ4IeilCidFdUcjFHeczNDcuctCjDQbaNoiD6Xv-SbyTAIeXzyuN5khDL9nk9SyTPym4dI7IR2cZtpiT0qSMQuifLVhcq0r95a1k6sdjZLZGmJ5W_nBnADPO4bWi73ZY3NV-UnDjPJOKdJWvGcmEJO0zPFIvk3dUIdH1tuenk0NAlYbZjgEDuoZ4LIiUTyzak0Zk2BvwKqWlizEwI2acBNnzKZyZdiIVl7AP52b5msOFfYWHL2Gq6ln3HS-DybyiBlJAPmCwi-25Ygms3Bmx3ZFyQyVg59m1TpYEoK3viCuY3WfnWqyjYSIqL2WUYP2Keq0F5Dg==
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_fe6d215ab45d4f188b522570b2d23b5e
+            id: pyd_ai_d20be96094024896a04a7008e566fee6
             name: get_file
             response:
               return_value: File attached
@@ -2163,11 +2163,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '2206'
+      - '2425'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2847
+      - gfet4t7; dur=3485
       transfer-encoding:
       - chunked
       vary:
@@ -2178,26 +2178,28 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: I received an image of a rose. The rose is predominantly orange and yellow, with some pinkish-orange hues
-              on the outer petals, especially on one petal near the top that has visible water droplets on it. The rose is
-              in bloom, with its petals unfurling. A stem is visible extending from the upper right of the rose. The background
-              of the full image consists of horizontal, blurred lines in shades of green and brown.
-            thoughtSignature: CvIHAb4+9vuDbrkPMtnU7Sy8EENtxtOHDI3/MVfioabknpyMvGN5BMZiCjBYog1Zj7/kYfIkQYQf0yMXcEwNt10KSLMxBKPtsyDD8Oqw0rH4JlVKxFFNHBBaoVXY5eoSADvygZsZw8AF3u3xMevqaIfOUtH7vLN0sufSegf+O9/Ax/EQe/kvyPgCVisvR5e8h05+i8GiOqcxsDkKeWax59qkRUgZ42/NYotbclWArUq49cPvPkDGzacpXlfskZsq1aNi1JG5XohHHAR6gGeHOHTPSe7Z9P68bzFm4Yvd/ZpQhTpBtvfdBIRF0oNs3Pl4aWTvwfPrLVRa97181PziYL4uH7AobDjdWpWpaLipaCbUIgCelEjRv/jVC4nXkbYzJ1up4c0bQElqsxGuarbAK7DNT2rKKchcJAX+4fs/70JmQgeEK9dIe0V7JNJq7hfneQUnsu8fyUftDsopdRsncliFlSW2qgTjO6oB0AdnLC5ac5rClrxo2PQcR6ceezcRdHNB92b2M8cxRVhvlIC2JSnqvkvZR5JuMeZqEEvrtvCkpm8+7pGqCM+sXXyvlOHs7Cs5+H9V0Tnfi+MFPfzLgYZa9h6hgAktpXlH/Fw2CQhEggbtKoCUT1ttE8hAQZCUOUiOaMP+rJpvoqbn4FonTAe6E+4jraAj5Soodwtz30b2yjMj0TTqIvUoZVYurADce2qIAKvTaqWCklD4wNANe9+0BDMUd5i1MPML7yLeGZa13IyJoEfrYVhsnuXUgYBocCHSF+GVRs74osTWNk7GxMoy7icwH0G7bQ4i2NSpOJ21m00orci0+n6u5ZaxY1tfzy34QOBNEuMLQr6LM2lTnw7W9rsgzqZn7guR8Tn7AeILAXCyCeqQSLT06rL05X9cyMrX3CvkQEgrIpSE2Nu/xEBhnc8HLmim5F9ycmavFm54K1UjsBdVAaP5k2FhKGeCuY3suABbkkACujhHYikKo3m+5HroR4IH9nREdGnb/wWF+Mr7x+PplT8wqUtF28tf9b1O85QcG4BAE3sygFpaYSZWjXtgb18voKAYXiEkug1cOu78wOCifHlwlZB4Xm2BKG9s7HC/DmArXDsdfX4vGiG2epoh8jxTiKD4F2jEP7jCNift78OYb3BA+TDbsU2+Xza3KWK3fzh0odev+VnVYuQVOVtayTTakBLFTA9+b8S+vAkwNtQ8d8bbJmx5cqRoVkxdjft3W2v2FyyKsBipdwKHhdiCAQxZwzfaZBFqdOeslpsNBJwNfVzaMSpENO1Z4i+nuNSqTWmPm5DbIqPMYGBsZaALCvdGCgVhdTP73WFfw8EGUoewyxf0AYFK+qLQxWhPOi4=
+          - text: I received an image of a beautiful yellow-orange rose. The rose is depicted with its petals unfurled, showcasing
+              a gradient of colors from a deeper orange-yellow in the center to lighter yellows and hints of pinkish-orange
+              at the edges of the petals. There are visible water droplets on the uppermost petal, which has a distinct pinkish
+              hue. The stem of the rose, along with a few small green leaves, extends from the upper right side of the flower.
+              The background of the image is horizontally striped with muted tones of green, brown, and lighter shades, suggesting
+              a natural, perhaps slightly blurred, environment.
+            thoughtSignature: Cv0HAb4+9vttC0pFEXLUqPAFo79qY3L23h9Vb+okRjQ6BIwYq/sAThu2IfFm3DGaAkteh77YBkZHYEnUodDdsTOokBRqQYGnGMByuCeW0IpO6ZEzV0yZqppTWlexM1qqgA6hWI/7oHYchmqhCTtw0/2vGUaIUiSWwtxRqdh9aq1ULK9N0rSIzgM8qMkQyqcxSSOMFbcEKEygdZEDu6t9JYNwDxbeZwg8H2Sn6WjWZ0/yLkTjwc6TQpQUX0ghH1J7EUWZ3lPz+AoXTz7gthAgYrgoFmUpqq7SOWCnk/x952q1OwfmZybJheIw9wy+MDFkVWLPQY9MY434EDoIsu9fElh1ZFCXtyRtPGvUmm8fjz7eQyxFlHcKHIcejZMUnaQmiG+D/NgNMY1t+5gxp3jo4jt9rHTdNYEJVw6VkkpIu+6odgo12i0ACIN+TpuiB9IBH0z5PvW6EjETCpLkSTY6YjX7PDpidC9G3DwbgICacRsCZ08pm4O1vZ+sNy/akPn7vnU9zDMt4JYhcdyru8bccb4zcnq6dmAmck0Rcthl+pzeZCvm696dtBR0HsSpE+dY0g6QIR65pdeYY3Q/DXXVjPr7Izx8at8Yvg45bBU5HVy5c7qhOT/3MmLb+lLprW2mGGLFvOgps4m98mo+IuLFXM6NmYpqELZ7iTw3jAYYsWCYga8fKAHfALQUCTMpSGv8PKKGUGLxqXgtmGyCjvKX7E3+bSQyrtxjHMEXIU6u5t3odeLBqhxExlndU48afM5rTDBG0U1WQpivkIkRwVrsLotmpFfa/+yrS96uJuRzvatd+Kgq6/U/whgIfOUcxpKFtL+lg56b6kqOJh15veErUwNpplmAfLUMNQ0EAGfH1MLwRuwj56ItvgBhcoPZX4S8fPBaQHkVmBZArH0NI/5hMksxXwAQnpK97M6/KKQwXyb8nQCPvtt+7HcdUsaVqrHNgEGMFiNgsnRdt+3+7iE/SsxEmDZbAj2EEEO6itH3f+Qh6EclUx9wJzxorRcbkCKpMlmnliXGL/nKrXcvBARwjTrErCIF3WH6ZDNFTzoNJ/TtqBpQND0FBNbt8OJZCmDehcARWw5bakARYTPNE/ad5A/NeewDYAzob2JicEXtwDTN7P6ctN32GuOViPM0Kjyi5YSSzrqBUFzz62qUBc1B4O4kwFcAlsromthGnTaXrGPxV0Y5Z1IiPVwQD9oxhrcDSrtMLfCuOfBL1FcGkS7DlqdN1LeDNuEGPpwn2oO274u3ImPO5azh20ibxkZPtEYml/LoIWwFNTWfjUmtLSQcmMlfcYzfivkK5T6HWCOfb7qdicgLYoBJraOC3Ub1irGQaNegWjalUOwkBtoGHTW0bw==
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: CRCKabqIHs3Sz7IP-bDb-Qc
+      responseId: 3iuKacnKDO-Dz7IPjeyZ6A0
       usageMetadata:
-        candidatesTokenCount: 88
+        candidatesTokenCount: 126
         promptTokenCount: 328
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 70
         - modality: IMAGE
           tokenCount: 258
-        thoughtsTokenCount: 209
-        totalTokenCount: 625
+        thoughtsTokenCount: 220
+        totalTokenCount: 674
     status:
       code: 200
       message: OK

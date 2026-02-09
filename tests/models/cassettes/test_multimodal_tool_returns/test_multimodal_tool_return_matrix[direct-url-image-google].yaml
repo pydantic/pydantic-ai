@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '996'
+      - '1909'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1631
+      - gfet4t7; dur=2359
       transfer-encoding:
       - chunked
       vary:
@@ -54,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_file
-            thoughtSignature: CvkCAb4+9vuzxLPlCmulNaDNPOBW5JzFeMSU0qUFYWIyG82fIqLIEKDhtmFmXdEWuejop0HWwsagukPPALXsbZ5A3Sj0YfJrwELVVqgImNwUAR/ilWES2lgstnXJplCuQyp3K3Q/HbDu93+zbQ/cqzuSHSA2YhjBWqBIAPo6Qp2s7p/npX8UuB6P+sY2p0yknVqC/VHh8BnGP+CVqRtWLN6btF4LSr78PUeJylh/db3QXCZ39wNH2kOpdbt4V5gYM3GDyIuVhkPAV8Ds0/teYAidyBnF3ESlBh123x6xeExjmlicGtU1fSNKNMUmC21MzC6jmxRba9jAz0Fxu4Y79b91S1KA0F1MVBnFOoaHxdWRpuy01cR/kDLLlsaiHwhk5Bnhvr6KyQ7T1e36esmx1vqfMjk438bWSUzM0QR7CdzcJVqjlgzg+VFzQkEE+Fbo9IjTNn5WGt+8Ke/78G3b04bK1hgA+Du6C9q6U+fUbWhgHDzXF40Eiphaagk=
+            thoughtSignature: CqUIAb4+9vsoOZGMKDBR7adVCDKN4e0tFa25YhURX7AOsjxIVKZkuvKGsP8J8w5ABpekSgsl/kXKyfol7h3ir9ujub1A08DVe69F4P3FCyMydTYhNnrlURH9S1mpyNl2WqcQCIm2UnRvtcB49fRey+Bp9tNW0av1L4+hir8yYddrc+bjE6Hc4yel1u6VzTRO0Kinnmle1fX19ETGlY3xLaLY3n+tc6rO3tu/oRxXgso+xOjX7y+yIryORQkwHOsfAZOeSOAliY725hvPaUzzD9VMLfdrUZb+H781vJxn+CJunl12vHktabqXtzt9W8855acNtzogE5CTmz3ufpeHCO6HzSMcMj9guVpj+muU0qncPzAJyZi36R5xyglueTksglFY23YLFFtN4ZFFZtWGJmMkxjh+LeUaakaBwC9g559JnX6+tkyerplpsI3ezRBhBe+DSYXxTErdK8/Yf/OrJFkYy3ah2mXWpXpwmUc7E49z7kencKcIWNDzfIhqBfeqlRna5S3pbojTc2tXoJu/xCEPskoBOY0D7MOwBWNhv4t9sfmSeHIpVg55GwhAjzqf3aJJ7dWwoGNl7FtQEI8F7n8xTNQ8WWhIQXNDZJlw95TMOGj3lTdjoPifFrh9OijAcLOy7Loq8EAKPA1BkQO5Mtkwi3MgM6WjiJ0FxWh6FxXpmCSsQF0oqHw27uL7z9TjIokQ+EO1mIiwbuX/ztH9ucUbBDtDOXJ0oqx87TyjgHH7NR3Cuw51qb3dwpWQ1JmbB7iVwSljuh5aBHNlL3IinW/wruA8C4pDsi+/Ao48nY6KVc/ujPSHqvTFU5C1961pwPaij3xX6nohBcvOc5ijYCoYAVuZJKmLq5lReT6F0HQljQkyU5vyyO/wkM2TxELHNdhBKPBwgJdpMKUpcsC+l+yfElMbjMr8Z9gMTvgxpNDhY+Ti2mPRSjNSM7SSyK8KecThkbeYFT0DymA4DsU0aG+QupFToS1Xhtq0GqBg4YVc/Uhs2pWLtgjK0Tk3iULTMOOlIbO+6Sij3LS09dnLB/C3eR82az9tp6kikmqiK8nzcvtwCf69oZGgmRRw1WvqIptt8BawE1Tq99l70IXGpnn4WzWTWvuwk9w4OV4kvUmKZMSXGSJpC1oNkvabv8XmJLoaKlIhPVLY/UzG+7WL55I+8HX42jjDXeOic8tyemwLq+2gKRgnl9xJUeMZlOW+YJrlnXDpl/bKSsR8Zwq65k7FYUwY1Ty9cKwlcDpWmc/46V3svrhLY4dJL5ypTccOCW49CP6Bc3JtqS5PEj0x+kfw9Yc+bUggllmPhd8bxjrxvHrhNcHeYP0nWCHx1IDyFP4b568C0zkoSg1ZtYsGr15fIQCmQDWBiQRI9HAEEvLnzBuCOB3nn+euFKYaJHpK9n1z7cWPu14=
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: ZQ-KaayLI4Ghz7IPuaX12AY
+      responseId: BCqKaazVKrGmqtsPivmpqQo
       usageMetadata:
         candidatesTokenCount: 10
         promptTokenCount: 41
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 41
-        thoughtsTokenCount: 88
-        totalTokenCount: 139
+        thoughtsTokenCount: 246
+        totalTokenCount: 297
     status:
       code: 200
       message: OK
@@ -84,7 +84,7 @@ interactions:
       host:
       - www.gstatic.com
     method: GET
-    uri: https://172.217.30.195/webp/gallery3/1.png
+    uri: https://www.gstatic.com/webp/gallery3/1.png
   response:
     body:
       string: !!binary |
@@ -2081,7 +2081,7 @@ interactions:
       accept-ranges:
       - bytes
       age:
-      - '17'
+      - '6541'
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       cache-control:
@@ -2097,7 +2097,7 @@ interactions:
       cross-origin-resource-policy:
       - cross-origin
       expires:
-      - Tue, 09 Feb 2027 16:46:12 GMT
+      - Tue, 09 Feb 2027 16:51:03 GMT
       last-modified:
       - Fri, 23 Apr 2021 09:38:00 GMT
       report-to:
@@ -2116,7 +2116,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '152375'
+      - '153287'
       content-type:
       - application/json
       host:
@@ -2130,13 +2130,13 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_b1273d5cadfe47eab148c1f2a2f0b39d
+            id: pyd_ai_9d3a8aa9903e42abafc7f920406933a0
             name: get_file
-          thoughtSignature: CvkCAb4-9vuzxLPlCmulNaDNPOBW5JzFeMSU0qUFYWIyG82fIqLIEKDhtmFmXdEWuejop0HWwsagukPPALXsbZ5A3Sj0YfJrwELVVqgImNwUAR_ilWES2lgstnXJplCuQyp3K3Q_HbDu93-zbQ_cqzuSHSA2YhjBWqBIAPo6Qp2s7p_npX8UuB6P-sY2p0yknVqC_VHh8BnGP-CVqRtWLN6btF4LSr78PUeJylh_db3QXCZ39wNH2kOpdbt4V5gYM3GDyIuVhkPAV8Ds0_teYAidyBnF3ESlBh123x6xeExjmlicGtU1fSNKNMUmC21MzC6jmxRba9jAz0Fxu4Y79b91S1KA0F1MVBnFOoaHxdWRpuy01cR_kDLLlsaiHwhk5Bnhvr6KyQ7T1e36esmx1vqfMjk438bWSUzM0QR7CdzcJVqjlgzg-VFzQkEE-Fbo9IjTNn5WGt-8Ke_78G3b04bK1hgA-Du6C9q6U-fUbWhgHDzXF40Eiphaagk=
+          thoughtSignature: CqUIAb4-9vsoOZGMKDBR7adVCDKN4e0tFa25YhURX7AOsjxIVKZkuvKGsP8J8w5ABpekSgsl_kXKyfol7h3ir9ujub1A08DVe69F4P3FCyMydTYhNnrlURH9S1mpyNl2WqcQCIm2UnRvtcB49fRey-Bp9tNW0av1L4-hir8yYddrc-bjE6Hc4yel1u6VzTRO0Kinnmle1fX19ETGlY3xLaLY3n-tc6rO3tu_oRxXgso-xOjX7y-yIryORQkwHOsfAZOeSOAliY725hvPaUzzD9VMLfdrUZb-H781vJxn-CJunl12vHktabqXtzt9W8855acNtzogE5CTmz3ufpeHCO6HzSMcMj9guVpj-muU0qncPzAJyZi36R5xyglueTksglFY23YLFFtN4ZFFZtWGJmMkxjh-LeUaakaBwC9g559JnX6-tkyerplpsI3ezRBhBe-DSYXxTErdK8_Yf_OrJFkYy3ah2mXWpXpwmUc7E49z7kencKcIWNDzfIhqBfeqlRna5S3pbojTc2tXoJu_xCEPskoBOY0D7MOwBWNhv4t9sfmSeHIpVg55GwhAjzqf3aJJ7dWwoGNl7FtQEI8F7n8xTNQ8WWhIQXNDZJlw95TMOGj3lTdjoPifFrh9OijAcLOy7Loq8EAKPA1BkQO5Mtkwi3MgM6WjiJ0FxWh6FxXpmCSsQF0oqHw27uL7z9TjIokQ-EO1mIiwbuX_ztH9ucUbBDtDOXJ0oqx87TyjgHH7NR3Cuw51qb3dwpWQ1JmbB7iVwSljuh5aBHNlL3IinW_wruA8C4pDsi-_Ao48nY6KVc_ujPSHqvTFU5C1961pwPaij3xX6nohBcvOc5ijYCoYAVuZJKmLq5lReT6F0HQljQkyU5vyyO_wkM2TxELHNdhBKPBwgJdpMKUpcsC-l-yfElMbjMr8Z9gMTvgxpNDhY-Ti2mPRSjNSM7SSyK8KecThkbeYFT0DymA4DsU0aG-QupFToS1Xhtq0GqBg4YVc_Uhs2pWLtgjK0Tk3iULTMOOlIbO-6Sij3LS09dnLB_C3eR82az9tp6kikmqiK8nzcvtwCf69oZGgmRRw1WvqIptt8BawE1Tq99l70IXGpnn4WzWTWvuwk9w4OV4kvUmKZMSXGSJpC1oNkvabv8XmJLoaKlIhPVLY_UzG-7WL55I-8HX42jjDXeOic8tyemwLq-2gKRgnl9xJUeMZlOW-YJrlnXDpl_bKSsR8Zwq65k7FYUwY1Ty9cKwlcDpWmc_46V3svrhLY4dJL5ypTccOCW49CP6Bc3JtqS5PEj0x-kfw9Yc-bUggllmPhd8bxjrxvHrhNcHeYP0nWCHx1IDyFP4b568C0zkoSg1ZtYsGr15fIQCmQDWBiQRI9HAEEvLnzBuCOB3nn-euFKYaJHpK9n1z7cWPu14=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_b1273d5cadfe47eab148c1f2a2f0b39d
+            id: pyd_ai_9d3a8aa9903e42abafc7f920406933a0
             name: get_file
             response: {}
         role: user
@@ -2162,11 +2162,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '2223'
+      - '1384'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2943
+      - gfet4t7; dur=2091
       transfer-encoding:
       - chunked
       vary:
@@ -2178,25 +2178,25 @@ interactions:
       - content:
           parts:
           - text: |-
-              I did not receive any file content from the `get_file` tool. The tool returned an empty response.
+              I didn't receive an image file from the `get_file` tool, as the response was empty.
 
-              However, based on the images you provided, I see a beautiful close-up of an orange and yellow rose, adorned with small water droplets on some of its petals. The rose appears to be in full bloom, with its petals unfurling gracefully. There's also a visible stem with a few leaves towards the top right of the image. The background in the original image has horizontal stripes of green and brown, which seem to be a stylistic effect rather than a natural background. The cropped images highlight different sections of the rose against a black background, allowing for a clearer view of the petals, water droplets, and stem.
-            thoughtSignature: CpcGAb4+9vtEUHJIBiQuDwlRys+lkPGrBS6Uu0e0ajUy0izJuj+gVNwQUYJScNIiOFkGlQEOAwBUCrt5VwtM/1XksiXSsVlgCxvFTyYWSNf0WHRjHZnvP/tFfv2VLUGaH52Hrj1rLeXnj6TytP2JyfIZdrXttxtH+zC0FHh/ROuwSVEGcqlIwkcBFHUUEAFHuxP4/qIRc2RGwwSZH+pT8S5GVrCxxsPLBt1T4sOR6HsltigcLdWV/qkr/MZ6Zi92vATL1xX0/dECCGEG9THFM0GdPpZb32TCiQLoCaJaYzW+SmsGpngznnPfXecMqkAQe9psUSCh3n0A5W1E+9cMwRN63tyuSR+9ZkN9yBzElw15O8lfJd1q3PW7oZ/4iVTm+0GYnvswOS+kDlk/N7dbJBmhpv7hhaESipGSb0tUGAos1v94GMGEZrE6F75WZY4hBxKNuRIi91qZqERpJqpEhb6Brrp9wLA7b4uAXxxjG6QHaT72OPfRvxTkCA8/mDlDhbmuEhuZudx1K1qOt3XnCficjf9RSzD6Ss2ieignOTLhGa4RNsJ+ICdBu2C0ErNCJI4eShkEA+uCgodpRSUGg/6zFPk5ejNHr1V6m/QzR4iK03Nmydxd9AvI7EEYKJSOQKpoz3svfW5MhTMCjQY9G02E43FmcmSExeuN6Yc15c/LneA1eTa5McldgegysdLXJ7yh79rRRztZ7o9ugAyjqBmUpTWD1VNp/xyuXkuzSl31WUgU1AGafXT6q1PtoN4AbZtUVqy6TQ2DJcFlhZwhNDy3T+Y2q9QSoh2R0BmlNDOpXokAQ7mqMNcAfqmbRxblBOPuJNch59JitO0kDmTAswwWLkCY2pd5p8u7KXGz9giHNNxW7A3rRu1vQimgVaIbWJP86xH7YjPBJUPVzvhlz0LNl+NWYv71hXbaCsO15S1NX5KF1aJzBCYH8abzijFmg/Q3lLQEUXxjQLKC25UpC/Bmy/932X3AqBD55jOn4OfcSE9JO8wC7OljVz/DbJVmxsDNhwtRHc+FZCAbAE6ImB1ihS6d/e34aog=
+              However, I can see the image you provided. It's a beautiful close-up of a yellow rose with orange tips on some petals, and there are small water droplets visible on the top-most petals. The rose is attached to a stem, and the background appears to be horizontally striped with various shades of green and brown.
+            thoughtSignature: CpYDAb4+9vsIktdtCeZ6k949sg/O1FP76pivS1L3FkZFrpvomSmsDqCWIOg0KzSg4rSivfC2SAt1eNicOrdNnH18MBSLQVhm7zxzvaoa+9Bagi2fze6zwoA3CdsknCUzLAgyIKmHWWtIC8FmF86mSgl6uSk4mQikOCZLmb7ZUwQdiBxGfXxs3uWQiTvUI6hlBDQqNCeGGj01Mu1Sf3IgjO80w6bKkHKOk0uwrX/sjCCQQ7oO6QxKQ2VaC31ENN323tMunYhzbDmLJpQjN1T80yDPhRwJzbJt2Vj9nC7VnZs9rc6K0gMEhDRE4hTlGYo8PxWBN68VA/9TSd9YZ4wftNevZepUXhSMyq6PX/LD8dfuVt74vEmkqsPJBMHvIpalyFWlBasYLLRfH4oCwmBtDxrWQ2cY02uUIusucg9e3epvt5by+Q4DEyQ3Xqoy1REUROyxpaelYFRVGZw8MSYJILlr3CQ2a7u6P8p9SJR+XSl3dFzXb3jFUvG+DGi0yHTXYRwBKb0JoMjCAULLkMMATvjtFBaA1lfzSA==
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: aA-KafWzL5Tjz7IPzKKnqQY
+      responseId: BiqKab7TPLSmmtkPlYfUcQ
       usageMetadata:
-        candidatesTokenCount: 150
+        candidatesTokenCount: 91
         promptTokenCount: 321
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 63
         - modality: IMAGE
           tokenCount: 258
-        thoughtsTokenCount: 172
-        totalTokenCount: 643
+        thoughtsTokenCount: 82
+        totalTokenCount: 494
     status:
       code: 200
       message: OK

@@ -21,19 +21,19 @@ interactions:
       cHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggB
   response_sample:
     json:
-      id: 63ce3159-c09f-4854-88dd-7867c10c5d83
+      id: f84e16f6-07aa-6d70-13a3-379ea15e730b
       outputs:
       - finish_reason: REASON_TOOL_CALLS
         message:
           role: ROLE_ASSISTANT
           tool_calls:
-          - id: call_38319588
+          - id: call_13503873
             type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
             status: TOOL_CALL_STATUS_COMPLETED
             function:
               name: get_file
               arguments: '{}'
-      created: '2026-02-03T01:31:31.694497738Z'
+      created: '2026-02-09T18:40:48.848629889Z'
       model: grok-4-1-fast-non-reasoning
       system_fingerprint: fp_9bb3d5b553
       usage:
@@ -41,7 +41,7 @@ interactions:
         prompt_tokens: 359
         total_tokens: 374
         prompt_text_tokens: 359
-        cached_prompt_text_tokens: 358
+        cached_prompt_text_tokens: 158
       settings:
         parallel_tool_calls: true
         temperature: 0.7
@@ -54,9 +54,9 @@ interactions:
               "object"}'
         top_p: 0.95
     raw: !!binary |
-      CiQ2M2NlMzE1OS1jMDlmLTQ4NTQtODhkZC03ODY3YzEwYzVkODMSKwgEGicQAhojCg1jYWxsXzM4
-      MzE5NTg4EAEYAVIOCghnZXRfZmlsZRICe30qDAjzn4XMBhDK45TLAjIbZ3Jvay00LTEtZmFzdC1u
-      b24tcmVhc29uaW5nOg1mcF85YmIzZDViNTUzShIIDxDnAhj2AiDnAjjmAliA0A9aYxABLTMzMz86
+      CiRmODRlMTZmNi0wN2FhLTZkNzAtMTNhMy0zNzllYTE1ZTczMGISKwgEGicQAhojCg1jYWxsXzEz
+      NTAzODczEAEYAVIOCghnZXRfZmlsZRICe30qDAiw1KjMBhCBodSUAzIbZ3Jvay00LTEtZmFzdC1u
+      b24tcmVhc29uaW5nOg1mcF85YmIzZDViNTUzShIIDxDnAhj2AiDnAjieAVjg9yFaYxABLTMzMz86
       AggBQlEKTwoIZ2V0X2ZpbGUiQ3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3Bl
       cnRpZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In1NMzNzPw==
 - request_sample:
@@ -70,7 +70,7 @@ interactions:
         - text: ''
         role: ROLE_ASSISTANT
         tool_calls:
-        - id: call_38319588
+        - id: call_13503873
           type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
           status: TOOL_CALL_STATUS_COMPLETED
           function:
@@ -94,37 +94,39 @@ interactions:
         mode: TOOL_MODE_AUTO
     raw: !!binary |
       CloKVgpUVXNlIHRoZSBnZXRfZmlsZSB0b29sIG5vdyB0byByZXRyaWV2ZSBhIGltYWdlIGZpbGUs
-      IHRoZW4gZGVzY3JpYmUgd2hhdCB5b3UgcmVjZWl2ZWQuEAEKKwoCCgAQAiIjCg1jYWxsXzM4MzE5
-      NTg4EAEYAVIOCghnZXRfZmlsZRICe30KFgoSChBTZWUgZmlsZSA2YTE4YzYuEAUKTQoWChRUaGlz
+      IHRoZW4gZGVzY3JpYmUgd2hhdCB5b3UgcmVjZWl2ZWQuEAEKKwoCCgAQAiIjCg1jYWxsXzEzNTAz
+      ODczEAEYAVIOCghnZXRfZmlsZRICe30KFgoSChBTZWUgZmlsZSA2YTE4YzYuEAUKTQoWChRUaGlz
       IGlzIGZpbGUgNmExOGM2OgoxEi8KK2h0dHBzOi8vd3d3LmdzdGF0aWMuY29tL3dlYnAvZ2FsbGVy
       eTMvMS5wbmcQARABEhtncm9rLTQtMS1mYXN0LW5vbi1yZWFzb25pbmeKAVEKTwoIZ2V0X2ZpbGUi
       Q3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3BlcnRpZXMiOiB7fSwgInR5cGUi
       OiAib2JqZWN0In2SAQIIAQ==
   response_sample:
     json:
-      id: e87dd135-ee07-67bb-5fa2-5e7961e782bf
+      id: 14544c79-f3b4-2cce-59d4-650984043cce
       outputs:
       - finish_reason: REASON_STOP
         message:
-          content: The file (6a18c6) is a close-up photograph of a vibrant orange-yellow
-            rose in soft focus. The flower has layered petals with a gradient from
-            deep orange at the edges to lighter yellow tones in the center. Several
-            water droplets glisten on the top petals and stem, catching the light.
-            The background is a blurred, warm gradient of greens, oranges, and browns,
-            giving a dreamy, natural outdoor effect. The stem and a few green leaves
-            are visible on the right side. It's a beautifully captured macro-style
-            image emphasizing the rose's texture and dew-kissed freshness.
+          content: The file 6a18c6 contains a high-resolution close-up photograph
+            of a vibrant orange-yellow rose flower. The rose is in full bloom with
+            layered petals that transition from deep orange at the edges to softer
+            yellow tones toward the center. Several water droplets are visible on
+            the petals, particularly clustered on the upper petals, glistening as
+            if freshly rained on. The stem and a few green leaves are included in
+            the frame, extending from the bottom right. The background features a
+            blurred, multicolored gradient (greens, oranges, and browns) that creates
+            a soft bokeh effect, emphasizing the flower as the focal point. The overall
+            style is artistic and macro-style photography with warm, saturated colors.
           role: ROLE_ASSISTANT
-      created: '2026-02-03T01:31:32.476292292Z'
+      created: '2026-02-09T18:40:49.674066859Z'
       model: grok-4-1-fast-non-reasoning
       system_fingerprint: fp_9bb3d5b553
       usage:
-        completion_tokens: 119
+        completion_tokens: 139
         prompt_tokens: 665
-        total_tokens: 784
+        total_tokens: 804
         prompt_text_tokens: 409
         prompt_image_tokens: 256
-        cached_prompt_text_tokens: 381
+        cached_prompt_text_tokens: 359
       settings:
         parallel_tool_calls: true
         temperature: 0.7
@@ -137,17 +139,20 @@ interactions:
               "object"}'
         top_p: 0.95
     raw: !!binary |
-      CiRlODdkZDEzNS1lZTA3LTY3YmItNWZhMi01ZTc5NjFlNzgyYmYSvwQIAxq6BAq1BFRoZSBmaWxl
-      ICg2YTE4YzYpIGlzIGEgY2xvc2UtdXAgcGhvdG9ncmFwaCBvZiBhIHZpYnJhbnQgb3JhbmdlLXll
-      bGxvdyByb3NlIGluIHNvZnQgZm9jdXMuIFRoZSBmbG93ZXIgaGFzIGxheWVyZWQgcGV0YWxzIHdp
-      dGggYSBncmFkaWVudCBmcm9tIGRlZXAgb3JhbmdlIGF0IHRoZSBlZGdlcyB0byBsaWdodGVyIHll
-      bGxvdyB0b25lcyBpbiB0aGUgY2VudGVyLiBTZXZlcmFsIHdhdGVyIGRyb3BsZXRzIGdsaXN0ZW4g
-      b24gdGhlIHRvcCBwZXRhbHMgYW5kIHN0ZW0sIGNhdGNoaW5nIHRoZSBsaWdodC4gVGhlIGJhY2tn
-      cm91bmQgaXMgYSBibHVycmVkLCB3YXJtIGdyYWRpZW50IG9mIGdyZWVucywgb3JhbmdlcywgYW5k
-      IGJyb3ducywgZ2l2aW5nIGEgZHJlYW15LCBuYXR1cmFsIG91dGRvb3IgZWZmZWN0LiBUaGUgc3Rl
-      bSBhbmQgYSBmZXcgZ3JlZW4gbGVhdmVzIGFyZSB2aXNpYmxlIG9uIHRoZSByaWdodCBzaWRlLiBJ
-      dCdzIGEgYmVhdXRpZnVsbHkgY2FwdHVyZWQgbWFjcm8tc3R5bGUgaW1hZ2UgZW1waGFzaXppbmcg
-      dGhlIHJvc2UncyB0ZXh0dXJlIGFuZCBkZXcta2lzc2VkIGZyZXNobmVzcy4QAioMCPSfhcwGEMTJ
-      juMBMhtncm9rLTQtMS1mYXN0LW5vbi1yZWFzb25pbmc6DWZwXzliYjNkNWI1NTNKFQh3EJkFGJAG
-      IJkDKIACOP0CWJzOUlpjEAEtMzMzPzoCCAFCUQpPCghnZXRfZmlsZSJDeyJhZGRpdGlvbmFsUHJv
-      cGVydGllcyI6IGZhbHNlLCAicHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifU0zM3M/
+      CiQxNDU0NGM3OS1mM2I0LTJjY2UtNTlkNC02NTA5ODQwNDNjY2USzwUIAxrKBQrFBVRoZSBmaWxl
+      IDZhMThjNiBjb250YWlucyBhIGhpZ2gtcmVzb2x1dGlvbiBjbG9zZS11cCBwaG90b2dyYXBoIG9m
+      IGEgdmlicmFudCBvcmFuZ2UteWVsbG93IHJvc2UgZmxvd2VyLiBUaGUgcm9zZSBpcyBpbiBmdWxs
+      IGJsb29tIHdpdGggbGF5ZXJlZCBwZXRhbHMgdGhhdCB0cmFuc2l0aW9uIGZyb20gZGVlcCBvcmFu
+      Z2UgYXQgdGhlIGVkZ2VzIHRvIHNvZnRlciB5ZWxsb3cgdG9uZXMgdG93YXJkIHRoZSBjZW50ZXIu
+      IFNldmVyYWwgd2F0ZXIgZHJvcGxldHMgYXJlIHZpc2libGUgb24gdGhlIHBldGFscywgcGFydGlj
+      dWxhcmx5IGNsdXN0ZXJlZCBvbiB0aGUgdXBwZXIgcGV0YWxzLCBnbGlzdGVuaW5nIGFzIGlmIGZy
+      ZXNobHkgcmFpbmVkIG9uLiBUaGUgc3RlbSBhbmQgYSBmZXcgZ3JlZW4gbGVhdmVzIGFyZSBpbmNs
+      dWRlZCBpbiB0aGUgZnJhbWUsIGV4dGVuZGluZyBmcm9tIHRoZSBib3R0b20gcmlnaHQuIFRoZSBi
+      YWNrZ3JvdW5kIGZlYXR1cmVzIGEgYmx1cnJlZCwgbXVsdGljb2xvcmVkIGdyYWRpZW50IChncmVl
+      bnMsIG9yYW5nZXMsIGFuZCBicm93bnMpIHRoYXQgY3JlYXRlcyBhIHNvZnQgYm9rZWggZWZmZWN0
+      LCBlbXBoYXNpemluZyB0aGUgZmxvd2VyIGFzIHRoZSBmb2NhbCBwb2ludC4gVGhlIG92ZXJhbGwg
+      c3R5bGUgaXMgYXJ0aXN0aWMgYW5kIG1hY3JvLXN0eWxlIHBob3RvZ3JhcGh5IHdpdGggd2FybSwg
+      c2F0dXJhdGVkIGNvbG9ycy4QAioMCLHUqMwGEKvjtcECMhtncm9rLTQtMS1mYXN0LW5vbi1yZWFz
+      b25pbmc6DWZwXzliYjNkNWI1NTNKFgiLARCZBRikBiCZAyiAAjjnAlik3VpaYxABLTMzMz86AggB
+      QlEKTwoIZ2V0X2ZpbGUiQ3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3BlcnRp
+      ZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In1NMzNzPw==

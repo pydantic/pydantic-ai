@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '719'
+      - '715'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1138
+      - gfet4t7; dur=1977
       transfer-encoding:
       - chunked
       vary:
@@ -54,13 +54,13 @@ interactions:
           - functionCall:
               args: {}
               name: get_file
-            thoughtSignature: CqsBAb4+9vuamKsuZVyBb9+YJ93ZRwJdDQ3dQIYQalqXFwobOGs4jPGXTC7woy+LgvVhb3QzBX+iUaCwlfWiyA3EQW9+7M91lxkyeCJpzqJ2F1qNU2hCzvyaG175t0a7dPtv07+Fng2lD7egWFt55V2+1/kUL2gyNdBFbhp/KW6LzQC1jO1yrM5C/oIuBMSZRd8F1+xOkJlKqZUZt5NnoREynqUw+Mo4kBSrhfEO
+            thoughtSignature: CqcBAb4+9vsVefeIqAvLE9zRmDAsS8UrOIGqPLbM7PanMbVuIyR+7g3Ar330VbGq0G794xm/MlYksAfdqbGIgh2cSSBAEnwJJfbKZQGYPVNgPb7Qkl118fgJyQtPW0VElNQ4XRnytpqUL+y1Db5k3Rl6gMuSXuiRGm1zgDBDGMTuBOQ4grUKeIQre2OrzfL0eguywUlrG+pbFmLo7B9tS4Cv9pNd1VgNAlE=
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: hA-KabOtGZjXz7IPtfTP4QU
+      responseId: TyqKaaO_J_epqtsP8oz4qA8
       usageMetadata:
         candidatesTokenCount: 10
         promptTokenCount: 41
@@ -84,7 +84,7 @@ interactions:
       host:
       - pdfobject.com
     method: GET
-    uri: https://185.199.109.153/pdf/sample.pdf
+    uri: https://pdfobject.com/pdf/sample.pdf
   response:
     body:
       string: !!binary |
@@ -424,7 +424,7 @@ interactions:
       access-control-allow-origin:
       - '*'
       age:
-      - '9'
+      - '519'
       cache-control:
       - max-age=600
       connection:
@@ -453,7 +453,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '26068'
+      - '26064'
       content-type:
       - application/json
       host:
@@ -467,13 +467,13 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_8b9064db9593404a81f3a53bc4880b40
+            id: pyd_ai_daa6421afdc149b2afb2932238d725f9
             name: get_file
-          thoughtSignature: CqsBAb4-9vuamKsuZVyBb9-YJ93ZRwJdDQ3dQIYQalqXFwobOGs4jPGXTC7woy-LgvVhb3QzBX-iUaCwlfWiyA3EQW9-7M91lxkyeCJpzqJ2F1qNU2hCzvyaG175t0a7dPtv07-Fng2lD7egWFt55V2-1_kUL2gyNdBFbhp_KW6LzQC1jO1yrM5C_oIuBMSZRd8F1-xOkJlKqZUZt5NnoREynqUw-Mo4kBSrhfEO
+          thoughtSignature: CqcBAb4-9vsVefeIqAvLE9zRmDAsS8UrOIGqPLbM7PanMbVuIyR-7g3Ar330VbGq0G794xm_MlYksAfdqbGIgh2cSSBAEnwJJfbKZQGYPVNgPb7Qkl118fgJyQtPW0VElNQ4XRnytpqUL-y1Db5k3Rl6gMuSXuiRGm1zgDBDGMTuBOQ4grUKeIQre2OrzfL0eguywUlrG-pbFmLo7B9tS4Cv9pNd1VgNAlE=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_8b9064db9593404a81f3a53bc4880b40
+            id: pyd_ai_daa6421afdc149b2afb2932238d725f9
             name: get_file
             response: {}
         role: user
@@ -499,11 +499,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '684'
+      - '552'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1855
+      - gfet4t7; dur=1766
       transfer-encoding:
       - chunked
       vary:
@@ -514,23 +514,22 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: I received a document titled "Sample PDF". It's described as a "simple PDF file. Fun fun fun." The document
-              appears to be filled with Lorem ipsum text, which is placeholder text commonly used in publishing and graphic
-              design. It doesn't seem to contain any meaningful content beyond that.
+          - text: I received a document titled "Sample PDF". It's described as "a simple PDF file. Fun fun fun." The document
+              contains several paragraphs of lorem ipsum text.
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: hg-KaeiYHqDVz7IPrIi98A0
+      responseId: USqKaZeVKZCpqtsPqYnpsQs
       usageMetadata:
-        candidatesTokenCount: 60
+        candidatesTokenCount: 34
         promptTokenCount: 321
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 63
         - modality: DOCUMENT
           tokenCount: 258
-        totalTokenCount: 381
+        totalTokenCount: 355
     status:
       code: 200
       message: OK

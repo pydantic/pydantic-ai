@@ -21,19 +21,19 @@ interactions:
       cHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggB
   response_sample:
     json:
-      id: ea91d4b3-0cd0-87ec-6ed8-ac4601fe3d96
+      id: b78e05d2-14b8-a759-f285-d7903f25afb3
       outputs:
       - finish_reason: REASON_TOOL_CALLS
         message:
           role: ROLE_ASSISTANT
           tool_calls:
-          - id: call_81755139
+          - id: call_36095077
             type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
             status: TOOL_CALL_STATUS_COMPLETED
             function:
               name: get_file
               arguments: '{}'
-      created: '2026-02-09T16:48:31.071291403Z'
+      created: '2026-02-09T18:44:49.029067751Z'
       model: grok-4-1-fast-non-reasoning
       system_fingerprint: fp_9bb3d5b553
       usage:
@@ -54,8 +54,8 @@ interactions:
               "object"}'
         top_p: 0.95
     raw: !!binary |
-      CiRlYTkxZDRiMy0wY2QwLTg3ZWMtNmVkOC1hYzQ2MDFmZTNkOTYSKwgEGicQAhojCg1jYWxsXzgx
-      NzU1MTM5EAEYAVIOCghnZXRfZmlsZRICe30qCwjfn6jMBhCLpP8hMhtncm9rLTQtMS1mYXN0LW5v
+      CiRiNzhlMDVkMi0xNGI4LWE3NTktZjI4NS1kNzkwM2YyNWFmYjMSKwgEGicQAhojCg1jYWxsXzM2
+      MDk1MDc3EAEYAVIOCghnZXRfZmlsZRICe30qCwih1qjMBhDnk+4NMhtncm9rLTQtMS1mYXN0LW5v
       bi1yZWFzb25pbmc6DWZwXzliYjNkNWI1NTNKEggPEOcCGPYCIOcCOJ4BWOD3IVpjEAEtMzMzPzoC
       CAFCUQpPCghnZXRfZmlsZSJDeyJhZGRpdGlvbmFsUHJvcGVydGllcyI6IGZhbHNlLCAicHJvcGVy
       dGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifU0zM3M/
@@ -70,7 +70,7 @@ interactions:
         - text: ''
         role: ROLE_ASSISTANT
         tool_calls:
-        - id: call_81755139
+        - id: call_36095077
           type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
           status: TOOL_CALL_STATUS_COMPLETED
           function:
@@ -94,8 +94,8 @@ interactions:
         mode: TOOL_MODE_AUTO
     raw: !!binary |
       CloKVgpUVXNlIHRoZSBnZXRfZmlsZSB0b29sIG5vdyB0byByZXRyaWV2ZSBhIGltYWdlIGZpbGUs
-      IHRoZW4gZGVzY3JpYmUgd2hhdCB5b3UgcmVjZWl2ZWQuEAEKKwoCCgAQAiIjCg1jYWxsXzgxNzU1
-      MTM5EAEYAVIOCghnZXRfZmlsZRICe30KFgoSChBTZWUgZmlsZSA2YTE4YzYuEAUKjp0JChYKFFRo
+      IHRoZW4gZGVzY3JpYmUgd2hhdCB5b3UgcmVjZWl2ZWQuEAEKKwoCCgAQAiIjCg1jYWxsXzM2MDk1
+      MDc3EAEYAVIOCghnZXRfZmlsZRICe30KFgoSChBTZWUgZmlsZSA2YTE4YzYuEAUKjp0JChYKFFRo
       aXMgaXMgZmlsZSA2YTE4YzY6CvCcCRLsnAkK5pwJZGF0YTppbWFnZS9wbmc7YmFzZTY0LGlWQk9S
       dzBLR2dvQUFBQU5TVWhFVWdBQUFaQUFBQUV0Q0FZQUFBQW02elpuQUFHNmcwbEVRVlI0QWV6TUEz
       VHNmQnJIOFdkUTQ3VnQyN2F2VWRzZXB4MmpjNmVEMnZiYXRyMTdzTGJ0M2JwTk12bHQxclluei9l
@@ -2753,29 +2753,29 @@ interactions:
       OiAib2JqZWN0In2SAQIIAQ==
   response_sample:
     json:
-      id: e82777da-dd16-5530-d9ff-3b9b0d9d5b1a
+      id: c005487c-aed5-1d2c-8106-0f22f9cad7d4
       outputs:
       - finish_reason: REASON_STOP
         message:
           content: This is a close-up photograph of a vibrant orange-yellow rose in
-            full bloom. The petals have a gradient of warm colors, from deep orange
-            at the edges to softer yellow tones toward the center. Several water droplets
-            glisten on the top petals, catching the light and adding a fresh, dewy
-            effect. A thin green stem with small leaves extends from the flower into
-            a softly blurred, colorful background with green and orange hues, giving
-            it a dreamy, artistic feel. The image has a macro photography style with
-            high detail on the rose and shallow depth of field.
+            full bloom. The petals are layered in warm hues ranging from deep orange
+            at the edges to softer yellow tones toward the center, with a few water
+            droplets glistening on the top petals, catching the light for a fresh,
+            dewy effect. A thin green stem and a couple of leaves extend from the
+            flower into the blurred background, which has a subtle gradient of earthy
+            green and orange tones, giving it a soft, artistic focus on the rose itself.
+            The image has a high level of detail and a slightly macro lens feel.
           role: ROLE_ASSISTANT
-      created: '2026-02-09T16:48:32.376892658Z'
+      created: '2026-02-09T18:44:50.574090825Z'
       model: grok-4-1-fast-non-reasoning
       system_fingerprint: fp_9bb3d5b553
       usage:
-        completion_tokens: 112
+        completion_tokens: 117
         prompt_tokens: 665
-        total_tokens: 777
+        total_tokens: 782
         prompt_text_tokens: 409
         prompt_image_tokens: 256
-        cached_prompt_text_tokens: 359
+        cached_prompt_text_tokens: 158
       settings:
         parallel_tool_calls: true
         temperature: 0.7
@@ -2788,17 +2788,18 @@ interactions:
               "object"}'
         top_p: 0.95
     raw: !!binary |
-      CiRlODI3NzdkYS1kZDE2LTU1MzAtZDlmZi0zYjliMGQ5ZDViMWEStgQIAxqxBAqsBFRoaXMgaXMg
+      CiRjMDA1NDg3Yy1hZWQ1LTFkMmMtODEwNi0wZjIyZjljYWQ3ZDQSxAQIAxq/BAq6BFRoaXMgaXMg
       YSBjbG9zZS11cCBwaG90b2dyYXBoIG9mIGEgdmlicmFudCBvcmFuZ2UteWVsbG93IHJvc2UgaW4g
-      ZnVsbCBibG9vbS4gVGhlIHBldGFscyBoYXZlIGEgZ3JhZGllbnQgb2Ygd2FybSBjb2xvcnMsIGZy
-      b20gZGVlcCBvcmFuZ2UgYXQgdGhlIGVkZ2VzIHRvIHNvZnRlciB5ZWxsb3cgdG9uZXMgdG93YXJk
-      IHRoZSBjZW50ZXIuIFNldmVyYWwgd2F0ZXIgZHJvcGxldHMgZ2xpc3RlbiBvbiB0aGUgdG9wIHBl
-      dGFscywgY2F0Y2hpbmcgdGhlIGxpZ2h0IGFuZCBhZGRpbmcgYSBmcmVzaCwgZGV3eSBlZmZlY3Qu
-      IEEgdGhpbiBncmVlbiBzdGVtIHdpdGggc21hbGwgbGVhdmVzIGV4dGVuZHMgZnJvbSB0aGUgZmxv
-      d2VyIGludG8gYSBzb2Z0bHkgYmx1cnJlZCwgY29sb3JmdWwgYmFja2dyb3VuZCB3aXRoIGdyZWVu
-      IGFuZCBvcmFuZ2UgaHVlcywgZ2l2aW5nIGl0IGEgZHJlYW15LCBhcnRpc3RpYyBmZWVsLiBUaGUg
-      aW1hZ2UgaGFzIGEgbWFjcm8gcGhvdG9ncmFwaHkgc3R5bGUgd2l0aCBoaWdoIGRldGFpbCBvbiB0
-      aGUgcm9zZSBhbmQgc2hhbGxvdyBkZXB0aCBvZiBmaWVsZC4QAioMCOCfqMwGEPLZ27MBMhtncm9r
-      LTQtMS1mYXN0LW5vbi1yZWFzb25pbmc6DWZwXzliYjNkNWI1NTNKFQhwEJkFGIkGIJkDKIACOOcC
-      WMy+UlpjEAEtMzMzPzoCCAFCUQpPCghnZXRfZmlsZSJDeyJhZGRpdGlvbmFsUHJvcGVydGllcyI6
-      IGZhbHNlLCAicHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifU0zM3M/
+      ZnVsbCBibG9vbS4gVGhlIHBldGFscyBhcmUgbGF5ZXJlZCBpbiB3YXJtIGh1ZXMgcmFuZ2luZyBm
+      cm9tIGRlZXAgb3JhbmdlIGF0IHRoZSBlZGdlcyB0byBzb2Z0ZXIgeWVsbG93IHRvbmVzIHRvd2Fy
+      ZCB0aGUgY2VudGVyLCB3aXRoIGEgZmV3IHdhdGVyIGRyb3BsZXRzIGdsaXN0ZW5pbmcgb24gdGhl
+      IHRvcCBwZXRhbHMsIGNhdGNoaW5nIHRoZSBsaWdodCBmb3IgYSBmcmVzaCwgZGV3eSBlZmZlY3Qu
+      IEEgdGhpbiBncmVlbiBzdGVtIGFuZCBhIGNvdXBsZSBvZiBsZWF2ZXMgZXh0ZW5kIGZyb20gdGhl
+      IGZsb3dlciBpbnRvIHRoZSBibHVycmVkIGJhY2tncm91bmQsIHdoaWNoIGhhcyBhIHN1YnRsZSBn
+      cmFkaWVudCBvZiBlYXJ0aHkgZ3JlZW4gYW5kIG9yYW5nZSB0b25lcywgZ2l2aW5nIGl0IGEgc29m
+      dCwgYXJ0aXN0aWMgZm9jdXMgb24gdGhlIHJvc2UgaXRzZWxmLiBUaGUgaW1hZ2UgaGFzIGEgaGln
+      aCBsZXZlbCBvZiBkZXRhaWwgYW5kIGEgc2xpZ2h0bHkgbWFjcm8gbGVucyBmZWVsLhACKgwIotao
+      zAYQydzfkQIyG2dyb2stNC0xLWZhc3Qtbm9uLXJlYXNvbmluZzoNZnBfOWJiM2Q1YjU1M0oVCHUQ
+      mQUYjgYgmQMogAI4ngFYsLVmWmMQAS0zMzM/OgIIAUJRCk8KCGdldF9maWxlIkN7ImFkZGl0aW9u
+      YWxQcm9wZXJ0aWVzIjogZmFsc2UsICJwcm9wZXJ0aWVzIjoge30sICJ0eXBlIjogIm9iamVjdCJ9
+      TTMzcz8=

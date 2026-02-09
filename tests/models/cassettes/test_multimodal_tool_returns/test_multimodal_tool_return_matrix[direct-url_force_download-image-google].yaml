@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '2805'
+      - '900'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=3119
+      - gfet4t7; dur=1316
       transfer-encoding:
       - chunked
       vary:
@@ -54,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_file
-            thoughtSignature: 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
+            thoughtSignature: CrECAb4+9vu7b4JZSO4pl8TnvAmHpclukeH906VNXLJ97C+9IzoF3EGBRbiV1B2LthRgpTbsYkWPiBIcDUt1w7pX/FEAxS7avPlPH7tMERg8ddnZ9wv8T+dMtsOjRQkl1fPIjkramtevGTy5T5YnklAh/6/J/osndB7bMKFrUO2YyxwquoT2fSGm52QgkcjDdDZoDHV3orRHL3C8kFKdiJULF6LPDOH6qIGLWCy9ZxLgw0rGDJvlPCPvAunfqxfFENnzIyF61mQrGHyGSKC+Gg7pminI1RMLaDDOKiXGMHmXjcocTDGXH+3KvQ9eIDeYayiEHrlt4TDWEp8b76jTLsLTOcLj+YcmpJm8tpes7q2B46/vu0eaTZERJ4f/VOIgl+Z2NzOhqJcTK0Htytq3mozn7aU=
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: vA-KaanMHunkz7IP7pKJsAU
+      responseId: 7iqKadK7BZyRmtkPj8eH2A8
       usageMetadata:
         candidatesTokenCount: 10
         promptTokenCount: 41
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 41
-        thoughtsTokenCount: 392
-        totalTokenCount: 443
+        thoughtsTokenCount: 64
+        totalTokenCount: 115
     status:
       code: 200
       message: OK
@@ -84,7 +84,7 @@ interactions:
       host:
       - www.gstatic.com
     method: GET
-    uri: https://172.217.30.195/webp/gallery3/1.png
+    uri: https://www.gstatic.com/webp/gallery3/1.png
   response:
     body:
       string: !!binary |
@@ -2081,7 +2081,7 @@ interactions:
       accept-ranges:
       - bytes
       age:
-      - '104'
+      - '6775'
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       cache-control:
@@ -2097,7 +2097,7 @@ interactions:
       cross-origin-resource-policy:
       - cross-origin
       expires:
-      - Tue, 09 Feb 2027 16:46:12 GMT
+      - Tue, 09 Feb 2027 16:51:03 GMT
       last-modified:
       - Fri, 23 Apr 2021 09:38:00 GMT
       report-to:
@@ -2116,7 +2116,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '154183'
+      - '152279'
       content-type:
       - application/json
       host:
@@ -2130,13 +2130,13 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_074c444cb69346afa7cbefb2f81596e5
+            id: pyd_ai_b42a797db8b14f27b8b83226f90c43e6
             name: get_file
-          thoughtSignature: CsUNAb4-9vsmgvjWS6pKWMOFULDJK1Dkl3HjWz_b4RfZ787k02KVDJ0YcbmlJK1I2hdZpLGhLz7pu-wAOyZDv8cf8zNYhBTpny2mPaMAG-uChxHnOqiwEaG3whIgwWCIhV4ODsMPq8hYqCGeXTZz8CQLz5RkopmqhYiUJRD_NPL7u5YXkrmSNBdf04jE0WmS1f_vjR1p0pZFHyvnTfoKBh1WA4cwwzQTyMpRpDuY6ZpkP_y8x_u-NkJ2SbWiJ-BAooWYXxE_1a5RrxlX9Q0pJVEbZoRGKUjkXjGP33s2rN3GN1B3QnHSEcKQIxBsJVmjUKsWgfFchbYP2IK3G3Iqxt6V5d8aqfZSBZ6RtsGkUc2MZefUMuQc-oLr-MrtCGOldFse1YQ5AfQjgPlNUVSqxr9GetLT_eA3lBXBXfn104qCCGP5j-tiLiT4SQa4XMf-Ef8VN4E8wkvJvsrnMTqob6kyzk1eoaFXSumo5EycrkL2WNC8DnZlBNC2TopRgy5N5K6hJcaYRI7TNGLovO4HQ-AHbyNg7AeARu5-TSkAHDSyQwIXxl-SFuiGloGe_l0wOr1cMoxkDKDi1imHYEhByWBKhtcbJ8dAnR8PtO568zlNM3_U_25w_Bi8uN3krIs0SdVzX--xniJElKv8QCF3beqpp5wMdUSmAVk0-SY00kWTXliQfrZEFmdsb0NvP3d5uO_ocFYBmqnVXOwou4y4q6rn_pegs47mDBT1dFOSJ4Ww6N-1nvjMur2xftG6H90bUFyjE5m2aryAJKHeFehCCTw1Rsb7qBp-2l-08UqqobFc8_htORi7qUXilBtis1s9QePwk18mHlQ1iYmPhntcBP_7WHO2rxJjL4axtBRK0n_Hv1xDRpvdrsjhy69LYxC78H3OiN41OxggpAw3tSGeGEPPEntE4Fgpq9kXYx3q1EXOeSKiGm2-x2y95h1r0FGD86A1TBCdRxLNCcxL8Waqzu0tlYdTkbm4o1NI4M-24ivYkvgjCqmI-LBPTeQIH7OsZIglz32nQR_K6onumaW_YJGx_IEUloRENqY69gnjAjqeebJgG13zu-s7ow0hGCt0XgAA5m8Ak56YY9CPVXnSsAsHGUAwsnnBvcDhlYUtMvTGpsvDWNouXFOfSPmyWtuoilAwIpY0R7jBRiiMNyj1RUurownKOvjXuuu1maB6rbSzOO1D8Ra0R-M-nOEx-_KNTt-TwECCEsbwRKN4xcWKPHseIUx46oiAVqyvDErbmYusdukSNbTLVpGn535HBQ66to5okVeeEKWhL9Xm_9OOdU8AqTIJoWQPnqt1MZR61A6TGG_gNv7C2XvwTSzWjMMEHuS_iNruL4Ryvp4GBYpEbLI4lmNADSquwTyBL6HN1Uf6BLdGC4OXfqlodWkCFHs4ErQmnLaGo8mfjDoqsiiBmJ46lMJybT_3wGzbj5M6_lWCgY5ef72oQletNxJfGdwS48o3Upd3GMDheTzSDAbs56tZSArdyVaXsfnA480blBZGCVbfoCEthxCNwdwmqRebB4AVEU1Bz122oVHmeDGW-rYoOoA2aZStUyzkTjs4ANHn_6vdnRD1hmUxerULeCj7hh6aL0v_jpteWGZjO3VxH3uhYRbcWpDddTN_D4ViHwqsgXqfMGRu3XSUzn3GBOBNxTw2A4eW-LPNHEfSsqznLvY6foamN37M9roHHUwCyFXXqdm4WshdPwq-Sqsjt1N5UFLDaNw5hrR-FwDNa0HJ7mXatb5nGrV9EGcTFKO0Z5fJPWQ4lj_b3qODoiv85VUGXlpYcVVdVxlTId3IZexDJSIGaKPtAAOclWESjjlhDN70N-lIAMTv05Y6_E-jWkcHiBupUO9hi6q8kYI9cP7GFAWkAc7VOJgXRLenZXlTCu9wzOotIRwTLIW4xU2fi129JpZsESf9fIyzL-DJS5JePgaSDr2HkxochH9js-7uYYCZv6A3P7p4ZA1y1EoRgsSUvPn4QYVheSl1_mZfQEw2_dswQGX9w6z9gCLso-fSlq5yauolPlNatRPLjEH7bHxlUAqjUDmT95dJq4nG4JmCU-HSi-YnsIGadfZdVdYsGtSeGsZRzAuGwlhH6hPy8nMjzsHrTa2t7FJN8ny7G8nUkJpnGMPqlgn3nJiuXT4Tm3GIXBPUgmxYBf2Y1YWOkNQb53E_4b3O-IiDk9kjVvqC1Ok-_goTFx5MpsrlLlkYMurtFxB85CyhR0OKJU29AiOGjEVpbYEhvaw-ts3R6fPUyvQvSExugQbjnQSWHJ1fzVdD3-EcQpAWQA30H-H7ajSOuNGV15r3qPg=
+          thoughtSignature: CrECAb4-9vu7b4JZSO4pl8TnvAmHpclukeH906VNXLJ97C-9IzoF3EGBRbiV1B2LthRgpTbsYkWPiBIcDUt1w7pX_FEAxS7avPlPH7tMERg8ddnZ9wv8T-dMtsOjRQkl1fPIjkramtevGTy5T5YnklAh_6_J_osndB7bMKFrUO2YyxwquoT2fSGm52QgkcjDdDZoDHV3orRHL3C8kFKdiJULF6LPDOH6qIGLWCy9ZxLgw0rGDJvlPCPvAunfqxfFENnzIyF61mQrGHyGSKC-Gg7pminI1RMLaDDOKiXGMHmXjcocTDGXH-3KvQ9eIDeYayiEHrlt4TDWEp8b76jTLsLTOcLj-YcmpJm8tpes7q2B46_vu0eaTZERJ4f_VOIgl-Z2NzOhqJcTK0Htytq3mozn7aU=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_074c444cb69346afa7cbefb2f81596e5
+            id: pyd_ai_b42a797db8b14f27b8b83226f90c43e6
             name: get_file
             response: {}
         role: user
@@ -2162,11 +2162,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1292'
+      - '1657'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1819
+      - gfet4t7; dur=2256
       transfer-encoding:
       - chunked
       vary:
@@ -2177,29 +2177,26 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: I did not receive an image file from the `get_file` tool. The tool returned an empty response.
-            thoughtSignature: Cs0DAb4+9vtxrhMiI0SK+nB2ZJg0sY+LD94cbCgfJz1aX1sE3Z8yxgNTEA0hG8LtZ8G+lA0Z73IHvOMTolLl4fGrZfWM1xhu3CxaF12W7F/WiCcksgymjU0xicEzY3Zp9xWjSBKsoQ0yY4ki9e5SEcOJYYYhKVpxYaZw8kiDoVhLanZzQVdDASoBF/Cwojbl/qrcKfSiB6LlxLrifO8v7FtkmWF3pfe3YaAnTJNROvrRpnINEbDOyjwGgpQgrsUMNA2+mtxcQx/xhNNctVrmMJTTgCsO2PxUjzYTwwNqYH/xSlGdtLNukwyEwIl8VC/lSMCtVb2/LbSZft6t4Lub33HlITocxIn9jMtrWeRoT94VD714Ke97NlfpsGXUAuKZsQdR20ShUaPFTT9j2pwkQD8wop9BKcEH/v9qL+h5qMTKeZfG9p6X/HJI48UNzlkiNQWkE4K78PY4staNgNHIHmnveXhNz7mykt+hVBPvKtlK2BYS/7TWTzOfM6dsq9C9G8AO/kg/o8fcTwOUof6QKV73bfP1IpXtVXaqGp2BWl1dmDVu7gZlKoMlVeOOzfJJz+t9BbByzKfWcEhwXvwYrFEtQfkkYvBO8ffY6M0PGfc=
+          - text: |-
+              I did not receive an image file from the `get_file` tool, as its response was empty.
+
+              However, based on the images you provided, I see a beautiful orange and yellow rose. The rose appears to be wet with numerous small water droplets on its petals, particularly on the outer, more pinkish-orange petal. The stem is visible in the upper right, bending downwards, with a few small green leaves. The background behind the rose in the original image has horizontal streaks of green and brown, suggesting a natural, perhaps garden, setting.
+            thoughtSignature: CvsDAb4+9vuErCdlVL1xd3mB7oZMIhvo/SpEWDVbsh/evNQQOf6EMKP1M39aqjN7RCKe0Cktmatda6McycmZWo860GWFxyFSdGN2w8gIBTHbqKf5Xpk+kXJdSbRaOt3czsUHalECFAwYlkYu3PXKv1a0chKyNLnrDMAk3G/2nPYkkxVuV1qFdF7flq8veZI8/YpPwr4ZBSpMAc+WCKulmqu/LBQeh6BXDV4+pjXKs2jfEBQNYjqtWSthQCYRjk/UZGD8gEkZrE2wpDabXm+c3kWpt/a5yU8tqb4gozAk5SeCc8iAhEQZmqvkN/QY6KqaNPiRseicPQ8FvHMZqOMJfCj6FsgjyH0IN9iav2dzHkAN08Yf0Ta+D0bufhN9DGXpBXefgA+kMXWwWjRy8jWMcxLrxeXE/PMiYkKxOsdn3Ej1lNrTmb1YWKvqfA+BokRIZA8yHUCXC9D+dk7xk1Rds4IEBZBqn7LnsnqeXA9LQ4dSExE4ALabF4IPkFYqDD2eJFc3sEjp+rBahEiO34b2y6fCZq4pfXIG+mK95wsexUSK7XWwCZzmHa+cxJmMdUwlqxarnabDTUhIvNvEsk2cBkcK33EBxgCzpGFeqBk2Gi6S+fwO96lL7KFpu41HWtGG/bpZreADEnZpMRD+6zTpxBSFdzAesIWrx78mbMAM
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: vg-KaZeWMKDVz7IP5cO98A0
+      responseId: 8CqKaY3cH_uNqtsPs6W_2Q8
       usageMetadata:
-        cacheTokensDetails:
-        - modality: TEXT
-          tokenCount: 35
-        - modality: IMAGE
-          tokenCount: 145
-        cachedContentTokenCount: 180
-        candidatesTokenCount: 23
+        candidatesTokenCount: 113
         promptTokenCount: 321
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 63
         - modality: IMAGE
           tokenCount: 258
-        thoughtsTokenCount: 101
-        totalTokenCount: 445
+        thoughtsTokenCount: 109
+        totalTokenCount: 543
     status:
       code: 200
       message: OK

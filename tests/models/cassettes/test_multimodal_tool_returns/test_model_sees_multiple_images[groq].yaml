@@ -41,7 +41,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '744'
+      - '745'
       content-type:
       - application/json
       strict-transport-security:
@@ -61,26 +61,26 @@ interactions:
           - function:
               arguments: '{}'
               name: get_images
-            id: fw7m8at55
+            id: 4bbc9mwp9
             type: function
-      created: 1770075029
-      id: chatcmpl-be08425a-8a77-4d87-8257-558059602df9
+      created: 1770663522
+      id: chatcmpl-53d32b49-d43e-4786-9c8c-544feb9b2acb
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       object: chat.completion
       service_tier: on_demand
-      system_fingerprint: fp_217b6e6136
+      system_fingerprint: fp_d2c1f7e199
       usage:
-        completion_time: 0.103555558
-        completion_tokens: 47
-        prompt_time: 1.162661823
+        completion_time: 0.092866247
+        completion_tokens: 46
+        prompt_time: 0.099323725
         prompt_tokens: 715
-        queue_time: 0.437218186
-        total_time: 1.266217381
-        total_tokens: 762
+        queue_time: 0.291992438
+        total_time: 0.192189972
+        total_tokens: 761
       usage_breakdown: null
       x_groq:
-        id: req_01kggb2y85fxwr721548fj178j
-        seed: 401199282
+        id: req_01kh1wabemfg6a12xvmjsy0h5a
+        seed: 1529361633
     status:
       code: 200
       message: OK
@@ -97,7 +97,7 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=ABniebONpdIFyPbsAt1HUAxIYHBITlVP4f08uOC5e6E-1770075027.6429076-1.0.1.1-x0yYM.Tin6jJEwNIBYGA.m2ApKQ9S.y__l14VlspU7GlHLEY4cz2t.t8o3xl9PeOjbXijiMsYYLdCYThoFaLfNbIdXSqq8PemGjxuiakIMBhovCsREy92Cj18T3dKOfY
+      - __cf_bm=xsd.eYNPrtaYMV7FjNZMwwAGsb9XGSJSvAMXUbP.oig-1770663521.6700652-1.0.1.1-2UvYQwhcvLG68mW8jDnFBRWcIZsGQlQ25h4JlzXV1pwAf5Qy5yo7itGMYBzBlfVmx9fBhAq8R86Ou7BX9pA_v.8ALecBhgJxYcgpESWfbp_j25t6xgOq3A22XcqUN2mv
       host:
       - api.groq.com
     method: POST
@@ -110,13 +110,13 @@ interactions:
         - function:
             arguments: '{}'
             name: get_images
-          id: fw7m8at55
+          id: 4bbc9mwp9
           type: function
       - content: |-
           See file 241a70.
           See file 6a18c6.
         role: tool
-        tool_call_id: fw7m8at55
+        tool_call_id: 4bbc9mwp9
       - content:
         - text: 'This is file 241a70:'
           type: text
@@ -152,7 +152,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '645'
+      - '646'
       content-type:
       - application/json
       strict-transport-security:
@@ -169,24 +169,24 @@ interactions:
         message:
           content: kiwi
           role: assistant
-      created: 1770075033
-      id: chatcmpl-0ae5bc7f-948c-4cc3-9dbf-f79f39bc8562
+      created: 1770663525
+      id: chatcmpl-7c3eac4e-be55-46cc-ac39-fce4ded43c9e
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       object: chat.completion
       service_tier: on_demand
       system_fingerprint: fp_217b6e6136
       usage:
-        completion_time: 0.012273829
+        completion_time: 0.014263477
         completion_tokens: 3
-        prompt_time: 0.722276842
+        prompt_time: 0.08356047
         prompt_tokens: 1961
-        queue_time: 2.64678003
-        total_time: 0.734550671
+        queue_time: 2.296403125
+        total_time: 0.097823947
         total_tokens: 1964
       usage_breakdown: null
       x_groq:
-        id: req_01kggb30ape3dta4pnxn6bva88
-        seed: 803996963
+        id: req_01kh1wac4wefzbvtjbjhz20kx6
+        seed: 1645696341
     status:
       code: 200
       message: OK

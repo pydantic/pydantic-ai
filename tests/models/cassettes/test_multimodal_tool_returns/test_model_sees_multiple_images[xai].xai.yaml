@@ -21,19 +21,19 @@ interactions:
       ZmFsc2UsICJwcm9wZXJ0aWVzIjoge30sICJ0eXBlIjogIm9iamVjdCJ9kgECCAE=
   response_sample:
     json:
-      id: be070407-9361-8fa3-61bf-ae51786c5dfb
+      id: 78ae9311-5251-7662-6e1c-d69619e89d01
       outputs:
       - finish_reason: REASON_TOOL_CALLS
         message:
           role: ROLE_ASSISTANT
           tool_calls:
-          - id: call_25139552
+          - id: call_51018116
             type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
             status: TOOL_CALL_STATUS_COMPLETED
             function:
               name: get_images
               arguments: '{}'
-      created: '2026-02-02T23:30:34.313417533Z'
+      created: '2026-02-09T18:58:45.635633182Z'
       model: grok-4-1-fast-non-reasoning
       system_fingerprint: fp_9bb3d5b553
       usage:
@@ -41,7 +41,7 @@ interactions:
         prompt_tokens: 363
         total_tokens: 378
         prompt_text_tokens: 363
-        cached_prompt_text_tokens: 292
+        cached_prompt_text_tokens: 158
       settings:
         parallel_tool_calls: true
         temperature: 0.7
@@ -54,9 +54,9 @@ interactions:
               "object"}'
         top_p: 0.95
     raw: !!binary |
-      CiRiZTA3MDQwNy05MzYxLThmYTMtNjFiZi1hZTUxNzg2YzVkZmISLQgEGikQAholCg1jYWxsXzI1
-      MTM5NTUyEAEYAVIQCgpnZXRfaW1hZ2VzEgJ7fSoMCJrnhMwGEL2+uZUBMhtncm9rLTQtMS1mYXN0
-      LW5vbi1yZWFzb25pbmc6DWZwXzliYjNkNWI1NTNKEggPEOsCGPoCIOsCOKQCWPiTFlplEAEtMzMz
+      CiQ3OGFlOTMxMS01MjUxLTc2NjItNmUxYy1kNjk2MTllODlkMDESLQgEGikQAholCg1jYWxsXzUx
+      MDE4MTE2EAEYAVIQCgpnZXRfaW1hZ2VzEgJ7fSoMCOXcqMwGEJ78i68CMhtncm9rLTQtMS1mYXN0
+      LW5vbi1yZWFzb25pbmc6DWZwXzliYjNkNWI1NTNKEggPEOsCGPoCIOsCOJ4BWKC2IlplEAEtMzMz
       PzoCCAFCUwpRCgpnZXRfaW1hZ2VzIkN7ImFkZGl0aW9uYWxQcm9wZXJ0aWVzIjogZmFsc2UsICJw
       cm9wZXJ0aWVzIjoge30sICJ0eXBlIjogIm9iamVjdCJ9TTMzcz8=
 - request_sample:
@@ -70,7 +70,7 @@ interactions:
         - text: ''
         role: ROLE_ASSISTANT
         tool_calls:
-        - id: call_25139552
+        - id: call_51018116
           type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
           status: TOOL_CALL_STATUS_COMPLETED
           function:
@@ -101,7 +101,7 @@ interactions:
     raw: !!binary |
       CmAKXApaQ2FsbCB0aGUgZ2V0X2ltYWdlcyB0b29sLiBPbmUgaW1hZ2Ugc2hvd3MgYSBmcnVpdCAt
       IHdoYXQgZnJ1aXQgaXMgaXQ/IEp1c3QgbmFtZSB0aGUgZnJ1aXQuEAEKLQoCCgAQAiIlCg1jYWxs
-      XzI1MTM5NTUyEAEYAVIQCgpnZXRfaW1hZ2VzEgJ7fQonCiMKIVNlZSBmaWxlIDI0MWE3MC4KU2Vl
+      XzUxMDE4MTE2EAEYAVIQCgpnZXRfaW1hZ2VzEgJ7fQonCiMKIVNlZSBmaWxlIDI0MWE3MC4KU2Vl
       IGZpbGUgNmExOGM2LhAFCvKDCAoWChRUaGlzIGlzIGZpbGUgMjQxYTcwOgqJgwgShYMICv+CCGRh
       dGE6aW1hZ2UvanBlZztiYXNlNjQsLzlqLzRBQVFTa1pKUmdBQkFRQUFBUUFCQUFELzJ3QkRBQU1D
       QWdJQ0FnTUNBZ0lEQXdNREJBWUVCQVFFQkFnR0JnVUdDUWdLQ2drSUNRa0tEQThNQ2dzT0N3a0pE
@@ -2415,13 +2415,13 @@ interactions:
       cHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggB
   response_sample:
     json:
-      id: 9222cf8c-2ea2-3157-7c29-71dd49cff171
+      id: 50a5247f-09cc-c931-5675-fa05de760664
       outputs:
       - finish_reason: REASON_STOP
         message:
           content: Kiwi
           role: ROLE_ASSISTANT
-      created: '2026-02-02T23:30:35.505860142Z'
+      created: '2026-02-09T18:58:46.702205685Z'
       model: grok-4-1-fast-non-reasoning
       system_fingerprint: fp_9bb3d5b553
       usage:
@@ -2443,8 +2443,8 @@ interactions:
               "object"}'
         top_p: 0.95
     raw: !!binary |
-      CiQ5MjIyY2Y4Yy0yZWEyLTMxNTctN2MyOS03MWRkNDljZmYxNzESDAgDGggKBEtpd2kQAioMCJvn
-      hMwGEK6gm/EBMhtncm9rLTQtMS1mYXN0LW5vbi1yZWFzb25pbmc6DWZwXzliYjNkNWI1NTNKFQgC
+      CiQ1MGE1MjQ3Zi0wOWNjLWM5MzEtNTY3NS1mYTA1ZGU3NjA2NjQSDAgDGggKBEtpd2kQAioMCObc
+      qMwGEPWd684CMhtncm9rLTQtMS1mYXN0LW5vbi1yZWFzb25pbmc6DWZwXzliYjNkNWI1NTNKFQgC
       EK0HGK8HIK0DKIAEOOsCWKyfUlplEAEtMzMzPzoCCAFCUwpRCgpnZXRfaW1hZ2VzIkN7ImFkZGl0
       aW9uYWxQcm9wZXJ0aWVzIjogZmFsc2UsICJwcm9wZXJ0aWVzIjoge30sICJ0eXBlIjogIm9iamVj
       dCJ9TTMzcz8=

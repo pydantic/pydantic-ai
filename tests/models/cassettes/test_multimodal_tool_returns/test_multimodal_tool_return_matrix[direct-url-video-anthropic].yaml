@@ -38,7 +38,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '569'
+      - '599'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -49,13 +49,13 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - text: I'll retrieve the file for you now.
+      - text: I'll retrieve the file for you.
         type: text
-      - id: toolu_01Lasu4HeytW2vWLFmmMAHsy
+      - id: toolu_01RMqiFPGwaVeC4udVPAcr1M
         input: {}
         name: get_file
         type: tool_use
-      id: msg_015cdf12Fe91RVRM46Ds5iGt
+      id: msg_01JKrvHtd55bD34t5PoY78dZ
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -67,104 +67,9 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
+        inference_geo: not_available
         input_tokens: 558
-        output_tokens: 46
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '864'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Use the get_file tool now to retrieve a video file, then describe what you received.
-          type: text
-        role: user
-      - content:
-        - text: I'll retrieve the file for you now.
-          type: text
-        - id: toolu_01Lasu4HeytW2vWLFmmMAHsy
-          input: {}
-          name: get_file
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: See file 9964e6.
-            type: text
-          is_error: false
-          tool_use_id: toolu_01Lasu4HeytW2vWLFmmMAHsy
-          type: tool_result
-        - text: 'This is file 9964e6: [video URL not supported by Anthropic]'
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties: {}
-          type: object
-        name: get_file
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '1030'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    parsed_body:
-      content:
-      - text: |-
-          I received a video file (file ID: 9964e6). However, I'm unable to play or view video files directly. The system indicates this is a video URL format that isn't supported by my current capabilities.
-
-          To describe what's in the video, I would need the video to be in a format I can analyze, or you could provide me with:
-          - A description of what the video contains
-          - Screenshots or frames from the video
-          - Information about what the video is supposed to show
-
-          Is there something specific about this video you'd like help with, or would you be able to provide it in an alternative format?
-        type: text
-      id: msg_01Khe9Ad1eufXoGHqzYPddD7
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        input_tokens: 647
-        output_tokens: 134
+        output_tokens: 45
         service_tier: standard
     status:
       code: 200

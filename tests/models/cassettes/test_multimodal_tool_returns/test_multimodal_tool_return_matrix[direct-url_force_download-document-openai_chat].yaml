@@ -40,13 +40,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '749'
+      - '748'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '1679'
+      - '1814'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -68,26 +68,26 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: call_3px9SjnyRF512LO5eazjpBRc
+            id: call_tQ90FZnKv7cb54NdPpV28gmf
             type: function
-      created: 1770655763
-      id: chatcmpl-D7OjrVl8lQClal66pQP2v8QssElMV
+      created: 1770662723
+      id: chatcmpl-D7QY73tPJJeXcakMESGbQzxo4terT
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 83
+        completion_tokens: 19
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 64
+          reasoning_tokens: 0
           rejected_prediction_tokens: 0
         prompt_tokens: 129
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 212
+        total_tokens: 148
     status:
       code: 200
       message: OK
@@ -103,7 +103,7 @@ interactions:
       host:
       - pdfobject.com
     method: GET
-    uri: https://185.199.109.153/pdf/sample.pdf
+    uri: https://pdfobject.com/pdf/sample.pdf
   response:
     body:
       string: !!binary |
@@ -443,7 +443,7 @@ interactions:
       access-control-allow-origin:
       - '*'
       age:
-      - '101'
+      - '31'
       cache-control:
       - max-age=600
       connection:
@@ -476,7 +476,7 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=J27i2AEvicKVs5e1Ik9I_xum1S.MtW38rKB.08RG9pg-1770655762.2910583-1.0.1.1-hfxyqbGhIt1WS6RjvvS4UaUpflbLNhVwFmPdHVoAtaI0AGEwicWk.010RtVEveH8KD4xJp.oUpmtdcqfj4bXV8LPZIm6Cz8fJxB5zmDM7GSggDWgeIhB6lx9QMnZyp75
+      - __cf_bm=dD89GHWNOVVI3rKsZdJFTVSGKdGIYx8bUYhES1o29oc-1770662723.3207457-1.0.1.1-IIXM_GN_pm2fx2przMXytdF2prumt335F1ljC2zTWBziiwZxrnNPkuWykSF7em_iUMNnjMvalMhNzp1MERnfNHyC3q8IOnY5Q3xtcfqjOZXJ6fhNEs5ycKPNtgF1iVjq
       host:
       - api.openai.com
     method: POST
@@ -490,11 +490,11 @@ interactions:
         - function:
             arguments: '{}'
             name: get_file
-          id: call_3px9SjnyRF512LO5eazjpBRc
+          id: call_tQ90FZnKv7cb54NdPpV28gmf
           type: function
       - content: See file 99631f.
         role: tool
-        tool_call_id: call_3px9SjnyRF512LO5eazjpBRc
+        tool_call_id: call_tQ90FZnKv7cb54NdPpV28gmf
       - content:
         - text: 'This is file 99631f:'
           type: text
@@ -525,13 +525,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1863'
+      - '1872'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '13800'
+      - '14804'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -547,39 +547,46 @@ interactions:
         message:
           annotations: []
           content: |-
-            I retrieved file 99631f -- a one-page PDF titled "Sample PDF." What I received:
+            I retrieved file 99631f ("Sample PDF"). What I received:
 
-            - Format and size: a single-page PDF (parsed as Page 1 / 1).
-            - Text content: it begins with the title "Sample PDF" and the short English line "This is a simple PDF file. Fun fun fun." The rest of the page is placeholder / lorem ipsum-style text (multiple paragraphs) describing typical filler copy (sentences like "Lorem ipsum dolor sit amet..." and subsequent Latin-like paragraphs about facilisis, pulvinar, vestibulum, etc.).
-            - Structure: a short header/title, one-line English intro, then several body paragraphs of placeholder text (roughly 4-6 paragraphs of lorem ipsum content).
-            - Images: there is a rendered image of the page available (the parsing note says rendered images are accessible), but the page appears to be plain text -- no separate photos or diagrams were indicated.
+            - File basics
+              - Title (from the content): "Sample PDF"
+              - Page count: 1 (single-page PDF)
+              - First line: "This is a simple PDF file. Fun fun fun."
+
+            - Content summary (page 1)
+              - The page contains plain, multi-paragraph placeholder text -- a mix of English and lorem-ipsum-style sentences used as sample/demo copy. It reads like filler text describing layout and typographic elements (e.g., sentences about facilisis, pulvinar, scelerisque, etc.).
+              - There are several paragraphs (multiple line breaks) covering typical placeholder topics: formatting, spacing, and generic sentences. No headings, tables, or structured data were detected in the parsed text.
+
+            - Visuals
+              - The parsed output shows only text. If you want, I can open the rendered page image to check for any images, headers/footers, or text that the parser might have missed.
 
             Would you like any of the following next?
-            - A concise summary of the page (shorter than the current text).
-            - Export into plain text, Word, or other formats.
-            - A word/character count or paragraph count.
-            - Search for specific words or extract particular lines.
-            - View the rendered page image or run OCR on the image (if you want me to confirm visual elements).
+            - A full extracted plain-text file (already available -- I can provide it verbatim),
+            - A shorter human-readable summary,
+            - Conversion to another format (Word, plain TXT),
+            - Search for specific words or phrases in the document,
+            - View the rendered page image to inspect layout/graphics.
           refusal: null
           role: assistant
-      created: 1770655765
-      id: chatcmpl-D7OjtoNgJ748RD7j3ztVOwOwBohfl
+      created: 1770662726
+      id: chatcmpl-D7QYAY5aKihh1wH9cHW546PhIRc6y
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 788
+        completion_tokens: 735
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 512
+          reasoning_tokens: 448
           rejected_prediction_tokens: 0
         prompt_tokens: 1126
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 1914
+        total_tokens: 1861
     status:
       code: 200
       message: OK

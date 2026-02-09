@@ -11,7 +11,7 @@ interactions:
       host:
       - www.gstatic.com
     method: GET
-    uri: https://142.251.129.195/webp/gallery3/1.png
+    uri: https://www.gstatic.com/webp/gallery3/1.png
   response:
     body:
       string: !!binary |
@@ -2008,7 +2008,7 @@ interactions:
       accept-ranges:
       - bytes
       age:
-      - '6'
+      - '7273'
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       cache-control:

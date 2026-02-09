@@ -21,19 +21,19 @@ interactions:
       cHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggB
   response_sample:
     json:
-      id: c5f76dc8-113d-5a38-473b-1ee720302fb9
+      id: c3789d0d-6421-c6f5-aecf-10a4fbdfca93
       outputs:
       - finish_reason: REASON_TOOL_CALLS
         message:
           role: ROLE_ASSISTANT
           tool_calls:
-          - id: call_18171037
+          - id: call_39444006
             type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
             status: TOOL_CALL_STATUS_COMPLETED
             function:
               name: get_file
               arguments: '{}'
-      created: '2026-02-09T16:51:07.929195829Z'
+      created: '2026-02-09T18:52:15.589555945Z'
       model: grok-4-1-fast-non-reasoning
       system_fingerprint: fp_9bb3d5b553
       usage:
@@ -54,8 +54,8 @@ interactions:
               "object"}'
         top_p: 0.95
     raw: !!binary |
-      CiRjNWY3NmRjOC0xMTNkLTVhMzgtNDczYi0xZWU3MjAzMDJmYjkSKwgEGicQAhojCg1jYWxsXzE4
-      MTcxMDM3EAEYAVIOCghnZXRfZmlsZRICe30qDAj7oKjMBhC1zom7AzIbZ3Jvay00LTEtZmFzdC1u
+      CiRjMzc4OWQwZC02NDIxLWM2ZjUtYWVjZi0xMGE0ZmJkZmNhOTMSKwgEGicQAhojCg1jYWxsXzM5
+      NDQ0MDA2EAEYAVIOCghnZXRfZmlsZRICe30qDAjf2ajMBhDp0Y+ZAjIbZ3Jvay00LTEtZmFzdC1u
       b24tcmVhc29uaW5nOg1mcF85YmIzZDViNTUzShIIDxDnAhj2AiDnAjieAVjg9yFaYxABLTMzMz86
       AggBQlEKTwoIZ2V0X2ZpbGUiQ3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3Bl
       cnRpZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In1NMzNzPw==
@@ -70,7 +70,7 @@ interactions:
         - text: ''
         role: ROLE_ASSISTANT
         tool_calls:
-        - id: call_18171037
+        - id: call_39444006
           type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
           status: TOOL_CALL_STATUS_COMPLETED
           function:
@@ -93,8 +93,8 @@ interactions:
         mode: TOOL_MODE_AUTO
     raw: !!binary |
       CloKVgpUVXNlIHRoZSBnZXRfZmlsZSB0b29sIG5vdyB0byByZXRyaWV2ZSBhIGltYWdlIGZpbGUs
-      IHRoZW4gZGVzY3JpYmUgd2hhdCB5b3UgcmVjZWl2ZWQuEAEKKwoCCgAQAiIjCg1jYWxsXzE4MTcx
-      MDM3EAEYAVIOCghnZXRfZmlsZRICe30K9pwJCvCcCRLsnAkK5pwJZGF0YTppbWFnZS9wbmc7YmFz
+      IHRoZW4gZGVzY3JpYmUgd2hhdCB5b3UgcmVjZWl2ZWQuEAEKKwoCCgAQAiIjCg1jYWxsXzM5NDQ0
+      MDA2EAEYAVIOCghnZXRfZmlsZRICe30K9pwJCvCcCRLsnAkK5pwJZGF0YTppbWFnZS9wbmc7YmFz
       ZTY0LGlWQk9SdzBLR2dvQUFBQU5TVWhFVWdBQUFaQUFBQUV0Q0FZQUFBQW02elpuQUFHNmcwbEVR
       VlI0QWV6TUEzVHNmQnJIOFdkUTQ3VnQyN2F2VWRzZXB4MmpjNmVEMnZiYXRyMTdzTGJ0M2JwTk12
       bHQxclluei9lY1QvSTNjUnpIY2YvKy9OMFd2ZDNiZUgrWFVCZXp0SlM4dDdidTRDMHErbjltVkQv
@@ -2751,29 +2751,26 @@ interactions:
       YWxzZSwgInByb3BlcnRpZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In2SAQIIAQ==
   response_sample:
     json:
-      id: 27fdb254-c41b-810a-4a21-de86231dd5a8
+      id: a89a337f-ee44-a486-38a6-9e1bda3b59cb
       outputs:
       - finish_reason: REASON_STOP
         message:
-          content: This is a close-up photograph of a vibrant orange-yellow rose in
-            full bloom. The petals have a gradient of warm colors from deep orange
-            at the edges to softer yellow in the center, with several water droplets
-            clinging to the top petals, glistening as if from recent rain or dew.
-            The stem and a few green leaves are visible in the lower right, set against
-            a softly blurred, multicolored background with greenish and brownish tones.
-            The image has a macro photography style, emphasizing the texture and freshness
-            of the flower.
+          content: This is a close-up photograph of a vibrant orange-yellow rose flower
+            with water droplets on its petals, giving it a fresh, dewy appearance.
+            The background has a blurred, gradient greenish-yellow tint, emphasizing
+            the rose's rich colors and intricate petal details. The stem and a few
+            leaves are visible in the lower right.
           role: ROLE_ASSISTANT
-      created: '2026-02-09T16:51:09.839767433Z'
+      created: '2026-02-09T18:52:16.709288Z'
       model: grok-4-1-fast-non-reasoning
       system_fingerprint: fp_9bb3d5b553
       usage:
-        completion_tokens: 102
+        completion_tokens: 64
         prompt_tokens: 648
-        total_tokens: 750
+        total_tokens: 712
         prompt_text_tokens: 392
         prompt_image_tokens: 256
-        cached_prompt_text_tokens: 359
+        cached_prompt_text_tokens: 158
       settings:
         parallel_tool_calls: true
         temperature: 0.7
@@ -2786,17 +2783,13 @@ interactions:
               "object"}'
         top_p: 0.95
     raw: !!binary |
-      CiQyN2ZkYjI1NC1jNDFiLTgxMGEtNGEyMS1kZTg2MjMxZGQ1YTgSlgQIAxqRBAqMBFRoaXMgaXMg
-      YSBjbG9zZS11cCBwaG90b2dyYXBoIG9mIGEgdmlicmFudCBvcmFuZ2UteWVsbG93IHJvc2UgaW4g
-      ZnVsbCBibG9vbS4gVGhlIHBldGFscyBoYXZlIGEgZ3JhZGllbnQgb2Ygd2FybSBjb2xvcnMgZnJv
-      bSBkZWVwIG9yYW5nZSBhdCB0aGUgZWRnZXMgdG8gc29mdGVyIHllbGxvdyBpbiB0aGUgY2VudGVy
-      LCB3aXRoIHNldmVyYWwgd2F0ZXIgZHJvcGxldHMgY2xpbmdpbmcgdG8gdGhlIHRvcCBwZXRhbHMs
-      IGdsaXN0ZW5pbmcgYXMgaWYgZnJvbSByZWNlbnQgcmFpbiBvciBkZXcuIFRoZSBzdGVtIGFuZCBh
-      IGZldyBncmVlbiBsZWF2ZXMgYXJlIHZpc2libGUgaW4gdGhlIGxvd2VyIHJpZ2h0LCBzZXQgYWdh
-      aW5zdCBhIHNvZnRseSBibHVycmVkLCBtdWx0aWNvbG9yZWQgYmFja2dyb3VuZCB3aXRoIGdyZWVu
-      aXNoIGFuZCBicm93bmlzaCB0b25lcy4gVGhlIGltYWdlIGhhcyBhIG1hY3JvIHBob3RvZ3JhcGh5
-      IHN0eWxlLCBlbXBoYXNpemluZyB0aGUgdGV4dHVyZSBhbmQgZnJlc2huZXNzIG9mIHRoZSBmbG93
-      ZXIuEAIqDAj9oKjMBhCJq7eQAzIbZ3Jvay00LTEtZmFzdC1ub24tcmVhc29uaW5nOg1mcF85YmIz
-      ZDViNTUzShUIZhCIBRjuBSCIAyiAAjjnAlisrk1aYxABLTMzMz86AggBQlEKTwoIZ2V0X2ZpbGUi
-      Q3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3BlcnRpZXMiOiB7fSwgInR5cGUi
-      OiAib2JqZWN0In1NMzNzPw==
+      CiRhODlhMzM3Zi1lZTQ0LWE0ODYtMzhhNi05ZTFiZGEzYjU5Y2ISzAIIAxrHAgrCAlRoaXMgaXMg
+      YSBjbG9zZS11cCBwaG90b2dyYXBoIG9mIGEgdmlicmFudCBvcmFuZ2UteWVsbG93IHJvc2UgZmxv
+      d2VyIHdpdGggd2F0ZXIgZHJvcGxldHMgb24gaXRzIHBldGFscywgZ2l2aW5nIGl0IGEgZnJlc2gs
+      IGRld3kgYXBwZWFyYW5jZS4gVGhlIGJhY2tncm91bmQgaGFzIGEgYmx1cnJlZCwgZ3JhZGllbnQg
+      Z3JlZW5pc2gteWVsbG93IHRpbnQsIGVtcGhhc2l6aW5nIHRoZSByb3NlJ3MgcmljaCBjb2xvcnMg
+      YW5kIGludHJpY2F0ZSBwZXRhbCBkZXRhaWxzLiBUaGUgc3RlbSBhbmQgYSBmZXcgbGVhdmVzIGFy
+      ZSB2aXNpYmxlIGluIHRoZSBsb3dlciByaWdodC4QAioMCODZqMwGEMDAm9ICMhtncm9rLTQtMS1m
+      YXN0LW5vbi1yZWFzb25pbmc6DWZwXzliYjNkNWI1NTNKFQhAEIgFGMgFIIgDKIACOJ4BWLiVVFpj
+      EAEtMzMzPzoCCAFCUQpPCghnZXRfZmlsZSJDeyJhZGRpdGlvbmFsUHJvcGVydGllcyI6IGZhbHNl
+      LCAicHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifU0zM3M/

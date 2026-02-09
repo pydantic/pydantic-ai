@@ -721,6 +721,7 @@ async def test_multimodal_tool_return_matrix(
     assets_path: Path,
     allow_model_requests: None,
     cassette_ctx: CassetteContext | None,
+    disable_ssrf_protection_for_vcr: None,
 ):
     if not is_provider_available(provider):  # pragma: no cover
         pytest.skip(f'{provider} dependencies not installed')
@@ -820,6 +821,7 @@ async def test_model_sees_multiple_images(
     assets_path: Path,
     allow_model_requests: None,
     cassette_ctx: CassetteContext | None,
+    disable_ssrf_protection_for_vcr: None,
 ):
     """Verify the model processes multiple images by identifying both.
 

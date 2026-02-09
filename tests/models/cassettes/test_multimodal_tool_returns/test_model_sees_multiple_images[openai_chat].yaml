@@ -40,13 +40,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '753'
+      - '750'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '2992'
+      - '1332'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -68,26 +68,26 @@ interactions:
           - function:
               arguments: '{}'
               name: get_images
-            id: call_KjpHfQhagRuugsEaGC0SLgBp
+            id: call_vhpst5vwPpGZD8FruwPCyVBf
             type: function
-      created: 1770079433
-      id: chatcmpl-D4yoDgV1PAL8glwRxomzhscsuvQTF
+      created: 1770663509
+      id: chatcmpl-D7QknRtasYwHFylBDVq6RsOiWst7p
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 147
+        completion_tokens: 19
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 128
+          reasoning_tokens: 0
           rejected_prediction_tokens: 0
         prompt_tokens: 133
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 280
+        total_tokens: 152
     status:
       code: 200
       message: OK
@@ -104,8 +104,7 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=jDUfnPqCrSD5rXYjdmRfjdve0HckPaFRMxZ6Japadus-1770079436-1.0.1.1-KIEk9b50P42ARb8x_TDs_uchIsK9J0pM9KGtkYhpDHC9BC.A5QzkRRw0jsMAVkthPskNzNmPuqxy31ZFLwTHTLhK7edyclt5iOcXrLI7rJ4;
-        _cfuvid=b4jqi5hSj1odzBS5W7382lo0twgbEL4s83GCAcVggj4-1770079436474-0.0.1.1-604800000
+      - __cf_bm=C3yyWzT06cN426NH0xeAi6HgiyERknbcyloPpdWUAQ0-1770663508.8876915-1.0.1.1-oPLhe99yWA4aODVhbPrRxQGw8YF5QSOBFdPeLpFbFZHWJPC1DcvpSQVyYXwst8CjZ3pl.Ku6S2aCEdOymv1jiOgP8C1BeRLkUeaKnbXqcXSeSij3mp_NenX0kUP16_.L
       host:
       - api.openai.com
     method: POST
@@ -119,13 +118,13 @@ interactions:
         - function:
             arguments: '{}'
             name: get_images
-          id: call_KjpHfQhagRuugsEaGC0SLgBp
+          id: call_vhpst5vwPpGZD8FruwPCyVBf
           type: function
       - content: |-
           See file 241a70.
           See file 6a18c6.
         role: tool
-        tool_call_id: call_KjpHfQhagRuugsEaGC0SLgBp
+        tool_call_id: call_vhpst5vwPpGZD8FruwPCyVBf
       - content:
         - text: 'This is file 241a70:'
           type: text
@@ -160,13 +159,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '617'
+      - '615'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '3269'
+      - '2677'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -184,24 +183,24 @@ interactions:
           content: Kiwi
           refusal: null
           role: assistant
-      created: 1770079437
-      id: chatcmpl-D4yoHs5GBGai48GzyI0SlqmnZkW9l
+      created: 1770663510
+      id: chatcmpl-D7QkoIxsw82hAm64ICIIB5oGA0yzL
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 139
+        completion_tokens: 75
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 128
+          reasoning_tokens: 64
           rejected_prediction_tokens: 0
         prompt_tokens: 765
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 904
+        total_tokens: 840
     status:
       code: 200
       message: OK

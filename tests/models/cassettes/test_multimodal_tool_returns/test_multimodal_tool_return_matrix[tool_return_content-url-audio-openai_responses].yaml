@@ -40,13 +40,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2588'
+      - '3103'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '1052'
+      - '3265'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -59,11 +59,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1769756148
-      created_at: 1769756147
+      completed_at: 1770663025
+      created_at: 1770663022
       error: null
       frequency_penalty: 0.0
-      id: resp_0c44960449b8d91c00697c55f3818881a1ab7b272b5b71596b
+      id: resp_05f27bc922c0206f00698a2c6ea05c819192662f062c7b5e79
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -72,13 +72,13 @@ interactions:
       model: gpt-5-mini-2025-08-07
       object: response
       output:
-      - encrypted_content: gAAAAABpfFX0BpQUg0TQFYCjzE6KwTabz0173YvapTNco_oyNJrvmGK8bPKpm7Qe_YbksdWvKUzYZniaholImrwec74827ZSOP159Sqhm-ggHoxL2gfWHRSiansvts1ths30GHMZ8GdrXmBC3hSD_sY9KNzqUxa_3wGD_PbD92vOpbdOfU_Zv5lOydSMlqhapVWq4CLDC7g1X8LcrupPXlXXFF8nFrTz8SNFtfYI_SPozo67W4RAiL5tg9i5gdf5sxj8g88sA63yeCUioPp4LK9fSiV_d2xT1cmhD0pmaefitU5dqUJeTFKwtPiXrk6ATzkVOftv1nQ6P9bcFn3EcKbDmmuiH1ztMIXhymQdlofAqf8gAy5g3tsYeUqBjTmiEqrlx0mx5D6_qH4q6MX21MgkkdoPn0QaX1afKqHs0Vw60RUDqVdF9mc4LP0LXuHY2pAxlw1A3rESUN15E7NZgtkCpYVl5R0OQn96amHKlj9QkYGscjpTWNHd90cJXawXKtZGTZf0TvdAksVy0q1EhIUWz4eufLbx1u4j9IkH2U71NU_3OtfGGODPkcL7t3LoL-SQGrk6KmjA7tcj4BK0P7EookAzPxRETyPctpxKV3eAoSWc5-4WLliUdBaUIKS3IMaLDGL6idIkg9lBa_86J-6ANDtkyQNFRnUZpYTM-D_TPea0BTcZKOUwMpiuH2ZduLfC0icVGvM-3L_Wz4p-Y123CSw94ZM3YaWXuoav0lApDfFcc5JBHgFa9wJbk2UaLIyUutvOOYlFcpnJxOca4LTd8cyCNLJgjyxmfofjYQ3TMBSGK40BHQ-eGCHIZyqCtSUFU9xXOpOhIXSXBDa2KVvGbJxfLcbDdSsjK2rmotnHTlP3gr223TSq63znhCfK3rbf_dnXnYTsOGk8eHCr-pJfzhWUPeclyqV_RPRH3kuYP-DcQ8ttPidV1jCW93g0JdkrU6FrL7fZS71zBDCWI6Qp59-kV3qedjBe4zYMZa-tvazKsVfQE6fVjiHso1HrsQKuNpIJEMT0owJCb1cf7vHcfkuCTMPMWw==
-        id: rs_0c44960449b8d91c00697c55f3c19081a1910fd8c820478af6
+      - encrypted_content: gAAAAABpiixxrPOPTckLKcmdRcTlPIrDcVIUs9E9RYcX4CW-DCeoJOxHJXQk06XM5XnCmTdB58NGw03-2FKwhJt4F-iZfsIu2cC644NImmgZA-TAHdAGWuoJTRK98mSi_h59gDQi7BxTdXGfwNlcSyFqIfWbqZQqWlolqEJ5EK3tSTi4gLcoiVhFnjo1vWGtwtfDa_8GlRFCC1oIY7WNgN3rxepJXbwtYkKR-VngLPDnt9HJQ8bD2oJha557vlCaDAYjuus8eV59scIs7Flp02HpE27Kka6_NSygR_hT8c-DnaeNlRdzW-uqwNvRNj4G_9xiqdoOekbmF_N9z3bkS7lGp_hbmeseTffBRM_Zysj4JDxKGmFcFltsPMR9KTtP12TyLZyfZLz_W7nr7hrcOVaQnDwhV2IzKQhO_AuJz3JNa_RcIEkv_plH7IZkk_KuvpfTeygYB7TC92Yj59vKm7ZGzc89qqV7Pf3NrcDGZQLn1lLEEJoQpPKH8dQvAjGJbN_OvvjgFqr72n-ElafjnSmO6_D_X-Q9A4MCVvCerLeZqTdlcYd3z_FPuakVgxEigAK-VylVXVzomYlRiZWh4lLueqLcaiXkWpG1ZfCnpWTKyvNcxxySnQiGSe7uoNiuCvW0jjqCnGBPoRqJQY-J4DOmqtwnR8iHHTLbACAPGxbG2Qz8WCX7RhvOQszStKSyfkuRDal8zGKsLjxaeCrsP7MP0QLcs1hNvoehg5nWtL50s9z24eiUJ7BSnberGK3Bigspqgy04m-U3NNmGSB9PexYskpkSVdRuRhm6hp_JnU-xqXw3CnGjIfeEhca7fq5oataIygi5n124-BB57TJ8wPjdtNdD4p7ErBhnA9uXz-5ZWxyRwqxAp4iGSLz6Q05cXmAluxc6SwWSppBH7LRyNQr8aYfwZ5P1pRHmaaOxEgE5tRpzSyn9OM6YSSeuzlxaRWebhuSdhPrVlPJ4tkGsn7p0gD0q3TaOdihavkfswvdxHSZUyjc6FF0pT4U1Z4d6lVMbHQx9dDljTUvhtppLUQqSOED6rDfzHQpnadzphlMhAWOHcM2L8XiEsE3_f8hra5E5SfE0bWXJK48eQ-dQdG44Zv8H80ojhkTsgjBu7hrarZkiwU9I-DgLGCYkKKlqH34aXxrl-lwnK1Ehvbl0ZxYMvibrNBoOXJWk1ayKAb6mWzKjx6A_B-05oONeq40Q11c0_ue1CouvfsJe1cjSDMg7kVGnYm_Li6nlIPnlDOfTuz2lTsUS9sDblGWAKpOUkUn-bexfjOrDz7VCyto_lRIzg2x5GH8XvSEHf0dspBGzm96B4JEWJeBeBA5AR1Nbt1sGPNEPbmCMd7qJEe2nHStfwNbKVMTF2Y0AEVn1NiztwvxLsNmT9noMz5xYS-sDlDuYmKdxiJHsaZ8UTRT2EcLCHMdyl9SFrYEzEsByL-upZeeFs-ChuiDjBhqdTDciV4u3P0cWWW2f5jyBwMwHXS-Kb3v3JhtSoh_Bm7pwZOuLnBx2poXvhWfvVJgKHxjSGtDCHD-ZIar70g_hRU5_wVmBntwmmG87g==
+        id: rs_05f27bc922c0206f00698a2c6ee98081918e6fe5c987d16f31
         summary: []
         type: reasoning
       - arguments: '{}'
-        call_id: call_ElpegfHlY5oZGysE0xVaPdJU
-        id: fc_0c44960449b8d91c00697c55f4545481a1bb7673e91e487bcb
+        call_id: call_d3vhOeNBHFlhWJarPI2YQiYM
+        id: fc_05f27bc922c0206f00698a2c7181748191bb65eb19b9ef220a
         name: get_file
         status: completed
         type: function_call
@@ -116,10 +116,10 @@ interactions:
         input_tokens: 47
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 52
+        output_tokens: 128
         output_tokens_details:
-          reasoning_tokens: 0
-        total_tokens: 99
+          reasoning_tokens: 64
+        total_tokens: 175
       user: null
     status:
       code: 200
@@ -133,12 +133,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1992'
+      - '2504'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=R3PU3OcKmN63PBm5Op__5W8ERdWhKKpoWBG6EIfWGAk-1769756148-1.0.1.1-wmRdJhkJ9PBCUgnnREkbrngRovdaevXcrmurmu1mb0X_XLGaOjHmeJ8e9CI1rD9XkjIt0AntldRcxhJkftpTu73LdvPG6KcqGyKY02PkemI;
-        _cfuvid=Snl90Us3DGTzEnvwMw61SItto1sey_EPhsJYFV8tp8w-1769756148595-0.0.1.1-604800000
+      - __cf_bm=VuYOEcrpURp1vw3s5P0ZbYViZqRt4JUTaAEUVmDLyaA-1770663022.5637205-1.0.1.1-yDooYz4J_8uGiF1jat5DcNduWFYSJ6Q.ufKaYcZ8A_Z0zl8EKfjBBcP3KWauenddxdospYv8i_P1M7Ii_ZVcw_KVO.P3ExSMnoiCWQwjmEekhcyl.s7PR0OozsPmdjNF
       host:
       - api.openai.com
     method: POST
@@ -148,16 +147,16 @@ interactions:
       input:
       - content: Use the get_file tool now to retrieve a audio file, then describe what you received.
         role: user
-      - encrypted_content: gAAAAABpfFX0BpQUg0TQFYCjzE6KwTabz0173YvapTNco_oyNJrvmGK8bPKpm7Qe_YbksdWvKUzYZniaholImrwec74827ZSOP159Sqhm-ggHoxL2gfWHRSiansvts1ths30GHMZ8GdrXmBC3hSD_sY9KNzqUxa_3wGD_PbD92vOpbdOfU_Zv5lOydSMlqhapVWq4CLDC7g1X8LcrupPXlXXFF8nFrTz8SNFtfYI_SPozo67W4RAiL5tg9i5gdf5sxj8g88sA63yeCUioPp4LK9fSiV_d2xT1cmhD0pmaefitU5dqUJeTFKwtPiXrk6ATzkVOftv1nQ6P9bcFn3EcKbDmmuiH1ztMIXhymQdlofAqf8gAy5g3tsYeUqBjTmiEqrlx0mx5D6_qH4q6MX21MgkkdoPn0QaX1afKqHs0Vw60RUDqVdF9mc4LP0LXuHY2pAxlw1A3rESUN15E7NZgtkCpYVl5R0OQn96amHKlj9QkYGscjpTWNHd90cJXawXKtZGTZf0TvdAksVy0q1EhIUWz4eufLbx1u4j9IkH2U71NU_3OtfGGODPkcL7t3LoL-SQGrk6KmjA7tcj4BK0P7EookAzPxRETyPctpxKV3eAoSWc5-4WLliUdBaUIKS3IMaLDGL6idIkg9lBa_86J-6ANDtkyQNFRnUZpYTM-D_TPea0BTcZKOUwMpiuH2ZduLfC0icVGvM-3L_Wz4p-Y123CSw94ZM3YaWXuoav0lApDfFcc5JBHgFa9wJbk2UaLIyUutvOOYlFcpnJxOca4LTd8cyCNLJgjyxmfofjYQ3TMBSGK40BHQ-eGCHIZyqCtSUFU9xXOpOhIXSXBDa2KVvGbJxfLcbDdSsjK2rmotnHTlP3gr223TSq63znhCfK3rbf_dnXnYTsOGk8eHCr-pJfzhWUPeclyqV_RPRH3kuYP-DcQ8ttPidV1jCW93g0JdkrU6FrL7fZS71zBDCWI6Qp59-kV3qedjBe4zYMZa-tvazKsVfQE6fVjiHso1HrsQKuNpIJEMT0owJCb1cf7vHcfkuCTMPMWw==
-        id: rs_0c44960449b8d91c00697c55f3c19081a1910fd8c820478af6
+      - encrypted_content: gAAAAABpiixxrPOPTckLKcmdRcTlPIrDcVIUs9E9RYcX4CW-DCeoJOxHJXQk06XM5XnCmTdB58NGw03-2FKwhJt4F-iZfsIu2cC644NImmgZA-TAHdAGWuoJTRK98mSi_h59gDQi7BxTdXGfwNlcSyFqIfWbqZQqWlolqEJ5EK3tSTi4gLcoiVhFnjo1vWGtwtfDa_8GlRFCC1oIY7WNgN3rxepJXbwtYkKR-VngLPDnt9HJQ8bD2oJha557vlCaDAYjuus8eV59scIs7Flp02HpE27Kka6_NSygR_hT8c-DnaeNlRdzW-uqwNvRNj4G_9xiqdoOekbmF_N9z3bkS7lGp_hbmeseTffBRM_Zysj4JDxKGmFcFltsPMR9KTtP12TyLZyfZLz_W7nr7hrcOVaQnDwhV2IzKQhO_AuJz3JNa_RcIEkv_plH7IZkk_KuvpfTeygYB7TC92Yj59vKm7ZGzc89qqV7Pf3NrcDGZQLn1lLEEJoQpPKH8dQvAjGJbN_OvvjgFqr72n-ElafjnSmO6_D_X-Q9A4MCVvCerLeZqTdlcYd3z_FPuakVgxEigAK-VylVXVzomYlRiZWh4lLueqLcaiXkWpG1ZfCnpWTKyvNcxxySnQiGSe7uoNiuCvW0jjqCnGBPoRqJQY-J4DOmqtwnR8iHHTLbACAPGxbG2Qz8WCX7RhvOQszStKSyfkuRDal8zGKsLjxaeCrsP7MP0QLcs1hNvoehg5nWtL50s9z24eiUJ7BSnberGK3Bigspqgy04m-U3NNmGSB9PexYskpkSVdRuRhm6hp_JnU-xqXw3CnGjIfeEhca7fq5oataIygi5n124-BB57TJ8wPjdtNdD4p7ErBhnA9uXz-5ZWxyRwqxAp4iGSLz6Q05cXmAluxc6SwWSppBH7LRyNQr8aYfwZ5P1pRHmaaOxEgE5tRpzSyn9OM6YSSeuzlxaRWebhuSdhPrVlPJ4tkGsn7p0gD0q3TaOdihavkfswvdxHSZUyjc6FF0pT4U1Z4d6lVMbHQx9dDljTUvhtppLUQqSOED6rDfzHQpnadzphlMhAWOHcM2L8XiEsE3_f8hra5E5SfE0bWXJK48eQ-dQdG44Zv8H80ojhkTsgjBu7hrarZkiwU9I-DgLGCYkKKlqH34aXxrl-lwnK1Ehvbl0ZxYMvibrNBoOXJWk1ayKAb6mWzKjx6A_B-05oONeq40Q11c0_ue1CouvfsJe1cjSDMg7kVGnYm_Li6nlIPnlDOfTuz2lTsUS9sDblGWAKpOUkUn-bexfjOrDz7VCyto_lRIzg2x5GH8XvSEHf0dspBGzm96B4JEWJeBeBA5AR1Nbt1sGPNEPbmCMd7qJEe2nHStfwNbKVMTF2Y0AEVn1NiztwvxLsNmT9noMz5xYS-sDlDuYmKdxiJHsaZ8UTRT2EcLCHMdyl9SFrYEzEsByL-upZeeFs-ChuiDjBhqdTDciV4u3P0cWWW2f5jyBwMwHXS-Kb3v3JhtSoh_Bm7pwZOuLnBx2poXvhWfvVJgKHxjSGtDCHD-ZIar70g_hRU5_wVmBntwmmG87g==
+        id: rs_05f27bc922c0206f00698a2c6ee98081918e6fe5c987d16f31
         summary: []
         type: reasoning
       - arguments: '{}'
-        call_id: call_ElpegfHlY5oZGysE0xVaPdJU
-        id: fc_0c44960449b8d91c00697c55f4545481a1bb7673e91e487bcb
+        call_id: call_d3vhOeNBHFlhWJarPI2YQiYM
+        id: fc_05f27bc922c0206f00698a2c7181748191bb65eb19b9ef220a
         name: get_file
         type: function_call
-      - call_id: call_ElpegfHlY5oZGysE0xVaPdJU
+      - call_id: call_d3vhOeNBHFlhWJarPI2YQiYM
         output: File attached
         type: function_call_output
       - content:
@@ -190,7 +189,7 @@ interactions:
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '379'
+      - '284'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:

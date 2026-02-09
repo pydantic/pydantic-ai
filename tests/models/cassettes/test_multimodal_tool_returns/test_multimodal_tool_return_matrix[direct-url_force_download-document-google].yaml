@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '755'
+      - '723'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=694
+      - gfet4t7; dur=1095
       transfer-encoding:
       - chunked
       vary:
@@ -54,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_file
-            thoughtSignature: CsQBAb4+9vvYhbdPlDkN8KYNzFKLASKZ88eGFHruWdCS37RH3B4ywG1nmxXpRZ1i736ZTRS4CpHL3h/oS+tZPlHumMei+M1YrtziTeRRyvU5RXegiOFUuiT1zek/nYMZfdzFi9TrpnkNFD2wEVaqvfwqlHFCsNQlEXgqFuhqJY+gqap7VEr/0AUfkOiF7mQ+PD/dcHNXTxtLGkCGedj03Kw6ExrPUVns/JXbxg8fAJmDaxatCLC13SiuSxJc4F0Vcl/62B6SEA==
+            thoughtSignature: Cq0BAb4+9vu+16YyXPErVB8/jZXTAPxSo1RVA1bHU2+Z4Omsn/uNAZTrcH0Ko8WP7qBi5sQazfaU3yjw7Ub3N/FwBHALRHqPaCIbiwVUYd7Bt/hDadJYHbQuYxfJQgPNTmwnMWDewa88xzMm98uvpQDfAYeu01LnZYLib1FLSdeGSPhpZjP0YPBgRyguTPZkzx/RMh0vjmdK7xohi9jnJIsxUVQkS8daoSlKgQJp3Mc=
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: 8A-KaazGA5Tjz7IP3qKnqQY
+      responseId: MiuKadDAM4Ghz7IPs6X12AY
       usageMetadata:
         candidatesTokenCount: 10
         promptTokenCount: 41
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 41
-        thoughtsTokenCount: 39
-        totalTokenCount: 90
+        thoughtsTokenCount: 34
+        totalTokenCount: 85
     status:
       code: 200
       message: OK
@@ -84,7 +84,7 @@ interactions:
       host:
       - pdfobject.com
     method: GET
-    uri: https://185.199.108.153/pdf/sample.pdf
+    uri: https://pdfobject.com/pdf/sample.pdf
   response:
     body:
       string: !!binary |
@@ -424,7 +424,7 @@ interactions:
       access-control-allow-origin:
       - '*'
       age:
-      - '64'
+      - '12'
       cache-control:
       - max-age=600
       connection:
@@ -453,7 +453,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '26104'
+      - '26072'
       content-type:
       - application/json
       host:
@@ -467,13 +467,13 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_6fd6e6031b80418e9670aafaa1351c3e
+            id: pyd_ai_2a80000a38d849c79a6ec71ccbbdcfb5
             name: get_file
-          thoughtSignature: CsQBAb4-9vvYhbdPlDkN8KYNzFKLASKZ88eGFHruWdCS37RH3B4ywG1nmxXpRZ1i736ZTRS4CpHL3h_oS-tZPlHumMei-M1YrtziTeRRyvU5RXegiOFUuiT1zek_nYMZfdzFi9TrpnkNFD2wEVaqvfwqlHFCsNQlEXgqFuhqJY-gqap7VEr_0AUfkOiF7mQ-PD_dcHNXTxtLGkCGedj03Kw6ExrPUVns_JXbxg8fAJmDaxatCLC13SiuSxJc4F0Vcl_62B6SEA==
+          thoughtSignature: Cq0BAb4-9vu-16YyXPErVB8_jZXTAPxSo1RVA1bHU2-Z4Omsn_uNAZTrcH0Ko8WP7qBi5sQazfaU3yjw7Ub3N_FwBHALRHqPaCIbiwVUYd7Bt_hDadJYHbQuYxfJQgPNTmwnMWDewa88xzMm98uvpQDfAYeu01LnZYLib1FLSdeGSPhpZjP0YPBgRyguTPZkzx_RMh0vjmdK7xohi9jnJIsxUVQkS8daoSlKgQJp3Mc=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_6fd6e6031b80418e9670aafaa1351c3e
+            id: pyd_ai_2a80000a38d849c79a6ec71ccbbdcfb5
             name: get_file
             response: {}
         role: user
@@ -499,11 +499,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '721'
+      - '543'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=3301
+      - gfet4t7; dur=1897
       transfer-encoding:
       - chunked
       vary:
@@ -514,28 +514,22 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: I received a document with the title "Sample PDF" and the subtitle "This is a simple PDF file. Fun fun fun."
-              The document contains several paragraphs of placeholder text (Lorem ipsum).
+          - text: The `get_file` tool returned an empty response, which indicates that no document file was retrieved. Therefore,
+              I cannot describe any document content.
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: 8w-Kab6iJPqdz7IP-5Or4Ag
+      responseId: NCuKafGrOc3Sz7IP-bDb-Qc
       usageMetadata:
-        cacheTokensDetails:
-        - modality: TEXT
-          tokenCount: 42
-        - modality: DOCUMENT
-          tokenCount: 174
-        cachedContentTokenCount: 216
-        candidatesTokenCount: 38
+        candidatesTokenCount: 30
         promptTokenCount: 321
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 63
         - modality: DOCUMENT
           tokenCount: 258
-        totalTokenCount: 359
+        totalTokenCount: 351
     status:
       code: 200
       message: OK

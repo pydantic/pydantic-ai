@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1109'
+      - '1165'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1815
+      - gfet4t7; dur=1756
       transfer-encoding:
       - chunked
       vary:
@@ -54,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_images
-            thoughtSignature: EsgDCsUDAb4+9vuGZLWnh6oIW2TPhFAplWj2lYN5zarmEd3L5tT0/02tyKkoUXAr8eB0r9ooDyAAGRPqIMHZ/2DH4LrKAOakyuZ25L8xbMbbrT+smgF51+Ir4FKqoRsJ6QLCnmU9Pj1r9xHB99ZIgkre+AYAhSYSS46dAAOkpRRWA4XcNTqZpGkmUGWI3hs8X/rOLXHCFL/xSwabK53podWPnaeL4T4A/wpyktvHbB+862P3wwMNeIdztchT7O70K4gK06M18OgQUL4xFWSiB+8/NnLq/v4pIsoKl4ixRw3GkT0Fd/lW6txXjQbpilfUqQH0yffcWWygUuQJ/o2TIAcXXbE/7+VaIecu2GMzRcChi7jOQujIdAOKFizccs/y6mo5pt4vot2MvF10/pZFzy0VPbboccrQcssde2mxUJjPPgIbMo3ikVvdExutZmOjYMgTGdoh0TH2VJ8BIsbXH8FPG3Kt/IV9nPu4gkfWG9UQRNO+7C2hL5iwh5daT+Sb4iLwQLVPP7qvAqynxXje4j5y2GV0srFX0nykDJLLsPctCrRiaBSu/4DiVWAXsRDBj9mFS3NCA3EOT0EK+6sU1YnrlbeTWOqiy7aO
+            thoughtSignature: EvADCu0DAb4+9vvgf1+lgKWWL9MrXe80I965JDKOBEayiHwowZUtaE/BZWbrca+1WRTfrnHI+oHapZRxgnnoNyQHXvFuEpeCk5zBOhzgsT8wiqnY/RATYMSb61nF1pDAeA2HyR+h4PQZaKgDeT05VmudJnrrsZ+dby4ANBokE3klE2SfmCL0cHBKD0HQDbDufcd2yOavEChvoreKaWrlOgXAHILk2OqEd70VG3r7hB0k3aJ2Q0vk24izK2rD2bqVvLG/bExP5PLch/oND6lD6sJXB8paX1MrHjbDUKTJ41S+buCTqrGYtkS0ienyboQ37LfvhfRINMQw9Dgc0y9fnNlNp6UGQLeluU8SApv9iu9HcIxxs0ND2N1hJ2Z92+8CAV1C6gN2YG/PciVnr552UsNqCVoCxTntcCEn6CwwmYwwVFNhqxU6V7ZCneYGcgNbPnql51br3IfAqchuv3DQHRGxsHMSGjKdKpp1WmPe9tr6S2nQF3YVE5fh//kJfisqhk2DHrJmMctgyw78UqDVdFgcCKHxw+lQ0s809QVvGgnZQNAWKat+uBoehwuK4boUGySdFYleK9av8cq1uwqj+YkEMVgqv2v4d53mFZwZG/mM/qDvLG1ROLa/Taz2683DcBW4on6+/IZfU7cx7TI9YH+vUQ==
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: xxCKaavxNLm4mtkPjpPXgQE
+      responseId: US6Kab2JLZTjz7IPzKKnqQY
       usageMetadata:
         candidatesTokenCount: 10
         promptTokenCount: 40
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 40
-        thoughtsTokenCount: 108
-        totalTokenCount: 158
+        thoughtsTokenCount: 123
+        totalTokenCount: 173
     status:
       code: 200
       message: OK
@@ -84,7 +84,7 @@ interactions:
       host:
       - www.gstatic.com
     method: GET
-    uri: https://142.251.129.195/webp/gallery3/1.png
+    uri: https://www.gstatic.com/webp/gallery3/1.png
   response:
     body:
       string: !!binary |
@@ -2081,7 +2081,7 @@ interactions:
       accept-ranges:
       - bytes
       age:
-      - '81'
+      - '7642'
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       cache-control:
@@ -2116,7 +2116,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '283965'
+      - '284021'
       content-type:
       - application/json
       host:
@@ -2130,13 +2130,13 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_eb21f2128a934db6a7f5c3b95c91fff1
+            id: pyd_ai_1655ba563ef34ec7bde401fbb313db80
             name: get_images
-          thoughtSignature: EsgDCsUDAb4-9vuGZLWnh6oIW2TPhFAplWj2lYN5zarmEd3L5tT0_02tyKkoUXAr8eB0r9ooDyAAGRPqIMHZ_2DH4LrKAOakyuZ25L8xbMbbrT-smgF51-Ir4FKqoRsJ6QLCnmU9Pj1r9xHB99ZIgkre-AYAhSYSS46dAAOkpRRWA4XcNTqZpGkmUGWI3hs8X_rOLXHCFL_xSwabK53podWPnaeL4T4A_wpyktvHbB-862P3wwMNeIdztchT7O70K4gK06M18OgQUL4xFWSiB-8_NnLq_v4pIsoKl4ixRw3GkT0Fd_lW6txXjQbpilfUqQH0yffcWWygUuQJ_o2TIAcXXbE_7-VaIecu2GMzRcChi7jOQujIdAOKFizccs_y6mo5pt4vot2MvF10_pZFzy0VPbboccrQcssde2mxUJjPPgIbMo3ikVvdExutZmOjYMgTGdoh0TH2VJ8BIsbXH8FPG3Kt_IV9nPu4gkfWG9UQRNO-7C2hL5iwh5daT-Sb4iLwQLVPP7qvAqynxXje4j5y2GV0srFX0nykDJLLsPctCrRiaBSu_4DiVWAXsRDBj9mFS3NCA3EOT0EK-6sU1YnrlbeTWOqiy7aO
+          thoughtSignature: EvADCu0DAb4-9vvgf1-lgKWWL9MrXe80I965JDKOBEayiHwowZUtaE_BZWbrca-1WRTfrnHI-oHapZRxgnnoNyQHXvFuEpeCk5zBOhzgsT8wiqnY_RATYMSb61nF1pDAeA2HyR-h4PQZaKgDeT05VmudJnrrsZ-dby4ANBokE3klE2SfmCL0cHBKD0HQDbDufcd2yOavEChvoreKaWrlOgXAHILk2OqEd70VG3r7hB0k3aJ2Q0vk24izK2rD2bqVvLG_bExP5PLch_oND6lD6sJXB8paX1MrHjbDUKTJ41S-buCTqrGYtkS0ienyboQ37LfvhfRINMQw9Dgc0y9fnNlNp6UGQLeluU8SApv9iu9HcIxxs0ND2N1hJ2Z92-8CAV1C6gN2YG_PciVnr552UsNqCVoCxTntcCEn6CwwmYwwVFNhqxU6V7ZCneYGcgNbPnql51br3IfAqchuv3DQHRGxsHMSGjKdKpp1WmPe9tr6S2nQF3YVE5fh__kJfisqhk2DHrJmMctgyw78UqDVdFgcCKHxw-lQ0s809QVvGgnZQNAWKat-uBoehwuK4boUGySdFYleK9av8cq1uwqj-YkEMVgqv2v4d53mFZwZG_mM_qDvLG1ROLa_Taz2683DcBW4on6-_IZfU7cx7TI9YH-vUQ==
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_eb21f2128a934db6a7f5c3b95c91fff1
+            id: pyd_ai_1655ba563ef34ec7bde401fbb313db80
             name: get_images
             parts:
             - inline_data:
@@ -2164,11 +2164,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '856'
+      - '864'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2707
+      - gfet4t7; dur=2621
       transfer-encoding:
       - chunked
       vary:
@@ -2180,22 +2180,22 @@ interactions:
       - content:
           parts:
           - text: Kiwi
-            thoughtSignature: EqwCCqkCAb4+9vsUupsTemLXY9DXhfjIowuWfZkqviWQWxWLuCdwlyPx642iFu8rEeXb0TCu4zX2emcWjvr07PWhI27/xBFqLiwrBFDUkYpNsGNTN0wEJCrYnCWMvQcQl7uwvx6Mq/4z9NGpbyuKN1cE/T3RWRueJ+67LdmHGj9g28NIwX6MO5ozSagCjrVzb1kE8yuSbTEz27CL2r2374FAr7dTFWbe5FYtrzhVWAwqMgXsV5EDsOQLVnDpQ+4TBXw+Ja2FUn4Uy1MzNYkcee7ImAax0fEH55aRww/JvgW/97S4maWa4DByBb1prDABUu6+IdQW1Tl0lrg4LgHFSo62/XF2aIrEGCFURKwnaGJW6dJRPCYg3WAsCxPOvz7oldhYKh0n5eFDor5rhS0m
+            thoughtSignature: ErACCq0CAb4+9vsRlIg5NFxZwEslovF1dIx1XsSehLvxTL5m/vQIFivGt+OYxKdnJX5fiLhVuqgyR00WQyErdz08+cuuFVjFB+cVnpWZCaiqtNhqR+iinGsY59QUXpOKyw59w0ruheu6njXHQs3oHQB1iQjILGIQc7fyQY9WCLWnv2edi5yPcZNd7JerFwIaqUq6iKOdyytOiiPBTMQB9bZyXCf3Te8jlq2S7jD/dz9jpLmKxuPCvxdhw18cHFIPYTwGTNbK9wTD4oT4I4IR1d8+nUhVxt9H2NBz1viGiRM3PcXk/k9hhSC7qmyRLIWSyOpS/pdZAq1yoH9LOeLq9IlAWigWksBRubX62MPsSpG0xOhkIQzcVw0BInZMNptCh3IogpYg35GHxmvkiDutB/uNDQ==
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: yhCKaaS9L-K4qtsPw-ep0A8
+      responseId: VC6KaZnpIt_qz7IP0Z_SyQQ
       usageMetadata:
         candidatesTokenCount: 2
-        promptTokenCount: 2356
+        promptTokenCount: 2371
         promptTokensDetails:
-        - modality: TEXT
-          tokenCount: 166
         - modality: IMAGE
           tokenCount: 2190
-        thoughtsTokenCount: 67
-        totalTokenCount: 2425
+        - modality: TEXT
+          tokenCount: 181
+        thoughtsTokenCount: 61
+        totalTokenCount: 2434
     status:
       code: 200
       message: OK

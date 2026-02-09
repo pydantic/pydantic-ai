@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '855'
+      - '723'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1328
+      - gfet4t7; dur=1391
       transfer-encoding:
       - chunked
       vary:
@@ -54,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_file
-            thoughtSignature: CpACAb4+9vuRReMdfeyMdKDBzf9bmJnr4m5xRWntQuRTFvsOxUbQMCna7YvVz8kWUzLegF3SHfwtLCa9HjNR2eOyvF6QAxPyA1GS+RiJkrOXlG6/mmM3eUIubafaw5eqKHvo+qSRXWj1P6wIbxJAdz96hSFgOyGlQ/Ps1sjAs7eMMUKVjrGpwHuPY6qInigzlWJ77oaYrUbQaNOghgq3EtiyMFBMnThiI+kPtQT8qY8UonkZoPDflFZo5VluPQeVvQ2lLtDYgi07lKgH8Gk7Q7QzgNv9+0euYGNRwR4csEdSg7A3kqs0rs53JQlvpRrXGSTpY9OjO0S2tVFlvVPc4esAw8F46lM/B9zYRyq5oZspRic=
+            thoughtSignature: Cq4BAb4+9vteTSrmkQzYriHnLatkeqmvVnBT7eUDS4L5I1EXbrqmkgtmxLGKUbPphJuiXAXLXW68A095cfKCwar9IVnssznhwJTNp2VUjUBxYmVG15gaCOYeVuYPUqpOZqsRRL42gPJF5Jtc8Y0n21AnoryWtnvX8t+W9ufei+VzVx034/utIoCsMVOm3eJ6sSvnZcY5qnvSVbzgJeaNXOxTWQDYyjK99Zu9mDwJf9Xz
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: ixCKacLuGJ_jz7IPkLuQaQ
+      responseId: 7iyKaYbxMpyRmtkPj8eH2A8
       usageMetadata:
         candidatesTokenCount: 10
         promptTokenCount: 41
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 41
-        thoughtsTokenCount: 62
-        totalTokenCount: 113
+        thoughtsTokenCount: 34
+        totalTokenCount: 85
     status:
       code: 200
       message: OK
@@ -84,7 +84,7 @@ interactions:
       host:
       - pdfobject.com
     method: GET
-    uri: https://185.199.109.153/pdf/sample.pdf
+    uri: https://pdfobject.com/pdf/sample.pdf
   response:
     body:
       string: !!binary |
@@ -424,7 +424,7 @@ interactions:
       access-control-allow-origin:
       - '*'
       age:
-      - '219'
+      - '456'
       cache-control:
       - max-age=600
       connection:
@@ -453,7 +453,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '26235'
+      - '26103'
       content-type:
       - application/json
       host:
@@ -467,13 +467,13 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_766504d1aa1645ec8b5bdf8932f23c0d
+            id: pyd_ai_6962ebe69e374d47ab17a75cf3b0a70f
             name: get_file
-          thoughtSignature: CpACAb4-9vuRReMdfeyMdKDBzf9bmJnr4m5xRWntQuRTFvsOxUbQMCna7YvVz8kWUzLegF3SHfwtLCa9HjNR2eOyvF6QAxPyA1GS-RiJkrOXlG6_mmM3eUIubafaw5eqKHvo-qSRXWj1P6wIbxJAdz96hSFgOyGlQ_Ps1sjAs7eMMUKVjrGpwHuPY6qInigzlWJ77oaYrUbQaNOghgq3EtiyMFBMnThiI-kPtQT8qY8UonkZoPDflFZo5VluPQeVvQ2lLtDYgi07lKgH8Gk7Q7QzgNv9-0euYGNRwR4csEdSg7A3kqs0rs53JQlvpRrXGSTpY9OjO0S2tVFlvVPc4esAw8F46lM_B9zYRyq5oZspRic=
+          thoughtSignature: Cq4BAb4-9vteTSrmkQzYriHnLatkeqmvVnBT7eUDS4L5I1EXbrqmkgtmxLGKUbPphJuiXAXLXW68A095cfKCwar9IVnssznhwJTNp2VUjUBxYmVG15gaCOYeVuYPUqpOZqsRRL42gPJF5Jtc8Y0n21AnoryWtnvX8t-W9ufei-VzVx034_utIoCsMVOm3eJ6sSvnZcY5qnvSVbzgJeaNXOxTWQDYyjK99Zu9mDwJf9Xz
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_766504d1aa1645ec8b5bdf8932f23c0d
+            id: pyd_ai_6962ebe69e374d47ab17a75cf3b0a70f
             name: get_file
             response:
               return_value: File attached
@@ -500,11 +500,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '563'
+      - '627'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2227
+      - gfet4t7; dur=2081
       transfer-encoding:
       - chunked
       vary:
@@ -515,22 +515,23 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: I received a document titled "Sample PDF". It's described as "a simple PDF file. Fun fun fun." The document
-              contains several paragraphs of Latin-like placeholder text.
+          - text: The document I received is a simple PDF file with the title "Sample PDF" and the tagline "This is a simple
+              PDF file. Fun fun fun." Below the title and tagline, there are four paragraphs of Latin-like placeholder text
+              (Lorem ipsum).
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: jRCKaa6sO-_Sz7IPw9ubwQ0
+      responseId: 8SyKacbWEberqtsPvvjfoQE
       usageMetadata:
-        candidatesTokenCount: 36
+        candidatesTokenCount: 51
         promptTokenCount: 328
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 70
         - modality: DOCUMENT
           tokenCount: 258
-        totalTokenCount: 364
+        totalTokenCount: 379
     status:
       code: 200
       message: OK

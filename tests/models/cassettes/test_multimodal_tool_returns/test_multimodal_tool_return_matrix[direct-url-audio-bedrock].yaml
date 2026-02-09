@@ -7,7 +7,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        NzFkZjFkYjktZTFhYi00N2ZhLTgwZGYtYTc5NGQ1MjI0MDk2
+        ZGQ2ZjY5YTQtOWMwZi00ZTdlLWFiMDUtYTBmNTNmYmJjM2Qz
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -23,28 +23,28 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '470'
+      - '494'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 925
+        latencyMs: 1013
       output:
         message:
           content:
           - text: |
-              <thinking> The user has requested to retrieve an audio file using the get_file tool. I will proceed to use the tool to retrieve the file. </thinking>
+              <thinking> The user has requested to retrieve an audio file using the get_file tool. I will use the tool to retrieve the file and then describe what I received. </thinking>
           - toolUse:
               input: {}
               name: get_file
-              toolUseId: tooluse_tcTKu5VdQ9GKfCXr3pj0pA
+              toolUseId: tooluse_f4K7sDay5jQrYjoAlcZcue
           role: assistant
       stopReason: tool_use
       usage:
         inputTokens: 396
-        outputTokens: 48
+        outputTokens: 51
         serverToolUsage: {}
-        totalTokens: 444
+        totalTokens: 447
     status:
       code: 200
       message: OK

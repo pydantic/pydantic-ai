@@ -38,7 +38,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '574'
+      - '603'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -49,13 +49,13 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - text: I'll retrieve the document file for you.
+      - text: I'll retrieve the file for you now.
         type: text
-      - id: toolu_01YD46VAP2Gtd12zetQhAdQM
+      - id: toolu_01VRoTuqwSBnQVbu8S9unCcK
         input: {}
         name: get_file
         type: tool_use
-      id: msg_01D4MmGddn3kg93gKicNiXAN
+      id: msg_01XTvDZL8dUrS8t8SxWTv7f6
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -67,6 +67,7 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
+        inference_geo: not_available
         input_tokens: 558
         output_tokens: 46
         service_tier: standard
@@ -82,7 +83,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '876'
+      - '871'
       content-type:
       - application/json
       host:
@@ -96,9 +97,9 @@ interactions:
           type: text
         role: user
       - content:
-        - text: I'll retrieve the document file for you.
+        - text: I'll retrieve the file for you now.
           type: text
-        - id: toolu_01YD46VAP2Gtd12zetQhAdQM
+        - id: toolu_01VRoTuqwSBnQVbu8S9unCcK
           input: {}
           name: get_file
           type: tool_use
@@ -108,7 +109,7 @@ interactions:
           - text: File attached
             type: text
           is_error: false
-          tool_use_id: toolu_01YD46VAP2Gtd12zetQhAdQM
+          tool_use_id: toolu_01VRoTuqwSBnQVbu8S9unCcK
           type: tool_result
         - source:
             type: url
@@ -132,7 +133,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1425'
+      - '1438'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -146,21 +147,20 @@ interactions:
       - text: |-
           I received a **PDF document** with the following characteristics:
 
-          ## Document Description:
+          ## Document Details:
+          - **Title:** "Sample PDF"
+          - **Subtitle:** "This is a simple PDF file. Fun fun fun."
+          - **Format:** Single-page PDF document
+          - **Content Type:** Sample/demonstration document
 
-          **Title:** "Sample PDF"
+          ## Content Description:
+          The PDF contains several paragraphs of **Lorem Ipsum** placeholder text - the classic dummy text commonly used in publishing and design to demonstrate the visual layout of documents without relying on meaningful content.
 
-          **Subtitle:** "This is a simple PDF file. Fun fun fun."
+          The document appears to be a simple test or sample PDF, likely used for demonstration purposes, testing PDF readers, or as a template. The Lorem Ipsum text is well-formatted in multiple paragraphs and flows naturally across the page, making it suitable for testing document rendering, printing, or PDF processing functions.
 
-          **Content Type:** This is a test/sample PDF document containing Lorem Ipsum placeholder text.
-
-          **Structure:** The document appears to be a single page filled with standard Lorem Ipsum dummy text - the classic placeholder text commonly used in publishing and graphic design to demonstrate the visual form of a document without relying on meaningful content.
-
-          **Purpose:** This appears to be a basic sample PDF file, likely used for testing purposes, demonstrating PDF functionality, or serving as a template. The Lorem Ipsum text is organized in multiple paragraphs and provides a realistic representation of how a text-heavy document would appear.
-
-          The document is straightforward with no complex formatting, images, or special elements - just plain text content in a clean, readable layout.
+          The layout is clean and straightforward with a clear title at the top followed by body text in a readable format.
         type: text
-      id: msg_015YJrCSoMQDSEYwFLH1Wb6y
+      id: msg_013LrngNDKE8mgWfGF9UbeV3
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
@@ -172,8 +172,9 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
+        inference_geo: not_available
         input_tokens: 3289
-        output_tokens: 198
+        output_tokens: 201
         service_tier: standard
     status:
       code: 200

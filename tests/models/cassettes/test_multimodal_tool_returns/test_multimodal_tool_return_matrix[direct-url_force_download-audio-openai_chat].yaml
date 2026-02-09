@@ -40,13 +40,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '749'
+      - '748'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '1953'
+      - '1506'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -68,26 +68,26 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: call_jmxG7QSjTBgtGNz5iVgtC7on
+            id: call_JSDsYIPTkqhLsXI5mpSVem7a
             type: function
-      created: 1770655717
-      id: chatcmpl-D7Oj7vo5DwyTQE9LraqrtJRWwxC8L
+      created: 1770662793
+      id: chatcmpl-D7QZFGC33wOyGPb6n7dcDpvQt31o0
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 83
+        completion_tokens: 19
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 64
+          reasoning_tokens: 0
           rejected_prediction_tokens: 0
         prompt_tokens: 129
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 212
+        total_tokens: 148
     status:
       code: 200
       message: OK
@@ -103,7 +103,7 @@ interactions:
       host:
       - download.samplelib.com
     method: GET
-    uri: https://188.227.84.172/mp3/sample-3s.mp3
+    uri: https://download.samplelib.com/mp3/sample-3s.mp3
   response:
     body:
       string: !!binary |
@@ -1052,7 +1052,7 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=uH7BxBlKB6lARSqjdY3RJgpZWHUtEmjBCtiYlQF2rNM-1770655716.076402-1.0.1.1-Hj00RwfBrB.3eNe2fcc9g5Rr76DL9PVw5N.HaxeKD4DOENu53pw6vbvS4YMyZ5aknI7BRwutlMSo7.QYRiVYrUIK8UdYT9bWKMkxWMsexhg0tddTjb8ZKcR7qqxuLjRr
+      - __cf_bm=Pjt1ukTOau2abaKUmGLK71sJUt3t04uB7asNSvQr_Ww-1770662793.117975-1.0.1.1-G4jhESUO6Riyo0Wr1u7aw1RHgBLBygo3RZAF0pZpgZELmAbFkUt0KkmLA7g5TsAsw0Hrd70nqS1a.3rjc5E99AhTG09hLuRBeYV7b6ASQFy8zLxty6ws0b2EZTtQUTkz
       host:
       - api.openai.com
     method: POST
@@ -1066,11 +1066,11 @@ interactions:
         - function:
             arguments: '{}'
             name: get_file
-          id: call_jmxG7QSjTBgtGNz5iVgtC7on
+          id: call_JSDsYIPTkqhLsXI5mpSVem7a
           type: function
       - content: See file 4660af.
         role: tool
-        tool_call_id: call_jmxG7QSjTBgtGNz5iVgtC7on
+        tool_call_id: call_JSDsYIPTkqhLsXI5mpSVem7a
       - content:
         - text: 'This is file 4660af:'
           type: text
@@ -1107,7 +1107,7 @@ interactions:
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '11'
+      - '10'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:

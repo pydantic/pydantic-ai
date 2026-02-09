@@ -38,7 +38,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '504'
+      - '603'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -49,11 +49,13 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - id: toolu_01M5zBnLhNJhsGADPqqozJMq
+      - text: I'll retrieve the file for you now.
+        type: text
+      - id: toolu_01XBL6B2Z996VStAuNCQapHS
         input: {}
         name: get_file
         type: tool_use
-      id: msg_013S7Kwo6nVTi4XJt1A3h18t
+      id: msg_01FDMe3mqQGdxi4d8Kd2jP74
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -65,8 +67,9 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
+        inference_geo: not_available
         input_tokens: 558
-        output_tokens: 36
+        output_tokens: 46
         service_tier: standard
     status:
       code: 200
@@ -80,7 +83,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '764'
+      - '829'
       content-type:
       - application/json
       host:
@@ -94,7 +97,9 @@ interactions:
           type: text
         role: user
       - content:
-        - id: toolu_01M5zBnLhNJhsGADPqqozJMq
+        - text: I'll retrieve the file for you now.
+          type: text
+        - id: toolu_01XBL6B2Z996VStAuNCQapHS
           input: {}
           name: get_file
           type: tool_use
@@ -106,7 +111,7 @@ interactions:
               url: https://www.gstatic.com/webp/gallery3/1.png
             type: image
           is_error: false
-          tool_use_id: toolu_01M5zBnLhNJhsGADPqqozJMq
+          tool_use_id: toolu_01XBL6B2Z996VStAuNCQapHS
           type: tool_result
         role: user
       model: claude-sonnet-4-5
@@ -126,7 +131,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1095'
+      - '1431'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -137,14 +142,22 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - text: I received a beautiful image of a golden-orange rose. The flower appears to be fresh with water droplets visible
-          on its petals, giving it a dewy, just-bloomed appearance. The rose is shown at an angle that displays the elegant
-          spiral of its petals, ranging from deep golden-orange to lighter peachy-yellow tones. There's also a small pink
-          rosebud visible at the top of the image on the stem, along with some green leaves. The image has a clean white background,
-          which makes the warm colors of the rose really stand out. The composition is artistic and the lighting emphasizes
-          the soft, velvety texture of the rose petals and the moisture droplets on them.
+      - text: |-
+          I received a beautiful image of a rose! Here's what I can see:
+
+          **Description:**
+          - A single rose flower shown in profile against a white background
+          - The petals display gorgeous warm colors - primarily golden yellow and orange tones with hints of peachy pink
+          - The petals have delicate water droplets on them, giving the flower a fresh, dewy appearance
+          - There's a pink/coral colored bud or second flower visible at the top of the stem
+          - A brown stem with what appears to be thorns extends diagonally across the composition
+          - There's a green leaf visible near the top of the stem
+          - The rose petals are soft and layered, creating a classic rose bloom shape
+          - The image has a clean, elegant composition with the flower isolated on a white background, making it look like a botanical photograph or artistic study
+
+          The overall effect is very romantic and natural, capturing the delicate beauty of the rose with excellent detail and color saturation.
         type: text
-      id: msg_01AceGvRFcRVQNNkFPXffvi1
+      id: msg_019azkaqXY8FHY5jHwt73nGo
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
@@ -156,8 +169,9 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 786
-        output_tokens: 150
+        inference_geo: not_available
+        input_tokens: 795
+        output_tokens: 209
         service_tier: standard
     status:
       code: 200

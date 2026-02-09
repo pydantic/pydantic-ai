@@ -46,7 +46,7 @@ interactions:
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '1129'
+      - '1272'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -68,10 +68,10 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: call_i92b3EOKn5j3PFw8G8ngehzr
+            id: call_nBuvHbZuG4EK56IvD6hWHZXn
             type: function
-      created: 1770655638
-      id: chatcmpl-D7Ohqty5V4iAVilECzW5GCndYO9mK
+      created: 1770662503
+      id: chatcmpl-D7QUZbBAQg2JoahTABq01tPVoeDjz
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
@@ -103,7 +103,7 @@ interactions:
       host:
       - pdfobject.com
     method: GET
-    uri: https://185.199.109.153/pdf/sample.pdf
+    uri: https://pdfobject.com/pdf/sample.pdf
   response:
     body:
       string: !!binary |
@@ -443,7 +443,7 @@ interactions:
       access-control-allow-origin:
       - '*'
       age:
-      - '28'
+      - '544'
       cache-control:
       - max-age=600
       connection:
@@ -476,7 +476,7 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=A0UZCbbHPkR.7zcRnLpkCmQtUmqjJ49zeIxU73T5G5E-1770655637.689623-1.0.1.1-OQ88ENTLv3ymsjJbltrwDbraPtcKIorzWRCFGnTA0RzdwGhqWJOhgOgg.NNrkpq5DVh83VdUmJarZc7EHKeiwFC5lHlESfyXbF7DleG5UZCtMB67sj459.xBfbt_lhT6
+      - __cf_bm=QjWelZO2S0AiVRI2flx9XUR5EURDqZD0I5zXmXnibSk-1770662503.1488242-1.0.1.1-rdinm.cp2WJMTxwqUHMItxcRupXlGhoXw32BxR.88Ebv.F78VtNSSyYyBk2_qQS3YmKb9zjyXbCmxavIBU1HEfFFevTN.eyP_nDwXaiiWMnVMQukN74YdmBcUGz.F.Ek
       host:
       - api.openai.com
     method: POST
@@ -490,11 +490,11 @@ interactions:
         - function:
             arguments: '{}'
             name: get_file
-          id: call_i92b3EOKn5j3PFw8G8ngehzr
+          id: call_nBuvHbZuG4EK56IvD6hWHZXn
           type: function
       - content: See file 99631f.
         role: tool
-        tool_call_id: call_i92b3EOKn5j3PFw8G8ngehzr
+        tool_call_id: call_nBuvHbZuG4EK56IvD6hWHZXn
       - content:
         - text: 'This is file 99631f:'
           type: text
@@ -525,13 +525,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1560'
+      - '1669'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '22213'
+      - '18063'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -547,40 +547,40 @@ interactions:
         message:
           annotations: []
           content: |-
-            I retrieved file 99631f. Summary of what I received:
+            I retrieved file 99631f (a one‐page PDF). Here's what I received and observed:
 
-            - File type: PDF (single page).
-            - Page count: 1 (page 1 of 1).
-            - Header/title line: "Sample PDF".
-            - Opening sentence: "This is a simple PDF file. Fun fun fun."
-            - Main content: Several paragraphs of filler/placeholder text (Latin-style "Lorem ipsum" prose and related sample sentences). The parsed text contains four longer paragraphs of body text after the opening lines; the content reads like a generic sample/demo document rather than conveying specific factual data.
-            - Images/graphics: The parsed output is plain text -- there's no parsed image content on the page. If you want, I can also show the rendered page image to confirm visual layout.
+            - File ID: 99631f
+            - Pages: 1
+            - Parsed text (page 1): begins with the heading "Sample PDF" and the sentence "This is a simple PDF file. Fun fun fun." The rest of the page is filler/placeholder text in English (Lorem‐Ipsum style), organized into several paragraphs about general layout and formatting (no meaningful data or headings beyond the sample text).
+            - Content type: plain text / placeholder content -- there are no tables, charts, or diagrams in the parsed text.
+            - Visuals: a rendered image of the page is available (the parsed text came from page 1). I can open and show the page image or perform OCR on it if you want verification of text in images or to extract any embedded visual elements.
 
-            Would you like any of the following?
-            - Full text exported as a file (TXT/Word).
-            - A concise summary or word/character count.
-            - The rendered page image displayed.
-            - A search for specific words or phrases in this document.
+            Would you like any of the following next?
+            - View the rendered page image,
+            - Get a full word/character count,
+            - Convert the PDF to another format (TXT/Markdown),
+            - Search for specific words or phrases in the file,
+            - Summarize or rewrite the text.
           refusal: null
           role: assistant
-      created: 1770655640
-      id: chatcmpl-D7Ohsh4DMUec4ucpUhnBc0B5KUZig
+      created: 1770662505
+      id: chatcmpl-D7QUbHhVBNk5CGy43SZbJFG5zp75c
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 1366
+        completion_tokens: 824
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 1152
+          reasoning_tokens: 576
           rejected_prediction_tokens: 0
         prompt_tokens: 1126
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 2492
+        total_tokens: 1950
     status:
       code: 200
       message: OK
