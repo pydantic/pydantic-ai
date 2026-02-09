@@ -98,6 +98,7 @@ from .messages import (
     UserPromptPart,
     VideoFormat,
     VideoMediaType,
+    UploadedFile,
     VideoUrl,
 )
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
@@ -214,6 +215,7 @@ __all__ = (
     'UserPromptPart',
     'VideoFormat',
     'VideoMediaType',
+    'UploadedFile',
     'VideoUrl',
     # profiles
     'ModelProfile',
