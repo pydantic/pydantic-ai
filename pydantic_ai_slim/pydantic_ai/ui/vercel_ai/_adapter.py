@@ -18,6 +18,7 @@ from ...messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    CompactionPart,
     DocumentUrl,
     FilePart,
     ImageUrl,
@@ -40,6 +41,7 @@ from .. import MessagesBuilder, UIAdapter, UIEventStream
 from ._event_stream import VercelAIEventStream
 from ._utils import dump_provider_metadata, load_provider_metadata
 from .request_types import (
+    CompactionUIPart,
     DataUIPart,
     DynamicToolInputAvailablePart,
     DynamicToolInputStreamingPart,
@@ -171,6 +173,17 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 provider_details=provider_meta.get('provider_details'),
                             )
                         )
+                    elif isinstance(part, CompactionUIPart):
+                        provider_meta = load_provider_metadata(part.provider_metadata)
+                        builder.add(
+                            CompactionPart(
+                                content=part.text,
+                                id=provider_meta.get('id'),
+                                provider_name=provider_meta.get('provider_name'),
+                                provider_details=provider_meta.get('provider_details'),
+                            )
+                        )
+
                     elif isinstance(part, ToolUIPart | DynamicToolUIPart):
                         if isinstance(part, DynamicToolUIPart):
                             tool_name = part.tool_name
@@ -472,6 +485,14 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             call_provider_metadata=call_provider_metadata,
                         )
                     )
+            elif isinstance(part, CompactionPart):
+                provider_metadata = dump_provider_metadata(
+                    id=part.id,
+                    provider_name=part.provider_name,
+                    provider_details=part.provider_details,
+                )
+                ui_parts.append(CompactionUIPart(text=part.content, state='done', provider_metadata=provider_metadata))
+
             else:
                 assert_never(part)
 

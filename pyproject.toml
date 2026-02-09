@@ -167,7 +167,7 @@ extend-select = [
     "PLW1514", # https://docs.astral.sh/ruff/rules/unspecified-encoding/
 ]
 flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
-mccabe = { max-complexity = 15 }
+mccabe = { max-complexity = 16 }
 ignore = [
     "D100", # ignore missing docstring in module
     "D102", # ignore missing docstring in public method

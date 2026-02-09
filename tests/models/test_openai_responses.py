@@ -15,6 +15,7 @@ from pydantic_ai import (
     BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CompactionPart,
     DocumentUrl,
     FilePart,
     FinalResultEvent,
@@ -313,7 +314,18 @@ async def test_openai_responses_compact_messages(allow_model_requests: None, ope
     assert result.all_messages() == snapshot(
         [
             ModelResponse(
-                parts=[],
+                parts=[
+                    CompactionPart(
+                        id='cmp_0489e67fc8c649fb01698210489600819099f5f5839c2d6a41',
+                        provider_name='openai',
+                        provider_details={
+                            'id': 'cmp_0489e67fc8c649fb01698210489600819099f5f5839c2d6a41',
+                            'encrypted_content': 'gAAAAABpghBLYasHUPQCFImk_uESkKSPB7xHJYPUJVWxmew4IT_xlXfXcnelcEgdrrSssJZO9Ak-fXrx3AEOC_vPvb2r52W0CpK4WdL5zbCdrFNSud2zB05054RFHCeApc_SmqJD76CZGYnfDopX_iHgjWRtIv2wG_b7duc_xEmIdGcKNHDH8jT9RIavTqR226Z01zT0s6MJlaMA8eRbM2FWyjx15byUTXS3dNlVFTbTfsBeD1RobfNmeZICSKScieRMnYkystYOMbqKQrfX6Yaw0ONEq9oqdNYJhZ2xiNcxKkqVPxfDEBJRwXWvUZT7DAA_xhrF6Ht2IagdX9zr3x6CxX9Ob7hU6a-3JK3m01658dQKw7j9_mRy2jUu6bXQJFiQOgFMNsb4Oc6A-t5dRUu628DoiZ4rwSI8bNJ5v7mtHDu2MJyittkFNj6UXEIVrxnJrOdhwOFbDmc8WtzGAJORI6HVd6k-hGMqqawPDdfjOF2aGFGEu1HQ1n_hM6wsNrypqYJn3uFWpOcuVGg8uF0viucA-POHIqaAo1SaRlMfmo76ORObskta7hB2TuFJm8I5t3T4G_mS_OZ5zJerG-n9NRyka3gdVFax3I12vXMz4K-raPFooOcv60jfgdLq3YEOYqi6x_SD7Fx0NaeaPzAoHg6CH_k883huh-3BudXotEjWNkBSOXOxJJbQ9T0wVei4KJndA8ks8iTJOeLpyAT_NkhWe_iZc6_zWMou0sY957UBQ4bA-e9pGdzazUUC43djKWYjjF5yi14KyPMAMkR5O0VzUIzbB8Ujs9NOxootsz_-W-bj0ENmsbeHqu7QSxQo8XjkAwzcIGdF1lp3kEtAcFDGAJ0QFY7sQ1zoIcqtHvqokD7mkT5d-55ihRkHBiRZ_89LW0Ui7NHro9hDNO6dCWqkP3QlouZYU7mqSY2ZtqJRjU6VYD_puUquC55IrJcDKr-wxa6U97_q2zuGKO8VLkVkvmZ1yCYq-SEueKbl-jvYcE4FWd3P3cmUbgkS1FytDJrnhyuRP2Go9mY7YWhZjxixhBReDmkHB7bW3YIyzEfX9WRwdgmOZcajFVP_fhKRM4bNvDVmaaDB2AVcCKh9cKPDzoYh3fCNzB8Hbu4ltoMsC4IflR3fez6n_QRQCx_AOp5AnerZ7I1Vg3gMi_-fGww515bbYNHGzP7A7BupbGvVI1fpAlZ_xD9eDAn1CZT3GpYXRvL1oceEYA726LAfeMoKptMEdliNh2vekFsjp2SpVQ29gI2V9eSgwD4-5MttqZ-GTfdsfpUEBdpKBjIiSCSieNlwxBhcWWurgi3GEiMdXD3m0WP5Vh2wNwz8raWWZaSOr3SsjUxNsR25d-LVRvryuFH5lydyor5MIcgtipUHgMZX5MLsCp6HnvIegkapR6eRa9Q2baRlKTqN4DcFNReSNJoDe_g3XoCRP3YdOJKy-IsxtpM7QSeYJaBgYSWMPpFvsJCoEus5IMz-m3LNpe9T5eQr4GDGocWucIjAwjAM5hQ0KaU00E6N6ae1EU_u8vkYV4R0QP2tN6knHlMlGUsMxT0CiNU7QdHRLxQ1uInlcuUbgtc0vEh0yWX20ikKAGDd3cAm_dbkkboszGwQJczsCwYmtZU8ZhfIwwmHRJZl-Go0gXvr-bA_oqcpbsxP6kA9SOuAfVz8pMcWPmf4Syg0MnK0o3_0pxIsJFw_ObBku9XCoj0Br7D40RZOiVuo9-YMOw6DgjMrkKGdhV2fWYa9zFWlil_cr3fHmsRe77jDqvmV2vyiGT2MEAwkFUCPWjZQ86YfOwGfmaGDEbKrdmxRHpC2IsPiIgQiemby4uXDSC7ZRQ4CP4j6StSwHgNhQsr4nB0PqqS1Zeo9UShl4VlgqhX4rTGQ_BiKC7odCQdd_bzADXgYYSvvUVhU8Xc_8jOODXJKQzMwEO-89NNBYEUhHbaDOuXSUGnY98ucIexl70i6HuT8rsEnFqFKb7KRVDie3rRmzF3GjuW1_kqtOTwbJS740WmUbgxLOMBl03Hqq64yoQxrV8KwVTAI5o2R-y7_oxjOEfnsxgRlwmUfJsar3QIP-ZKBr38uwJZ0SX1oZ5O_YAdGDJqI9iIOyBixxUrF5eEDhU44dpZhTyzNh0nSNFRASmIVp-8VE80parrBjdm4U8JNVNwW2l8XAsUm-8E8poapxXEBD1sZpgfSnuymDIbqeSb8pLt5LISXQd-F2TusCN8fqsl6TYnad1QfF-zJNZtiePYF89WsIWecy08g4BsnwXpI-8XcPRWcURILYes8SaVG6qkXqeUswizKRw5toLYIq-vPdbGzm3A7vhTd7kVLEYbMCIAPkCqp543fb4XFtDsN7dig7gemwEhZSsELCj1ScVFXAo4M0QLYz68dyPF2P42fHZQe8sdNzMZ0Gpb0y-LmQ9hgR-zMwRt3JhLyYFEUI6Je-Snc6weM887ZPMCyGF9sD1IGaqg-H1-8mGSZFbZtbwS1Bq3fND0s5eSeiMcDDad3xfrgsgVmLawX40e_oQ==',
+                            'type': 'compaction',
+                            'created_by': None,
+                        },
+                    )
+                ],
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={
@@ -381,7 +393,18 @@ async def test_openai_responses_compact_messages_with_previous_response_id(
     assert result.all_messages() == snapshot(
         [
             ModelResponse(
-                parts=[],
+                parts=[
+                    CompactionPart(
+                        id='cmp_082a4bdb11d5c65401698239d862108193ae5867099c6aee7f',
+                        provider_name='openai',
+                        provider_details={
+                            'id': 'cmp_082a4bdb11d5c65401698239d862108193ae5867099c6aee7f',
+                            'encrypted_content': 'gAAAAABpgjnc57C_-CW7hUXdiloPyRHOrQe98Tp38r6-L3ueZ0rUE9QKreCZ1MgHEcBlmL1O1DY4e54DHGitYKFHAbQRmdPB1eG_Pux0rGcUCrR-wevYzeUgj3sbbT7fkYS-9oA-5La8qHCg3urgxXU0s8bpjD7onMDN0uOvc0LEL4uIatixzt2abTGuXRp-F3XzB-K_yKYD5GumHOLCb8RyhA1LguP42iVUn5SZKTZu61_Z0_Tf-6veuvgID7cbcpNkzsaOTi-tJDCHK4oQPU_MnaevdswPoQLee_AWQ_V0Ncp2GRdtKdhOgRcdTnzlkNdC0rlviQIgydE62seb1a24ZT_IJNU_FrJucm1K9kVXc1yt9V9BK2Y9RW8RtQihflZQsKYajGU_b3XPlIzG0xs9Bie8V7yUh3mk5tISA118Hj7l6qhwx8bMl9ng3eseJ4fnzk22YkzSoqNAxb-0TnpcZEXht46f4SU27-Ny_om_fNZ2wFo9AXE7b3CUMWBqgNHVKGJMu1T17_7GSkIL1NcbVRKVuz9kNJ9gFbDJplhhI5BXrkFtx5G9muKvnUql-I6-uFPttdbGO04cP-8FsljV0A1yKNZZC44tB7SyN_m5RzP6inc5_DZzHILnF5FMCsfC5wIcDxRTdNI0UK--BJd4F_YkPPM-iDeE8JQBo7Th6j-j_xgCab5pz54fHBpsl32OmjYtS7pTnr7Ev1g_bFhiGdYyj-PZfruZ7VotRaVOmhlaDNzuqiM-fy3bGgwlCPCdrlyh5ghRM80w8qFcQmV619YVR39nDfJFcRqkFF48E_S9P6PuUdXlaoCUmdAc06ZkNi1096-dRxqPv2li9LWpap2T00wXQ0osRAYImkTx4QYu34BWo09wSG8FQkmuBaeO9O01V8YfSlnqlTM6hP5obiQJDdYSeVVCzO6JLXFWP4F9Ot5YWjmleRU9atCVcaXBlPV1hvJZzNJPgCignUOINoIR97HKoyErzr52zI6qqM0RWEgvUeaTzIJRE1MA57aYT_NmoYd9RqWX53GJaN1fnbO8AYtMvR_EhhH8v3WpHJhO5qVUD8q4hlussmfsHRX2-s6u-5hz4hVi37GtUTnahuZwncp0fBF6y0MbHTiT5pFszm_meBjPKcvOX6NsjO3pLYh2qEGotwS-NVhTtuvLPPJcq6ytuF5i-ztH_12lCUCnJwT-PyY9jIvNsrMsub7IqaeUWXDI0LKStjec-MQr_Jpp3qrt57li_qgefgo13VKdDsmqVj86NwSDwgbf643BflUFeu7OQRV1irbuK5gtwwlVv34uCQBLMYmeVtBlCN8UCWFIb82lFqwt9VtJPbQxBCOkCLPkerthTGLF8Gkg9sEInBNi8zy0qHIwM4tY2vybdo3ORT-ilbkQ-jVdS19979dqaFDxO49fzYvonUeLawvRZO7gb0jb_k99Tj4v77SBUE-q9GH8fVTMBqQH-fOqXixmPXJgYQTkeO2a8_SuYee-3U9e8IftBSupeerpPEYCo2Q4ONNDQg0IWk_wIvmTki5T0_LHVrP60L_fGFC-5BXXdc4WQV1SosSZHs9zZjFb-HmmK5rCm2Oelo_hx8gDN_3ctpm4OeK5Uu3b98i_hE6yJ8A7JswW3vXGidDMPNnTJUOAwi_T7qdl53ZvcX55a3OBkohDw1RgDhqJ00gv753h9fEz6eGcznIS0wVG_2zcGvahMMOsWFA2JAhhnrl0u5DlsBxhCIrISpI1D2SAXrhldnB-63bANAqpoQAxQnRzkHy-vQTJBjetVMm4_R3MIfZePa91k2PQr_yFHxlGpmRqF1a5JETn695Ewrz64pVSt_66YP2yO0EFgBjoULqzjPkqMcNWg8LEkYinOtbUEzlwM3ixnVfEGYnXTTjruOzRUDrur83O_wykacoXWSXRY1Yx0ZCDS1mTXJLo1bqgSah4D_VIDzTGP595C1tdoT9thCRC9A0tFSGGCxtXe-sTBIKULLC95rnnzVJQ3Nm6gZTaNrsh6ymEZ_YqdQaQGgcyCO9MAehfUTSeZ7lNv_0qtBsYthFFQHA2j1o2nE8sIhx3gpxhygyJx4irmArh6-LrcOc_hHy5aNOdQ6SCyC2hYaLVYZeitSWflGUfNInNo4f43wp9wyEPwC9MmQ_bbdCIH-7CpODwjLPhfa_GxOcErvm3ILSfMBZtyLHZVUVkN-I63-qLAuw9MXvhn2uOFvQij27DwUqgfOsk2UGu3X3IkYvrOu3mY2LFMyRpVtR5Fg35aBQ7qI0o0jcjfdb1rXxk0gynN5LQ4TTc8Q-MphoDqgjx0hB98DbfJgTeMkbLLy2zDfesn37cio9u2C0IGqYFfrLlkEBQehIvtG8MJBVY5xUHZccq_mpMTmVjLDSjEoNCoWJ3eyjZkD4hNArQXRPQwWcETs1xvsuojU8zJtFtChnH4-L8',
+                            'type': 'compaction',
+                            'created_by': None,
+                        },
+                    )
+                ],
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={
@@ -451,7 +474,18 @@ async def test_openai_responses_compact_messages_output_type(allow_model_request
     assert result.all_messages() == snapshot(
         [
             ModelResponse(
-                parts=[],
+                parts=[
+                    CompactionPart(
+                        id='cmp_0fa9669751a6aa3001698214d3e9dc81a1978379bdeaf4c82d',
+                        provider_name='openai',
+                        provider_details={
+                            'id': 'cmp_0fa9669751a6aa3001698214d3e9dc81a1978379bdeaf4c82d',
+                            'encrypted_content': 'gAAAAABpghTXQkzrhcLMG3agNJ5pG_Y6tXkAwkQ08ryk3-O99YR0IPD_tpfHV0_yhwiRdmaFc0DSJMpe6OfkX088T3zUdN4jJz7jk94RabzFgzb7IrfPeadRYn4BR_A2nrK7YqA_DpusOknym3n1tOvOXrZ_M_dr6-Av400R53ILuxNRaXQwRNLL7oGV4qZyCcUb2r43cqjvUFVA4A2VpEjoEgC8WC3jrlrQsatIp2DsWPq0YhiLH7B_3bcn8DOaANE9jJntiTWpVMwH8y3fhTO6E5H9YehHzkSkcMfkGYOjblX-wfKeLfPhaR_xA34snbP87eJH0K6V6DhP_kLv9Fxtj38gdd4BxHq0A8JuQDgh_UjoKC2rFdDYPv5YQ50QK8BdfuzFYUvdhWkdTqo1RGU0I33ZvIlyqVTO9NliQa8nxCHr8caKColOxS5c8jhemss-x_iREgi9tFI6Qib34euUf0JZcfD5WLxew9G9rFcwOwNpnVccQYkm8RmzcwAfnfQCTcgKLTkdk6k4tvAkYANrd3BS9rbbWU3beXNWehea-afwWItA3giHlTY-EbN4jPfMDWI6pUmtjtoxGlgFsSNYCG9HKilZiHte8i9Sa8HTRJc-chEG954DKeIHTfZC5_wkh0s5YTJVvOVaZLjLZdZXlF-ERSLQ5gVzoMpdNq6_H4Pp2iTS-tzX3Df8s-pDwGgNQ9XrhIsv0tIftscCSM8z0o0a6t313oqCLOBwxncS9XreRgjslWmjUrWfZeVQoCOcAM8UqDKmSqn59WctQGIeiNWV7EAfA44e00YfsMGk1xQgjtGz8dbnnqJGfneQcpbGg-x2Y7nsXyBTsOYuz0G_ytwPqaxkb2mjcQnzwnUeKVPVBP-QuggKzFJdgOBNzfu8Iv8g0PqcbQxSz7vQ9FGJY07VBx3QZmB1FUSUl7ABbS9bfqaI84AmyPlZfXPt9ezbcl5cdieyeXKslnVMwh37XwIpzYjZ6eK7iAQS90BbfCM-IKVwdo78gJTKnjVFMCCT6mF47EoseEQ3f3YQicxtn3LZTOu80aiwrlS7HiV6BnGJenEztYNh0vWNdLaIDwzRq7b_0mE4rJTeaQ-t05KkGhsoDCkxM3O8K0XkG4ffkgXi42mw-mg90-SWpul5rqauNk2he_dxH4F4xfv_gilNO3__zS3X8o_7sFpG1vVhOF56Y9fK9YlowavAOuaPbXOG_YGvjRl7SbR5pLJsNrO9yjBmh0L3tCHro9wUn7ww5oxZWkQK23UdWkLZyno0fF4pzBJyw4ODWHHacOV4AYigPVJCUU_QMfGCvccQzpfHRAAhQEKMrHR94OVAtq0NahWsag6kv6DRaDaRvS_a7_9N3TOP3lALGZxSe9xAPpVTIpyEoXOpYCFz_yKwCsWN8-xHn1lF4Dg0Dkbh9Rg8NRQq8qqYBM3VMlIJ73zddYKqPJdsbdCYFB7krA38uolowlePB13F0A4HZuEPELzhfUeFHuRmccSUVK4NAYaUzqeafg-ejZaQmuoJWJX_KarTZIz7FCHQPJeNTCVGm8W90LSmKfC1ZiUcPk36ivlu2OcNJeIVIMEdbn9XIYczIFEL8e_BotqmxFQOwQvE5lUJn5IRQwSajmCvTm03AbeIAmGdSiGsvmIPrAW3MFq8b8tjT-vHYhFosw4LeyFXggtBe6GsfENUxjkBu1mW_SbxL8GVQVrt7BgKkbaqd7BQh5Wh1_b5wWUueeXgDcJD1Slfxr-tCvdv-swC5rzvCGX2iaWhYRQs0FYxOmz7KxYzndvDjRsIPVdTzcApsOcF3EiOiwTTtFu4kHV_rTukggX9wpfu3O60RBDKMdmKj-LyF5sF-7-eaVyCsC9AlAlmwEZXJbUs9-Ls4m4-IZQMX9EWw70qNDWuqvGa5QQVjYJWJ6Gxnr8yNBuTCzyXoXQq5QYvniY5XcuiRdLTILnDm33_7t80PPzS4Zhh4p0dejYGA2Fn5n5pGR1MARlO7SIJhBjlEUDPL82lqHhYi8CWNZFwZo1P2fKH9NVJ6CCFbNIFevKLQ1hDltlfCyn31HamVo-32mvuxAVJO8dNJPeAFsA9EN46ooWVUNd5bEL-KvYbUzeaPabebr6t5Su43AS5A2iKocu9ibGUfHBTz4Iv-OZkzjT9RJ6ucxZb76DwmOGLRhvYXH4NQYd8GBaYYav_xhx2RBW3V4y2vWFFkhzubKsG6LtOWXjfDGLb2z81OeCddf0QjnMNvFvHAnjFx99HVgbRgqjzPTFRrSWkvxXPih9-QJyZgsF_SqPfn1I3c8Lm1Hyu9j81ikrZ2mpz1Ybr3PWNzJLlCzokfhXdoCaaxCTV2Jg85iCsDie1On5dSszRm5z69Fz3Sv-y6wVoB5hLPMls8_HV-ZxmZUYybJD9OqXDsfetxQZspj4d_Ik=',
+                            'type': 'compaction',
+                            'created_by': None,
+                        },
+                    )
+                ],
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={

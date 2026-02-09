@@ -28,6 +28,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    CompactionPart,
     FilePart,
     FileUrl,
     FinishReason,
@@ -615,7 +616,7 @@ class GoogleModel(Model):
             _provider_timestamp=first_chunk.create_time,
         )
 
-    async def _map_messages(  # noqa: C901
+    async def _map_messages(
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> tuple[ContentDict | None, list[ContentUnionDict]]:
         contents: list[ContentUnionDict] = []
@@ -1053,6 +1054,8 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
             content = item.content
             inline_data_dict: BlobDict = {'data': content.data, 'mime_type': content.media_type}
             part['inline_data'] = inline_data_dict
+        elif isinstance(item, CompactionPart):
+            pass
         else:
             assert_never(item)
 
