@@ -948,7 +948,9 @@ async def test_image_url_input(allow_model_requests: None):
     )
 
 
-async def test_image_url_input_force_download(allow_model_requests: None, openai_api_key: str):
+async def test_image_url_input_force_download(
+    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+):
     provider = OpenAIProvider(api_key=openai_api_key)
     m = OpenAIChatModel('gpt-4.1-nano', provider=provider)
     agent = Agent(m)
@@ -965,7 +967,9 @@ async def test_image_url_input_force_download(allow_model_requests: None, openai
     assert result.output == snapshot('This vegetable is a potato.')
 
 
-async def test_image_url_input_force_download_response_api(allow_model_requests: None, openai_api_key: str):
+async def test_image_url_input_force_download_response_api(
+    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+):
     provider = OpenAIProvider(api_key=openai_api_key)
     m = OpenAIResponsesModel('gpt-4.1-nano', provider=provider)
     agent = Agent(m)
@@ -982,7 +986,9 @@ async def test_image_url_input_force_download_response_api(allow_model_requests:
     assert result.output == snapshot('This is a potato.')
 
 
-async def test_openai_audio_url_input(allow_model_requests: None, openai_api_key: str):
+async def test_openai_audio_url_input(
+    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+):
     m = OpenAIChatModel('gpt-4o-audio-preview', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
 
@@ -1007,7 +1013,9 @@ async def test_openai_audio_url_input(allow_model_requests: None, openai_api_key
     )
 
 
-async def test_document_url_input(allow_model_requests: None, openai_api_key: str):
+async def test_document_url_input(
+    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
 
@@ -1029,7 +1037,9 @@ async def test_document_url_input_response_api(allow_model_requests: None, opena
     assert 'Dummy PDF' in result.output
 
 
-async def test_document_url_input_force_download_response_api(allow_model_requests: None, openai_api_key: str):
+async def test_document_url_input_force_download_response_api(
+    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+):
     """Test DocumentUrl with force_download=True downloads and sends as file_data."""
     provider = OpenAIProvider(api_key=openai_api_key)
     m = OpenAIResponsesModel('gpt-4.1-nano', provider=provider)
@@ -1420,7 +1430,9 @@ async def test_document_as_binary_content_input(
     assert result.output == snapshot('The main content of the document is "Dummy PDF file."')
 
 
-async def test_text_document_url_input(allow_model_requests: None, openai_api_key: str):
+async def test_text_document_url_input(
+    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
 
