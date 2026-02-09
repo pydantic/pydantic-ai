@@ -5,6 +5,7 @@ from __future__ import annotations as _annotations
 from dataclasses import dataclass
 
 import pytest
+from inline_snapshot import snapshot
 
 from ..conftest import try_import
 
@@ -189,26 +190,76 @@ async def test_case_groups_returns_none_for_single_run():
 
 
 async def test_averages_with_multi_run():
-    """averages() with multi-run should use group summaries via average_from_aggregates."""
-    results = iter([0.5, 0.7, 0.8, 0.9])
-
-    async def task(inputs: str) -> float:
-        return next(results)
-
-    dataset = Dataset(
-        cases=[
-            Case(name='case1', inputs='hello'),
-            Case(name='case2', inputs='world'),
-        ],
-        evaluators=(MockScoreEvaluator(),),
+    """averages() with multi-run should use two-level aggregation via average_from_aggregates."""
+    # Use deterministic scores: case1 gets [0.2, 0.4], case2 gets [0.9]
+    # case2 has one failure to create unequal group sizes (distinguishes flat vs two-level).
+    # Two-level: mean(mean(0.2, 0.4), mean(0.9)) = mean(0.3, 0.9) = 0.6
+    # Flat would be: mean(0.2, 0.4, 0.9) = 0.5
+    mock_evaluator_spec = MockScoreEvaluator().as_spec()
+    case1_run1 = ReportCase(
+        name='case1 [1/2]',
+        inputs='hello',
+        output=0.2,
+        expected_output=None,
+        metadata=None,
+        metrics={},
+        attributes={},
+        scores={'score': EvaluationResult(name='score', value=0.2, reason=None, source=mock_evaluator_spec)},
+        labels={},
+        assertions={},
+        task_duration=1.0,
+        total_duration=1.0,
+        source_case_name='case1',
     )
-    report = await dataset.evaluate(task, name='test', progress=False, repeat=2)
+    case1_run2 = ReportCase(
+        name='case1 [2/2]',
+        inputs='hello',
+        output=0.4,
+        expected_output=None,
+        metadata=None,
+        metrics={},
+        attributes={},
+        scores={'score': EvaluationResult(name='score', value=0.4, reason=None, source=mock_evaluator_spec)},
+        labels={},
+        assertions={},
+        task_duration=1.0,
+        total_duration=1.0,
+        source_case_name='case1',
+    )
+    case2_run1 = ReportCase(
+        name='case2 [1/2]',
+        inputs='world',
+        output=0.9,
+        expected_output=None,
+        metadata=None,
+        metrics={},
+        attributes={},
+        scores={'score': EvaluationResult(name='score', value=0.9, reason=None, source=mock_evaluator_spec)},
+        labels={},
+        assertions={},
+        task_duration=1.0,
+        total_duration=1.0,
+        source_case_name='case2',
+    )
+    case2_failure = ReportCaseFailure(
+        name='case2 [2/2]',
+        inputs='world',
+        metadata=None,
+        expected_output=None,
+        error_message='failed',
+        error_stacktrace='Traceback ...',
+        source_case_name='case2',
+    )
 
+    report = EvaluationReport(
+        name='test',
+        cases=[case1_run1, case1_run2, case2_run1],
+        failures=[case2_failure],
+    )
     averages = report.averages()
     assert averages is not None
-    # With grouping, averages should come from average_from_aggregates
-    # Each group has 2 runs, so group averages are computed first, then averaged across groups
-    assert 'score' in averages.scores
+    # Two-level: mean(mean(0.2, 0.4), mean(0.9)) = mean(0.3, 0.9) = 0.6
+    assert averages.scores['score'] == pytest.approx(0.6)
 
 
 def test_average_from_aggregates_computation():
@@ -258,12 +309,12 @@ def test_average_from_aggregates_empty():
 
 
 def test_average_from_aggregates_partial_keys():
-    """average_from_aggregates should handle aggregates with different keys."""
+    """average_from_aggregates should handle aggregates with different keys for scores, metrics, and labels."""
     agg1 = ReportCaseAggregate(
         name='Averages',
         scores={'s1': 1.0},
-        labels={},
-        metrics={},
+        labels={'sentiment': {'positive': 0.8, 'negative': 0.2}},
+        metrics={'m1': 10.0},
         assertions=1.0,
         task_duration=1.0,
         total_duration=1.0,
@@ -271,8 +322,8 @@ def test_average_from_aggregates_partial_keys():
     agg2 = ReportCaseAggregate(
         name='Averages',
         scores={'s2': 2.0},
-        labels={},
-        metrics={},
+        labels={'topic': {'science': 0.6, 'arts': 0.4}},
+        metrics={'m2': 20.0},
         assertions=None,
         task_duration=3.0,
         total_duration=3.0,
@@ -283,43 +334,37 @@ def test_average_from_aggregates_partial_keys():
     assert result.scores['s1'] == 1.0
     # s2 only present in agg2, so average is 2.0/1 = 2.0
     assert result.scores['s2'] == 2.0
+    # m1 only in agg1, m2 only in agg2
+    assert result.metrics['m1'] == 10.0
+    assert result.metrics['m2'] == 20.0
+    # Labels: each label key only in one aggregate
+    assert result.labels['sentiment'] == {'positive': 0.8, 'negative': 0.2}
+    assert result.labels['topic'] == {'science': 0.6, 'arts': 0.4}
     # Only one aggregate has assertions
     assert result.assertions == 1.0
 
 
-async def test_otel_spans_have_correct_attributes():
+async def test_otel_spans_have_correct_attributes(capfire: CaptureLogfire):
     """OTel spans should have repeat and source_case_name attributes set when repeat > 1."""
 
     async def task(inputs: str) -> str:
         return inputs.upper()
 
     dataset = Dataset(cases=[Case(name='case1', inputs='hello')])
-    report = await dataset.evaluate(task, name='test', progress=False, repeat=2)
+    await dataset.evaluate(task, name='test', progress=False, repeat=2)
 
-    # Verify report structure
-    assert len(report.cases) == 2
-    for case in report.cases:
-        assert case.source_case_name == 'case1'
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
 
+    # The evaluate span should have the repeat attribute
+    eval_spans = [s for s in spans if s['name'] == 'evaluate {name}']
+    assert len(eval_spans) == 1
+    assert eval_spans[0]['attributes']['logfire.experiment.repeat'] == 2
 
-async def test_evaluate_sync_repeat_param_accepted():
-    """evaluate_sync should accept repeat parameter (tested via async evaluate directly since evaluate_sync can't run in async context)."""
-
-    async def task(inputs: str) -> str:
-        return inputs.upper()
-
-    dataset = Dataset(
-        cases=[
-            Case(name='case1', inputs='hello'),
-        ]
-    )
-    # Test that repeat parameter is accepted by evaluate (evaluate_sync just delegates to it)
-    report = await dataset.evaluate(task, name='test', progress=False, repeat=2)
-
-    assert len(report.cases) == 2
-    case_names = sorted(c.name for c in report.cases)
-    assert case_names == ['case1 [1/2]', 'case1 [2/2]']
-    assert all(c.source_case_name == 'case1' for c in report.cases)
+    # Each case span should have source_case_name
+    case_spans = [s for s in spans if s['name'] == 'case: {case_name}']
+    assert len(case_spans) == 2
+    for span in case_spans:
+        assert span['attributes']['logfire.experiment.source_case_name'] == 'case1'
 
 
 async def test_repeat_with_evaluators():
@@ -340,25 +385,56 @@ async def test_repeat_with_evaluators():
         assert len(case.assertions) > 0
 
 
-async def test_repeat_rendering():
+def test_repeat_rendering():
     """Multi-run report should render correctly."""
+    mock_evaluator_spec = AlwaysPass().as_spec()
 
-    async def task(inputs: str) -> str:
-        return inputs.upper()
+    def _make_case(name: str, source: str, duration: float) -> ReportCase:
+        return ReportCase(
+            name=name,
+            inputs='hello',
+            output='HELLO',
+            expected_output=None,
+            metadata=None,
+            metrics={},
+            attributes={},
+            scores={'score': EvaluationResult(name='score', value=0.8, reason=None, source=mock_evaluator_spec)},
+            labels={},
+            assertions={
+                'AlwaysPass': EvaluationResult(name='AlwaysPass', value=True, reason=None, source=mock_evaluator_spec)
+            },
+            task_duration=duration,
+            total_duration=duration,
+            source_case_name=source,
+        )
 
-    dataset = Dataset(
+    report = EvaluationReport(
+        name='test',
         cases=[
-            Case(name='case1', inputs='hello'),
-            Case(name='case2', inputs='world'),
+            _make_case('case1 [1/2]', 'case1', 0.1),
+            _make_case('case1 [2/2]', 'case1', 0.2),
+            _make_case('case2 [1/2]', 'case2', 0.3),
+            _make_case('case2 [2/2]', 'case2', 0.4),
         ],
-        evaluators=(AlwaysPass(),),
     )
-    report = await dataset.evaluate(task, name='test', progress=False, repeat=2)
 
-    # Should not raise
     rendered = report.render(width=200)
-    assert 'case1' in rendered
-    assert 'case2' in rendered
+    assert rendered == snapshot("""\
+               Evaluation Summary: test               \n\
+┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID     ┃ Scores       ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ case1 [1/2] │ score: 0.800 │ ✔          │  100.0ms │
+├─────────────┼──────────────┼────────────┼──────────┤
+│ case1 [2/2] │ score: 0.800 │ ✔          │  200.0ms │
+├─────────────┼──────────────┼────────────┼──────────┤
+│ case2 [1/2] │ score: 0.800 │ ✔          │  300.0ms │
+├─────────────┼──────────────┼────────────┼──────────┤
+│ case2 [2/2] │ score: 0.800 │ ✔          │  400.0ms │
+├─────────────┼──────────────┼────────────┼──────────┤
+│ Averages    │ score: 0.800 │ 100.0% ✔   │  250.0ms │
+└─────────────┴──────────────┴────────────┴──────────┘
+""")
 
 
 def test_report_case_group_fields():

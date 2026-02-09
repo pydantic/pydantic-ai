@@ -105,7 +105,8 @@ class ReportCaseFailure(Generic[InputsT, OutputT, MetadataT]):
     """The stacktrace of the exception that caused the failure."""
 
     source_case_name: str | None = None
-    """Same semantics as ReportCase.source_case_name."""
+    """The original case name before run-indexing. Serves as the aggregation key
+    for multi-run experiments. None when repeat == 1."""
 
     trace_id: str | None = None
     """The trace ID of the case span."""
@@ -233,23 +234,14 @@ class ReportCaseAggregate(BaseModel):
                 total_duration=0.0,
             )
 
-        # Average scores
-        all_score_keys: set[str] = set()
-        for a in aggregates:
-            all_score_keys.update(a.scores)
-        avg_scores: dict[str, float | int] = {}
-        for key in all_score_keys:
-            values = [a.scores[key] for a in aggregates if key in a.scores]
-            avg_scores[key] = sum(values) / len(values)
+        def _avg_numeric_dicts(dicts: list[dict[str, float | int]]) -> dict[str, float | int]:
+            all_keys: set[str] = set()
+            for d in dicts:
+                all_keys.update(d)
+            return {key: sum(vals) / len(vals) for key in all_keys if (vals := [d[key] for d in dicts if key in d])}
 
-        # Average metrics
-        all_metric_keys: set[str] = set()
-        for a in aggregates:
-            all_metric_keys.update(a.metrics)
-        avg_metrics: dict[str, float | int] = {}
-        for key in all_metric_keys:
-            values = [a.metrics[key] for a in aggregates if key in a.metrics]
-            avg_metrics[key] = sum(values) / len(values)
+        avg_scores = _avg_numeric_dicts([a.scores for a in aggregates])
+        avg_metrics = _avg_numeric_dicts([a.metrics for a in aggregates])
 
         # Average labels (average the distribution dicts)
         all_label_keys: set[str] = set()
@@ -260,7 +252,7 @@ class ReportCaseAggregate(BaseModel):
             combined: dict[str, float] = {}
             count = 0
             for a in aggregates:
-                if key in a.labels:  # pragma: no branch
+                if key in a.labels:
                     count += 1
                     for label_val, freq in a.labels[key].items():
                         combined[label_val] = combined.get(label_val, 0.0) + freq
@@ -329,17 +321,17 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
 
         result: list[ReportCaseGroup[InputsT, OutputT, MetadataT]] = []
         for group_name, (runs, failures) in groups.items():
-            first: ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT] | None = (
-                runs[0] if runs else failures[0] if failures else None
+            first: ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT] = (
+                runs[0] if runs else failures[0]
             )
             result.append(
                 ReportCaseGroup(
                     name=group_name,
-                    inputs=first.inputs if first else None,  # type: ignore[arg-type]
-                    metadata=first.metadata if first else None,
-                    expected_output=first.expected_output if first else None,
-                    runs=runs,  # type: ignore[arg-type]
-                    failures=failures,  # type: ignore[arg-type]
+                    inputs=first.inputs,
+                    metadata=first.metadata,
+                    expected_output=first.expected_output,
+                    runs=runs,
+                    failures=failures,
                     summary=ReportCaseAggregate.average(list(runs)),
                 )
             )
