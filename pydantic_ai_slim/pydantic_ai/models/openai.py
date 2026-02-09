@@ -697,7 +697,7 @@ class OpenAIChatModel(Model):
 
         _drop_unsupported_params(profile, model_settings)
 
-        extra_body: dict[str, Any] | None = model_settings.get('extra_body')
+        extra_body = cast(dict[str, Any] | None, model_settings.get('extra_body'))
         extra_body, response_format = self._customize_request_payload(
             extra_body=extra_body,
             response_format=response_format,

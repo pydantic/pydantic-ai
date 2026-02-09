@@ -2403,6 +2403,7 @@ def test_native_output_strict_mode(allow_model_requests: None):
 
 def test_ollama_native_output_sends_response_format(allow_model_requests: None):
     """With Ollama provider, native structured output sends response_format with json_schema (issue #4116)."""
+
     class CityLocation(BaseModel):
         city: str
         country: str
