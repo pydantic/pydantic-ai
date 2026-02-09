@@ -875,6 +875,15 @@ def build_validation_context(
         return validation_ctx
 
 
+def _skipped_output_part(call: _messages.ToolCallPart, content: str) -> _messages.ToolReturnPart:
+    """Build a ToolReturnPart for an output tool call that was skipped."""
+    return _messages.ToolReturnPart(
+        tool_name=call.tool_name,
+        content=content,
+        tool_call_id=call.tool_call_id,
+    )
+
+
 async def process_tool_calls(  # noqa: C901
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
@@ -914,13 +923,9 @@ async def process_tool_calls(  # noqa: C901
         # Early strategy is chosen and final result is already set
         elif ctx.deps.end_strategy == 'early' and final_result:
             yield _messages.FunctionToolCallEvent(call)
-            part = _messages.ToolReturnPart(
-                tool_name=call.tool_name,
-                content='Output tool not used - a final result was already processed.',
-                tool_call_id=call.tool_call_id,
-            )
-            yield _messages.FunctionToolResultEvent(part)
+            part = _skipped_output_part(call, 'Output tool not used - a final result was already processed.')
             output_parts.append(part)
+            yield _messages.FunctionToolResultEvent(part)
         # Early strategy is chosen and final result is not yet set
         # Or exhaustive strategy is chosen
         else:
@@ -932,11 +937,7 @@ async def process_tool_calls(  # noqa: C901
                 if final_result:
                     # If we already have a valid final result, skip without failing
                     yield _messages.FunctionToolCallEvent(call, args_valid=False)
-                    part = _messages.ToolReturnPart(
-                        tool_name=call.tool_name,
-                        content='Output tool not used - output failed validation.',
-                        tool_call_id=call.tool_call_id,
-                    )
+                    part = _skipped_output_part(call, 'Output tool not used - output failed validation.')
                     output_parts.append(part)
                     yield _messages.FunctionToolResultEvent(part)
                     continue
@@ -952,11 +953,7 @@ async def process_tool_calls(  # noqa: C901
                 if final_result:
                     # Already have a result, just note that this tool wasn't used
                     yield _messages.FunctionToolCallEvent(call, args_valid=False)
-                    part = _messages.ToolReturnPart(
-                        tool_name=call.tool_name,
-                        content='Output tool not used - output failed validation.',
-                        tool_call_id=call.tool_call_id,
-                    )
+                    part = _skipped_output_part(call, 'Output tool not used - output failed validation.')
                     output_parts.append(part)
                     yield _messages.FunctionToolResultEvent(part)
                 else:
@@ -977,11 +974,7 @@ async def process_tool_calls(  # noqa: C901
                     if final_result:
                         # Already have a result, just note that this tool wasn't used
                         yield _messages.FunctionToolCallEvent(call, args_valid=True)
-                        part = _messages.ToolReturnPart(
-                            tool_name=call.tool_name,
-                            content='Output tool not used - output failed validation.',
-                            tool_call_id=call.tool_call_id,
-                        )
+                        part = _skipped_output_part(call, 'Output tool not used - tool execution failed.')
                         output_parts.append(part)
                         yield _messages.FunctionToolResultEvent(part)
                     else:

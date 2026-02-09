@@ -253,7 +253,6 @@ class ToolManager(Generic[AgentDepsT]):
         tool = self.tools.get(name)
 
         # Handle unknown tool
-        # Handle unknown tool
         if tool is None:
             if self.tools:
                 msg = f'Available tools: {", ".join(f"{name!r}" for name in self.tools.keys())}'

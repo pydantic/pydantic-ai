@@ -2098,7 +2098,7 @@ class TestMultipleToolCalls:
                         ),
                         ToolReturnPart(
                             tool_name='second_output',
-                            content='Output tool not used - output failed validation.',
+                            content='Output tool not used - tool execution failed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
@@ -3523,8 +3523,8 @@ async def test_external_tool_validation_failure():
     try:
         async for event in agent.run_stream_events('test external tool validation'):  # pragma: no branch
             events.append(event)
-    except Exception:
-        pass  # May fail due to validation errors
+    except UnexpectedModelBehavior:
+        pass  # Expected when max retries exceeded
 
     tool_call_events: list[FunctionToolCallEvent] = [e for e in events if isinstance(e, FunctionToolCallEvent)]
 
