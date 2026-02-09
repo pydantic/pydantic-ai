@@ -153,7 +153,7 @@ class StreamEventsResult(Generic[AgentDepsT, OutputDataT]):
         try:
             async for event in events:
                 await self._send_stream.send(event)
-        except anyio.BrokenResourceError:  # pragma: no cover
+        except anyio.BrokenResourceError:
             # Receiver/consumer closed, so we cancel the stream
             if isinstance(events, AgentStream):
                 await events.cancel()
@@ -195,8 +195,10 @@ class StreamEventsResult(Generic[AgentDepsT, OutputDataT]):
         await self._receive_stream.aclose()
         if not self._task.done():
             self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
+        # Always await the task to retrieve its result/exception and prevent
+        # "Task exception was never retrieved" warnings
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await self._task
         self._cleaned_up = True
 
     def _ensure_iter(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
