@@ -196,7 +196,7 @@ class GoogleModelSettings(ModelSettings, total=False):
     google_logprobs: bool
     """Include log probabilities in the response. Only supported by the Vertex AI API.
 
-    See <https://developers.googleblog.com/unlock-gemini-reasoning-with-logprobs-on-vertex-ai/> for more information
+    See <https://docs.cloud.google.com/vertex-ai/generative-ai/docs/multimodal/content-generation-parameters#log-probabilities-output-tokens> for more information
     Note: Only supported for non-streaming requests.
 
     """
@@ -204,7 +204,7 @@ class GoogleModelSettings(ModelSettings, total=False):
     google_top_logprobs: int
     """Include log probabilities of the top n tokens in the response. Only supported by the Vertex AI API.
 
-    <https://developers.googleblog.com/unlock-gemini-reasoning-with-logprobs-on-vertex-ai/>
+    <https://docs.cloud.google.com/vertex-ai/generative-ai/docs/multimodal/content-generation-parameters#log-probabilities-output-tokens>
     Note: Only supported for non-streaming requests.
     """
 
