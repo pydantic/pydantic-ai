@@ -109,6 +109,17 @@ gcloud auth application-default login
 gcloud config set project <your-project-id>
 ```
 
+## SSRF Protection
+
+VCR tests that download URL content (e.g. `ImageUrl(url=..., force_download=True)`) need the `disable_ssrf_protection_for_vcr` fixture. Without it, SSRF protection resolves hostnames to IPs, breaking cassette matching. An autouse guard will raise `RuntimeError` if you forget it.
+
+```python
+@pytest.mark.vcr()
+async def test_with_url(allow_model_requests: None, api_key: str, disable_ssrf_protection_for_vcr: None):
+    agent = Agent(model)
+    result = await agent.run([ImageUrl(url='https://example.com/img.jpg', force_download=True)])
+```
+
 ## Full Workflow Example
 
 ```bash

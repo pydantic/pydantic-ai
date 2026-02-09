@@ -45,6 +45,12 @@ async def test_download_item_raises_user_error_with_youtube_url() -> None:
 
 
 @pytest.mark.vcr()
+async def test_guard_ssrf_in_vcr_tests() -> None:
+    with pytest.raises(RuntimeError, match="'disable_ssrf_protection_for_vcr' fixture"):
+        await download_item(ImageUrl(url='https://example.com/img.png', force_download=True), data_format='bytes')
+
+
+@pytest.mark.vcr()
 async def test_download_item_application_octet_stream(disable_ssrf_protection_for_vcr: None) -> None:
     downloaded_item = await download_item(
         VideoUrl(

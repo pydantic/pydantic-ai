@@ -139,6 +139,10 @@ async def test_something(model: Model):
 #### VCR configuration
 - `vcr_config` - module-scoped, configures header filtering and localhost ignore
 
+#### SSRF protection for URL downloads
+- `disable_ssrf_protection_for_vcr` - required for VCR tests that download URL content (`ImageUrl`, `AudioUrl`, `DocumentUrl`, `VideoUrl` with `force_download=True`)
+- An autouse guard raises a `RuntimeError` if a VCR test triggers SSRF validation without this fixture
+
 ## Assertion Helpers
 
 ### From `conftest.py`
