@@ -4785,8 +4785,8 @@ class TestStreamEventsContextManager:
                 pass
 
         with pytest.raises(RuntimeError, match='StreamEventsResult has been closed and cannot be reused'):
-            async for _ in stream:  # pragma: no cover
-                pass  # pragma: no cover
+            async for _ in stream:
+                pass
 
     async def test_context_manager_with_tool_calls(self):
         """Context manager streams tool-related events correctly."""
@@ -4858,7 +4858,7 @@ class TestStreamEventsContextManager:
             yield {0: DeltaToolCall(json_args='"hello"')}
             yield {0: DeltaToolCall(json_args='}')}
             # These would follow but we'll break before reaching them
-            yield 'More text'  # type: ignore  # pragma: no cover
+            yield 'More text'  # type: ignore
 
         agent = Agent(FunctionModel(stream_function=stream_function))
 
