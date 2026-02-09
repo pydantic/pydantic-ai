@@ -1136,14 +1136,14 @@ async def test_aggregated_usage_attribute_names(capfire: CaptureLogfire) -> None
     spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
     agent_run_span = next(s for s in spans if s['name'] == 'agent run')
 
-    # Verify that agent run span uses aggregated_usage attribute names for input/output
+    # Verify that agent run span uses aggregated_usage attribute names for all gen_ai.usage.* attributes
     assert 'gen_ai.aggregated_usage.input_tokens' in agent_run_span['attributes']
     assert 'gen_ai.aggregated_usage.output_tokens' in agent_run_span['attributes']
+    assert 'gen_ai.aggregated_usage.details.cache_read_tokens' in agent_run_span['attributes']
     # Verify that the standard names are NOT used on agent run spans
     assert 'gen_ai.usage.input_tokens' not in agent_run_span['attributes']
     assert 'gen_ai.usage.output_tokens' not in agent_run_span['attributes']
-    # Verify that other usage details are preserved with their original names
-    assert 'gen_ai.usage.details.cache_read_tokens' in agent_run_span['attributes']
+    assert 'gen_ai.usage.details.cache_read_tokens' not in agent_run_span['attributes']
 
     # Verify that model/chat span still uses standard attribute names
     chat_span = next(s for s in spans if 'chat' in s['name'])
