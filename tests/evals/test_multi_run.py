@@ -189,7 +189,7 @@ async def test_case_groups_returns_none_for_single_run():
     assert report.case_groups() is None
 
 
-async def test_averages_with_multi_run():
+def test_averages_with_multi_run():
     """averages() with multi-run should use two-level aggregation via average_from_aggregates."""
     # Use deterministic scores: case1 gets [0.2, 0.4], case2 gets [0.9]
     # case2 has one failure to create unequal group sizes (distinguishes flat vs two-level).

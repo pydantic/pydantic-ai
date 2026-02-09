@@ -258,17 +258,15 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
     def _build_tasks_to_run(self, repeat: int) -> list[tuple[Case[InputsT, OutputT, MetadataT], str, str | None]]:
         """Build the list of (case, report_case_name, source_case_name) tuples for evaluation."""
-        tasks_to_run: list[tuple[Case[InputsT, OutputT, MetadataT], str, str | None]] = []
         if repeat > 1:
-            for i, case in enumerate(self.cases, 1):
-                case_name = case.name or f'Case {i}'
-                for run_idx in range(1, repeat + 1):
-                    run_name = f'{case_name} [{run_idx}/{repeat}]'
-                    tasks_to_run.append((case, run_name, case_name))
+            return [
+                (case, f'{case_name} [{run_idx}/{repeat}]', case_name)
+                for i, case in enumerate(self.cases, 1)
+                for run_idx in range(1, repeat + 1)
+                if (case_name := case.name or f'Case {i}')
+            ]
         else:
-            for i, case in enumerate(self.cases, 1):
-                tasks_to_run.append((case, case.name or f'Case {i}', None))
-        return tasks_to_run
+            return [(case, case.name or f'Case {i}', None) for i, case in enumerate(self.cases, 1)]
 
     # TODO in v2: Make everything not required keyword-only
     async def evaluate(

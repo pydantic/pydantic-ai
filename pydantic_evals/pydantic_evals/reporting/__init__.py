@@ -123,7 +123,7 @@ class ReportCaseGroup(Generic[InputsT, OutputT, MetadataT]):
     """Grouped results from running the same case multiple times.
 
     This is a computed view, not stored data. Obtain via
-    EvaluationReport.case_groups().
+    `EvaluationReport.case_groups()`.
     """
 
     name: str
