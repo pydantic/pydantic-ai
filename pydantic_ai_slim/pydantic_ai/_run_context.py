@@ -65,7 +65,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     tool_call_metadata: Any = None
     """Metadata from `DeferredToolResults.metadata[tool_call_id]`, available when `tool_call_approved=True`."""
     tool_call_context: Any = None
-    """Context from `DeferredToolResults.context[tool_call_id], available when `tool_call_approved=True`."""
+    """Context from `DeferredToolResults.context[tool_call_id]`, available when `tool_call_approved=True`."""
     partial_output: bool = False
     """Whether the output passed to an output validator is partial."""
     run_id: str | None = None
