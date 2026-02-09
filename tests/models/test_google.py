@@ -9,7 +9,7 @@ import re
 import tempfile
 from collections.abc import AsyncIterator
 from datetime import date, timezone
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from httpx import AsyncClient as HttpxAsyncClient, Timeout
@@ -82,13 +82,19 @@ from ..parts_from_messages import part_types_from_messages
 with try_import() as imports_successful:
     from google.genai import errors
     from google.genai.types import (
+        Candidate,
+        Content,
         FinishReason as GoogleFinishReason,
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
         HarmBlockThreshold,
         HarmCategory,
+        LogprobsResult,
+        LogprobsResultCandidate,
+        LogprobsResultTopCandidates,
         MediaModality,
         ModalityTokenCount,
+        Part,
     )
 
     from pydantic_ai.models.google import (
@@ -5700,4 +5706,111 @@ async def test_google_prepends_empty_user_turn_when_first_content_is_model(googl
                 ],
             },
         ]
+    )
+
+
+async def test_google_vertex_logprobs(vertex_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.5-flash', provider=vertex_provider)
+    agent = Agent(model=model)
+
+    settings = GoogleModelSettings(google_logprobs=True, google_top_logprobs=5)
+    result = await agent.run('What is 2+2?', model_settings=settings)
+
+    messages = result.all_messages()
+    response = cast(ModelResponse, messages[-1])
+
+    assert result.output is not None
+    assert response.provider_details is not None
+    assert 'logprobs' in response.provider_details
+    assert 'avg_logprobs' in response.provider_details
+
+
+async def test_google_gla_logprobs_raises_error(allow_model_requests: None, google_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(model=model)
+
+    settings = GoogleModelSettings(google_logprobs=True)
+    with pytest.raises(UserError, match='Logprobs are only supported on Vertex AI'):
+        await agent.run('What is 2+2?', model_settings=settings)
+
+
+async def test_google_logprobs_streaming_raises_error(vertex_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.5-flash', provider=vertex_provider)
+    agent = Agent(model=model)
+
+    settings = GoogleModelSettings(google_logprobs=True)
+    with pytest.raises(UserError, match='Logprobs are not supported for streaming requests'):
+        async with agent.run_stream('What is 2+2?', model_settings=settings):
+            pass
+
+
+async def test_google_vertex_logprobs_structure(
+    allow_model_requests: None, vertex_provider: GoogleProvider, mocker: MockerFixture
+):
+    model = GoogleModel('gemini-2.5-flash', provider=vertex_provider)
+    agent = Agent(model=model)
+
+    # Construct mock logprobs matching the provided structure
+    logprobs_result = LogprobsResult(
+        chosen_candidates=[
+            LogprobsResultCandidate(log_probability=-0.18970422, token='H', token_id=236814),
+            LogprobsResultCandidate(log_probability=-0.08993984, token='ere', token_id=627),
+        ],
+        top_candidates=[
+            LogprobsResultTopCandidates(
+                candidates=[
+                    LogprobsResultCandidate(log_probability=-0.18970422, token='H', token_id=236814),
+                    LogprobsResultCandidate(log_probability=-1.7739637, token='Here', token_id=8291),
+                ]
+            )
+        ],
+    )
+
+    candidate = Candidate(
+        content=Content(role='model', parts=[Part(text='Here')]),
+        finish_reason=GoogleFinishReason.STOP,
+        logprobs_result=logprobs_result,
+        avg_logprobs=-0.1398,
+    )
+
+    response = GenerateContentResponse(
+        candidates=[candidate],
+        model_version='gemini-2.5-flash',
+        usage_metadata=GenerateContentResponseUsageMetadata(prompt_token_count=10, candidates_token_count=5),
+        response_id='test-response-id',
+        create_time=datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+    )
+
+    # Mock the client
+    mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+
+    settings = GoogleModelSettings(google_logprobs=True, google_top_logprobs=2)
+    result = await agent.run('Hello', model_settings=settings)
+
+    messages = result.all_messages()
+    response = cast(ModelResponse, messages[-1])
+
+    assert result.output == 'Here'
+
+    assert response.provider_details is not None
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'STOP',
+            'timestamp': IsDatetime(),
+            'logprobs': {
+                'chosenCandidates': [
+                    {'logProbability': -0.18970422, 'token': 'H', 'tokenId': 236814},
+                    {'logProbability': -0.08993984, 'token': 'ere', 'tokenId': 627},
+                ],
+                'topCandidates': [
+                    {
+                        'candidates': [
+                            {'logProbability': -0.18970422, 'token': 'H', 'tokenId': 236814},
+                            {'logProbability': -1.7739637, 'token': 'Here', 'tokenId': 8291},
+                        ]
+                    }
+                ],
+            },
+            'avg_logprobs': -0.1398,
+        }
     )

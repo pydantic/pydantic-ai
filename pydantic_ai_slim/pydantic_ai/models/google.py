@@ -574,15 +574,13 @@ class GoogleModel(Model):
         )
 
         # Validate logprobs settings
-        logprobs_requested = model_settings.get('google_logprobs') or model_settings.get('google_top_logprobs')
-
-        if logprobs_requested:
-            if self._provider.name != 'google-vertex':
-                raise UserError(
-                    'Logprobs are only supported on Vertex AI. '
-                    'Use provider="google-vertex" to enable logprobs. '
-                    f'Current provider: {self._provider.name}'
-                )
+        logprobs_requested = model_settings.get('google_logprobs')
+        if logprobs_requested and self._provider.name != 'google-vertex':
+            raise UserError(
+                'Logprobs are only supported on Vertex AI. '
+                'Use provider="google-vertex" to enable logprobs. '
+                f'Current provider: {self._provider.name}'
+            )
 
         # Check if logprobs are requested with streaming
         if logprobs_requested and stream:
@@ -594,8 +592,8 @@ class GoogleModel(Model):
         if 'google_logprobs' in model_settings:
             config['response_logprobs'] = model_settings.get('google_logprobs')
 
-        if 'google_top_logprobs' in model_settings:
-            config['logprobs'] = model_settings.get('google_top_logprobs')
+            if 'google_top_logprobs' in model_settings:
+                config['logprobs'] = model_settings.get('google_top_logprobs')
 
         return contents, config
 
