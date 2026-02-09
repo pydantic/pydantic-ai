@@ -2030,9 +2030,9 @@ class OpenAIResponsesModel(Model):
                                 )
                             )
                     elif isinstance(item, CompactionPart):
-                        provider_details = message.provider_details
+                        provider_details = item.provider_details
                         assert provider_details is not None and 'encrypted_content' in provider_details, (
-                            'CompactionPart requires message.provider_details with "encrypted_content"'
+                            'CompactionPart requires item.provider_details with "encrypted_content"'
                         )
 
                         compacted_response_item = responses.ResponseCompactionItemParamParam(
