@@ -9,7 +9,6 @@ from typing_extensions import Never
 
 from pydantic_ai import (
     AbstractToolset,
-    AgentRunResultEvent,
     _utils,
     messages as _messages,
     models,
@@ -23,7 +22,7 @@ from pydantic_ai.agent import (
     ParallelExecutionMode,
     WrapperAgent,
 )
-from pydantic_ai.agent.abstract import AgentMetadata, Instructions, RunOutputDataT
+from pydantic_ai.agent.abstract import AgentMetadata, Instructions, RunOutputDataT, StreamEventsResult
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
@@ -669,7 +668,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]: ...
+    ) -> StreamEventsResult[AgentDepsT, OutputDataT]: ...
 
     @overload
     def run_stream_events(
@@ -689,7 +688,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]: ...
+    ) -> StreamEventsResult[AgentDepsT, RunOutputDataT]: ...
 
     def run_stream_events(
         self,
@@ -708,7 +707,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+    ) -> StreamEventsResult[AgentDepsT, Any]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] and
@@ -722,8 +721,9 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
 
         async def main():
             events: list[AgentStreamEvent | AgentRunResultEvent] = []
-            async for event in agent.run_stream_events('What is the capital of France?'):
-                events.append(event)
+            async with agent.run_stream_events('What is the capital of France?') as stream:
+                async for event in stream:
+                    events.append(event)
             print(events)
             '''
             [

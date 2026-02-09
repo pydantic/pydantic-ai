@@ -4234,6 +4234,7 @@ class TestRunStreamEventsCancellation:
         agent = Agent(FunctionModel(stream_function=stream_function))
 
         events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        # Direct iteration (legacy path):
         async for event in agent.run_stream_events('test'):  # pragma: no branch
             events.append(event)
             if len(events) >= 3:
@@ -4254,6 +4255,7 @@ class TestRunStreamEventsCancellation:
         agent = Agent(FunctionModel(stream_function=stream_function))
 
         events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        # Direct iteration (legacy path):
         async for event in agent.run_stream_events('test'):  # pragma: no branch
             events.append(event)
             if len(events) >= 3:
@@ -4267,6 +4269,7 @@ class TestRunStreamEventsCancellation:
         agent = Agent(TestModel())
 
         events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        # Direct iteration (legacy path):
         async for event in agent.run_stream_events('Hello'):
             events.append(event)
 
@@ -4293,6 +4296,7 @@ class TestRunStreamEventsCancellation:
 
         events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
         saw_part_start = False
+        # Direct iteration (legacy path):
         async for event in agent.run_stream_events('Call my_tool'):  # pragma: no branch
             events.append(event)
             # Break after seeing a PartStartEvent for the tool call
@@ -4330,6 +4334,7 @@ class TestRunStreamEventsCancellation:
         agent = Agent(FunctionModel(stream_function=stream_function))
 
         events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        # Direct iteration (legacy path):
         async for event in agent.run_stream_events('test'):  # pragma: no branch
             events.append(event)
             # Break after a few events
@@ -4356,6 +4361,7 @@ class TestRunStreamEventsCancellation:
 
         agent = Agent(FunctionModel(stream_function=stream_function))
 
+        # Direct iteration (legacy path):
         async for event in agent.run_stream_events('test'):  # pragma: no branch
             if isinstance(event, PartDeltaEvent):
                 break
@@ -4420,6 +4426,7 @@ class TestCoverageEdgeCases:
             return 'tool result'  # pragma: no cover
 
         events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        # Direct iteration (legacy path):
         async for event in agent.run_stream_events('Call the tool'):  # pragma: no branch
             events.append(event)
             # Break when we see the tool call event (during tool streaming, not model streaming)
@@ -4693,3 +4700,180 @@ class TestCoverageEdgeCases:
 
         # Should have stopped early
         assert chunk_count < 10
+
+
+class TestStreamEventsContextManager:
+    """Tests for run_stream_events used as a context manager."""
+
+    async def test_context_manager_basic(self):
+        """Basic context manager usage yields events and ends with AgentRunResultEvent."""
+        agent = Agent(TestModel())
+
+        events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        async with agent.run_stream_events('Hello') as stream:
+            async for event in stream:
+                events.append(event)
+
+        assert len(events) > 0
+        assert isinstance(events[-1], AgentRunResultEvent)
+
+    async def test_context_manager_break(self):
+        """Breaking inside a context manager stops iteration and cleans up."""
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            for i in range(100):  # pragma: no branch
+                yield f'chunk {i} '
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        async with agent.run_stream_events('test') as stream:
+            async for event in stream:  # pragma: no branch
+                events.append(event)
+                if len(events) >= 3:
+                    break
+
+        assert len(events) == 3
+        assert not any(isinstance(e, AgentRunResultEvent) for e in events)
+        assert stream.is_closed
+
+    async def test_context_manager_is_closed(self):
+        """is_closed property tracks cleanup state correctly."""
+        agent = Agent(TestModel())
+
+        stream = agent.run_stream_events('Hello')
+        assert not stream.is_closed
+        assert repr(stream) == 'StreamEventsResult(is_closed=False)'
+
+        async with stream as s:
+            assert not s.is_closed
+            async for _ in s:
+                pass
+
+        assert stream.is_closed
+        assert repr(stream) == 'StreamEventsResult(is_closed=True)'
+
+    async def test_anext(self):
+        """__anext__ works for manual iteration via anext()."""
+        agent = Agent(TestModel())
+
+        async with agent.run_stream_events('Hello') as stream:
+            # First call to __aiter__ creates _active_iter
+            stream.__aiter__()
+            # __anext__ calls _ensure_iter again (already-initialized branch)
+            first_event = await anext(stream)
+            assert first_event is not None
+
+    async def test_cleanup_is_idempotent(self):
+        """Calling _cleanup multiple times is safe (idempotent guard)."""
+        agent = Agent(TestModel())
+
+        async with agent.run_stream_events('Hello') as stream:
+            async for _ in stream:
+                pass
+            # Explicitly call _cleanup before __aexit__ does it again
+            await stream._cleanup()  # pyright: ignore[reportPrivateUsage]
+
+        assert stream.is_closed
+
+    async def test_reuse_after_close_raises(self):
+        """Attempting to iterate a closed StreamEventsResult raises RuntimeError."""
+        agent = Agent(TestModel())
+
+        async with agent.run_stream_events('Hello') as stream:
+            async for _ in stream:
+                pass
+
+        with pytest.raises(RuntimeError, match='StreamEventsResult has been closed and cannot be reused'):
+            async for _ in stream:  # pragma: no cover
+                pass  # pragma: no cover
+
+    async def test_context_manager_with_tool_calls(self):
+        """Context manager streams tool-related events correctly."""
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            if not any(
+                isinstance(m, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in m.parts) for m in messages
+            ):
+                # First call: produce a tool call
+                yield {0: DeltaToolCall(name='my_tool', json_args='{"x": "hello"}')}
+            else:
+                # Second call: produce final text
+                yield 'Done!'
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        @agent.tool_plain
+        def my_tool(x: str) -> str:
+            return f'{x}-result'
+
+        events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        async with agent.run_stream_events('Call the tool') as stream:
+            async for event in stream:
+                events.append(event)
+
+        assert len(events) > 0
+        assert isinstance(events[-1], AgentRunResultEvent)
+        # Should contain both tool call and tool result events
+        assert any(isinstance(e, FunctionToolCallEvent) for e in events)
+        assert any(isinstance(e, FunctionToolResultEvent) for e in events)
+
+    async def test_context_manager_with_message_history(self):
+        """Context manager works with message_history continuation."""
+        agent = Agent(TestModel())
+
+        # First run to build history
+        result = await agent.run('Hello')
+        history = result.all_messages()
+
+        # Continue with context manager
+        events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        async with agent.run_stream_events('Follow up', message_history=history) as stream:
+            async for event in stream:
+                events.append(event)
+
+        assert len(events) > 0
+        assert isinstance(events[-1], AgentRunResultEvent)
+
+    async def test_context_manager_exception_propagation(self):
+        """Exceptions from the agent task propagate through the context manager."""
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            raise RuntimeError('model error')
+            yield 'unreachable'  # pragma: no cover
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        with pytest.raises(RuntimeError, match='model error'):
+            async with agent.run_stream_events('test') as stream:
+                async for _ in stream:  # pragma: no cover
+                    pass  # pragma: no cover
+
+    async def test_context_manager_break_during_tool_streaming(self):
+        """Breaking during tool call streaming via context manager cleans up properly."""
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+            # Stream a tool call with args in multiple chunks
+            yield {0: DeltaToolCall(name='my_tool', json_args='{"x": ')}
+            yield {0: DeltaToolCall(json_args='"hello"')}
+            yield {0: DeltaToolCall(json_args='}')}
+            # These would follow but we'll break before reaching them
+            yield 'More text'  # type: ignore  # pragma: no cover
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        @agent.tool_plain
+        def my_tool(x: str) -> str:  # pragma: no cover
+            return f'{x}-result'  # pragma: no cover
+
+        events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        async with agent.run_stream_events('Call tool') as stream:
+            async for event in stream:  # pragma: no branch
+                events.append(event)
+                # Break after seeing a few events
+                if len(events) >= 3:
+                    break
+
+        assert len(events) == 3
+        assert not any(isinstance(e, AgentRunResultEvent) for e in events)
+        assert stream.is_closed
