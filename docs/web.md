@@ -24,7 +24,7 @@ Create a web app from an agent instance using [`Agent.to_web()`][pydantic_ai.age
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5', instructions='You are a helpful assistant.')
+agent = Agent('openai:gpt-5.2', instructions='You are a helpful assistant.')
 
 @agent.tool_plain
 def get_weather(city: str) -> str:
@@ -50,15 +50,15 @@ from pydantic_ai.models.anthropic import AnthropicModel
 # Model with custom configuration
 anthropic_model = AnthropicModel('claude-sonnet-4-5')
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 
 app = agent.to_web(
-    models=['openai:gpt-5', anthropic_model],
+    models=['openai:gpt-5.2', anthropic_model],
 )
 
 # Or with custom display labels
 app = agent.to_web(
-    models={'GPT 5': 'openai:gpt-5', 'Claude': anthropic_model},
+    models={'GPT 5.2': 'openai:gpt-5.2', 'Claude': anthropic_model},
 )
 ```
 
@@ -70,7 +70,7 @@ You can specify a list of [builtin tools](builtin-tools.md) that will be shown a
 from pydantic_ai import Agent
 from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 
 app = agent.to_web(
     models=['anthropic:claude-sonnet-4-5'],
@@ -88,7 +88,7 @@ You can pass extra instructions that will be included in each agent run:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 
 app = agent.to_web(instructions='Always respond in a friendly tone.')
 ```
@@ -128,7 +128,7 @@ Then use `html_source` to point to your local file or custom URL:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 
 # Use a local file (e.g., for offline usage)
 app = agent.to_web(html_source='~/pydantic-ai-ui.html')

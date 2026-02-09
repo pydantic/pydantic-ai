@@ -1292,7 +1292,7 @@ _messages_ctx_var: ContextVar[_RunMessages] = ContextVar('var')
 def capture_run_messages() -> Iterator[list[_messages.ModelMessage]]:
     """Context manager to access the messages used in a [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], or [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] call.
 
-    Useful when a run may raise an exception, see [model errors](../agents.md#model-errors) for more information.
+    Useful when a run may raise an exception, see [model errors](../agent.md#model-errors) for more information.
 
     Examples:
     ```python

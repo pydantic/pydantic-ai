@@ -24,7 +24,7 @@ search = DuckDuckGoSearchRun()
 search_tool = tool_from_langchain(search)
 
 agent = Agent(
-    'google-gla:gemini-2.5-flash',
+    'google-gla:gemini-3-flash-preview',
     tools=[search_tool],
 )
 
@@ -46,7 +46,7 @@ from pydantic_ai.ext.langchain import LangChainToolset
 toolkit = SlackToolkit()
 toolset = LangChainToolset(toolkit.get_tools())
 
-agent = Agent('openai:gpt-5', toolsets=[toolset])
+agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 # ...
 ```
 
@@ -70,7 +70,7 @@ tavily_search = tool_from_aci(
 )
 
 agent = Agent(
-    'google-gla:gemini-2.5-flash',
+    'google-gla:gemini-3-flash-preview',
     tools=[tavily_search],
 )
 
@@ -97,7 +97,7 @@ toolset = ACIToolset(
     linked_account_owner_id=os.getenv('LINKED_ACCOUNT_OWNER_ID'),
 )
 
-agent = Agent('openai:gpt-5', toolsets=[toolset])
+agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 ```
 
 ## See Also

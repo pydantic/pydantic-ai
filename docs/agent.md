@@ -24,7 +24,7 @@ Here's a toy example of an agent that simulates a roulette wheel:
 from pydantic_ai import Agent, RunContext
 
 roulette_agent = Agent(  # (1)!
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     deps_type=int,
     output_type=bool,
     system_prompt=(
@@ -74,7 +74,7 @@ Here's a simple example demonstrating the first four:
 ```python {title="run_agent.py"}
 from pydantic_ai import Agent, AgentRunResultEvent, AgentStreamEvent
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 
 result_sync = agent.run_sync('What is the capital of Italy?')
 print(result_sync.output)
@@ -153,7 +153,7 @@ from pydantic_ai import (
 )
 
 weather_agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     system_prompt='Providing a weather forecast at the locations the user provides.',
 )
 
@@ -298,7 +298,7 @@ Here's an example of using `async for` with `iter` to record each node the agent
 ```python {title="agent_iter_async_for.py"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 
 
 async def main():
@@ -334,7 +334,7 @@ async def main():
             model_response=ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
                 usage=RequestUsage(input_tokens=56, output_tokens=7),
-                model_name='gpt-5',
+                model_name='gpt-5.2',
                 timestamp=datetime.datetime(...),
                 run_id='...',
             )
@@ -359,7 +359,7 @@ You can also drive the iteration manually by passing the node you want to run ne
 from pydantic_ai import Agent
 from pydantic_graph import End
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 
 
 async def main():
@@ -399,7 +399,7 @@ async def main():
                 model_response=ModelResponse(
                     parts=[TextPart(content='The capital of France is Paris.')],
                     usage=RequestUsage(input_tokens=56, output_tokens=7),
-                    model_name='gpt-5',
+                    model_name='gpt-5.2',
                     timestamp=datetime.datetime(...),
                     run_id='...',
                 )
@@ -457,7 +457,7 @@ class WeatherService:
 
 
 weather_agent = Agent[WeatherService, str](
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     deps_type=WeatherService,
     output_type=str,  # We'll produce a final answer as plain text
     system_prompt='Providing a weather forecast at the locations the user provides.',
@@ -696,7 +696,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 
 # 1. Model-level defaults
 model = OpenAIChatModel(
-    'gpt-5',
+    'gpt-5.2',
     settings=ModelSettings(temperature=0.8, max_tokens=500)  # Base defaults
 )
 
@@ -744,7 +744,7 @@ class Deps:
 
 
 agent = Agent[Deps](
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     deps_type=Deps,
     metadata=lambda ctx: {'tenant': ctx.deps.tenant},  # agent-level metadata
 )
@@ -808,7 +808,7 @@ For example:
 from pydantic_ai import Agent, UnexpectedModelBehavior
 from pydantic_ai.models.google import GoogleModelSettings
 
-agent = Agent('google-gla:gemini-2.5-flash')
+agent = Agent('google-gla:gemini-3-flash-preview')
 
 try:
     result = agent.run_sync(
@@ -846,7 +846,7 @@ Here's an example of a conversation comprised of multiple runs:
 ```python {title="conversation_example.py" hl_lines="13"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 
 # First run
 result1 = agent.run_sync('Who was Albert Einstein?')
@@ -954,7 +954,7 @@ from datetime import date
 from pydantic_ai import Agent, RunContext
 
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     deps_type=str,  # (1)!
     system_prompt="Use the customer's name while replying to them.",  # (2)!
 )
@@ -1011,7 +1011,7 @@ from datetime import date
 from pydantic_ai import Agent, RunContext
 
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     deps_type=str,  # (1)!
     instructions="Use the customer's name while replying to them.",  # (2)!
 )
@@ -1068,7 +1068,7 @@ class ChatResult(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     deps_type=DatabaseConn,
     output_type=ChatResult,
 )
@@ -1161,7 +1161,7 @@ In these cases, [`capture_run_messages`][pydantic_ai.capture_run_messages] can b
 ```python {title="agent_model_errors.py"}
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, capture_run_messages
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 
 
 @agent.tool_plain
@@ -1203,7 +1203,7 @@ with capture_run_messages() as messages:  # (2)!
                     )
                 ],
                 usage=RequestUsage(input_tokens=62, output_tokens=4),
-                model_name='gpt-5',
+                model_name='gpt-5.2',
                 timestamp=datetime.datetime(...),
                 run_id='...',
             ),
@@ -1228,7 +1228,7 @@ with capture_run_messages() as messages:  # (2)!
                     )
                 ],
                 usage=RequestUsage(input_tokens=72, output_tokens=8),
-                model_name='gpt-5',
+                model_name='gpt-5.2',
                 timestamp=datetime.datetime(...),
                 run_id='...',
             ),
