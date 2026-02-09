@@ -301,7 +301,7 @@ markdown_extensions:
   - material.extensions.preview:
       targets:
         include:
-          - "*"
+          - '*'
   - pydantic_docs.mdext
 
 watch:
