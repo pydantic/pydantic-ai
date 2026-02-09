@@ -24,7 +24,7 @@ Supports virtually every [model](models/overview.md) and provider: OpenAI, Anthr
 Tightly [integrates](logfire.md) with [Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior, tracing, and cost tracking. If you already have an observability platform that supports OTel, you can [use that too](logfire.md#alternative-observability-backends).
 
 4. **Fully Type-safe**:
-Designed to give your IDE or AI coding agent as much context as possible for auto-completion and [type checking](agents.md#static-type-checking), moving entire classes of errors from runtime to write-time for a bit of that Rust "if it compiles, it works" feel.
+Designed to give your IDE or AI coding agent as much context as possible for auto-completion and [type checking](agent.md#static-type-checking), moving entire classes of errors from runtime to write-time for a bit of that Rust "if it compiles, it works" feel.
 
 5. **Powerful Evals**:
 Enables you to systematically test and [evaluate](evals.md) the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire.
@@ -74,7 +74,7 @@ Here's a minimal example of Pydantic AI:
 from pydantic_ai import Agent
 
 agent = Agent(  # (1)!
-    'anthropic:claude-sonnet-4-0',
+    'anthropic:claude-sonnet-4-5',
     instructions='Be concise, reply with one sentence.',  # (2)!
 )
 
@@ -85,15 +85,15 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 """
 ```
 
-1. We configure the agent to use [Anthropic's Claude Sonnet 4.0](api/models/anthropic.md) model, but you can also set the model when running the agent.
-2. Register static [instructions](agents.md#instructions) using a keyword argument to the agent.
-3. [Run the agent](agents.md#running-agents) synchronously, starting a conversation with the LLM.
+1. We configure the agent to use [Anthropic's Claude Sonnet 4.5](api/models/anthropic.md) model, but you can also set the model when running the agent.
+2. Register static [instructions](agent.md#instructions) using a keyword argument to the agent.
+3. [Run the agent](agent.md#running-agents) synchronously, starting a conversation with the LLM.
 
 _(This example is complete, it can be run "as is", assuming you've [installed the `pydantic_ai` package](install.md))_
 
 The exchange will be very short: Pydantic AI will send the instructions and the user prompt to the LLM, and the model will return a text response.
 
-Not very interesting yet, but we can easily add [tools](tools.md), [dynamic instructions](agents.md#instructions), and [structured outputs](output.md) to build more powerful agents.
+Not very interesting yet, but we can easily add [tools](tools.md), [dynamic instructions](agent.md#instructions), and [structured outputs](output.md) to build more powerful agents.
 
 ## Tools & Dependency Injection Example
 
@@ -121,7 +121,7 @@ class SupportOutput(BaseModel):  # (13)!
 
 
 support_agent = Agent(  # (1)!
-    'openai:gpt-5',  # (2)!
+    'openai:gpt-5.2',  # (2)!
     deps_type=SupportDependencies,
     output_type=SupportOutput,  # (9)!
     instructions=(  # (4)!
@@ -166,15 +166,15 @@ async def main():
     """
 ```
 
-1. This [agent](agents.md) will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has type `#!python Agent[SupportDependencies, SupportOutput]`.
+1. This [agent](agent.md) will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has type `#!python Agent[SupportDependencies, SupportOutput]`.
 2. Here we configure the agent to use [OpenAI's GPT-5 model](api/models/openai.md), you can also set the model when running the agent.
-3. The `SupportDependencies` dataclass is used to pass data, connections, and logic into the model that will be needed when running [instructions](agents.md#instructions) and [tool](tools.md) functions. Pydantic AI's system of dependency injection provides a [type-safe](agents.md#static-type-checking) way to customise the behavior of your agents, and can be especially useful when running [unit tests](testing.md) and evals.
-4. Static [instructions](agents.md#instructions) can be registered with the [`instructions` keyword argument][pydantic_ai.agent.Agent.__init__] to the agent.
-5. Dynamic [instructions](agents.md#instructions) can be registered with the [`@agent.instructions`][pydantic_ai.agent.Agent.instructions] decorator, and can make use of dependency injection. Dependencies are carried via the [`RunContext`][pydantic_ai.tools.RunContext] argument, which is parameterized with the `deps_type` from above. If the type annotation here is wrong, static type checkers will catch it.
+3. The `SupportDependencies` dataclass is used to pass data, connections, and logic into the model that will be needed when running [instructions](agent.md#instructions) and [tool](tools.md) functions. Pydantic AI's system of dependency injection provides a [type-safe](agent.md#static-type-checking) way to customise the behavior of your agents, and can be especially useful when running [unit tests](testing.md) and evals.
+4. Static [instructions](agent.md#instructions) can be registered with the [`instructions` keyword argument][pydantic_ai.agent.Agent.__init__] to the agent.
+5. Dynamic [instructions](agent.md#instructions) can be registered with the [`@agent.instructions`][pydantic_ai.agent.Agent.instructions] decorator, and can make use of dependency injection. Dependencies are carried via the [`RunContext`][pydantic_ai.tools.RunContext] argument, which is parameterized with the `deps_type` from above. If the type annotation here is wrong, static type checkers will catch it.
 6. The [`@agent.tool`](tools.md) decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via [`RunContext`][pydantic_ai.tools.RunContext], any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.
 7. The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are [extracted](tools.md#function-tools-and-schema) from the docstring and added to the parameter schema sent to the LLM.
-8. [Run the agent](agents.md#running-agents) asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.
-9. The response from the agent will be guaranteed to be a `SupportOutput`. If validation fails [reflection](agents.md#reflection-and-self-correction), the agent is prompted to try again.
+8. [Run the agent](agent.md#running-agents) asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.
+9. The response from the agent will be guaranteed to be a `SupportOutput`. If validation fails [reflection](agent.md#reflection-and-self-correction), the agent is prompted to try again.
 10. The output will be validated with Pydantic to guarantee it is a `SupportOutput`, since the agent is generic, it'll also be typed as a `SupportOutput` to aid with static type checking.
 11. In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
 12. This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
@@ -205,7 +205,7 @@ logfire.instrument_sqlite3()  # (3)!
 ...
 
 support_agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     deps_type=SupportDependencies,
     output_type=SupportOutput,
     instructions=(
@@ -248,7 +248,7 @@ As of today, these files are not automatically leveraged by IDEs or coding agent
 
 To try Pydantic AI for yourself, [install it](install.md) and follow the instructions [in the examples](examples/setup.md).
 
-Read the [docs](agents.md) to learn more about building applications with Pydantic AI.
+Read the [docs](agent.md) to learn more about building applications with Pydantic AI.
 
 Read the [API Reference](api/agent.md) to understand Pydantic AI's interface.
 

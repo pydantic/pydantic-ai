@@ -25,7 +25,7 @@ You can then use `OpenAIChatModel` by name:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 ...
 ```
 
@@ -35,7 +35,7 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 
-model = OpenAIChatModel('gpt-5')
+model = OpenAIChatModel('gpt-5.2')
 agent = Agent(model)
 ...
 ```
@@ -52,7 +52,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='your-api-key'))
+model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(api_key='your-api-key'))
 agent = Agent(model)
 ...
 ```
@@ -69,7 +69,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 client = AsyncOpenAI(max_retries=3)
-model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(openai_client=client))
+model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(openai_client=client))
 agent = Agent(model)
 ...
 ```
@@ -91,7 +91,7 @@ client = AsyncAzureOpenAI(
 )
 
 model = OpenAIChatModel(
-    'gpt-5',
+    'gpt-5.2',
     provider=OpenAIProvider(openai_client=client),
 )
 agent = Agent(model)
@@ -107,7 +107,7 @@ You can use [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesMo
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai-responses:gpt-5')
+agent = Agent('openai-responses:gpt-5.2')
 ...
 ```
 
@@ -117,7 +117,7 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
 
-model = OpenAIResponsesModel('gpt-5')
+model = OpenAIResponsesModel('gpt-5.2')
 agent = Agent(model)
 ...
 ```
@@ -151,7 +151,7 @@ model_settings = OpenAIResponsesModelSettings(
         )
     ],
 )
-model = OpenAIResponsesModel('gpt-5')
+model = OpenAIResponsesModel('gpt-5.2')
 agent = Agent(model=model, model_settings=model_settings)
 
 result = agent.run_sync('Open a new browser tab')
@@ -167,7 +167,7 @@ The Responses API supports referencing earlier model responses in a new request 
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5')
+model = OpenAIResponsesModel('gpt-5.2')
 agent = Agent(model=model)
 
 result = agent.run_sync('The secret is 1234')
@@ -189,7 +189,7 @@ When the `openai_previous_response_id` field is set to `'auto'`, Pydantic AI wil
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5')
+model = OpenAIResponsesModel('gpt-5.2')
 agent = Agent(model=model)
 
 result1 = agent.run_sync('Tell me a joke.')
@@ -404,7 +404,7 @@ To use [Azure AI Foundry](https://ai.azure.com/) as your provider, you can set t
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('azure:gpt-5')
+agent = Agent('azure:gpt-5.2')
 ...
 ```
 
@@ -416,7 +416,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.azure import AzureProvider
 
 model = OpenAIChatModel(
-    'gpt-5',
+    'gpt-5.2',
     provider=AzureProvider(
         azure_endpoint='your-azure-endpoint',
         api_version='your-api-version',
@@ -436,7 +436,7 @@ You can set the `VERCEL_AI_GATEWAY_API_KEY` and `VERCEL_OIDC_TOKEN` environment 
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('vercel:anthropic/claude-4-sonnet')
+agent = Agent('vercel:anthropic/claude-sonnet-4-5')
 ...
 ```
 
@@ -448,7 +448,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.vercel import VercelProvider
 
 model = OpenAIChatModel(
-    'anthropic/claude-4-sonnet',
+    'anthropic/claude-sonnet-4-5',
     provider=VercelProvider(api_key='your-vercel-ai-gateway-api-key'),
 )
 agent = Agent(model)
@@ -632,7 +632,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.litellm import LiteLLMProvider
 
 model = OpenAIChatModel(
-    'openai/gpt-5',
+    'openai/gpt-5.2',
     provider=LiteLLMProvider(
         api_base='<api-base-url>',
         api_key='<api-key>'
