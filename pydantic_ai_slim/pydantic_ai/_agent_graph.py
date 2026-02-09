@@ -1105,14 +1105,6 @@ async def process_tool_calls(  # noqa: C901
                             instrumentation_version=tool_manager.ctx.instrumentation_version,
                             usage=ctx.state.usage,
                         )
-                    try:
-                        await tool_manager.execute_tool_call(
-                            validated,
-                            tracer=ctx.deps.tracer,
-                            include_content=include_content,
-                            instrumentation_version=instrumentation_version,
-                            usage=ctx.state.usage,
-                        )
                     except ToolRetryError as e:
                         output_parts.append(e.tool_retry)
                         yield _messages.FunctionToolResultEvent(e.tool_retry)
