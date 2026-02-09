@@ -376,7 +376,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 # These don't have deltas, so they don't need to be ended.
                 pass
             case CompactionPart():  # pragma: no cover
-                async for e in self.handle_compaction(part):
+                async for e in self.handle_compaction_call_end(part):
                     yield e
 
     async def before_stream(self) -> AsyncIterator[EventT]:
@@ -525,8 +525,12 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         return  # pragma: no cover
         yield  # Make this an async generator
 
-    async def handle_compaction_call_end(self):
-        """Handle the end of a compaction."""
+    async def handle_compaction_call_end(self, part: CompactionPart) -> AsyncIterator[EventT]:
+        """Handle the end of a `CompactionPart`.
+
+        Args:
+            part: The compaction part.
+        """
         return  # pragma: no cover
         yield  # Make this an async generator
 
