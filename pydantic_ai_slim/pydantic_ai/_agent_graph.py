@@ -1097,12 +1097,15 @@ async def process_tool_calls(  # noqa: C901
                     # Validation failed — no tool is actually executed here. We call
                     # execute_tool_call so the validation error is raised inside a trace span.
                     # Retries are already tracked by validate_tool_call() via failed_tools.
+                    run_context = tool_manager.ctx
+                    if run_context is None:
+                        raise RuntimeError('Expected run context to be set')  # pragma: no cover
                     try:
                         await tool_manager.execute_tool_call(
                             validated,
                             tracer=ctx.deps.tracer,
-                            include_content=tool_manager.ctx.trace_include_content,
-                            instrumentation_version=tool_manager.ctx.instrumentation_version,
+                            include_content=run_context.trace_include_content,
+                            instrumentation_version=run_context.instrumentation_version,
                             usage=ctx.state.usage,
                         )
                     except ToolRetryError as e:
