@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import hashlib
 import os
-import re
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TypeVar
@@ -25,8 +25,8 @@ except ImportError as _import_error:  # pragma: no cover
         'you can use the `web` optional group — `pip install "pydantic-ai-slim[web]"`'
     ) from _import_error
 
-DEFAULT_UI_VERSION = '1.0.0'
-CDN_URL_TEMPLATE = 'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@{version}/dist/index.html'
+CHAT_UI_VERSION = '1.0.0'
+DEFAULT_HTML_URL = f'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@{CHAT_UI_VERSION}/dist/index.html'
 
 AgentDepsT = TypeVar('AgentDepsT')
 OutputDataT = TypeVar('OutputDataT')
@@ -47,27 +47,64 @@ def _get_cache_dir() -> Path:
     return cache_dir
 
 
-def _sanitize_version(version: str) -> str:
-    """Sanitize version string for use as filename."""
-    return re.sub(r'[^a-zA-Z0-9._-]', '_', version)
+async def _get_ui_html(html_source: str | Path | None = None) -> bytes:
+    """Get UI HTML content from the specified source or default CDN.
 
+    When html_source is provided, it is used directly.
+    When html_source is None, fetches from the default CDN.
 
-async def _get_ui_html(version: str) -> bytes:
-    """Get UI HTML content from filesystem cache or fetch from CDN."""
-    cache_dir = _get_cache_dir()
-    cache_file = cache_dir / f'{_sanitize_version(version)}.html'
+    Args:
+        html_source: Path or URL for the chat UI HTML. Can be:
+            - None: Uses the default CDN (cached locally)
+            - A Path instance: Reads from the local file
+            - A URL (http:// or https://): Fetches from the URL
+            - A file path string: Reads from the local file
+    """
+    # Use default CDN with caching
+    if html_source is None:
+        cache_dir = _get_cache_dir()
+        cache_file = cache_dir / f'{CHAT_UI_VERSION}.html'
 
-    if cache_file.exists():
-        return cache_file.read_bytes()
+        if cache_file.exists():
+            return cache_file.read_bytes()
 
-    cdn_url = CDN_URL_TEMPLATE.format(version=version)
-    async with httpx.AsyncClient() as client:
-        response = await client.get(cdn_url)
-        response.raise_for_status()
-        content = response.content
+        async with httpx.AsyncClient() as client:
+            response = await client.get(DEFAULT_HTML_URL)
+            response.raise_for_status()
+            content = response.content
 
-    cache_file.write_bytes(content)
-    return content
+        cache_file.write_bytes(content)
+        return content
+
+    # Handle Path instances
+    if isinstance(html_source, Path):
+        html_source = html_source.expanduser()
+        if html_source.is_file():
+            return html_source.read_bytes()
+        raise FileNotFoundError(f'Local UI file not found: {html_source}')
+
+    # Handle URLs with filesystem caching
+    if html_source.startswith(('http://', 'https://')):
+        cache_dir = _get_cache_dir()
+        url_hash = hashlib.sha256(html_source.encode()).hexdigest()[:16]
+        cache_file = cache_dir / f'url_{url_hash}.html'
+
+        if cache_file.exists():
+            return cache_file.read_bytes()
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(html_source)
+            response.raise_for_status()
+            content = response.content
+
+        cache_file.write_bytes(content)
+        return content
+
+    # Handle local file paths (strings)
+    local_path = Path(html_source).expanduser()
+    if local_path.is_file():
+        return local_path.read_bytes()
+    raise FileNotFoundError(f'Local UI file not found: {html_source}')
 
 
 def create_web_app(
@@ -77,8 +114,13 @@ def create_web_app(
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,
+    html_source: str | Path | None = None,
 ) -> Starlette:
     """Create a Starlette app that serves a web chat UI for the given agent.
+
+    By default, the UI is fetched from a CDN and cached locally. The html_source
+    parameter allows overriding this for enterprise environments, offline usage,
+    or custom UI builds.
 
     Args:
         agent: The Pydantic AI agent to serve
@@ -92,6 +134,11 @@ def create_web_app(
         deps: Optional dependencies to use for all requests.
         model_settings: Optional settings to use for all model requests.
         instructions: Optional extra instructions to pass to each agent run.
+        html_source: Path or URL for the chat UI HTML. Can be:
+            - None (default): Fetches from CDN and caches locally
+            - A Path instance: Reads from the local file
+            - A URL string (http:// or https://): Fetches from the URL
+            - A file path string: Reads from the local file
 
     Returns:
         A configured Starlette application ready to be served
@@ -110,16 +157,7 @@ def create_web_app(
 
     async def index(request: Request) -> Response:
         """Serve the chat UI from filesystem cache or CDN."""
-        version = request.query_params.get('version')
-        ui_version = version or DEFAULT_UI_VERSION
-
-        try:
-            content = await _get_ui_html(ui_version)
-        except httpx.HTTPStatusError as e:
-            return HTMLResponse(
-                content=f'Failed to fetch UI version "{ui_version}": {e.response.status_code}',
-                status_code=502,
-            )
+        content = await _get_ui_html(html_source)
 
         return HTMLResponse(
             content=content,

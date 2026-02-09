@@ -2,12 +2,13 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Any, Literal, cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -29,7 +30,6 @@ from pydantic_ai import (
     ModelResponse,
     ModelRetry,
     RetryPromptPart,
-    SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -41,6 +41,7 @@ from pydantic_ai import (
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.exceptions import ContentFilterError
+from pydantic_ai.messages import SystemPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
@@ -409,7 +410,7 @@ async def test_request_tool_call(allow_model_requests: None):
     ]
     mock_client = MockOpenAI.create_mock(responses)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m, system_prompt='this is the system prompt')
+    agent = Agent(m, instructions='this is the system prompt')
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
@@ -424,9 +425,9 @@ async def test_request_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
@@ -464,6 +465,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
@@ -501,6 +503,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
@@ -944,7 +947,9 @@ async def test_image_url_input(allow_model_requests: None):
     )
 
 
-async def test_image_url_input_force_download(allow_model_requests: None, openai_api_key: str):
+async def test_image_url_input_force_download(
+    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+):
     provider = OpenAIProvider(api_key=openai_api_key)
     m = OpenAIChatModel('gpt-4.1-nano', provider=provider)
     agent = Agent(m)
@@ -961,7 +966,9 @@ async def test_image_url_input_force_download(allow_model_requests: None, openai
     assert result.output == snapshot('This vegetable is a potato.')
 
 
-async def test_image_url_input_force_download_response_api(allow_model_requests: None, openai_api_key: str):
+async def test_image_url_input_force_download_response_api(
+    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+):
     provider = OpenAIProvider(api_key=openai_api_key)
     m = OpenAIResponsesModel('gpt-4.1-nano', provider=provider)
     agent = Agent(m)
@@ -978,7 +985,9 @@ async def test_image_url_input_force_download_response_api(allow_model_requests:
     assert result.output == snapshot('This is a potato.')
 
 
-async def test_openai_audio_url_input(allow_model_requests: None, openai_api_key: str):
+async def test_openai_audio_url_input(
+    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+):
     m = OpenAIChatModel('gpt-4o-audio-preview', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
 
@@ -1003,7 +1012,9 @@ async def test_openai_audio_url_input(allow_model_requests: None, openai_api_key
     )
 
 
-async def test_document_url_input(allow_model_requests: None, openai_api_key: str):
+async def test_document_url_input(
+    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
 
@@ -1025,7 +1036,9 @@ async def test_document_url_input_response_api(allow_model_requests: None, opena
     assert 'Dummy PDF' in result.output
 
 
-async def test_document_url_input_force_download_response_api(allow_model_requests: None, openai_api_key: str):
+async def test_document_url_input_force_download_response_api(
+    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+):
     """Test DocumentUrl with force_download=True downloads and sends as file_data."""
     provider = OpenAIProvider(api_key=openai_api_key)
     m = OpenAIResponsesModel('gpt-4.1-nano', provider=provider)
@@ -1042,8 +1055,6 @@ async def test_document_url_input_force_download_response_api(allow_model_reques
 
 async def test_image_url_force_download_chat() -> None:
     """Test that force_download=True calls download_item for ImageUrl in OpenAIChatModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
@@ -1077,8 +1088,6 @@ async def test_image_url_force_download_chat() -> None:
 
 async def test_image_url_no_force_download_chat() -> None:
     """Test that force_download=False does not call download_item for ImageUrl in OpenAIChatModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
@@ -1106,8 +1115,6 @@ async def test_image_url_no_force_download_chat() -> None:
 
 async def test_document_url_force_download_responses() -> None:
     """Test that force_download=True calls download_item for DocumentUrl in OpenAIResponsesModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
@@ -1141,8 +1148,6 @@ async def test_document_url_force_download_responses() -> None:
 
 async def test_document_url_no_force_download_responses() -> None:
     """Test that force_download=False does not call download_item for DocumentUrl in OpenAIResponsesModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
@@ -1170,8 +1175,6 @@ async def test_document_url_no_force_download_responses() -> None:
 
 async def test_audio_url_force_download_responses() -> None:
     """Test that force_download=True calls download_item for AudioUrl in OpenAIResponsesModel."""
-    from unittest.mock import AsyncMock, patch
-
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
@@ -1426,7 +1429,9 @@ async def test_document_as_binary_content_input(
     assert result.output == snapshot('The main content of the document is "Dummy PDF file."')
 
 
-async def test_text_document_url_input(allow_model_requests: None, openai_api_key: str):
+async def test_text_document_url_input(
+    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
 
@@ -1614,6 +1619,36 @@ async def test_extra_headers(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m, model_settings=OpenAIChatModelSettings(extra_headers={'Extra-Header-Key': 'Extra-Header-Value'}))
     await agent.run('hello')
+
+
+async def test_openai_store_false(allow_model_requests: None):
+    """Test that openai_store=False is correctly passed to the OpenAI API."""
+    c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, model_settings=OpenAIChatModelSettings(openai_store=False))
+
+    result = await agent.run('test')
+    assert result.output == 'hello'
+
+    # Verify the store parameter was passed to the mock
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs.get('store') is False
+
+
+async def test_openai_store_true(allow_model_requests: None):
+    """Test that openai_store=True is correctly passed to the OpenAI API."""
+    c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, model_settings=OpenAIChatModelSettings(openai_store=True))
+
+    result = await agent.run('test')
+    assert result.output == 'hello'
+
+    # Verify the store parameter was passed to the mock
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs.get('store') is True
 
 
 async def test_user_id(allow_model_requests: None, openai_api_key: str):
@@ -2529,8 +2564,16 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(content=IsStr(), id='rs_68c1fa166e9c81979ff56b16882744f1093f57e27128848a'),
-                    TextPart(content=IsStr(), id='msg_68c1fa1ec9448197b5c8f78a90999360093f57e27128848a'),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fa166e9c81979ff56b16882744f1093f57e27128848a',
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_68c1fa1ec9448197b5c8f78a90999360093f57e27128848a',
+                        provider_name='openai',
+                    ),
                 ],
                 usage=RequestUsage(input_tokens=13, output_tokens=1915, details={'reasoning_tokens': 1600}),
                 model_name='o3-mini-2025-01-31',
@@ -2716,7 +2759,8 @@ Dagvoorspelling:
 async def test_reasoning_model_with_temperature(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m, model_settings=OpenAIChatModelSettings(temperature=0.5))
-    result = await agent.run('What is the capital of Mexico?')
+    with pytest.warns(UserWarning, match='Sampling parameters.*temperature.*not supported when reasoning is enabled'):
+        result = await agent.run('What is the capital of Mexico?')
     assert result.output == snapshot(
         'The capital of Mexico is Mexico City. It is not only the seat of the federal government but also a major cultural, political, and economic center in the country.'
     )
@@ -2853,6 +2897,7 @@ def test_openai_response_timestamp_milliseconds(allow_model_requests: None):
     result = agent.run_sync('Hello')
     response = cast(ModelResponse, result.all_messages()[-1])
     assert response.timestamp == IsNow(tz=timezone.utc)
+    assert response.provider_name == 'openai'
     assert response.provider_details == snapshot(
         {'finish_reason': 'stop', 'timestamp': datetime(2025, 6, 1, 3, 7, 48, tzinfo=timezone.utc)}
     )
@@ -3568,8 +3613,45 @@ async def test_openai_model_settings_temperature_ignored_on_gpt_5(allow_model_re
     m = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
 
-    result = await agent.run('What is the capital of France?', model_settings=ModelSettings(temperature=0.0))
+    with pytest.warns(UserWarning, match='Sampling parameters.*temperature.*not supported when reasoning is enabled'):
+        result = await agent.run('What is the capital of France?', model_settings=ModelSettings(temperature=0.0))
     assert result.output == snapshot('Paris.')
+
+
+async def test_openai_gpt_5_2_temperature_allowed_by_default(allow_model_requests: None):
+    """GPT-5.2 allows temperature by default (reasoning_effort defaults to 'none')."""
+    c = completion_message(ChatCompletionMessage(content='Paris.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    # No warning should be raised when using temperature without reasoning enabled
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter('always')
+        await agent.run('What is the capital of France?', model_settings=ModelSettings(temperature=0.5))
+        # Check no UserWarning about sampling params was raised
+        sampling_warnings = [x for x in w if 'Sampling parameters' in str(x.message)]
+        assert len(sampling_warnings) == 0
+
+    # Verify temperature was passed to the API
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['temperature'] == 0.5
+
+
+async def test_openai_gpt_5_2_temperature_warns_when_reasoning_enabled(allow_model_requests: None):
+    """GPT-5.2 warns and filters temperature when reasoning_effort is set."""
+    c = completion_message(ChatCompletionMessage(content='Paris.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.warns(UserWarning, match='Sampling parameters.*temperature.*not supported when reasoning is enabled'):
+        await agent.run(
+            'What is the capital of France?',
+            model_settings=OpenAIChatModelSettings(temperature=0.5, openai_reasoning_effort='medium'),
+        )
+
+    # Verify temperature was NOT passed to the API (filtered out)
+    assert 'temperature' not in get_mock_chat_completion_kwargs(mock_client)[0]
 
 
 async def test_openai_model_cerebras_provider(allow_model_requests: None, cerebras_api_key: str):
@@ -3731,6 +3813,201 @@ response\
 """,
         }
     )
+
+
+async def test_openai_auto_mode_reasoning_field_sends_back_in_field(allow_model_requests: None):
+    """Test that auto mode detects reasoning from field and sends back in field."""
+    c = completion_message(
+        ChatCompletionMessage.model_construct(content='response', reasoning_content='reasoning', role='assistant')
+    )
+    m = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts='auto',  # Auto mode
+        ),
+    )
+    settings = ModelSettings()
+    params = ModelRequestParameters()
+    resp = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
+    # Auto mode should detect thinking came from 'reasoning_content' field and send back in same field
+    assert m._map_model_response(resp) == snapshot(  # type: ignore[reportPrivateUsage]
+        {'role': 'assistant', 'reasoning_content': 'reasoning', 'content': 'response'}
+    )
+
+
+async def test_openai_auto_mode_reasoning_field_different_provider_uses_tags(allow_model_requests: None):
+    """Test that auto mode falls back to tags when provider_name doesn't match."""
+    # This test verifies behavior by checking that when thinking comes from a different provider, auto mode falls back to tags.
+    c1 = completion_message(ChatCompletionMessage.model_construct(content='response2', role='assistant'))
+    m = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c1)),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts='auto',
+        ),
+    )
+
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='question')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(
+                    content='reasoning from different provider',
+                    id='reasoning_content',
+                    provider_name='different-provider',
+                ),
+            ]
+        ),
+    ]
+
+    settings = ModelSettings()
+    params = ModelRequestParameters()
+    await m.request(messages=messages, model_settings=settings, model_request_parameters=params)
+
+    mapped = m._map_model_response(messages[1])  # type: ignore[reportPrivateUsage]
+    assert mapped == snapshot(
+        {
+            'role': 'assistant',
+            'content': """<think>
+reasoning from different provider
+</think>""",
+        }
+    )
+
+
+async def test_openai_auto_mode_tags_sends_back_in_tags(allow_model_requests: None):
+    """Test that auto mode detects reasoning from tags and sends back in tags."""
+    c = completion_message(
+        ChatCompletionMessage.model_construct(content='<think>reasoning</think>response', role='assistant')
+    )
+    m = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)),
+        profile=OpenAIModelProfile(openai_chat_send_back_thinking_parts='auto'),
+    )
+    settings = ModelSettings()
+    params = ModelRequestParameters()
+    resp = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
+    assert m._map_model_response(resp) == snapshot(  # type: ignore[reportPrivateUsage]
+        {
+            'role': 'assistant',
+            'content': """\
+<think>
+reasoning
+</think>
+
+response\
+""",
+        }
+    )
+
+
+async def test_openai_auto_mode_no_thinking_field_uses_default_fields(allow_model_requests: None):
+    """Test that auto mode with no thinking_field set checks default reasoning and reasoning_content fields."""
+    c1 = completion_message(
+        ChatCompletionMessage.model_construct(content='response', reasoning='thought', role='assistant')
+    )
+    m1 = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c1)),
+        profile=OpenAIModelProfile(
+            openai_chat_send_back_thinking_parts='auto',
+        ),
+    )
+    settings = ModelSettings()
+    params = ModelRequestParameters()
+    resp1 = await m1.request(messages=[], model_settings=settings, model_request_parameters=params)
+
+    thinking_parts = [p for p in resp1.parts if isinstance(p, ThinkingPart)]
+    assert len(thinking_parts) == 1
+    assert thinking_parts[0].id == 'reasoning'
+    mapped1 = m1._map_model_response(resp1)  # type: ignore[reportPrivateUsage]
+    assert mapped1 == snapshot({'role': 'assistant', 'reasoning': 'thought', 'content': 'response'})
+
+    c2 = completion_message(
+        ChatCompletionMessage.model_construct(content='response', reasoning_content='thought', role='assistant')
+    )
+    m2 = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c2)),
+        profile=OpenAIModelProfile(
+            openai_chat_send_back_thinking_parts='auto',
+        ),
+    )
+    resp2 = await m2.request(messages=[], model_settings=settings, model_request_parameters=params)
+
+    thinking_parts = [p for p in resp2.parts if isinstance(p, ThinkingPart)]
+    assert len(thinking_parts) == 1
+    assert thinking_parts[0].id == 'reasoning_content'
+    mapped2 = m2._map_model_response(resp2)  # type: ignore[reportPrivateUsage]
+    assert mapped2 == snapshot({'role': 'assistant', 'reasoning_content': 'thought', 'content': 'response'})
+
+
+async def test_openai_auto_mode_mismatched_field_uses_tags(allow_model_requests: None):
+    """Test that auto mode falls back to tags when configured field doesn't match where reasoning comes from."""
+    # Configure thinking_field as 'reasoning_content', but reasoning comes in 'reasoning'
+    c = completion_message(
+        ChatCompletionMessage.model_construct(content='response', reasoning='thought', role='assistant')
+    )
+    m = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts='auto',
+        ),
+    )
+    settings = ModelSettings()
+    params = ModelRequestParameters()
+    resp = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
+
+    thinking_parts = [p for p in resp.parts if isinstance(p, ThinkingPart)]
+    assert len(thinking_parts) == 1
+    assert thinking_parts[0].id == 'reasoning'
+
+    # But when sending back, since id='reasoning' doesn't match configured 'reasoning_content', it should fall back to tags
+    mapped = m._map_model_response(resp)  # type: ignore[reportPrivateUsage]
+    assert mapped == snapshot(
+        {
+            'role': 'assistant',
+            'content': """<think>
+thought
+</think>
+
+response""",
+        }
+    )
+
+
+async def test_openai_auto_mode_multiple_thinking_parts_same_field(allow_model_requests: None):
+    """Test that auto mode correctly groups multiple thinking parts from the same field."""
+    c1 = completion_message(
+        ChatCompletionMessage.model_construct(content='response', reasoning='first thought', role='assistant')
+    )
+
+    m = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c1)),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field='reasoning',
+            openai_chat_send_back_thinking_parts='auto',
+        ),
+    )
+
+    settings = ModelSettings()
+    params = ModelRequestParameters()
+    resp1 = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
+
+    thinking_parts = [p for p in resp1.parts if isinstance(p, ThinkingPart)]
+    assert len(thinking_parts) == 1
+    assert thinking_parts[0].id == 'reasoning'
+    assert thinking_parts[0].provider_name == 'openai'
+
+    mapped = m._map_model_response(resp1)  # type: ignore[reportPrivateUsage]
+    assert mapped == snapshot({'role': 'assistant', 'reasoning': 'first thought', 'content': 'response'})
 
 
 def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
@@ -4050,3 +4327,81 @@ async def test_openai_chat_audio_url_uri_encoding(allow_model_requests: None):
     # Expect Data URI with correct MIME type for mp3
     assert audio_part['input_audio']['data'] == data_uri
     assert audio_part['input_audio']['format'] == 'mp3'
+
+
+def test_transformer_adds_properties_to_object_schemas():
+    """OpenAI drops object schemas without a 'properties' key. The transformer must add it."""
+
+    schema = {'type': 'object', 'additionalProperties': {'type': 'string'}}
+    result = OpenAIJsonSchemaTransformer(schema, strict=None).walk()
+
+    assert result['properties'] == {}
+
+
+def chunk_with_usage(
+    delta: list[ChoiceDelta],
+    finish_reason: FinishReason | None = None,
+    completion_tokens: int = 1,
+    prompt_tokens: int = 2,
+    total_tokens: int = 3,
+) -> chat.ChatCompletionChunk:
+    """Create a chunk with configurable usage stats for testing continuous_usage_stats."""
+    return chat.ChatCompletionChunk(
+        id='123',
+        choices=[
+            ChunkChoice(index=index, delta=delta, finish_reason=finish_reason) for index, delta in enumerate(delta)
+        ],
+        created=1704067200,  # 2024-01-01
+        model='gpt-4o-123',
+        object='chat.completion.chunk',
+        usage=CompletionUsage(
+            completion_tokens=completion_tokens, prompt_tokens=prompt_tokens, total_tokens=total_tokens
+        ),
+    )
+
+
+async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
+    """Test that continuous_usage_stats replaces usage instead of accumulating.
+
+    When continuous_usage_stats=True, each chunk contains cumulative usage, not incremental.
+    The final usage should equal the last chunk's usage, not the sum of all chunks.
+    We verify that usage is correctly updated at each step via stream_responses.
+    """
+    # Simulate cumulative usage: each chunk has higher tokens (cumulative, not incremental)
+    stream = [
+        chunk_with_usage(
+            [ChoiceDelta(content='hello ', role='assistant')],
+            completion_tokens=5,
+            prompt_tokens=10,
+            total_tokens=15,
+        ),
+        chunk_with_usage([ChoiceDelta(content='world')], completion_tokens=10, prompt_tokens=10, total_tokens=20),
+        chunk_with_usage([ChoiceDelta(content='!')], completion_tokens=15, prompt_tokens=10, total_tokens=25),
+        chunk_with_usage([], finish_reason='stop', completion_tokens=15, prompt_tokens=10, total_tokens=25),
+    ]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    settings = cast(OpenAIChatModelSettings, {'openai_continuous_usage_stats': True})
+    async with agent.run_stream('', model_settings=settings) as result:
+        # Verify usage is updated at each step via stream_responses
+        usage_at_each_step: list[RequestUsage] = []
+        async for response, _ in result.stream_responses(debounce_by=None):
+            usage_at_each_step.append(response.usage)
+
+        # Each step should have the cumulative usage from that chunk (not accumulated)
+        # The stream emits responses for each content chunk plus final
+        assert usage_at_each_step == snapshot(
+            [
+                RequestUsage(input_tokens=10, output_tokens=5),
+                RequestUsage(input_tokens=10, output_tokens=10),
+                RequestUsage(input_tokens=10, output_tokens=15),
+                RequestUsage(input_tokens=10, output_tokens=15),
+                RequestUsage(input_tokens=10, output_tokens=15),
+            ]
+        )
+
+    # Final usage should be from the last chunk (15 output tokens)
+    # NOT the sum of all chunks (5+10+15+15 = 45 output tokens)
+    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=10, output_tokens=15))

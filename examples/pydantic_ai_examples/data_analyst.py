@@ -9,7 +9,7 @@ from pydantic_ai import Agent, ModelRetry, RunContext
 
 @dataclass
 class AnalystAgentDeps:
-    output: dict[str, pd.DataFrame] = field(default_factory=dict)
+    output: dict[str, pd.DataFrame] = field(default_factory=dict[str, pd.DataFrame])
 
     def store(self, value: pd.DataFrame) -> str:
         """Store the output in deps and return the reference such as Out[1] to be used by the LLM."""
@@ -26,7 +26,7 @@ class AnalystAgentDeps:
 
 
 analyst_agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     deps_type=AnalystAgentDeps,
     instructions='You are a data analyst and your job is to analyze the data according to the user request.',
 )

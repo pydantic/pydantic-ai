@@ -21,7 +21,7 @@ jobs:
     name: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -45,7 +45,7 @@ jobs:
   mypy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -60,7 +60,7 @@ jobs:
   docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -105,11 +105,8 @@ jobs:
     env:
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
-      # We only run the llama_cpp tests on the latest Python as they have been regularly failing in CI with `Fatal Python error: Illegal instruction`:
-      # https://github.com/pydantic/pydantic-ai/actions/runs/19547773220/job/55970947389
-      RUN_LLAMA_CPP_TESTS: ${{ matrix.python-version == '3.13' && matrix.install.name == 'all-extras' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -151,9 +148,8 @@ jobs:
     env:
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
-      RUN_LLAMA_CPP_TESTS: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -197,7 +193,7 @@ jobs:
     env:
       CI: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -219,7 +215,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test, test-lowest-versions]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           # needed for diff-cover
           fetch-depth: 0
@@ -278,7 +274,7 @@ jobs:
       url: https://ai.pydantic.dev
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v4
       - run: npm install
@@ -320,7 +316,7 @@ jobs:
       statuses: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v4
       - run: npm install
@@ -372,7 +368,7 @@ jobs:
       package-version: ${{ steps.inspect_package.outputs.version }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: astral-sh/setup-uv@v5
         with:

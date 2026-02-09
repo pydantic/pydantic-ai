@@ -58,7 +58,7 @@ def create_retrying_client():
 
 # Use the retrying client with a model
 client = create_retrying_client()
-model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(http_client=client))
+model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(http_client=client))
 agent = Agent(model)
 ```
 
@@ -262,7 +262,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from smart_retry_example import create_retrying_client
 
 client = create_retrying_client()
-model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(http_client=client))
+model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(http_client=client))
 agent = Agent(model)
 ```
 
@@ -315,6 +315,16 @@ agent = Agent(model)
 
 6. **Consider Circuit Breakers**: For high-traffic applications, consider implementing circuit breaker patterns.
 
+!!! tip "Monitoring Retries in Production"
+    Excessive retries can indicate underlying issues and increase costs. [Logfire](logfire.md) helps you track retry patterns:
+
+    - See which requests triggered retries
+    - Understand retry causes (rate limits, server errors, timeouts)
+    - Monitor retry frequency over time
+    - Identify opportunities to reduce retries
+
+    With [HTTPX instrumentation](logfire.md#monitoring-http-requests) enabled, retry attempts are automatically captured in your traces.
+
 ## Error Handling
 
 The retry transports will re-raise the last exception if all retry attempts fail. Make sure to handle these appropriately in your application:
@@ -327,7 +337,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from smart_retry_example import create_retrying_client
 
 client = create_retrying_client()
-model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(http_client=client))
+model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(http_client=client))
 agent = Agent(model)
 ```
 

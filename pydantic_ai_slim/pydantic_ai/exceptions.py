@@ -24,6 +24,7 @@ __all__ = (
     'AgentRunError',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
+    'ConcurrencyLimitExceeded',
     'ModelAPIError',
     'ModelHTTPError',
     'ContentFilterError',
@@ -134,6 +135,10 @@ class AgentRunError(RuntimeError):
 
 class UsageLimitExceeded(AgentRunError):
     """Error raised when a Model's usage exceeds the specified limits."""
+
+
+class ConcurrencyLimitExceeded(AgentRunError):
+    """Error raised when the concurrency queue depth exceeds max_queued."""
 
 
 class UnexpectedModelBehavior(AgentRunError):

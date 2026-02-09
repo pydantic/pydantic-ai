@@ -52,6 +52,13 @@ from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 
+DEFAULT_HTTP_TIMEOUT: int = 600
+"""Default HTTP timeout in seconds for API requests.
+
+This matches the default timeout used by OpenAI's Python client.
+See https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9
+"""
+
 KnownModelName = TypeAliasType(
     'KnownModelName',
     Literal[
@@ -71,6 +78,7 @@ KnownModelName = TypeAliasType(
         'anthropic:claude-opus-4-20250514',
         'anthropic:claude-opus-4-5-20251101',
         'anthropic:claude-opus-4-5',
+        'anthropic:claude-opus-4-6',
         'anthropic:claude-sonnet-4-0',
         'anthropic:claude-sonnet-4-20250514',
         'anthropic:claude-sonnet-4-5-20250929',
@@ -109,6 +117,7 @@ KnownModelName = TypeAliasType(
         'bedrock:mistral.mistral-large-2402-v1:0',
         'bedrock:mistral.mistral-large-2407-v1:0',
         'bedrock:mistral.mixtral-8x7b-instruct-v0:1',
+        'bedrock:us.amazon.nova-2-lite-v1:0',
         'bedrock:us.amazon.nova-lite-v1:0',
         'bedrock:us.amazon.nova-micro-v1:0',
         'bedrock:us.amazon.nova-pro-v1:0',
@@ -135,7 +144,9 @@ KnownModelName = TypeAliasType(
         'cerebras:llama3.1-8b',
         'cerebras:qwen-3-235b-a22b-instruct-2507',
         'cerebras:qwen-3-32b',
+        'cerebras:qwen-3-coder-480b',
         'cerebras:zai-glm-4.6',
+        'cerebras:zai-glm-4.7',
         'cohere:c4ai-aya-expanse-32b',
         'cohere:c4ai-aya-expanse-8b',
         'cohere:command-nightly',
@@ -160,6 +171,7 @@ KnownModelName = TypeAliasType(
         'gateway/anthropic:claude-opus-4-20250514',
         'gateway/anthropic:claude-opus-4-5-20251101',
         'gateway/anthropic:claude-opus-4-5',
+        'gateway/anthropic:claude-opus-4-6',
         'gateway/anthropic:claude-sonnet-4-0',
         'gateway/anthropic:claude-sonnet-4-20250514',
         'gateway/anthropic:claude-sonnet-4-5-20250929',
@@ -198,6 +210,7 @@ KnownModelName = TypeAliasType(
         'gateway/bedrock:mistral.mistral-large-2402-v1:0',
         'gateway/bedrock:mistral.mistral-large-2407-v1:0',
         'gateway/bedrock:mistral.mixtral-8x7b-instruct-v0:1',
+        'gateway/bedrock:us.amazon.nova-2-lite-v1:0',
         'gateway/bedrock:us.amazon.nova-lite-v1:0',
         'gateway/bedrock:us.amazon.nova-micro-v1:0',
         'gateway/bedrock:us.amazon.nova-pro-v1:0',
@@ -367,6 +380,7 @@ KnownModelName = TypeAliasType(
         'grok:grok-3-mini',
         'grok:grok-3',
         'grok:grok-4-0709',
+        'grok:grok-4-latest',
         'grok:grok-4-1-fast-non-reasoning',
         'grok:grok-4-1-fast-reasoning',
         'grok:grok-4-1-fast',
@@ -375,6 +389,27 @@ KnownModelName = TypeAliasType(
         'grok:grok-4-fast',
         'grok:grok-4',
         'grok:grok-code-fast-1',
+        'xai:grok-3',
+        'xai:grok-3-fast',
+        'xai:grok-3-fast-latest',
+        'xai:grok-3-latest',
+        'xai:grok-3-mini',
+        'xai:grok-3-mini-fast',
+        'xai:grok-3-mini-fast-latest',
+        'xai:grok-4',
+        'xai:grok-4-0709',
+        'xai:grok-4-1-fast',
+        'xai:grok-4-1-fast-non-reasoning',
+        'xai:grok-4-1-fast-non-reasoning-latest',
+        'xai:grok-4-1-fast-reasoning',
+        'xai:grok-4-1-fast-reasoning-latest',
+        'xai:grok-4-fast',
+        'xai:grok-4-fast-non-reasoning',
+        'xai:grok-4-fast-non-reasoning-latest',
+        'xai:grok-4-fast-reasoning',
+        'xai:grok-4-fast-reasoning-latest',
+        'xai:grok-4-latest',
+        'xai:grok-code-fast-1',
         'groq:llama-3.1-8b-instant',
         'groq:llama-3.3-70b-versatile',
         'groq:meta-llama/llama-guard-4-12b',
@@ -564,12 +599,12 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
 class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
-    function_tools: list[ToolDefinition] = field(default_factory=list)
-    builtin_tools: list[AbstractBuiltinTool] = field(default_factory=list)
+    function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
+    builtin_tools: list[AbstractBuiltinTool] = field(default_factory=list[AbstractBuiltinTool])
 
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
-    output_tools: list[ToolDefinition] = field(default_factory=list)
+    output_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
     prompted_output_template: str | None = None
     allow_text_output: bool = True
     allow_image_output: bool = False
@@ -1159,11 +1194,17 @@ def infer_model(  # noqa: C901
         from .huggingface import HuggingFaceModel
 
         return HuggingFaceModel(model_name, provider=provider)
+    elif model_kind == 'xai':
+        from .xai import XaiModel
+
+        return XaiModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
 
-def cached_async_http_client(*, provider: str | None = None, timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
+def cached_async_http_client(
+    *, provider: str | None = None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
+) -> httpx.AsyncClient:
     """Cached HTTPX async client that creates a separate client for each provider.
 
     The client is cached based on the provider parameter. If provider is None, it's used for non-provider specific
@@ -1189,7 +1230,9 @@ def cached_async_http_client(*, provider: str | None = None, timeout: int = 600,
 
 
 @cache
-def _cached_async_http_client(provider: str | None, timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
+def _cached_async_http_client(
+    provider: str | None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
+) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},
@@ -1235,6 +1278,14 @@ async def download_item(
 ) -> DownloadedItem[str] | DownloadedItem[bytes]:
     """Download an item by URL and return the content as a bytes object or a (base64-encoded) string.
 
+    This function includes SSRF (Server-Side Request Forgery) protection:
+    - Only http:// and https:// protocols are allowed
+    - Private/internal IP addresses are blocked by default
+    - Cloud metadata endpoints (169.254.169.254) are always blocked
+    - Hostnames are resolved before requests to prevent DNS rebinding
+
+    Set `item.force_download='allow-local'` to allow private IP addresses.
+
     Args:
         item: The item to download.
         data_format: The format to return the content in:
@@ -1247,18 +1298,17 @@ async def download_item(
             - `extension`: The media type as an extension.
 
     Raises:
-        UserError: If the URL points to a YouTube video or its protocol is gs://.
+        UserError: If the URL points to a YouTube video.
+        ValueError: If the URL uses an unsupported protocol or targets a private/internal
+            IP address (unless allow-local is set).
     """
-    if item.url.startswith('gs://'):
-        raise UserError('Downloading from protocol "gs://" is not supported.')
-    elif item.url.startswith('s3://'):
-        raise UserError('Downloading from protocol "s3://" is not supported.')
-    elif isinstance(item, VideoUrl) and item.is_youtube:
+    if isinstance(item, VideoUrl) and item.is_youtube:
         raise UserError('Downloading YouTube videos is not supported.')
 
-    client = cached_async_http_client()
-    response = await client.get(item.url, follow_redirects=True)
-    response.raise_for_status()
+    from .._ssrf import safe_download
+
+    allow_local = item.force_download == 'allow-local'
+    response = await safe_download(item.url, allow_local=allow_local)
 
     if content_type := response.headers.get('content-type'):
         content_type = content_type.split(';')[0]

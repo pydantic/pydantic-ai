@@ -86,7 +86,7 @@ Can optionally accept a `RunContext` as a parameter.
 class GraphAgentState:
     """State kept across the execution of the agent graph."""
 
-    message_history: list[_messages.ModelMessage] = dataclasses.field(default_factory=list)
+    message_history: list[_messages.ModelMessage] = dataclasses.field(default_factory=list[_messages.ModelMessage])
     usage: _usage.RunUsage = dataclasses.field(default_factory=_usage.RunUsage)
     retries: int = 0
     run_step: int = 0
@@ -187,12 +187,16 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     deferred_tool_results: DeferredToolResults | None = None
 
     instructions: str | None = None
-    instructions_functions: list[_system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(default_factory=list)
+    instructions_functions: list[_system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(
+        default_factory=list[_system_prompt.SystemPromptRunner[DepsT]]
+    )
 
     system_prompts: tuple[str, ...] = dataclasses.field(default_factory=tuple)
-    system_prompt_functions: list[_system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(default_factory=list)
+    system_prompt_functions: list[_system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(
+        default_factory=list[_system_prompt.SystemPromptRunner[DepsT]]
+    )
     system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(
-        default_factory=dict
+        default_factory=dict[str, _system_prompt.SystemPromptRunner[DepsT]]
     )
 
     async def run(  # noqa: C901
@@ -788,6 +792,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         text_processor: _output.BaseOutputProcessor[NodeRunEndT],
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
         run_context = build_run_context(ctx)
+        run_context = replace(
+            run_context,
+            retry=ctx.state.retries,
+            max_retries=ctx.deps.max_result_retries,
+        )
 
         result_data = await text_processor.process(text, run_context=run_context)
 
@@ -1127,7 +1136,8 @@ async def _call_tools(  # noqa: C901
 
                 return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
 
-        if tool_manager.should_call_sequentially(tool_calls):
+        parallel_execution_mode = tool_manager.get_parallel_execution_mode(tool_calls)
+        if parallel_execution_mode == 'sequential':
             for index, call in enumerate(tool_calls):
                 if event := await handle_call_or_result(
                     _call_tool(
@@ -1155,15 +1165,25 @@ async def _call_tools(  # noqa: C901
                 )
                 for call in tool_calls
             ]
-
             try:
-                pending = tasks
-                while pending:
-                    done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                    for task in done:
-                        index = tasks.index(task)
+                if parallel_execution_mode == 'parallel_ordered_events':
+                    # Wait for all tasks to complete before yielding any events
+                    await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
+                    for index, task in enumerate(tasks):
                         if event := await handle_call_or_result(coro_or_task=task, index=index):
                             yield event
+                else:
+                    pending: set[
+                        asyncio.Task[
+                            tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]
+                        ]
+                    ] = set(tasks)  # pyright: ignore[reportAssignmentType]
+                    while pending:
+                        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                        for task in done:
+                            index = tasks.index(task)  # pyright: ignore[reportArgumentType]
+                            if event := await handle_call_or_result(coro_or_task=task, index=index):  # pyright: ignore[reportArgumentType]
+                                yield event
 
             except asyncio.CancelledError as e:
                 for task in tasks:
@@ -1263,7 +1283,7 @@ async def _call_tool(
                     f'The return value of tool {tool_call.tool_name!r} contains invalid nested `ToolReturn` objects. '
                     f'`ToolReturn` should be used directly.'
                 )
-            elif isinstance(content, _messages.MultiModalContent):
+            elif isinstance(content, _messages.MULTI_MODAL_CONTENT_TYPES):
                 identifier = content.identifier
 
                 return_values.append(f'See file {identifier}')
@@ -1277,10 +1297,10 @@ async def _call_tool(
         )
 
     if (
-        isinstance(tool_return.return_value, _messages.MultiModalContent)
+        isinstance(tool_return.return_value, _messages.MULTI_MODAL_CONTENT_TYPES)
         or isinstance(tool_return.return_value, list)
         and any(
-            isinstance(content, _messages.MultiModalContent)
+            isinstance(content, _messages.MULTI_MODAL_CONTENT_TYPES)
             for content in tool_return.return_value  # type: ignore
         )
     ):
@@ -1311,7 +1331,7 @@ _messages_ctx_var: ContextVar[_RunMessages] = ContextVar('var')
 def capture_run_messages() -> Iterator[list[_messages.ModelMessage]]:
     """Context manager to access the messages used in a [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], or [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] call.
 
-    Useful when a run may raise an exception, see [model errors](../agents.md#model-errors) for more information.
+    Useful when a run may raise an exception, see [model errors](../agent.md#model-errors) for more information.
 
     Examples:
     ```python
@@ -1398,8 +1418,7 @@ async def _process_message_history(
             if takes_ctx:
                 messages = await processor(run_context, messages)
             else:
-                async_processor = cast(_HistoryProcessorAsync, processor)
-                messages = await async_processor(messages)
+                messages = await processor(messages)
         else:
             if takes_ctx:
                 sync_processor_with_ctx = cast(_HistoryProcessorSyncWithCtx[DepsT], processor)

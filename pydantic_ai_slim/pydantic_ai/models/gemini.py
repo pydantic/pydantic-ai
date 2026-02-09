@@ -303,6 +303,7 @@ class GeminiModel(Model):
             usage,
             vendor_id=vendor_id,
             vendor_details=vendor_details,
+            provider_name=self._provider.name,
             provider_url=self.base_url,
         )
 
@@ -579,7 +580,7 @@ class GeminiSafetySettings(TypedDict):
     """Safety settings options for Gemini model request.
 
     See [Gemini API docs](https://ai.google.dev/gemini-api/docs/safety-settings) for safety category and threshold descriptions.
-    For an example on how to use `GeminiSafetySettings`, see [here](../../agents.md#model-specific-settings).
+    For an example on how to use `GeminiSafetySettings`, see [here](../../agent.md#model-specific-settings).
     """
 
     category: Literal[
@@ -728,6 +729,7 @@ def _process_response_from_parts(
     model_name: GeminiModelName,
     usage: usage.RequestUsage,
     vendor_id: str | None,
+    provider_name: str,
     provider_url: str,
     vendor_details: dict[str, Any] | None = None,
 ) -> ModelResponse:
@@ -748,6 +750,7 @@ def _process_response_from_parts(
         parts=items,
         usage=usage,
         model_name=model_name,
+        provider_name=provider_name,
         provider_response_id=vendor_id,
         provider_details=vendor_details,
         provider_url=provider_url,

@@ -141,7 +141,7 @@ class MockAnthropic:
     messages_: MockAnthropicMessage | Sequence[MockAnthropicMessage] | None = None
     stream: Sequence[MockRawMessageStreamEvent] | Sequence[Sequence[MockRawMessageStreamEvent]] | None = None
     index = 0
-    chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
+    chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     base_url: str = 'https://api.anthropic.com'
 
     @cached_property
@@ -834,6 +834,61 @@ async def test_model_settings_reusable_with_beta_headers(allow_model_requests: N
         assert 'custom-feature-2' in betas
 
 
+async def test_anthropic_betas_setting(allow_model_requests: None):
+    """Verify anthropic_betas setting adds betas to the API request."""
+    c = completion_message(
+        [BetaTextBlock(text='Hello!', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+
+    model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(
+            anthropic_betas=['interleaved-thinking-2025-05-14'],
+        ),
+    )
+    agent = Agent(model)
+
+    await agent.run('Hello')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    betas = completion_kwargs['betas']
+    assert 'interleaved-thinking-2025-05-14' in betas
+
+
+async def test_anthropic_betas_merge_with_other_sources(allow_model_requests: None):
+    """Verify anthropic_betas merges with auto-added betas and extra_headers anthropic-beta."""
+    c = completion_message(
+        [BetaTextBlock(text='{"city": "Paris", "country": "France"}', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(
+            anthropic_betas=['interleaved-thinking-2025-05-14'],
+            extra_headers={'anthropic-beta': 'custom-feature-1'},
+        ),
+    )
+    agent = Agent(model, output_type=NativeOutput(CityLocation))
+
+    await agent.run('What is the capital of France?')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    betas = completion_kwargs['betas']
+    assert 'interleaved-thinking-2025-05-14' in betas
+    assert 'custom-feature-1' in betas
+    assert 'structured-outputs-2025-11-13' in betas
+
+
 async def test_anthropic_mixed_strict_tool_run(allow_model_requests: None, anthropic_api_key: str):
     """Exercise both strict=True and strict=False tool definitions against the live API."""
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
@@ -1114,7 +1169,7 @@ async def test_request_tool_call(allow_model_requests: None):
 
     mock_client = MockAnthropic.create_mock(responses)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m, system_prompt='this is the system prompt')
+    agent = Agent(m, instructions='this is the system prompt')
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
@@ -1129,9 +1184,9 @@ async def test_request_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -1162,6 +1217,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -1192,6 +1248,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -1500,7 +1557,9 @@ async def test_image_url_input(allow_model_requests: None, anthropic_api_key: st
     )
 
 
-async def test_image_url_input_force_download(allow_model_requests: None, anthropic_api_key: str):
+async def test_image_url_input_force_download(
+    allow_model_requests: None, anthropic_api_key: str, disable_ssrf_protection_for_vcr: None
+):
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
@@ -1862,7 +1921,9 @@ async def test_document_url_input(allow_model_requests: None, anthropic_api_key:
     )
 
 
-async def test_text_document_url_input(allow_model_requests: None, anthropic_api_key: str):
+async def test_text_document_url_input(
+    allow_model_requests: None, anthropic_api_key: str, disable_ssrf_protection_for_vcr: None
+):
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
@@ -1962,32 +2023,20 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content="""\
-This is a straightforward question about a common everyday task - crossing the street safely. I should provide clear, helpful instructions that emphasize safety.
-
-The basic steps for crossing a street safely include:
-1. Find a designated crossing area if possible (crosswalk, pedestrian crossing)
-2. Look both ways before crossing
-3. Make eye contact with drivers if possible
-4. Follow traffic signals if present
-5. Cross quickly but don't run
-6. Continue to be aware of traffic while crossing
-
-I'll provide this information in a clear, helpful way, emphasizing safety without being condescending.\
-""",
-                        signature='ErUBCkYIBhgCIkB9AyHADyBknnHL4dh+Yj3rg3javltU/bz1MLHKCQTEVZwvjis+DKTOFSYqZU0F2xasSofECVAmYmgtRf87AL52EgyXRs8lh+1HtZ0V+wAaDBo0eAabII+t1pdHzyIweFpD2l4j1eeUwN8UQOW+bxcN3mwu144OdOoUxmEKeOcU97wv+VF2pCsm07qcvucSKh1P/rZzWuYm7vxdnD4EVFHdBeewghoO0Ngc1MTNsxgC',
+                        content='This is a straightforward question about pedestrian safety. I should provide clear, practical advice about crossing the street safely.',
+                        signature='Eq8CCkYICxgCKkDdadQOXMzNBqjrNVAKWsgUfg49NpPg026zBGxIIGwEHVCq0JTW/P9fKHjZdjgO8Dyx03YDw6hN0w1HucifXFggEgzoVS5Gogi9nvJSOA8aDDYuCAX4nGGkeHQLayIw+MWbf/TYU4AqT1X89p4S7fe7LOO+B8o24yCHQ8cFK9QK9p5WMj2Y4oBFBfC9uL8ZKpYBDjoKceyqFJA56ewVH73lNY5szTvm52+CVXMZJCb8x0B1bf9LIOsFUoJD6F4gZBdKfMqJgFCcKFR6iZh09pwa0E8lHvEnUeF1A0AJ6z0j8gQd5NxgipxWrF9908qJbMSkVDdg1dT/3Rr0nbGguAYTYdoV4MrVxyk29dSkkjyAAZBMI3p+HOwiaT6GmYq4qVE3kWnSoiEJGAE=',
                         provider_name='anthropic',
                     ),
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=42,
-                    output_tokens=363,
+                    input_tokens=43,
+                    output_tokens=321,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 42,
-                        'output_tokens': 363,
+                        'input_tokens': 43,
+                        'output_tokens': 321,
                     },
                 ),
                 model_name='claude-sonnet-4-5-20250929',
@@ -1995,7 +2044,7 @@ I'll provide this information in a clear, helpful way, emphasizing safety withou
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_01BnZvs3naGorn93wjjCDwbd',
+                provider_response_id='msg_01TGA8SWcHTTn5674cmicbnJ',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2022,31 +2071,39 @@ I'll provide this information in a clear, helpful way, emphasizing safety withou
                 parts=[
                     ThinkingPart(
                         content="""\
-The person is asking me to draw an analogy between crossing a street and crossing a river. I'll structure my response similarly to my street-crossing guidelines, but adapt it for river crossing, which has different safety considerations and methods.
+This is an interesting analogy question. The person is asking me to apply the safety principles and general approach from crossing a street to crossing a river. Let me think about the parallel elements:
 
-For crossing a river, I should include:
-1. Finding the right spot (bridges, shallow areas, ferry points)
-2. Assessing safety (current speed, depth, obstacles)
-3. Choosing the appropriate method (walking across shallow areas, using bridges, boats, etc.)
-4. Safety precautions (life vests, ropes, etc.)
-5. The actual crossing technique
-6. What to do in emergencies
+Street crossing principles:
+- Find safe crossing point
+- Assess conditions
+- Look for hazards
+- Use designated crossings when available
+- Wait for safe conditions
+- Cross carefully while staying alert
 
-I'll keep the format similar to my street-crossing response for consistency.\
+River crossing would involve similar safety thinking:
+- Find safe crossing point (bridge, ford, ferry, shallow area)
+- Assess conditions (water depth, current, weather)
+- Look for hazards (rocks, debris, cold water, strong current)
+- Use established crossings when available
+- Wait for safe conditions (water levels, weather)
+- Cross carefully while staying alert
+
+I should provide practical advice for different methods of crossing a river.\
 """,
-                        signature='ErUBCkYIBhgCIkDvSvKCs5ePyYmR6zFw5i+jF7KEmortSIleqDa4gfa3pbuBclQt0TPdacouhdXFHdVSqR4qOAAAOpN7RQEUz2o6Egy9MPee6H8U4SW/G2QaDP/9ysoEvk+yNyVYZSIw+/+5wuRyc3oajwV3w0EdL9CIAXXd5thQH7DwAe3HTFvoJuF4oZ4fU+Kh6LRqxnEaKh3SSRqAH4UH/sD86duzg0jox4J/NH4C9iILVesEERgC',
+                        signature='EvgHCkYICxgCKkBWep44ZkS8HkPkKt2q7OJir9S1aK8TFXpFjWz4yEEVk+2r0FCXIRwuIJBfrLI+kTWKzAFtjxpM+G+S8Btnle6sEgwSq3W1+WbBYHYolVYaDCbom89zf38EbOe8jCIwKz0NLPNu1XU3I3nREDwVSSBCe/u2C+Ryon6gXHWSWlM7r6M2jMVUNynufqiO9m+jKt8GDH5qCKJRfydyyKcS1muFqazBmHs8L3sUsHzj7s2XkvP+2yA789klS3DrrYj4H1kYbRWpmGlTxkpPAuXUr8u1U02sNS0zqh5HiIEu2LZesOj5l1jw68VXcVBPsYEdkSvarScNKzmDBOiw0vTV9EkoxZ/p/ZvoP4PUYSzFc1oJRPaLDCn7KW/aAsZBbsS55YDwHBXvjrDFFtcd2V04JuavcKi0EwomwCy95e0NAaOrA9aAFizZoG30V9KSiz0XUQ3+8ByxKILXk1qvtaV2HJgYahAuRcOpEoty4+Dqx96KsA4ifPaU0+MRwoVUwGUm+mK75ViBIAQdRFblkHbPHYHpK+P9SjdIb00h6PUH59pPyNFQOMJyav7c6dy2efTmiTdzejLHXjUzVvG2LaDnq7cFM2MpqvxlIxDULVG+N13xOTStjLJ9Siwq/zMPKTZYhbYYYC6INlMxwmvM0xz3ofsZbUVOAHv2Ti9jixmB38wyKaFiS7GkQvaK9r9AYl7b632bnsjexiHMe+HMAwfOiA9d2bfhGYCwnt59uNCPgXRihLqaeemq84tiHjSpXrYAieAHtiwEhh0Zz5/ztFgn9pDko5ZmfUvXW9kcZ/8nthmDJSD0z933gw5gITW5u+4S4ozqkGtQ4lGgHNzXLpAEs1A6lsqh2jC2iAskj4Mc/oihJbmAFT0UQ0uopcExyImY6maqKub7xYUseRiNjd1Y7hq7eLDlrMiOR8DDoUoTEIz1imI+KetpLXJoSorecGkYivZajx9ZY+L/R4VcA6olgJsjSpztEvlNextE8sAcAnwBK5l8+yBxWBflFf96wOcvbxE3xtEfR5+ISy6+A6kcxPkpj/31B0VM9y3EqMcDqKmMCF6r7MpwRzXxkHofWCG49N4SQKDJrRJSMldy/qGvd5TIVDghEK+8AoVhWZXqXl6y9z5NG72fOlXLdh3me1jtqMSBX3q0gxmljqzqii/r4F6Qmmmwl2szfryxwgUWAAPS6yDEWbDyUhQSmc24Q+uHrXhKIPKuDQljCsI2by2pyC8UV4RsEfvNLk0zs5CPR3+1kewb8TVB6S+IpmJHJnBZImkI2vt2IUgvnJb/5D+aezG2mA8O+4qjsnHsbT8Njk92tOI1wxOFSAO19SOEa+DD2bsYAQ==',
                         provider_name='anthropic',
                     ),
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=291,
-                    output_tokens=471,
+                    input_tokens=354,
+                    output_tokens=525,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 291,
-                        'output_tokens': 471,
+                        'input_tokens': 354,
+                        'output_tokens': 525,
                     },
                 ),
                 model_name='claude-sonnet-4-5-20250929',
@@ -2317,22 +2374,19 @@ async def test_anthropic_model_thinking_part_from_other_model(
     provider = OpenAIProvider(api_key=openai_api_key)
     m = OpenAIResponsesModel('gpt-5', provider=provider)
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
-    agent = Agent(m, system_prompt='You are a helpful assistant.', model_settings=settings)
+    agent = Agent(m, instructions='You are a helpful assistant.', model_settings=settings)
 
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='You are a helpful assistant.',
-                        timestamp=IsDatetime(),
-                    ),
                     UserPromptPart(
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     ),
                 ],
+                instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -2344,12 +2398,36 @@ async def test_anthropic_model_thinking_part_from_other_model(
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(content=IsStr(), id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7'),
-                    ThinkingPart(content=IsStr(), id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7'),
-                    ThinkingPart(content=IsStr(), id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7'),
-                    ThinkingPart(content=IsStr(), id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7'),
-                    ThinkingPart(content=IsStr(), id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7'),
-                    TextPart(content=IsStr(), id='msg_68c1fdbecbf081a18085a084257a9aef06da9901a3d98ab7'),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_68c1fdbecbf081a18085a084257a9aef06da9901a3d98ab7',
+                        provider_name='openai',
+                    ),
                 ],
                 usage=RequestUsage(input_tokens=23, output_tokens=2211, details={'reasoning_tokens': 1920}),
                 model_name='gpt-5-2025-08-07',
@@ -2385,6 +2463,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
+                instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -2456,21 +2535,21 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=42,
-                    output_tokens=419,
+                    input_tokens=43,
+                    output_tokens=282,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 42,
-                        'output_tokens': 419,
+                        'input_tokens': 43,
+                        'output_tokens': 282,
                     },
                 ),
-                model_name='claude-sonnet-4-5-20250929',
+                model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_01PiJ6i3vjEZjHxojahi2YNc',
+                provider_response_id='msg_01ALwQ87pTS7hH1PjSdC9wJD',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2489,162 +2568,113 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' This is basic')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' safety information that could')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' help prevent')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' accidents.')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='')),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    content_delta="""\
-.)
-2. Look\
-""",
-                    provider_name='anthropic',
-                ),
-            ),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta=' both ways (left-', provider_name='anthropic')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta='right-left in countries', provider_name='anthropic')
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' where cars drive on the right;', provider_name='anthropic'),
-            ),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta=' right-left-right where', provider_name='anthropic')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta=' they drive on the left)', provider_name='anthropic')
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
-
-3. Wait for\
-""",
-                    provider_name='anthropic',
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' traffic to stop or for a clear', provider_name='anthropic'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- gap in traffic
-4\
-""",
-                    provider_name='anthropic',
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta='. Make eye contact with drivers if', provider_name='anthropic'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- possible
-5. Cross at\
-""",
-                    provider_name='anthropic',
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- a steady pace without running
-6. Continue\
-""",
-                    provider_name='anthropic',
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- watching for traffic while crossing
-7\
-""",
-                    provider_name='anthropic',
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta='. Use pedestrian signals where', provider_name='anthropic'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- available
-
-I'll also mention\
-""",
-                    provider_name='anthropic',
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=' some additional safety tips and considerations for', provider_name='anthropic'
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=' different situations (busy streets, streets', provider_name='anthropic'
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' with traffic signals, etc.).', provider_name='anthropic'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    signature_delta='ErUBCkYIBhgCIkA/Y+JwNMtmQyHcoo4/v2dpY6ruQifcu3pAzHbzIwpIrjIyaWaYdJOp9/0vUmBPj+LmqgiDSTktRcn0U75AlpXOEgwzVmYdHgDaZfeyBGcaDFSIZCHzzrZQkolJKCIwhMETosYLx+Dw/vKa83hht943z9R3/ViOqokT25JmMfaGOntuo+33Zxqf5rqUbkQ3Kh34rIqqnKaFSVr7Nn85z8OFN3Cwzz+HmXl2FgCXOxgC',
-                    provider_name='anthropic',
+                    signature_delta='EvMCCkYICxgCKkCHP2cSuEdcJK/0rFwqES/ecn+VurRpNTwI4XNyM0vnNfGsc9OmE8YYHauwBZ/uaRpmlEn2I4/kszHlcpptO82JEgyRMSbPkJYaegxYF3AaDHZbSm9EzZ6CM+YtliIw3iNVP/ilYrfoneo8S2+ad/5xSC62nKbk6joLtKmqXgXwYFJRpjIUjM2V7EGReOPRKtoBKfNHVmdNf7SeMhHalX/ObSeJ1G/NjDyGQAsDjyHGd7uY1r5gAIn3Cpdv5r+gHYJmWT+w2uiKZsBDRoSf4O3Km0l752EhPD4InEhqpCKyqhbUZ3dt5+JVKQHk2iyTBhQMB/XBYgZTstIpRqQRXU5ypcrydgnqj3mD1G9C7YC0ZTCNvFluAx0OL8q+cQwufgfqKquLEf2+XMYzhx9jYkVFEpnf/s1nx6gNBATKfF3Dmrs2r4tWu2QJB+FjlRuDp/8dxUxgJbmyhGxb7XsYeb1vgb7wwzDvP/UhjfQYAQ=='
                 ),
             ),
             PartEndEvent(
                 index=0,
                 part=ThinkingPart(
-                    content="""\
-The question is asking about how to safely cross a street, which is a basic but important safety skill.
-
-I should provide clear, step-by-step instructions for crossing a street safely:
-
-1. Find a designated crossing point if possible (crosswalk, pedestrian crossing, etc.)
-2. Look both ways (left-right-left in countries where cars drive on the right; right-left-right where they drive on the left)
-3. Wait for traffic to stop or for a clear gap in traffic
-4. Make eye contact with drivers if possible
-5. Cross at a steady pace without running
-6. Continue watching for traffic while crossing
-7. Use pedestrian signals where available
-
-I'll also mention some additional safety tips and considerations for different situations (busy streets, streets with traffic signals, etc.).\
-""",
-                    signature='ErUBCkYIBhgCIkA/Y+JwNMtmQyHcoo4/v2dpY6ruQifcu3pAzHbzIwpIrjIyaWaYdJOp9/0vUmBPj+LmqgiDSTktRcn0U75AlpXOEgwzVmYdHgDaZfeyBGcaDFSIZCHzzrZQkolJKCIwhMETosYLx+Dw/vKa83hht943z9R3/ViOqokT25JmMfaGOntuo+33Zxqf5rqUbkQ3Kh34rIqqnKaFSVr7Nn85z8OFN3Cwzz+HmXl2FgCXOxgC',
+                    content='This is a straightforward question about pedestrian safety. I should provide clear, helpful advice about how to safely cross a street. This is basic safety information that could help prevent accidents.',
+                    signature='EvMCCkYICxgCKkCHP2cSuEdcJK/0rFwqES/ecn+VurRpNTwI4XNyM0vnNfGsc9OmE8YYHauwBZ/uaRpmlEn2I4/kszHlcpptO82JEgyRMSbPkJYaegxYF3AaDHZbSm9EzZ6CM+YtliIw3iNVP/ilYrfoneo8S2+ad/5xSC62nKbk6joLtKmqXgXwYFJRpjIUjM2V7EGReOPRKtoBKfNHVmdNf7SeMhHalX/ObSeJ1G/NjDyGQAsDjyHGd7uY1r5gAIn3Cpdv5r+gHYJmWT+w2uiKZsBDRoSf4O3Km0l752EhPD4InEhqpCKyqhbUZ3dt5+JVKQHk2iyTBhQMB/XBYgZTstIpRqQRXU5ypcrydgnqj3mD1G9C7YC0ZTCNvFluAx0OL8q+cQwufgfqKquLEf2+XMYzhx9jYkVFEpnf/s1nx6gNBATKfF3Dmrs2r4tWu2QJB+FjlRuDp/8dxUxgJbmyhGxb7XsYeb1vgb7wwzDvP/UhjfQYAQ==',
                     provider_name='anthropic',
                 ),
                 next_part_kind='text',
             ),
-            PartStartEvent(
-                index=1, part=TextPart(content='# How to Cross a Street Safely'), previous_part_kind='thinking'
-            ),
+            PartStartEvent(index=1, part=TextPart(content='Here are'), previous_part_kind='thinking'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+- Stop\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' at')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' the curb and')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' look')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' left, right')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+, then left again
+-\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Wait for a')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' clear')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' gap')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+ in traffic
+- Walk\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' br')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='iskly but')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=" don't run")),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+- Keep\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' looking')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' for traffic as')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' you cross')),
             PartDeltaEvent(
                 index=1,
                 delta=TextPartDelta(
                     content_delta="""\
 
 
-Follow these steps to cross a\
+**General\
 """
                 ),
             ),
@@ -2652,90 +2682,219 @@ Follow these steps to cross a\
                 index=1,
                 delta=TextPartDelta(
                     content_delta="""\
- street safely:
-
-1\
+ safety tips:**
+- Put\
 """
                 ),
             ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='. **Find a proper')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' crossing point** - Use a crosswalk,')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' pedestrian crossing, or intersection')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' away')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' phones and remove')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' head')),
             PartDeltaEvent(
                 index=1,
                 delta=TextPartDelta(
                     content_delta="""\
- whenever possible.
-
-2.\
+phones
+-\
 """
                 ),
             ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' **Stop at the curb** -')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Stand slightly back from the edge.')),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Wear bright')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' or')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' reflective clothing in')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' low light')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+- Never\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' assume')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' drivers')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' see you')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+-\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Avoid crossing between')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+ parked cars
+- Walk\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' facing')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' traffic')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' when there')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta="'s no")),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' sidew')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+alk
+
+**In\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' busy')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' urban')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+ areas:**
+- Follow\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' pedest')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='rian signals strictly')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+- Be\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' extra cautious of')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' cyclists')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' in')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' bike')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+ lanes
+- Watch\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' for buses')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' and large')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' vehicles with')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' blind')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+ spots
+
+The\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' key is to')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' be visible')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=', alert, and predict')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='able in')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' your movements. Always')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' prioritize safety over speed')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' when')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' crossing')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' streets.')),
             PartEndEvent(
                 index=1,
                 part=TextPart(
                     content="""\
-# How to Cross a Street Safely
+Here are the basic steps for safely crossing the street:
 
-Follow these steps to cross a street safely:
+**At intersections with traffic lights:**
+- Wait for the pedestrian "Walk" signal
+- Look both ways before stepping into the street
+- Make eye contact with drivers when possible
+- Stay alert for turning vehicles
 
-1. **Find a proper crossing point** - Use a crosswalk, pedestrian crossing, or intersection whenever possible.
+**At intersections without signals:**
+- Use crosswalks when available
+- Stop at the curb and look left, right, then left again
+- Wait for a clear gap in traffic
+- Walk briskly but don't run
+- Keep looking for traffic as you cross
 
-2. **Stop at the curb** - Stand slightly back from the edge.
+**General safety tips:**
+- Put away phones and remove headphones
+- Wear bright or reflective clothing in low light
+- Never assume drivers see you
+- Avoid crossing between parked cars
+- Walk facing traffic when there's no sidewalk
 
-3. **Look both ways** - Look left, right, then left again (reverse in countries where cars drive on the left).
+**In busy urban areas:**
+- Follow pedestrian signals strictly
+- Be extra cautious of cyclists in bike lanes
+- Watch for buses and large vehicles with blind spots
 
-4. **Listen for traffic** - Remove headphones if you're wearing them.
-
-5. **Wait for a gap** or for vehicles to stop completely.
-
-6. **Make eye contact** with drivers to ensure they see you.
-
-7. **Cross with purpose** - Walk at a steady pace without stopping or running.
-
-8. **Continue watching** for traffic as you cross.
-
-9. **Use signals** - Follow pedestrian crossing signals where available.
-
-If there's a traffic light or pedestrian signal, only cross when indicated, and always check for turning vehicles even when you have the right of way.
-
-Is there a specific situation or type of street crossing you're concerned about?\
+The key is to be visible, alert, and predictable in your movements. Always prioritize safety over speed when crossing streets.\
 """
                 ),
             ),
         ]
     )
+
+
+@pytest.mark.parametrize(
+    'case_id',
+    ['basic', 'effort', 'adaptive-thinking'],
+)
+async def test_anthropic_opus_46_features(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    case_id: str,
+):
+    settings_map: dict[str, AnthropicModelSettings] = {
+        'basic': AnthropicModelSettings(),
+        'effort': AnthropicModelSettings(anthropic_effort='low'),
+        'adaptive-thinking': AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'}),
+    }
+    has_thinking = case_id == 'adaptive-thinking'
+    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, model_settings=settings_map[case_id])
+
+    result = await agent.run('What is 2+2?')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.model_name == 'claude-opus-4-6'
+
+    if has_thinking:
+        assert any(isinstance(p, ThinkingPart) for p in response.parts)
+    assert any(isinstance(p, TextPart) for p in response.parts)
+
+
+async def test_anthropic_opus_46_adaptive_thinking_rejects_tool_output(allow_model_requests: None):
+    """Verified in https://logfire-us.pydantic.dev/public-trace/ca9932da-b5ff-46f0-b277-9aeecc5f41e7?spanId=15a32e26f5020e62"""
+    responses = [
+        completion_message(
+            [BetaTextBlock(text='Paris', type='text')],
+            usage=BetaUsage(input_tokens=2, output_tokens=1),
+        ),
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    class CityLocation(BaseModel):
+        city: str
+
+    agent = Agent(
+        m,
+        output_type=ToolOutput(CityLocation),
+        model_settings=AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'}),
+    )
+    with pytest.raises(UserError, match='Anthropic does not support thinking and output tools at the same time'):
+        await agent.run('What is the capital of France?')
 
 
 async def test_multiple_system_prompt_formatting(allow_model_requests: None):
@@ -3545,41 +3704,29 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
             PartStartEvent(index=0, part=ThinkingPart(content='', signature='', provider_name='anthropic')),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(
-                    content_delta='The user is asking about the weather', provider_name='anthropic'
-                ),
+                delta=ThinkingPartDelta(content_delta='The user is asking about the weather'),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=' in San Francisco today. This is clearly a request', provider_name='anthropic'
-                ),
+                delta=ThinkingPartDelta(content_delta=' in San Francisco today. This is clearly a request'),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' for current, real-time information', provider_name='anthropic'),
+                delta=ThinkingPartDelta(content_delta=' for current, real-time information'),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=' that changes daily, so I should use', provider_name='anthropic'
-                ),
+                delta=ThinkingPartDelta(content_delta=' that changes daily, so I should use'),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=' web search to get up-to-date weather', provider_name='anthropic'
-                ),
+                delta=ThinkingPartDelta(content_delta=' web search to get up-to-date weather'),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=' information. According to the guidelines, today', provider_name='anthropic'
-                ),
+                delta=ThinkingPartDelta(content_delta=' information. According to the guidelines, today'),
             ),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta="'s date is September 16, ", provider_name='anthropic')
-            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta="'s date is September 16, ")),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
@@ -3587,28 +3734,22 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
 2025.
 
 I should search for current\
-""",
-                    provider_name='anthropic',
+"""
                 ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=' weather in San Francisco. I\'ll include "', provider_name='anthropic'
-                ),
+                delta=ThinkingPartDelta(content_delta=' weather in San Francisco. I\'ll include "'),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(
-                    content_delta='today" in the search query to get the most current', provider_name='anthropic'
-                ),
+                delta=ThinkingPartDelta(content_delta='today" in the search query to get the most current'),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' information.', provider_name='anthropic')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' information.')),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    signature_delta='Er8ECkYIBxgCKkDp29haxwUos3j9hg3HNQI8e4jcFtinIsLxpzaQR/MhPnIpHkUpSNPatD/C2EVyiEGg2LIO1lhkU/P8XLgiyejFEgzinYyrRtGe03DeFEIaDL63CVUOAo1v/57lpSIw+msm1NHv1h+xLzkbu2YqlXPwjza0tVjwAj7RLUFwB1HpPbdv6hlityaMFb/SwKZZKqYDwbYu36cdPpUcpirpZaKZ/DITzfWJkX93BXmRl5au50mxAiFe9B8XxreADaofra5cmevEaaLH0b5Ze/IC0ja/cJdo9NoVlyHlqdXmex22CAkg0Y/HnsZr8MbnE6GyG9bOqAEhwb6YgKHMaMLDVmElbNSsD7luWtsbw5BDvRaqSSROzTxH4s0dqjUqJsoOBeUXuUqWHSl2KwQi8akELKUnvlDz15ZwFI1yVTHA5nSMFIhjB0jECs1g8PjFkAYTHkHddYR5/SLruy1ENpKU0xjc/hd/O41xnI3PxHBGDKv/hdeSVBKjJ0SDYIwXW96QS5vzlKxYGCqtibj2VxPzUlDITvhn1oO+cjCXClo1lE+ul//+nk7jk7fRkvl1/+pscYCpBoGKprA7CU1kpiggO9pAVUrpZM9vC2jF5/VVVYEoY3CyC+hrNpDWXTUdGdCTofhp2wdWVZzCmO7/+L8SUnlu64YYe9PWsRDuHRe8Lvl0M9EyBrhWnGWQkkk9b+O5uNU5xgE0sjbuGzgYswhwSd7Powb8XbtbW6h7lTbo1M2IQ3Ok0kdt0RAYAQ==',
-                    provider_name='anthropic',
+                    signature_delta='Er8ECkYIBxgCKkDp29haxwUos3j9hg3HNQI8e4jcFtinIsLxpzaQR/MhPnIpHkUpSNPatD/C2EVyiEGg2LIO1lhkU/P8XLgiyejFEgzinYyrRtGe03DeFEIaDL63CVUOAo1v/57lpSIw+msm1NHv1h+xLzkbu2YqlXPwjza0tVjwAj7RLUFwB1HpPbdv6hlityaMFb/SwKZZKqYDwbYu36cdPpUcpirpZaKZ/DITzfWJkX93BXmRl5au50mxAiFe9B8XxreADaofra5cmevEaaLH0b5Ze/IC0ja/cJdo9NoVlyHlqdXmex22CAkg0Y/HnsZr8MbnE6GyG9bOqAEhwb6YgKHMaMLDVmElbNSsD7luWtsbw5BDvRaqSSROzTxH4s0dqjUqJsoOBeUXuUqWHSl2KwQi8akELKUnvlDz15ZwFI1yVTHA5nSMFIhjB0jECs1g8PjFkAYTHkHddYR5/SLruy1ENpKU0xjc/hd/O41xnI3PxHBGDKv/hdeSVBKjJ0SDYIwXW96QS5vzlKxYGCqtibj2VxPzUlDITvhn1oO+cjCXClo1lE+ul//+nk7jk7fRkvl1/+pscYCpBoGKprA7CU1kpiggO9pAVUrpZM9vC2jF5/VVVYEoY3CyC+hrNpDWXTUdGdCTofhp2wdWVZzCmO7/+L8SUnlu64YYe9PWsRDuHRe8Lvl0M9EyBrhWnGWQkkk9b+O5uNU5xgE0sjbuGzgYswhwSd7Powb8XbtbW6h7lTbo1M2IQ3Ok0kdt0RAYAQ=='
                 ),
             ),
             PartEndEvent(
@@ -4644,35 +4785,26 @@ async def test_anthropic_web_fetch_tool_stream(
     )
     assert event_parts == snapshot(
         [
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='The user wants', provider_name='anthropic')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' me to fetch', provider_name='anthropic')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the content', provider_name='anthropic')),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta=' from the URL https', provider_name='anthropic')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta='://ai.pydantic.dev', provider_name='anthropic')
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and provide', provider_name='anthropic')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' only', provider_name='anthropic')),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta=' the first sentence from', provider_name='anthropic')
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' that page.', provider_name='anthropic')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='The user wants')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' me to fetch')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the content')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' from the URL https')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='://ai.pydantic.dev')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and provide')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' only')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the first sentence from')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' that page.')),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' I need to use the web_fetch', provider_name='anthropic'),
+                delta=ThinkingPartDelta(content_delta=' I need to use the web_fetch'),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' tool to', provider_name='anthropic')),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta=' get the content from', provider_name='anthropic')
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' this URL.', provider_name='anthropic')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' tool to')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' get the content from')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' this URL.')),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    signature_delta='EusCCkYICRgCKkAG/7zhRcmUoiMtml5iZUXVv3nqupp8kgk0nrq9zOoklaXzVCnrb9kwLNWGETIcCaAnLd0cd0ESwjslkVKdV9n8EgxKKdu8LlEvh9VGIWIaDAJ2Ja2NEacp1Am6jSIwyNO36tV+Sj+q6dWf79U+3KOIa1khXbIYarpkIViCuYQaZwpJ4Vtedrd7dLWTY2d5KtIB9Pug5UPuvepSOjyhxLaohtGxmdvZN8crGwBdTJYF9GHSli/rzvkR6CpH+ixd8iSopwFcsJgQ3j68fr/yD7cHmZ06jU3LaESVEBwTHnlK0ABiYnGvD3SvX6PgImMSQxQ1ThARFTA7DePoWw+z5DI0L2vgSun2qTYHkmGxzaEskhNIBlK9r7wS3tVcO0Di4lD/rhYV61tklL2NBWJqvm7ZCtJTN09CzPFJy7HDkg7bSINVL4kuu9gTWEtb/o40tw1b+sO62UcfxQTVFQ4Cj8D8XFZbGAE=',
-                    provider_name='anthropic',
+                    signature_delta='EusCCkYICRgCKkAG/7zhRcmUoiMtml5iZUXVv3nqupp8kgk0nrq9zOoklaXzVCnrb9kwLNWGETIcCaAnLd0cd0ESwjslkVKdV9n8EgxKKdu8LlEvh9VGIWIaDAJ2Ja2NEacp1Am6jSIwyNO36tV+Sj+q6dWf79U+3KOIa1khXbIYarpkIViCuYQaZwpJ4Vtedrd7dLWTY2d5KtIB9Pug5UPuvepSOjyhxLaohtGxmdvZN8crGwBdTJYF9GHSli/rzvkR6CpH+ixd8iSopwFcsJgQ3j68fr/yD7cHmZ06jU3LaESVEBwTHnlK0ABiYnGvD3SvX6PgImMSQxQ1ThARFTA7DePoWw+z5DI0L2vgSun2qTYHkmGxzaEskhNIBlK9r7wS3tVcO0Di4lD/rhYV61tklL2NBWJqvm7ZCtJTN09CzPFJy7HDkg7bSINVL4kuu9gTWEtb/o40tw1b+sO62UcfxQTVFQ4Cj8D8XFZbGAE='
                 ),
             ),
             PartStartEvent(
@@ -5959,13 +6091,11 @@ Here's how it breaks down following the order of operations:
             PartStartEvent(index=0, part=ThinkingPart(content='', signature='', provider_name='anthropic')),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta='The user is asking me to calculate', provider_name='anthropic'),
+                delta=ThinkingPartDelta(content_delta='The user is asking me to calculate'),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=' a mathematical expression: 65465-6544 *', provider_name='anthropic'
-                ),
+                delta=ThinkingPartDelta(content_delta=' a mathematical expression: 65465-6544 *'),
             ),
             PartDeltaEvent(
                 index=0,
@@ -5974,20 +6104,18 @@ Here's how it breaks down following the order of operations:
  65464-6+1.02255
 
 This\
-""",
-                    provider_name='anthropic',
+"""
                 ),
             ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    content_delta=' involves multiplication and subtraction operations, and I need to be careful about the order of',
-                    provider_name='anthropic',
+                    content_delta=' involves multiplication and subtraction operations, and I need to be careful about the order of'
                 ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' operations (PEMDAS/BODMAS).', provider_name='anthropic'),
+                delta=ThinkingPartDelta(content_delta=' operations (PEMDAS/BODMAS).'),
             ),
             PartDeltaEvent(
                 index=0,
@@ -5996,13 +6124,10 @@ This\
  Let me break this down:
 
 65\
-""",
-                    provider_name='anthropic',
+"""
                 ),
             ),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta='465-6544 * 65464-6+1.02255', provider_name='anthropic')
-            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='465-6544 * 65464-6+1.02255')),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
@@ -6011,28 +6136,24 @@ This\
 
 Following order of operations:
 1. First, multiplication:\
-""",
-                    provider_name='anthropic',
+"""
                 ),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' 6544 * 65464', provider_name='anthropic')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' 6544 * 65464')),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
                     content_delta="""\
 
 2. Then left to right for\
-""",
-                    provider_name='anthropic',
+"""
                 ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' addition and subtraction: 65465', provider_name='anthropic'),
+                delta=ThinkingPartDelta(content_delta=' addition and subtraction: 65465'),
             ),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta=' - (result from step 1)', provider_name='anthropic')
-            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' - (result from step 1)')),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
@@ -6040,31 +6161,25 @@ Following order of operations:
  - 6 + 1.02255
 
 This\
-""",
-                    provider_name='anthropic',
+"""
                 ),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=' is a computational task that requires precise', provider_name='anthropic'
-                ),
+                delta=ThinkingPartDelta(content_delta=' is a computational task that requires precise'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta=' calculations, so I should use the code_execution'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta=' tool to get an accurate result.'),
             ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    content_delta=' calculations, so I should use the code_execution', provider_name='anthropic'
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' tool to get an accurate result.', provider_name='anthropic'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    signature_delta='EucFCkYIBxgCKkCfcR3zTiKFcMLhP1aMZu4l0cfgiw3ukkSHOSX2qV1DEKtpe3pu1HpRvDz1mEw32e/wvHoS/AfpVYk3AFb8oAscEgxips//IwdGKRINkQoaDDc122APa5lQXEtsuiIw7RQW/ow7z+MOXL6D8pAl4Iz5V6VSbn2A37DxwRbzOYHSicZuvVrhZHLmn2WWwTZjKs4EYn4HNPF6+Y+9dITwGBWUz6WXsOnv/S1sp+WJLYD8vGMDG9DzTIdjQ9pMN/Bg6VB3hPTveXqxopBk+V7u1WaQC0NmkEmREv6Pdq9iHHEnuIhN0t7UrrNDxPwt/cmbilfa7QL8ofeeSorIRwvibXtG0aqNDu42r6JkatwttDSRIBSqIgKLkel8yPP9ksmOf4SRbNAbgijmq63s+EIkNHt2yjuTHV48pR1j1czHWcsoqJOHj6faeXge0OyGKuPqbBCzoqAjecNq0dRfHQUgXMWmeaJp1R6iWhKxyJV5Y2EwhA5WGH9xzc9h0TobIgGFGAk2OvzDPBO5qr+O85LbjNeHF3WfZciaj2lMIVsveklN9S8598m+R+D4/O8Sscebc2xoVf8qBDazJP5gVtuMoAKBcJuNVWeTR5snv2vs5BEejv6Q2gcb6rPa4ZxEmilhK1NTy9+dwoYvgLUm5o11PBXbI7uRv18tLwwer55Ult5Aq3JgG8Uj8FgBA4exLCw9LKUhzd+1lN0i19f2mDDuBORw5dPUBj2unzIb6sro/2SYm3MF2nmKhh5mm1F/v37ksOzJlTUPhbcs6aYrUJo5cM1H9AB8vpcNln38uWb4tuFgD5Wqy/0WFu60nsRsnInI5SPMN39wA4cx2eyrCfne32iw0Ov+VAdn0+D8FFzyVEEh7lrCQlJFoqoznxvpKh6NRhUzLmLpfEPOhFN/bZBHsj+3YJLT4JgRaYGTf6fMkZGCyIk60hIbqofwcuMFNqFYOK0nffOV8dz9ElisN/6cSJsYAQ==',
-                    provider_name='anthropic',
+                    signature_delta='EucFCkYIBxgCKkCfcR3zTiKFcMLhP1aMZu4l0cfgiw3ukkSHOSX2qV1DEKtpe3pu1HpRvDz1mEw32e/wvHoS/AfpVYk3AFb8oAscEgxips//IwdGKRINkQoaDDc122APa5lQXEtsuiIw7RQW/ow7z+MOXL6D8pAl4Iz5V6VSbn2A37DxwRbzOYHSicZuvVrhZHLmn2WWwTZjKs4EYn4HNPF6+Y+9dITwGBWUz6WXsOnv/S1sp+WJLYD8vGMDG9DzTIdjQ9pMN/Bg6VB3hPTveXqxopBk+V7u1WaQC0NmkEmREv6Pdq9iHHEnuIhN0t7UrrNDxPwt/cmbilfa7QL8ofeeSorIRwvibXtG0aqNDu42r6JkatwttDSRIBSqIgKLkel8yPP9ksmOf4SRbNAbgijmq63s+EIkNHt2yjuTHV48pR1j1czHWcsoqJOHj6faeXge0OyGKuPqbBCzoqAjecNq0dRfHQUgXMWmeaJp1R6iWhKxyJV5Y2EwhA5WGH9xzc9h0TobIgGFGAk2OvzDPBO5qr+O85LbjNeHF3WfZciaj2lMIVsveklN9S8598m+R+D4/O8Sscebc2xoVf8qBDazJP5gVtuMoAKBcJuNVWeTR5snv2vs5BEejv6Q2gcb6rPa4ZxEmilhK1NTy9+dwoYvgLUm5o11PBXbI7uRv18tLwwer55Ult5Aq3JgG8Uj8FgBA4exLCw9LKUhzd+1lN0i19f2mDDuBORw5dPUBj2unzIb6sro/2SYm3MF2nmKhh5mm1F/v37ksOzJlTUPhbcs6aYrUJo5cM1H9AB8vpcNln38uWb4tuFgD5Wqy/0WFu60nsRsnInI5SPMN39wA4cx2eyrCfne32iw0Ov+VAdn0+D8FFzyVEEh7lrCQlJFoqoznxvpKh6NRhUzLmLpfEPOhFN/bZBHsj+3YJLT4JgRaYGTf6fMkZGCyIk60hIbqofwcuMFNqFYOK0nffOV8dz9ElisN/6cSJsYAQ=='
                 ),
             ),
             PartEndEvent(
@@ -6461,6 +6576,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
                     TextPart(
                         content='Tomorrow is November 20, 2025.',
                         id='msg_0dcd74f01910b54500691e5596124081a087e8fa7b2ca19d5a',
+                        provider_name='openai',
                     )
                 ],
                 usage=RequestUsage(input_tokens=329, output_tokens=12, details={'reasoning_tokens': 0}),
@@ -6940,9 +7056,9 @@ async def test_anthropic_tool_with_thinking(allow_model_requests: None, anthropi
 
     result = await agent.run('What is the largest city in the user country?')
     assert result.output == snapshot("""\
-Based on the information that you're in Mexico, the largest city in your country is **Mexico City** (Ciudad de México). \n\
+Based on the information that you're from Mexico, the largest city in your country is **Mexico City** (Ciudad de México). \n\
 
-Mexico City is not only the largest city in Mexico but also one of the largest metropolitan areas in the world. The city proper has a population of approximately 9.2 million people, while the greater Mexico City metropolitan area has over 21 million inhabitants, making it the most populous metropolitan area in North America.
+Mexico City is not only the largest city in Mexico but also one of the largest metropolitan areas in the world. The city proper has a population of approximately 9.2 million people, while the greater Mexico City metropolitan area (which includes surrounding municipalities) has over 21 million inhabitants, making it one of the most populous urban agglomerations globally.
 
 Mexico City serves as the country's capital and is the political, economic, and cultural center of Mexico.\
 """)

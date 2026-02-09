@@ -530,7 +530,7 @@ class PersonalizedGreeting(BaseModel):
     language_code: str
 
 
-agent = Agent('openai:gpt-5', toolsets=[toolset], output_type=PersonalizedGreeting)
+agent = Agent('openai:gpt-5.2', toolsets=[toolset], output_type=PersonalizedGreeting)
 
 result = agent.run_sync('Greet the user in a personalized way')
 print(repr(result.output))
@@ -722,6 +722,12 @@ Pydantic AI provides two toolsets that allow an agent to connect to and call too
 1. `MCPServer`: the [MCP SDK-based Client](./mcp/client.md) which offers more direct control by leveraging the MCP SDK directly
 2. `FastMCPToolset`: the [FastMCP-based Client](./mcp/fastmcp-client.md) which offers additional capabilities like Tool Transformation, simpler OAuth configuration, and more.
 
+### Agent Skills
+
+Toolsets that implement [Agent Skills](https://agentskills.io) support so agents can efficiently discover and perform specific tasks:
+
+- [`pydantic-ai-skills`](https://github.com/DougTrajano/pydantic-ai-skills) - `SkillsToolset` implements Agent Skills support with progressive disclosure (load skills on-demand to reduce tokens). Supports filesystem and programmatic skills; compatible with [agentskills.io](https://agentskills.io).
+
 ### Task Management
 
 Toolsets for task planning and progress tracking help agents organize complex work and provide visibility into agent progress:
@@ -756,7 +762,7 @@ from pydantic_ai.ext.langchain import LangChainToolset
 toolkit = SlackToolkit()
 toolset = LangChainToolset(toolkit.get_tools())
 
-agent = Agent('openai:gpt-5', toolsets=[toolset])
+agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 # ...
 ```
 
@@ -780,5 +786,5 @@ toolset = ACIToolset(
     linked_account_owner_id=os.getenv('LINKED_ACCOUNT_OWNER_ID'),
 )
 
-agent = Agent('openai:gpt-5', toolsets=[toolset])
+agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 ```

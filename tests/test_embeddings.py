@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Iterator
 from decimal import Decimal
 from typing import Any, get_args
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from inline_snapshot import snapshot
+
+if sys.version_info < (3, 11):
+    from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
+else:
+    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 from pydantic_ai.embeddings import (
     Embedder,
@@ -18,7 +24,7 @@ from pydantic_ai.embeddings import (
     TestEmbeddingModel,
     infer_embedding_model,
 )
-from pydantic_ai.exceptions import ModelHTTPError, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
@@ -37,8 +43,39 @@ with try_import() as openai_imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as cohere_imports_successful:
-    from pydantic_ai.embeddings.cohere import CohereEmbeddingModel, LatestCohereEmbeddingModelNames
+    from pydantic_ai.embeddings.cohere import (
+        CohereEmbeddingModel,
+        CohereEmbeddingSettings,
+        LatestCohereEmbeddingModelNames,
+    )
     from pydantic_ai.providers.cohere import CohereProvider
+
+with try_import() as bedrock_imports_successful:
+    from botocore.exceptions import ClientError
+
+    from pydantic_ai.embeddings.bedrock import (
+        BedrockEmbeddingModel,
+        BedrockEmbeddingSettings,
+        LatestBedrockEmbeddingModelNames,
+    )
+    from pydantic_ai.providers.bedrock import BedrockProvider
+
+with try_import() as google_imports_successful:
+    from pydantic_ai.embeddings.google import (
+        GoogleEmbeddingModel,
+        GoogleEmbeddingSettings,
+        LatestGoogleGLAEmbeddingModelNames,
+        LatestGoogleVertexEmbeddingModelNames,
+    )
+    from pydantic_ai.providers.google import GoogleProvider
+
+with try_import() as voyageai_imports_successful:
+    from pydantic_ai.embeddings.voyageai import (
+        LatestVoyageAIEmbeddingModelNames,
+        VoyageAIEmbeddingModel,
+        VoyageAIEmbeddingSettings,
+    )
+    from pydantic_ai.providers.voyageai import VoyageAIProvider
 
 with try_import() as sentence_transformers_imports_successful:
     from sentence_transformers import SentenceTransformer
@@ -134,6 +171,33 @@ class TestOpenAI:
         embedder = Embedder(model)
         with pytest.raises(ModelHTTPError, match='model_not_found'):
             await embedder.embed_query('Hello, world!')
+
+    async def test_response_with_no_usage(self):
+        mock_client = AsyncMock()
+        mock_embedding_item = MagicMock()
+        mock_embedding_item.embedding = [0.1, 0.2, 0.3]
+
+        mock_response = MagicMock()
+        mock_response.data = [mock_embedding_item]
+        mock_response.usage = None
+        mock_response.model = 'test-model'
+
+        mock_client.embeddings.create.return_value = mock_response
+
+        provider = OpenAIProvider(openai_client=mock_client)
+        model = OpenAIEmbeddingModel('test-model', provider=provider)
+
+        result = await model.embed('test', input_type='query')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=[[0.1, 0.2, 0.3]],
+                inputs=['test'],
+                input_type='query',
+                model_name='test-model',
+                provider_name='openai',
+                timestamp=IsDatetime(),
+            )
+        )
 
     @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
     async def test_instrumentation(self, openai_api_key: str, capfire: CaptureLogfire):
@@ -317,6 +381,985 @@ class TestCohere:
         with pytest.raises(ModelHTTPError, match='not found,'):
             await embedder.embed_query('Hello, world!')
 
+    async def test_query_with_cohere_truncate(self, co_api_key: str):
+        model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key=co_api_key))
+        embedder = Embedder(model)
+        settings: CohereEmbeddingSettings = {'cohere_truncate': 'END'}
+        result = await embedder.embed_query('Hello, world!', settings=settings)
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                usage=RequestUsage(input_tokens=4),
+                model_name='embed-v4.0',
+                timestamp=IsDatetime(),
+                provider_name='cohere',
+                provider_response_id=IsStr(),
+            )
+        )
+
+    async def test_query_with_truncate(self, co_api_key: str):
+        model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key=co_api_key))
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello, world!', settings={'truncate': True})
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                usage=RequestUsage(input_tokens=4),
+                model_name='embed-v4.0',
+                timestamp=IsDatetime(),
+                provider_name='cohere',
+                provider_response_id=IsStr(),
+            )
+        )
+
+
+@pytest.mark.skipif(not voyageai_imports_successful(), reason='VoyageAI not installed')
+@pytest.mark.vcr
+class TestVoyageAI:
+    async def test_infer_model(self, voyage_api_key: str):
+        with patch.dict(os.environ, {'VOYAGE_API_KEY': voyage_api_key}):
+            model = infer_embedding_model('voyageai:voyage-3.5')
+        assert isinstance(model, VoyageAIEmbeddingModel)
+        assert model.model_name == 'voyage-3.5'
+        assert model.system == 'voyageai'
+        assert model.base_url == 'https://api.voyageai.com/v1'
+        assert isinstance(model._provider, VoyageAIProvider)  # type: ignore[reportAttributeAccess]
+
+    async def test_query(self, voyage_api_key: str):
+        model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello, world!')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                usage=RequestUsage(input_tokens=3),
+                model_name='voyage-3.5',
+                timestamp=IsDatetime(),
+                provider_name='voyageai',
+            )
+        )
+
+    async def test_query_voyage_4(self, voyage_api_key: str):
+        model = VoyageAIEmbeddingModel('voyage-4', provider=VoyageAIProvider(api_key=voyage_api_key))
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello, world!')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                usage=RequestUsage(input_tokens=3),
+                model_name='voyage-4',
+                timestamp=IsDatetime(),
+                provider_name='voyageai',
+            )
+        )
+
+    async def test_documents(self, voyage_api_key: str):
+        model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
+        embedder = Embedder(model)
+        result = await embedder.embed_documents(['hello', 'world'])
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=2),
+                inputs=['hello', 'world'],
+                input_type='document',
+                usage=RequestUsage(),
+                model_name='voyage-3.5',
+                timestamp=IsDatetime(),
+                provider_name='voyageai',
+            )
+        )
+
+    async def test_max_input_tokens(self, voyage_api_key: str):
+        model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
+        embedder = Embedder(model)
+        max_input_tokens = await embedder.max_input_tokens()
+        assert max_input_tokens == snapshot(32000)
+
+    async def test_embed_error(self, voyage_api_key: str):
+        model = VoyageAIEmbeddingModel('nonexistent', provider=VoyageAIProvider(api_key=voyage_api_key))
+        embedder = Embedder(model)
+        with pytest.raises(ModelAPIError, match='not supported'):
+            await embedder.embed_query('Hello, world!')
+
+    async def test_query_with_truncate(self, voyage_api_key: str):
+        model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello, world!', settings={'truncate': True})
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                usage=RequestUsage(input_tokens=3),
+                model_name='voyage-3.5',
+                timestamp=IsDatetime(),
+                provider_name='voyageai',
+            )
+        )
+
+    async def test_query_with_voyageai_input_type(self, voyage_api_key: str):
+        model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
+        embedder = Embedder(model)
+        settings: VoyageAIEmbeddingSettings = {'voyageai_input_type': 'none'}
+        result = await embedder.embed_query('Hello, world!', settings=settings)
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                usage=RequestUsage(input_tokens=4),
+                model_name='voyage-3.5',
+                timestamp=IsDatetime(),
+                provider_name='voyageai',
+            )
+        )
+
+
+@pytest.mark.skipif(not bedrock_imports_successful(), reason='Bedrock not installed')
+@pytest.mark.vcr
+class TestBedrock:
+    async def test_infer_model(self):
+        with patch.dict(
+            os.environ,
+            {
+                'AWS_ACCESS_KEY_ID': 'test-access-key',
+                'AWS_SECRET_ACCESS_KEY': 'test-secret-key',
+                'AWS_DEFAULT_REGION': 'us-east-1',
+            },
+        ):
+            model = infer_embedding_model('bedrock:amazon.titan-embed-text-v2:0')
+        assert isinstance(model, BedrockEmbeddingModel)
+        assert model.model_name == 'amazon.titan-embed-text-v2:0'
+        assert model.system == 'bedrock'
+        assert model.base_url == 'https://bedrock-runtime.us-east-1.amazonaws.com'
+
+    async def test_titan_v1_minimal(self, bedrock_provider: BedrockProvider):
+        """Test Titan V1 with default settings (fixed 1536 dimensions)."""
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v1', provider=bedrock_provider)
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello, world!')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                model_name='amazon.titan-embed-text-v1',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=4),
+            )
+        )
+
+    async def test_titan_v2_minimal(self, bedrock_provider: BedrockProvider):
+        """Test Titan V2 with default settings (1024 dimensions, normalize=True)."""
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello, world!')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                model_name='amazon.titan-embed-text-v2:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=5),
+            )
+        )
+
+    async def test_titan_v2_with_dimensions(self, bedrock_provider: BedrockProvider):
+        """Test Titan V2 with custom dimensions setting."""
+
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(dimensions=256))
+        result = await embedder.embed_query('Test embedding dimensions')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=256), length=1),
+                inputs=['Test embedding dimensions'],
+                input_type='query',
+                model_name='amazon.titan-embed-text-v2:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=4),
+            )
+        )
+
+    async def test_titan_v2_with_normalize_false(self, bedrock_provider: BedrockProvider):
+        """Test Titan V2 with normalize=False (override default)."""
+
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_titan_normalize=False))
+        result = await embedder.embed_query('Test normalization disabled')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                inputs=['Test normalization disabled'],
+                input_type='query',
+                model_name='amazon.titan-embed-text-v2:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=4),
+            )
+        )
+
+    async def test_titan_v2_with_normalize_true(self, bedrock_provider: BedrockProvider):
+        """Test Titan V2 with explicit normalize=True setting."""
+
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_titan_normalize=True))
+        result = await embedder.embed_query('Test explicit normalization')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                inputs=['Test explicit normalization'],
+                input_type='query',
+                model_name='amazon.titan-embed-text-v2:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=4),
+            )
+        )
+
+    async def test_titan_v2_multiple_texts(self, bedrock_provider: BedrockProvider):
+        """Test Titan V2 document embedding (multiple texts, sequential requests)."""
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        # Use max_concurrency=1 to ensure deterministic request order for VCRpy
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_max_concurrency=1))
+        result = await embedder.embed_documents(['hello', 'world'])
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=2),
+                inputs=['hello', 'world'],
+                input_type='document',
+                model_name='amazon.titan-embed-text-v2:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=4),
+            )
+        )
+
+    async def test_cohere_v3_minimal(self, bedrock_provider: BedrockProvider):
+        """Test Cohere V3 with default settings (1024 dimensions, truncate=NONE)."""
+        model = BedrockEmbeddingModel('cohere.embed-english-v3', provider=bedrock_provider)
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello, world!')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                model_name='cohere.embed-english-v3',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=4),
+                provider_response_id=IsStr(),
+            )
+        )
+
+    async def test_cohere_v3_with_input_type(self, bedrock_provider: BedrockProvider):
+        """Test Cohere V3 with custom input_type setting."""
+
+        model = BedrockEmbeddingModel('cohere.embed-english-v3', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_cohere_input_type='classification'))
+        result = await embedder.embed_query('Test input type setting')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                inputs=['Test input type setting'],
+                input_type='query',
+                model_name='cohere.embed-english-v3',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=4),
+                provider_response_id=IsStr(),
+            )
+        )
+
+    async def test_cohere_v3_with_truncate(self, bedrock_provider: BedrockProvider):
+        """Test Cohere V3 with custom truncate setting."""
+
+        model = BedrockEmbeddingModel('cohere.embed-english-v3', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_cohere_truncate='END'))
+        result = await embedder.embed_query('Test truncation setting')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                inputs=['Test truncation setting'],
+                input_type='query',
+                model_name='cohere.embed-english-v3',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=5),
+                provider_response_id=IsStr(),
+            )
+        )
+
+    async def test_cohere_v3_with_base_truncate(self, bedrock_provider: BedrockProvider):
+        """Test Cohere V3 with base truncate=True setting (maps to END)."""
+
+        model = BedrockEmbeddingModel('cohere.embed-multilingual-v3', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(truncate=True))
+        result = await embedder.embed_query('Test base truncate setting')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                inputs=['Test base truncate setting'],
+                input_type='query',
+                model_name='cohere.embed-multilingual-v3',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=6),
+                provider_response_id=IsStr(),
+            )
+        )
+
+    async def test_cohere_v4_minimal(self, bedrock_provider: BedrockProvider):
+        """Test Cohere V4 with default settings (1536 dimensions, truncate=NONE)."""
+        model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello, world!')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                model_name='cohere.embed-v4:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=4),
+                provider_response_id=IsStr(),
+            )
+        )
+
+    async def test_cohere_v4_with_dimensions(self, bedrock_provider: BedrockProvider):
+        """Test Cohere V4 with custom dimensions setting."""
+
+        model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(dimensions=512))
+        result = await embedder.embed_query('Test dimensions setting')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=512), length=1),
+                inputs=['Test dimensions setting'],
+                input_type='query',
+                model_name='cohere.embed-v4:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=3),
+                provider_response_id=IsStr(),
+            )
+        )
+
+    async def test_cohere_v4_with_max_tokens(self, bedrock_provider: BedrockProvider):
+        """Test Cohere V4 with max_tokens setting."""
+
+        model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_cohere_max_tokens=256))
+        result = await embedder.embed_query('Test max tokens setting')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
+                inputs=['Test max tokens setting'],
+                input_type='query',
+                model_name='cohere.embed-v4:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=4),
+                provider_response_id=IsStr(),
+            )
+        )
+
+    async def test_cohere_v4_with_input_type(self, bedrock_provider: BedrockProvider):
+        """Test Cohere V4 with custom input_type setting."""
+
+        model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_cohere_input_type='clustering'))
+        result = await embedder.embed_query('Test input type setting')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
+                inputs=['Test input type setting'],
+                input_type='query',
+                model_name='cohere.embed-v4:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=4),
+                provider_response_id=IsStr(),
+            )
+        )
+
+    async def test_cohere_v4_with_truncate(self, bedrock_provider: BedrockProvider):
+        """Test Cohere V4 with custom truncate setting."""
+
+        model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_cohere_truncate='END'))
+        result = await embedder.embed_query('Test truncation setting')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
+                inputs=['Test truncation setting'],
+                input_type='query',
+                model_name='cohere.embed-v4:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=4),
+                provider_response_id=IsStr(),
+            )
+        )
+
+    async def test_cohere_v4_with_truncate_start(self, bedrock_provider: BedrockProvider):
+        """Test Cohere V4 with truncate START setting."""
+
+        model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_cohere_truncate='START'))
+        result = await embedder.embed_query('Test truncation start setting')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
+                inputs=['Test truncation start setting'],
+                input_type='query',
+                model_name='cohere.embed-v4:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=5),
+                provider_response_id=IsStr(),
+            )
+        )
+
+    async def test_cohere_v4_truncate_priority(self, bedrock_provider: BedrockProvider):
+        """Test that bedrock_cohere_truncate takes precedence over base truncate."""
+
+        model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
+        # Both settings provided - model-specific should win (START over END from truncate=True)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_cohere_truncate='START', truncate=True))
+        result = await embedder.embed_query('Test truncate priority')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
+                inputs=['Test truncate priority'],
+                input_type='query',
+                model_name='cohere.embed-v4:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=3),
+                provider_response_id=IsStr(),
+            )
+        )
+
+    async def test_cohere_v4_batch_documents(self, bedrock_provider: BedrockProvider):
+        """Test Cohere V4 batch embedding (multiple texts in single request)."""
+        model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
+        embedder = Embedder(model)
+        result = await embedder.embed_documents(['hello', 'world'])
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=2),
+                inputs=['hello', 'world'],
+                input_type='document',
+                model_name='cohere.embed-v4:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=2),
+                provider_response_id=IsStr(),
+            )
+        )
+
+    async def test_nova_minimal(self, bedrock_provider: BedrockProvider):
+        """Test Nova with default settings (3072 dimensions, truncate=NONE)."""
+        model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello, world!')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=3072), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                model_name='amazon.nova-2-multimodal-embeddings-v1:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=19),
+            )
+        )
+
+    async def test_nova_with_dimensions(self, bedrock_provider: BedrockProvider):
+        """Test Nova with custom dimensions setting."""
+
+        model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(dimensions=256))
+        result = await embedder.embed_query('Test Nova dimensions')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=256), length=1),
+                inputs=['Test Nova dimensions'],
+                input_type='query',
+                model_name='amazon.nova-2-multimodal-embeddings-v1:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=18),
+            )
+        )
+
+    async def test_nova_with_truncate(self, bedrock_provider: BedrockProvider):
+        """Test Nova with custom truncate setting."""
+
+        model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
+        embedder = Embedder(
+            model,
+            settings=BedrockEmbeddingSettings(bedrock_nova_truncate='END'),
+        )
+        result = await embedder.embed_query('Test Nova truncate')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=3072), length=1),
+                inputs=['Test Nova truncate'],
+                input_type='query',
+                model_name='amazon.nova-2-multimodal-embeddings-v1:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=19),
+            )
+        )
+
+    async def test_nova_with_truncate_start(self, bedrock_provider: BedrockProvider):
+        """Test Nova with truncate START setting."""
+
+        model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
+        embedder = Embedder(
+            model,
+            settings=BedrockEmbeddingSettings(bedrock_nova_truncate='START'),
+        )
+        result = await embedder.embed_query('Test Nova truncate start')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=3072), length=1),
+                inputs=['Test Nova truncate start'],
+                input_type='query',
+                model_name='amazon.nova-2-multimodal-embeddings-v1:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=20),
+            )
+        )
+
+    async def test_nova_with_base_truncate(self, bedrock_provider: BedrockProvider):
+        """Test Nova with base truncate=True setting (maps to END)."""
+
+        model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(truncate=True))
+        result = await embedder.embed_query('Test base truncate')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=3072), length=1),
+                inputs=['Test base truncate'],
+                input_type='query',
+                model_name='amazon.nova-2-multimodal-embeddings-v1:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=19),
+            )
+        )
+
+    async def test_nova_with_embedding_purpose(self, bedrock_provider: BedrockProvider):
+        """Test Nova with custom embedding_purpose setting."""
+
+        model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
+        embedder = Embedder(
+            model,
+            settings=BedrockEmbeddingSettings(bedrock_nova_embedding_purpose='TEXT_RETRIEVAL'),
+        )
+        result = await embedder.embed_query('Test Nova settings')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=3072), length=1),
+                inputs=['Test Nova settings'],
+                input_type='query',
+                model_name='amazon.nova-2-multimodal-embeddings-v1:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=22),
+            )
+        )
+
+    async def test_nova_multiple_texts(self, bedrock_provider: BedrockProvider):
+        """Test Nova document embedding (multiple texts, sequential requests)."""
+        model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
+        # Use max_concurrency=1 to ensure deterministic request order for VCRpy
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_max_concurrency=1))
+        result = await embedder.embed_documents(['hello', 'world'])
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=3072), length=2),
+                inputs=['hello', 'world'],
+                input_type='document',
+                model_name='amazon.nova-2-multimodal-embeddings-v1:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=6),
+            )
+        )
+
+    async def test_titan_v1_max_input_tokens(self, bedrock_provider: BedrockProvider):
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v1', provider=bedrock_provider)
+        embedder = Embedder(model)
+        max_input_tokens = await embedder.max_input_tokens()
+        assert max_input_tokens == snapshot(8192)
+
+    async def test_titan_v2_max_input_tokens(self, bedrock_provider: BedrockProvider):
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        embedder = Embedder(model)
+        max_input_tokens = await embedder.max_input_tokens()
+        assert max_input_tokens == snapshot(8192)
+
+    async def test_cohere_v3_max_input_tokens(self, bedrock_provider: BedrockProvider):
+        model = BedrockEmbeddingModel('cohere.embed-english-v3', provider=bedrock_provider)
+        embedder = Embedder(model)
+        max_input_tokens = await embedder.max_input_tokens()
+        assert max_input_tokens == snapshot(512)
+
+    async def test_cohere_v4_max_input_tokens(self, bedrock_provider: BedrockProvider):
+        model = BedrockEmbeddingModel('cohere.embed-v4:0', provider=bedrock_provider)
+        embedder = Embedder(model)
+        max_input_tokens = await embedder.max_input_tokens()
+        assert max_input_tokens == snapshot(128000)
+
+    async def test_nova_max_input_tokens(self, bedrock_provider: BedrockProvider):
+        model = BedrockEmbeddingModel('amazon.nova-2-multimodal-embeddings-v1:0', provider=bedrock_provider)
+        embedder = Embedder(model)
+        max_input_tokens = await embedder.max_input_tokens()
+        assert max_input_tokens == snapshot(8192)
+
+    async def test_base_url_property(self, bedrock_provider: BedrockProvider):
+        """Test that base_url property returns the endpoint URL."""
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        assert model.base_url is not None
+        assert isinstance(model.base_url, str)
+
+    async def test_regional_prefix_model_name(self, bedrock_provider: BedrockProvider):
+        """Test model with regional prefix (e.g., us.amazon.titan-embed-text-v2:0) is handled correctly."""
+        model = BedrockEmbeddingModel('us.amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        # Model name preserves the regional prefix
+        assert model.model_name == 'us.amazon.titan-embed-text-v2:0'
+        # But handler uses normalized name (without prefix)
+        assert model._handler.model_name == 'amazon.titan-embed-text-v2:0'  # pyright: ignore[reportPrivateUsage]
+        # max_input_tokens() works correctly with regional prefix
+        max_tokens = await model.max_input_tokens()
+        assert max_tokens == snapshot(8192)
+
+    async def test_regional_prefix_embed(self, bedrock_provider: BedrockProvider):
+        """Test embedding with a regional prefix model ID using Cohere v4.
+
+        Cross-region inference profiles are supported for Cohere models on Bedrock.
+        """
+        model = BedrockEmbeddingModel('us.cohere.embed-v4:0', provider=bedrock_provider)
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello from regional endpoint!')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
+                inputs=['Hello from regional endpoint!'],
+                input_type='query',
+                model_name='us.cohere.embed-v4:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=5),
+                provider_response_id=IsStr(),
+            )
+        )
+
+    async def test_unsupported_model_error(self, bedrock_provider: BedrockProvider):
+        with pytest.raises(UserError, match='Unsupported Bedrock embedding model'):
+            BedrockEmbeddingModel('unsupported.model', provider=bedrock_provider)
+
+    async def test_unknown_model_max_tokens_returns_none(self, bedrock_provider: BedrockProvider):
+        """Test that unknown models with valid prefixes return None for max_input_tokens."""
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v99:0', provider=bedrock_provider)
+        assert await model.max_input_tokens() is None
+
+    def test_model_with_string_provider(self, bedrock_provider: BedrockProvider):
+        """Test BedrockEmbeddingModel can be created with string provider."""
+        with patch('pydantic_ai.embeddings.bedrock.infer_provider', return_value=bedrock_provider) as mock_infer:
+            model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider='bedrock')
+            mock_infer.assert_called_once_with('bedrock')
+            assert model.model_name == 'amazon.titan-embed-text-v2:0'
+
+    async def test_client_error_with_status_code(self, bedrock_provider: BedrockProvider):
+        """Test error handling when ClientError is raised with HTTP status code."""
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+
+        error_response = {
+            'Error': {'Code': 'ValidationException', 'Message': 'Invalid input'},
+            'ResponseMetadata': {'HTTPStatusCode': 400},
+        }
+        with patch.object(
+            model.client,
+            'invoke_model',
+            side_effect=ClientError(error_response, 'InvokeModel'),  # pyright: ignore[reportArgumentType]
+        ):
+            with pytest.raises(ExceptionGroup) as exc_info:
+                await model.embed(['test'], input_type='query')
+            assert len(exc_info.value.exceptions) == 1
+            assert isinstance(exc_info.value.exceptions[0], ModelHTTPError)
+            assert exc_info.value.exceptions[0].status_code == 400
+
+    async def test_client_error_without_status_code(self, bedrock_provider: BedrockProvider):
+        """Test error handling when ClientError is raised without HTTP status code."""
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+
+        error_response = {
+            'Error': {'Code': 'UnknownError', 'Message': 'Something went wrong'},
+            'ResponseMetadata': {},  # No HTTPStatusCode
+        }
+        with patch.object(
+            model.client,
+            'invoke_model',
+            side_effect=ClientError(error_response, 'InvokeModel'),  # pyright: ignore[reportArgumentType]
+        ):
+            with pytest.raises(ExceptionGroup) as exc_info:
+                await model.embed(['test'], input_type='query')
+            assert len(exc_info.value.exceptions) == 1
+            assert isinstance(exc_info.value.exceptions[0], ModelAPIError)
+
+    async def test_count_tokens_not_implemented(self, bedrock_provider: BedrockProvider):
+        """Test that count_tokens raises NotImplementedError (Bedrock doesn't support it)."""
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        embedder = Embedder(model)
+        with pytest.raises(NotImplementedError):
+            await embedder.count_tokens('Hello, world!')
+
+    @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+    async def test_instrumentation(self, bedrock_provider: BedrockProvider, capfire: CaptureLogfire):
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        embedder = Embedder(model, instrument=True)
+        await embedder.embed_query('Hello, world!', settings={'dimensions': 256})
+
+        spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+        span = next(span for span in spans if 'embeddings' in span['name'])
+
+        assert span == snapshot(
+            {
+                'name': 'embeddings amazon.titan-embed-text-v2:0',
+                'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'parent': None,
+                'start_time': IsInt(),
+                'end_time': IsInt(),
+                'attributes': {
+                    'gen_ai.operation.name': 'embeddings',
+                    'gen_ai.provider.name': 'bedrock',
+                    'gen_ai.request.model': 'amazon.titan-embed-text-v2:0',
+                    'input_type': 'query',
+                    'server.address': 'bedrock-runtime.us-east-1.amazonaws.com',
+                    'inputs_count': 1,
+                    'embedding_settings': {'dimensions': 256},
+                    'inputs': ['Hello, world!'],
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'input_type': {'type': 'string'},
+                            'inputs_count': {'type': 'integer'},
+                            'embedding_settings': {'type': 'object'},
+                            'inputs': {'type': ['array']},
+                            'embeddings': {'type': 'array'},
+                        },
+                    },
+                    'logfire.span_type': 'span',
+                    'logfire.msg': 'embeddings amazon.titan-embed-text-v2:0',
+                    'gen_ai.usage.input_tokens': 5,
+                    'gen_ai.response.model': 'amazon.titan-embed-text-v2:0',
+                    'gen_ai.embeddings.dimension.count': 256,
+                },
+            }
+        )
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
+@pytest.mark.vcr
+class TestGoogle:
+    @pytest.fixture
+    def embedder(self, gemini_api_key: str) -> Embedder:
+        return Embedder(GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key=gemini_api_key)))
+
+    async def test_infer_model_gla(self, gemini_api_key: str):
+        with patch.dict(os.environ, {'GOOGLE_API_KEY': gemini_api_key}):
+            model = infer_embedding_model('google-gla:gemini-embedding-001')
+        assert isinstance(model, GoogleEmbeddingModel)
+        assert model.model_name == 'gemini-embedding-001'
+        assert model.system == 'google-gla'
+        assert 'generativelanguage.googleapis.com' in model.base_url
+
+    async def test_infer_model_vertex(self):
+        # Vertex AI requires project setup, so we just test the model creation
+        # without actually calling the API
+        with patch.dict(
+            os.environ,
+            {
+                'GOOGLE_API_KEY': 'mock-api-key',
+            },
+        ):
+            model = infer_embedding_model('google-vertex:gemini-embedding-001')
+        assert isinstance(model, GoogleEmbeddingModel)
+        assert model.model_name == 'gemini-embedding-001'
+        assert model.system == 'google-vertex'
+
+    async def test_model_with_string_provider(self, gemini_api_key: str):
+        with patch.dict(os.environ, {'GOOGLE_API_KEY': gemini_api_key}):
+            model = GoogleEmbeddingModel('gemini-embedding-001', provider='google-gla')
+        assert isinstance(model, GoogleEmbeddingModel)
+        assert model.model_name == 'gemini-embedding-001'
+        assert model.system == 'google-gla'
+
+    async def test_query(self, embedder: Embedder):
+        result = await embedder.embed_query('Hello, world!')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=3072), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                usage=RequestUsage(),
+                model_name='gemini-embedding-001',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+            )
+        )
+
+    async def test_documents(self, embedder: Embedder):
+        result = await embedder.embed_documents(['hello', 'world'])
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=3072), length=2),
+                inputs=['hello', 'world'],
+                input_type='document',
+                usage=RequestUsage(),
+                model_name='gemini-embedding-001',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+            )
+        )
+
+    async def test_query_with_dimensions(self, embedder: Embedder):
+        result = await embedder.embed_query('Hello, world!', settings={'dimensions': 768})
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=768), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                usage=RequestUsage(),
+                model_name='gemini-embedding-001',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+            )
+        )
+
+    async def test_max_input_tokens(self, embedder: Embedder):
+        max_input_tokens = await embedder.max_input_tokens()
+        assert max_input_tokens == snapshot(2048)
+
+    async def test_count_tokens(self, embedder: Embedder):
+        count = await embedder.count_tokens('Hello, world!')
+        assert count == snapshot(5)
+
+    async def test_embed_error(self, gemini_api_key: str):
+        model = GoogleEmbeddingModel('nonexistent-model', provider=GoogleProvider(api_key=gemini_api_key))
+        embedder = Embedder(model)
+        with pytest.raises(ModelHTTPError, match='not found'):
+            await embedder.embed_query('Hello, world!')
+
+    async def test_count_tokens_error(self, gemini_api_key: str):
+        model = GoogleEmbeddingModel('nonexistent-model', provider=GoogleProvider(api_key=gemini_api_key))
+        embedder = Embedder(model)
+        with pytest.raises(ModelHTTPError, match='not found'):
+            await embedder.count_tokens('Hello, world!')
+
+    async def test_query_with_task_type(self, embedder: Embedder):
+        result = await embedder.embed_query(
+            'Hello, world!', settings=GoogleEmbeddingSettings(google_task_type='RETRIEVAL_QUERY')
+        )
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=3072), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                usage=RequestUsage(),
+                model_name='gemini-embedding-001',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+            )
+        )
+
+    @pytest.mark.skipif(
+        not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
+    )
+    @pytest.mark.vcr()
+    async def test_vertex_query(
+        self, allow_model_requests: None, vertex_provider: GoogleProvider
+    ):  # pragma: lax no cover
+        model = GoogleEmbeddingModel('gemini-embedding-001', provider=vertex_provider)
+        embedder = Embedder(model)
+        result = await embedder.embed_query('Hello, world!')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=3072), length=1),
+                inputs=['Hello, world!'],
+                input_type='query',
+                usage=RequestUsage(input_tokens=4),
+                model_name='gemini-embedding-001',
+                timestamp=IsDatetime(),
+                provider_name='google-vertex',
+            )
+        )
+
+    @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+    async def test_instrumentation(self, gemini_api_key: str, capfire: CaptureLogfire):
+        model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key=gemini_api_key))
+        embedder = Embedder(model, instrument=True)
+        await embedder.embed_query('Hello, world!', settings={'dimensions': 768})
+
+        spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+        span = next(span for span in spans if 'embeddings' in span['name'])
+
+        assert span == snapshot(
+            {
+                'name': 'embeddings gemini-embedding-001',
+                'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'parent': None,
+                'start_time': IsInt(),
+                'end_time': IsInt(),
+                'attributes': {
+                    'gen_ai.operation.name': 'embeddings',
+                    'gen_ai.provider.name': 'google-gla',
+                    'gen_ai.request.model': 'gemini-embedding-001',
+                    'input_type': 'query',
+                    'server.address': 'generativelanguage.googleapis.com',
+                    'inputs_count': 1,
+                    'embedding_settings': {'dimensions': 768},
+                    'inputs': ['Hello, world!'],
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'input_type': {'type': 'string'},
+                            'inputs_count': {'type': 'integer'},
+                            'embedding_settings': {'type': 'object'},
+                            'inputs': {'type': ['array']},
+                            'embeddings': {'type': 'array'},
+                        },
+                    },
+                    'logfire.span_type': 'span',
+                    'logfire.msg': 'embeddings gemini-embedding-001',
+                    'gen_ai.response.model': 'gemini-embedding-001',
+                    'operation.cost': 0.0,
+                    'gen_ai.embeddings.dimension.count': 768,
+                },
+            }
+        )
+
 
 @pytest.mark.skipif(not sentence_transformers_imports_successful(), reason='SentenceTransformers not installed')
 class TestSentenceTransformers:
@@ -373,7 +1416,11 @@ class TestSentenceTransformers:
 
 
 @pytest.mark.skipif(
-    not openai_imports_successful() or not cohere_imports_successful(),
+    not openai_imports_successful()
+    or not cohere_imports_successful()
+    or not google_imports_successful()
+    or not voyageai_imports_successful()
+    or not bedrock_imports_successful(),
     reason='some embedding package was not installed',
 )
 def test_known_embedding_model_names():  # pragma: lax no cover
@@ -387,8 +1434,14 @@ def test_known_embedding_model_names():  # pragma: lax no cover
 
     openai_names = [f'openai:{n}' for n in get_model_names(LatestOpenAIEmbeddingModelNames)]
     cohere_names = [f'cohere:{n}' for n in get_model_names(LatestCohereEmbeddingModelNames)]
+    google_gla_names = [f'google-gla:{n}' for n in get_model_names(LatestGoogleGLAEmbeddingModelNames)]
+    google_vertex_names = [f'google-vertex:{n}' for n in get_model_names(LatestGoogleVertexEmbeddingModelNames)]
+    voyageai_names = [f'voyageai:{n}' for n in get_model_names(LatestVoyageAIEmbeddingModelNames)]
+    bedrock_names = [f'bedrock:{n}' for n in get_model_names(LatestBedrockEmbeddingModelNames)]
 
-    generated_names = sorted(openai_names + cohere_names)
+    generated_names = sorted(
+        openai_names + cohere_names + google_gla_names + google_vertex_names + voyageai_names + bedrock_names
+    )
 
     known_model_names = sorted(get_args(KnownEmbeddingModelName.__value__))
     if generated_names != known_model_names:
