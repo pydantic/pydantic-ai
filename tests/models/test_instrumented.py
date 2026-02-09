@@ -1326,7 +1326,7 @@ def test_messages_to_otel_messages_multimodal_v4():
 
 
 def test_messages_to_otel_messages_multimodal_v4_no_content():
-    """Test that version 4 with include_content=False omits uri and mime_type."""
+    """Test that version 4 with include_content=False omits uri but keeps mime_type."""
     messages: list[ModelMessage] = [
         ModelRequest(
             parts=[
@@ -1347,7 +1347,7 @@ def test_messages_to_otel_messages_multimodal_v4_no_content():
                 'role': 'user',
                 'parts': [
                     {'type': 'text'},
-                    {'type': 'uri', 'modality': 'image'},
+                    {'type': 'uri', 'modality': 'image', 'mime_type': 'image/jpeg'},
                 ],
             }
         ]
@@ -1414,7 +1414,7 @@ def test_messages_to_otel_messages_binary_content_v4():
 
 
 def test_messages_to_otel_messages_binary_content_v4_no_content():
-    """Test that version 4 with include_content=False omits mime_type and content for BinaryContent."""
+    """Test that version 4 with include_content=False omits content but keeps mime_type."""
     image_data = BinaryContent(data=b'fake image data', media_type='image/png')
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -1429,7 +1429,7 @@ def test_messages_to_otel_messages_binary_content_v4_no_content():
                 'role': 'user',
                 'parts': [
                     {'type': 'text'},
-                    {'type': 'blob', 'modality': 'image'},
+                    {'type': 'blob', 'modality': 'image', 'mime_type': 'image/png'},
                 ],
             }
         ]
@@ -1981,6 +1981,61 @@ def test_build_tool_definitions():
             'parameters': {'type': 'object', 'properties': {}},
         },
     ]
+
+
+def test_messages_to_otel_messages_file_part_v4(document_content: BinaryContent):
+    """Test that version 4 uses blob format for FilePart in ModelResponse (output messages)."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Generate a document')], timestamp=IsDatetime()),
+        ModelResponse(parts=[FilePart(content=document_content)]),
+    ]
+    settings = InstrumentationSettings(version=4)
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'Generate a document'},
+                ],
+            },
+            {
+                'role': 'assistant',
+                'parts': [
+                    {
+                        'type': 'blob',
+                        'modality': 'document',
+                        'mime_type': 'application/pdf',
+                        'content': document_content.base64,
+                    },
+                ],
+            },
+        ]
+    )
+
+
+def test_messages_to_otel_messages_file_part_v4_no_content(document_content: BinaryContent):
+    """Test that version 4 with include_content=False omits content but keeps mime_type for FilePart."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Generate a document')], timestamp=IsDatetime()),
+        ModelResponse(parts=[FilePart(content=document_content)]),
+    ]
+    settings = InstrumentationSettings(version=4, include_content=False)
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text'},
+                ],
+            },
+            {
+                'role': 'assistant',
+                'parts': [
+                    {'type': 'blob', 'modality': 'document', 'mime_type': 'application/pdf'},
+                ],
+            },
+        ]
+    )
 
 
 async def test_instrumented_model_count_tokens(capfire: CaptureLogfire):

@@ -790,18 +790,14 @@ class UserPromptPart:
                 )
             elif isinstance(part, ImageUrl | AudioUrl | DocumentUrl | VideoUrl):
                 if settings.version >= 4:
-                    uri_data: dict[str, Any] = {
-                        'type': 'uri',
-                        'modality': _kind_to_modality_lookup[part.kind],
-                    }
+                    uri_part = _otel_messages.UriPart(type='uri', modality=_kind_to_modality_lookup[part.kind])
+                    try:  # don't fail the whole message if media type can't be inferred for some reason, just omit it
+                        uri_part['mime_type'] = part.media_type
+                    except ValueError:
+                        pass
                     if settings.include_content:
-                        uri_data['uri'] = part.url
-                        try:
-                            uri_data['mime_type'] = part.media_type
-                        except ValueError:
-                            # Could not infer media type from URL - omit mime_type field
-                            pass
-                    parts.append(_otel_messages.UriPart(**uri_data))
+                        uri_part['uri'] = part.url
+                    parts.append(uri_part)
                 else:
                     parts.append(
                         _otel_messages.MediaUrlPart(
@@ -811,14 +807,12 @@ class UserPromptPart:
                     )
             elif isinstance(part, BinaryContent):
                 if settings.version >= 4:
-                    blob_part = _otel_messages.BlobPart(type='blob')
+                    blob_part = _otel_messages.BlobPart(type='blob', mime_type=part.media_type)
                     modality = _infer_modality_from_media_type(part.media_type)
                     if modality is not None:
                         blob_part['modality'] = modality
-                    if settings.include_content:
-                        blob_part['mime_type'] = part.media_type
-                        if settings.include_binary_content:
-                            blob_part['content'] = part.base64
+                    if settings.include_content and settings.include_binary_content:
+                        blob_part['content'] = part.base64
                     parts.append(blob_part)
                 else:
                     converted_part = _otel_messages.BinaryDataPart(type='binary', media_type=part.media_type)
