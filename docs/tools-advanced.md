@@ -189,7 +189,7 @@ print(tool_def.return_schema)
 
 _(This example is complete, it can be run "as is")_
 
-The return schema is automatically generated from the function's return type annotation. If the return type's JSON schema doesn't already include a `description`, one is populated from the function's docstring `Returns` section, consistent with how parameter descriptions are extracted from docstrings.
+The return schema is automatically generated from the function's return type annotation.
 
 When a tool returns [`ToolReturn[T]`][pydantic_ai.messages.ToolReturn], the return schema is inferred from the inner type `T` rather than `ToolReturn` itself. For example, a tool annotated `-> ToolReturn[UserDetails]` will have its return schema derived from `UserDetails`.
 

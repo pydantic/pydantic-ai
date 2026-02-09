@@ -92,7 +92,6 @@ __all__ = (
     'WrapperAgent',
     'AbstractAgent',
     'EventStreamHandler',
-    'ToolDefinition',
 )
 
 
