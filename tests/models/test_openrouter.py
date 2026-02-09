@@ -954,25 +954,26 @@ async def test_openrouter_no_web_search_without_tool(openrouter_api_key: str) ->
 
 
 async def test_openrouter_settings_to_openai_settings_no_web_search_options() -> None:
-    """Test _openrouter_settings_to_openai_settings when web_search_plugin is provided but web_search_options is None."""
+    """Test _openrouter_settings_to_openai_settings when WebSearchTool has no provider_metadata."""
     from typing import Any
 
+    from pydantic_ai.builtin_tools import WebSearchTool
     from pydantic_ai.models.openrouter import (
-        OpenRouterWebSearchPlugin,
         _openrouter_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
     )
 
     settings = OpenRouterModelSettings()
-    web_search_plugin: OpenRouterWebSearchPlugin = {'id': 'web'}
-
-    result = _openrouter_settings_to_openai_settings(
-        settings, web_search_plugin=web_search_plugin, web_search_options=None
+    model_request_parameters = ModelRequestParameters(
+        builtin_tools=[WebSearchTool(search_context_size='high')],
     )
+
+    result = _openrouter_settings_to_openai_settings(settings, model_request_parameters)
 
     extra_body = cast(dict[str, Any], result.get('extra_body', {}))
     assert 'plugins' in extra_body
     assert extra_body['plugins'] == [{'id': 'web'}]
-    assert 'web_search_options' not in extra_body
+    assert 'web_search_options' in extra_body
+    assert extra_body['web_search_options'] == {'search_context_size': 'high'}
 
 
 async def test_openrouter_prepare_request_loop_with_non_websearch_first(openrouter_api_key: str) -> None:
