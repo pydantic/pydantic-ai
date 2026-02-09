@@ -62,8 +62,8 @@ class OllamaProvider(Provider[AsyncOpenAI]):
 
         # As OllamaProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly.
-        # Ollama's native structured output uses `format` with a raw JSON schema; strict mode is not supported (issue #4116).
-        # Ensure native structured output is supported regardless of the model-specific profile default.
+        # Ollama's /v1/chat/completions endpoint supports response_format with json_schema natively.
+        # Strict mode is not supported (issue #4116).
         base = OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_chat_thinking_field='reasoning',

@@ -127,7 +127,7 @@ def test_ollama_provider_model_profile(mocker: MockerFixture):
     assert unknown_profile is not None
     assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
-    # Ollama native structured output uses `format` with raw JSON schema; strict mode is not supported (issue #4116)
+    # Ollama does not support strict mode in tool definitions (issue #4116)
     for model in ('llama3.2', 'qwen3', 'unknown-model'):
         profile = provider.model_profile(model)
         assert profile is not None

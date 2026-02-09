@@ -2401,8 +2401,8 @@ def test_native_output_strict_mode(allow_model_requests: None):
     assert get_mock_chat_completion_kwargs(mock_client)[-1]['response_format']['json_schema']['strict'] is False
 
 
-def test_ollama_native_output_sends_format_in_extra_body(allow_model_requests: None):
-    """With Ollama provider, native structured output sends raw JSON schema in extra_body['format'] (issue #4116)."""
+def test_ollama_native_output_sends_response_format(allow_model_requests: None):
+    """With Ollama provider, native structured output sends response_format with json_schema (issue #4116)."""
     class CityLocation(BaseModel):
         city: str
         country: str
@@ -2417,17 +2417,17 @@ def test_ollama_native_output_sends_format_in_extra_body(allow_model_requests: N
 
     agent.run_sync('What is the capital of France?')
     kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
-    assert 'response_format' not in kwargs
-    assert 'extra_body' in kwargs
-    assert 'format' in kwargs['extra_body']
-    format_schema = kwargs['extra_body']['format']
-    assert isinstance(format_schema, dict)
-    assert format_schema.get('type') == 'object'
-    assert 'properties' in format_schema
-    assert 'city' in format_schema['properties'] and 'country' in format_schema['properties']
+    assert 'response_format' in kwargs
+    response_format = kwargs['response_format']
+    assert response_format['type'] == 'json_schema'
+    json_schema = response_format['json_schema']
+    assert 'schema' in json_schema
+    schema = json_schema['schema']
+    assert schema['type'] == 'object'
+    assert 'city' in schema['properties'] and 'country' in schema['properties']
 
 
-def test_ollama_json_object_output_sends_format_json_in_extra_body(allow_model_requests: None):
+def test_ollama_json_object_output_sends_response_format(allow_model_requests: None):
     class CityLocation(BaseModel):
         city: str
         country: str
@@ -2444,8 +2444,8 @@ def test_ollama_json_object_output_sends_format_json_in_extra_body(allow_model_r
 
     agent.run_sync('What is the capital of France?')
     kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
-    assert 'response_format' not in kwargs
-    assert kwargs['extra_body']['format'] == 'json'
+    assert 'response_format' in kwargs
+    assert kwargs['response_format']['type'] == 'json_object'
 
 
 async def test_ollama_streaming_tools_request_sends_tools_and_stream_options(allow_model_requests: None) -> None:
