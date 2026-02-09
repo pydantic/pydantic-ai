@@ -4846,8 +4846,8 @@ class TestStreamEventsContextManager:
 
         with pytest.raises(RuntimeError, match='model error'):
             async with agent.run_stream_events('test') as stream:
-                async for _ in stream:  # pragma: no cover
-                    pass  # pragma: no cover
+                async for _ in stream:
+                    pass
 
     async def test_context_manager_break_during_tool_streaming(self):
         """Breaking during tool call streaming via context manager cleans up properly."""

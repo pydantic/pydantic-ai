@@ -155,7 +155,7 @@ class StreamEventsResult(Generic[AgentDepsT, OutputDataT]):
                 await self._send_stream.send(event)
         except anyio.BrokenResourceError:
             # Receiver/consumer closed, so we cancel the stream
-            if isinstance(events, AgentStream):
+            if isinstance(events, AgentStream):  # pragma: no branch
                 await events.cancel()
         except asyncio.CancelledError:
             if isinstance(events, AgentStream):  # pragma: no branch
