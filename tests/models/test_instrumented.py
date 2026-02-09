@@ -2038,6 +2038,75 @@ def test_messages_to_otel_messages_file_part_v4_no_content(document_content: Bin
     )
 
 
+def test_messages_to_otel_messages_cache_point_v4():
+    """Test that CachePoint is correctly skipped with version 4."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'text',
+                        CachePoint(),
+                        ImageUrl('https://example.com/image.jpg', media_type='image/jpeg'),
+                        CachePoint(),
+                    ]
+                )
+            ],
+            timestamp=IsDatetime(),
+        ),
+    ]
+    settings = InstrumentationSettings(version=4)
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'text'},
+                    {'type': 'uri', 'modality': 'image', 'mime_type': 'image/jpeg', 'uri': 'https://example.com/image.jpg'},
+                ],
+            }
+        ]
+    )
+
+
+def test_messages_to_otel_messages_builtin_tool_v4():
+    """Test that BuiltinToolCallPart works correctly with version 4."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                TextPart('text'),
+                BuiltinToolCallPart('code_execution', {'code': '2 * 2'}, tool_call_id='tool_call_1'),
+                BuiltinToolReturnPart('code_execution', {'output': '4'}, tool_call_id='tool_call_1'),
+            ]
+        ),
+    ]
+    settings = InstrumentationSettings(version=4)
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'parts': [
+                    {'type': 'text', 'content': 'text'},
+                    {
+                        'type': 'tool_call',
+                        'id': 'tool_call_1',
+                        'name': 'code_execution',
+                        'builtin': True,
+                        'arguments': {'code': '2 * 2'},
+                    },
+                    {
+                        'type': 'tool_call_response',
+                        'id': 'tool_call_1',
+                        'name': 'code_execution',
+                        'builtin': True,
+                        'result': {'output': '4'},
+                    },
+                ],
+            }
+        ]
+    )
+
+
 async def test_instrumented_model_count_tokens(capfire: CaptureLogfire):
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hello, world!')], timestamp=IsDatetime())]
     model = InstrumentedModel(MyModel())
