@@ -50,7 +50,7 @@ Then running `clai` will start an interactive session where you can chat with th
 | Option | Description |
 |--------|-------------|
 | `prompt` | AI prompt for one-shot mode (positional). If omitted, starts interactive mode. |
-| `-m`, `--model` | Model to use in `provider:model` format (e.g., `openai:gpt-5`) |
+| `-m`, `--model` | Model to use in `provider:model` format (e.g., `openai:gpt-5.2`) |
 | `-a`, `--agent` | Custom agent in `module:variable` format |
 | `-t`, `--code-theme` | Syntax highlighting theme (`dark`, `light`, or [pygments theme](https://pygments.org/styles/)) |
 | `--no-stream` | Disable streaming from the model |
@@ -62,7 +62,7 @@ Then running `clai` will start an interactive session where you can chat with th
 You can specify which model to use with the `--model` flag:
 
 ```bash
-clai --model anthropic:claude-sonnet-4-0
+clai --model anthropic:claude-sonnet-4-5
 ```
 
 (a full list of models available can be printed with `clai --list-models`)
@@ -74,7 +74,7 @@ You can specify a custom agent using the `--agent` flag with a module path and v
 ```python {title="custom_agent.py" test="skip"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5', instructions='You always respond in Italian.')
+agent = Agent('openai:gpt-5.2', instructions='You always respond in Italian.')
 ```
 
 Then run:
@@ -93,7 +93,7 @@ Additionally, you can directly launch CLI mode from an `Agent` instance using `A
 ```python {title="agent_to_cli_sync.py" test="skip" hl_lines=4}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5', instructions='You always respond in Italian.')
+agent = Agent('openai:gpt-5.2', instructions='You always respond in Italian.')
 agent.to_cli_sync()
 ```
 
@@ -102,7 +102,7 @@ You can also use the async interface with `Agent.to_cli()`:
 ```python {title="agent_to_cli.py" test="skip" hl_lines=6}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5', instructions='You always respond in Italian.')
+agent = Agent('openai:gpt-5.2', instructions='You always respond in Italian.')
 
 async def main():
     await agent.to_cli()
@@ -124,7 +124,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 
 # Create some conversation history
 message_history: list[ModelMessage] = [
@@ -143,7 +143,7 @@ The CLI will start with the provided conversation history, allowing the agent to
 Launch a web-based chat interface by running:
 
 ```bash
-clai web -m openai:gpt-5
+clai web -m openai:gpt-5.2
 ```
 
 This will start a web server (default: http://127.0.0.1:7932) with a chat interface.
@@ -153,7 +153,7 @@ You can also serve an existing agent. For example, if you have an agent defined 
 ```python
 from pydantic_ai import Agent
 
-my_agent = Agent('openai:gpt-5', instructions='You are a helpful assistant.')
+my_agent = Agent('openai:gpt-5.2', instructions='You are a helpful assistant.')
 ```
 
 Launch the web UI:
@@ -163,13 +163,13 @@ Launch the web UI:
 clai web --agent my_module:my_agent
 
 # With specific models (first is default when no --agent)
-clai web -m openai:gpt-5 -m anthropic:claude-sonnet-4-5
+clai web -m openai:gpt-5.2 -m anthropic:claude-sonnet-4-5
 
 # With builtin tools
-clai web -m openai:gpt-5 -t web_search -t code_execution
+clai web -m openai:gpt-5.2 -t web_search -t code_execution
 
 # Generic agent with system instructions
-clai web -m openai:gpt-5 -i 'You are a helpful coding assistant'
+clai web -m openai:gpt-5.2 -i 'You are a helpful coding assistant'
 
 # Custom agent with extra instructions for each run
 clai web --agent my_module:my_agent -i 'Always respond in Spanish'

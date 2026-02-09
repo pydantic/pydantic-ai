@@ -415,7 +415,7 @@ class ExaToolset(FunctionToolset):
     from pydantic_ai.common_tools.exa import ExaToolset
 
     toolset = ExaToolset(api_key='your-api-key')
-    agent = Agent('openai:gpt-4o', toolsets=[toolset])
+    agent = Agent('openai:gpt-5.2', toolsets=[toolset])
     ```
     """
 

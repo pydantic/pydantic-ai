@@ -17,7 +17,7 @@ You can set the `OPENROUTER_API_KEY` environment variable and use [`OpenRouterPr
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openrouter:anthropic/claude-3.5-sonnet')
+agent = Agent('openrouter:anthropic/claude-sonnet-4-5')
 ...
 ```
 
@@ -29,7 +29,7 @@ from pydantic_ai.models.openrouter import OpenRouterModel
 from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 model = OpenRouterModel(
-    'anthropic/claude-3.5-sonnet',
+    'anthropic/claude-sonnet-4-5',
     provider=OpenRouterProvider(api_key='your-openrouter-api-key'),
 )
 agent = Agent(model)
@@ -69,7 +69,7 @@ settings = OpenRouterModelSettings(
         'include': True,
     }
 )
-model = OpenRouterModel('openai/gpt-5')
+model = OpenRouterModel('openai/gpt-5.2')
 agent = Agent(model, model_settings=settings)
 ...
 ```
