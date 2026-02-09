@@ -945,7 +945,7 @@ async def process_tool_calls(  # noqa: C901
                     ctx.state.increment_retries(
                         ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
                     )
-                    raise e  # pragma: lax no cover
+                    raise  # pragma: lax no cover
 
             if not validated.args_valid:
                 # Validation failed
