@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, Discriminator
@@ -648,9 +648,6 @@ class OpenRouterModel(OpenAIChatModel):
                 web_search_plugin['search_prompt'] = openrouter_metadata['search_prompt']
 
             web_search_options = {'search_context_size': web_search_tool.search_context_size}
-            model_request_parameters = replace(
-                model_request_parameters, builtin_tools=model_request_parameters.builtin_tools
-            )
 
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
         new_settings = _openrouter_settings_to_openai_settings(
