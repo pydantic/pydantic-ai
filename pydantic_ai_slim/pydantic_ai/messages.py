@@ -1524,10 +1524,19 @@ class ModelResponse:
                     )
                 )
             elif isinstance(part, FilePart):
-                converted_part = _otel_messages.BinaryDataPart(type='binary', media_type=part.content.media_type)
-                if settings.include_content and settings.include_binary_content:
-                    converted_part['content'] = part.content.base64
-                parts.append(converted_part)
+                if settings.version >= 4:
+                    blob_part = _otel_messages.BlobPart(type='blob', mime_type=part.content.media_type)
+                    modality = _infer_modality_from_media_type(part.content.media_type)
+                    if modality is not None:
+                        blob_part['modality'] = modality
+                    if settings.include_content and settings.include_binary_content:
+                        blob_part['content'] = part.content.base64
+                    parts.append(blob_part)
+                else:
+                    converted_part = _otel_messages.BinaryDataPart(type='binary', media_type=part.content.media_type)
+                    if settings.include_content and settings.include_binary_content:
+                        converted_part['content'] = part.content.base64
+                    parts.append(converted_part)
             elif isinstance(part, BaseToolCallPart):
                 call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
                 if isinstance(part, BuiltinToolCallPart):
