@@ -360,4 +360,4 @@ is required. You may notice the following in your [message history](../message-h
 - `ModelResponse` objects with `finish_reason='incomplete'` for paused responses
 - `ModelRequest` objects with empty `parts` for the automatic continuation requests
 
-Continuations are capped at 5 per run to prevent unbounded requests if a provider keeps pausing
+Continuations are capped at 5 per run by default to prevent unbounded requests if a provider keeps pausing. You can configure this limit via the [`max_continuations`][pydantic_ai.settings.ModelSettings.max_continuations] model setting.

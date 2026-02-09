@@ -627,7 +627,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         elif isinstance(part, _messages.BuiltinToolReturnPart):
                             yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
 
-                    max_continuations = 5
+                    max_continuations = (ctx.deps.model_settings or {}).get('max_continuations', 5)
                     ctx.state.continuations += 1
                     if ctx.state.continuations > max_continuations:
                         raise exceptions.UnexpectedModelBehavior(

@@ -181,6 +181,16 @@ class ModelSettings(TypedDict, total=False):
     * Outlines (all providers)
     """
 
+    max_continuations: int
+    """Maximum number of continuation requests for incomplete responses (e.g. Anthropic `pause_turn`).
+
+    Defaults to 5 if not specified.
+
+    Supported by:
+
+    * Anthropic
+    """
+
 
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:
     """Merge two sets of model settings, preferring the overrides.

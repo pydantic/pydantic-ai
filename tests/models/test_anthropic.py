@@ -288,27 +288,44 @@ async def test_pause_turn_continues_run(allow_model_requests: None):
     result = await agent.run('test prompt')
 
     assert result.output == 'final'
-
-    pause_response = next(
-        m
-        for m in result.all_messages()
-        if isinstance(m, ModelResponse) and (m.provider_details or {}).get('finish_reason') == 'pause_turn'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='test prompt', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='paused')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5, details={'input_tokens': 10, 'output_tokens': 5}),
+                model_name='claude-3-5-haiku-123',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'pause_turn'},
+                provider_response_id='123',
+                finish_reason='incomplete',
+                run_id=IsStr(),
+            ),
+            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content='final')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5, details={'input_tokens': 10, 'output_tokens': 5}),
+                model_name='claude-3-5-haiku-123',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
     )
-    assert pause_response.finish_reason == 'incomplete'
-
-    all_kwargs = get_mock_chat_completion_kwargs(mock_client)
-    assert len(all_kwargs) == 2
-    messages_2 = all_kwargs[1]['messages']
-    assert len(messages_2) == 2
-    assert messages_2[1]['role'] == 'assistant'
-    content_blocks = messages_2[1]['content']
-    assert isinstance(content_blocks, list)
-    assert content_blocks[0]['type'] == 'text'
-    assert content_blocks[0]['text'] == 'paused'
 
 
 async def test_pause_turn_exceeds_max_continuations(allow_model_requests: None):
-    """Test that exceeding 5 consecutive pause_turn responses raises UnexpectedModelBehavior."""
+    """Test that exceeding the default max continuations (5) raises UnexpectedModelBehavior."""
     responses: list[BetaMessage | Exception] = []
     for _ in range(6):
         c = completion_message([BetaTextBlock(text='paused', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
@@ -321,6 +338,22 @@ async def test_pause_turn_exceeds_max_continuations(allow_model_requests: None):
 
     with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum continuations'):
         await agent.run('test prompt')
+
+
+async def test_pause_turn_exceeds_custom_max_continuations(allow_model_requests: None):
+    """Test that a custom max_continuations setting is respected."""
+    responses: list[BetaMessage | Exception] = []
+    for _ in range(3):
+        c = completion_message([BetaTextBlock(text='paused', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+        c.stop_reason = 'pause_turn'
+        responses.append(c)
+
+    mock_client = MockAnthropic.create_mock(responses)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum continuations \\(2\\)'):
+        await agent.run('test prompt', model_settings=ModelSettings(max_continuations=2))
 
 
 async def test_pause_turn_web_search_vcr(allow_model_requests: None, anthropic_api_key: str):
@@ -348,7 +381,6 @@ async def test_pause_turn_web_search_vcr(allow_model_requests: None, anthropic_a
         '14) "latest news on the quantum computing in San Francisco today", '
         '15) "latest news on the stock market in San Francisco today", '
         'After the searches, provide a concise summary.'
-        'you can return a pause_turn response if you need to wait for the searches to complete.'
     )
 
     result = await agent.run(prompt)
