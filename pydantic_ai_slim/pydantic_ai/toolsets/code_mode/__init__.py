@@ -18,12 +18,11 @@ from pydantic_ai.runtime.abstract import (
     FunctionCall,
     ToolCallback,
 )
-from pydantic_ai.runtime.monty import MontyRuntime
 
 from ... import exceptions
 from ..._run_context import AgentDepsT, RunContext
 from ..._tool_manager import ToolManager
-from ...exceptions import ApprovalRequired, CallDeferred, ModelRetry
+from ...exceptions import ApprovalRequired, ModelRetry
 from ...messages import ToolCallPart
 from ...tools import ToolApproved, ToolDefinition, ToolDenied
 from ..abstract import SchemaValidatorProt, ToolsetTool
@@ -104,6 +103,13 @@ __all__ = (
     'CodeModeContext',
     'InterruptedCall',
 )
+
+
+def _default_runtime() -> CodeRuntime:
+    """Lazy default factory: imports MontyRuntime only at instantiation time."""
+    from pydantic_ai.runtime.monty import MontyRuntime
+
+    return MontyRuntime()
 
 
 class _CodeToolArguments(TypedDict):
@@ -263,7 +269,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 callback after deserialization.
     """
 
-    runtime: CodeRuntime = field(default_factory=MontyRuntime)
+    runtime: CodeRuntime = field(default_factory=_default_runtime)
     prompt_builder: Callable[..., str] = build_code_mode_prompt
     max_retries: int = 3
     tool_name_prefix: str | None = None
@@ -460,11 +466,15 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     ) -> Any:
         code = tool_args['code']
         if name != _CODE_MODE_TOOL_NAME:
-            raise exceptions.UserError(f'CodeModeToolset.call_tool expected tool name {_CODE_MODE_TOOL_NAME!r}, got {name!r}')
+            raise exceptions.UserError(
+                f'CodeModeToolset.call_tool expected tool name {_CODE_MODE_TOOL_NAME!r}, got {name!r}'
+            )
         if not isinstance(tool, _CodeModeTool):
             raise exceptions.UserError(f'CodeModeToolset.call_tool expected _CodeModeTool, got {type(tool).__name__}')
         if not isinstance(code, str):
-            raise exceptions.UserError(f'CodeModeToolset.call_tool expected code to be a string, got {type(code).__name__}')
+            raise exceptions.UserError(
+                f'CodeModeToolset.call_tool expected code to be a string, got {type(code).__name__}'
+            )
 
         original_name_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         sanitized_to_original: dict[str, str] = {}
