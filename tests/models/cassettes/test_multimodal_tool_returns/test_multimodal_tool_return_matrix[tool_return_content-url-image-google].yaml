@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '920'
+      - '900'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2198
+      - gfet4t7; dur=1557
       transfer-encoding:
       - chunked
       vary:
@@ -54,13 +54,13 @@ interactions:
           - functionCall:
               args: {}
               name: get_file
-            thoughtSignature: CsACAXLI2nzZtjSuuOlnkKllBISaRa+/Di3jsWcvhUTgFMbW6LF4dH7RAkp9TuaZK1C3fAuRQlD88/ZSzadi14Idff4FmYb3mDhXEe6aq6Q1sbR+eQyW4WMUl1PVfhadsqvrzLgVVS/qPC9HqSnmKUs3nFraFfb7ypRJzamOzvjjsIhHjeWtvSUxk4FCCn+t9wASdIvl9RBsFw8pUlUjzV4kCjVCqUvoHwVCvtfAyRCeNmmzVqTNcwH1aqVcf8HEm/YuoNynY/3T3J8YHB3ut+1+7F+zySsCWbrjkS0EsTl4JmybGsepFYB89fkrIe9IiQKWos2Upz6NIfjS1D2o6IpubuT3oseUs4YTl5qRZeSga6wDntaBdWMB3G9wv7ELVKWy6YIhMz9VTf1QwMKH3jcuVsjeenWbPI8QXmzuleExXZ0=
+            thoughtSignature: CrICAb4+9vthYDBHQfmjwjVh0sO9H68ATeDtL0egBxWKijCcZF0SVypwfIe7oOiBx1MZDSZAZOOX10nORe9F3KQSu5QvcpcQjCNsfwB3a5pOyn0h7xoRLS5W9m68mgoqhrvEVAOKODzeYwLa5aetu8UkQV3qUcn4ObRlPF094SgIEapCmkAHOuER61MfD7+CldfdIZpfN7odFWMjXIlfYYho3rCWnBGXGOTp1Tum/jgoASRM/Aye45BY0RY2OYhVcBlgLiqvLWdA0+RApqOtCoNUJYgzCEjEPJQUvvViVY4nMFGDY7VEKi08/55VgTmkqJvODFbKD0nMteYsMvpxq/GcDubocI/ZoJvCB9QkB0c4jCu2gEAPb57fxHnaErADH9ve/vVLWNwTTcCJUw9nSbr8jo0n
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: 1FV8abiBIoClqtsPqqvSyAI
+      responseId: BhCKab_QFqLTz7IPyr71gAU
       usageMetadata:
         candidatesTokenCount: 10
         promptTokenCount: 41
@@ -84,7 +84,7 @@ interactions:
       host:
       - www.gstatic.com
     method: GET
-    uri: https://www.gstatic.com/webp/gallery3/1.png
+    uri: https://172.217.30.195/webp/gallery3/1.png
   response:
     body:
       string: !!binary |
@@ -2081,7 +2081,7 @@ interactions:
       accept-ranges:
       - bytes
       age:
-      - '50411'
+      - '178'
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       cache-control:
@@ -2097,7 +2097,7 @@ interactions:
       cross-origin-resource-policy:
       - cross-origin
       expires:
-      - Fri, 29 Jan 2027 16:55:06 GMT
+      - Tue, 09 Feb 2027 16:46:12 GMT
       last-modified:
       - Fri, 23 Apr 2021 09:38:00 GMT
       report-to:
@@ -2116,7 +2116,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '152330'
+      - '152310'
       content-type:
       - application/json
       host:
@@ -2130,13 +2130,13 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_ddce99f995c94531ba7946d9973a5bdc
+            id: pyd_ai_fe6d215ab45d4f188b522570b2d23b5e
             name: get_file
-          thoughtSignature: CsACAXLI2nzZtjSuuOlnkKllBISaRa-_Di3jsWcvhUTgFMbW6LF4dH7RAkp9TuaZK1C3fAuRQlD88_ZSzadi14Idff4FmYb3mDhXEe6aq6Q1sbR-eQyW4WMUl1PVfhadsqvrzLgVVS_qPC9HqSnmKUs3nFraFfb7ypRJzamOzvjjsIhHjeWtvSUxk4FCCn-t9wASdIvl9RBsFw8pUlUjzV4kCjVCqUvoHwVCvtfAyRCeNmmzVqTNcwH1aqVcf8HEm_YuoNynY_3T3J8YHB3ut-1-7F-zySsCWbrjkS0EsTl4JmybGsepFYB89fkrIe9IiQKWos2Upz6NIfjS1D2o6IpubuT3oseUs4YTl5qRZeSga6wDntaBdWMB3G9wv7ELVKWy6YIhMz9VTf1QwMKH3jcuVsjeenWbPI8QXmzuleExXZ0=
+          thoughtSignature: CrICAb4-9vthYDBHQfmjwjVh0sO9H68ATeDtL0egBxWKijCcZF0SVypwfIe7oOiBx1MZDSZAZOOX10nORe9F3KQSu5QvcpcQjCNsfwB3a5pOyn0h7xoRLS5W9m68mgoqhrvEVAOKODzeYwLa5aetu8UkQV3qUcn4ObRlPF094SgIEapCmkAHOuER61MfD7-CldfdIZpfN7odFWMjXIlfYYho3rCWnBGXGOTp1Tum_jgoASRM_Aye45BY0RY2OYhVcBlgLiqvLWdA0-RApqOtCoNUJYgzCEjEPJQUvvViVY4nMFGDY7VEKi08_55VgTmkqJvODFbKD0nMteYsMvpxq_GcDubocI_ZoJvCB9QkB0c4jCu2gEAPb57fxHnaErADH9ve_vVLWNwTTcCJUw9nSbr8jo0n
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_ddce99f995c94531ba7946d9973a5bdc
+            id: pyd_ai_fe6d215ab45d4f188b522570b2d23b5e
             name: get_file
             response:
               return_value: File attached
@@ -2163,11 +2163,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1727'
+      - '2206'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=3205
+      - gfet4t7; dur=2847
       transfer-encoding:
       - chunked
       vary:
@@ -2178,26 +2178,26 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: I received an image of a yellow-orange rose, with many small water droplets visible on its petals, especially
-              on the top, slightly pinkish-tinged petal. The rose is in bloom, with many layers of petals visible. It appears
-              to be on a stem with a few green leaves. The background is a mix of horizontal green and brown stripes, suggesting
-              a natural, possibly out-of-focus, environment.
-            thoughtSignature: CqEFAXLI2nyi/Np52ws535lQRXSfqDKfK6rPAVvjvbNw0VC+QFHFwlw6KRrNCR9kNDJkCT1egW5LIPSHivOiExrbj0G6CXm5U33bHhrahZMlkC5C8zAr+UbyVLQVOtazjfqQ/poxKeluVV2BcNdyNmkP2dngTMoyqWBx2OJ6Tbw+78p3zc+uVb5U0vu93cvqtzl5SjatSZFcBthyT9JcPau6iF2Ln+mbFwcQQ7j6tx7qCgdZ/0kW1CxU4wuzWqru/nuJcV2WzBs9ll4d8c0MCsmT3ZKo/gaEEQ+5Iuh/5ayWIDmYj2mQvTm+CAf9j4xpykxZ1G72X/4ZpUNDHXfNwC8oliLyKk4gqiMSBwRBMlYc7TymUP/P4+SBYM5iYCyoDQNrYcxiRrECudCAdtOJND33KV/jxDrm9EqYgD2vsWO3lV4blLrK6GshhxzpyQUyffAyCk2HMT+NgfT07nrTYmWeo3EZP3e/lhspP2A9Gs9ZWlvDTIcd5bxIkNnNWchCS5p5+CycsxeXjky8FAfrUyUEozBaYNcHGAIz/1qDiTG+fikZHKwdXPf4fVxLA4jYf5b6oMYDNDPkCF8miH1isV0FI6R5nOUg+1wgAq/v6NtwkN0Dt1HfhO0rAC2KI/mSiz3npv4OFVStjjTrc0eVeWygpuqiDaIDUH1ZVuxAuL3s48q1kHhbj9oA6lWpAa96SqsQDwdXMZBL0pxPApu25yuSDhQVlWC7zp4kjjpr5rdU7fsounwx+n1Djuz3WrGOZVA3RW8pflatGTSDqSqb/7OrQlBnE43fPWEKy0DSHeIOhpWXuWtofWBnWHcfonDLG093Nb3Uo6epGyLSAGGcfVXW3JYR/L9dS3qJqR3198CgFCdUrf70WFlGzUN+gyIUfcZp2Q==
+          - text: I received an image of a rose. The rose is predominantly orange and yellow, with some pinkish-orange hues
+              on the outer petals, especially on one petal near the top that has visible water droplets on it. The rose is
+              in bloom, with its petals unfurling. A stem is visible extending from the upper right of the rose. The background
+              of the full image consists of horizontal, blurred lines in shades of green and brown.
+            thoughtSignature: CvIHAb4+9vuDbrkPMtnU7Sy8EENtxtOHDI3/MVfioabknpyMvGN5BMZiCjBYog1Zj7/kYfIkQYQf0yMXcEwNt10KSLMxBKPtsyDD8Oqw0rH4JlVKxFFNHBBaoVXY5eoSADvygZsZw8AF3u3xMevqaIfOUtH7vLN0sufSegf+O9/Ax/EQe/kvyPgCVisvR5e8h05+i8GiOqcxsDkKeWax59qkRUgZ42/NYotbclWArUq49cPvPkDGzacpXlfskZsq1aNi1JG5XohHHAR6gGeHOHTPSe7Z9P68bzFm4Yvd/ZpQhTpBtvfdBIRF0oNs3Pl4aWTvwfPrLVRa97181PziYL4uH7AobDjdWpWpaLipaCbUIgCelEjRv/jVC4nXkbYzJ1up4c0bQElqsxGuarbAK7DNT2rKKchcJAX+4fs/70JmQgeEK9dIe0V7JNJq7hfneQUnsu8fyUftDsopdRsncliFlSW2qgTjO6oB0AdnLC5ac5rClrxo2PQcR6ceezcRdHNB92b2M8cxRVhvlIC2JSnqvkvZR5JuMeZqEEvrtvCkpm8+7pGqCM+sXXyvlOHs7Cs5+H9V0Tnfi+MFPfzLgYZa9h6hgAktpXlH/Fw2CQhEggbtKoCUT1ttE8hAQZCUOUiOaMP+rJpvoqbn4FonTAe6E+4jraAj5Soodwtz30b2yjMj0TTqIvUoZVYurADce2qIAKvTaqWCklD4wNANe9+0BDMUd5i1MPML7yLeGZa13IyJoEfrYVhsnuXUgYBocCHSF+GVRs74osTWNk7GxMoy7icwH0G7bQ4i2NSpOJ21m00orci0+n6u5ZaxY1tfzy34QOBNEuMLQr6LM2lTnw7W9rsgzqZn7guR8Tn7AeILAXCyCeqQSLT06rL05X9cyMrX3CvkQEgrIpSE2Nu/xEBhnc8HLmim5F9ycmavFm54K1UjsBdVAaP5k2FhKGeCuY3suABbkkACujhHYikKo3m+5HroR4IH9nREdGnb/wWF+Mr7x+PplT8wqUtF28tf9b1O85QcG4BAE3sygFpaYSZWjXtgb18voKAYXiEkug1cOu78wOCifHlwlZB4Xm2BKG9s7HC/DmArXDsdfX4vGiG2epoh8jxTiKD4F2jEP7jCNift78OYb3BA+TDbsU2+Xza3KWK3fzh0odev+VnVYuQVOVtayTTakBLFTA9+b8S+vAkwNtQ8d8bbJmx5cqRoVkxdjft3W2v2FyyKsBipdwKHhdiCAQxZwzfaZBFqdOeslpsNBJwNfVzaMSpENO1Z4i+nuNSqTWmPm5DbIqPMYGBsZaALCvdGCgVhdTP73WFfw8EGUoewyxf0AYFK+qLQxWhPOi4=
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: 2VV8ab7hAbewqtsP46qH2AM
+      responseId: CRCKabqIHs3Sz7IP-bDb-Qc
       usageMetadata:
-        candidatesTokenCount: 85
+        candidatesTokenCount: 88
         promptTokenCount: 328
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 70
         - modality: IMAGE
           tokenCount: 258
-        thoughtsTokenCount: 146
-        totalTokenCount: 559
+        thoughtsTokenCount: 209
+        totalTokenCount: 625
     status:
       code: 200
       message: OK

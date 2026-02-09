@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1741'
+      - '4997'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1781
+      - gfet4t7; dur=4713
       transfer-encoding:
       - chunked
       vary:
@@ -54,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_file
-            thoughtSignature: CqcHAXLI2nwc3E0ovOclBHrcT+sG9yvnddJeHZ6YA5+7TASnxor2cjdW4e+u0B+NBdfMbElTtD76bvnrZphkDSAQomeeLwVtH3V4Qa6bO+dBSkm8KzcB5eQ5LsZA1HybAXGIq5JqtO0//y5qNkVSZ7iaA9NNK5O5/lwfxrTjpc3dL6lpKeXUW9p2swGlXOmptE6qNfzZR/BeRvip4sl1aH1XEIE4yM6uXHMxPXSCGsHoT9v4bVi0rPc4c4+X6vEYoMeMg1Dsc4DV6lNy5jYeaDW0sSuJFD6DoLIKGs7O8oP/mfGKKd99BCStXL6OZyGZTJhdUkT5U8uPcPbbe4G4AbPi53A7SCQkJh8VCZYdX5EVKahL34fuL0aQCHFr5rkayOXbQOLAqcx5xeOIiIIWfJnVpLi2uDCc22e5YL3tYGjBB/T63CBAinvivfhNt5A7eeb0e7nhjpuR9nsmlYCiuRALLdgXIZI49PBTGTLWUcK0jkYaVK0+0VcW+cC1G7QIj1MM0XMgI+/5uYDkbQHTj0CzOleMWpZUSQQd8CQav/KlJjSKpqaTkTC9FmrW3cZQStACFnHM9qmO7zDUE1ZntK3YPwA4i2lP2cEV6ywzkrrKmkPxBYuiOEajkWoGcats/syw9K9nR+pifbj6xphkF3P47HQfeBFyAaFLTze2H1q14H+HO9zeHogx8uNlr0yjnoCYRHnIrJHwmNPy1aYXkzpGkblI+rRY5wqTeVgN2aD5vuI3jJJ5d5y5ouvXdGHo0zvO3hEF1gs0NyV438svjLMvAyfU0gCRMVfcZjA54FQgMIcwr1KVzui6l3VywOD8xEbgrRCCrovgNGjGJfZX9Nk3VQZSPAFtojyB4l/hPTxpA5XMguSC8a8y4IKeJsw1TWqy/Cf/VnDtu/qeV++HktwXkF1tM+QWEs9m86R3i4Tctyy8sE4ABX1OzECXqLHUmK9A2Yew0lChWO4Gu4k8Kvk+hraBS7vhJwv0nzwivmrS+vOtRnu/Bq/4IjaLNRA2RKuQCWKiXVQMoapC8RTo0WMsFFrWXmmgSJiscdFOC96yo36lKhj1DwA18sulJGLTMrF3whp6G4TT79Y3yNyj7pUgADRsVPz1e+0sdM++9rIXUffagLhuY+Khz+BgKYUOQsG2pY329H/SdXh8b46qK4nvlT0Az+gu8b7ypkxlMCxCz8Co2EEa0m2RgEbaTk8l+5fZmvLoLiTl8561G/0bGn+YhpmVfjDkFoo=
+            thoughtSignature: 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
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: __d8aZWUHZWcz7IP2f3nkAQ
+      responseId: ZxCKafi1LaDVz7IP5cO98A0
       usageMetadata:
         candidatesTokenCount: 10
         promptTokenCount: 41
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 41
-        thoughtsTokenCount: 216
-        totalTokenCount: 267
+        thoughtsTokenCount: 798
+        totalTokenCount: 849
     status:
       code: 200
       message: OK
@@ -84,7 +84,7 @@ interactions:
       host:
       - www.gstatic.com
     method: GET
-    uri: https://www.gstatic.com/webp/gallery3/1.png
+    uri: https://172.217.30.195/webp/gallery3/1.png
   response:
     body:
       string: !!binary |
@@ -2081,7 +2081,7 @@ interactions:
       accept-ranges:
       - bytes
       age:
-      - '91925'
+      - '275'
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       cache-control:
@@ -2097,7 +2097,7 @@ interactions:
       cross-origin-resource-policy:
       - cross-origin
       expires:
-      - Fri, 29 Jan 2027 16:55:06 GMT
+      - Tue, 09 Feb 2027 16:46:12 GMT
       last-modified:
       - Fri, 23 Apr 2021 09:38:00 GMT
       report-to:
@@ -2116,7 +2116,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '153150'
+      - '156406'
       content-type:
       - application/json
       host:
@@ -2130,13 +2130,13 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_d63cbcac181247c092b619b39798dfdd
+            id: pyd_ai_dd7b480a762a4343b35b99fb9c9524b2
             name: get_file
-          thoughtSignature: CqcHAXLI2nwc3E0ovOclBHrcT-sG9yvnddJeHZ6YA5-7TASnxor2cjdW4e-u0B-NBdfMbElTtD76bvnrZphkDSAQomeeLwVtH3V4Qa6bO-dBSkm8KzcB5eQ5LsZA1HybAXGIq5JqtO0__y5qNkVSZ7iaA9NNK5O5_lwfxrTjpc3dL6lpKeXUW9p2swGlXOmptE6qNfzZR_BeRvip4sl1aH1XEIE4yM6uXHMxPXSCGsHoT9v4bVi0rPc4c4-X6vEYoMeMg1Dsc4DV6lNy5jYeaDW0sSuJFD6DoLIKGs7O8oP_mfGKKd99BCStXL6OZyGZTJhdUkT5U8uPcPbbe4G4AbPi53A7SCQkJh8VCZYdX5EVKahL34fuL0aQCHFr5rkayOXbQOLAqcx5xeOIiIIWfJnVpLi2uDCc22e5YL3tYGjBB_T63CBAinvivfhNt5A7eeb0e7nhjpuR9nsmlYCiuRALLdgXIZI49PBTGTLWUcK0jkYaVK0-0VcW-cC1G7QIj1MM0XMgI-_5uYDkbQHTj0CzOleMWpZUSQQd8CQav_KlJjSKpqaTkTC9FmrW3cZQStACFnHM9qmO7zDUE1ZntK3YPwA4i2lP2cEV6ywzkrrKmkPxBYuiOEajkWoGcats_syw9K9nR-pifbj6xphkF3P47HQfeBFyAaFLTze2H1q14H-HO9zeHogx8uNlr0yjnoCYRHnIrJHwmNPy1aYXkzpGkblI-rRY5wqTeVgN2aD5vuI3jJJ5d5y5ouvXdGHo0zvO3hEF1gs0NyV438svjLMvAyfU0gCRMVfcZjA54FQgMIcwr1KVzui6l3VywOD8xEbgrRCCrovgNGjGJfZX9Nk3VQZSPAFtojyB4l_hPTxpA5XMguSC8a8y4IKeJsw1TWqy_Cf_VnDtu_qeV--HktwXkF1tM-QWEs9m86R3i4Tctyy8sE4ABX1OzECXqLHUmK9A2Yew0lChWO4Gu4k8Kvk-hraBS7vhJwv0nzwivmrS-vOtRnu_Bq_4IjaLNRA2RKuQCWKiXVQMoapC8RTo0WMsFFrWXmmgSJiscdFOC96yo36lKhj1DwA18sulJGLTMrF3whp6G4TT79Y3yNyj7pUgADRsVPz1e-0sdM--9rIXUffagLhuY-Khz-BgKYUOQsG2pY329H_SdXh8b46qK4nvlT0Az-gu8b7ypkxlMCxCz8Co2EEa0m2RgEbaTk8l-5fZmvLoLiTl8561G_0bGn-YhpmVfjDkFoo=
+          thoughtSignature: CrAaAb4-9vsmfibPwxtx1e15yPhh3c9sUwzAfR93hYz517yXLf1qc9LHrZJL9zOlfgWghEGYooszNp3oOS3ZIBopp0ofjqHET04nMp1MjlbKqj5ZrSy3EdnErMiR6ORv_XNQDY1n4M4H-BgFeWtUtQuZCp8AxAfTZzJQKdx6ogBO_NKL3IRHm0Hwfw9Rki1bqqFglxWKPjkGrUlzjB4rhQiHUmaMfV3SxlUUjpbCLEA44o4gP4VDy0f0QK_GNc2uPlWic2-UaJRhtpFqb6TqHEIL9iwnsvPwKeqijXYYgKS60xqn7Y4BocVBPGq4erP9eBUb0SrPGpSTvUKFrZlSbvXOciTTwwCRgKqEvsvepkzkdMtTB4gt2HwM6FFiE0dCyuXF2iy2zOWEpGhGAtePKDw_VaU69xWi9TDI_xLhdtsV0nPrvXxIY1scZEFmsh-RVEIC3pFVO7tva-4CxBcZLiAhYzKXiP1ZUYUWg5GCiTtcpgnvM1IAAlEvBRAfF7FhXqGaFG-0uj5PsaBlpHqvRqGyPLtqcALYbA7t_2yQOPNHPb9QosDl74B1AxqTRVna-GJIbIUUHEgur2Dlq6DP-2U8SjVmxdV4G8KevhrRU0aIrcP8kyfEEmDszWimO2fESTQu6RtzzQtFaz-LzFqnYfq9P6aatjQWOh3vXn22Snk5YRo8uEQsY41KGpKEJFGynt6QZqoRLDWGz37_iHylr-AqS3PUdpbv137dzmApStRwXTamY27IfY-YQb1Qz-ZRzqm07JeZCiWkb-pbizTaaEseJnibH3gZMj4uozxNuceBDZJ2RRSaYtnkiW-RU2aM0epf7aofpKsM5h2AWSFQPIhU8emiPNeCoZleBrhQ9sfDkcPqQsOzZtpSOel2ABJ7XCQ7zS96VuOOJnGax5ws4xgTTgnWcdPYh_amWjtT8ZUHmZZLseX4P36X3pXC9nn5mOmSyqV5WhRUuJ-BunZSfCLkSr94jQop8bczivYMOgMKWF-w0z9TCIcQbiZem3QWEQbE2Egiljo7iM5fcZJpu5HPKhJQzjio3fbGz9nyl5jNfzC9AAqQxTLZ9-LpKpOFM6IZ6AwOaHP9saFrPFU3d6XFWSvVqGxRQGUetOuhzwtekhvWFnW3xBh1-kwXoa-rLPvmIi73l0Be03PUXSLvzstl13XpF8uNZrN2yiNZVN9yyo0cDLd5YsAgQl8T5RexOEYOLrgPGjXh6f82d052XIM6UTuekmJ8zxIY8eYUf_Md5iysx6iyHm_4nbPkUHqWHhgsW3UUrEHlkD-T47d1Gl9ixcORWVb8yoABzNOGxWLR_ohXouxa73f_bozDmxlrNCjX3oOh5-HuPWoitUou8K-h4DXG_osZddQQuSwhrtUkilw9-1wZLcf1msc8BkQiMYy8pGLJ5o_fTtr4Ef_Q0lFqcL7i6oq9trxNvW1VEAgJHi2tXlXSU9NLieascXQpc1kMYhFDyTzVIf6Ory7g9I2-q22MDDGCxc_lBH58FKv2siaRuO-CWyUF5h_mJrPZiiLBVZNwfQLN17wzUhZFPQ-DcsKfYYg6XRi93t0fK-Y1WSNOqUCAn-inu4V1DVdLNe0oJ50vDN49srDBvWXDD3Wc4xFscX62dGcyfPWMwuw2qbQ1uau7PoFAFTwCNjTVnJY4JWINQGC-nMz-CRgxwiKDHkBTliwULIjku4rVodLnijOjKOO1-Z4inEuSIeMAOz3J-M3GArbPj3PSkDukL1iU_j1UIlHDaDzus-rufjzj0VzaoBqHngcuAFpjVR6DlHAyQnLt0uiIanplKWrezNf2FmIsdZqMHOoD9IeT-r34FfQaeFQofKYgYrOb82hg3I9vt7YGqYlFxa-c3d0ZA8VwDISKNpgMUbqh3vX7VLB_3SJEq0QvL9RfmQvyJjVtPWQq1oYaEU6zdHxOFyvJPVrEED-_gZ02dAJKEzCkyIJG1Cu8EsQJfVe5A6jcZH5etlO77GlghrsgVka8k22Fq6bOOCNvAGkhkmI3--9dG8k5zQc1YZv2Wmd4GowTwsj7YxbX2nA4m78ltpUwRqbXkYo59d9dlJI78Yr581GumlI2R06ZMY8ZDHarVtj1sJ9CJoAy4vNlKd16mTdf8xI2zzqMnDQWvsZfNivA4558ClEgCmlPIaFRINJvGz5d5rPE34PNoHrCY2Ytcz2EbYMdSkKD9gT8BZ9h3ekhPqwwtNa7qKF0tib_qaQfpQNIFLKTJ-bj7PqXLdKuIfgY1jnMXumqceZ15-FkwlIIPD17Ls3ceY-GA-QvGZjfo9QcaAy8YZgfzYPZ5gxdwR2vZMlKhQ8DM5IaYcbOtjC2jAQWIhPepPm8ACxLR7J-lzAN_kA5069eGw-eTL3xdf1cDb-75B-kNne2BSkj35X9zqMMDdt3XEn9Op4Y4boruYiHJ0HFsUXsgqCi3cqvjRo8Lv6U41_QBhPW-gwX308LGd783_X9OTIsSzXwtjK4C-fyF4wizWGBeoOKfXEE3tVX8Sy0lKhFKip4rlnPo1ku-wq0KbkASOAMT7YlzeRYb9enCY-ZrrF9duY9eDJPpCJvYcBhlwdnDHag7PiwJVNW0RRy_Uap_9-GZWctXCDqxkwJcglyuRw-TrVjrroUH-91vTa0HuuupYorzrC80Jv8fG_pBFcnq6kA48ElwppH09Zw2Aad6uQHavZ7VRZfvdnzfLemdG-JBZOuBQGkIgFfE8eLzxW7L-IFePyQoVpFV7Lwc9-SczR76v3b1AKiBx6ULOY6YNOrRos1sQakDoRPNOASNa_1DrphjbFotE0zE9nDT6f12S8IudfKBthUGsDGQvnWaJUMIT9RfFtOhPI74jRtw_mYrG5GKWksCqLNJguuHPR9nr1bW11gPPy8vJZqWjKYaGLcMs3-hTUpnO6HVwhquQjs-2_pPBZmcCRQG438J_Q5FYbwkVPX5-dNjmHYXKT34LBh4F5STDVexhu_RnpeclaoOe8bbJO6giwN_DXiEl_Kj6Mmk8JM4FxjiEYWYAeaEGWuBB68TSBJjBTdWCVLkp3KbmyfCHOs6XApp959kqCnwMKQME3n7Xt8LOfMHmSY6bcbOsGzxRbpAfWeFjIBYz5Mhhx6BdSfx2grVgMfxy73w1a3VnCLE_cl8M-I4KV4zFGnStnz0-2Ij_RmHmpkOJ3q8sKllsDm2ScJcMppp7ipgryM_W8lr0riHSX0CpXFcf2z7800GUd2Q4jMYeopMpAGtP1sl_8KXXbs7K8duiCV-Z0wFB9poH2bRYnHy-O9xdiG07SCvFX3HFmhCoRfjFTUU9403L9BLArC42InaUnzau_nZyFwlfpNXpRjfgikxyMzF7CEzI8ZigYTImzaoJECvELaVCFgnD6y_WbmFVk7kVmgkKAiyGw9N-Trfp3TMzumbnxN9zrdrp6fhv8e2_cf9CRX4JaImAXjdT1MCfV_Nahv1CwCx0UgVcfAFwMI5Sn5y1oMxnWAL4GSxZKTGvGFfCr0x2uycaA9txp71u8zGBk6zjgs1-jwlyp8LCTud70EcnZ4skPFJ4h-dT84tCZmp5Hu1fucgXOfipKmAm0iWY_U1omRapDL0eLn996WMRPfhtlMPaWWuBSSZZDkzaeA_z_ddLdBYHQ7ZteKRS5ftZbv2l2wiQYHDA_gQe-kYEeq2tP3VZcfOtjyBLjMIyFW2EtkcxyZ-6WKpNxFHJZNlvGCa5IbnuZQRp8_iaOE8Gs8aRQqonjhFD-GxAHrPkQfBRswnKmNRhLZWpRShUed8ia4Gy07oMLS7mxrq79JLCoqrHDdoxkIZKQ3Q0CJkH8rjDb_O3LysJXdB_8o3PZXBhKfZkmd12cUC80yucKHo_omLKLN-mM_N0-pX3T_27UsSYAg6lIliMKdsdgUEgLnMLGdi1G5RoZSSDX8I8NsBDANQpxmkbQJqxBxPYcrHPGuF8XrzKR4TGRUgBGmg7ZjXsv-3ynaV1_Z1O7RJyow7UM_eklNnAerVVu-zN2AwIILleQaee2McWxjR93my3bA993oUkuFGP-QRunPxT7CR8ir7wuwwexktVVnEIki_KDDpfR2Tz424NirxiNUQbVp-rJhRpYpBIDwBFFz4RTVRlne2Gr5EHThQN8m2qOW7hvDvKC8cFtIZ3Vq8TjmX8u5YMbAFTe1vZURZyWjS_IytW2ybCbgQrtaeKv7wEZD_A_85WLxmQBI5lwAgVUGq3D7hidZE66jlE7LOvcim_nWVFd1VuRsPbTI7RJqPM_s_PQPldDWwUr6Oj-aGdUKRrLM7qt28GTBLSB2zi6_dc1_7LolzX77q-6VYkU5j46G3qA3gQNjEOHsWkXC-pLPuscaueOIzdGUFr3RTnI4T8QK5pPcRZ5gC3mhBocc5yQbr-Et13_Pdg8wXKpC344QroBrvjIlKP21eEKhdeHu6ELNRZzu6mgoAgZJKINgDKBfJBfyVDUmiYr02otGQa-GTrYvAcMpLn6hpbZAfXAZeJQmyF3QVg==
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_d63cbcac181247c092b619b39798dfdd
+            id: pyd_ai_dd7b480a762a4343b35b99fb9c9524b2
             name: get_file
             response:
               return_value: File attached
@@ -2163,11 +2163,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '2805'
+      - '4213'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=3789
+      - gfet4t7; dur=4469
       transfer-encoding:
       - chunked
       vary:
@@ -2178,28 +2178,28 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: I received an image of a single yellow-orange rose. The rose is in bloom, with many petals forming a tight
-              center that gradually opens outwards. The petals are primarily a vibrant yellow, blending into a softer orange
-              hue towards their edges and tips. There are visible water droplets on some of the petals, particularly on the
-              upper, more open ones, suggesting recent moisture. A reddish-brown stem with small green leaves extends from
-              the upper right, curving downwards to support the flower. The background of the image features horizontal stripes
-              in varying shades of green, brown, and lighter tones.
-            thoughtSignature: CqUKAXLI2nwD7EZqLnOcn5QzYELl27kSh6U7O32u/lhveYacn76XvhoIf47qmMbx+p2bio5+kKtXoW9PYcDah4VM0vKIvfuWMZZMxxzqzm5d77V3SxlHe7IOzxHdAxetIx6xtpo6Xfkcnjlmv0/JsaYYOncAEev4okH7+ZQ/VAL2qc0p4ga5bfTNMmYzrEX84qvcB9kpoV7e2Yytrcyb7OdQbLQSiHTxC18x0PxMNTWufWqLAbCSJkP7mq8KtJr2rmnNRNFGvxHjUq+fF8fC7QRjpC6odHxGIZ2nfNY2GCDQuvSqTI6vm5bDayYpWZrhajoKS1nBgLzNmn3GOfO64PSYogFIWdkQ+4NQSaxa9D2/9ktZAX46H/Hp53uxWfiGzeWLExUTvXSI2R8jM2wGlto9B1Sqymw9P3X721DWZZnaH/GH4wA+GHad8DZOeXl5eK0bdDfXTDGfTxz3c8lihNLtFmQSJhZwKd8M5sGiB8q3b+tO1/nUb7qJPwtYz93oykHScGXcHrXFMdX4XfeMj5zA6Am6BqTp6jBc0ARxIls6H11sQElOhj9h5Z9WcAcFOoRQINX4Na3sViGsbzEEAQ8Ue7z+wQMB42m1yBROHZHMGPB0zeDYoHhia1iznbd8VSnYLn5Hec+l+yngm41zjNGQ1A5H5ezCGFHMd+M2A4AToM3ENOUzRmH3YcIEsZrmvYMFFZ19QrzmLODPiF4R0OjmIDvgq0vg/2QWMJU/lk7GUK34ojvXe2OCx8RokzV5xcS45Lb1qMgx6DKi1BVYCcfhFzGZchvBAXGDpHft2yRFVgqAEja5igDEtkXz+NRj1QixTNeY75/v2ayv3c0P+WV90FEzH8gUmZBrcL4ee37kixEftypF4l127NDVg5FN+MjNGy5hVQg8rSRP/ULs5HjYc0Z5quGvDLu9gsW212Fks0sobRJ7KPZfqo7PV5890ICIeihvawrM9a9zdZSGF6oEd3CXf+Tx9TzWzO/YzZQ3xTL+E3A6AWANTIPUkRwFHWQQFlPZ+ea114M7oGth+0xHKXVpUXNEZRVf0Z+O6tA/wE6wJviS1ytbY/jgl0+NddCOFn375Xmz7o7GPzla1Qqh/YDRqwwUn+KrpNFO3U0Ul/7eFg/z6vBRHpWGotadPhW28646zff7ceRGpYsJKU0bqmrCopPOtb4Kr5hMEhgCWuVVh7RtDl703tGBuh4eVo92ejZB6ivPeshyk8DG6o1T7LQ8Zp+TZl64fh+muigRoW1WjcH2pjveaZFZ2mcu+FR+B2XGabWcjeEJon/eV1aN0r+3wXRYo7LLQG0tPQxe5QU/tPk4Rsd6FA1N9KoKptNy2qiLk8gFCULAOngIHGrDB7J0TME7+AKMqP6sNxjnpt2bgz6u0e79v4WN8JsUPv8UAR1Cn7TOjI4F6lD6eq8mgyA1UjjTc11Cr0cX4sOKyL8hqVy439P0siDyEl2kjFuTEf8bt9y/nhLGRVATyzxGv1lRF4rEMMh6zY7Inx3VBPWV1i7m69A+c7yDtnAb2qHDBN+cGkE1/JVjtoSFZ3Qqukf1ilEA7n8cSiYoqLoxVUS/ojXoKrmaDqk1KRHlJnzAqZcqCRKDaBlMLfhD7oWtdHVJNwnnqHWhyVcj1WoM+iPuwE9W3OpXwqTakSvBG73NZ5GQNdCYqWSr6kE1TuZs6vBxqzpSmJ3t0b9n9+7EA0sUKS5wNNoSIsMGwI+a8RpiAG4hyE8UwDPXMZQIR0r+sEe1qUVr
+          - text: |-
+              I received a response from the `get_file` tool indicating that a file was attached, but the content of that file (the actual image data) was not directly provided to me in a way that I could process or describe visually.
+
+              However, based on the image you have provided in your prompt, I can describe it for you:
+
+              The image is a close-up of a beautiful yellow-orange rose. The petals are a vibrant blend of yellow and orange hues, with some delicate pinkish tones visible on the outer edges and on the uppermost petal, which also has numerous small water droplets clinging to its surface. The rose appears to be fully bloomed, with its petals gracefully unfurling. A stem with a few small green leaves is visible extending from the upper right side of the flower. The background in the main image has horizontal bands of varying colors, including greens, browns, and lighter shades. The cropped hint images show the rose against a stark black background, highlighting its colors and the water droplets.
+            thoughtSignature: CpcQAb4+9vs4nPeAz3ZQF3RbRhgOJE9KSJ7TORVC7R/OiZeLOwaYdxZwbVZG7rLgPT/Ui5ulbMvPxf4Mai3xBfFF2jgOUUxBxotc7RHYR6TAUx9pAGGSTx5KT0KgGV6m+fHhmE5KPKDfz4ng/m5LGUryk90goX35m2N6uP4XJ0Z6UC4rN1fXNnBC+cQSGaFcp94Ikyivpo6y5gm0D10bCStnwiO3dKsNemA6eX5+vxuACPmNYs0289RySPzIbSSNzxWn4eVoGHWvd9olXeHjMbA6OkdlhycP2segBlKH92f4RRto0YcpS8A40huauPK3eziHfkrIPHqfhFqhETcQXonzdjnjVRpsBJaBzqwvuOQlmm9o7Cxx7DDegjXbGMOVfSkxXC0ASIPoEvGiAeAzqItnTS79uo3lkrXRidGH54/J47CHqt2jBnMGo3x3wCFx6ncNmfyH++HCR47s+pNTSreoEgOERMAjc093h+L9xe51cFaiKlf6m1Dyi4P7nTp3aTkod3UBW1lj/hJTchR7E2yOfDpVjbZGMGXgXK6NI9tWS88SwhO0Hx2nuguFVdbMnV4+Gnvovf+FTWtGQ7Ss/jhZW/G4P9MJSms9MjgPbqQLLM0YetOLov8+BB1J3ChcKfywtsOaedGyD7ZOmFIpuwKFa5vTvHfQe0SCqNxPLx0cH+jRidUZfDV2EW7qQk5lYGOI60shkFXFG7SKfuz16pxUL2AgNSUP7ns5/cLf4x4HWVAkQM6OoRM/1Efbg6YSbEg5PFF2kRUEAHmJy9lplzHlq0SPE5jGqQTdjsv0rMEalEeU6JJpb0xie5Uo2bo6imE9KN0Tbg6zeiUT5sGfWZ27Yqvgb7vWbzG04ZxLQit7wggpkbAuHfdtrL3sPvVPfaS+ILIzC3cbey6wsWHsBIl3oWttNxXW7iSOqHtcIEQPasWj8ZRHLrwL/Ufzd2ghUrvOWiPgD6pacIxDJtnYagIgNJ5yGTh8YJnuZ0B1tMfYT9JRiyHgbvfvSOrv5qIQNuayUQu0q/CwfcM3fSxZhX3o2Vygp0zbfndK8fTf9Nonwe/h3/At5o3sYwdKseQG8+zsf7rT9lYs13WbZykj0RZ8rPWngoWlzIteQ7pnbc+cmWkL1hKRjonGQ3Uy1krwRkF4cQXkg3R+LE1+JKJdJ1swz9NkYl3uBKgebeiIcRCtGM9d6+mjxFD9VaD9v/cA+TnV0gH0azNBgPkU+wyJ3jheGrlMNr4dS3C0kF3jfgXeYpvWeBbuYwiHQ+5GOXVpjI5+KZJEdjHE0apZvpBahhxawolU2/wHTWheFu//Rpoud4J7GubSPuJmNXFrmYZUxngjAruei/lIAa63U4gtSRmJhSQh4tj8pqfCKVbNKW5Fntkstg/drPGe1TWO1bwrOrCpH4RNmz+I54UYpBoqzztD+3CbLtTOZ4sXTdLpBEIbRXpuW8m0bC/VSyM2lA1LpIcL1W/1sS7DsH8PcRhDbadlNz4C/91TARFEbc9ZzVvUknozbaMQZvTRwMJ6P34v3A0j/sFIrshlT/PVJAcWWgLN7ueQd09rJmAgeq2GJSmc+jk6i+BsQtF7M1unY1dls5LgRzE0wZxPTxpdSwF9jz8Jja9kaW7WvKViHd8vbr/s//8PprHV+V6MnJKHA8Trj95ei0r1BdAUV0Wuv2xg56rjIhJx221LSfd3OdfgHxla/M1jib4qbg7LPyJm3/XQYnVvBAVyc60eBvfMWGaYMfbjGLFmIH6pCt3biK9Mxtnf95wcuGsO1hwwXq6eqLYRj20DgMv/bjCUP7rvkW7FWSKjLNacV21su2RrPQaxtLk4Ay+eG1TlWB/KI1QD5x29Pj37LrlWtWnPlP3Frm/NSsXKX0nymIfI1jDGjgdUHKmIibJaCu1Og+0gvDosGhYaztlYYQytaSYWe47XE5vriHCALfVExEv63hLt2B7+JC4w8iTthEo9o282aM5cdIq6yThn9pp5MPHDYqZl/5z7wCh71DbenC1E0FTsTLCPqC8wz867Vu+KWP+3lpt3/1VUMOLVTIBfATVMlnNTS3gTKIi8JzOh4Oo4KxN+SpT2Hf6QSd2hvtpab4wQAuXhLzWIUG4aRjXi9uX00ms8lBq+fi1t54rh99nbrt3X8CdtpnapEXSfuGWhC24A+hCsIMNj/6WMeJtRvKhJELkynwzyuKxnAO2UY+MUSQCXBzXBoTFalN/e7RF9ZjtcQrLzjVPjjF67HAaBUjRzHE8xLHngBZkVlNbQiFNRQE1MLfvK92AM98cx5thBCnglLIbv5RcG2f6UK1BAaMMbsJkfYhN20zxiNxTLrmGFdzmlpDWswLuDl0O7sRjLb+YKNMXzmfMzV8RfISAwyINFb8r3zUY8TJqSYvLRRRBZCMO66xPtPY4kU0pQlnVVCwbIcv9McGi3Zp0M9RJ/PzZOIn7z67+jH3ew41shXVqDURywXo+SI3E9dfMAAeDlNJJDxEn1cs0cmTGFOmqm7Jjd2eCP15eRfyt2f7xcpKo31Hc0469Vsnst1Kox9hhgxn/virceKj7DEa56/CH77myOpR9TNh3/mD3AV2xGAhyiB8pFobybm8448ThifsJmhxzxiTGyADoIVWvD1Bdz8+RbAV8GpyJKnP5qEZgykc4QsYszrjWHCWfkn6CD2iqCQ1nkwmyBy0DwUABZ7+093LtfNE07eOBwD9KKhQMW9HIbcDXSA5daShliuWxQtLB2IyDtaHWqoZbAmER2lEBSALloQg==
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: A_h8ac_SHoycz7IPs-_ggQQ
+      responseId: bBCKaebBHO_Sz7IPw9ubwQ0
       usageMetadata:
-        candidatesTokenCount: 116
+        candidatesTokenCount: 206
         promptTokenCount: 328
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 70
         - modality: IMAGE
           tokenCount: 258
-        thoughtsTokenCount: 273
-        totalTokenCount: 717
+        thoughtsTokenCount: 465
+        totalTokenCount: 999
     status:
       code: 200
       message: OK

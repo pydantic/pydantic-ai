@@ -36,115 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '785'
+      - '807'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1442
-      transfer-encoding:
-      - chunked
-      vary:
-      - Origin
-      - X-Origin
-      - Referer
-    parsed_body:
-      candidates:
-      - content:
-          parts:
-          - functionCall:
-              args:
-                parameters: {}
-              name: get_file
-            thoughtSignature: EssBCsgBAb4+9vt9e923OSq9MR+/XXGe6xmXxajPaX9Yrtd487T6WXkOGdi/MG6AhK7T9e8eFMml/IBxDZ7DRJ5QyidTnMPq1VT3q1er2/6hRqdtTwPPSzgpWBmcEw4Xqjy+SoWYjNHIRzUCgd0AH66K3sNTT/Y9qQYKQac4K8Q8BP8NNWlrjHg5u3RHvSsEdjWExsnLHxTJquPLPHAVQRbBVJecrmZp7DbvVWL9GYAIcyAy1PHGzUwwr60yVqCN/WCGWOjxGIa0KSkcOK8=
-          role: model
-        finishMessage: Model generated function call(s).
-        finishReason: STOP
-        index: 0
-      modelVersion: gemini-3-flash-preview
-      responseId: eoyDacntJ4fzqtsPs9LbiQg
-      usageMetadata:
-        candidatesTokenCount: 13
-        promptTokenCount: 36
-        promptTokensDetails:
-        - modality: TEXT
-          tokenCount: 36
-        thoughtsTokenCount: 36
-        totalTokenCount: 85
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - '*/*'
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '1199'
-      content-type:
-      - application/json
-      host:
-      - generativelanguage.googleapis.com
-    method: POST
-    parsed_body:
-      contents:
-      - parts:
-        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
-        role: user
-      - parts:
-        - functionCall:
-            args:
-              parameters: {}
-            id: pyd_ai_3f936ecd73af470e81e16b1ddafe402e
-            name: get_file
-          thoughtSignature: EssBCsgBAb4-9vt9e923OSq9MR-_XXGe6xmXxajPaX9Yrtd487T6WXkOGdi_MG6AhK7T9e8eFMml_IBxDZ7DRJ5QyidTnMPq1VT3q1er2_6hRqdtTwPPSzgpWBmcEw4Xqjy-SoWYjNHIRzUCgd0AH66K3sNTT_Y9qQYKQac4K8Q8BP8NNWlrjHg5u3RHvSsEdjWExsnLHxTJquPLPHAVQRbBVJecrmZp7DbvVWL9GYAIcyAy1PHGzUwwr60yVqCN_WCGWOjxGIa0KSkcOK8=
-        role: model
-      - parts:
-        - functionResponse:
-            id: pyd_ai_3f936ecd73af470e81e16b1ddafe402e
-            name: get_file
-            response:
-              error: |-
-                1 validation error:
-                ```json
-                [
-                  {
-                    "type": "extra_forbidden",
-                    "loc": [
-                      "parameters"
-                    ],
-                    "msg": "Extra inputs are not permitted",
-                    "input": {}
-                  }
-                ]
-                ```
-
-                Fix the errors and try again.
-        role: user
-      generationConfig:
-        responseModalities:
-        - TEXT
-      tools:
-      - functionDeclarations:
-        - description: ''
-          name: get_file
-          parameters_json_schema:
-            additionalProperties: false
-            properties: {}
-            type: object
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
-  response:
-    headers:
-      alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-      content-length:
-      - '1607'
-      content-type:
-      - application/json; charset=UTF-8
-      server-timing:
-      - gfet4t7; dur=2550
+      - gfet4t7; dur=950
       transfer-encoding:
       - chunked
       vary:
@@ -158,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: list_files
-            thoughtSignature: ErsGCrgGAb4+9vsVgnF3zf3wdj/y5FFqgVI+sBjV/BLuOA1F0BFzNPtpD3HCPAdgAIAg486Z5J1Q6gY5jiB3hmNVpB9XQIDT7ov4kLYvvOsBzy+z932aHzFKmOG7VT5GljtpUQxgFPsMboA9A+kM0cuSdBjisaOD/qXshup/ue/xkXpCh1FgPnxLoWkISR7Jw2Tmhu5aTRwuUx/S+Wve7PGFTC0hA4Uoj+ihuNE3OGmndbgq74nW0wh3t5TwvDdocAOxp03hlFskhJV9U366wsrFwuIU8hmT9Yh+dE3fnKuJ4fgpzlMs2T+zjekAj09VEfhqr7PrNUZSNEbj4pZkUt0gg54qSNMQi4LFpBP7kvVqQPI7PyWVv+f0i8OKBNj1nL268U4vHltOwcpd3W3pl0zZdmBIR7V5KQ6w7s2sIApkj4XkRhhYK809oZIgFlaN44i1UTsMyRS1jHk0YDp84M3OBM5QWUFY/upvU864t89qPbgDCl6HVJCKoiUHOMhDXOYggtqWleBpnq7TVEMmgwB6XWt6iJFVm3QdF5v9FeHC0UJu7VslF9oaj65HWVGZJ6U+54zmwPEG43R6P1eDlTCGLVvJistt+kq24Fc693jwohFPhmqJi5+XTO/BrTrRSanrAwJVcdy0K1+V214hjMxYuhUNhlBtJ329k17HtRuwN7OwBZCWfsD+ATYUOxdZjCJoRD5N5DnVXcWFRYXnMuop5PosENdKJrOHhR+2XfbhyIuaZiB7zzXl5Kw3fSOJDqjy41iNAHGzFeApJnI+GQ698ib5quN6jr6HECGqV+JKCliYZgvsD8jXHny5U6ZyeNkfXvXgzkzeY7qNraMUDixDSXQbi0z8/mcKEGNiffwBmfQ++rZW8G9wux8Rnod9R/DiYNWWSoPF6EGVjEnJf7teM3JGhtdnX5nrSgNKNigQebrKUdd0HZe1FQP0WG00iZCqxhV/eJVMoVUj078o5C+mY0V/eTNnl8RP12EhCyOzFkDK1cI/45pwGs8x2Bn1eLIetq8nWmaUNk5Pf2U5cOyzomXFoaV5XLiJ8mhGcMFdPlMO5+d8uGVEfCamwHkqwnnY6UfYxaLU2JaoS6w=
+            thoughtSignature: EuYBCuMBAb4+9vt/pXHW7rXaWcvjxrw8LJPX4hMigJBktqonPkX3DZQ18g+ScqxMXLFCp8aqWpMwZNDsYTZhTE8UJkii4jUaqHTgdYFtNfJntLGtYAz+hrWh7M9hNEqB7hfQppSxnBfSaWiZoOTRyAC+HuuHwu8/qoKN039qpYbfeml9Q/DeuURWe+qUtKiTsKhZXmjf2kV0VxDrC9saYoTki1mueFS5t0OYlqTnEicHuV3eBflCqor24H201rns6cVdaAmcTE0jJQ83sEi38Z4GmkVL2VoaAhSVZeTyKkbkgBQNDXtEJEc=
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: fYyDaZadEamqqtsPouzB4Qc
+      responseId: bRCKaZH3I-Kfz7IPvtDq-QU
       usageMetadata:
         candidatesTokenCount: 10
-        promptTokenCount: 167
+        promptTokenCount: 36
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 167
-        thoughtsTokenCount: 183
-        totalTokenCount: 360
+          tokenCount: 36
+        thoughtsTokenCount: 46
+        totalTokenCount: 92
     status:
       code: 200
       message: OK
@@ -185,7 +81,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2708'
+      - '1083'
       content-type:
       - application/json
       host:
@@ -198,44 +94,14 @@ interactions:
         role: user
       - parts:
         - functionCall:
-            args:
-              parameters: {}
-            id: pyd_ai_3f936ecd73af470e81e16b1ddafe402e
-            name: get_file
-          thoughtSignature: EssBCsgBAb4-9vt9e923OSq9MR-_XXGe6xmXxajPaX9Yrtd487T6WXkOGdi_MG6AhK7T9e8eFMml_IBxDZ7DRJ5QyidTnMPq1VT3q1er2_6hRqdtTwPPSzgpWBmcEw4Xqjy-SoWYjNHIRzUCgd0AH66K3sNTT_Y9qQYKQac4K8Q8BP8NNWlrjHg5u3RHvSsEdjWExsnLHxTJquPLPHAVQRbBVJecrmZp7DbvVWL9GYAIcyAy1PHGzUwwr60yVqCN_WCGWOjxGIa0KSkcOK8=
-        role: model
-      - parts:
-        - functionResponse:
-            id: pyd_ai_3f936ecd73af470e81e16b1ddafe402e
-            name: get_file
-            response:
-              error: |-
-                1 validation error:
-                ```json
-                [
-                  {
-                    "type": "extra_forbidden",
-                    "loc": [
-                      "parameters"
-                    ],
-                    "msg": "Extra inputs are not permitted",
-                    "input": {}
-                  }
-                ]
-                ```
-
-                Fix the errors and try again.
-        role: user
-      - parts:
-        - functionCall:
             args: {}
-            id: pyd_ai_97b3422822044a36907a0ec50be67561
+            id: pyd_ai_e891678c3dc7445e929a39faeb816e14
             name: list_files
-          thoughtSignature: ErsGCrgGAb4-9vsVgnF3zf3wdj_y5FFqgVI-sBjV_BLuOA1F0BFzNPtpD3HCPAdgAIAg486Z5J1Q6gY5jiB3hmNVpB9XQIDT7ov4kLYvvOsBzy-z932aHzFKmOG7VT5GljtpUQxgFPsMboA9A-kM0cuSdBjisaOD_qXshup_ue_xkXpCh1FgPnxLoWkISR7Jw2Tmhu5aTRwuUx_S-Wve7PGFTC0hA4Uoj-ihuNE3OGmndbgq74nW0wh3t5TwvDdocAOxp03hlFskhJV9U366wsrFwuIU8hmT9Yh-dE3fnKuJ4fgpzlMs2T-zjekAj09VEfhqr7PrNUZSNEbj4pZkUt0gg54qSNMQi4LFpBP7kvVqQPI7PyWVv-f0i8OKBNj1nL268U4vHltOwcpd3W3pl0zZdmBIR7V5KQ6w7s2sIApkj4XkRhhYK809oZIgFlaN44i1UTsMyRS1jHk0YDp84M3OBM5QWUFY_upvU864t89qPbgDCl6HVJCKoiUHOMhDXOYggtqWleBpnq7TVEMmgwB6XWt6iJFVm3QdF5v9FeHC0UJu7VslF9oaj65HWVGZJ6U-54zmwPEG43R6P1eDlTCGLVvJistt-kq24Fc693jwohFPhmqJi5-XTO_BrTrRSanrAwJVcdy0K1-V214hjMxYuhUNhlBtJ329k17HtRuwN7OwBZCWfsD-ATYUOxdZjCJoRD5N5DnVXcWFRYXnMuop5PosENdKJrOHhR-2XfbhyIuaZiB7zzXl5Kw3fSOJDqjy41iNAHGzFeApJnI-GQ698ib5quN6jr6HECGqV-JKCliYZgvsD8jXHny5U6ZyeNkfXvXgzkzeY7qNraMUDixDSXQbi0z8_mcKEGNiffwBmfQ--rZW8G9wux8Rnod9R_DiYNWWSoPF6EGVjEnJf7teM3JGhtdnX5nrSgNKNigQebrKUdd0HZe1FQP0WG00iZCqxhV_eJVMoVUj078o5C-mY0V_eTNnl8RP12EhCyOzFkDK1cI_45pwGs8x2Bn1eLIetq8nWmaUNk5Pf2U5cOyzomXFoaV5XLiJ8mhGcMFdPlMO5-d8uGVEfCamwHkqwnnY6UfYxaLU2JaoS6w=
+          thoughtSignature: EuYBCuMBAb4-9vt_pXHW7rXaWcvjxrw8LJPX4hMigJBktqonPkX3DZQ18g-ScqxMXLFCp8aqWpMwZNDsYTZhTE8UJkii4jUaqHTgdYFtNfJntLGtYAz-hrWh7M9hNEqB7hfQppSxnBfSaWiZoOTRyAC-HuuHwu8_qoKN039qpYbfeml9Q_DeuURWe-qUtKiTsKhZXmjf2kV0VxDrC9saYoTki1mueFS5t0OYlqTnEicHuV3eBflCqor24H201rns6cVdaAmcTE0jJQ83sEi38Z4GmkVL2VoaAhSVZeTyKkbkgBQNDXtEJEc=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_97b3422822044a36907a0ec50be67561
+            id: pyd_ai_e891678c3dc7445e929a39faeb816e14
             name: list_files
             response:
               error: |-
@@ -260,11 +126,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '2059'
+      - '3290'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=3163
+      - gfet4t7; dur=5197
       transfer-encoding:
       - chunked
       vary:
@@ -279,21 +145,21 @@ interactions:
               args:
                 name: input_file_0.png
               name: get_file
-            thoughtSignature: Ev0ICvoIAb4+9vsdsIMoDxp4nllMqfR9xe4pXMbn6cX4Tdw/WKYvx4j0ifnn7JQ/lA8zPdBg+J3CcbKfWrHMFitKiXbp1B16nvjSxmdoAHgOgAHECYKgF+YyqKiyeUWtGR6xX6RKgunykk3I6tcfb+xMyFpsMRun0AGW8GYG6oYPJWDooBb6lQaULeF6KyrAQfjHwuyQu3xxNjkVfSsl0zyLPk7NF9Wqau7loelr/ifsI7bTbB4ujxQ+KnBZkKxgQetCZlyu1MmIw0Qqg+qCtR7FiJYxkJPOUYrUHcsg20LBqEvmQqffGC6vKcbAtrZ1YBMXVKTNKYo94J1lXSM1kR0U1HZ8/z17gk6zJrG0SYwt3iWmCS+2QZKFiDKUvOgkGTBUqLP1xMJOXxehcdzTabgTghyH9qVc0NkiAZPX7YMRU2ME2rimPVVp8u5zLX3roSV8KpnfKlFxbbXoNx7CpWP39p5PN9NV1wKW9GaneYpS/H5uSB+M6zFaUXp/BzSuoTzOKxBpQZxIgimfMBjuWlLwtbcIxFNuPuMoHHY+p4lSEb8eULgo6ptnDnlSffcwJmMIzVAvmJQROunrXO2Rho3aCjuZQjTummE1/p/huoOO0i6W2In+9A3ipR3sJjQwQif/BuDBAJuL9yJuMJTBy87zdGmeOpGVTzOI9grOsUCXiBT8pfDHLaKv1Q4QXECK+oi6++cl3lPXSSsy5/DmOKWfjrYC6ClCmizDeTrBbDbeiUYwmDls2phHlw8NP5pwTkRlNcyBy8oVY/nNMqaDube2o84X/sdrCpbh3AemYdBEHlehhxaRAUkraSHuGXxV2tzqq2NdOwsPK+Q/rp2UtwdSi/XGagg//YVHbzhcIcSePnK68leaWeSmc1aVPh6c4PV2i3tIYbC5fHj+buLQKKoyQ0kYRYHbDzlUKoGwB6207953XQyTtBvzaNrYM8chDSPw2hxcrw5d6nQRv9U5PtaPgJOtD8R5AnIBr0k1Hu9jEaHOHulI3FDuvIX7iFnZUyPTZUp1IEpYuzFuGPJdRmZp89ts/fLOfctxbu0sQ6KQOneNlGTQwljpQ4ecRKvDSf7nZkQDGPmCFRgRM4cfwCAPf7RdVPUldNTFNNyoO4enPTzmAZhAS+JYvOkBUf0T4SfETRf3BfygytIjKgTKHX+SSQoOE/CKN0RYwk+5yZMbrmzB1dhCQLUjn3syDFZxRCYKVL6UCCp6I7T0Ah3xsW3t9MJgESk5TDytXNJt0g2BDQfkNhPkWepYP2pL47SwJJQSYjyC/gW8crRqfBEmVZv2B6w+sKZZws6ZYRJrE0xWyhCmCwJDo81zdPvoiU+697wUIhFuk/SDnbiiAP4saqT1PjmInhnAYNAFyFMQrigW0n+l/qp5bZv2uxG5pa0aRIghaOuTAMt6xbDfiZvHb+APzJo0X8ypPW+trshYy4B/Md6alGGtlnNc9c3tQ26zRj9n2We4JmMvPjPo3iy7oV0pw76ENTA+15+pa3G9mVbNAStgOplYHwvWrwV1Fmhj
+            thoughtSignature: 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
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: gIyDaZGDIIalqtsPpNn04Ag
+      responseId: chCKaar3Np_jz7IPkLuQaQ
       usageMetadata:
         candidatesTokenCount: 22
-        promptTokenCount: 398
+        promptTokenCount: 130
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 398
-        thoughtsTokenCount: 315
-        totalTokenCount: 735
+          tokenCount: 130
+        thoughtsTokenCount: 547
+        totalTokenCount: 699
     status:
       code: 200
       message: OK
@@ -306,7 +172,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '4819'
+      - '4426'
       content-type:
       - application/json
       host:
@@ -319,44 +185,14 @@ interactions:
         role: user
       - parts:
         - functionCall:
-            args:
-              parameters: {}
-            id: pyd_ai_3f936ecd73af470e81e16b1ddafe402e
-            name: get_file
-          thoughtSignature: EssBCsgBAb4-9vt9e923OSq9MR-_XXGe6xmXxajPaX9Yrtd487T6WXkOGdi_MG6AhK7T9e8eFMml_IBxDZ7DRJ5QyidTnMPq1VT3q1er2_6hRqdtTwPPSzgpWBmcEw4Xqjy-SoWYjNHIRzUCgd0AH66K3sNTT_Y9qQYKQac4K8Q8BP8NNWlrjHg5u3RHvSsEdjWExsnLHxTJquPLPHAVQRbBVJecrmZp7DbvVWL9GYAIcyAy1PHGzUwwr60yVqCN_WCGWOjxGIa0KSkcOK8=
-        role: model
-      - parts:
-        - functionResponse:
-            id: pyd_ai_3f936ecd73af470e81e16b1ddafe402e
-            name: get_file
-            response:
-              error: |-
-                1 validation error:
-                ```json
-                [
-                  {
-                    "type": "extra_forbidden",
-                    "loc": [
-                      "parameters"
-                    ],
-                    "msg": "Extra inputs are not permitted",
-                    "input": {}
-                  }
-                ]
-                ```
-
-                Fix the errors and try again.
-        role: user
-      - parts:
-        - functionCall:
             args: {}
-            id: pyd_ai_97b3422822044a36907a0ec50be67561
+            id: pyd_ai_e891678c3dc7445e929a39faeb816e14
             name: list_files
-          thoughtSignature: ErsGCrgGAb4-9vsVgnF3zf3wdj_y5FFqgVI-sBjV_BLuOA1F0BFzNPtpD3HCPAdgAIAg486Z5J1Q6gY5jiB3hmNVpB9XQIDT7ov4kLYvvOsBzy-z932aHzFKmOG7VT5GljtpUQxgFPsMboA9A-kM0cuSdBjisaOD_qXshup_ue_xkXpCh1FgPnxLoWkISR7Jw2Tmhu5aTRwuUx_S-Wve7PGFTC0hA4Uoj-ihuNE3OGmndbgq74nW0wh3t5TwvDdocAOxp03hlFskhJV9U366wsrFwuIU8hmT9Yh-dE3fnKuJ4fgpzlMs2T-zjekAj09VEfhqr7PrNUZSNEbj4pZkUt0gg54qSNMQi4LFpBP7kvVqQPI7PyWVv-f0i8OKBNj1nL268U4vHltOwcpd3W3pl0zZdmBIR7V5KQ6w7s2sIApkj4XkRhhYK809oZIgFlaN44i1UTsMyRS1jHk0YDp84M3OBM5QWUFY_upvU864t89qPbgDCl6HVJCKoiUHOMhDXOYggtqWleBpnq7TVEMmgwB6XWt6iJFVm3QdF5v9FeHC0UJu7VslF9oaj65HWVGZJ6U-54zmwPEG43R6P1eDlTCGLVvJistt-kq24Fc693jwohFPhmqJi5-XTO_BrTrRSanrAwJVcdy0K1-V214hjMxYuhUNhlBtJ329k17HtRuwN7OwBZCWfsD-ATYUOxdZjCJoRD5N5DnVXcWFRYXnMuop5PosENdKJrOHhR-2XfbhyIuaZiB7zzXl5Kw3fSOJDqjy41iNAHGzFeApJnI-GQ698ib5quN6jr6HECGqV-JKCliYZgvsD8jXHny5U6ZyeNkfXvXgzkzeY7qNraMUDixDSXQbi0z8_mcKEGNiffwBmfQ--rZW8G9wux8Rnod9R_DiYNWWSoPF6EGVjEnJf7teM3JGhtdnX5nrSgNKNigQebrKUdd0HZe1FQP0WG00iZCqxhV_eJVMoVUj078o5C-mY0V_eTNnl8RP12EhCyOzFkDK1cI_45pwGs8x2Bn1eLIetq8nWmaUNk5Pf2U5cOyzomXFoaV5XLiJ8mhGcMFdPlMO5-d8uGVEfCamwHkqwnnY6UfYxaLU2JaoS6w=
+          thoughtSignature: EuYBCuMBAb4-9vt_pXHW7rXaWcvjxrw8LJPX4hMigJBktqonPkX3DZQ18g-ScqxMXLFCp8aqWpMwZNDsYTZhTE8UJkii4jUaqHTgdYFtNfJntLGtYAz-hrWh7M9hNEqB7hfQppSxnBfSaWiZoOTRyAC-HuuHwu8_qoKN039qpYbfeml9Q_DeuURWe-qUtKiTsKhZXmjf2kV0VxDrC9saYoTki1mueFS5t0OYlqTnEicHuV3eBflCqor24H201rns6cVdaAmcTE0jJQ83sEi38Z4GmkVL2VoaAhSVZeTyKkbkgBQNDXtEJEc=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_97b3422822044a36907a0ec50be67561
+            id: pyd_ai_e891678c3dc7445e929a39faeb816e14
             name: list_files
             response:
               error: |-
@@ -368,13 +204,13 @@ interactions:
         - functionCall:
             args:
               name: input_file_0.png
-            id: pyd_ai_315f922796e0497496f052dfbf0eb055
+            id: pyd_ai_919d1fdf2d424592a310100f95b91ba2
             name: get_file
-          thoughtSignature: Ev0ICvoIAb4-9vsdsIMoDxp4nllMqfR9xe4pXMbn6cX4Tdw_WKYvx4j0ifnn7JQ_lA8zPdBg-J3CcbKfWrHMFitKiXbp1B16nvjSxmdoAHgOgAHECYKgF-YyqKiyeUWtGR6xX6RKgunykk3I6tcfb-xMyFpsMRun0AGW8GYG6oYPJWDooBb6lQaULeF6KyrAQfjHwuyQu3xxNjkVfSsl0zyLPk7NF9Wqau7loelr_ifsI7bTbB4ujxQ-KnBZkKxgQetCZlyu1MmIw0Qqg-qCtR7FiJYxkJPOUYrUHcsg20LBqEvmQqffGC6vKcbAtrZ1YBMXVKTNKYo94J1lXSM1kR0U1HZ8_z17gk6zJrG0SYwt3iWmCS-2QZKFiDKUvOgkGTBUqLP1xMJOXxehcdzTabgTghyH9qVc0NkiAZPX7YMRU2ME2rimPVVp8u5zLX3roSV8KpnfKlFxbbXoNx7CpWP39p5PN9NV1wKW9GaneYpS_H5uSB-M6zFaUXp_BzSuoTzOKxBpQZxIgimfMBjuWlLwtbcIxFNuPuMoHHY-p4lSEb8eULgo6ptnDnlSffcwJmMIzVAvmJQROunrXO2Rho3aCjuZQjTummE1_p_huoOO0i6W2In-9A3ipR3sJjQwQif_BuDBAJuL9yJuMJTBy87zdGmeOpGVTzOI9grOsUCXiBT8pfDHLaKv1Q4QXECK-oi6--cl3lPXSSsy5_DmOKWfjrYC6ClCmizDeTrBbDbeiUYwmDls2phHlw8NP5pwTkRlNcyBy8oVY_nNMqaDube2o84X_sdrCpbh3AemYdBEHlehhxaRAUkraSHuGXxV2tzqq2NdOwsPK-Q_rp2UtwdSi_XGagg__YVHbzhcIcSePnK68leaWeSmc1aVPh6c4PV2i3tIYbC5fHj-buLQKKoyQ0kYRYHbDzlUKoGwB6207953XQyTtBvzaNrYM8chDSPw2hxcrw5d6nQRv9U5PtaPgJOtD8R5AnIBr0k1Hu9jEaHOHulI3FDuvIX7iFnZUyPTZUp1IEpYuzFuGPJdRmZp89ts_fLOfctxbu0sQ6KQOneNlGTQwljpQ4ecRKvDSf7nZkQDGPmCFRgRM4cfwCAPf7RdVPUldNTFNNyoO4enPTzmAZhAS-JYvOkBUf0T4SfETRf3BfygytIjKgTKHX-SSQoOE_CKN0RYwk-5yZMbrmzB1dhCQLUjn3syDFZxRCYKVL6UCCp6I7T0Ah3xsW3t9MJgESk5TDytXNJt0g2BDQfkNhPkWepYP2pL47SwJJQSYjyC_gW8crRqfBEmVZv2B6w-sKZZws6ZYRJrE0xWyhCmCwJDo81zdPvoiU-697wUIhFuk_SDnbiiAP4saqT1PjmInhnAYNAFyFMQrigW0n-l_qp5bZv2uxG5pa0aRIghaOuTAMt6xbDfiZvHb-APzJo0X8ypPW-trshYy4B_Md6alGGtlnNc9c3tQ26zRj9n2We4JmMvPjPo3iy7oV0pw76ENTA-15-pa3G9mVbNAStgOplYHwvWrwV1Fmhj
+          thoughtSignature: EpcQCpQQAb4-9vsAun9784LAmL8E5ne_4Z0Ag473WlzlwIx5wN5RQsnGCGy6wuWZYe16nh8XvEHokr3CKLpvY1Ugpe7VE77edKpx1Gwg4nfarYPXgO5kBM8tSM1goYmqp2sS4_q9N47gcHjFkL3kuUzKXyrBEql0xJCDsc9HCt_4ecdNyvRoozeBB2pChMQXhp_8XvstoURJPzQJeh4LK0oWM_4MriaqEMWcXgGqUBYBVs5aP11B5tZc8tHREMFb05SiKNg7IskwPt2Rfpy7ErQdAuUrVw07dZ4MedFtJin82TC9pxef4IGxZR5Hr-85Azp_Ywp0mgE5KrD2UwUpbg2TYTWcBc1sBczrs8la92_SyG1R5WdBxsPoJ7syC9undyO8C4fFpItguoBqq_Vfz0bIcYsblnouJ9ExBURhGIjKJ7BxZJrop5MKn1zsJ6gBefgfiArHZU3JoC19T0LdxLfSF0qCotSQqG2PvhcScK8PSeKqGvMcKDzNSGRuysWuy08ADcDd1gE7MQH8Qe3lbHfnWWbiVzfAPDOzE80x8pZ9KeucBeLWvw49j6tHemunW3wWaqRb-MxxJfhWvRhQhTQ5k9-cRH0N2kmaAMm3rFcs-dHWl4GzksSQuTY078E4E6wH1MCmubgn6Q0-Q3dc_9SWhtcsrQ2pg-6nNN4hXyj-XZRV9KBziwTJM3EVwEQ0uqRUH5PnOxnTT7aAai34KaA44DQccm5OetTvkpUNy7ZKUFKzDdajBV12FPoIDdvLEElRIeJBI-oOKqxKlH7UHSynA-OHX_TsTX3X15lqLVC1Bm1gT77vt2OrZf8jdcIEk-3SYCOAuu_UyGOSXBhWAoZZBMbkeHuBcA-u3zkZTet6Rtxbbr-NDFZBkm0jm0RNEU2kux5UIhRUcBwetxMM9sZTXqhwRfdRxrYzS4_X5rfIyF_c0NV_geNmz4q7I8H6yEYEIQ8masmVZRi_UNCzXdEJxMMLauZkTMdavDbZMC6UdIcQ5IXYcyMCA3_hwLM3S7jR8JOlCD-VTnNp2-gYcPTci_AxIkfbO--FjhXdgwzi1hA7Oi0N6MVKUFN2jfCyAkndsvvIyNFaBBMDMDO_53VOO3YB68ifikQsk7UibeAlFVxh57tBQoZhZ4J4-w_7MSlLNZIycHbIZZMcDbu4rUVScCLW0P_6lhoR45b9RFG_GGfj1-IGE1R-QBn34xUpRf8XyYX12FRv-QC0XROFtuj5fXWV6NIquKvvmQRD2M7qRL7IIbQjRF7BS5Px0529nfO94UczTEqFZB9fzomKmbYVgQ-7hdPhBXR33VM2E-cP225zbhaoWnVCwgiRML5eDCACBuG2-BBvFbQHAnAwK37d0PXw0Ou7qcrQ1MS3X7oGPSjKV4Hk0vjAmMPcSmqTbXrBsw82LkqtzebB00SoTsTW4EVVn6SePEq9U1pVYfDkcAOA1Vh7HTQuNes8YUUwli9wMdFpcu2NaPagvsSO_AGf6Ow3QOYFhRI34UtnNqYtyEmQRct1a-zBQs4ZqeCeJh0f6JOMIOBgkBQQeil7OPRDoagkpo4frP2BvfGj9v6mdt71W51ikEfeIVYC1MbVd_7Bb96Gu8Io3ymgl6LG-_E0hI6XBbjVQLACMBFLbjkt1h22nAcSw6iqDkWxpK568Orou3BWI1Pn1PyRYLVsmGxI8MhV0y5mpKaNm0In7JTMmFLTzN4tjhkZL-id0VRLAdVaDc8kaWFQSsPTtoh2BaPWTsDMcY4w0bfJHU89koS_XyMJl8fvxIf6imZDKg1q7_46O926CgAwbWOi3Rkdt8pBkriMV_C0WSTX2jn8FOD8uXLxQOYH8B-siuvZRaNjNojFgWL1NVlIt8A9aL9n0npoCw8d6kY3-clRx7yEhSsCguwpYPyHNFA088OnYZHLXj3tOJ8rTvWbn79l6-R0yOKKdPn6LndzVC_HsWaeGZdJbNRwLFsY-evxeZW0CDSIvlEtUzZLFhCXE0uYjUB-KApYhDDrH_gMFzUu8YOodFM-AwKm2raMdMEsqKsgQ1-HskPrEi96fdLwQLtN9MiDdv-S28EykadByqVW_nMuR19d0PEJfFl4dAMvkkWtj8Fs-pDZoUCfpXLqarJDdAjc8vNAf6QyRiV-yLwuIxD4enPRSqRCo9fNovThXpH5w0ryDOEz5yq28IXQsExEP2Q6j625AeDX-5DkCBNg6NDnvCyrHd1xwOZforwVMaavcJdqQpaf4uWkydYVoDZSRz2cW-CHbxCvlkLcn-JcSNgLJNJd5TzF2xwh7UGvwZTZW9ynz9KRRuL__cWDh4S4e5-I-dUWLFn8lh6k5xibyqItaElO5yOQ3C5g3RlRW_pGQo6WZrj3ykOYJW6PWcgGiuy2gryMDMSlmSjRzwGb1s33ncyseuLbwvRsBEWPr0Bv3AHjGaJAffIlX9ZL2Mrv9HBjQdhgaGRCUd45f3zmDIC3f8xm0HALJfe5yRXLd0sAuyU33rjo3AT4MS1u0Dy-3RCb_GqBkgqyOHwOtG2oaoxeOooky-BA5w15I1uYdIGA4gVhve-lw02verwzIj1E7dN1USQaWWlFazgFVylwVebXYrsoUtIYr-O0gVgFwD8bpK8CSt4g3c0ULXOR5rAkrrsgWCgbe8NKvA3fgMGt23ODktKDfwqDRJsYjaE6PGAd2Xtv4Tt8ZNf4cWlDhuXJ_drrmA-CusYQ3tL3Jum4nOyHyYJYVMWCsA4q1tMaeAVLiMkWekJtmRjF2wsSyw==
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_315f922796e0497496f052dfbf0eb055
+            id: pyd_ai_919d1fdf2d424592a310100f95b91ba2
             name: get_file
             response:
               error: |-
@@ -411,11 +247,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1016'
+      - '2718'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1986
+      - gfet4t7; dur=4049
       transfer-encoding:
       - chunked
       vary:
@@ -429,21 +265,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_file
-            thoughtSignature: EoMDCoADAb4+9vvQOLdUK6+TxMTqrLbihd9xmWWz7xTDEWuasi/4jfFFVXauFfVPyoRm+e5SschWP3wmDgJVOa0qFWFURxpBQXFpAyEHKmUVhML1k+mK5wzQryJCSxZpDZn+wBcOE5aKj+dulRMfYZbpojLbsu9GvSuYIPF3ay+MqoC2EHEFSwtqH+psSoRzxOrxUDU0uDGZ8t/iuMyNcN2U31OXuhSGXiw/GNaZGdzvZHdVKPQdoJn8dM3uk7P7oHugQZ/2+wjEuyn955dsZ0D8HF4/h/lfxV/DJwOUancoDFIlpT8iKhdpiwxjtSai66y3ZMJ9ZHqo1gCEaGRxQ3e6RLkywxOIsr7fEsQMGeZasxJ/cL6+6L03e/h9/5dr/TYVsz9viNQWbPDp5sU5iowGJ7ImIEwe5Cyd5gvqM/1oD5zY00oUXJVMzBoY/D5ivp9zUVlJCX5KNVblQd1cSAbria5ZyVyx7zs3bxUkfxKVkiDngr5Zoo2moqtFNNk64izzb+EQ
+            thoughtSignature: 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
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: goyDaf2XJriAmtkPivyz0Ac
+      responseId: dxCKadSEAu_Sz7IPw9ubwQ0
       usageMetadata:
         candidatesTokenCount: 10
-        promptTokenCount: 825
+        promptTokenCount: 789
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 825
-        thoughtsTokenCount: 83
-        totalTokenCount: 918
+          tokenCount: 789
+        thoughtsTokenCount: 473
+        totalTokenCount: 1272
     status:
       code: 200
       message: OK
@@ -459,7 +295,7 @@ interactions:
       host:
       - www.gstatic.com
     method: GET
-    uri: https://www.gstatic.com/webp/gallery3/1.png
+    uri: https://142.251.129.195/webp/gallery3/1.png
   response:
     body:
       string: !!binary |
@@ -2455,8 +2291,6 @@ interactions:
     headers:
       accept-ranges:
       - bytes
-      age:
-      - '277'
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       cache-control:
@@ -2472,7 +2306,7 @@ interactions:
       cross-origin-resource-policy:
       - cross-origin
       expires:
-      - Thu, 04 Feb 2027 18:09:50 GMT
+      - Tue, 09 Feb 2027 16:51:03 GMT
       last-modified:
       - Fri, 23 Apr 2021 09:38:00 GMT
       report-to:
@@ -2491,7 +2325,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '156867'
+      - '158174'
       content-type:
       - application/json
       host:
@@ -2504,44 +2338,14 @@ interactions:
         role: user
       - parts:
         - functionCall:
-            args:
-              parameters: {}
-            id: pyd_ai_3f936ecd73af470e81e16b1ddafe402e
-            name: get_file
-          thoughtSignature: EssBCsgBAb4-9vt9e923OSq9MR-_XXGe6xmXxajPaX9Yrtd487T6WXkOGdi_MG6AhK7T9e8eFMml_IBxDZ7DRJ5QyidTnMPq1VT3q1er2_6hRqdtTwPPSzgpWBmcEw4Xqjy-SoWYjNHIRzUCgd0AH66K3sNTT_Y9qQYKQac4K8Q8BP8NNWlrjHg5u3RHvSsEdjWExsnLHxTJquPLPHAVQRbBVJecrmZp7DbvVWL9GYAIcyAy1PHGzUwwr60yVqCN_WCGWOjxGIa0KSkcOK8=
-        role: model
-      - parts:
-        - functionResponse:
-            id: pyd_ai_3f936ecd73af470e81e16b1ddafe402e
-            name: get_file
-            response:
-              error: |-
-                1 validation error:
-                ```json
-                [
-                  {
-                    "type": "extra_forbidden",
-                    "loc": [
-                      "parameters"
-                    ],
-                    "msg": "Extra inputs are not permitted",
-                    "input": {}
-                  }
-                ]
-                ```
-
-                Fix the errors and try again.
-        role: user
-      - parts:
-        - functionCall:
             args: {}
-            id: pyd_ai_97b3422822044a36907a0ec50be67561
+            id: pyd_ai_e891678c3dc7445e929a39faeb816e14
             name: list_files
-          thoughtSignature: ErsGCrgGAb4-9vsVgnF3zf3wdj_y5FFqgVI-sBjV_BLuOA1F0BFzNPtpD3HCPAdgAIAg486Z5J1Q6gY5jiB3hmNVpB9XQIDT7ov4kLYvvOsBzy-z932aHzFKmOG7VT5GljtpUQxgFPsMboA9A-kM0cuSdBjisaOD_qXshup_ue_xkXpCh1FgPnxLoWkISR7Jw2Tmhu5aTRwuUx_S-Wve7PGFTC0hA4Uoj-ihuNE3OGmndbgq74nW0wh3t5TwvDdocAOxp03hlFskhJV9U366wsrFwuIU8hmT9Yh-dE3fnKuJ4fgpzlMs2T-zjekAj09VEfhqr7PrNUZSNEbj4pZkUt0gg54qSNMQi4LFpBP7kvVqQPI7PyWVv-f0i8OKBNj1nL268U4vHltOwcpd3W3pl0zZdmBIR7V5KQ6w7s2sIApkj4XkRhhYK809oZIgFlaN44i1UTsMyRS1jHk0YDp84M3OBM5QWUFY_upvU864t89qPbgDCl6HVJCKoiUHOMhDXOYggtqWleBpnq7TVEMmgwB6XWt6iJFVm3QdF5v9FeHC0UJu7VslF9oaj65HWVGZJ6U-54zmwPEG43R6P1eDlTCGLVvJistt-kq24Fc693jwohFPhmqJi5-XTO_BrTrRSanrAwJVcdy0K1-V214hjMxYuhUNhlBtJ329k17HtRuwN7OwBZCWfsD-ATYUOxdZjCJoRD5N5DnVXcWFRYXnMuop5PosENdKJrOHhR-2XfbhyIuaZiB7zzXl5Kw3fSOJDqjy41iNAHGzFeApJnI-GQ698ib5quN6jr6HECGqV-JKCliYZgvsD8jXHny5U6ZyeNkfXvXgzkzeY7qNraMUDixDSXQbi0z8_mcKEGNiffwBmfQ--rZW8G9wux8Rnod9R_DiYNWWSoPF6EGVjEnJf7teM3JGhtdnX5nrSgNKNigQebrKUdd0HZe1FQP0WG00iZCqxhV_eJVMoVUj078o5C-mY0V_eTNnl8RP12EhCyOzFkDK1cI_45pwGs8x2Bn1eLIetq8nWmaUNk5Pf2U5cOyzomXFoaV5XLiJ8mhGcMFdPlMO5-d8uGVEfCamwHkqwnnY6UfYxaLU2JaoS6w=
+          thoughtSignature: EuYBCuMBAb4-9vt_pXHW7rXaWcvjxrw8LJPX4hMigJBktqonPkX3DZQ18g-ScqxMXLFCp8aqWpMwZNDsYTZhTE8UJkii4jUaqHTgdYFtNfJntLGtYAz-hrWh7M9hNEqB7hfQppSxnBfSaWiZoOTRyAC-HuuHwu8_qoKN039qpYbfeml9Q_DeuURWe-qUtKiTsKhZXmjf2kV0VxDrC9saYoTki1mueFS5t0OYlqTnEicHuV3eBflCqor24H201rns6cVdaAmcTE0jJQ83sEi38Z4GmkVL2VoaAhSVZeTyKkbkgBQNDXtEJEc=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_97b3422822044a36907a0ec50be67561
+            id: pyd_ai_e891678c3dc7445e929a39faeb816e14
             name: list_files
             response:
               error: |-
@@ -2553,13 +2357,13 @@ interactions:
         - functionCall:
             args:
               name: input_file_0.png
-            id: pyd_ai_315f922796e0497496f052dfbf0eb055
+            id: pyd_ai_919d1fdf2d424592a310100f95b91ba2
             name: get_file
-          thoughtSignature: Ev0ICvoIAb4-9vsdsIMoDxp4nllMqfR9xe4pXMbn6cX4Tdw_WKYvx4j0ifnn7JQ_lA8zPdBg-J3CcbKfWrHMFitKiXbp1B16nvjSxmdoAHgOgAHECYKgF-YyqKiyeUWtGR6xX6RKgunykk3I6tcfb-xMyFpsMRun0AGW8GYG6oYPJWDooBb6lQaULeF6KyrAQfjHwuyQu3xxNjkVfSsl0zyLPk7NF9Wqau7loelr_ifsI7bTbB4ujxQ-KnBZkKxgQetCZlyu1MmIw0Qqg-qCtR7FiJYxkJPOUYrUHcsg20LBqEvmQqffGC6vKcbAtrZ1YBMXVKTNKYo94J1lXSM1kR0U1HZ8_z17gk6zJrG0SYwt3iWmCS-2QZKFiDKUvOgkGTBUqLP1xMJOXxehcdzTabgTghyH9qVc0NkiAZPX7YMRU2ME2rimPVVp8u5zLX3roSV8KpnfKlFxbbXoNx7CpWP39p5PN9NV1wKW9GaneYpS_H5uSB-M6zFaUXp_BzSuoTzOKxBpQZxIgimfMBjuWlLwtbcIxFNuPuMoHHY-p4lSEb8eULgo6ptnDnlSffcwJmMIzVAvmJQROunrXO2Rho3aCjuZQjTummE1_p_huoOO0i6W2In-9A3ipR3sJjQwQif_BuDBAJuL9yJuMJTBy87zdGmeOpGVTzOI9grOsUCXiBT8pfDHLaKv1Q4QXECK-oi6--cl3lPXSSsy5_DmOKWfjrYC6ClCmizDeTrBbDbeiUYwmDls2phHlw8NP5pwTkRlNcyBy8oVY_nNMqaDube2o84X_sdrCpbh3AemYdBEHlehhxaRAUkraSHuGXxV2tzqq2NdOwsPK-Q_rp2UtwdSi_XGagg__YVHbzhcIcSePnK68leaWeSmc1aVPh6c4PV2i3tIYbC5fHj-buLQKKoyQ0kYRYHbDzlUKoGwB6207953XQyTtBvzaNrYM8chDSPw2hxcrw5d6nQRv9U5PtaPgJOtD8R5AnIBr0k1Hu9jEaHOHulI3FDuvIX7iFnZUyPTZUp1IEpYuzFuGPJdRmZp89ts_fLOfctxbu0sQ6KQOneNlGTQwljpQ4ecRKvDSf7nZkQDGPmCFRgRM4cfwCAPf7RdVPUldNTFNNyoO4enPTzmAZhAS-JYvOkBUf0T4SfETRf3BfygytIjKgTKHX-SSQoOE_CKN0RYwk-5yZMbrmzB1dhCQLUjn3syDFZxRCYKVL6UCCp6I7T0Ah3xsW3t9MJgESk5TDytXNJt0g2BDQfkNhPkWepYP2pL47SwJJQSYjyC_gW8crRqfBEmVZv2B6w-sKZZws6ZYRJrE0xWyhCmCwJDo81zdPvoiU-697wUIhFuk_SDnbiiAP4saqT1PjmInhnAYNAFyFMQrigW0n-l_qp5bZv2uxG5pa0aRIghaOuTAMt6xbDfiZvHb-APzJo0X8ypPW-trshYy4B_Md6alGGtlnNc9c3tQ26zRj9n2We4JmMvPjPo3iy7oV0pw76ENTA-15-pa3G9mVbNAStgOplYHwvWrwV1Fmhj
+          thoughtSignature: EpcQCpQQAb4-9vsAun9784LAmL8E5ne_4Z0Ag473WlzlwIx5wN5RQsnGCGy6wuWZYe16nh8XvEHokr3CKLpvY1Ugpe7VE77edKpx1Gwg4nfarYPXgO5kBM8tSM1goYmqp2sS4_q9N47gcHjFkL3kuUzKXyrBEql0xJCDsc9HCt_4ecdNyvRoozeBB2pChMQXhp_8XvstoURJPzQJeh4LK0oWM_4MriaqEMWcXgGqUBYBVs5aP11B5tZc8tHREMFb05SiKNg7IskwPt2Rfpy7ErQdAuUrVw07dZ4MedFtJin82TC9pxef4IGxZR5Hr-85Azp_Ywp0mgE5KrD2UwUpbg2TYTWcBc1sBczrs8la92_SyG1R5WdBxsPoJ7syC9undyO8C4fFpItguoBqq_Vfz0bIcYsblnouJ9ExBURhGIjKJ7BxZJrop5MKn1zsJ6gBefgfiArHZU3JoC19T0LdxLfSF0qCotSQqG2PvhcScK8PSeKqGvMcKDzNSGRuysWuy08ADcDd1gE7MQH8Qe3lbHfnWWbiVzfAPDOzE80x8pZ9KeucBeLWvw49j6tHemunW3wWaqRb-MxxJfhWvRhQhTQ5k9-cRH0N2kmaAMm3rFcs-dHWl4GzksSQuTY078E4E6wH1MCmubgn6Q0-Q3dc_9SWhtcsrQ2pg-6nNN4hXyj-XZRV9KBziwTJM3EVwEQ0uqRUH5PnOxnTT7aAai34KaA44DQccm5OetTvkpUNy7ZKUFKzDdajBV12FPoIDdvLEElRIeJBI-oOKqxKlH7UHSynA-OHX_TsTX3X15lqLVC1Bm1gT77vt2OrZf8jdcIEk-3SYCOAuu_UyGOSXBhWAoZZBMbkeHuBcA-u3zkZTet6Rtxbbr-NDFZBkm0jm0RNEU2kux5UIhRUcBwetxMM9sZTXqhwRfdRxrYzS4_X5rfIyF_c0NV_geNmz4q7I8H6yEYEIQ8masmVZRi_UNCzXdEJxMMLauZkTMdavDbZMC6UdIcQ5IXYcyMCA3_hwLM3S7jR8JOlCD-VTnNp2-gYcPTci_AxIkfbO--FjhXdgwzi1hA7Oi0N6MVKUFN2jfCyAkndsvvIyNFaBBMDMDO_53VOO3YB68ifikQsk7UibeAlFVxh57tBQoZhZ4J4-w_7MSlLNZIycHbIZZMcDbu4rUVScCLW0P_6lhoR45b9RFG_GGfj1-IGE1R-QBn34xUpRf8XyYX12FRv-QC0XROFtuj5fXWV6NIquKvvmQRD2M7qRL7IIbQjRF7BS5Px0529nfO94UczTEqFZB9fzomKmbYVgQ-7hdPhBXR33VM2E-cP225zbhaoWnVCwgiRML5eDCACBuG2-BBvFbQHAnAwK37d0PXw0Ou7qcrQ1MS3X7oGPSjKV4Hk0vjAmMPcSmqTbXrBsw82LkqtzebB00SoTsTW4EVVn6SePEq9U1pVYfDkcAOA1Vh7HTQuNes8YUUwli9wMdFpcu2NaPagvsSO_AGf6Ow3QOYFhRI34UtnNqYtyEmQRct1a-zBQs4ZqeCeJh0f6JOMIOBgkBQQeil7OPRDoagkpo4frP2BvfGj9v6mdt71W51ikEfeIVYC1MbVd_7Bb96Gu8Io3ymgl6LG-_E0hI6XBbjVQLACMBFLbjkt1h22nAcSw6iqDkWxpK568Orou3BWI1Pn1PyRYLVsmGxI8MhV0y5mpKaNm0In7JTMmFLTzN4tjhkZL-id0VRLAdVaDc8kaWFQSsPTtoh2BaPWTsDMcY4w0bfJHU89koS_XyMJl8fvxIf6imZDKg1q7_46O926CgAwbWOi3Rkdt8pBkriMV_C0WSTX2jn8FOD8uXLxQOYH8B-siuvZRaNjNojFgWL1NVlIt8A9aL9n0npoCw8d6kY3-clRx7yEhSsCguwpYPyHNFA088OnYZHLXj3tOJ8rTvWbn79l6-R0yOKKdPn6LndzVC_HsWaeGZdJbNRwLFsY-evxeZW0CDSIvlEtUzZLFhCXE0uYjUB-KApYhDDrH_gMFzUu8YOodFM-AwKm2raMdMEsqKsgQ1-HskPrEi96fdLwQLtN9MiDdv-S28EykadByqVW_nMuR19d0PEJfFl4dAMvkkWtj8Fs-pDZoUCfpXLqarJDdAjc8vNAf6QyRiV-yLwuIxD4enPRSqRCo9fNovThXpH5w0ryDOEz5yq28IXQsExEP2Q6j625AeDX-5DkCBNg6NDnvCyrHd1xwOZforwVMaavcJdqQpaf4uWkydYVoDZSRz2cW-CHbxCvlkLcn-JcSNgLJNJd5TzF2xwh7UGvwZTZW9ynz9KRRuL__cWDh4S4e5-I-dUWLFn8lh6k5xibyqItaElO5yOQ3C5g3RlRW_pGQo6WZrj3ykOYJW6PWcgGiuy2gryMDMSlmSjRzwGb1s33ncyseuLbwvRsBEWPr0Bv3AHjGaJAffIlX9ZL2Mrv9HBjQdhgaGRCUd45f3zmDIC3f8xm0HALJfe5yRXLd0sAuyU33rjo3AT4MS1u0Dy-3RCb_GqBkgqyOHwOtG2oaoxeOooky-BA5w15I1uYdIGA4gVhve-lw02verwzIj1E7dN1USQaWWlFazgFVylwVebXYrsoUtIYr-O0gVgFwD8bpK8CSt4g3c0ULXOR5rAkrrsgWCgbe8NKvA3fgMGt23ODktKDfwqDRJsYjaE6PGAd2Xtv4Tt8ZNf4cWlDhuXJ_drrmA-CusYQ3tL3Jum4nOyHyYJYVMWCsA4q1tMaeAVLiMkWekJtmRjF2wsSyw==
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_315f922796e0497496f052dfbf0eb055
+            id: pyd_ai_919d1fdf2d424592a310100f95b91ba2
             name: get_file
             response:
               error: |-
@@ -2582,13 +2386,13 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_fe445739c7094d2f9e66d2fa3f6a96a1
+            id: pyd_ai_b245310cde3244749b059f8f1ab5cf0e
             name: get_file
-          thoughtSignature: EoMDCoADAb4-9vvQOLdUK6-TxMTqrLbihd9xmWWz7xTDEWuasi_4jfFFVXauFfVPyoRm-e5SschWP3wmDgJVOa0qFWFURxpBQXFpAyEHKmUVhML1k-mK5wzQryJCSxZpDZn-wBcOE5aKj-dulRMfYZbpojLbsu9GvSuYIPF3ay-MqoC2EHEFSwtqH-psSoRzxOrxUDU0uDGZ8t_iuMyNcN2U31OXuhSGXiw_GNaZGdzvZHdVKPQdoJn8dM3uk7P7oHugQZ_2-wjEuyn955dsZ0D8HF4_h_lfxV_DJwOUancoDFIlpT8iKhdpiwxjtSai66y3ZMJ9ZHqo1gCEaGRxQ3e6RLkywxOIsr7fEsQMGeZasxJ_cL6-6L03e_h9_5dr_TYVsz9viNQWbPDp5sU5iowGJ7ImIEwe5Cyd5gvqM_1oD5zY00oUXJVMzBoY_D5ivp9zUVlJCX5KNVblQd1cSAbria5ZyVyx7zs3bxUkfxKVkiDngr5Zoo2moqtFNNk64izzb-EQ
+          thoughtSignature: Ev0MCvoMAb4-9vvHIxCXVOP1z3PDv7BIAr67Ph4urt3WWYHXOMw_bgJ_8PXlB3zBWNcpR-3vcPr24MiYfJDIm7v3kzPu3y2MGYP5xp5FSMJgtITfBo9Wr9azfzB-9eNKNmDOMDtwL8zdKA0DUurLlJWg3vG8L_jgLF4qeTPPeFbuALQ_B-5a8DUbJ-lRTaqioPWQVuN2laQ41wDNm7l_b4_7jQxOefKoYeNR-MS9REROPrEbvgBMt50XgFteNgxLtbmjhWKCumdxA02Wsrb8hARfecDb5ztvEJt6VRgztMhxnQgcIfKshcJyzAUMaq5NPvwpvgqFNK7tFzGRB0rfBib34x2H5I8-oxFYHwLQJlhOayDWiC_6TyF8OKCwr9vTZxhWFnHL2r5QmIZVUN5AeGqn36_PX7c4nAKJSbIGk1eRAx374Sm763Hf_yS5KI0SlEQgsZT6TvUVijAh6d03UZ1ZflvsXHR1wH8RrK5I2o23QKJWye1SnTD_o_seAr4CVizJbElevtU9EBHA4RcNzfuYwGzlsLfOpNRbEG3b8Mb4MVC2YBaBJLbmmmpICcJV9PCRu78a1Awq2bcRhDTJJuDROXIPJtWcHvVQz7RLlb7Dtg2rFy7FD6e8Nqda3lfPOXZmZwBgg0oZat85N1K0_pJiqOTODp77MqAYsBh4O7NQSpcDDovJE0elPXBSwlcXDHPikJeE8Zth2fXKZVbkjNI7mwe-ivg0KLAbguPd7wDzYzaqvKUVkTL4_mDwcArUlQKs3SwyqA8oqjfeh4rZfe-DyGKSKBffDaQvqsro7fuOWvw4xaUqYo56wFT5i1v0mQx-XOoZa2hCMzV7oQ4L2SU_qx6r1kZ4WBCR8fC4eJLNXwbmb8nsfgtlFB_muVwBRY8GIHuaar5MklfY43iukuEU0c2b2yPusDkKrdFBlqAX5cKjKt-b9983Lb7yo_b9z10RDoiIYtxAbAvHhmBQNgUd6G2AiTrsV6eluqh2xWbLWxfynYEMbvZ8RQpXMhkDdXL5WqZ6s68CSjiKKa5SwS7EZdugolji99YlNjvOiQdgcNaaHzMg_Zmz57Ssuk-BQ5LZ34mcRLvxXTPBS6X8oxrq_oMKhXyHcVw-PhaGr7s6IsJx5oJ8mshk8VWuLk8pgoqqL9-6UbBxk1aNGZj58lMxY3wF0V3FwO-4t1QjkEBkj4tn6DVDfCpakl9ozu6WNnTUINxS7it_wgYhf3ATc76yajmz1XDLrbNnergt_jVGST8OQz4EOHeQ-1gi8wWEdK3-_VGZPHmR5EdV7SOb_-XB-Q6fhyOlhMC0RoTa6gfqcmOGmmB0ptc-UNJXNuGYOZnbYEms6dTPXh-xFEynNVgT7tpv-uqPgVv64_gXS2qsODg0q52fSrCTClwzWqQAH_sqFgy6JH14fPmfjwLtkARmss_N-xNf6BzOhmfmmhpSan4P0lyh1CrYcVraiwvw6bzoamFXlh4cH2VfkSbU9frRVImfli2ye6Hn1VuBp_DMUfEWkrAYM8VWkrqDZg0Co16-pf_kWksrnSeP5M4ixpCK4z0DLhpNugeu1JlwFPQj1OHs3_NjcyDcsi4OE3iRbstvOh0DOIyRjygXGMlKxMkXkfUeB-IDHVioy1GkgY3jN7ACrMA37FXrZ6yudYecQH4MFk3i9GzJ9MxmfWztRbkMYAurtcpY21Nw9zdpfQvJDw52tlj7BQLE_cF6EpOdxBKcBD1p2qGE_K_cvxipMmnCdKO8UvqswNFZxc0g1XHxO49kGgISeQ3pgaN-tYsh55UKB6DnHzMNBCxLCh2r21wPnpx2bD8KM3r9XJzolONLMUnZzxV_iL1XyhtqsatuATuOVQClCm5FIVIbog_VzhqUMYGDMTyfa6BuaJDw3kisBnASBDKShZpr_W0Hl3eFORn2rcYmH_EkmRSA09yBqfizGPy5QuJ2vQjL7CQMe3ubFh46yF7gmCgUi1b-6CIp_0tkYvr4qXaTUf1vsWf4GK_5DQtonqjix-BMeF-r0FkuAx5rrOtVCH4OT1mxvVi1Of9l2BMFMmWdayaa9bs6rksnbf4pYpXTqtZptgQ_LDHuAY_yKU5IpxGdHS8DhUafUzmM-VYG1uIUYK4g5FSBTI80eXmkrAJxdmxk8YZh3_OTSD-6rvCcC7_TIpm_q1Z8FsCL7-zGi6pa3Dysxk0mnAmFRXP4csc8NrvOL0p7nXY=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_fe445739c7094d2f9e66d2fa3f6a96a1
+            id: pyd_ai_b245310cde3244749b059f8f1ab5cf0e
             name: get_file
             response:
               return_value: File attached
@@ -2615,11 +2419,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '2619'
+      - '2262'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=4729
+      - gfet4t7; dur=4000
       transfer-encoding:
       - chunked
       vary:
@@ -2631,25 +2435,27 @@ interactions:
       - content:
           parts:
           - text: |-
-              I have retrieved the image. It is a high-resolution photograph of a single rose set against a solid white background.
+              I have retrieved the image, which features a beautiful, single rose bloom set against a plain white background.
 
-              The rose is a vibrant, warm orange color, with its outer petals and one prominent top petal showing a soft pink or coral hue. This topmost petal is covered in small, clear water droplets, giving it a fresh, dew-kissed appearance. The rose is attached to a thin, curved stem that transitions from green to a reddish-brown color. The lighting is soft and even, highlighting the delicate textures and layered petals of the flower.
-            thoughtSignature: ErwJCrkJAb4+9vtGHTiaParY3Abk2E19JrKBNQr2LNilgte9cfruoHbY8t8hldTWY0ER/Hfq2/4CmJUQKnWDGdpzemK08fdmZaZzcuhLHh8O1mD9qQt/QWO8SerQOWZH9YqFtVzIBfsbpqtDNmX1tl7ktR4//+xdnaRHYoRxQUQvDp/qytwn08SfLqTVfnrgXES9bS2wExjIHEV0/Tlb01EC3NmPIsrN/Bxpo3GbI/jYp0xN3P/BeV+mVsIirQ50KtUg75SrpyrSvf6kSl9Odg8fSSE5HA1Ivgw2tg9jGvTvKVsU+bFqUJl0uvjW2fsjMy416gno00x04phqcdx4Cuch1QUiGBJ8B1q4onladlAeWd7ENO6tiCaEDrAabL1QqlLrD6lYZx8T5Y+GXJ/Nr39AyfadUwIOgbmuIGJba3XJ9QVDX1MBKuWQzcCxDzMUtAhMwDsOR1clmX76W77nmiVl0ZAjq+STziP6Hb1QPpAstCStLdmJv+dSELvRs1TgEl4CsbWVEHjPd/E5/w/TmsRwn8uY4obi22sKYmg2BalW75t1RgPmjlggrbcUT6n30lqMAfTJUyDJr33HiIYwAS8XwZQPvY+5GA4NF2b5K5tMW/yAfJ+DZyvGjx5w6jNNs4vfYEU/74aq4IVW78FcqxHMXj0AEmc0fhjPmidYDuG+mxJ9+OD5MLJUbPLi6c17kaGiaR3y56+PXugn7jvk9X14omIDAlS3JS2LvJflXOV3zgSgXdTmel/TA5wZ9iBLRTTBtkRpX10SryeLbbjl5nFA1FOJHHLFz8dWgQUNSoZy0FVAusxtXMyuEKUNv9RQueM314sj/LsNPj2sWRfs5KAfgR7PrkH3U/2AODHku02wfCWPmKc5FUa26Q7IyXJAh3wNnof7/o5qhmWk5M1ifJM2zyGz3n7QrMQ8rth3Et3KvWQYJD5RafqseVpA/UqdI4sRwGjyYFYPBss78c8W43IKDztkotVRElNXzQ1hhCsSr6KjqRBsokWrsaNr6tugETZG8PEg495OtUqkNV1nbw0SMNOKKIDzyAprWpooOflJ38VcYMpW+9bLiTZQp8Y7oFbBsbCQA87sd+Ey9lRRzzG+G9DMAiTUT7h6PT4G184PEdnHsaO6DZi1gIAAdibQwWy9dJloecHGniYQ52B7EC3WKsqgvjoo70P+NUykosZP0xDijnSBeQtF3n3ZOaJQA3w8KwL4KwyN1Wrphl80caD4iWY7xX0Orkh+A6rkisRQV1ZHhtEsRPpasaZHrLQ6YJRqSo1G+k//7t48KNeM0fNoVu5aB52at4WVzXyVibVxej4S8f8Xknae3jfJIxAJcWQ/LyU0Nc06bDVGOeWEwUqc0/Y4SJyVKDqHRcZHdR/Af5CH5YYQAnYCF9ntSb63Lkrt32aEpHDsKu8R3hOOjCq2XPu6NfC6++K0w4tzynohnQat/v6sWjWOriln3VrZTALagDSlQqgCyKQUJgxvzYvY9n8nZcWwXBVf3xq9qsU9q5a7PlRIryfHlVKyAPfO11vmoufiAx6RHmlnt8t9xe35duiB4HZN35lXh/Yrf7MJloOfrxCCGTBqax/o6R3HiDSrix/g2znwBd6kP164
+              The rose is primarily a warm **orange or amber** color, with its outer petals showing delicate **pink and reddish hues** along the edges. A prominent petal at the top is distinctly pink and is covered in several clear **water droplets**, giving it a fresh, dewy appearance.
+
+              The rose is attached to a slender, brownish-red stem that extends toward the upper right corner, with a small green leaf visible near the base of the bloom. The petals are soft and layered, spiraling inward toward the center of the flower.
+            thoughtSignature: EvIGCu8GAb4+9vti4RhQPa6JS3HFIu7wClD/EmLQH0yRtDdR3iEEwF3BvsqGCATYPwUJkDNSErGO63sD/aGqzq/cnEQ8CCQDFQIa9YII4T4lfJWnU0RO5ZAqe+N1+2z0VZs4k67oku1vauCOrdyYvnZB6pKInIV6V8cEhICcRnW+qLhvXKLkrGHRaNwPHX1ZMzLmcGe6A/OAHaIkCaW2jl3axZBrnIk3LSgQvZpeaZVExNR73+HH/DBW4ddhFPH42b8AiXWdl9Pl5GS1fdIOIdce2jCONpG/Zj2okIt9twRz2XRfFOWIzcz7gfnKfb4brcqEKyTFv4OECylRIvNIeayPwNy28PnPCXGRie8gfmB3+ocBMuY7WMgdk8D1XsBxUaeB+zQZc/+GYdb5LBqrnoTOUZzCdJH9f5Y6JJy63oUHuWMIRZfnbxsbaT165u477h0MOGPN707n6H4kwMSVG5IycFtTazJ2ZsNsVgen0TlEbS1MBQH3Mi74sdMbj4oyyh0pHyvylDj6GkyyhK0eWu+j+CVcWTim6LNXESbTrKOF2eSfbblPMMIoNCaUvawMtN7rfrxB1jCgNSiH1nbtrqzoxh+RYxjPg763jT2Xk2hZ+90grC7xW2tYyDqv0jKSNPEptz0P1HA9M0E3Fm9sjBFSb0b2nIA67Yg+57YIuNokSJB6vUDIHT7iR45mpDnvtn3AxqYSd8H/c+yK6FUw919oiZ70BmuEViC6Vdte+Aj55BIz3NQ59J1C3wrtgZgbnAlFBI0NYns3i8Yi70OiEaLtaOfiwpsiSUXhR1KfBiA+fZikYR8VkPS4MKmN9YX8qTesbpCFPJHfvgKA9eyt4AlnVTk9djXN1D9aATEVc5Zy9p4O7qwnC6gMJdqT4uHpV3okhweqhBBOgIy6ShtME5SuLZUwlnU6WxHlqzp9lmaq19kzPoPQ7ep6r2ytCATHFNg1yfJ+6s3AQiwMU3NY+I4DNGFHC+oY3eGnjbEUAiNvmb5d1VQbCqmvgskisbk7fPDXydIQw6jMeFWXpjqpxWf+0u7tbpbiUbS1Jmfar/0m2I8MJkbjvwskECGMn9dmPWoqXNj97zBmjp9Q6Ezc6afd7evsatBP2HVX52hkRCRUTN/4TMjodG6NiTUWaLczfdaL91PgM2oy5qBdr8AGPGfOrJQn
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: iIyDabHwJK2pqtsP-ZPakAg
+      responseId: exCKaYmnKsGtz7IP2b-R0Qw
       usageMetadata:
-        candidatesTokenCount: 114
-        promptTokenCount: 1421
+        candidatesTokenCount: 130
+        promptTokenCount: 1326
         promptTokensDetails:
         - modality: IMAGE
           tokenCount: 1102
         - modality: TEXT
-          tokenCount: 319
-        thoughtsTokenCount: 274
-        totalTokenCount: 1809
+          tokenCount: 224
+        thoughtsTokenCount: 202
+        totalTokenCount: 1658
     status:
       code: 200
       message: OK

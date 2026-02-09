@@ -40,13 +40,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '748'
+      - '749'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '1183'
+      - '1679'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -68,26 +68,26 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: call_XIL2y7lhK7l23BvrmkN3cqjV
+            id: call_3px9SjnyRF512LO5eazjpBRc
             type: function
-      created: 1769797512
-      id: chatcmpl-D3nT6IjXiIhC6nTvV4GTxcw62fnBk
+      created: 1770655763
+      id: chatcmpl-D7OjrVl8lQClal66pQP2v8QssElMV
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 19
+        completion_tokens: 83
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 0
+          reasoning_tokens: 64
           rejected_prediction_tokens: 0
         prompt_tokens: 129
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 148
+        total_tokens: 212
     status:
       code: 200
       message: OK
@@ -103,7 +103,7 @@ interactions:
       host:
       - pdfobject.com
     method: GET
-    uri: https://pdfobject.com/pdf/sample.pdf
+    uri: https://185.199.109.153/pdf/sample.pdf
   response:
     body:
       string: !!binary |
@@ -443,7 +443,7 @@ interactions:
       access-control-allow-origin:
       - '*'
       age:
-      - '20'
+      - '101'
       cache-control:
       - max-age=600
       connection:
@@ -455,7 +455,7 @@ interactions:
       etag:
       - '"680c9470-497a"'
       expires:
-      - Fri, 30 Jan 2026 16:04:25 GMT
+      - Mon, 09 Feb 2026 16:56:51 GMT
       last-modified:
       - Sat, 26 Apr 2025 08:08:16 GMT
       vary:
@@ -476,8 +476,7 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=2YdioT_auOiBjJbLh08zyYp6MAfxEBhEASzkx5NKZbk-1769797513-1.0.1.1-_JnmE51lBo5webVXHMOXn4jCdlcsyULo0FlLOz..F891P3YTIZF3kxVmbF4hvaOMOu.ZUuZ.sHbxlJnScb39wSVHnDQD5a42ggUnejjPqEk;
-        _cfuvid=NNfKKnbqutlDcwZYIYRpMiNjI0DqtCz6RYfFJyvbJKU-1769797513558-0.0.1.1-604800000
+      - __cf_bm=J27i2AEvicKVs5e1Ik9I_xum1S.MtW38rKB.08RG9pg-1770655762.2910583-1.0.1.1-hfxyqbGhIt1WS6RjvvS4UaUpflbLNhVwFmPdHVoAtaI0AGEwicWk.010RtVEveH8KD4xJp.oUpmtdcqfj4bXV8LPZIm6Cz8fJxB5zmDM7GSggDWgeIhB6lx9QMnZyp75
       host:
       - api.openai.com
     method: POST
@@ -491,11 +490,11 @@ interactions:
         - function:
             arguments: '{}'
             name: get_file
-          id: call_XIL2y7lhK7l23BvrmkN3cqjV
+          id: call_3px9SjnyRF512LO5eazjpBRc
           type: function
       - content: See file 99631f.
         role: tool
-        tool_call_id: call_XIL2y7lhK7l23BvrmkN3cqjV
+        tool_call_id: call_3px9SjnyRF512LO5eazjpBRc
       - content:
         - text: 'This is file 99631f:'
           type: text
@@ -526,13 +525,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1597'
+      - '1863'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '8989'
+      - '13800'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -548,45 +547,39 @@ interactions:
         message:
           annotations: []
           content: |-
-            I retrieved file 99631f -- a single-page PDF (page 1 of 1) titled "Sample PDF."
+            I retrieved file 99631f -- a one-page PDF titled "Sample PDF." What I received:
 
-            What the file contains (page 1):
-            - A short header/title: "Sample PDF"
-            - An opening English line: "This is a simple PDF file. Fun fun fun."
-            - The rest of the page is filler / placeholder text in the style of "Lorem ipsum" (multiple paragraphs of Latin-like placeholder text describing typical paragraph structure and flow).
-            - No charts, diagrams, or non-text images are present in the parsed text output.
+            - Format and size: a single-page PDF (parsed as Page 1 / 1).
+            - Text content: it begins with the title "Sample PDF" and the short English line "This is a simple PDF file. Fun fun fun." The rest of the page is placeholder / lorem ipsum-style text (multiple paragraphs) describing typical filler copy (sentences like "Lorem ipsum dolor sit amet..." and subsequent Latin-like paragraphs about facilisis, pulvinar, vestibulum, etc.).
+            - Structure: a short header/title, one-line English intro, then several body paragraphs of placeholder text (roughly 4-6 paragraphs of lorem ipsum content).
+            - Images: there is a rendered image of the page available (the parsing note says rendered images are accessible), but the page appears to be plain text -- no separate photos or diagrams were indicated.
 
-            Notes:
-            - The parsed text I was given matches the full page content; a rendered image of the page is available if you want me to display or OCR it, but the parsed text appears to capture the page contents.
-            - File identifier: 99631f.
-
-            Next steps I can take:
-            - Show the rendered page image.
-            - Provide a cleaned plain-text or downloadable TXT/DOCX version.
-            - Summarize or shorten the document.
-            - Search for specific words/phrases in the page.
-
-            Which would you like me to do?
+            Would you like any of the following next?
+            - A concise summary of the page (shorter than the current text).
+            - Export into plain text, Word, or other formats.
+            - A word/character count or paragraph count.
+            - Search for specific words or extract particular lines.
+            - View the rendered page image or run OCR on the image (if you want me to confirm visual elements).
           refusal: null
           role: assistant
-      created: 1769797513
-      id: chatcmpl-D3nT7FXfE4T6aFEiCdnSwMErfLQ4S
+      created: 1770655765
+      id: chatcmpl-D7OjtoNgJ748RD7j3ztVOwOwBohfl
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 488
+        completion_tokens: 788
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 256
+          reasoning_tokens: 512
           rejected_prediction_tokens: 0
         prompt_tokens: 1126
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 1614
+        total_tokens: 1914
     status:
       code: 200
       message: OK

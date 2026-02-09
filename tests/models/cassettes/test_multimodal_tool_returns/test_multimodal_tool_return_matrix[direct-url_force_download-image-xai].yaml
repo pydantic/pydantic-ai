@@ -11,7 +11,7 @@ interactions:
       host:
       - www.gstatic.com
     method: GET
-    uri: https://www.gstatic.com/webp/gallery3/1.png
+    uri: https://172.217.30.195/webp/gallery3/1.png
   response:
     body:
       string: !!binary |
@@ -2008,7 +2008,7 @@ interactions:
       accept-ranges:
       - bytes
       age:
-      - '92290'
+      - '139'
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       cache-control:
@@ -2024,7 +2024,7 @@ interactions:
       cross-origin-resource-policy:
       - cross-origin
       expires:
-      - Fri, 29 Jan 2027 16:46:37 GMT
+      - Tue, 09 Feb 2027 16:46:12 GMT
       last-modified:
       - Fri, 23 Apr 2021 09:38:00 GMT
       report-to:

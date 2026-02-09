@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '888'
+      - '855'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1168
+      - gfet4t7; dur=1328
       transfer-encoding:
       - chunked
       vary:
@@ -54,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_file
-            thoughtSignature: CqcCAXLI2nwVTg/8gNK8oXLmfrBQHJOqrqn16waOfJroqZdfvvHOXqE8rsjj+pSdKYQTNXHZDtM8W4lPRAaHZ+HtM8wpcRrsqZVKvKQN/1ejBBLpJj1sbhjpaWabJCnfslK06nc7oOl40pgMgeV3FYNpGJG0ScDHBsVjK2ZLhiKRJbIQXn+zqXnZ4QZPQSVJyrb0nwgDbYlpmuGhDDsbBen3Y/VBwPpcrBdmnKEBq1VgIfI+vYnbUzIl2ihmntN//asdGulMcaPDXEFwinPmdEBhp34c843H1pzsd8RRXOQqzNaop8/sJMChx4kWt4cSd66jDm+YrITkndELOPuDI6HEz0jzLBtcnzzwTJa1VyH15PJPjqi7gVcowT2qG9MCdqfSlhDqRI7WIQ==
+            thoughtSignature: CpACAb4+9vuRReMdfeyMdKDBzf9bmJnr4m5xRWntQuRTFvsOxUbQMCna7YvVz8kWUzLegF3SHfwtLCa9HjNR2eOyvF6QAxPyA1GS+RiJkrOXlG6/mmM3eUIubafaw5eqKHvo+qSRXWj1P6wIbxJAdz96hSFgOyGlQ/Ps1sjAs7eMMUKVjrGpwHuPY6qInigzlWJ77oaYrUbQaNOghgq3EtiyMFBMnThiI+kPtQT8qY8UonkZoPDflFZo5VluPQeVvQ2lLtDYgi07lKgH8Gk7Q7QzgNv9+0euYGNRwR4csEdSg7A3kqs0rs53JQlvpRrXGSTpY9OjO0S2tVFlvVPc4esAw8F46lM/B9zYRyq5oZspRic=
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: L_h8aebSOMbjz7IPmdHVwAM
+      responseId: ixCKacLuGJ_jz7IPkLuQaQ
       usageMetadata:
         candidatesTokenCount: 10
         promptTokenCount: 41
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 41
-        thoughtsTokenCount: 64
-        totalTokenCount: 115
+        thoughtsTokenCount: 62
+        totalTokenCount: 113
     status:
       code: 200
       message: OK
@@ -84,7 +84,7 @@ interactions:
       host:
       - pdfobject.com
     method: GET
-    uri: https://pdfobject.com/pdf/sample.pdf
+    uri: https://185.199.109.153/pdf/sample.pdf
   response:
     body:
       string: !!binary |
@@ -424,7 +424,7 @@ interactions:
       access-control-allow-origin:
       - '*'
       age:
-      - '187'
+      - '219'
       cache-control:
       - max-age=600
       connection:
@@ -436,7 +436,7 @@ interactions:
       etag:
       - '"680c9470-497a"'
       expires:
-      - Fri, 30 Jan 2026 16:04:25 GMT
+      - Mon, 09 Feb 2026 16:56:51 GMT
       last-modified:
       - Sat, 26 Apr 2025 08:08:16 GMT
       vary:
@@ -453,7 +453,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '26267'
+      - '26235'
       content-type:
       - application/json
       host:
@@ -467,13 +467,13 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_10e3de7d0db045e3abcf8bbe01b08b06
+            id: pyd_ai_766504d1aa1645ec8b5bdf8932f23c0d
             name: get_file
-          thoughtSignature: CqcCAXLI2nwVTg_8gNK8oXLmfrBQHJOqrqn16waOfJroqZdfvvHOXqE8rsjj-pSdKYQTNXHZDtM8W4lPRAaHZ-HtM8wpcRrsqZVKvKQN_1ejBBLpJj1sbhjpaWabJCnfslK06nc7oOl40pgMgeV3FYNpGJG0ScDHBsVjK2ZLhiKRJbIQXn-zqXnZ4QZPQSVJyrb0nwgDbYlpmuGhDDsbBen3Y_VBwPpcrBdmnKEBq1VgIfI-vYnbUzIl2ihmntN__asdGulMcaPDXEFwinPmdEBhp34c843H1pzsd8RRXOQqzNaop8_sJMChx4kWt4cSd66jDm-YrITkndELOPuDI6HEz0jzLBtcnzzwTJa1VyH15PJPjqi7gVcowT2qG9MCdqfSlhDqRI7WIQ==
+          thoughtSignature: CpACAb4-9vuRReMdfeyMdKDBzf9bmJnr4m5xRWntQuRTFvsOxUbQMCna7YvVz8kWUzLegF3SHfwtLCa9HjNR2eOyvF6QAxPyA1GS-RiJkrOXlG6_mmM3eUIubafaw5eqKHvo-qSRXWj1P6wIbxJAdz96hSFgOyGlQ_Ps1sjAs7eMMUKVjrGpwHuPY6qInigzlWJ77oaYrUbQaNOghgq3EtiyMFBMnThiI-kPtQT8qY8UonkZoPDflFZo5VluPQeVvQ2lLtDYgi07lKgH8Gk7Q7QzgNv9-0euYGNRwR4csEdSg7A3kqs0rs53JQlvpRrXGSTpY9OjO0S2tVFlvVPc4esAw8F46lM_B9zYRyq5oZspRic=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_10e3de7d0db045e3abcf8bbe01b08b06
+            id: pyd_ai_766504d1aa1645ec8b5bdf8932f23c0d
             name: get_file
             response:
               return_value: File attached
@@ -500,11 +500,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '588'
+      - '563'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1686
+      - gfet4t7; dur=2227
       transfer-encoding:
       - chunked
       vary:
@@ -515,22 +515,22 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: I received a PDF document titled "Sample PDF" with the subtitle "This is a simple PDF file. Fun fun fun."
-              The document contains several paragraphs of Latin-like placeholder text (Lorem ipsum).
+          - text: I received a document titled "Sample PDF". It's described as "a simple PDF file. Fun fun fun." The document
+              contains several paragraphs of Latin-like placeholder text.
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: Mfh8adWDMI2Hz7IP766XuAM
+      responseId: jRCKaa6sO-_Sz7IPw9ubwQ0
       usageMetadata:
-        candidatesTokenCount: 40
+        candidatesTokenCount: 36
         promptTokenCount: 328
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 70
         - modality: DOCUMENT
           tokenCount: 258
-        totalTokenCount: 368
+        totalTokenCount: 364
     status:
       code: 200
       message: OK

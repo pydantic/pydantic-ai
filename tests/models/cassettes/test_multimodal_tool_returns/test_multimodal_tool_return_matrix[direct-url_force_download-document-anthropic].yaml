@@ -38,7 +38,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '574'
+      - '538'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -49,13 +49,11 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - text: I'll retrieve the document file for you.
-        type: text
-      - id: toolu_014i4d6vBY2TGFf1C97Pu2nV
+      - id: toolu_01Nphdvu27BRRPh6sRA3hMX9
         input: {}
         name: get_file
         type: tool_use
-      id: msg_01MAPypgQ115vqj8qbN79WYJ
+      id: msg_017MhFsFp6vxQNyRTTkkGQ8w
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -67,8 +65,9 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
+        inference_geo: not_available
         input_tokens: 558
-        output_tokens: 46
+        output_tokens: 36
         service_tier: standard
     status:
       code: 200
@@ -85,7 +84,7 @@ interactions:
       host:
       - pdfobject.com
     method: GET
-    uri: https://pdfobject.com/pdf/sample.pdf
+    uri: https://185.199.108.153/pdf/sample.pdf
   response:
     body:
       string: !!binary |
@@ -425,7 +424,7 @@ interactions:
       access-control-allow-origin:
       - '*'
       age:
-      - '0'
+      - '52'
       cache-control:
       - max-age=600
       connection:
@@ -437,7 +436,7 @@ interactions:
       etag:
       - '"680c9470-497a"'
       expires:
-      - Fri, 30 Jan 2026 16:04:25 GMT
+      - Mon, 09 Feb 2026 16:56:51 GMT
       last-modified:
       - Sat, 26 Apr 2025 08:08:16 GMT
       vary:
@@ -454,7 +453,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '25914'
+      - '25844'
       content-type:
       - application/json
       host:
@@ -468,9 +467,7 @@ interactions:
           type: text
         role: user
       - content:
-        - text: I'll retrieve the document file for you.
-          type: text
-        - id: toolu_014i4d6vBY2TGFf1C97Pu2nV
+        - id: toolu_01Nphdvu27BRRPh6sRA3hMX9
           input: {}
           name: get_file
           type: tool_use
@@ -483,7 +480,7 @@ interactions:
               type: base64
             type: document
           is_error: false
-          tool_use_id: toolu_014i4d6vBY2TGFf1C97Pu2nV
+          tool_use_id: toolu_01Nphdvu27BRRPh6sRA3hMX9
           type: tool_result
         role: user
       model: claude-sonnet-4-5
@@ -503,7 +500,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1394'
+      - '1510'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -514,21 +511,18 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - text: |-
-          I received a **PDF document** with the following characteristics:
-
-          **Document Details:**
-          - **Type:** PDF file (application/pdf)
-          - **Title:** "Sample PDF"
-          - **Subtitle:** "This is a simple PDF file. Fun fun fun."
-          - **Content:** The document appears to be a test/sample PDF containing Lorem Ipsum placeholder text
-
-          **Content Description:**
-          The document is a single-page PDF filled with standard Lorem Ipsum text - the classic placeholder text commonly used in publishing and graphic design. The text begins with "Lorem ipsum dolor sit amet, consectetuer adipiscing elit..." and continues with several paragraphs of Latin-like filler text discussing various topics in a nonsensical way (as is typical for Lorem Ipsum).
-
-          The document appears to be a simple demonstration or test PDF file, likely used for testing PDF reading capabilities or document handling systems. It has a clean, straightforward layout with multiple paragraphs of text.
+      - text: "I received a PDF document with the following characteristics:\n\n**Document Type:** PDF file  \n**Title:**
+          \"Sample PDF\"  \n**Subtitle:** \"This is a simple PDF file. Fun fun fun.\"\n\n**Content Description:**\nThe document
+          contains several paragraphs of Lorem Ipsum placeholder text - the standard dummy text commonly used in publishing
+          and design. The text is formatted in a clean, readable layout and includes multiple paragraphs discussing various
+          Latin phrases that don't form coherent meaning (as is typical with Lorem Ipsum text).\n\n**Structure:**\n- A large
+          heading reading \"Sample PDF\" at the top\n- A subtitle/tagline underneath\n- Multiple paragraphs of Lorem Ipsum
+          text filling the page\n- The text appears to be single-page document\n\nThis appears to be a sample/test PDF file,
+          likely used for demonstration purposes or testing PDF reading functionality. The \"Fun fun fun\" tagline and the
+          use of Lorem Ipsum filler text confirm this is a simple example document rather than a substantive document with
+          real content."
         type: text
-      id: msg_01BhQorB7wJ8KFV9NrA1NQ3u
+      id: msg_0183QSaywNUXnii4nwGN6WxU
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
@@ -540,8 +534,9 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 3284
-        output_tokens: 207
+        inference_geo: not_available
+        input_tokens: 3275
+        output_tokens: 223
         service_tier: standard
     status:
       code: 200

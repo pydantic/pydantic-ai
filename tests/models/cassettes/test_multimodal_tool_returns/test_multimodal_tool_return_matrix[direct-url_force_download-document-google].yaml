@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '915'
+      - '755'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1204
+      - gfet4t7; dur=694
       transfer-encoding:
       - chunked
       vary:
@@ -54,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_file
-            thoughtSignature: Cr4CAXLI2nz3CqZnFwjZFUoLr3JJHwaxh7fl+sN6zXwvoQQVCFRfmVfKM7bn9kvadEBAcPf+Pzxetjqs5bFazZSm5Fx3KMOKDg38RtfLxSjoUs/2Wqv2xQzLdPpAQIL/qbAdvZZub7l2wGmJqrnDJOx8vJdcdyvZXQ263ff6+Ob22VFDcL3xSn9EtXRGf9VsOcNiHE9ZzBf/q3F09cOqlenw6/MNv7+e+gjr90ot/MkN+SO9+0h/QUUXAqCrpsEp07+WO+qpUpA+RKDtnH+5ikC8otgGuvX94VauKq0glcQ0Q3/O2WsVXkl+fcHz0DlstI+cVZJ8grNlWrVEOMt0jpIyr/d+PMmjK/g+SzzDfJRyrUoS17c1+081qEPbWYC/SZ/zhBLre+ETJ0xahZqTyUPjHcAeT/STNztzIeprEq9P
+            thoughtSignature: CsQBAb4+9vvYhbdPlDkN8KYNzFKLASKZ88eGFHruWdCS37RH3B4ywG1nmxXpRZ1i736ZTRS4CpHL3h/oS+tZPlHumMei+M1YrtziTeRRyvU5RXegiOFUuiT1zek/nYMZfdzFi9TrpnkNFD2wEVaqvfwqlHFCsNQlEXgqFuhqJY+gqap7VEr/0AUfkOiF7mQ+PD/dcHNXTxtLGkCGedj03Kw6ExrPUVns/JXbxg8fAJmDaxatCLC13SiuSxJc4F0Vcl/62B6SEA==
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: gfd8ac6_K-fQz7IPsrLGGQ
+      responseId: 8A-KaazGA5Tjz7IP3qKnqQY
       usageMetadata:
         candidatesTokenCount: 10
         promptTokenCount: 41
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 41
-        thoughtsTokenCount: 72
-        totalTokenCount: 123
+        thoughtsTokenCount: 39
+        totalTokenCount: 90
     status:
       code: 200
       message: OK
@@ -84,7 +84,7 @@ interactions:
       host:
       - pdfobject.com
     method: GET
-    uri: https://pdfobject.com/pdf/sample.pdf
+    uri: https://185.199.108.153/pdf/sample.pdf
   response:
     body:
       string: !!binary |
@@ -424,7 +424,7 @@ interactions:
       access-control-allow-origin:
       - '*'
       age:
-      - '12'
+      - '64'
       cache-control:
       - max-age=600
       connection:
@@ -436,7 +436,7 @@ interactions:
       etag:
       - '"680c9470-497a"'
       expires:
-      - Fri, 30 Jan 2026 16:04:25 GMT
+      - Mon, 09 Feb 2026 16:56:51 GMT
       last-modified:
       - Sat, 26 Apr 2025 08:08:16 GMT
       vary:
@@ -453,7 +453,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '26264'
+      - '26104'
       content-type:
       - application/json
       host:
@@ -467,13 +467,13 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_0df9279153c94a0689bd3b8a61b5cded
+            id: pyd_ai_6fd6e6031b80418e9670aafaa1351c3e
             name: get_file
-          thoughtSignature: Cr4CAXLI2nz3CqZnFwjZFUoLr3JJHwaxh7fl-sN6zXwvoQQVCFRfmVfKM7bn9kvadEBAcPf-Pzxetjqs5bFazZSm5Fx3KMOKDg38RtfLxSjoUs_2Wqv2xQzLdPpAQIL_qbAdvZZub7l2wGmJqrnDJOx8vJdcdyvZXQ263ff6-Ob22VFDcL3xSn9EtXRGf9VsOcNiHE9ZzBf_q3F09cOqlenw6_MNv7-e-gjr90ot_MkN-SO9-0h_QUUXAqCrpsEp07-WO-qpUpA-RKDtnH-5ikC8otgGuvX94VauKq0glcQ0Q3_O2WsVXkl-fcHz0DlstI-cVZJ8grNlWrVEOMt0jpIyr_d-PMmjK_g-SzzDfJRyrUoS17c1-081qEPbWYC_SZ_zhBLre-ETJ0xahZqTyUPjHcAeT_STNztzIeprEq9P
+          thoughtSignature: CsQBAb4-9vvYhbdPlDkN8KYNzFKLASKZ88eGFHruWdCS37RH3B4ywG1nmxXpRZ1i736ZTRS4CpHL3h_oS-tZPlHumMei-M1YrtziTeRRyvU5RXegiOFUuiT1zek_nYMZfdzFi9TrpnkNFD2wEVaqvfwqlHFCsNQlEXgqFuhqJY-gqap7VEr_0AUfkOiF7mQ-PD_dcHNXTxtLGkCGedj03Kw6ExrPUVns_JXbxg8fAJmDaxatCLC13SiuSxJc4F0Vcl_62B6SEA==
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_0df9279153c94a0689bd3b8a61b5cded
+            id: pyd_ai_6fd6e6031b80418e9670aafaa1351c3e
             name: get_file
             response: {}
         role: user
@@ -499,11 +499,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '583'
+      - '721'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2302
+      - gfet4t7; dur=3301
       transfer-encoding:
       - chunked
       vary:
@@ -514,22 +514,28 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: I have retrieved a document titled "Sample PDF". It's described as a "simple PDF file. Fun fun fun." The
-              document contains several paragraphs of Latin-like placeholder text (Lorem ipsum).
+          - text: I received a document with the title "Sample PDF" and the subtitle "This is a simple PDF file. Fun fun fun."
+              The document contains several paragraphs of placeholder text (Lorem ipsum).
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: hPd8aanZCZ7nz7IPu7nHsAY
+      responseId: 8w-Kab6iJPqdz7IP-5Or4Ag
       usageMetadata:
-        candidatesTokenCount: 40
+        cacheTokensDetails:
+        - modality: TEXT
+          tokenCount: 42
+        - modality: DOCUMENT
+          tokenCount: 174
+        cachedContentTokenCount: 216
+        candidatesTokenCount: 38
         promptTokenCount: 321
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 63
         - modality: DOCUMENT
           tokenCount: 258
-        totalTokenCount: 361
+        totalTokenCount: 359
     status:
       code: 200
       message: OK

@@ -21,19 +21,19 @@ interactions:
       LCAicHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggB
   response_sample:
     json:
-      id: ea5016dd-0e61-c01d-4f64-79c0ab670e86
+      id: f19f33d3-87f6-7891-03b9-82310c8e3941
       outputs:
       - finish_reason: REASON_TOOL_CALLS
         message:
           role: ROLE_ASSISTANT
           tool_calls:
-          - id: call_79040187
+          - id: call_96752955
             type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
             status: TOOL_CALL_STATUS_COMPLETED
             function:
               name: get_file
               arguments: '{}'
-      created: '2026-01-30T18:28:30.512892289Z'
+      created: '2026-02-09T16:51:51.996690428Z'
       model: grok-4-1-fast-non-reasoning
       system_fingerprint: fp_9bb3d5b553
       usage:
@@ -54,8 +54,8 @@ interactions:
               "object"}'
         top_p: 0.95
     raw: !!binary |
-      CiRlYTUwMTZkZC0wZTYxLWMwMWQtNGY2NC03OWMwYWI2NzBlODYSKwgEGicQAhojCg1jYWxsXzc5
-      MDQwMTg3EAEYAVIOCghnZXRfZmlsZRICe30qDAjO8PPLBhCBu8j0ATIbZ3Jvay00LTEtZmFzdC1u
+      CiRmMTlmMzNkMy04N2Y2LTc4OTEtMDNiOS04MjMxMGM4ZTM5NDESKwgEGicQAhojCg1jYWxsXzk2
+      NzUyOTU1EAEYAVIOCghnZXRfZmlsZRICe30qDAinoajMBhD8k6HbAzIbZ3Jvay00LTEtZmFzdC1u
       b24tcmVhc29uaW5nOg1mcF85YmIzZDViNTUzShIIDxDnAhj2AiDnAjjmAliA0A9aYxABLTMzMz86
       AggBQlEKTwoIZ2V0X2ZpbGUiQ3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3Bl
       cnRpZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In1NMzNzPw==
@@ -70,7 +70,7 @@ interactions:
         - text: ''
         role: ROLE_ASSISTANT
         tool_calls:
-        - id: call_79040187
+        - id: call_96752955
           type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
           status: TOOL_CALL_STATUS_COMPLETED
           function:
@@ -78,7 +78,7 @@ interactions:
             arguments: '{}'
       - content:
         - file:
-            file_id: file_bde1c150-5c0c-441f-b7c8-8c49680e5c7a
+            file_id: file_1c34dceb-a977-47f1-8f37-a8b29ca91dae
         role: ROLE_USER
       - content:
         - text: File attached
@@ -92,74 +92,52 @@ interactions:
         mode: TOOL_MODE_AUTO
     raw: !!binary |
       Cl0KWQpXVXNlIHRoZSBnZXRfZmlsZSB0b29sIG5vdyB0byByZXRyaWV2ZSBhIGRvY3VtZW50IGZp
-      bGUsIHRoZW4gZGVzY3JpYmUgd2hhdCB5b3UgcmVjZWl2ZWQuEAEKKwoCCgAQAiIjCg1jYWxsXzc5
-      MDQwMTg3EAEYAVIOCghnZXRfZmlsZRICe30KMQotGisKKWZpbGVfYmRlMWMxNTAtNWMwYy00NDFm
-      LWI3YzgtOGM0OTY4MGU1YzdhEAEKEwoPCg1GaWxlIGF0dGFjaGVkEAUSG2dyb2stNC0xLWZhc3Qt
+      bGUsIHRoZW4gZGVzY3JpYmUgd2hhdCB5b3UgcmVjZWl2ZWQuEAEKKwoCCgAQAiIjCg1jYWxsXzk2
+      NzUyOTU1EAEYAVIOCghnZXRfZmlsZRICe30KMQotGisKKWZpbGVfMWMzNGRjZWItYTk3Ny00N2Yx
+      LThmMzctYThiMjljYTkxZGFlEAEKEwoPCg1GaWxlIGF0dGFjaGVkEAUSG2dyb2stNC0xLWZhc3Qt
       bm9uLXJlYXNvbmluZ4oBUQpPCghnZXRfZmlsZSJDeyJhZGRpdGlvbmFsUHJvcGVydGllcyI6IGZh
       bHNlLCAicHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggB
   response_sample:
     json:
-      id: 3e3a47dc-1936-c023-15ed-eb8defcf8b38
+      id: dd00e828-a31e-3e3c-a6fe-0478c9e3f3e1
       outputs:
       - finish_reason: REASON_TOOL_CALLS
         message:
           role: ROLE_ASSISTANT
           tool_calls:
-          - id: call_07820012
-            type: TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL
-            status: TOOL_CALL_STATUS_COMPLETED
-            function:
-              name: search_pdf_attachment
-              arguments: '{"file_name":"99631f.application/pdf","query":"what is the
-                main topic or title of this document","mode":"keyword"}'
-      - finish_reason: REASON_TOOL_CALLS
-        index: 2
-        message:
-          role: ROLE_ASSISTANT
-          tool_calls:
-          - id: call_87130572
-            type: TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL
-            status: TOOL_CALL_STATUS_COMPLETED
-            function:
-              name: search_pdf_attachment
-              arguments: '{"file_name":"99631f.application/pdf","query":"title","mode":"keyword"}'
-          - id: call_86763335
-            type: TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL
-            status: TOOL_CALL_STATUS_COMPLETED
-            function:
-              name: search_pdf_attachment
-              arguments: '{"file_name":"99631f.application/pdf","query":"main topic","mode":"keyword"}'
-          - id: call_90476678
+          - id: call_07601595
             type: TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL
             status: TOOL_CALL_STATUS_COMPLETED
             function:
               name: read_attachment
-              arguments: '{"key":"99631f.application/pdf","query":"summarize the content
-                and describe what the document is about"}'
+              arguments: '{"key":"99631f.application/pdf","query":"Provide a detailed
+                summary of the entire document, including its title, main topic, structure,
+                key sections, and any important content or conclusions."}'
       - finish_reason: REASON_STOP
-        index: 6
+        index: 2
         message:
-          content: I received a single-page PDF attachment named **99631f.application/pdf**.
-            It is titled **"Sample PDF"** on the first (and only) page. The content
-            is a simple placeholder document starting with "This is a simple PDF file.
-            Fun fun fun." followed by several paragraphs of standard **Lorem ipsum**
-            dummy text (classic filler Latin-like text used in design and publishing
-            to demonstrate typography or layout). There are no images, tables, or
-            substantive information—just repetitive placeholder prose.
+          content: "I received a single-page PDF file titled **\"Sample PDF\"**. \n\
+            \nIt appears to be a simple placeholder or demo document with minimal\
+            \ substantive content. The main body starts with the playful phrase \"\
+            This is a simple PDF file. Fun fun fun.\" followed by several paragraphs\
+            \ of standard **Lorem Ipsum** dummy text (classic filler Latin-like placeholder\
+            \ text used in design and publishing to simulate readable content without\
+            \ meaning).\n\nThere are no headings, images, tables, or structured sections\
+            \ beyond the page itself—just continuous prose. No key conclusions, data,\
+            \ or specific topics are present; it's purely filler text repeating themes\
+            \ of generic Latin placeholders. Total length is short, fitting on one\
+            \ page."
           role: ROLE_ASSISTANT
-      created: '2026-01-30T18:28:33.378128326Z'
+      created: '2026-02-09T16:51:55.694216739Z'
       model: grok-4-1-fast-non-reasoning
       system_fingerprint: fp_9bb3d5b553
       usage:
-        completion_tokens: 313
-        prompt_tokens: 3863
-        total_tokens: 4176
-        prompt_text_tokens: 3863
-        cached_prompt_text_tokens: 1303
+        completion_tokens: 199
+        prompt_tokens: 2646
+        total_tokens: 2845
+        prompt_text_tokens: 2646
+        cached_prompt_text_tokens: 1047
         server_side_tools_used:
-        - SERVER_SIDE_TOOL_ATTACHMENT_SEARCH
-        - SERVER_SIDE_TOOL_ATTACHMENT_SEARCH
-        - SERVER_SIDE_TOOL_ATTACHMENT_SEARCH
         - SERVER_SIDE_TOOL_ATTACHMENT_SEARCH
       settings:
         parallel_tool_calls: true
@@ -173,27 +151,24 @@ interactions:
               "object"}'
         top_p: 0.95
     raw: !!binary |
-      CiQzZTNhNDdkYy0xOTM2LWMwMjMtMTVlZC1lYjhkZWZjZjhiMzgSqwEIBBqmARACGqEBCg1jYWxs
-      XzA3ODIwMDEyEAcYAVKLAQoVc2VhcmNoX3BkZl9hdHRhY2htZW50EnJ7ImZpbGVfbmFtZSI6Ijk5
-      NjMxZi5hcHBsaWNhdGlvbi9wZGYiLCJxdWVyeSI6IndoYXQgaXMgdGhlIG1haW4gdG9waWMgb3Ig
-      dGl0bGUgb2YgdGhpcyBkb2N1bWVudCIsIm1vZGUiOiJrZXl3b3JkIn0SjwMIBBACGogDEAIadQoN
-      Y2FsbF84NzEzMDU3MhAHGAFSYAoVc2VhcmNoX3BkZl9hdHRhY2htZW50Ekd7ImZpbGVfbmFtZSI6
-      Ijk5NjMxZi5hcHBsaWNhdGlvbi9wZGYiLCJxdWVyeSI6InRpdGxlIiwibW9kZSI6ImtleXdvcmQi
-      fRp6Cg1jYWxsXzg2NzYzMzM1EAcYAVJlChVzZWFyY2hfcGRmX2F0dGFjaG1lbnQSTHsiZmlsZV9u
-      YW1lIjoiOTk2MzFmLmFwcGxpY2F0aW9uL3BkZiIsInF1ZXJ5IjoibWFpbiB0b3BpYyIsIm1vZGUi
-      OiJrZXl3b3JkIn0akAEKDWNhbGxfOTA0NzY2NzgQBxgBUnsKD3JlYWRfYXR0YWNobWVudBJoeyJr
-      ZXkiOiI5OTYzMWYuYXBwbGljYXRpb24vcGRmIiwicXVlcnkiOiJzdW1tYXJpemUgdGhlIGNvbnRl
-      bnQgYW5kIGRlc2NyaWJlIHdoYXQgdGhlIGRvY3VtZW50IGlzIGFib3V0In0S/QMIAxAGGvYDCvED
-      SSByZWNlaXZlZCBhIHNpbmdsZS1wYWdlIFBERiBhdHRhY2htZW50IG5hbWVkICoqOTk2MzFmLmFw
-      cGxpY2F0aW9uL3BkZioqLiBJdCBpcyB0aXRsZWQgKioiU2FtcGxlIFBERiIqKiBvbiB0aGUgZmly
-      c3QgKGFuZCBvbmx5KSBwYWdlLiBUaGUgY29udGVudCBpcyBhIHNpbXBsZSBwbGFjZWhvbGRlciBk
-      b2N1bWVudCBzdGFydGluZyB3aXRoICJUaGlzIGlzIGEgc2ltcGxlIFBERiBmaWxlLiBGdW4gZnVu
-      IGZ1bi4iIGZvbGxvd2VkIGJ5IHNldmVyYWwgcGFyYWdyYXBocyBvZiBzdGFuZGFyZCAqKkxvcmVt
-      IGlwc3VtKiogZHVtbXkgdGV4dCAoY2xhc3NpYyBmaWxsZXIgTGF0aW4tbGlrZSB0ZXh0IHVzZWQg
-      aW4gZGVzaWduIGFuZCBwdWJsaXNoaW5nIHRvIGRlbW9uc3RyYXRlIHR5cG9ncmFwaHkgb3IgbGF5
-      b3V0KS4gVGhlcmUgYXJlIG5vIGltYWdlcywgdGFibGVzLCBvciBzdWJzdGFudGl2ZSBpbmZvcm1h
-      dGlvbuKAlGp1c3QgcmVwZXRpdGl2ZSBwbGFjZWhvbGRlciBwcm9zZS4QAioMCNHw88sGEMaPp7QB
-      Mhtncm9rLTQtMS1mYXN0LW5vbi1yZWFzb25pbmc6DWZwXzliYjNkNWI1NTNKGgi5AhCXHhjQICCX
-      HjiXCkoECAgICFi06O5iWmMQAS0zMzM/OgIIAUJRCk8KCGdldF9maWxlIkN7ImFkZGl0aW9uYWxQ
-      cm9wZXJ0aWVzIjogZmFsc2UsICJwcm9wZXJ0aWVzIjoge30sICJ0eXBlIjogIm9iamVjdCJ9TTMz
-      cz8=
+      CiRkZDAwZTgyOC1hMzFlLTNlM2MtYTZmZS0wNDc4YzllM2YzZTES9QEIBBrwARACGusBCg1jYWxs
+      XzA3NjAxNTk1EAcYAVLVAQoPcmVhZF9hdHRhY2htZW50EsEBeyJrZXkiOiI5OTYzMWYuYXBwbGlj
+      YXRpb24vcGRmIiwicXVlcnkiOiJQcm92aWRlIGEgZGV0YWlsZWQgc3VtbWFyeSBvZiB0aGUgZW50
+      aXJlIGRvY3VtZW50LCBpbmNsdWRpbmcgaXRzIHRpdGxlLCBtYWluIHRvcGljLCBzdHJ1Y3R1cmUs
+      IGtleSBzZWN0aW9ucywgYW5kIGFueSBpbXBvcnRhbnQgY29udGVudCBvciBjb25jbHVzaW9ucy4i
+      fRLUBQgDEAIazQUKyAVJIHJlY2VpdmVkIGEgc2luZ2xlLXBhZ2UgUERGIGZpbGUgdGl0bGVkICoq
+      IlNhbXBsZSBQREYiKiouIAoKSXQgYXBwZWFycyB0byBiZSBhIHNpbXBsZSBwbGFjZWhvbGRlciBv
+      ciBkZW1vIGRvY3VtZW50IHdpdGggbWluaW1hbCBzdWJzdGFudGl2ZSBjb250ZW50LiBUaGUgbWFp
+      biBib2R5IHN0YXJ0cyB3aXRoIHRoZSBwbGF5ZnVsIHBocmFzZSAiVGhpcyBpcyBhIHNpbXBsZSBQ
+      REYgZmlsZS4gRnVuIGZ1biBmdW4uIiBmb2xsb3dlZCBieSBzZXZlcmFsIHBhcmFncmFwaHMgb2Yg
+      c3RhbmRhcmQgKipMb3JlbSBJcHN1bSoqIGR1bW15IHRleHQgKGNsYXNzaWMgZmlsbGVyIExhdGlu
+      LWxpa2UgcGxhY2Vob2xkZXIgdGV4dCB1c2VkIGluIGRlc2lnbiBhbmQgcHVibGlzaGluZyB0byBz
+      aW11bGF0ZSByZWFkYWJsZSBjb250ZW50IHdpdGhvdXQgbWVhbmluZykuCgpUaGVyZSBhcmUgbm8g
+      aGVhZGluZ3MsIGltYWdlcywgdGFibGVzLCBvciBzdHJ1Y3R1cmVkIHNlY3Rpb25zIGJleW9uZCB0
+      aGUgcGFnZSBpdHNlbGbigJRqdXN0IGNvbnRpbnVvdXMgcHJvc2UuIE5vIGtleSBjb25jbHVzaW9u
+      cywgZGF0YSwgb3Igc3BlY2lmaWMgdG9waWNzIGFyZSBwcmVzZW50OyBpdCdzIHB1cmVseSBmaWxs
+      ZXIgdGV4dCByZXBlYXRpbmcgdGhlbWVzIG9mIGdlbmVyaWMgTGF0aW4gcGxhY2Vob2xkZXJzLiBU
+      b3RhbCBsZW5ndGggaXMgc2hvcnQsIGZpdHRpbmcgb24gb25lIHBhZ2UuEAIqDAiroajMBhCj0IPL
+      AjIbZ3Jvay00LTEtZmFzdC1ub24tcmVhc29uaW5nOg1mcF85YmIzZDViNTUzShcIxwEQ1hQYnRYg
+      1hQ4lwhKAQhY1NCLGlpjEAEtMzMzPzoCCAFCUQpPCghnZXRfZmlsZSJDeyJhZGRpdGlvbmFsUHJv
+      cGVydGllcyI6IGZhbHNlLCAicHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifU0zM3M/

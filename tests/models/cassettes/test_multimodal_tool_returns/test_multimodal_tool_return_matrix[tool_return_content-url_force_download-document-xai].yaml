@@ -11,7 +11,7 @@ interactions:
       host:
       - pdfobject.com
     method: GET
-    uri: https://pdfobject.com/pdf/sample.pdf
+    uri: https://185.199.108.153/pdf/sample.pdf
   response:
     body:
       string: !!binary |
@@ -351,7 +351,7 @@ interactions:
       access-control-allow-origin:
       - '*'
       age:
-      - '218'
+      - '249'
       cache-control:
       - max-age=600
       connection:
@@ -363,7 +363,7 @@ interactions:
       etag:
       - '"680c9470-497a"'
       expires:
-      - Fri, 30 Jan 2026 16:04:25 GMT
+      - Mon, 09 Feb 2026 16:56:51 GMT
       last-modified:
       - Sat, 26 Apr 2025 08:08:16 GMT
       vary:

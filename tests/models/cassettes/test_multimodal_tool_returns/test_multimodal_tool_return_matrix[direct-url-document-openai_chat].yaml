@@ -46,7 +46,7 @@ interactions:
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '1442'
+      - '1129'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -68,10 +68,10 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: call_L4HzijBkxbVDlLwugpKK33nX
+            id: call_i92b3EOKn5j3PFw8G8ngehzr
             type: function
-      created: 1770082304
-      id: chatcmpl-D4zYWtfVJ2N749Ug94o9JgLDfaRu2
+      created: 1770655638
+      id: chatcmpl-D7Ohqty5V4iAVilECzW5GCndYO9mK
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
@@ -103,7 +103,7 @@ interactions:
       host:
       - pdfobject.com
     method: GET
-    uri: https://pdfobject.com/pdf/sample.pdf
+    uri: https://185.199.109.153/pdf/sample.pdf
   response:
     body:
       string: !!binary |
@@ -443,7 +443,7 @@ interactions:
       access-control-allow-origin:
       - '*'
       age:
-      - '0'
+      - '28'
       cache-control:
       - max-age=600
       connection:
@@ -455,7 +455,7 @@ interactions:
       etag:
       - '"680c9470-497a"'
       expires:
-      - Tue, 03 Feb 2026 01:41:47 GMT
+      - Mon, 09 Feb 2026 16:56:51 GMT
       last-modified:
       - Sat, 26 Apr 2025 08:08:16 GMT
       vary:
@@ -476,8 +476,7 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=hd.s66kd.W0TpF.2jJ_pPoScAncG7OdbIaCLtsyEyp8-1770082305-1.0.1.1-2r2JXp.96pF.ymyWEu5eWr4qAwztBMiqBUG6nJnBSys5h1HwhN5StIxWoCbOUeV7SbCX3fOXUzx3EdtGillWooTxM.ccTkGKvLC.T9cLmP8;
-        _cfuvid=Wiqb6FKzg5i6ydoOI5iNRyW6uFAav_ksJS9_N9WT5Eg-1770082305974-0.0.1.1-604800000
+      - __cf_bm=A0UZCbbHPkR.7zcRnLpkCmQtUmqjJ49zeIxU73T5G5E-1770655637.689623-1.0.1.1-OQ88ENTLv3ymsjJbltrwDbraPtcKIorzWRCFGnTA0RzdwGhqWJOhgOgg.NNrkpq5DVh83VdUmJarZc7EHKeiwFC5lHlESfyXbF7DleG5UZCtMB67sj459.xBfbt_lhT6
       host:
       - api.openai.com
     method: POST
@@ -491,11 +490,11 @@ interactions:
         - function:
             arguments: '{}'
             name: get_file
-          id: call_L4HzijBkxbVDlLwugpKK33nX
+          id: call_i92b3EOKn5j3PFw8G8ngehzr
           type: function
       - content: See file 99631f.
         role: tool
-        tool_call_id: call_L4HzijBkxbVDlLwugpKK33nX
+        tool_call_id: call_i92b3EOKn5j3PFw8G8ngehzr
       - content:
         - text: 'This is file 99631f:'
           type: text
@@ -526,13 +525,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1974'
+      - '1560'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '9921'
+      - '22213'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -548,44 +547,40 @@ interactions:
         message:
           annotations: []
           content: |-
-            I retrieved file 99631f. Here's what I found:
+            I retrieved file 99631f. Summary of what I received:
 
-            - File type / pages: A 1-page PDF (parsed as "PAGE: 1 / 1").
-            - Title / opening lines (page 1): "Sample PDF" followed by "This is a simple PDF file. Fun fun fun."
-            - Main content: Several paragraphs of placeholder-style text (a mix of English and lorem-ipsum style Latin). The text reads like a generic sample/test document with sentences such as:
-              - "Lorem ipsum dolor sit amet, consectetuer adipiscing elit..."
-              - "Phasellus facilisis odio sed mi. Curabitur suscipit. Nullam vel nisi..."
-              - Multiple paragraphs describing generic layout/content (vestibulum, pellentesque, fusce, proin, etc.).
-            - Purpose: It appears to be a simple sample/test PDF used to demonstrate or test PDF parsing/rendering rather than conveying topic-specific information.
-            - Images/graphics: The parsed output shows only text. If there are rendered images on the page I can retrieve and inspect them, but the parsed text suggests no important embedded graphics.
+            - File type: PDF (single page).
+            - Page count: 1 (page 1 of 1).
+            - Header/title line: "Sample PDF".
+            - Opening sentence: "This is a simple PDF file. Fun fun fun."
+            - Main content: Several paragraphs of filler/placeholder text (Latin-style "Lorem ipsum" prose and related sample sentences). The parsed text contains four longer paragraphs of body text after the opening lines; the content reads like a generic sample/demo document rather than conveying specific factual data.
+            - Images/graphics: The parsed output is plain text -- there's no parsed image content on the page. If you want, I can also show the rendered page image to confirm visual layout.
 
-            If you want, I can:
-            - Provide a concise or detailed summary of the page.
-            - Return the full extracted text in a downloadable format (TXT/CSV).
-            - Show the rendered page image (screenshot) and read any text contained in any image areas.
-            - Search the document for specific words/phrases or perform keyword counts.
-
-            Which would you like me to do next?
+            Would you like any of the following?
+            - Full text exported as a file (TXT/Word).
+            - A concise summary or word/character count.
+            - The rendered page image displayed.
+            - A search for specific words or phrases in this document.
           refusal: null
           role: assistant
-      created: 1770082309
-      id: chatcmpl-D4zYbC8hC1F2TyjbqD8cPmV1krKCG
+      created: 1770655640
+      id: chatcmpl-D7Ohsh4DMUec4ucpUhnBc0B5KUZig
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 632
+        completion_tokens: 1366
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 320
+          reasoning_tokens: 1152
           rejected_prediction_tokens: 0
         prompt_tokens: 1126
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 1758
+        total_tokens: 2492
     status:
       code: 200
       message: OK

@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1044'
+      - '856'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1430
+      - gfet4t7; dur=1299
       transfer-encoding:
       - chunked
       vary:
@@ -54,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_file
-            thoughtSignature: CpwDAXLI2ny6ewfONY+qo5LfYJz/2q1RE19YO6OFfPL95HPUY4rWCIXHaG4FOAlSgHWEUdaIvPaek6IOhpoHLpIDc8bSXh5fSeEooVtRCNBoqjNayM+InegytVaCoTux3lSL5wDwsgwx2i06vhNzeEe4/coFUKs4JE0WFQOSRkVz+Ts7ExDaVFKuM+kRp4q/wXJEALT17Pb3rpwc1cLc9svsdjWM2nWh9fBlDgINPh/A3VbSYgq2jqA8aPlUGav59tQuv6M9HQZhWyHa87YqRxa0ujwDMj3QTGCy1zxC9hcYVbI4INHfaMzM84IxuAat/G56Yjko9QEWRs9kMjTjXTAjkf3LHP7IDqFSpO/9kHWWS+wkw1yOZM1h+mGzIBHPfL+tECeV6uYJ2RnNggWJORFqanfFw6zjeZYnuhhT1NCS6Ztc5BdckM8+1NhSVbEAc2TJBfNhXTK8tzUCx1ryFwVNZOw6eIe0KOVvh7RHIYBYBZBFBea7Yn9YRh7hu8ARFHjcPhjCXAYU/KhMTtErBRGYPvO5txA6M2v9AMp/zw==
+            thoughtSignature: CpECAb4+9vvJXzV69wppnGF5qo+LZeaDyzeB7RdMJUJrwsaidbS1ec2AyUDJPt7VX1FBNxkE2BgO2wEjNgwA4Pam1mpTCTuloZjtDt5W5wEJ99ZKLkIaiuU6Jynd/UfmLrdsORr+b+g+b4BSzJ3qMAbV8tVIf8LlXqbtF0dgvp/7n68V/Li5Os9pzecHeoY0VX83uxKLE44ZVmnNJ5gX4sYVPtfo4zkG+3PZGKr02JCsySTToTTTuglFZ9nfCb6kcc9C1PciWJw1BM1qBElMw6hiaUq3+RHBbhczeaMAK7pOLAxLd8Z75mv0Cy8dEcYDEgpSK5yXDSW4rKo/QyD0s/jzw1tHmeXubHVG6euV9NOePm1K
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: h1V8adGOFvSlqtsPwZqduAk
+      responseId: ug-KabaVKunkz7IP7pKJsAU
       usageMetadata:
         candidatesTokenCount: 10
         promptTokenCount: 41
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 41
-        thoughtsTokenCount: 83
-        totalTokenCount: 134
+        thoughtsTokenCount: 61
+        totalTokenCount: 112
     status:
       code: 200
       message: OK
@@ -84,7 +84,7 @@ interactions:
       host:
       - download.samplelib.com
     method: GET
-    uri: https://download.samplelib.com/mp3/sample-3s.mp3
+    uri: https://188.227.84.172/mp3/sample-3s.mp3
   response:
     body:
       string: !!binary |
@@ -1029,7 +1029,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '70744'
+      - '70556'
       content-type:
       - application/json
       host:
@@ -1043,13 +1043,13 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_95fc7358d9b24b94a749703340c095ff
+            id: pyd_ai_abba1bb312434a909b41c83a53cc4b35
             name: get_file
-          thoughtSignature: CpwDAXLI2ny6ewfONY-qo5LfYJz_2q1RE19YO6OFfPL95HPUY4rWCIXHaG4FOAlSgHWEUdaIvPaek6IOhpoHLpIDc8bSXh5fSeEooVtRCNBoqjNayM-InegytVaCoTux3lSL5wDwsgwx2i06vhNzeEe4_coFUKs4JE0WFQOSRkVz-Ts7ExDaVFKuM-kRp4q_wXJEALT17Pb3rpwc1cLc9svsdjWM2nWh9fBlDgINPh_A3VbSYgq2jqA8aPlUGav59tQuv6M9HQZhWyHa87YqRxa0ujwDMj3QTGCy1zxC9hcYVbI4INHfaMzM84IxuAat_G56Yjko9QEWRs9kMjTjXTAjkf3LHP7IDqFSpO_9kHWWS-wkw1yOZM1h-mGzIBHPfL-tECeV6uYJ2RnNggWJORFqanfFw6zjeZYnuhhT1NCS6Ztc5BdckM8-1NhSVbEAc2TJBfNhXTK8tzUCx1ryFwVNZOw6eIe0KOVvh7RHIYBYBZBFBea7Yn9YRh7hu8ARFHjcPhjCXAYU_KhMTtErBRGYPvO5txA6M2v9AMp_zw==
+          thoughtSignature: CpECAb4-9vvJXzV69wppnGF5qo-LZeaDyzeB7RdMJUJrwsaidbS1ec2AyUDJPt7VX1FBNxkE2BgO2wEjNgwA4Pam1mpTCTuloZjtDt5W5wEJ99ZKLkIaiuU6Jynd_UfmLrdsORr-b-g-b4BSzJ3qMAbV8tVIf8LlXqbtF0dgvp_7n68V_Li5Os9pzecHeoY0VX83uxKLE44ZVmnNJ5gX4sYVPtfo4zkG-3PZGKr02JCsySTToTTTuglFZ9nfCb6kcc9C1PciWJw1BM1qBElMw6hiaUq3-RHBbhczeaMAK7pOLAxLd8Z75mv0Cy8dEcYDEgpSK5yXDSW4rKo_QyD0s_jzw1tHmeXubHVG6euV9NOePm1K
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_95fc7358d9b24b94a749703340c095ff
+            id: pyd_ai_abba1bb312434a909b41c83a53cc4b35
             name: get_file
             response: {}
         role: user
@@ -1075,11 +1075,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1064'
+      - '1036'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2831
+      - gfet4t7; dur=2773
       transfer-encoding:
       - chunked
       vary:
@@ -1090,13 +1090,13 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: I did not receive an audio file, so I cannot describe it. The `get_file` tool returned an empty response.
-            thoughtSignature: CoIDAXLI2nzooJZMxFNe4dg5YEpqQIdUyyOKgzawAxfnMHu9g52z6SDrLoiHCayHwLkoD+nAEzE6ilHf7QV+ZOO5rzAhF1AtaIoTeMb2FL9pGKij+uKyoMtJDIIHRBp1mCFDmBIZmCUweHea/5Iw2PxOh2vnr1vM9vbbWX8Rb0sBhmu0s/sjMkA23pK4x6LAu63VJCwX9/ReC1EYVbJP6C9jxWhB5T0DT4suj0hS1evxis+ODoeKP4Yskpra4ePyCp4cy1WrI3od46sGOrzlz6+Jd13oSMKD+VMI3/vT4QFqo8p+qCgwiVO/TsuhRJGFQ68mZgMTCfyH0HsCLRgahNoZlEGuFnnBAQexcKQTO6GO6mpZwP2fjzwfm83C6Kx/BC3rl7gaK90VZlo+JTt7irsX4QKtmsqVKLNfeQq8+PWq12SAZM5b6GL3SCeCtsBYG9kaKhzE4EblPLGD4OhcvQSggtSIsXdNM5XvntFZHYmjR/o2Qy4+wiXQlm/C245ZsDBBA7g=
+          - text: I'm sorry, I was unable to retrieve an audio file. The `get_file` tool returned an empty response.
+            thoughtSignature: CvQCAb4+9vvHK9Uhbgng8/yhM9/shi7H1TlLnYre+n4QNPJfGln5RXKjLfP2dfHKKSU+paOIxV0etf80HrDV+XMhV3owaGD4asLwMoXYH+Tss9hdnN+AmFbkR6vkEc+5V9Iuod8/5BFsbIwpOrL9MPd1+JykF+AZ6WE9bBKpvq2zEh1ouWFE1ns4YPMf5M4+xZw2ry+Ztb91pGCvBl6cRnAqGiElrFkyWzlG157Tx6HKK9zLd/g73djaYgLg82t3Uu9yprIWGhs/T86umsKMBvRFcLb5R/NxKs0tmYS3BcN0HENvk1HWB3pT1YYl6PVyuorR2bGSX2vD8fq10F50Y0Otm7VNPpU3Uz/k9zT1ROIds1zIG0QYkVw82fjaTtL1OPdEqg8acGAeZEXv+JZl2V4rHSncD96cZAFSzSuL4COW5kZ4CEPXmwvgs/E28zkMCtAlFem5hP7jY1SHOSNcPXoLPvrIoZ53ry2HDw4PPAGUquDEle/0
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: jFV8aauyI6e6qtsPmJbEuAM
+      responseId: vg-KaZThG_vgz7IPoNKUWQ
       usageMetadata:
         candidatesTokenCount: 26
         promptTokenCount: 167
@@ -1105,8 +1105,8 @@ interactions:
           tokenCount: 63
         - modality: AUDIO
           tokenCount: 104
-        thoughtsTokenCount: 92
-        totalTokenCount: 285
+        thoughtsTokenCount: 85
+        totalTokenCount: 278
     status:
       code: 200
       message: OK

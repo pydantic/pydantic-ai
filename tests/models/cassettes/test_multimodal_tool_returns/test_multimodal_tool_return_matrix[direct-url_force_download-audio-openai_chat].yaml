@@ -46,7 +46,7 @@ interactions:
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '1442'
+      - '1953'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -68,10 +68,10 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: call_t5PYAdgvFgWQoSs5c8qp6OHe
+            id: call_jmxG7QSjTBgtGNz5iVgtC7on
             type: function
-      created: 1769797567
-      id: chatcmpl-D3nTzFiQfkRzCfgMJkz9aM6k0fAT9
+      created: 1770655717
+      id: chatcmpl-D7Oj7vo5DwyTQE9LraqrtJRWwxC8L
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
@@ -103,7 +103,7 @@ interactions:
       host:
       - download.samplelib.com
     method: GET
-    uri: https://download.samplelib.com/mp3/sample-3s.mp3
+    uri: https://188.227.84.172/mp3/sample-3s.mp3
   response:
     body:
       string: !!binary |
@@ -1052,8 +1052,7 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=.da0yeZhzvrS8OBFgKHRz1dQOO3V2Vus6o_By6.5RFw-1769797569-1.0.1.1-VUTLhUkM1Pcs7NSRTqjHQLHps9UfJ8i0KdVRpJzz7Ljz6RK1ErOVcdqE4Sp1UhsKbDpG9kzfqwW1Qo1tthiNw1ftexyXHJlKnjpTDeM7MW8;
-        _cfuvid=Eud6lAjffw7ohE7fDRqWb0YMfXTKtKodGVqejZ50IOI-1769797569183-0.0.1.1-604800000
+      - __cf_bm=uH7BxBlKB6lARSqjdY3RJgpZWHUtEmjBCtiYlQF2rNM-1770655716.076402-1.0.1.1-Hj00RwfBrB.3eNe2fcc9g5Rr76DL9PVw5N.HaxeKD4DOENu53pw6vbvS4YMyZ5aknI7BRwutlMSo7.QYRiVYrUIK8UdYT9bWKMkxWMsexhg0tddTjb8ZKcR7qqxuLjRr
       host:
       - api.openai.com
     method: POST
@@ -1067,11 +1066,11 @@ interactions:
         - function:
             arguments: '{}'
             name: get_file
-          id: call_t5PYAdgvFgWQoSs5c8qp6OHe
+          id: call_jmxG7QSjTBgtGNz5iVgtC7on
           type: function
       - content: See file 4660af.
         role: tool
-        tool_call_id: call_t5PYAdgvFgWQoSs5c8qp6OHe
+        tool_call_id: call_jmxG7QSjTBgtGNz5iVgtC7on
       - content:
         - text: 'This is file 4660af:'
           type: text
@@ -1108,7 +1107,7 @@ interactions:
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '22'
+      - '11'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:

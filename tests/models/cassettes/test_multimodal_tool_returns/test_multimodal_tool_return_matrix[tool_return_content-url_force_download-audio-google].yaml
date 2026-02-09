@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1985'
+      - '1721'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1588
+      - gfet4t7; dur=1709
       transfer-encoding:
       - chunked
       vary:
@@ -54,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_file
-            thoughtSignature: Ct8IAXLI2nx+8VeToyvZC6x76wIV3iDpjZem0R8OVv/aGWW4j5y8pgtj73Tg3PafBUEVKBzJvt1JbWp/SJZ4DrCbcuDDwMqyXKGhbNcr1zEUzSY45w8zXpvJbagphLqMqxjHwtMiqSZf01aNHxIOXdnz4HBJG47vrIvUfkWaS4DuwIkOYfmc2YsVOBxFbQEyvCTvVFnMBl1/IgZzF8+4oQyNZ1BIGyUzkVIl4+2iM3an+/8wDk5EiQrXp0o2+maDH4WS/aksOgnbc/QDrvaWdl6khmWq2SbPtMMA9lm93K2JYDgIfrnMMD3zud4UDXVE7P9O6Ve5U70uiy/0Pc2hV7PUOZpyAMhcaaA5FI1enXIv1HbN5QT5jkoBM0wsi4VlYCgPF5OpDSUqchFrvqeLTE3mrp5N/PD4FUDNXiZvF9UJiPhtP1PXnX568EuxJRp8KtuM17IxoJLBbmxVCSF1ZCQClQ1qQxkI7xZJ9DV7ftfpngzTCmviKIipRvyykuFwlRZvXSx6M5g2aSxa3yNQUVUiHqNLAsAU1w2a0XNKK9NToyXlB4LWrwo6lOOdHPtwC4bOnnWW9cfutgzEaSC9rAGDA+f2JF1UQ7+VxEyfbXtQ++Bzw0Mk3R7QTFv1dOb8CzTEnNuKAf/ZPDzR9bikVjfz/MEmdVSrt1X7ex8pgPlVPClOd75uQML71VKQzppKQZBMz8u/7WpIXCDdMCDOX1YaIxu7JhN8FZ2IXsgaFTTft/K8b5T2zNngR+wTXJryMKbUQYj/6pCwfj+NDTEU+h+NhL4MLlBZPoPQ9ZA8iWwBe8ssWtn/J0fRFnQJbaxsMNte/CGj4fZ1kZdetSmYetslniEYUXWnTobKi/4zVQrXRomiEGh3w9EfCQSE9LF8RJ11lxJSOWdLpd1C+Bx5hrMjt97uzlc6Belgqp+JDbApgLn/YhTA+BO2Y4mXPz1fiHiB/HXrvd6RlpO8dAbGL8dBZML30/AxqQbqTFIYLZ4t/TKJeb+U7hyJXEZI/OzFPmmdHM71iRJdpYsvZ/YSBcwuKVdf9JfcMKPWdb7XMWuz849MU2/m30vbzCZKzb/8pgN7QVVGiGRaWsjk69TkeqgVkJnd6n4gUNS0uuRgVJTebOEodIppZPiC1KFSbll1Z10h8u2frvZ85iuQuGr0X1ssaWgUePwt1vVnhQ2JtmMT3zVA83GWC+Sfj7LgRp/G6IrZ78FNHShDpGwRmjAh+VG5f6HEVGtPfWEzxkUIJ6KslBBqi49M0/pQLQz7j3sDMwTciJWeu6vatSYqPL6JFSGPDzongFH8/RNzEMeope05UbCwBiVXhoaxYA0XjpyJB6HOCsSv45fTcUS+t2OsGEmdZVBX9ao/nps4d5db+rcwiColf/c7yhgROBfcrefTWaDjo2wsim6vqQxPcwKlSRlf/Jch6uRXp4wx3AroMMhMFvIBAyejN5BcBze7WeEukEL34ylAMNKRRo5Zmcw6GATc
+            thoughtSignature: CpgHAb4+9vspyBB8dld4y7nB5T3OH6HPVmShPc06WwRkNas4Elr0wB+kT+TCfIWqfON4irJitpfJYo4j4zJz9ZQ4PGrz6eR6V2Yo7zG2Kcm7SBPxCO00his29W72P+KlwHjMdbVAbBSD9/xeCaG7tkStbfMOj9J7QSK1JGaQCm/6ow0TFTv6ERSgOpHLNgsH3+FuN0clUVCgOOX59pP5AHHkSxAOIcqx7bonsop0vA936mfeazbDKFu1B0v4OxPm+y3+M9kuWWJRbj3nkfSxJUMQboTQ/gaqhStujQlMfNKVo73887zWPvgldE9tZHgE2+ZaDRPG0DQf9VsV1W3vhkJNaya5YGsN3u76bGS+hLL/vyYv3/ukV0cvuIpavPLXIYTjnfd1ZnP2/qT+UqNq16HWM7F5F87jxut78ay9S6x2TZBobMjBjaGCHLvTV8jJhrQ5Rveu/9kc8VYdGsWwOO9KI1/7DkdFwcr37Z9nRI6p4DL5BDnWDkRmMI+h8FD0yRfHXKkf+hsoq3P2Zmw5yvKnHhzU9Kc8ttOjVGiZV5Rhyvu7Ovombb7LI7TWwKOxb4nf7u6y/ngHN3bzk4EE1igX69Q8huXX07uAQriIAIIcvSgM0m0qA+7LyXNLo7RzHiFk0rj14BdeQYSSUKR0XxmwWGc2YrrMiI/4OfIGv09iLv3ngwE3piuBRXGynKzkgkoqFFkgaEFMPI6sJGcSOee+YcxPumCG2lDIBLDSW+pn50NASUfqSX00644Zx3uTTFQIl1MtxJAE4c47rQzD85VFsJm/ASSLcOBdRcdjdLdPQewnC+G3xm9tX99/0Al6zTuifMiSXgQU37Awg2Evx9hvT1mMmnVmhn4E1Mlfv60pN5KQ2XfxtMIUewgT0sOYF10jp9sfvzufERb/UihAzNwR/yFdTBw4DHS71t1O7DE5iG/EesuazjFprQ3fg8SimaCHgk2jhTWApBhEt4JSp3zPWiuAYLScBYh8pGLTB9i83O5hezWzzobhx7FUNjBPhKRO6QgTAK2tZ6N/jsZic5eUEkmm9ivWg5pL9R4oTocZmoR60DVhBPFuXVval4T8yAP2M44c4sYtrA8fiasM0wQ+J9ANhcWs95zfn2YhImxn1YwzocwKy9sSoKKar6jyBfh/lYxsEzYXpp0dkWL60OF8fXpIIYecJCm85FjMlJC8PYupP0H03vPAIAzdCvuWwyvHBuRhgnJ1EW4=
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: gfh8aa2NMJjgz7IPhtntkAk
+      responseId: qxCKacSgI9GxqtsPkJbI6A8
       usageMetadata:
         candidatesTokenCount: 10
         promptTokenCount: 41
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 41
-        thoughtsTokenCount: 252
-        totalTokenCount: 303
+        thoughtsTokenCount: 220
+        totalTokenCount: 271
     status:
       code: 200
       message: OK
@@ -84,7 +84,7 @@ interactions:
       host:
       - download.samplelib.com
     method: GET
-    uri: https://download.samplelib.com/mp3/sample-3s.mp3
+    uri: https://188.227.84.172/mp3/sample-3s.mp3
   response:
     body:
       string: !!binary |
@@ -1029,7 +1029,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '71715'
+      - '71451'
       content-type:
       - application/json
       host:
@@ -1043,13 +1043,13 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_d49dc076da694828b5c6160e05814230
+            id: pyd_ai_d25a9c1fbc494abaad3c0c4205c8a7b8
             name: get_file
-          thoughtSignature: Ct8IAXLI2nx-8VeToyvZC6x76wIV3iDpjZem0R8OVv_aGWW4j5y8pgtj73Tg3PafBUEVKBzJvt1JbWp_SJZ4DrCbcuDDwMqyXKGhbNcr1zEUzSY45w8zXpvJbagphLqMqxjHwtMiqSZf01aNHxIOXdnz4HBJG47vrIvUfkWaS4DuwIkOYfmc2YsVOBxFbQEyvCTvVFnMBl1_IgZzF8-4oQyNZ1BIGyUzkVIl4-2iM3an-_8wDk5EiQrXp0o2-maDH4WS_aksOgnbc_QDrvaWdl6khmWq2SbPtMMA9lm93K2JYDgIfrnMMD3zud4UDXVE7P9O6Ve5U70uiy_0Pc2hV7PUOZpyAMhcaaA5FI1enXIv1HbN5QT5jkoBM0wsi4VlYCgPF5OpDSUqchFrvqeLTE3mrp5N_PD4FUDNXiZvF9UJiPhtP1PXnX568EuxJRp8KtuM17IxoJLBbmxVCSF1ZCQClQ1qQxkI7xZJ9DV7ftfpngzTCmviKIipRvyykuFwlRZvXSx6M5g2aSxa3yNQUVUiHqNLAsAU1w2a0XNKK9NToyXlB4LWrwo6lOOdHPtwC4bOnnWW9cfutgzEaSC9rAGDA-f2JF1UQ7-VxEyfbXtQ--Bzw0Mk3R7QTFv1dOb8CzTEnNuKAf_ZPDzR9bikVjfz_MEmdVSrt1X7ex8pgPlVPClOd75uQML71VKQzppKQZBMz8u_7WpIXCDdMCDOX1YaIxu7JhN8FZ2IXsgaFTTft_K8b5T2zNngR-wTXJryMKbUQYj_6pCwfj-NDTEU-h-NhL4MLlBZPoPQ9ZA8iWwBe8ssWtn_J0fRFnQJbaxsMNte_CGj4fZ1kZdetSmYetslniEYUXWnTobKi_4zVQrXRomiEGh3w9EfCQSE9LF8RJ11lxJSOWdLpd1C-Bx5hrMjt97uzlc6Belgqp-JDbApgLn_YhTA-BO2Y4mXPz1fiHiB_HXrvd6RlpO8dAbGL8dBZML30_AxqQbqTFIYLZ4t_TKJeb-U7hyJXEZI_OzFPmmdHM71iRJdpYsvZ_YSBcwuKVdf9JfcMKPWdb7XMWuz849MU2_m30vbzCZKzb_8pgN7QVVGiGRaWsjk69TkeqgVkJnd6n4gUNS0uuRgVJTebOEodIppZPiC1KFSbll1Z10h8u2frvZ85iuQuGr0X1ssaWgUePwt1vVnhQ2JtmMT3zVA83GWC-Sfj7LgRp_G6IrZ78FNHShDpGwRmjAh-VG5f6HEVGtPfWEzxkUIJ6KslBBqi49M0_pQLQz7j3sDMwTciJWeu6vatSYqPL6JFSGPDzongFH8_RNzEMeope05UbCwBiVXhoaxYA0XjpyJB6HOCsSv45fTcUS-t2OsGEmdZVBX9ao_nps4d5db-rcwiColf_c7yhgROBfcrefTWaDjo2wsim6vqQxPcwKlSRlf_Jch6uRXp4wx3AroMMhMFvIBAyejN5BcBze7WeEukEL34ylAMNKRRo5Zmcw6GATc
+          thoughtSignature: CpgHAb4-9vspyBB8dld4y7nB5T3OH6HPVmShPc06WwRkNas4Elr0wB-kT-TCfIWqfON4irJitpfJYo4j4zJz9ZQ4PGrz6eR6V2Yo7zG2Kcm7SBPxCO00his29W72P-KlwHjMdbVAbBSD9_xeCaG7tkStbfMOj9J7QSK1JGaQCm_6ow0TFTv6ERSgOpHLNgsH3-FuN0clUVCgOOX59pP5AHHkSxAOIcqx7bonsop0vA936mfeazbDKFu1B0v4OxPm-y3-M9kuWWJRbj3nkfSxJUMQboTQ_gaqhStujQlMfNKVo73887zWPvgldE9tZHgE2-ZaDRPG0DQf9VsV1W3vhkJNaya5YGsN3u76bGS-hLL_vyYv3_ukV0cvuIpavPLXIYTjnfd1ZnP2_qT-UqNq16HWM7F5F87jxut78ay9S6x2TZBobMjBjaGCHLvTV8jJhrQ5Rveu_9kc8VYdGsWwOO9KI1_7DkdFwcr37Z9nRI6p4DL5BDnWDkRmMI-h8FD0yRfHXKkf-hsoq3P2Zmw5yvKnHhzU9Kc8ttOjVGiZV5Rhyvu7Ovombb7LI7TWwKOxb4nf7u6y_ngHN3bzk4EE1igX69Q8huXX07uAQriIAIIcvSgM0m0qA-7LyXNLo7RzHiFk0rj14BdeQYSSUKR0XxmwWGc2YrrMiI_4OfIGv09iLv3ngwE3piuBRXGynKzkgkoqFFkgaEFMPI6sJGcSOee-YcxPumCG2lDIBLDSW-pn50NASUfqSX00644Zx3uTTFQIl1MtxJAE4c47rQzD85VFsJm_ASSLcOBdRcdjdLdPQewnC-G3xm9tX99_0Al6zTuifMiSXgQU37Awg2Evx9hvT1mMmnVmhn4E1Mlfv60pN5KQ2XfxtMIUewgT0sOYF10jp9sfvzufERb_UihAzNwR_yFdTBw4DHS71t1O7DE5iG_EesuazjFprQ3fg8SimaCHgk2jhTWApBhEt4JSp3zPWiuAYLScBYh8pGLTB9i83O5hezWzzobhx7FUNjBPhKRO6QgTAK2tZ6N_jsZic5eUEkmm9ivWg5pL9R4oTocZmoR60DVhBPFuXVval4T8yAP2M44c4sYtrA8fiasM0wQ-J9ANhcWs95zfn2YhImxn1YwzocwKy9sSoKKar6jyBfh_lYxsEzYXpp0dkWL60OF8fXpIIYecJCm85FjMlJC8PYupP0H03vPAIAzdCvuWwyvHBuRhgnJ1EW4=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_d49dc076da694828b5c6160e05814230
+            id: pyd_ai_d25a9c1fbc494abaad3c0c4205c8a7b8
             name: get_file
             response:
               return_value: File attached
@@ -1076,11 +1076,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1368'
+      - '1848'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=3095
+      - gfet4t7; dur=3254
       transfer-encoding:
       - chunked
       vary:
@@ -1091,24 +1091,25 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: I have retrieved a file, but I cannot process or describe audio content. Therefore, I am unable to describe
-              the audio file you sent.
-            thoughtSignature: CtAEAXLI2nw8LrihJuYzisa4ky2xDgi8u9O2xULNZZYVRLzMMNuTcnsYca/Gn4zB7skCbdh02dFVXFtSXiZghSZpTWxaihkpng3h0Y/8BFzc/fuTbgbx/tBz+QWIKF3oGAFHJ0VYzQiPeCdMJC3qWUOFboRWPKO/M0SUEG5QDh7Heu+/N9MCj7VafevcpATnU7EWbuPYp4CLIFeMFXbFmNt6sqzzGt7trMAN6PxIeMEiNHcYXe9SUOSgpa4sRGZmYHNQzLBu2b6QwYUhFe2tpIu6++NVVj6Fpjtk8vcEwBcFKsA7Yuv6W02MgUvPYuMlB5QVItTdTlQN+lINi35kD5DT0baKsgk5uLZ24ebU7+Z4EW27JeLi33RN1XISoSWjbmUhWgE3H4PRY/VQ43WAr1DcIktkgDNl96JqVrSfZq0Ftvv/5hB/FGFYdpfrHFJdtcAVw+Ef4O44t5uxvTJ5crfcio+Bf9YiG/i9Huaw1667QQ1UZlBU1QgBQpqnpCQ4PH6klIlR5uufp5qB+OQRWi/gRrI9sYHVRfDzfbvlejHQrQ0nHkDsKmGTX+pfmxAYP4XkBAdyjVKEgpHeLvHNAVRb4p225VpdU4L/9tU5q3u/TUtlYTSKToSox8IVo1fP0xWPAGOAiXuetApWUi81PMiIilZdPMqxuemH+eDWqyyB09rkhkI7m/S9euHC+j/yA7BKYNBSvUvhdr6+ArncdHzHbhuzvfm7uOYjp5e6c8MRynCXIWoaPouYlTXanLU0Vm6kdKDxW2q/6kUeCNvvp2capg==
+          - text: I'm sorry, I cannot fulfill that request. The `get_file` tool successfully retrieved a file, but it doesn't
+              provide any information about the file's content or type, such as whether it's an audio file or what its contents
+              might be. Therefore, I cannot describe what I received.
+            thoughtSignature: Cs0GAb4+9vupXF9rVyyMU1LibOG69tJfV2Njh4ZiEFouk1fDa2OdJlCj8t/1/nqjklPl5KFfTk+ywarWhKfXsTSrWl63/g/ZKMoB8S4aXWP12LC2Dyq7is0t65Xf8KlFNYPXrRzvXAzoYzoFHB2qBl4JgGKkO9YfBhiq6v/PB1M7HgOoHHOKwleSua94gOVIeizVHqPsxxlZCExjSMdecPfMx6QclbE96CnJtybCaVM1V6imPiQfbek5UeZ2QIw/81xD17hgpLiBTe8W7p0+YjhHf92j9Gtwv+6YViDEae9Z/nDfThG9N82h5ctsg62DSrYroU8WfThegpAPHopcST4wS4roEswhBTV8Bcz8uGni4oyNyS3npZRHmbE9MLEK53F6gFg8i/2fF3iKHBub57K5Bs6VWXj3vahE8EgRL5TGTICY0vT8ZwbrqP6OAVqDFTjCDuUmXLSbdgaqIYichdkbYXduu4SLq4VGnk73dou3s6Sye8K2Op4exCvsnDVwjszI67h86B7axttUxfQoGgQQ4ip78yDFb74tmB7QLlVW4RzU91nsB/d3sOaXHxFcivCNhZ8qa2yPvsty//UKoDktX6d/XAbJgORhDzcfCCbEeBYB1wxo/dSqzaOeTKPfGXRAUyVUNpFyVT02Sq8ASW8lqr73r/tUNIx1IQJvn1cGfGNijZicX0u0zbyVzKBrG3arQbtonEDvyQH1VLRjdeaoTD29553WjiDoX2/v9qAVBTXGXSdGjDlEgSlDAc+uZoky6v/fdDtERnd5Z/s6b0oQ6GYPkjpj+x0JufTQMJkRMNTP0m7514CQNxLo6QrMvrp0H0nyiDLqQo1riyzwkI7vZANrF4PXTn3rv2jhnqhz5mZPUdmIFqBP4uxhcU8IrWoEz2mLqwE1jwdGGw7RMnE/dNeh7Usbj3kjuZlsY86jaiKtgibhMX3sZiDNmO3TtoXAKeaTWLwVlGe0nPK8XyGgwNK2T12oMSJH+GYJ6YvOw1BBo5xioXT5cnAIu1hPaKjCBZa/6SoPl1KLenkupxFFeO3hobtYLs7MM+6DEyGH8w8PQ4jTqTt130wIAxaJqGdJFGxt7Mkdgngtd0kWxwgX/Jpm3Kjch4ew6XMvd0k=
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: hfh8aYiQM5Otz7IPnsew0Q8
+      responseId: rxCKadD3OKW_qtsP6NG5YA
       usageMetadata:
-        candidatesTokenCount: 28
+        candidatesTokenCount: 65
         promptTokenCount: 174
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 70
         - modality: AUDIO
           tokenCount: 104
-        thoughtsTokenCount: 133
-        totalTokenCount: 335
+        thoughtsTokenCount: 192
+        totalTokenCount: 431
     status:
       code: 200
       message: OK
