@@ -153,12 +153,12 @@ _(This example is complete, it can be run "as is")_
 | `blocked_domains` | ❌ | ✅ | ✅ | ✅ | ❌ |
 | `allowed_domains` | ❌ | ✅ | ✅ | ✅ | ❌ |
 | `max_uses` | ❌ | ✅ | ❌ | ❌ | ❌ |
-| `engine` | ❌ | ❌ | ❌ | ❌ | ✅ |
-| `max_results` | ❌ | ❌ | ❌ | ❌ | ✅ |
-| `search_prompt` | ❌ | ❌ | ❌ | ❌ | ✅ |
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
+
+!!! note "OpenRouter Provider-Specific Parameters"
+    OpenRouter supports additional parameters via `provider_metadata['openrouter']`: `engine`, `max_results`, and `search_prompt`. See the [OpenRouter documentation](models/openrouter.md#web-search) for details.
 
 ## Code Execution Tool
 

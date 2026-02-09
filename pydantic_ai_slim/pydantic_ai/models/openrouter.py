@@ -575,7 +575,8 @@ def _openrouter_settings_to_openai_settings(
         extra_body['usage'] = usage
 
     if web_search_plugin is not None:
-        plugins = extra_body.get('plugins', [])
+        existing_plugins = extra_body.get('plugins')
+        plugins: list[OpenRouterWebSearchPlugin] = list(existing_plugins) if existing_plugins else []
         plugins.append(web_search_plugin)
         extra_body['plugins'] = plugins
 
@@ -634,19 +635,22 @@ class OpenRouterModel(OpenAIChatModel):
 
         if web_search_tool is not None:
             web_search_plugin = {'id': 'web'}
-            if web_search_tool.engine is not None:
-                web_search_plugin['engine'] = web_search_tool.engine
-            if web_search_tool.max_results is not None:
-                web_search_plugin['max_results'] = web_search_tool.max_results
-            if web_search_tool.search_prompt is not None:
-                web_search_plugin['search_prompt'] = web_search_tool.search_prompt
+
+            openrouter_metadata = (
+                web_search_tool.provider_metadata.get('openrouter', {}) if web_search_tool.provider_metadata else {}
+            )
+
+            if 'engine' in openrouter_metadata:
+                web_search_plugin['engine'] = openrouter_metadata['engine']
+            if 'max_results' in openrouter_metadata:
+                web_search_plugin['max_results'] = openrouter_metadata['max_results']
+            if 'search_prompt' in openrouter_metadata:
+                web_search_plugin['search_prompt'] = openrouter_metadata['search_prompt']
 
             web_search_options = {'search_context_size': web_search_tool.search_context_size}
-
-            filtered_builtin_tools = [
-                t for t in model_request_parameters.builtin_tools if not isinstance(t, WebSearchTool)
-            ]
-            model_request_parameters = replace(model_request_parameters, builtin_tools=filtered_builtin_tools)
+            model_request_parameters = replace(
+                model_request_parameters, builtin_tools=model_request_parameters.builtin_tools
+            )
 
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
         new_settings = _openrouter_settings_to_openai_settings(
