@@ -595,7 +595,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             tool_def=tool_def,
             max_retries=self.max_retries,
             args_validator=TOOL_SCHEMA_VALIDATOR,
-            include_return_schema=True,  # Setting it to True for MCP tools by default because it is a part of the MCP spec.
+            include_return_schema=False,
         )
 
     async def list_resources(self) -> list[Resource]:

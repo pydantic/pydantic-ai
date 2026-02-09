@@ -161,19 +161,9 @@ class DeferredToolRequests:
     approvals: list[ToolCallPart] = field(default_factory=list)
     """Tool calls that require human-in-the-loop approval."""
     context: dict[str, dict[str, Any]] = field(default_factory=dict)
-    """Context for deferred tool calls, keyed by `tool_call_id`.
+    """Opaque context data provided by toolsets for use during resumption, keyed by `tool_call_id`.
 
-    For code mode (run_code), the context contains:
-
-    - `checkpoint`: bytes - Monty checkpoint for resuming execution
-    - `interrupted_calls`: list of dicts with nested call details:
-        - `call_id`: str - The nested call ID
-        - `tool_name`: str - The tool name
-        - `args`: tuple - Positional arguments
-        - `kwargs`: dict - Keyword arguments
-        - `type`: 'approval' | 'external' - Whether the call needs approval or external execution
-
-    Pass this context back in DeferredToolResults.context with added 'results' key.
+    Pass this back unchanged in [`DeferredToolResults.context`][pydantic_ai.tools.DeferredToolResults.context].
     """
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
     """Metadata for deferred tool calls, keyed by `tool_call_id`."""
