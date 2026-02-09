@@ -68,8 +68,10 @@ with try_import() as cohere_imports_successful:
     from cohere.core.api_error import ApiError as CohereApiError
 
     from pydantic_ai.models.cohere import (
+        CohereModel,
         _check_context_window_exceeded as cohere_check,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.providers.cohere import CohereProvider
 
 HUGE_PROMPT = 'word ' * 150_000
 ANTHROPIC_HUGE_PROMPT = 'word ' * 250_000
@@ -176,6 +178,19 @@ async def test_mistral_context_window_exceeded(allow_model_requests: None, mistr
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.model_name == 'mistral-small-latest'
+
+
+@pytest.mark.skipif(not cohere_imports_successful(), reason='cohere not installed')
+async def test_cohere_context_window_exceeded(allow_model_requests: None, co_api_key: str):
+    """Test that Cohere context length exceeded errors raise ContextWindowExceeded."""
+    model = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
+    agent = Agent(model)
+
+    with pytest.raises(ContextWindowExceeded) as exc_info:
+        await agent.run(HUGE_PROMPT)
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.model_name == 'command-r7b-12-2024'
 
 
 # ==================== Unit tests for _check_context_window_exceeded branches ====================
