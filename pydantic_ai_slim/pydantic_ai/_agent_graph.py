@@ -1097,15 +1097,14 @@ async def process_tool_calls(  # noqa: C901
                     # Validation failed — no tool is actually executed here. We call
                     # execute_tool_call so the validation error is raised inside a trace span.
                     # Retries are already tracked by validate_tool_call() via failed_tools.
-                    include_content = (
-                        ctx.deps.instrumentation_settings is not None
-                        and ctx.deps.instrumentation_settings.include_content
-                    )
-                    instrumentation_version = (
-                        ctx.deps.instrumentation_settings.version
-                        if ctx.deps.instrumentation_settings
-                        else DEFAULT_INSTRUMENTATION_VERSION
-                    )
+                    try:
+                        await tool_manager.execute_tool_call(
+                            validated,
+                            tracer=ctx.deps.tracer,
+                            include_content=tool_manager.ctx.trace_include_content,
+                            instrumentation_version=tool_manager.ctx.instrumentation_version,
+                            usage=ctx.state.usage,
+                        )
                     try:
                         await tool_manager.execute_tool_call(
                             validated,
