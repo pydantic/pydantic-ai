@@ -840,10 +840,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         final_usage_attrs: dict[str, str | int | float | bool] = {}
         if settings.use_aggregated_usage_attribute_names:
             for key, value in usage_attrs.items():
-                if key == 'gen_ai.usage.input_tokens':
-                    final_usage_attrs['gen_ai.aggregated_usage.input_tokens'] = value
-                elif key == 'gen_ai.usage.output_tokens':
-                    final_usage_attrs['gen_ai.aggregated_usage.output_tokens'] = value
+                if key.startswith('gen_ai.usage.'):
+                    final_usage_attrs[key.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1)] = value
                 else:
                     final_usage_attrs[key] = value
         else:
