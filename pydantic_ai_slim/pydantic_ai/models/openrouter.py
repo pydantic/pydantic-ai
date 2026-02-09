@@ -545,16 +545,13 @@ def _map_openrouter_provider_details(
 
 
 def _openrouter_settings_to_openai_settings(
-    model_settings: OpenRouterModelSettings,
-    web_search_plugin: OpenRouterWebSearchPlugin | None = None,
-    web_search_options: OpenRouterWebSearchOptions | None = None,
+    model_settings: OpenRouterModelSettings, model_request_parameters: ModelRequestParameters
 ) -> OpenAIChatModelSettings:
     """Transforms a 'OpenRouterModelSettings' object into an 'OpenAIChatModelSettings' object.
 
     Args:
         model_settings: The 'OpenRouterModelSettings' object to transform.
-        web_search_plugin: Optional web search plugin configuration to add.
-        web_search_options: Optional web search options to add.
+        model_request_parameters: The 'ModelRequestParameters' object to use for the transformation.
 
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
@@ -574,13 +571,24 @@ def _openrouter_settings_to_openai_settings(
     if usage := model_settings.pop('openrouter_usage', None):
         extra_body['usage'] = usage
 
-    if web_search_plugin is not None:
-        existing_plugins = extra_body.get('plugins')
-        plugins: list[OpenRouterWebSearchPlugin] = list(existing_plugins) if existing_plugins else []
-        plugins.append(web_search_plugin)
-        extra_body['plugins'] = plugins
+    for builtin_tool in model_request_parameters.builtin_tools:
+        if isinstance(builtin_tool, WebSearchTool):
+            web_search_plugin: OpenRouterWebSearchPlugin = {'id': 'web'}
 
-        if web_search_options:
+            openrouter_metadata = (
+                builtin_tool.provider_metadata.get('openrouter', {}) if builtin_tool.provider_metadata else {}
+            )
+
+            if 'engine' in openrouter_metadata:
+                web_search_plugin['engine'] = openrouter_metadata['engine']
+            if 'max_results' in openrouter_metadata:
+                web_search_plugin['max_results'] = openrouter_metadata['max_results']
+            if 'search_prompt' in openrouter_metadata:
+                web_search_plugin['search_prompt'] = openrouter_metadata['search_prompt']
+
+            extra_body['plugins'] = [web_search_plugin]
+
+            web_search_options: OpenRouterWebSearchOptions = {'search_context_size': builtin_tool.search_context_size}
             extra_body['web_search_options'] = web_search_options
 
     model_settings['extra_body'] = extra_body
@@ -624,38 +632,16 @@ class OpenRouterModel(OpenAIChatModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        web_search_tool: WebSearchTool | None = None
-        web_search_plugin: OpenRouterWebSearchPlugin | None = None
-        web_search_options: OpenRouterWebSearchOptions | None = None
-
-        for tool in model_request_parameters.builtin_tools:
-            if isinstance(tool, WebSearchTool):
-                web_search_tool = tool
-                break
-
-        if web_search_tool is not None:
-            web_search_plugin = {'id': 'web'}
-
-            openrouter_metadata = (
-                web_search_tool.provider_metadata.get('openrouter', {}) if web_search_tool.provider_metadata else {}
-            )
-
-            if 'engine' in openrouter_metadata:
-                web_search_plugin['engine'] = openrouter_metadata['engine']
-            if 'max_results' in openrouter_metadata:
-                web_search_plugin['max_results'] = openrouter_metadata['max_results']
-            if 'search_prompt' in openrouter_metadata:
-                web_search_plugin['search_prompt'] = openrouter_metadata['search_prompt']
-
-            web_search_options = {'search_context_size': web_search_tool.search_context_size}
-
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
         new_settings = _openrouter_settings_to_openai_settings(
-            cast(OpenRouterModelSettings, merged_settings or {}),
-            web_search_plugin=web_search_plugin,
-            web_search_options=web_search_options,
+            cast(OpenRouterModelSettings, merged_settings or {}), model_request_parameters
         )
         return new_settings, customized_parameters
+
+    @override
+    def _get_web_search_options(self, model_request_parameters: ModelRequestParameters):
+        """OpenRouter handles web search via plugins in extra_body, not via the OpenAI web_search_options parameter."""
+        return None
 
     @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _OpenRouterChatCompletion:
