@@ -1,14 +1,7 @@
 from ._dynamic import ToolsetFunc
 from .abstract import AbstractToolset, ToolsetTool
 from .approval_required import ApprovalRequiredToolset
-from .code_mode import (
-    CodeModeToolset,
-    DescriptionHandler,
-    Signature,
-    build_code_mode_prompt,
-    signature_from_function,
-    signature_from_schema,
-)
+from .code_mode import CodeModeToolset
 from .combined import CombinedToolset
 from .external import DeferredToolset, ExternalToolset  # pyright: ignore[reportDeprecated]
 from .filtered import FilteredToolset
@@ -25,7 +18,6 @@ __all__ = (
     'ToolsetTool',
     'CodeModeToolset',
     'CombinedToolset',
-    'DescriptionHandler',
     'ExternalToolset',
     'DeferredToolset',
     'FilteredToolset',
@@ -34,10 +26,6 @@ __all__ = (
     'RenamedToolset',
     'PreparedToolset',
     'ReturnSchemaToolset',
-    'Signature',
     'WrapperToolset',
     'ApprovalRequiredToolset',
-    'build_code_mode_prompt',
-    'signature_from_function',
-    'signature_from_schema',
 )

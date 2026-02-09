@@ -29,8 +29,8 @@ from ...tools import ToolApproved, ToolDefinition, ToolDenied
 from ..abstract import SchemaValidatorProt, ToolsetTool
 from ..function import FunctionToolset, FunctionToolsetTool
 from ..wrapper import WrapperToolset
-from .sanitization import ToolNameMapping
-from .signature import Signature, signature_from_function, signature_from_schema
+from ._sanitization import ToolNameMapping
+from ._signature import Signature, signature_from_function, signature_from_schema
 
 # Type alias for description handler callback
 # Takes (description, tool_definition) and returns processed description
@@ -101,13 +101,6 @@ class CodeModeContext(TypedDict):
 
 __all__ = (
     'CodeModeToolset',
-    'DescriptionHandler',
-    'Signature',
-    'build_code_mode_prompt',
-    'signature_from_function',
-    'signature_from_schema',
-    'ApprovalRequired',
-    'CallDeferred',
     'CodeModeContext',
     'InterruptedCall',
 )
