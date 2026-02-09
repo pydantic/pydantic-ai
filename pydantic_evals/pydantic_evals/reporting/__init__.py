@@ -1493,6 +1493,10 @@ class EvaluationRenderer:
         if self.include_averages:  # pragma: no branch
             # Use flat averaging for both sides to keep the diff symmetric.
             # baseline_cases is already filtered to only cases matching the report.
+            # Note: for multi-run reports, this differs from build_table which uses two-level
+            # aggregation via report.averages(). In practice the results are identical when all
+            # runs succeed (equal group sizes), and only diverge with partial failures within a
+            # group — a rare edge case. We can revisit if users report confusing behavior.
             report_average = ReportCaseAggregate.average(report_cases) if report_cases else None
             baseline_average = ReportCaseAggregate.average(baseline_cases) if baseline_cases else None
             if report_average and baseline_average:  # pragma: no branch
