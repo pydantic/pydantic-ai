@@ -11,7 +11,7 @@ Below are suggestions on how to fix some common errors you might encounter while
 ```python {test="skip" lint="skip"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5.2')
 result = await agent.run('Who let the dogs out?')
 ```
 
@@ -24,7 +24,7 @@ from pydantic_ai import Agent
 
 nest_asyncio.apply()
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5.2')
 result = agent.run_sync('Who let the dogs out?')
 ```
 

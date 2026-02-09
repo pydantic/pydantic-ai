@@ -18,7 +18,7 @@ nav:
 
   - Documentation:
       - Core Concepts:
-          - agents.md
+          - Agents: agent.md
           - dependencies.md
           - tools.md
           - output.md
@@ -359,7 +359,7 @@ plugins:
         Concepts documentation:
           - a2a.md
           - ag-ui.md
-          - agents.md
+          - Agents: agent.md
           - builtin-tools.md
           - dependencies.md
           - deferred-tools.md

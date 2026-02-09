@@ -39,7 +39,7 @@ from pydantic_ai import (
     ToolDenied,
 )
 
-agent = Agent('openai:gpt-5', output_type=[str, DeferredToolRequests])
+agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
 
 PROTECTED_FILES = {'.env'}
 
@@ -140,7 +140,7 @@ print(result.all_messages())
             ),
         ],
         usage=RequestUsage(input_tokens=63, output_tokens=21),
-        model_name='gpt-5',
+        model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
     ),
@@ -187,7 +187,7 @@ print(result.all_messages())
             )
         ],
         usage=RequestUsage(input_tokens=86, output_tokens=31),
-        model_name='gpt-5',
+        model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
     ),
@@ -210,7 +210,7 @@ print(result.all_messages())
             )
         ],
         usage=RequestUsage(input_tokens=93, output_tokens=89),
-        model_name='gpt-5',
+        model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
     ),
@@ -264,7 +264,7 @@ async def calculate_answer_task(task_id: str, question: str) -> TaskResult:
     return TaskResult(task_id=task_id, result=42)
 
 
-agent = Agent('openai:gpt-5', output_type=[str, DeferredToolRequests])
+agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
 
 tasks: list[asyncio.Task[TaskResult]] = []
 
@@ -342,7 +342,7 @@ async def main():
                 )
             ],
             usage=RequestUsage(input_tokens=63, output_tokens=13),
-            model_name='gpt-5',
+            model_name='gpt-5.2',
             timestamp=datetime.datetime(...),
             run_id='...',
         ),
@@ -365,7 +365,7 @@ async def main():
                 )
             ],
             usage=RequestUsage(input_tokens=64, output_tokens=28),
-            model_name='gpt-5',
+            model_name='gpt-5.2',
             timestamp=datetime.datetime(...),
             run_id='...',
         ),
