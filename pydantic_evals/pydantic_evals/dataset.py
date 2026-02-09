@@ -38,6 +38,7 @@ from pydantic_evals._utils import get_event_loop
 
 from ._utils import get_unwrapped_function_name, logfire_span, task_group_gather
 from .evaluators import EvaluationResult, Evaluator
+from .evaluators._base import BaseEvaluator
 from .evaluators._run_evaluator import run_evaluator
 from .evaluators.common import DEFAULT_EVALUATORS
 from .evaluators.context import EvaluatorContext
@@ -642,15 +643,19 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         Returns:
             A new Dataset instance created from the _DatasetModel.
         """
-        registry = _get_registry(custom_evaluator_types)
-        report_evaluator_registry = _get_report_evaluator_registry(custom_report_evaluator_types)
+        registry = _get_evaluator_registry(custom_evaluator_types, Evaluator, DEFAULT_EVALUATORS, 'evaluator')
+        report_evaluator_registry = _get_evaluator_registry(
+            custom_report_evaluator_types, ReportEvaluator, DEFAULT_REPORT_EVALUATORS, 'report evaluator'
+        )
 
         cases: list[Case[InputsT, OutputT, MetadataT]] = []
         errors: list[ValueError] = []
         dataset_evaluators: list[Evaluator] = []
         for spec in dataset_model.evaluators:
             try:
-                dataset_evaluator = _load_evaluator_from_registry(registry, None, spec)
+                dataset_evaluator = _load_evaluator_from_registry(
+                    registry, spec, 'evaluator', 'custom_evaluator_types', context='dataset'
+                )
             except ValueError as e:
                 errors.append(e)
                 continue
@@ -659,7 +664,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         report_evaluators: list[ReportEvaluator] = []
         for spec in dataset_model.report_evaluators:
             try:
-                report_evaluator = _load_report_evaluator_from_registry(report_evaluator_registry, spec)
+                report_evaluator = _load_evaluator_from_registry(
+                    report_evaluator_registry, spec, 'report evaluator', 'custom_report_evaluator_types'
+                )
             except ValueError as e:
                 errors.append(e)
                 continue
@@ -669,7 +676,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             evaluators: list[Evaluator] = []
             for spec in row.evaluators:
                 try:
-                    evaluator = _load_evaluator_from_registry(registry, row.name, spec)
+                    evaluator = _load_evaluator_from_registry(
+                        registry, spec, 'evaluator', 'custom_evaluator_types', context=f'case {row.name!r}'
+                    )
                 except ValueError as e:
                     errors.append(e)
                     continue
@@ -756,9 +765,13 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         Returns:
             A dictionary representing the JSON schema.
         """
-        evaluator_schema_types = _build_evaluator_schema_types(_get_registry(custom_evaluator_types))
+        evaluator_schema_types = _build_evaluator_schema_types(
+            _get_evaluator_registry(custom_evaluator_types, Evaluator, DEFAULT_EVALUATORS, 'evaluator')
+        )
         report_evaluator_schema_types = _build_evaluator_schema_types(
-            _get_report_evaluator_registry(custom_report_evaluator_types)
+            _get_evaluator_registry(
+                custom_report_evaluator_types, ReportEvaluator, DEFAULT_REPORT_EVALUATORS, 'report evaluator'
+            )
         )
 
         in_type, out_type, meta_type = cls._params()
@@ -1221,51 +1234,64 @@ def _get_span_duration(span: logfire_api.LogfireSpan, fallback: float) -> float:
         return fallback
 
 
-def _get_registry(
-    custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]],
-) -> Mapping[str, type[Evaluator[InputsT, OutputT, MetadataT]]]:
-    """Create a registry of evaluator types from default and custom evaluators.
+BaseEvalT = TypeVar('BaseEvalT', bound=BaseEvaluator)
+
+
+def _get_evaluator_registry(
+    custom_types: Sequence[type[BaseEvalT]],
+    base_class: type[BaseEvalT],
+    defaults: Sequence[type[BaseEvalT]],
+    label: str,
+) -> Mapping[str, type[BaseEvalT]]:
+    """Create a registry of evaluator types from default and custom types.
 
     Args:
-        custom_evaluator_types: Additional evaluator classes to include in the registry.
+        custom_types: Additional evaluator classes to include in the registry.
+        base_class: The base class that all custom types must subclass.
+        defaults: Default evaluator classes to include (can be overridden by custom types).
+        label: Human-readable label for error messages (e.g. 'evaluator', 'report evaluator').
 
     Returns:
         A mapping from evaluator names to evaluator classes.
     """
-    registry: dict[str, type[Evaluator[InputsT, OutputT, MetadataT]]] = {}
+    registry: dict[str, type[BaseEvalT]] = {}
 
-    for evaluator_class in custom_evaluator_types:
-        if not issubclass(evaluator_class, Evaluator):
+    for evaluator_class in custom_types:
+        if not issubclass(evaluator_class, base_class):
             raise ValueError(
-                f'All custom evaluator classes must be subclasses of Evaluator, but {evaluator_class} is not'
+                f'All custom {label} classes must be subclasses of {base_class.__name__}, but {evaluator_class} is not'
             )
         if '__dataclass_fields__' not in evaluator_class.__dict__:
             raise ValueError(
-                f'All custom evaluator classes must be decorated with `@dataclass`, but {evaluator_class} is not'
+                f'All custom {label} classes must be decorated with `@dataclass`, but {evaluator_class} is not'
             )
         name = evaluator_class.get_serialization_name()
         if name in registry:
-            raise ValueError(f'Duplicate evaluator class name: {name!r}')
+            raise ValueError(f'Duplicate {label} class name: {name!r}')
         registry[name] = evaluator_class
 
-    for evaluator_class in DEFAULT_EVALUATORS:
-        # Allow overriding the default evaluators with custom evaluators raising an error
+    for evaluator_class in defaults:
+        # Allow overriding the default evaluators with custom evaluators without raising an error
         registry.setdefault(evaluator_class.get_serialization_name(), evaluator_class)
 
     return registry
 
 
 def _load_evaluator_from_registry(
-    registry: Mapping[str, type[Evaluator[InputsT, OutputT, MetadataT]]],
-    case_name: str | None,
+    registry: Mapping[str, type[BaseEvalT]],
     spec: EvaluatorSpec,
-) -> Evaluator[InputsT, OutputT, MetadataT]:
+    label: str,
+    custom_types_param: str,
+    context: str | None = None,
+) -> BaseEvalT:
     """Load an evaluator from the registry based on a specification.
 
     Args:
         registry: Mapping from evaluator names to evaluator classes.
-        case_name: Name of the case this evaluator will be used for, or None for dataset-level evaluators.
         spec: Specification of the evaluator to load.
+        label: Human-readable label for error messages (e.g. 'evaluator', 'report evaluator').
+        custom_types_param: Name of the parameter for custom types, used in error messages.
+        context: Optional context for error messages (e.g. "case 'foo'", "dataset").
 
     Returns:
         An initialized evaluator instance.
@@ -1276,75 +1302,14 @@ def _load_evaluator_from_registry(
     evaluator_class = registry.get(spec.name)
     if evaluator_class is None:
         raise ValueError(
-            f'Evaluator {spec.name!r} is not in the provided `custom_evaluator_types`. Valid choices: {list(registry.keys())}.'
-            f' If you are trying to use a custom evaluator, you must include its type in the `custom_evaluator_types` argument.'
+            f'{label.capitalize()} {spec.name!r} is not in the provided `{custom_types_param}`. Valid choices: {list(registry.keys())}.'
+            f' If you are trying to use a custom {label}, you must include its type in the `{custom_types_param}` argument.'
         )
     try:
         return evaluator_class(*spec.args, **spec.kwargs)
     except Exception as e:
-        case_detail = f'case {case_name!r}' if case_name is not None else 'dataset'
-        raise ValueError(f'Failed to instantiate evaluator {spec.name!r} for {case_detail}: {e}') from e
-
-
-def _get_report_evaluator_registry(
-    custom_report_evaluator_types: Sequence[type[ReportEvaluator[InputsT, OutputT, MetadataT]]],
-) -> Mapping[str, type[ReportEvaluator[InputsT, OutputT, MetadataT]]]:
-    """Create a registry of report evaluator types from default and custom report evaluators.
-
-    Args:
-        custom_report_evaluator_types: Additional report evaluator classes to include in the registry.
-
-    Returns:
-        A mapping from report evaluator names to report evaluator classes.
-    """
-    registry: dict[str, type[ReportEvaluator[InputsT, OutputT, MetadataT]]] = {}
-
-    for evaluator_class in custom_report_evaluator_types:
-        if not issubclass(evaluator_class, ReportEvaluator):
-            raise ValueError(
-                f'All custom report evaluator classes must be subclasses of ReportEvaluator, but {evaluator_class} is not'
-            )
-        if '__dataclass_fields__' not in evaluator_class.__dict__:
-            raise ValueError(
-                f'All custom report evaluator classes must be decorated with `@dataclass`, but {evaluator_class} is not'
-            )
-        name = evaluator_class.get_serialization_name()
-        if name in registry:
-            raise ValueError(f'Duplicate report evaluator class name: {name!r}')
-        registry[name] = evaluator_class
-
-    for evaluator_class in DEFAULT_REPORT_EVALUATORS:
-        registry.setdefault(evaluator_class.get_serialization_name(), evaluator_class)
-
-    return registry
-
-
-def _load_report_evaluator_from_registry(
-    registry: Mapping[str, type[ReportEvaluator[InputsT, OutputT, MetadataT]]],
-    spec: EvaluatorSpec,
-) -> ReportEvaluator[InputsT, OutputT, MetadataT]:
-    """Load a report evaluator from the registry based on a specification.
-
-    Args:
-        registry: Mapping from report evaluator names to report evaluator classes.
-        spec: Specification of the report evaluator to load.
-
-    Returns:
-        An initialized report evaluator instance.
-
-    Raises:
-        ValueError: If the report evaluator name is not found in the registry.
-    """
-    evaluator_class = registry.get(spec.name)
-    if evaluator_class is None:
-        raise ValueError(
-            f'Report evaluator {spec.name!r} is not in the provided `custom_report_evaluator_types`. Valid choices: {list(registry.keys())}.'
-            f' If you are trying to use a custom report evaluator, you must include its type in the `custom_report_evaluator_types` argument.'
-        )
-    try:
-        return evaluator_class(*spec.args, **spec.kwargs)
-    except Exception as e:
-        raise ValueError(f'Failed to instantiate report evaluator {spec.name!r}: {e}') from e
+        detail = f' for {context}' if context else ''
+        raise ValueError(f'Failed to instantiate {label} {spec.name!r}{detail}: {e}') from e
 
 
 def _build_evaluator_schema_types(registry: Mapping[str, type[Any]]) -> list[Any]:
