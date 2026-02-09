@@ -1360,7 +1360,12 @@ class ModelResponse:
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
     incomplete: bool = False
-    """Whether the response was cancelled/incomplete."""
+    """Whether the response is incomplete, e.g. because the stream was cancelled before finishing.
+
+    Incomplete responses may contain partial text or tool calls with truncated arguments.
+    When passed as message history, incomplete tool calls without corresponding results
+    are automatically filtered out by the agent before sending to the model.
+    """
 
     @property
     def text(self) -> str | None:

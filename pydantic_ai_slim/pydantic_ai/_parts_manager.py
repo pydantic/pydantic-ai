@@ -62,24 +62,13 @@ class ModelResponsePartsManager:
     _vendor_id_to_part_index: dict[VendorId, int] = field(default_factory=dict[VendorId, int], init=False)
     """Maps a vendor's "part" ID (if provided) to the index in `_parts` where that part resides."""
 
-    def get_parts(self, *, exclude_incomplete_tool_calls: bool = False) -> list[ModelResponsePart]:
+    def get_parts(self) -> list[ModelResponsePart]:
         """Return only model response parts that are complete (i.e., not ToolCallPartDelta's).
-
-        Args:
-            exclude_incomplete_tool_calls: If True, exclude tool call parts where
-                the arguments can't be parsed as valid JSON.
 
         Returns:
             A list of ModelResponsePart objects. ToolCallPartDelta objects are excluded.
         """
-        parts: list[ModelResponsePart] = [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
-
-        if exclude_incomplete_tool_calls:
-            parts = [
-                p for p in parts if not isinstance(p, (ToolCallPart, BuiltinToolCallPart)) or not p.args_incomplete
-            ]
-
-        return parts
+        return [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
 
     def get_part_by_vendor_id(self, vendor_id: VendorId) -> ManagedPart | None:
         """Return a part by its vendor ID.

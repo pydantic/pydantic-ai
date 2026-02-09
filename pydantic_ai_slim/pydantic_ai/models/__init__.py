@@ -1005,9 +1005,10 @@ class StreamedResponse(ABC):
 
             yield event
 
-        end_event = part_end_event()
-        if end_event:
-            yield end_event
+        if not self._cancelled:
+            end_event = part_end_event()
+            if end_event:
+                yield end_event
 
     @abstractmethod
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:

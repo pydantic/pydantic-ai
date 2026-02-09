@@ -634,8 +634,9 @@ class MistralStreamedResponse(StreamedResponse):
         """Cancel the streaming response and close the underlying HTTP connection."""
         await super().cancel()
         if self._stream_to_close is not None:
-            # mistralai.EventStreamAsync doesn't expose a close() method, but as an async context manager
-            # its __aexit__ closes the underlying HTTP response. Passing None args indicates normal exit.
+            # mistralai.EventStreamAsync (see mistralai/utils/eventstreaming.py) has no aclose() or
+            # close() method — it's designed only as an async context manager. Its __aexit__ calls
+            # self.response.aclose() on the underlying httpx.Response, which is the only cleanup needed.
             await self._stream_to_close.__aexit__(None, None, None)  # type: ignore[arg-type]
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:

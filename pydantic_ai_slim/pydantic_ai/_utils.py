@@ -20,7 +20,6 @@ from typing import (
     TypeAlias,
     TypeGuard,
     TypeVar,
-    cast,
     get_args,
     get_origin,
     overload,
@@ -201,7 +200,7 @@ async def group_by_temporal(  # noqa: C901
     # we might wait for the next item more than once, so we store the task to await next time
     task: asyncio.Task[T] | None = None
 
-    async def async_iter_groups() -> AsyncIterator[list[T]]:
+    async def async_iter_groups() -> AsyncGenerator[list[T], None]:
         nonlocal task
 
         assert soft_max_interval is not None and soft_max_interval >= 0, 'soft_max_interval must be a positive number'
@@ -259,7 +258,7 @@ async def group_by_temporal(  # noqa: C901
     # Track if we're being closed via GeneratorExit, in that case we can't await
     closing = False
     # Track the inner generator so we can close it explicitly
-    inner_gen: AsyncIterator[list[T]] | None = None
+    inner_gen: AsyncGenerator[list[T], None] | None = None
     try:
         inner_gen = async_iter_groups()
         yield inner_gen
@@ -274,9 +273,8 @@ async def group_by_temporal(  # noqa: C901
         # leading to "RuntimeError: generator didn't stop after athrow()" because the generator
         # is suspended at a yield inside a try/finally block.
         if inner_gen is not None and not closing:  # pragma: no branch
-            with suppress(Exception):
-                # inner_gen is an async generator (has yield), so it has aclose()
-                await cast(AsyncGenerator[list[T], None], inner_gen).aclose()
+            with suppress(GeneratorExit, RuntimeError):
+                await inner_gen.aclose()
         # After iteration if a task still exists, cancel it, this will only happen if an error occurred
         if task:
             task.cancel('Cancelling due to error in iterator')
