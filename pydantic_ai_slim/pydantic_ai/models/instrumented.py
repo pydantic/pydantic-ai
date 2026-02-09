@@ -331,7 +331,7 @@ class InstrumentationSettings:
     ):
         for typ in ['input', 'output']:
             if not (tokens := getattr(response.usage, f'{typ}_tokens', 0)):
-                continue  # pragma: no cover
+                continue
             token_attributes = {**attributes, 'gen_ai.token.type': typ}
             self.tokens_histogram.record(tokens, token_attributes)
             if price_calculation:
