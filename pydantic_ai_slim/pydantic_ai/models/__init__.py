@@ -78,6 +78,7 @@ KnownModelName = TypeAliasType(
         'anthropic:claude-opus-4-20250514',
         'anthropic:claude-opus-4-5-20251101',
         'anthropic:claude-opus-4-5',
+        'anthropic:claude-opus-4-6',
         'anthropic:claude-sonnet-4-0',
         'anthropic:claude-sonnet-4-20250514',
         'anthropic:claude-sonnet-4-5-20250929',
@@ -143,7 +144,9 @@ KnownModelName = TypeAliasType(
         'cerebras:llama3.1-8b',
         'cerebras:qwen-3-235b-a22b-instruct-2507',
         'cerebras:qwen-3-32b',
+        'cerebras:qwen-3-coder-480b',
         'cerebras:zai-glm-4.6',
+        'cerebras:zai-glm-4.7',
         'cohere:c4ai-aya-expanse-32b',
         'cohere:c4ai-aya-expanse-8b',
         'cohere:command-nightly',
@@ -168,6 +171,7 @@ KnownModelName = TypeAliasType(
         'gateway/anthropic:claude-opus-4-20250514',
         'gateway/anthropic:claude-opus-4-5-20251101',
         'gateway/anthropic:claude-opus-4-5',
+        'gateway/anthropic:claude-opus-4-6',
         'gateway/anthropic:claude-sonnet-4-0',
         'gateway/anthropic:claude-sonnet-4-20250514',
         'gateway/anthropic:claude-sonnet-4-5-20250929',
@@ -1274,6 +1278,14 @@ async def download_item(
 ) -> DownloadedItem[str] | DownloadedItem[bytes]:
     """Download an item by URL and return the content as a bytes object or a (base64-encoded) string.
 
+    This function includes SSRF (Server-Side Request Forgery) protection:
+    - Only http:// and https:// protocols are allowed
+    - Private/internal IP addresses are blocked by default
+    - Cloud metadata endpoints (169.254.169.254) are always blocked
+    - Hostnames are resolved before requests to prevent DNS rebinding
+
+    Set `item.force_download='allow-local'` to allow private IP addresses.
+
     Args:
         item: The item to download.
         data_format: The format to return the content in:
@@ -1286,18 +1298,17 @@ async def download_item(
             - `extension`: The media type as an extension.
 
     Raises:
-        UserError: If the URL points to a YouTube video or its protocol is gs://.
+        UserError: If the URL points to a YouTube video.
+        ValueError: If the URL uses an unsupported protocol or targets a private/internal
+            IP address (unless allow-local is set).
     """
-    if item.url.startswith('gs://'):
-        raise UserError('Downloading from protocol "gs://" is not supported.')
-    elif item.url.startswith('s3://'):
-        raise UserError('Downloading from protocol "s3://" is not supported.')
-    elif isinstance(item, VideoUrl) and item.is_youtube:
+    if isinstance(item, VideoUrl) and item.is_youtube:
         raise UserError('Downloading YouTube videos is not supported.')
 
-    client = cached_async_http_client()
-    response = await client.get(item.url, follow_redirects=True)
-    response.raise_for_status()
+    from .._ssrf import safe_download
+
+    allow_local = item.force_download == 'allow-local'
+    response = await safe_download(item.url, allow_local=allow_local)
 
     if content_type := response.headers.get('content-type'):
         content_type = content_type.split(';')[0]
