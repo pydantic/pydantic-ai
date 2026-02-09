@@ -665,7 +665,11 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         for spec in dataset_model.report_evaluators:
             try:
                 report_evaluator = _load_evaluator_from_registry(
-                    report_evaluator_registry, spec, 'report evaluator', 'custom_report_evaluator_types'
+                    report_evaluator_registry,
+                    spec,
+                    'report evaluator',
+                    'custom_report_evaluator_types',
+                    context='dataset',
                 )
             except ValueError as e:
                 errors.append(e)
