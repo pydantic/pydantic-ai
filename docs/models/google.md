@@ -341,10 +341,6 @@ model = GoogleModel(
     )
 agent = Agent(model, model_settings=model_settings)
 
-result = agent.run_sync('What 2+2?')
-
-result.all_messages()[-1].provider_details
-
 ```
 
 See the [Gooogle Dev Blog](https://developers.googleblog.com/unlock-gemini-reasoning-with-logprobs-on-vertex-ai/) for more information.
