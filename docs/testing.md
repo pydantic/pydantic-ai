@@ -306,7 +306,6 @@ from pydantic_ai.testing import vcr_yaml_serializer
 
 
 def pytest_recording_configure(config, vcr: VCR):
-    """Register the custom serializer for cleaner cassettes."""
     vcr.register_serializer('yaml', vcr_yaml_serializer)
 
 
