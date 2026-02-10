@@ -4,12 +4,14 @@ from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from typing import Any, overload
 
+from pydantic.errors import PydanticUserError
 from typing_extensions import Never
 
 from pydantic_ai import models
 from pydantic_ai.agent.abstract import AbstractAgent, AgentMetadata, EventStreamHandler, Instructions, RunOutputDataT
 from pydantic_ai.agent.wrapper import WrapperAgent
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, UserContent
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -154,7 +156,10 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 async def single_event() -> AsyncIterator[AgentStreamEvent]:
                     yield event
 
-                await handler(ctx, single_event())
+                try:
+                    await handler(ctx, single_event())
+                except (UserError, PydanticUserError) as e:
+                    raise TerminalError(str(e)) from e
 
             await self.restate_context.run_typed(f'handle event: {event_kind}', call_handler)
 
@@ -237,6 +242,10 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             raise TerminalError(
                 'Event stream handler cannot be set at agent run time inside a Restate handler, it must be set at agent creation time.'
             )
+        if toolsets is not None:
+            raise TerminalError(
+                'Toolsets cannot be set at agent run time inside a Restate handler, they must be set at agent creation time.'
+            )
         with self._restate_overrides():
             return await super().run(
                 user_prompt=user_prompt,
@@ -251,7 +260,6 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 usage=usage,
                 metadata=metadata,
                 infer_name=infer_name,
-                toolsets=toolsets,
                 builtin_tools=builtin_tools,
                 event_stream_handler=self.event_stream_handler,
                 **_deprecated_kwargs,
@@ -459,6 +467,10 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             raise TerminalError(
                 'An agent needs to have a `model` in order to be used with Restate, it cannot be set at agent run time.'
             )
+        if toolsets is not None:
+            raise TerminalError(
+                'Toolsets cannot be set at agent run time inside a Restate handler, they must be set at agent creation time.'
+            )
         with self._restate_overrides():
             async with super().iter(
                 user_prompt=user_prompt,
@@ -473,7 +485,6 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 usage=usage,
                 metadata=metadata,
                 infer_name=infer_name,
-                toolsets=toolsets,
                 builtin_tools=builtin_tools,
                 **_deprecated_kwargs,
             ) as run:

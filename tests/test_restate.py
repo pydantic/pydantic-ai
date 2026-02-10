@@ -274,6 +274,26 @@ async def test_restate_agent_event_stream_handler_and_iter():
 
 
 @pytest.mark.anyio
+async def test_restate_agent_event_stream_handler_maps_user_error_to_terminal_error():
+    fake_ctx = FakeRestateContext()
+
+    async def event_stream_handler(ctx: RunContext[Any], stream: AsyncIterable[Any]) -> None:
+        async for event in stream:
+            if event.event_kind == 'function_tool_call':
+                raise UserError('event handler failed')
+
+    agent = Agent(TestModel())
+
+    @agent.tool
+    async def plus_one(ctx: RunContext, x: int) -> int:
+        return x + 1
+
+    restate_agent = RestateAgent(agent, fake_ctx, event_stream_handler=event_stream_handler)
+    with pytest.raises(TerminalError, match='event handler failed'):
+        await restate_agent.run('go')
+
+
+@pytest.mark.anyio
 async def test_restate_agent_restrictions():
     fake_ctx = FakeRestateContext()
 
@@ -298,12 +318,25 @@ async def test_restate_agent_restrictions():
     with pytest.raises(TerminalError, match='Event stream handler cannot be set'):
         await restate_agent.run('x', event_stream_handler=handler)
 
+    extra_toolset = FunctionToolset(id='extra')
+
+    @extra_toolset.tool
+    async def extra() -> str:
+        return 'ok'
+
+    with pytest.raises(TerminalError, match='Toolsets cannot be set at agent run time'):
+        await restate_agent.run('x', toolsets=[extra_toolset])
+
     with pytest.raises(TerminalError, match=r'agent\.run_stream\(\)'):
         async with restate_agent.run_stream('x'):
             pass
 
     with pytest.raises(TerminalError, match=r'agent\.run_stream_events\(\)'):
         await anext(restate_agent.run_stream_events('x'))
+
+    with pytest.raises(TerminalError, match='Toolsets cannot be set at agent run time'):
+        async with restate_agent.iter('x', toolsets=[extra_toolset]):
+            pass
 
 
 @pytest.mark.anyio
