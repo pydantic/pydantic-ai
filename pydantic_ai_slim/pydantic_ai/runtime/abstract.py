@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 from typing import Any, TypeAlias
 
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
-from pydantic_ai.toolsets.code_mode import InterruptedCall
 
 
 @dataclass(frozen=True)
@@ -23,7 +22,7 @@ class FunctionCall:
     call_id: str
     function_name: str
     args: tuple[Any, ...] = ()  # Positional args
-    kwargs: dict[str, Any] = field(default_factory=lambda: {})  # keyword args
+    kwargs: dict[str, Any] = field(default_factory=dict)  # keyword args
 
 
 class CodeExecutionError(Exception):
@@ -79,19 +78,13 @@ class CodeInterruptedError(Exception):
 
     Attributes:
         interrupted_calls: The tool calls that caused the interruption.
-        checkpoint: Serialized runtime state that can be passed to
-            [`CodeRuntime.resume`][pydantic_ai.runtime.abstract.CodeRuntime.resume]
-            to continue execution.
-        completed_results: Results from tool calls that completed successfully
-            before the interruption, keyed by call_id (str). Values are raw
-            tool results — runtimes handle any internal wrapping.
+        checkpoint: Opaque runtime-specific state from a previous interrupted run.
+            Bundles everything the runtime needs to resume, including any
+            completed results from calls that succeeded before the interruption.
     """
 
     interrupted_calls: list[InterruptedToolCall]
     checkpoint: bytes
-    # Keyed by FunctionCall.call_id (str), values are raw tool results.
-    # Runtimes convert to their internal format (e.g. Monty wraps in {'return_value': v}).
-    completed_results: dict[str, Any] = field(default_factory=lambda: {})
 
 
 ToolCallback: TypeAlias = Callable[[FunctionCall], Awaitable[Any]]
@@ -101,47 +94,44 @@ class CodeRuntime(ABC):
     """Abstract base for code execution runtimes. Subclass per runtime provider."""
 
     @abstractmethod
-    async def run(self, code: str, functions: list[str], call_tool: ToolCallback, *, signatures: list[str]) -> Any:
-        """Execute code, invoking call_tool for each external function call.
+    async def run(
+        self,
+        code: str,
+        functions: list[str],
+        call_tool: ToolCallback,
+        *,
+        signatures: list[str],
+        checkpoint: bytes | None = None,
+    ) -> Any:
+        """Execute code, or resume from checkpoint if provided.
 
         Args:
             code: The LLM-generated Python code to execute.
             functions: List of external function names the code may call.
             call_tool: Callback invoked each time the code calls an external
                 function. Receives a FunctionCall and returns the tool result.
+                On resume, may contain pre-resolved results for interrupted calls.
+            signatures: Function signatures for type checking.
+            checkpoint: Opaque runtime-specific state from a previous interrupted run.
+                When None, execute from scratch. When provided, resume.
 
         Returns:
             The final output of the code execution.
 
         Raises:
             CodeSyntaxError: If the code can't be parsed.
+            CodeTypingError: If the code has type errors.
             CodeRuntimeError: If execution fails.
+            CodeInterruptedError: When execution is interrupted by tool calls
+                requiring approval or deferral.
         """
         ...
 
-    @abstractmethod
-    async def resume(
-        self,
-        checkpoint: bytes,
-        call_tool: ToolCallback,
-        interrupted_calls: list[InterruptedCall],
-        completed_results: dict[str, Any] | None = None,
-    ) -> Any:
-        """Resume execution from a checkpoint with resolved results.
+    def prompt_hints(self) -> str:
+        """Return runtime-specific text to include in the LLM prompt.
 
-        Args:
-            checkpoint: The serialized checkpoint state from a previous interrupted run.
-            call_tool: Callback invoked for each pending function call. The callback
-                should have pre-resolved results available (via results_map) so that
-                pending calls return immediately.
-            interrupted_calls: List of call details from the interrupted execution.
-                Each dict contains: call_id, tool_name, args, kwargs, type.
-                These are needed to reconstruct FunctionCall objects for the callback.
-            completed_results: Results from calls that already succeeded before the
-                interruption. Keyed by call_id (str), values are raw tool results.
-                Fed to the runtime first so already-completed calls are not re-executed.
-
-        Returns:
-            The final output of the resumed code execution.
+        If non-empty, the returned string is inserted verbatim into the code
+        mode prompt between the execution model section and the coding
+        guidelines. Return an empty string (the default) to add nothing.
         """
-        ...
+        return ''

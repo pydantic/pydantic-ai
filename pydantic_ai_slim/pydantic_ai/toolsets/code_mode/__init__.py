@@ -67,11 +67,13 @@ class CodeModeContext(TypedDict):
     with the added `results` field.
 
     Attributes:
-        checkpoint: Runtime checkpoint for resuming execution.
+        checkpoint: Opaque runtime checkpoint for resuming execution.
+            Contains everything the runtime needs to resume, including any
+            completed results from calls that succeeded before the interruption.
         interrupted_calls: List of nested tool calls that were interrupted.
-        completed_results: Results from calls that succeeded before the interruption.
-            Keyed by call_id (str), values are raw tool results. Passed back on
-            resume so those calls are not re-executed.
+        code: The LLM-generated code that was being executed (needed for resume).
+        functions: List of function names the code may call (needed for resume).
+        signatures: Function signatures for type checking (needed for resume).
         results: Map of call_id to result for each interrupted call. Required when resuming.
             Values can be: ToolApproved(), ToolDenied(message=...), or any external result.
 
@@ -84,9 +86,7 @@ class CodeModeContext(TypedDict):
 
         # Building resume context with results
         resume_ctx: CodeModeContext = {
-            'checkpoint': ctx['checkpoint'],
-            'interrupted_calls': ctx['interrupted_calls'],
-            'completed_results': ctx.get('completed_results', {}),
+            **ctx,
             'results': {ic['call_id']: ToolApproved() for ic in interrupted},
         }
         ```
@@ -94,7 +94,9 @@ class CodeModeContext(TypedDict):
 
     checkpoint: bytes
     interrupted_calls: list[InterruptedCall]
-    completed_results: NotRequired[dict[str, Any]]
+    code: str
+    functions: list[str]
+    signatures: list[str]
     results: NotRequired[dict[str, Any]]
 
 
@@ -120,7 +122,7 @@ _CODE_ADAPTER = TypeAdapter(_CodeToolArguments)
 _CODE_MODE_TOOL_NAME = 'run_code'
 
 
-def build_code_mode_prompt(*, signatures: list[str]) -> str:
+def build_code_mode_prompt(*, signatures: list[str], runtime_hints: str) -> str:
     """Build the default code mode prompt with the given tool signatures.
 
     This is the default prompt builder used by CodeModeToolset. Users can provide
@@ -128,11 +130,16 @@ def build_code_mode_prompt(*, signatures: list[str]) -> str:
 
     Args:
         signatures: List of Python function signatures for available tools.
+        runtime_hints: Runtime-specific text to include in the prompt (from
+            `CodeRuntime.prompt_hints()`). Inserted verbatim if non-empty.
 
     Returns:
         The complete prompt describing code mode capabilities and available functions.
     """
     functions_block = '\n\n'.join(signatures)
+
+    restrictions_block = f'\n{runtime_hints}\n' if runtime_hints else ''
+
     # TODO: The first line of the prompt should be customizable by the user using Prompt Templates #3656
     return f"""\
 ALWAYS use run_code to solve the ENTIRE task in a single code block. Do not call tools individually - write one comprehensive Python script that fetches all data, processes it, and returns the complete answer.
@@ -141,11 +148,7 @@ CRITICAL execution model:
 - Solve the COMPLETE problem in ONE run_code call - not partial solutions
 - Each run_code call is ISOLATED - variables do NOT persist between calls
 - Plan your entire solution before writing code, then implement it all at once
-
-
-CRITICAL Syntax restrictions (the runtime uses a restricted Python subset):
-- No imports - use only the provided functions and builtins (len, sum, str, etc.) or write your own functions.
-
+{restrictions_block}
 How to write effective code:
 - External functions return coroutines - use `await` to get results
 - For sequential execution: `items = await get_items()`
@@ -298,7 +301,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         self._cached_signatures = available_functions
 
-        description = self.prompt_builder(signatures=available_functions)
+        description = self.prompt_builder(signatures=available_functions, runtime_hints=self.runtime.prompt_hints())
         return {
             _CODE_MODE_TOOL_NAME: _CodeModeTool(
                 toolset=self,
@@ -388,6 +391,36 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         return callback
 
+    @staticmethod
+    def _build_interruption_context(
+        e: CodeInterruptedError,
+        code: str,
+        functions: list[str],
+        signatures: list[str],
+    ) -> CodeModeContext:
+        """Build a CodeModeContext from a CodeInterruptedError.
+
+        Used by both the initial execution path and the resume path to convert
+        a runtime interruption into the context needed for ApprovalRequired.
+        """
+        interrupted_calls: list[InterruptedCall] = [
+            {
+                'call_id': ic.call.call_id,
+                'tool_name': ic.call.function_name,
+                'args': ic.call.args,
+                'kwargs': ic.call.kwargs,
+                'type': 'approval' if isinstance(ic.type, ApprovalRequired) else 'external',
+            }
+            for ic in e.interrupted_calls
+        ]
+        return {
+            'checkpoint': e.checkpoint,
+            'interrupted_calls': interrupted_calls,
+            'code': code,
+            'functions': functions,
+            'signatures': signatures,
+        }
+
     async def _handle_resume(
         self,
         ctx: RunContext[AgentDepsT],
@@ -409,6 +442,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         Raises:
             UserError: If context is missing required data (checkpoint, results).
             ModelRetry: If code execution fails after resume.
+            ApprovalRequired: If the resumed execution encounters new tool calls
+                that need approval or deferral (nested approvals).
         """
         raw_context = ctx.tool_call_context
         if raw_context is None:
@@ -443,21 +478,31 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 'All interrupted calls must have a result (ToolApproved, ToolDenied, or value).'
             )
 
-        # Recover results from calls that completed before the interruption.
-        # Already in the ABC's format (str keys, raw values) — passed through as-is.
-        completed_results = context.get('completed_results') or None
+        # Extract code/functions/signatures needed to call run() with checkpoint
+        resume_code = context.get('code', '')
+        resume_functions = context.get('functions', [])
+        resume_signatures = context.get('signatures', [])
 
         callback = self._make_tool_callback(tool, code_mode_tool_manager, sanitized_to_original, results_map)
 
         try:
-            return await self.runtime.resume(
-                checkpoint,
+            return await self.runtime.run(
+                resume_code,
+                resume_functions,
                 callback,
-                interrupted_calls,
-                completed_results=completed_results,
+                signatures=resume_signatures,
+                checkpoint=checkpoint,
             )
-        except CodeRuntimeError as e:
-            raise ModelRetry(f'Runtime error in generated code:\n{e.message}')
+        except (CodeTypingError, CodeSyntaxError, CodeRuntimeError) as e:
+            raise ModelRetry(f'Error in resumed code execution:\n{e.message}')
+        except CodeInterruptedError as e:
+            # Resumed execution discovered new tool calls that need approval/deferral.
+            # Propagate as a fresh ApprovalRequired so the user can handle the next round.
+            raise ApprovalRequired(
+                context=self._build_interruption_context(
+                    e, resume_code, resume_functions, resume_signatures,
+                )
+            )
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
@@ -493,9 +538,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         # Normal execution path
         callback = self._make_tool_callback(tool, code_mode_tool_manager, sanitized_to_original, results_map=None)
+        functions = list(tool.original_tools.keys())
 
         try:
-            functions = list(tool.original_tools.keys())
             return await self.runtime.run(code, functions, callback, signatures=self._cached_signatures)
         except CodeTypingError as e:
             raise ModelRetry(f'Type error in generated code:\n{e.message}')
@@ -504,23 +549,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         except CodeRuntimeError as e:
             raise ModelRetry(f'Runtime error in generated code:\n{e.message}')
         except CodeInterruptedError as e:
-            # Raise ApprovalRequired so run_code ends up in approvals (not calls)
-            # This ensures ToolApproved flows through correctly on resume
-            # The context contains checkpoint and interrupted_calls info
-            # We use context (not metadata) because this data is REQUIRED for resumption
-            interrupted_calls: list[InterruptedCall] = [
-                {
-                    'call_id': ic.call.call_id,
-                    'tool_name': ic.call.function_name,
-                    'args': ic.call.args,
-                    'kwargs': ic.call.kwargs,
-                    'type': 'approval' if isinstance(ic.type, ApprovalRequired) else 'external',
-                }
-                for ic in e.interrupted_calls
-            ]
-            code_mode_context: CodeModeContext = {
-                'checkpoint': e.checkpoint,
-                'interrupted_calls': interrupted_calls,
-                'completed_results': e.completed_results,
-            }
-            raise ApprovalRequired(context=cast(dict[str, Any], code_mode_context))
+            raise ApprovalRequired(
+                context=self._build_interruption_context(
+                    e, code, functions, self._cached_signatures,
+                )
+            )

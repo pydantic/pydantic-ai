@@ -54,8 +54,8 @@ async def test_type_error_raises_model_retry():
 
     assert str(exc_info.value) == snapshot("""\
 Type error in generated code:
-main.py:6:5: error[invalid-argument-type] Argument to function `add` is incorrect: Expected `int`, found `Literal["hello"]`
-main.py:6:14: error[invalid-argument-type] Argument to function `add` is incorrect: Expected `int`, found `Literal["world"]`
+main.py:1:5: error[invalid-argument-type] Argument to function `add` is incorrect: Expected `int`, found `Literal["hello"]`
+main.py:1:14: error[invalid-argument-type] Argument to function `add` is incorrect: Expected `int`, found `Literal["world"]`
 """)
 
 
@@ -184,7 +184,6 @@ CRITICAL execution model:
 - Solve the COMPLETE problem in ONE run_code call - not partial solutions
 - Each run_code call is ISOLATED - variables do NOT persist between calls
 - Plan your entire solution before writing code, then implement it all at once
-
 
 CRITICAL Syntax restrictions (the runtime uses a restricted Python subset):
 - No imports - use only the provided functions and builtins (len, sum, str, etc.) or write your own functions.

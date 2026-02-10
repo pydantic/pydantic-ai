@@ -676,7 +676,7 @@ MultiModalContent = Annotated[
 
 UserContent: TypeAlias = str | MultiModalContent | CachePoint
 
-T = TypeVar('T', default=ToolReturnContent)
+T = TypeVar('T')
 
 
 @dataclass(repr=False)

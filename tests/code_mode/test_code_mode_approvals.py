@@ -24,7 +24,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApp
 from pydantic_ai.toolsets.code_mode import CodeModeContext, CodeModeToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 
-from ..conftest import IsBytes, IsStr
+from ..conftest import IsBytes, IsList, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -71,6 +71,13 @@ r2 = await f2
         result = await agent.run('Do both', toolsets=[code_toolset])
 
     # Snapshot shows the full structure of the deferred result
+    assert isinstance(result.output, DeferredToolRequests)
+    run_code_call_id = result.output.approvals[0].tool_call_id
+    ctx: CodeModeContext = result.output.context[run_code_call_id]  # type: ignore[assignment]
+
+    # Sort interrupted_calls by tool_name for deterministic snapshot comparison
+    ctx['interrupted_calls'] = sorted(ctx['interrupted_calls'], key=lambda ic: ic['tool_name'])
+
     assert result.output == snapshot(
         DeferredToolRequests(
             approvals=[
@@ -94,29 +101,26 @@ r2 = await f2
                     'interrupted_calls': [
                         {
                             'call_id': IsStr(),
-                            'tool_name': 'sensitive_action',
-                            'args': (),
-                            'kwargs': {'value': 42},
-                            'type': 'approval',
-                        },
-                        {
-                            'call_id': IsStr(),
                             'tool_name': 'external_service',
                             'args': (),
                             'kwargs': {'data': 'test'},
                             'type': 'external',
                         },
+                        {
+                            'call_id': IsStr(),
+                            'tool_name': 'sensitive_action',
+                            'args': (),
+                            'kwargs': {'value': 42},
+                            'type': 'approval',
+                        },
                     ],
-                    'completed_results': {},
+                    'code': IsStr(),
+                    'functions': IsList(IsStr(), length=2),
+                    'signatures': IsList(IsStr(), length=2),
                 }
             },
         )
     )
-
-    # Extract values needed for resume flow
-    assert isinstance(result.output, DeferredToolRequests)
-    run_code_call_id = result.output.approvals[0].tool_call_id
-    ctx: CodeModeContext = result.output.context[run_code_call_id]  # type: ignore[assignment]
 
     # Build results for nested calls - type-safe access to interrupted_calls
     nested_results: dict[str, object] = {}
@@ -126,11 +130,13 @@ r2 = await f2
         else:
             nested_results[ic['call_id']] = 'ext_result'
 
-    # Build resume context: original context + results (type-safe)
+    # Build resume context: original context + results
     resume_ctx: CodeModeContext = {
         'checkpoint': ctx['checkpoint'],
         'interrupted_calls': ctx['interrupted_calls'],
-        'completed_results': ctx.get('completed_results', {}),
+        'code': ctx['code'],
+        'functions': ctx['functions'],
+        'signatures': ctx['signatures'],
         'results': nested_results,
     }
     # No cast needed - Mapping accepts TypedDict
@@ -200,7 +206,9 @@ async def test_code_mode_resume_missing_context_error():
                             'type': 'approval',
                         },
                     ],
-                    'completed_results': {},
+                    'code': 'await sensitive_action(value=42)',
+                    'functions': ['sensitive_action'],
+                    'signatures': IsList(IsStr(), length=1),
                 }
             },
         )
@@ -277,7 +285,9 @@ async def test_code_mode_resume_missing_results_error():
                             'type': 'approval',
                         },
                     ],
-                    'completed_results': {},
+                    'code': 'await sensitive_action(value=42)',
+                    'functions': ['sensitive_action'],
+                    'signatures': IsList(IsStr(), length=1),
                 }
             },
         )
@@ -368,12 +378,12 @@ r3 = await f3
     assert isinstance(result.output, DeferredToolRequests)
     assert call_counts == {'fast': 1, 'sensitive': 1, 'external': 1}
 
-    # Context should have completed_results for fast_lookup and interrupted_calls for the other two
+    # Context should have interrupted_calls for the two interrupted tools
+    # (completed_results for fast_lookup are bundled inside the checkpoint)
     run_code_call_id = result.output.approvals[0].tool_call_id
     ctx: CodeModeContext = result.output.context[run_code_call_id]  # type: ignore[assignment]
 
     assert len(ctx['interrupted_calls']) == 2
-    assert ctx.get('completed_results')  # Should have the fast_lookup result
 
     interrupted_names = {ic['tool_name'] for ic in ctx['interrupted_calls']}
     assert interrupted_names == {'sensitive_action', 'external_service'}
@@ -386,11 +396,14 @@ r3 = await f3
         else:
             nested_results[ic['call_id']] = 'ext_result'
 
-    # Build resume context preserving completed_results
+    # Build resume context — completed_results are inside the checkpoint,
+    # so we just pass the original context fields + results
     resume_ctx: CodeModeContext = {
         'checkpoint': ctx['checkpoint'],
         'interrupted_calls': ctx['interrupted_calls'],
-        'completed_results': ctx.get('completed_results', {}),
+        'code': ctx['code'],
+        'functions': ctx['functions'],
+        'signatures': ctx['signatures'],
         'results': nested_results,
     }
     resume_context = {run_code_call_id: resume_ctx}
@@ -414,3 +427,112 @@ r3 = await f3
     assert call_counts['sensitive'] == 2
     # external_service called once (deferred, result provided directly)
     assert call_counts['external'] == 1
+
+
+async def test_code_mode_nested_approvals():
+    """Test that a resumed execution can trigger a second round of approvals.
+
+    Scenario: sequential code where a later tool call depends on an earlier
+    approved result. The second tool also needs approval, so resume hits a
+    second interruption which must propagate as a fresh ApprovalRequired.
+
+    Flow:
+      Run 1: action_1 needs approval → interrupted
+      Run 2: resume with action_1 approved → executes → code continues →
+              action_2 needs approval → second interruption
+      Run 3: resume with action_2 approved → executes → code completes
+    """
+
+    def action_1(ctx: RunContext[None], value: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired()
+        return value * 10
+
+    def action_2(ctx: RunContext[None], value: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired()
+        return value + 1
+
+    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset.add_function(action_1, takes_ctx=True)
+    toolset.add_function(action_2, takes_ctx=True)
+    code_toolset = CodeModeToolset(wrapped=toolset)
+
+    call_count = 0
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # Sequential: action_2 depends on action_1's result
+            code = """\
+r1 = await action_1(value=5)
+r2 = await action_2(value=r1)
+{"first": r1, "second": r2}"""
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': code}, tool_call_id='rc1')])
+        return ModelResponse(parts=[TextPart('All done!')])
+
+    agent: Agent[None, str | DeferredToolRequests] = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    # --- Run 1: action_1 needs approval ---
+    async with code_toolset:
+        result = await agent.run('Do sequential', toolsets=[code_toolset])
+
+    assert isinstance(result.output, DeferredToolRequests)
+    run_code_call_id = result.output.approvals[0].tool_call_id
+    ctx1: CodeModeContext = result.output.context[run_code_call_id]  # type: ignore[assignment]
+
+    assert len(ctx1['interrupted_calls']) == 1
+    assert ctx1['interrupted_calls'][0]['tool_name'] == 'action_1'
+    assert ctx1['interrupted_calls'][0]['type'] == 'approval'
+
+    # --- Run 2: resume with action_1 approved → should hit action_2 interruption ---
+    nested_results_1: dict[str, object] = {
+        ctx1['interrupted_calls'][0]['call_id']: ToolApproved(),
+    }
+    resume_ctx_1: CodeModeContext = {
+        **ctx1,
+        'results': nested_results_1,
+    }
+
+    async with code_toolset:
+        result = await agent.run(
+            message_history=result.all_messages(),
+            deferred_tool_results=DeferredToolResults(
+                approvals={run_code_call_id: ToolApproved()},
+                context={run_code_call_id: resume_ctx_1},
+            ),
+            toolsets=[code_toolset],
+        )
+
+    # Should get a SECOND DeferredToolRequests for action_2
+    assert isinstance(result.output, DeferredToolRequests)
+    run_code_call_id_2 = result.output.approvals[0].tool_call_id
+    ctx2: CodeModeContext = result.output.context[run_code_call_id_2]  # type: ignore[assignment]
+
+    assert len(ctx2['interrupted_calls']) == 1
+    assert ctx2['interrupted_calls'][0]['tool_name'] == 'action_2'
+    assert ctx2['interrupted_calls'][0]['type'] == 'approval'
+    # action_2 receives action_1's result (5 * 10 = 50)
+    assert ctx2['interrupted_calls'][0]['kwargs'] == {'value': 50}
+
+    # --- Run 3: resume with action_2 approved → should complete ---
+    nested_results_2: dict[str, object] = {
+        ctx2['interrupted_calls'][0]['call_id']: ToolApproved(),
+    }
+    resume_ctx_2: CodeModeContext = {
+        **ctx2,
+        'results': nested_results_2,
+    }
+
+    async with code_toolset:
+        result = await agent.run(
+            message_history=result.all_messages(),
+            deferred_tool_results=DeferredToolResults(
+                approvals={run_code_call_id_2: ToolApproved()},
+                context={run_code_call_id_2: resume_ctx_2},
+            ),
+            toolsets=[code_toolset],
+        )
+
+    assert result.output == snapshot('All done!')

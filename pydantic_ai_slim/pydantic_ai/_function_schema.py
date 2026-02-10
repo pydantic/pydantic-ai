@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import partial
 from inspect import Parameter, signature
-from typing import TYPE_CHECKING, Any, Concatenate, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Concatenate, cast, get_args, get_origin, get_type_hints
 
 from pydantic import ConfigDict, TypeAdapter
 from pydantic._internal import _decorators, _generate_schema, _typing_extra
@@ -24,6 +24,7 @@ from typing_extensions import ParamSpec, TypeIs, TypeVar
 from ._griffe import doc_descriptions
 from ._run_context import RunContext
 from ._utils import check_object_json_schema, is_async_callable, is_model_like, run_in_executor
+from .messages import ToolReturn
 
 if TYPE_CHECKING:
     from .tools import DocstringFormat, ObjectJsonSchema
