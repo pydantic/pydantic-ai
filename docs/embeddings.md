@@ -575,7 +575,7 @@ See [Jina AI's late chunking paper](https://arxiv.org/abs/2409.04701) for detail
 from pydantic_ai import Agent
 
 # Use an agent to generate context for each chunk
-context_agent = Agent('openai:gpt-4o-mini')
+context_agent = Agent('openai:gpt-5-mini')
 
 
 async def add_context(chunk: str, full_document: str) -> str:
