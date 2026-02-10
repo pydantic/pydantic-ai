@@ -1,15 +1,18 @@
 name: Auto Review
 on:
   pull_request_target:
-    types: [opened, synchronize]
+    types: [opened, synchronize, labeled]
 
 concurrency:
   group: review-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event.action == 'synchronize' }}
 
 jobs:
 
   review:
+    if: >-
+      (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'auto-review')) ||
+      (github.event.action == 'labeled' && github.event.label.name == 'auto-review')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
