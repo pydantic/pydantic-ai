@@ -300,7 +300,6 @@ class InstrumentationSettings:
                     }
                 ),
             }
-
             span.set_attributes(attributes)
 
     def system_instructions_attributes(self, instructions: str | None) -> dict[str, str]:
