@@ -46,7 +46,7 @@ This example runs SurrealDB embedded. To run it in a separate process (useful if
 surreal start -u root -p root rocksdb:database
 ```
 
-With docker
+Or with Docker:
 
 ```bash
 docker run --rm --pull always -p 8000:8000 surrealdb/surrealdb:latest start -u root -p root rocksdb:database
