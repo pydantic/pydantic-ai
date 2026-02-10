@@ -325,7 +325,7 @@ import pytest
 
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-4o-mini')
+agent = Agent('anthropic:claude-sonnet-4-5')
 
 
 @pytest.mark.vcr
