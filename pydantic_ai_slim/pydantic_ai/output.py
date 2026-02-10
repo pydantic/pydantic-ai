@@ -334,11 +334,10 @@ def StructuredDict(
         # we need to resolve it to avoid KeyError in TypeAdapter
         if '$ref' in json_schema and '$defs' in json_schema:
             ref_key = json_schema['$ref'].replace('#/$defs/', '')
-            if ref_key in json_schema['$defs']:
-                # Merge the referenced schema as the base, keeping $defs for recursive references
-                ref_schema = json_schema['$defs'][ref_key].copy()
-                ref_schema['$defs'] = json_schema['$defs']
-                json_schema = ref_schema
+            # Merge the referenced schema as the base, keeping $defs for recursive references
+            ref_schema = json_schema['$defs'][ref_key].copy()
+            ref_schema['$defs'] = json_schema['$defs']
+            json_schema = ref_schema
 
     if name:
         json_schema['title'] = name
