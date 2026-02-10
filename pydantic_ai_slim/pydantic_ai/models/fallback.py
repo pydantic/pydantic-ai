@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, overload
 from opentelemetry.trace import get_current_span
 from typing_extensions import assert_never
 
-from pydantic_ai._function_schema import get_first_param_type
+from pydantic_ai._function_schema import _get_first_param_type  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import is_async_callable
 from pydantic_ai.models.instrumented import InstrumentedModel
@@ -45,7 +45,7 @@ def _is_response_handler(handler: Callable[..., Any]) -> bool:
     Returns True if the first parameter is type-hinted as ModelResponse.
     Returns False otherwise (including if there are no type hints).
     """
-    first_param_type = get_first_param_type(handler)
+    first_param_type = _get_first_param_type(handler)
     if first_param_type is None:
         return False
     # Only support exact ModelResponse type (no Optional, no subclasses)
@@ -154,24 +154,11 @@ class FallbackModel(Model):
 
     async def _should_fallback(self, value: Exception | ModelResponse) -> bool:
         """Check if any handler wants to trigger fallback."""
-        if isinstance(value, Exception):
-            handlers = self._exception_handlers
-            for handler in handlers:
-                if is_async_callable(handler):
-                    result = await handler(value)
-                else:
-                    result = handler(value)
-                if result:
-                    return True
-        else:
-            handlers = self._response_handlers
-            for handler in handlers:
-                if is_async_callable(handler):
-                    result = await handler(value)
-                else:
-                    result = handler(value)
-                if result:
-                    return True
+        handlers = self._exception_handlers if isinstance(value, Exception) else self._response_handlers
+        for handler in handlers:
+            result = await handler(value) if is_async_callable(handler) else handler(value)  # type: ignore[arg-type]
+            if result:
+                return True
         return False
 
     @property

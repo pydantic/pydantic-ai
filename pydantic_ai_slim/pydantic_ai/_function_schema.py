@@ -233,7 +233,7 @@ WithoutCtx = Callable[P, R]
 TargetCallable = WithCtx[P, R] | WithoutCtx[P, R]
 
 
-def get_first_param_type(callable_obj: Callable[..., Any]) -> Any | None:
+def _get_first_param_type(callable_obj: Callable[..., Any]) -> Any | None:
     """Get the type annotation of the first parameter of a callable.
 
     Handles regular functions, methods, and callable classes with __call__.
@@ -281,7 +281,7 @@ def _takes_ctx(callable_obj: TargetCallable[P, R]) -> TypeIs[WithCtx[P, R]]:  # 
     Returns:
         `True` if the callable takes a `RunContext` as first argument, `False` otherwise.
     """
-    first_param_type = get_first_param_type(callable_obj)
+    first_param_type = _get_first_param_type(callable_obj)
     if first_param_type is None:
         return False
     return _is_call_ctx(first_param_type)

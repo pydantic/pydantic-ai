@@ -156,7 +156,7 @@ You can use [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to atte
 in sequence until one succeeds. Pydantic AI can switch to the next model when the current model
 raises an exception (like a 4xx/5xx API error) **or** when the response content indicates a semantic
 failure (like a truncated response or a failed built-in tool call). This behavior is controlled by the
-[`fallback_on`][pydantic_ai.models.fallback.FallbackModel] parameter, which accepts exception types,
+`fallback_on` parameter (see [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]), which accepts exception types,
 exception handlers, and response handlers — all of which can be sync or async.
 
 !!! note
@@ -342,7 +342,7 @@ def bad_finish_reason(response: ModelResponse) -> bool:
 
 
 fallback_model = FallbackModel(
-    'openai:gpt-4o-mini',
+    'openai:gpt-5.2',
     'anthropic:claude-sonnet-4-5',
     fallback_on=bad_finish_reason,
 )
@@ -363,7 +363,7 @@ print(result.output)
 
     For non-empty responses, **all finish reasons are accepted** — even `'error'` — because the response may contain partial results or useful information. This is why explicit checking via `fallback_on` is useful: it allows you to inspect the response content and make semantic decisions about whether to accept it or fallback to another model.
 
-    See the [agent graph implementation](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/_agent_graph.py) for details on default finish reason handling.
+    For details on default finish reason handling and retries, see [Reflection and Self-Correction](../agent.md#reflection-and-self-correction).
 
 #### Built-in Tool Failure Example
 
@@ -413,9 +413,6 @@ print(result.output)
 Pydantic AI is a Python agent framework for building production-grade LLM applications.
 """
 ```
-
-!!! warning "Solo response handlers replace default exception fallback"
-    As with the finish reason example above, passing a single response handler as `fallback_on` **replaces** the default `(ModelAPIError,)` exception fallback. To keep both, combine them in a list as shown below.
 
 Response handlers receive the [`ModelResponse`][pydantic_ai.messages.ModelResponse] returned by the model and should return `True` to trigger fallback to the next model, or `False` to accept the response.
 
