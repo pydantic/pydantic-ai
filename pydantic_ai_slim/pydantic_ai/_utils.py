@@ -255,7 +255,7 @@ async def group_by_temporal(
         # after iteration if a tasks still exists, cancel it, this will only happen if an error occurred
         if task:
             task.cancel('Cancelling due to error in iterator')
-            with suppress(asyncio.CancelledError):
+            with suppress(asyncio.CancelledError, StopAsyncIteration):
                 await task
 
 
