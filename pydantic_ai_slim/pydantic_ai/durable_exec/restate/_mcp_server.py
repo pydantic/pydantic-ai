@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any
 
 from pydantic.errors import PydanticUserError
-from typing_extensions import Protocol, Self
+from typing_extensions import Self
 
 from pydantic_ai import ToolDefinition
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
@@ -17,24 +17,10 @@ from ._restate_types import Context, RunOptions, TerminalError
 from ._serde import PydanticTypeAdapter
 from ._toolset import CONTEXT_RUN_SERDE, RestateContextRunResult, unwrap_context_run_result
 
-ToolResult: TypeAlias = Any
-
-
-class _MCPServer(Protocol):
-    @property
-    def id(self) -> str | None: ...
-
-    async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]: ...
-
-    async def call_tool(
-        self,
-        name: str,
-        tool_args: dict[str, Any],
-        ctx: RunContext[Any],
-        tool: ToolsetTool[Any],
-    ) -> ToolResult: ...
-
-    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[Any]: ...
+if TYPE_CHECKING:
+    from pydantic_ai.mcp import MCPServer, ToolResult
+else:
+    ToolResult = Any
 
 
 @dataclass
@@ -50,9 +36,9 @@ MCP_GET_TOOLS_SERDE = PydanticTypeAdapter(RestateMCPGetToolsContextRunResult)
 class RestateMCPServer(WrapperToolset[Any]):
     """A wrapper for [`MCPServer`][pydantic_ai.mcp.MCPServer] that integrates with Restate."""
 
-    def __init__(self, wrapped: AbstractToolset[Any], context: Context):
+    def __init__(self, wrapped: MCPServer, context: Context):
         super().__init__(wrapped)
-        self._wrapped = cast(_MCPServer, wrapped)
+        self._wrapped = wrapped
         self._context = context
         self._call_options = RunOptions[RestateContextRunResult](serde=CONTEXT_RUN_SERDE)
 

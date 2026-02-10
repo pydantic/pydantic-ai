@@ -66,10 +66,15 @@ class RestateModelWrapper(WrapperModel):
         self._context = context
         self._event_stream_handler = event_stream_handler
 
-    async def request(self, *args: Any, **kwargs: Any) -> ModelResponse:
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
         async def request_run() -> ModelResponse:
             try:
-                return await self.wrapped.request(*args, **kwargs)
+                return await self.wrapped.request(messages, model_settings, model_request_parameters)
             except (UserError, PydanticUserError) as e:
                 raise TerminalError(str(e)) from e
 

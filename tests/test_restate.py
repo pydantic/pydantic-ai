@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from typing import Any, cast
 
 import pytest
+from pydantic import BaseModel
 
 try:
     from restate import TerminalError
@@ -14,10 +15,15 @@ except ImportError:  # pragma: lax no cover
 
 from pydantic_ai import Agent, RunContext, ToolDefinition
 from pydantic_ai.durable_exec.restate import RestateAgent
-from pydantic_ai.durable_exec.restate._model import RestateModelWrapper
+from pydantic_ai.durable_exec.restate._model import MODEL_RESPONSE_SERDE, RestateModelWrapper
 from pydantic_ai.durable_exec.restate._serde import PydanticTypeAdapter
-from pydantic_ai.durable_exec.restate._toolset import RestateContextRunToolset
+from pydantic_ai.durable_exec.restate._toolset import (
+    CONTEXT_RUN_SERDE,
+    RestateContextRunResult,
+    RestateContextRunToolset,
+)
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
+from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -35,7 +41,10 @@ class FakeRestateContext:
         self.calls.append(name)
         result = fn(*args, **kwargs)
         if inspect.isawaitable(result):
-            return await result
+            result = await result
+
+        if options is not None and (serde := getattr(options, 'serde', None)) is not None:
+            return serde.deserialize(serde.serialize(result))
         return result
 
 
@@ -50,6 +59,35 @@ def test_pydantic_type_adapter_round_trip():
 
     buf = serde.serialize(123)
     assert serde.deserialize(buf) == 123
+
+
+def test_context_run_serde_round_trip():
+    results = [
+        RestateContextRunResult(kind='output', output={'key': 'value'}),
+        RestateContextRunResult(kind='model_retry', output=None, error='msg'),
+        RestateContextRunResult(kind='call_deferred', output=None, metadata={'k': 'v'}),
+        RestateContextRunResult(kind='approval_required', output=None, metadata={'a': 1}),
+    ]
+
+    for result in results:
+        assert CONTEXT_RUN_SERDE.deserialize(CONTEXT_RUN_SERDE.serialize(result)) == result
+
+
+def test_context_run_serde_output_any_not_type_preserved():
+    class OutputModel(BaseModel):
+        value: int
+
+    result = RestateContextRunResult(kind='output', output=OutputModel(value=1))
+    deserialized = CONTEXT_RUN_SERDE.deserialize(CONTEXT_RUN_SERDE.serialize(result))
+
+    assert deserialized is not None
+    assert deserialized == RestateContextRunResult(kind='output', output={'value': 1})
+    assert isinstance(deserialized.output, dict)
+
+
+def test_model_response_serde_round_trip():
+    response = ModelResponse(parts=[TextPart('hello')], model_name='test-model')
+    assert MODEL_RESPONSE_SERDE.deserialize(MODEL_RESPONSE_SERDE.serialize(response)) == response
 
 
 @pytest.mark.anyio
@@ -209,7 +247,7 @@ async def test_restate_agent_event_stream_handler_and_iter():
 
     async def event_stream_handler(ctx: RunContext[Any], stream: AsyncIterable[Any]) -> None:
         async for event in stream:
-            seen_event_kinds.append(getattr(event, 'event_kind', 'unknown'))
+            seen_event_kinds.append(event.event_kind)
 
     agent = Agent(TestModel())
 

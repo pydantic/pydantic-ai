@@ -145,15 +145,14 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         if handler is None:
             return
         async for event in stream:
-            event_kind = getattr(event, 'event_kind', 'event')
-            event_ = event
+            event_kind = event.event_kind
 
             # Wrap each event in its own durable step (similar to Temporal's per-event activity),
             # so event handler side effects are retried/deduplicated at event granularity.
 
             async def call_handler() -> None:
                 async def single_event() -> AsyncIterator[AgentStreamEvent]:
-                    yield event_
+                    yield event
 
                 await handler(ctx, single_event())
 

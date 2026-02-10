@@ -17,7 +17,11 @@ from ._serde import PydanticTypeAdapter
 
 @dataclass
 class RestateContextRunResult:
-    """A simple wrapper for tool results to be used with Restate's run_typed."""
+    """Serializable wrapper for tool outcomes used with Restate's `run_typed()`.
+
+    `output` is intentionally `Any`: values are serialized as JSON and replayed as
+    JSON-compatible Python types.
+    """
 
     kind: Literal['output', 'call_deferred', 'approval_required', 'model_retry']
     output: Any
