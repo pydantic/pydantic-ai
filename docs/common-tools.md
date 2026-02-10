@@ -224,18 +224,18 @@ print(result.output)
 ## You.com Search Tool
 
 !!! info
-    You.com is a paid service, but they have free credits to explore their product.
+    You.com is a paid service, but they have free credits to explore their APIs.
 
-    Sign in or create an account on our platform [here](https://you.com/platform). We'll start you off with $100 in complimentary credits! No credit card necessary.
+    Sign in or create an account on their platform [here](https://you.com/platform).
 
-The You.com search tool allows you to search the web for information. It returns structured results, including news, based on your natural language query. It is built on top of the [You.com API](https://you.com/apis). Read our [API documentation](https://docs.you.com/) for more information.
+The You.com search tool allows you to search the web for information. It returns structured results, including news, based on your natural language query. It is built on top of the [You.com API](https://you.com/apis). Read their [API documentation](https://docs.you.com/) for more information.
 
 ### Installation
 
-To use `you_search_tool`, you need to install [`pydantic-ai-slim`](install.md#slim-install) with the `you` optional group:
+To use [`you_search_tool`][pydantic_ai.common_tools.you.you_search_tool], install [`pydantic-ai-slim`](install.md#slim-install):
 
 ```bash
-pip/uv-add "pydantic-ai-slim[you]"
+pip/uv-add pydantic-ai-slim
 ```
 
 ### Parameters
@@ -249,7 +249,7 @@ The You.com search tool supports several parameters that can be configured when 
 | `freshness` | Time-based filtering: `'day'`, `'week'`, `'month'`, `'year'`, or date range `'YYYY-MM-DDtoYYYY-MM-DD'`. | Only if not configured |
 | `country` | Geographic focus using country codes: `'US'`, `'GB'`, `'FR'`, etc. | Only if not configured |
 | `language` | Language of results in BCP 47 format: `'EN'`, `'ES'`, `'FR'`, etc. | Only if not configured |
-| `safesearch` | Content moderation: `'off'`, `'moderate'`, or `'strict'`. | Only if not configured |
+| `safesearch` | Content moderation: `'off'`, `'moderate'`, or `'strict'`. Defaults to `'moderate'`. | Only if not configured |
 | `livecrawl` | Enable full page content retrieval: `'web'`, `'news'`, or `'all'`. | Only if not configured |
 | `livecrawl_formats` | Format for livecrawled content: `'html'` or `'markdown'`. | Only if not configured |
 
@@ -269,8 +269,6 @@ Here's an example of how you can use the You.com search tool with an agent:
 import asyncio
 import os
 
-from youdotcom.models import Country, Language
-
 from pydantic_ai import Agent
 from pydantic_ai.common_tools.you import you_search_tool
 
@@ -286,14 +284,14 @@ agent = Agent(
     'anthropic:claude-sonnet-4-5',
     tools=[you_search_tool(
         api_key=api_key,
-        count=5,           # Always return 5 results per section
-        freshness='day',   # Always search recent content
-        country=Country.US,  # Always focus on US results
-        language=Language.EN,  # Always return English results
+        count=5,            # Always return 5 results per section
+        freshness='day',    # Always search recent content
+        country='US',       # Always focus on US results
+        language='EN',      # Always return English results
     )],
     system_prompt=(
-        'You must use the you_search tool to search for information. '
-        'Do not use any built-in search capabilities.'
+        'Use the you_search tool to search for live information from the web. '
+        'Use this information to synthesize an answer to the user\'s question.'
     ),
 )
 

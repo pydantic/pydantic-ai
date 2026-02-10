@@ -6267,7 +6267,6 @@ dev = [
     { name = "pytest-recording" },
     { name = "pytest-xdist" },
     { name = "strict-no-cover" },
-    { name = "youdotcom" },
 ]
 docs = [
     { name = "black" },
@@ -6331,7 +6330,6 @@ dev = [
     { name = "pytest-recording", specifier = ">=0.13.2" },
     { name = "pytest-xdist", specifier = ">=3.6.1" },
     { name = "strict-no-cover", git = "https://github.com/pydantic/strict-no-cover.git?rev=7fc59da2c4dff919db2095a0f0e47101b657131d" },
-    { name = "youdotcom", specifier = ">=2.2.0" },
 ]
 docs = [
     { name = "black", specifier = ">=24.10.0" },
@@ -6528,9 +6526,6 @@ web = [
 xai = [
     { name = "xai-sdk" },
 ]
-you = [
-    { name = "youdotcom" },
-]
 
 [package.metadata]
 requires-dist = [
@@ -6590,9 +6585,8 @@ requires-dist = [
     { name = "vllm", marker = "(python_full_version < '3.12' and platform_machine != 'x86_64' and extra == 'outlines-vllm-offline') or (python_full_version < '3.12' and sys_platform != 'darwin' and extra == 'outlines-vllm-offline')", specifier = ">=0.11.0" },
     { name = "voyageai", marker = "extra == 'voyageai'", specifier = ">=0.3.2" },
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.5.0" },
-    { name = "youdotcom", marker = "extra == 'you'", specifier = ">=2.2.0" },
 ]
-provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "retries", "sentence-transformers", "tavily", "temporal", "ui", "vertexai", "voyageai", "web", "xai", "you"]
+provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "retries", "sentence-transformers", "tavily", "temporal", "ui", "vertexai", "voyageai", "web", "xai"]
 
 [[package]]
 name = "pydantic-core"
@@ -10138,20 +10132,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/f9/86/0f0dccb6e59a9e7f122c5afd43568b1d31b8ab7dda5f1b01fb5c7025c9a9/yarl-1.22.0-cp314-cp314t-win_amd64.whl", hash = "sha256:9fb17ea16e972c63d25d4a97f016d235c78dd2344820eb35bc034bc32012ee27", size = 96292, upload-time = "2025-10-06T14:12:15.398Z" },
     { url = "https://files.pythonhosted.org/packages/48/b7/503c98092fb3b344a179579f55814b613c1fbb1c23b3ec14a7b008a66a6e/yarl-1.22.0-cp314-cp314t-win_arm64.whl", hash = "sha256:9f6d73c1436b934e3f01df1e1b21ff765cd1d28c77dfb9ace207f746d4610ee1", size = 85171, upload-time = "2025-10-06T14:12:16.935Z" },
     { url = "https://files.pythonhosted.org/packages/73/ae/b48f95715333080afb75a4504487cbe142cae1268afc482d06692d605ae6/yarl-1.22.0-py3-none-any.whl", hash = "sha256:1380560bdba02b6b6c90de54133c81c9f2a453dee9912fe58c1dcced1edb7cff", size = 46814, upload-time = "2025-10-06T14:12:53.872Z" },
-]
-
-[[package]]
-name = "youdotcom"
-version = "2.2.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "httpcore" },
-    { name = "httpx" },
-    { name = "pydantic" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/51/fb/a9bca7081e0c5d5e2a07f9f58f95d19bcdd1a89777774229f9cea53807e0/youdotcom-2.2.0.tar.gz", hash = "sha256:737ba33ebd2ea1ea40d4640dda9b2944b2b43de8345be9dbbe22a6b2d120fb1f", size = 66651, upload-time = "2026-01-29T23:04:56.281Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/71/48/50185fc8c64286c7fef94cf3735eae6215cbd4d323453ca156068a883d05/youdotcom-2.2.0-py3-none-any.whl", hash = "sha256:00f76badcd9697de9132d3391ce9ab5d3dbbc76b3492fb07f99b38ff37ab4dc9", size = 83094, upload-time = "2026-01-29T23:04:55.104Z" },
 ]
 
 [[package]]

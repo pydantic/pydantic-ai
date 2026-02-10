@@ -98,7 +98,6 @@ outlines-vllm-offline = [
 duckduckgo = ["ddgs>=9.0.0"]
 tavily = ["tavily-python>=0.5.0"]
 exa = ["exa-py>=2.0.0"]
-you = ["youdotcom>=2.2.0"]
 # CLI
 cli = [
     "rich>=13",
