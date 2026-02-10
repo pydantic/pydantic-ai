@@ -175,18 +175,18 @@ def test_native_output_supported_model(
     mock_sonnet_4_5: tuple[AnthropicModel, AsyncAnthropic],
     city_location_schema: type[BaseModel],
 ):
-    """sonnet-4-5: NativeOutput → strict=True + beta header + output_format."""
+    """sonnet-4-5: NativeOutput → strict=True + beta header + output_config."""
     model, mock_client = mock_sonnet_4_5
     agent = Agent(model, output_type=NativeOutput(city_location_schema))
 
     agent.run_sync('What is the capital of France?')
 
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
-    output_format = completion_kwargs['output_format']
+    output_config = completion_kwargs['output_config']
     betas = completion_kwargs['betas']
 
-    assert output_format['type'] == 'json_schema'
-    assert output_format['schema']['type'] == 'object'
+    assert output_config['format']['type'] == 'json_schema'
+    assert output_config['format']['schema']['type'] == 'object'
     assert betas == snapshot(['structured-outputs-2025-11-13'])
 
 

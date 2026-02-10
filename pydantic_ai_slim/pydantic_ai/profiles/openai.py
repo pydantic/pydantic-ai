@@ -155,7 +155,9 @@ def openai_model_profile(model_name: str) -> ModelProfile:
 
     # Check if the model supports web search (only specific search-preview models)
     supports_web_search = '-search-preview' in model_name
-    supports_image_output = is_gpt_5 or 'o3' in model_name or '4.1' in model_name or '4o' in model_name
+    supports_image_output = (
+        is_gpt_5 or is_gpt_5_1_plus or 'o3' in model_name or '4.1' in model_name or '4o' in model_name
+    )
 
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18,
     # and gpt-4o-2024-08-06 model snapshots and later. We leave it in here for all models because the
