@@ -136,3 +136,19 @@ def test_structured_dict_with_non_recursive_defs():
     result = adapter.validate_python(data)
     assert result['name'] == 'Alice'
     assert result['address']['city'] == 'NYC'
+
+
+def test_recursive_schema_collision_coverage():
+    """Test recursion where root key collides with def key (for coverage)."""
+    schema = {
+        'title': 'Node',
+        'type': 'object',
+        'properties': {'child': {'$ref': '#/$defs/Node'}},
+        '$defs': {'Node': {'type': 'string'}},
+    }
+    sd = StructuredDict(schema)
+    json_schema = sd.__get_pydantic_json_schema__(None, None)  # pyright: ignore
+
+    # The transformer handling collision creates Node_root
+    # Fix should unwrap it.
+    assert json_schema['type'] == 'object'
