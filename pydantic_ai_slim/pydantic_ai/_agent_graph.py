@@ -880,7 +880,7 @@ def _skip_output_tool(
     message: str,
     output_parts: list[_messages.ModelRequestPart],
     *,
-    args_valid: bool = False,
+    args_valid: bool | None = None,
 ) -> Iterator[_messages.HandleResponseEvent]:
     """Yield events for an output tool call that was skipped, and append the result to output_parts."""
     yield _messages.FunctionToolCallEvent(call, args_valid=args_valid)
@@ -932,7 +932,7 @@ async def process_tool_calls(  # noqa: C901
         # Early strategy is chosen and final result is already set
         elif ctx.deps.end_strategy == 'early' and final_result:
             for event in _skip_output_tool(
-                call, 'Output tool not used - a final result was already processed.', output_parts
+                call, 'Output tool not used - a final result was already processed.', output_parts, args_valid=None
             ):
                 yield event
         # Early strategy is chosen and final result is not yet set
@@ -944,7 +944,7 @@ async def process_tool_calls(  # noqa: C901
             except exceptions.UnexpectedModelBehavior as e:
                 if final_result:
                     for event in _skip_output_tool(
-                        call, 'Output tool not used - output failed validation.', output_parts
+                        call, 'Output tool not used - output failed validation.', output_parts, args_valid=False
                     ):
                         yield event
                     continue
@@ -957,7 +957,7 @@ async def process_tool_calls(  # noqa: C901
                 assert validated.validation_error is not None
                 if final_result:
                     for event in _skip_output_tool(
-                        call, 'Output tool not used - output failed validation.', output_parts
+                        call, 'Output tool not used - output failed validation.', output_parts, args_valid=False
                     ):
                         yield event
                     continue
