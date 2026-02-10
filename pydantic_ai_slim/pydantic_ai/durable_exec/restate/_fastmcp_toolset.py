@@ -58,7 +58,8 @@ class RestateFastMCPToolset(WrapperToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         async def get_tools_in_context() -> RestateFastMCPGetToolsContextRunResult:
-            res = await self._fastmcp_toolset.get_tools(ctx)
+            async with self._fastmcp_toolset:
+                res = await self._fastmcp_toolset.get_tools(ctx)
             # ToolsetTool is not serializable as it holds a SchemaValidator
             # so we just return ToolDefinitions and reconstruct ToolsetTool outside of ctx.run_typed().
             return RestateFastMCPGetToolsContextRunResult(output={name: tool.tool_def for name, tool in res.items()})
@@ -85,7 +86,8 @@ class RestateFastMCPToolset(WrapperToolset[AgentDepsT]):
         tool: ToolsetTool[AgentDepsT],
     ) -> Any:
         async def call_tool_action() -> Any:
-            return await self._fastmcp_toolset.call_tool(name, tool_args, ctx, tool)
+            async with self._fastmcp_toolset:
+                return await self._fastmcp_toolset.call_tool(name, tool_args, ctx, tool)
 
         async def call_tool_in_context() -> RestateContextRunResult:
             return await wrap_tool_call_result(call_tool_action)

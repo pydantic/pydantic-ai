@@ -398,24 +398,23 @@ async def test_restate_mcp_server_wrapping_and_agent_mcp_wrapping():
             return None
 
         async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
-            async with self:
-                tool_defs = {
-                    name: ToolDefinition(
-                        name=name,
-                        description=name,
-                        parameters_json_schema={'type': 'object', 'properties': {'value': {}}, 'required': ['value']},
-                    )
-                    for name in ('echo', 'none', 'retry', 'deferred', 'approval', 'user_error')
-                }
-                return {
-                    name: ToolsetTool[Any](
-                        toolset=self,
-                        tool_def=tool_def,
-                        max_retries=1,
-                        args_validator=TOOL_SCHEMA_VALIDATOR,
-                    )
-                    for name, tool_def in tool_defs.items()
-                }
+            tool_defs = {
+                name: ToolDefinition(
+                    name=name,
+                    description=name,
+                    parameters_json_schema={'type': 'object', 'properties': {'value': {}}, 'required': ['value']},
+                )
+                for name in ('echo', 'none', 'retry', 'deferred', 'approval', 'user_error')
+            }
+            return {
+                name: ToolsetTool[Any](
+                    toolset=self,
+                    tool_def=tool_def,
+                    max_retries=1,
+                    args_validator=TOOL_SCHEMA_VALIDATOR,
+                )
+                for name, tool_def in tool_defs.items()
+            }
 
         async def call_tool(
             self,
@@ -424,18 +423,17 @@ async def test_restate_mcp_server_wrapping_and_agent_mcp_wrapping():
             ctx: RunContext[Any],
             tool: ToolsetTool[Any],
         ) -> Any:
-            async with self:
-                if name == 'retry':
-                    raise ModelRetry('nope')
-                elif name == 'deferred':
-                    raise CallDeferred(metadata={'foo': 'bar'})
-                elif name == 'approval':
-                    raise ApprovalRequired(metadata={'hello': 'world'})
-                elif name == 'user_error':
-                    raise UserError('bad')
-                elif name == 'none':
-                    return None
-                return {'name': name, 'args': tool_args}
+            if name == 'retry':
+                raise ModelRetry('nope')
+            elif name == 'deferred':
+                raise CallDeferred(metadata={'foo': 'bar'})
+            elif name == 'approval':
+                raise ApprovalRequired(metadata={'hello': 'world'})
+            elif name == 'user_error':
+                raise UserError('bad')
+            elif name == 'none':
+                return None
+            return {'name': name, 'args': tool_args}
 
     fake_ctx = FakeRestateContext()
     fake_server = FakeMCPServer(tool_prefix='fake')
@@ -682,16 +680,18 @@ async def test_restate_fastmcp_toolset_wrapping_smoke():
     assert 'get fastmcp tools' in fake_ctx.calls
     assert 'echo' in tools
     assert tools['echo'].toolset is durable_toolset
-    assert toolset.enter_calls == 1
-    assert toolset.exit_calls == 1
+    assert toolset.enter_calls >= 1
+    assert toolset.enter_calls == toolset.exit_calls
+
+    get_tools_enter_calls = toolset.enter_calls
 
     fake_ctx.calls.clear()
     result = await durable_toolset.call_tool('echo', {'value': 123}, ctx, tools['echo'])
     assert fake_ctx.calls == ['Calling fastmcp tool echo']
     assert isinstance(result, dict)
     assert cast(dict[str, Any], result).get('value') == 123
-    assert toolset.enter_calls == 2
-    assert toolset.exit_calls == 2
+    assert toolset.enter_calls > get_tools_enter_calls
+    assert toolset.enter_calls == toolset.exit_calls
 
 
 @pytest.mark.anyio

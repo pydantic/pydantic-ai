@@ -63,7 +63,8 @@ class RestateMCPServer(WrapperToolset[Any]):
 
     async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
         async def get_tools_in_context() -> RestateMCPGetToolsContextRunResult:
-            res = await self._mcp_server.get_tools(ctx)
+            async with self._mcp_server:
+                res = await self._mcp_server.get_tools(ctx)
             # ToolsetTool is not serializable as it holds a SchemaValidator
             # (which is also the same for every MCP tool so unnecessary to pass along the wire every time),
             # so we just return the ToolDefinitions and wrap them in ToolsetTool outside of ctx.run_typed().
@@ -92,7 +93,8 @@ class RestateMCPServer(WrapperToolset[Any]):
         tool: ToolsetTool[Any],
     ) -> ToolResult:
         async def call_tool_action() -> ToolResult:
-            return await self._mcp_server.call_tool(name, tool_args, ctx, tool)
+            async with self._mcp_server:
+                return await self._mcp_server.call_tool(name, tool_args, ctx, tool)
 
         async def call_tool_in_context() -> RestateContextRunResult:
             return await wrap_tool_call_result(call_tool_action)
