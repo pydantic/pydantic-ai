@@ -661,7 +661,7 @@ class MistralModel(Model):
                         raise RuntimeError('DocumentUrl other than PDF is not supported in Mistral.')
                 elif isinstance(item, VideoUrl):
                     raise RuntimeError('VideoUrl is not supported in Mistral.')
-                else:  # pragma: no cover
+                else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')
         return MistralUserMessage(content=content)
 
