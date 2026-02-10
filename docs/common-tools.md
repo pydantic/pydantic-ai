@@ -290,8 +290,7 @@ agent = Agent(
         language='EN',      # Always return English results
     )],
     system_prompt=(
-        'Use the you_search tool to search for live information from the web. '
-        'Use this information to synthesize an answer to the user\'s question.'
+        'Use the you_search tool to search for live information from the web. Use this information as needed to synthesize an answer to the query.'
     ),
 )
 
