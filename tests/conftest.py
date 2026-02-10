@@ -293,9 +293,9 @@ def raise_if_exception(e: Any) -> None:
 
 
 def pytest_recording_configure(config: Any, vcr: VCR):
-    from pydantic_ai.testing import json_body_serializer
+    from pydantic_ai.testing import vcr_yaml_serializer
 
-    vcr.register_serializer('yaml', json_body_serializer)
+    vcr.register_serializer('yaml', vcr_yaml_serializer)
 
     def method_matcher(r1: vcr_request.Request, r2: vcr_request.Request) -> None:
         if r1.method.upper() != r2.method.upper():

@@ -300,12 +300,12 @@ Configure VCR in your `conftest.py`:
 import pytest
 from vcr import VCR
 
-from pydantic_ai.testing import json_body_serializer
+from pydantic_ai.testing import vcr_yaml_serializer
 
 
 def pytest_recording_configure(config, vcr: VCR):
     """Register the custom serializer for cleaner cassettes."""
-    vcr.register_serializer('yaml', json_body_serializer)
+    vcr.register_serializer('yaml', vcr_yaml_serializer)
 
 
 @pytest.fixture(scope='module')
@@ -342,7 +342,7 @@ pytest test_integration.py --record-mode=once
 
 ### What the Serializer Does
 
-The `json_body_serializer` module:
+The `vcr_yaml_serializer` module:
 
 1. **Parses JSON bodies**: Stores response bodies as structured YAML instead of escaped strings
 2. **Decompresses responses**: Handles gzip and Brotli encoding transparently

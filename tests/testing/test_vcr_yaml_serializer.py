@@ -3,7 +3,7 @@ from typing import Any
 import pytest
 import yaml
 
-from pydantic_ai.testing.json_body_serializer import deserialize, serialize
+from pydantic_ai.testing.vcr_yaml_serializer import deserialize, serialize
 
 
 @pytest.fixture
