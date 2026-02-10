@@ -1250,7 +1250,7 @@ async def _call_tool(
                     f'The return value of tool {tool_call.tool_name!r} contains invalid nested `ToolReturn` objects. '
                     f'`ToolReturn` should be used directly.'
                 )
-            elif isinstance(content, _messages.MultiModalContent):
+            elif isinstance(content, _messages.MULTI_MODAL_CONTENT_TYPES):
                 identifier = content.identifier
 
                 return_values.append(f'See file {identifier}')
@@ -1264,10 +1264,10 @@ async def _call_tool(
         )
 
     if (
-        isinstance(tool_return.return_value, _messages.MultiModalContent)
+        isinstance(tool_return.return_value, _messages.MULTI_MODAL_CONTENT_TYPES)
         or isinstance(tool_return.return_value, list)
         and any(
-            isinstance(content, _messages.MultiModalContent)
+            isinstance(content, _messages.MULTI_MODAL_CONTENT_TYPES)
             for content in tool_return.return_value  # type: ignore
         )
     ):
@@ -1299,7 +1299,7 @@ _messages_ctx_var: ContextVar[_RunMessages] = ContextVar('var')
 def capture_run_messages() -> Iterator[list[_messages.ModelMessage]]:
     """Context manager to access the messages used in a [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], or [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] call.
 
-    Useful when a run may raise an exception, see [model errors](../agents.md#model-errors) for more information.
+    Useful when a run may raise an exception, see [model errors](../agent.md#model-errors) for more information.
 
     Examples:
     ```python

@@ -33,7 +33,7 @@ To help you get started with [Pydantic AI Gateway](https://gateway.pydantic.dev)
 ```python {title="hello_world.py"}
 from pydantic_ai import Agent
 
-agent = Agent('gateway/openai:gpt-5')
+agent = Agent('gateway/openai:gpt-5.2')
 
 result = agent.run_sync('Where does "hello world" come from?')
 print(result.output)
@@ -89,9 +89,9 @@ Examples of providers and models that can be used are:
 
 | **Provider** | **API Format**  | **Example Model**                        |
 | --- |-----------------|------------------------------------------|
-| OpenAI | `openai`        | `gateway/openai:gpt-5`                   |
+| OpenAI | `openai`        | `gateway/openai:gpt-5.2`                 |
 | Anthropic | `anthropic`     | `gateway/anthropic:claude-sonnet-4-5`    |
-| Google Vertex | `google-vertex` | `gateway/google-vertex:gemini-2.5-flash` |
+| Google Vertex | `google-vertex` | `gateway/google-vertex:gemini-3-flash-preview` |
 | Groq | `groq`          | `gateway/groq:openai/gpt-oss-120b`       |
 | AWS Bedrock | `bedrock`       | `gateway/bedrock:amazon.nova-micro-v1:0` |
 
@@ -124,7 +124,7 @@ You can access multiple models with the same API key, as shown in the code snipp
     ```python {title="hello_world.py"}
     from pydantic_ai import Agent
 
-    agent = Agent('gateway/openai:gpt-5')
+    agent = Agent('gateway/openai:gpt-5.2')
 
     result = agent.run_sync('Where does "hello world" come from?')
     print(result.output)
@@ -143,7 +143,7 @@ You can access multiple models with the same API key, as shown in the code snipp
     from pydantic_ai.providers.gateway import gateway_provider
 
     provider = gateway_provider('openai', api_key='paig_<example_key>')
-    model = OpenAIChatModel('gpt-5', provider=provider)
+    model = OpenAIChatModel('gpt-5.2', provider=provider)
     agent = Agent(model)
 
     result = agent.run_sync('Where does "hello world" come from?')
@@ -167,7 +167,7 @@ You can access multiple models with the same API key, as shown in the code snipp
         api_key='paig_<example_key>',
         route='builtin-openai'
     )
-    model = OpenAIChatModel('gpt-5', provider=provider)
+    model = OpenAIChatModel('gpt-5.2', provider=provider)
     agent = Agent(model)
 
     result = agent.run_sync('Where does "hello world" come from?')
@@ -205,7 +205,7 @@ client = openai.Client(
 )
 
 response = client.chat.completions.create(
-    model='gpt-5',
+    model='gpt-5.2',
     messages=[{'role': 'user', 'content': 'Hello world'}],
 )
 print(response.choices[0].message.content)
