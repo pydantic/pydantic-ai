@@ -1,6 +1,6 @@
 # RAG with SurrealDB
 
-RAG search example using SurrealDB. This demo allows you to ask question of the [logfire](https://pydantic.dev/logfire) documentation.
+RAG search example using SurrealDB. This demo allows you to ask questions about the [logfire](https://pydantic.dev/logfire) documentation.
 
 Demonstrates:
 
