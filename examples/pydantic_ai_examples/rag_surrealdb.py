@@ -112,22 +112,17 @@ async def retrieve(search_query: str) -> str:
 
     # SurrealDB vector search using HNSW index
     async with database_connect(False) as db:
-        try:
-            rows = await query(
-                db,
-                """
-                SELECT url, title, content, vector::distance::knn() AS dist
-                FROM doc_sections
-                WHERE embedding <|8, 40|> $vector
-                ORDER BY dist ASC
-                """,
-                {'vector': cast(Value, embedding_vector)},
-                RetrievalQueryResult,
-            )
-            logfire.info('Retrieved {len} results', len=len(rows))
-        except ValidationError as e:
-            logfire.error('Failed to validate JSON response: {error}', error=e)
-            raise
+        rows = await query(
+            db,
+            """
+            SELECT url, title, content, vector::distance::knn() AS dist
+            FROM doc_sections
+            WHERE embedding <|8, 40|> $vector
+            ORDER BY dist ASC
+            """,
+            {'vector': cast(Value, embedding_vector)},
+            RetrievalQueryResult,
+        )
 
     return '\n\n'.join(
         f'# {row.title}\nDocumentation URL:{row.url}\n\n{row.content}' for row in rows
