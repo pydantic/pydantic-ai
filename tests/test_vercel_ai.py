@@ -1713,7 +1713,7 @@ async def test_run_stream_tool_metadata_single_chunk():
 
 
 async def test_run_stream_tool_metadata_multiple_chunks():
-    """Test that multiple BaseChunks in ToolReturnPart.metadata are yielded to the stream."""
+    """Test that multiple data-carrying chunks in ToolReturnPart.metadata are yielded to the stream."""
 
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
