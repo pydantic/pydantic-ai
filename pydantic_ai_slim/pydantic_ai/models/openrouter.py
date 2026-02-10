@@ -8,13 +8,9 @@ from pydantic import BaseModel, Discriminator
 from typing_extensions import TypedDict, assert_never, override
 
 from ..exceptions import ModelHTTPError
-from ..messages import (
-    FinishReason,
-    ModelResponseStreamEvent,
-    ThinkingPart,
-    VideoUrl,
-)
+from ..messages import BinaryContent, FinishReason, ModelResponseStreamEvent, ThinkingPart, VideoUrl
 from ..profiles import ModelProfileSpec
+from ..profiles.openai import OpenAIModelProfile
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterProvider
 from ..settings import ModelSettings
@@ -612,6 +608,26 @@ class OpenRouterModel(OpenAIChatModel):
     @override
     def _streamed_response_cls(self):
         return OpenRouterStreamedResponse
+
+    @override
+    async def _map_binary_content_item(
+        self, item: BinaryContent, profile: OpenAIModelProfile
+    ) -> ChatCompletionContentPartParam:
+        """Map a BinaryContent item to a chat completion content part for OpenRouter.
+
+        OpenRouter supports video inputs via the ``video_url`` content type with either
+        a direct URL or a base64-encoded data URL. For video ``BinaryContent`` we map
+        the bytes to a ``video_url`` part using a data URI, and defer all other types
+        to the base ``OpenAIChatModel`` implementation.
+        """
+        if item.is_video:
+            video_url: dict[str, str] = {'url': item.data_uri}
+            return cast(
+                ChatCompletionContentPartParam,
+                ChatCompletionContentPartVideoUrlParam(video_url=video_url, type='video_url'),
+            )
+
+        return await super()._map_binary_content_item(item, profile)
 
     @override
     async def _map_video_url_item(self, item: VideoUrl) -> ChatCompletionContentPartParam:

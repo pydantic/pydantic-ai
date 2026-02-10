@@ -297,6 +297,38 @@ async def test_openrouter_video_url_mapping() -> None:
     assert content[1] == {'type': 'video_url', 'video_url': {'url': 'https://example.com/video.mp4'}}
 
 
+async def test_openrouter_binary_content_video_mapping() -> None:
+    """Test that `BinaryContent` with a video media type maps to a `video_url` part."""
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('google/gemini-3-flash-preview', provider=provider)
+
+    binary_video = BinaryContent(data=b'video-bytes', media_type='video/mp4')
+
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Count the students.',
+                        binary_video,
+                    ]
+                )
+            ]
+        )
+    ]
+
+    mapped_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    content = mapped_messages[0].get('content')
+    assert content is not None
+    assert isinstance(content, list)
+
+    assert content[0] == {'type': 'text', 'text': 'Count the students.'}
+    assert content[1] == {
+        'type': 'video_url',
+        'video_url': {'url': binary_video.data_uri},
+    }
+
+
 async def test_openrouter_video_url_force_download() -> None:
     from unittest.mock import AsyncMock, patch
 
@@ -338,7 +370,7 @@ async def test_openrouter_video_url_force_download() -> None:
 
 
 async def test_openrouter_video_url_no_force_download() -> None:
-    """Test that force_download=False does not call download_item for VideoUrl."""
+    """Test that `force_download=False` does not call `download_item` for `VideoUrl`."""
     from unittest.mock import AsyncMock, patch
 
     provider = OpenRouterProvider(api_key='test-key')
@@ -372,16 +404,7 @@ async def test_openrouter_video_url_no_force_download() -> None:
 async def test_openrouter_video_url_public_api(
     allow_model_requests: None, openrouter_api_key: str
 ) -> None:  # pragma: lax no cover
-    """Test VideoUrl support through the public Agent.run API.
-
-    This test validates the complete end-to-end flow using the public API,
-    ensuring VideoUrl works correctly with OpenRouter models.
-
-    To record the VCR cassette and populate the snapshot (first-time setup):
-    - Set OPENROUTER_API_KEY to a valid key.
-    - Run: uv run pytest tests/models/test_openrouter.py::test_openrouter_video_url_public_api --record-mode=rewrite --inline-snapshot=create
-    - After that, the test passes without an API key by replaying the cassette.
-    """
+    """Test `VideoUrl` support through the public `Agent.run` API."""
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('google/gemini-2.5-flash', provider=provider)
     agent = Agent(model)
@@ -403,6 +426,27 @@ This video features a giant panda in an enclosure designed to resemble its natur
 - **Enrichment toy:** A large, round, light brown object (possibly a ball or feeder) is seen on the rocks, likely an enrichment toy for the panda.
 - **Panda:** The main subject is a black and white giant panda, which is actively eating bamboo at the bottom right of the frame, occasionally looking up.\
 """)
+
+
+async def test_openrouter_binary_content_video_public_api(
+    allow_model_requests: None, openrouter_api_key: str, video_content: BinaryContent, vcr: Cassette
+) -> None:  # pragma: lax no cover
+    """Test `BinaryContent` video support through the public `Agent.run` API."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('google/gemini-2.5-flash', provider=provider)
+    agent = Agent(model)
+
+    result = await agent.run(['What is in this video? Answer in one short sentence.', video_content])
+    assert isinstance(result.output, str)
+    assert len(result.output) > 0
+
+    assert vcr is not None
+    assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+
+    video_content_part = request_body['messages'][0]['content'][1]
+    assert video_content_part['type'] == 'video_url'
+    assert video_content_part['video_url']['url'].startswith('data:video/mp4;base64,')
 
 
 async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_api_key: str) -> None:
