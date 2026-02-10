@@ -94,11 +94,11 @@ from .messages import (
     ToolCallPartDelta,
     ToolReturn,
     ToolReturnPart,
+    UploadedFile,
     UserContent,
     UserPromptPart,
     VideoFormat,
     VideoMediaType,
-    UploadedFile,
     VideoUrl,
 )
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
@@ -211,11 +211,11 @@ __all__ = (
     'ToolCallPartDelta',
     'ToolReturn',
     'ToolReturnPart',
+    'UploadedFile',
     'UserContent',
     'UserPromptPart',
     'VideoFormat',
     'VideoMediaType',
-    'UploadedFile',
     'VideoUrl',
     # profiles
     'ModelProfile',

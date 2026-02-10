@@ -39,6 +39,7 @@ from pydantic_ai import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
 from pydantic_ai.builtin_tools import WebSearchTool
@@ -714,6 +715,16 @@ async def test_audio_as_binary_content_input(allow_model_requests: None, media_t
 
     with pytest.raises(RuntimeError, match='Only images are supported for binary content in Groq.'):
         await agent.run(['hello', BinaryContent(data=base64_content, media_type=media_type)])
+
+
+async def test_uploaded_file_input(allow_model_requests: None):
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockGroq.create_mock(c)
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(NotImplementedError, match='UploadedFile is not supported by Groq.'):
+        await agent.run(['hello', UploadedFile(file_id='file-123', provider_name='anthropic')])
 
 
 async def test_image_as_binary_content_input(

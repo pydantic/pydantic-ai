@@ -889,6 +889,30 @@ def test_uploaded_file_in_otel_message_parts():
     )
 
 
+def test_uploaded_file_serialization_roundtrip():
+    """Verify that UploadedFile survives a ModelMessagesTypeAdapter serialization roundtrip.
+
+    UploadedFile uses `exclude=True` on private fields (`_media_type`, `_identifier`) and exposes
+    them via computed fields — this test ensures those computed values are preserved through
+    serialization and deserialization.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'analyze this file',
+                        UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='application/pdf'),
+                    ]
+                )
+            ]
+        )
+    ]
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+    assert deserialized == messages
+
+
 def test_tool_return_content_with_url_field_not_coerced_to_image_url():
     """Test that dicts with 'url' keys are not incorrectly coerced to ImageUrl.
 

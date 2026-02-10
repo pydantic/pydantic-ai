@@ -923,8 +923,8 @@ class BedrockConverseModel(Model):
 
                     try:
                         format = item.format
-                    except ValueError:
-                        raise UserError(f'Unsupported media type for Bedrock UploadedFile: {item.media_type}')
+                    except ValueError as e:
+                        raise UserError(f'Unsupported media type for Bedrock UploadedFile: {item.media_type}') from e
 
                     if item.media_type.startswith('image/'):
                         content.append(_make_image_block(format, source))

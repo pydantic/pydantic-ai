@@ -481,7 +481,6 @@ class XaiModel(Model):
                         f'Expected `provider_name` to be `{self.system!r}`.'
                     )
                 content_items.append(file(item.file_id))
-
             else:
                 assert_never(item)
 
