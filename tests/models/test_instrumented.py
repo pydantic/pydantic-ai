@@ -2112,6 +2112,103 @@ def test_messages_to_otel_messages_builtin_tool_v4():
     )
 
 
+def test_messages_to_otel_messages_binary_content_v4_no_binary():
+    """Test version 4 with include_binary_content=False omits the content field entirely."""
+    image_data = BinaryContent(data=b'fake image data', media_type='image/png')
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content=['Analyze this', image_data])],
+            timestamp=IsDatetime(),
+        ),
+    ]
+    settings = InstrumentationSettings(version=4, include_binary_content=False)
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'Analyze this'},
+                    {'type': 'blob', 'modality': 'image', 'mime_type': 'image/png'},
+                ],
+            }
+        ]
+    )
+
+
+def test_messages_to_otel_messages_file_part_v4_no_binary(document_content: BinaryContent):
+    """Test version 4 FilePart with include_binary_content=False omits the content field."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Generate a document')], timestamp=IsDatetime()),
+        ModelResponse(parts=[FilePart(content=document_content)]),
+    ]
+    settings = InstrumentationSettings(version=4, include_binary_content=False)
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'Generate a document'},
+                ],
+            },
+            {
+                'role': 'assistant',
+                'parts': [
+                    {'type': 'blob', 'modality': 'document', 'mime_type': 'application/pdf'},
+                ],
+            },
+        ]
+    )
+
+
+def test_messages_to_otel_messages_binary_content_v4_unknown_modality():
+    """Test version 4 with unknown media type (no modality field added)."""
+    unknown_data = BinaryContent(data=b'unknown data', media_type='x-custom/data')
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content=['Check this', unknown_data])],
+            timestamp=IsDatetime(),
+        ),
+    ]
+    settings = InstrumentationSettings(version=4)
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'Check this'},
+                    {'type': 'blob', 'mime_type': 'x-custom/data', 'content': unknown_data.base64},
+                ],
+            }
+        ]
+    )
+
+
+def test_messages_to_otel_messages_file_part_v4_unknown_modality():
+    """Test version 4 FilePart with unknown media type (no modality field added)."""
+    unknown_content = BinaryContent(data=b'unknown file data', media_type='x-vendor/custom-format')
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Process file')], timestamp=IsDatetime()),
+        ModelResponse(parts=[FilePart(content=unknown_content)]),
+    ]
+    settings = InstrumentationSettings(version=4)
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'Process file'},
+                ],
+            },
+            {
+                'role': 'assistant',
+                'parts': [
+                    {'type': 'blob', 'mime_type': 'x-vendor/custom-format', 'content': unknown_content.base64},
+                ],
+            },
+        ]
+    )
+
+
 async def test_instrumented_model_count_tokens(capfire: CaptureLogfire):
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hello, world!')], timestamp=IsDatetime())]
     model = InstrumentedModel(MyModel())

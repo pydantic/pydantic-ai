@@ -768,7 +768,7 @@ class UserPromptPart:
     [`Agent.run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], and [`Agent.run_stream`][pydantic_ai.agent.AbstractAgent.run_stream].
     """
 
-    content: str | Sequence[UserContent]  # pragma: no cover
+    content: str | Sequence[UserContent]
     """The content of the prompt."""
 
     _: KW_ONLY
