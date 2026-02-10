@@ -1,4 +1,6 @@
-# Unit testing
+# Testing
+
+## Unit testing
 
 Writing unit tests for Pydantic AI code is just like unit tests for any other Python code.
 
