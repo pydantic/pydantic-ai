@@ -255,6 +255,35 @@ def test_add_usages():
     assert RunUsage() + RunUsage() == RunUsage()
 
 
+def test_add_usages_with_none_detail_value():
+    """Test that None values in details are skipped when incrementing usage."""
+    usage = RunUsage(
+        requests=1,
+        input_tokens=10,
+        output_tokens=20,
+        details={'reasoning_tokens': 5},
+    )
+
+    # Create a usage with None in details (simulating model response with missing detail)
+    incr_usage = RunUsage(
+        requests=1,
+        input_tokens=5,
+        output_tokens=10,
+    )
+    # Manually set a None value in details to simulate edge case from model responses
+    incr_usage.details = {'reasoning_tokens': None, 'other_tokens': 10}  # type: ignore[dict-item]
+
+    result = usage + incr_usage
+    assert result == snapshot(
+        RunUsage(
+            requests=2,
+            input_tokens=15,
+            output_tokens=30,
+            details={'reasoning_tokens': 5, 'other_tokens': 10},
+        )
+    )
+
+
 async def test_tool_call_limit() -> None:
     test_agent = Agent(TestModel())
 
@@ -428,3 +457,30 @@ async def test_parallel_tool_calls_limit_enforced():
 
 def test_usage_unknown_provider():
     assert RequestUsage.extract({}, provider='unknown', provider_url='', provider_fallback='') == RequestUsage()
+
+
+def test_usage_limits_preserves_explicit_zero():
+    """Test that explicit 0 token limits are preserved and not replaced by deprecated fallbacks."""
+    # When input_tokens_limit=0 and deprecated request_tokens_limit is also set,
+    # the explicit 0 should be preserved (not overwritten by the deprecated fallback).
+    # We ignore type errors below because overloads don't allow mixing current and deprecated args.
+    limits = UsageLimits(input_tokens_limit=0, request_tokens_limit=123)  # pyright: ignore[reportCallIssue]
+    assert limits.input_tokens_limit == 0
+
+    limits = UsageLimits(output_tokens_limit=0, response_tokens_limit=456)  # pyright: ignore[reportCallIssue]
+    assert limits.output_tokens_limit == 0
+
+    # When only deprecated arg is passed, should use it as fallback
+    limits = UsageLimits(request_tokens_limit=123)  # pyright: ignore[reportDeprecated]
+    assert limits.input_tokens_limit == 123
+
+    limits = UsageLimits(response_tokens_limit=456)  # pyright: ignore[reportDeprecated]
+    assert limits.output_tokens_limit == 456
+
+    # When neither is passed, should be None
+    limits = UsageLimits()
+    assert limits.input_tokens_limit is None
+
+    # When only current arg is set, should use it
+    limits = UsageLimits(input_tokens_limit=100)
+    assert limits.input_tokens_limit == 100

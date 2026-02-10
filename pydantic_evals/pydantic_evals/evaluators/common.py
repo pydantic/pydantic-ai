@@ -186,7 +186,7 @@ def _update_combined_output(
 class LLMJudge(Evaluator[object, object, object]):
     """Judge whether the output of a language model meets the criteria of a provided rubric.
 
-    If you do not specify a model, it uses the default model for judging. This starts as 'openai:gpt-4o', but can be
+    If you do not specify a model, it uses the default model for judging. This starts as 'openai:gpt-5.2', but can be
     overridden by calling [`set_default_judge_model`][pydantic_evals.evaluators.llm_as_a_judge.set_default_judge_model].
     """
 

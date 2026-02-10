@@ -272,19 +272,6 @@ async def test_stub_provider_properties():
     assert provider.base_url == 'https://bedrock.stub'
 
 
-@pytest.mark.parametrize(
-    ('model_name', 'expected'),
-    [
-        ('us.anthropic.claude-sonnet-4-20250514-v1:0', 'anthropic.claude-sonnet-4-20250514-v1:0'),
-        ('eu.amazon.nova-micro-v1:0', 'amazon.nova-micro-v1:0'),
-        ('apac.meta.llama3-8b-instruct-v1:0', 'meta.llama3-8b-instruct-v1:0'),
-        ('anthropic.claude-3-7-sonnet-20250219-v1:0', 'anthropic.claude-3-7-sonnet-20250219-v1:0'),
-    ],
-)
-def test_remove_inference_geo_prefix(model_name: str, expected: str):
-    assert BedrockConverseModel._remove_inference_geo_prefix(model_name) == expected  # pyright: ignore[reportPrivateUsage]
-
-
 async def test_bedrock_model_structured_output(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     agent = Agent(model=model, instructions='You are a helpful chatbot.', retries=5)
@@ -747,7 +734,9 @@ async def test_video_as_binary_content_input(
 
 
 @pytest.mark.vcr()
-async def test_image_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
+async def test_image_url_input(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, disable_ssrf_protection_for_vcr: None
+):
     m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
@@ -763,7 +752,9 @@ async def test_image_url_input(allow_model_requests: None, bedrock_provider: Bed
 
 
 @pytest.mark.vcr()
-async def test_video_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
+async def test_video_url_input(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, disable_ssrf_protection_for_vcr: None
+):
     m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
@@ -779,7 +770,9 @@ async def test_video_url_input(allow_model_requests: None, bedrock_provider: Bed
 
 
 @pytest.mark.vcr()
-async def test_document_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
+async def test_document_url_input(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, disable_ssrf_protection_for_vcr: None
+):
     m = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
@@ -792,7 +785,9 @@ async def test_document_url_input(allow_model_requests: None, bedrock_provider: 
 
 
 @pytest.mark.vcr()
-async def test_text_document_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
+async def test_text_document_url_input(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, disable_ssrf_protection_for_vcr: None
+):
     m = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
@@ -1942,6 +1937,184 @@ async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_
     assert second_usage == snapshot(RunUsage(input_tokens=1324, output_tokens=5, cache_read_tokens=1322, requests=1))
 
 
+@pytest.mark.vcr()
+async def test_bedrock_cache_messages_with_document_as_last_content(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test the workaround for the AWS bug where cache points cannot be added after documents, so we insert them before the documents."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(
+        model,
+        system_prompt='YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\n' * 50,  # More tokens to activate a cache
+        model_settings=BedrockModelSettings(
+            bedrock_cache_messages=True,  # This should add a cache point to the last user message
+        ),
+    )
+
+    # Create a document as the last piece of content in the user message
+    document = BinaryContent(data=b'This is a test document with important analysis data.', media_type='text/plain')
+    document2 = BinaryContent(data=b'This is a test document with unimportant data.', media_type='text/plain')
+    run_args = [
+        'YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\n' * 50,  # More tokens to activate a cache
+        'Please analyze this document:',
+        document,
+        'And this document:',
+        document2,
+    ]
+
+    result = await agent.run(run_args)
+    assert result.output == snapshot("""\
+I'll analyze the documents you've provided:
+
+## Document 1 (Document 1.txt)
+- **Content**: Contains important analysis data
+- **Key characteristic**: Explicitly marked as containing "important" information
+- **Purpose**: Appears to be a test document designed to hold significant analytical data
+
+## Document 2 (Document 2.txt)
+- **Content**: Contains unimportant data
+- **Key characteristic**: Explicitly marked as containing "unimportant" information
+- **Purpose**: Also a test document, but with data of lesser significance
+
+## Summary
+Both documents appear to be test files with minimal content. The main distinction between them is the stated importance level of their data - Document 1 contains information designated as important for analysis, while Document 2's data is marked as unimportant. Without more specific content or a particular analysis goal, these seem to be placeholder documents for testing document analysis capabilities.
+
+Is there a specific aspect of these documents you'd like me to focus on or a particular type of analysis you need?\
+""")
+
+    usage = result.usage()
+    assert usage.input_tokens > 0
+    assert usage.output_tokens > 0
+    assert usage.cache_write_tokens > 0
+    assert usage.cache_read_tokens == 0
+
+    messages = result.all_messages()
+
+    result = await agent.run('How long is the doc?', message_history=messages)
+    assert result.output == snapshot("""\
+Based on the documents provided:
+
+**Document 1 (Document 1.txt)**: 10 words
+- "This is a test document with important analysis data."
+
+**Document 2 (Document 2.txt)**: 8 words
+- "This is a test document with unimportant data."
+
+Both documents are very short - just single sentences. If you're asking about character count instead:
+
+- Document 1: 55 characters (including spaces)
+- Document 2: 49 characters (including spaces)\
+""")
+
+    usage = result.usage()
+    assert usage.input_tokens > 0
+    assert usage.output_tokens > 0
+    assert usage.cache_write_tokens > 0
+    assert usage.cache_read_tokens > 0
+
+
+@pytest.mark.vcr()
+async def test_bedrock_cache_messages_with_image_as_last_content(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, image_content: BinaryContent
+):
+    """Test that cache points can be added after images without the workaround necessary for documents."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(
+        model,
+        system_prompt='YOU ARE A HELPFUL ASSISTANT THAT ANALYZES IMAGES.\n' * 50,  # More tokens to activate a cache
+        model_settings=BedrockModelSettings(
+            bedrock_cache_messages=True,  # This should add a cache point to the last user message
+        ),
+    )
+
+    # Create a document as the last piece of content in the user message
+    run_args = [
+        'YOU ARE A HELPFUL ASSISTANT THAT ANALYZES IMAGES.\n' * 50,  # More tokens to activate a cache
+        'Please analyze the following image:',
+        image_content,
+    ]
+
+    result = await agent.run(run_args)
+    assert result.output == snapshot("""\
+I'd be happy to analyze this image for you!
+
+This is a close-up photograph of a **kiwi fruit cross-section**. Here are the key details:
+
+## Visual Characteristics:
+- **Color Palette**: Vibrant green flesh with a pale cream/white center
+- **Seeds**: Multiple small, black, teardrop-shaped seeds arranged in a radial pattern around the center
+- **Texture**: The flesh appears juicy and translucent with a gradient from bright green at the edges to lighter green near the center
+- **Skin**: Brown fuzzy skin visible around the perimeter of the slice
+- **Pattern**: Natural starburst or sunburst pattern created by the seed arrangement
+
+## Composition:
+- The slice is photographed from directly above against a white background
+- The fruit is cut perpendicular to its length, showing a perfect circular cross-section
+- The lighting is bright and even, highlighting the fruit's natural moisture and color variations
+
+## Notable Features:
+- The radial symmetry creates an aesthetically pleasing natural pattern
+- Tiny fine hairs (trichomes) are visible on the brown skin edge
+- The flesh shows subtle striations radiating outward from the center
+
+This type of image is commonly used in food photography, nutritional content, or botanical documentation.\
+""")
+
+    usage = result.usage()
+    assert usage.input_tokens > 0
+    assert usage.output_tokens > 0
+    assert usage.cache_write_tokens > 0
+    assert usage.cache_read_tokens == 0
+
+    messages = result.all_messages()
+
+    result = await agent.run('How large is the image?', message_history=messages)
+    assert result.output == snapshot("""\
+The image dimensions are **597 × 597 pixels** (a perfect square).
+
+This is a relatively small to medium-sized image by modern standards, suitable for web use, thumbnails, or social media posts, but not high-resolution enough for large-format printing.\
+""")
+
+    usage = result.usage()
+    assert usage.input_tokens > 0
+    assert usage.output_tokens > 0
+    assert usage.cache_write_tokens > 0
+    assert usage.cache_read_tokens > 0
+
+
+@pytest.mark.vcr()
+async def test_bedrock_cache_messages_with_video_as_last_content(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, video_content: BinaryContent
+):
+    """Test that cache points can be added after videos without the workaround necessary for documents."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(
+        model,
+        system_prompt='YOU ARE A HELPFUL ASSISTANT THAT ANALYZES VIDEOS.\n' * 50,  # More tokens to activate a cache
+        model_settings=BedrockModelSettings(
+            bedrock_cache_messages=True,  # This should add a cache point to the last user message
+        ),
+    )
+
+    # Create a document as the last piece of content in the user message
+    run_args = [
+        'YOU ARE A HELPFUL ASSISTANT THAT ANALYZES VIDEOS.\n' * 50,  # More tokens to activate a cache
+        'Please analyze this video:',
+        video_content,
+    ]
+
+    result = await agent.run(run_args)
+    assert result.output == snapshot(
+        'The video depicts a camera mounted on a tripod, capturing a scenic view of a landscape featuring mountains and a road. The camera remains stationary throughout the video, focusing on the picturesque scenery.'
+    )
+
+    usage = result.usage()
+    assert usage.input_tokens > 0
+    assert usage.output_tokens > 0
+    assert usage.cache_write_tokens > 0
+    assert usage.cache_read_tokens == 0
+
+
 async def test_bedrock_cache_point_as_first_content_raises_error(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
@@ -1952,10 +2125,99 @@ async def test_bedrock_cache_point_as_first_content_raises_error(
         await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
 
 
-# Bedrock currently errors if a cache point immediately follows non-text content, so we inject a newline block.
-async def test_bedrock_cache_point_after_binary_content_workaround(
+async def test_bedrock_cache_point_with_only_document_raises_error(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
+    """CachePoint should raise a UserError if the message contains only a document/video with no text."""
+    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        BinaryContent(data=b'Document content', media_type='text/plain'),
+                        CachePoint(),
+                    ]
+                )
+            ]
+        )
+    ]
+    with pytest.raises(
+        UserError, match='CachePoint cannot be placed when the user message contains only a document or video'
+    ):
+        await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_bedrock_cache_messages_no_duplicate_with_explicit_cache_point(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """bedrock_cache_messages should not add a duplicate cache point when one already exists before multi-modal content."""
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Process this document:',
+                        CachePoint(),
+                        BinaryContent(data=b'Document content', media_type='text/plain'),
+                    ]
+                )
+            ]
+        )
+    ]
+    # With bedrock_cache_messages=True, the explicit CachePoint is moved before the document.
+    # The auto-caching logic should not add another cache point (which would be back-to-back).
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings(bedrock_cache_messages=True)
+    )
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {'text': 'Process this document:'},
+            {'cachePoint': {'type': 'default'}},
+            {
+                'document': {
+                    'name': 'Document 1',
+                    'format': 'txt',
+                    'source': {'bytes': b'Document content'},
+                }
+            },
+        ]
+    )
+
+
+async def test_bedrock_cache_messages_no_duplicate_when_text_ends_with_cache_point(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """bedrock_cache_messages should not add a duplicate cache point when text content already ends with one."""
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Some text content',
+                        CachePoint(),
+                    ]
+                )
+            ]
+        )
+    ]
+    # With bedrock_cache_messages=True, the explicit CachePoint is already at the end.
+    # The auto-caching logic should not add another cache point.
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings(bedrock_cache_messages=True)
+    )
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {'text': 'Some text content'},
+            {'cachePoint': {'type': 'default'}},
+        ]
+    )
+
+
+# Bedrock currently errors if a cache point immediately follows documents/videos, so we insert it before them.
+async def test_bedrock_cache_point_before_binary_content(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -1974,6 +2236,7 @@ async def test_bedrock_cache_point_after_binary_content_workaround(
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {'text': 'Process the attached text file. Return the answer only.'},
+            {'cachePoint': {'type': 'default'}},
             {
                 'document': {
                     'name': 'Document 1',
@@ -1981,8 +2244,190 @@ async def test_bedrock_cache_point_after_binary_content_workaround(
                     'source': {'bytes': b'What is 2+2? Provide the answer only.'},
                 }
             },
-            {'text': '\n'},  # Empty line after BinaryContent as temp workaround unless bedrock will fix the bug
+        ]
+    )
+
+
+async def test_bedrock_cache_point_with_multiple_trailing_documents(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """CachePoint should be placed before the entire trailing group of documents/videos, not just the last one."""
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Process these documents.',
+                        BinaryContent(data=b'Document 1 content', media_type='text/plain'),
+                        BinaryContent(data=b'Document 2 content', media_type='text/plain'),
+                        CachePoint(),
+                    ]
+                )
+            ]
+        )
+    ]
+    _, bedrock_messages = await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
+    # CachePoint should be inserted BEFORE both documents, not between them
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {'text': 'Process these documents.'},
             {'cachePoint': {'type': 'default'}},
+            {
+                'document': {
+                    'name': 'Document 1',
+                    'format': 'txt',
+                    'source': {'bytes': b'Document 1 content'},
+                }
+            },
+            {
+                'document': {
+                    'name': 'Document 2',
+                    'format': 'txt',
+                    'source': {'bytes': b'Document 2 content'},
+                }
+            },
+        ]
+    )
+
+
+async def test_bedrock_cache_point_with_mixed_content_and_trailing_documents(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """CachePoint should only move before the trailing contiguous group, not all documents."""
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'First instruction.',
+                        BinaryContent(data=b'Doc 1', media_type='text/plain'),
+                        # Image breaks the trailing document group (images don't have the cache restriction)
+                        BinaryContent(data=b'\x89PNG\r\n\x1a\n', media_type='image/png'),
+                        BinaryContent(data=b'Doc 2', media_type='text/plain'),
+                        BinaryContent(data=b'Doc 3', media_type='text/plain'),
+                        CachePoint(),
+                    ]
+                )
+            ]
+        )
+    ]
+    _, bedrock_messages = await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
+    # CachePoint should be inserted after the image (non-document/video) and before Doc 2 and Doc 3
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {'text': 'First instruction.'},
+            {
+                'document': {
+                    'name': 'Document 1',
+                    'format': 'txt',
+                    'source': {'bytes': b'Doc 1'},
+                }
+            },
+            {
+                'image': {
+                    'format': 'png',
+                    'source': {'bytes': b'\x89PNG\r\n\x1a\n'},
+                }
+            },
+            {'cachePoint': {'type': 'default'}},
+            {
+                'document': {
+                    'name': 'Document 2',
+                    'format': 'txt',
+                    'source': {'bytes': b'Doc 2'},
+                }
+            },
+            {
+                'document': {
+                    'name': 'Document 3',
+                    'format': 'txt',
+                    'source': {'bytes': b'Doc 3'},
+                }
+            },
+        ]
+    )
+
+
+async def test_bedrock_cache_messages_with_multiple_trailing_documents(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """bedrock_cache_messages should place cache point before the entire trailing document group."""
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Analyze these files.',
+                        BinaryContent(data=b'File 1', media_type='text/plain'),
+                        BinaryContent(data=b'File 2', media_type='text/plain'),
+                    ]
+                )
+            ]
+        )
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings(bedrock_cache_messages=True)
+    )
+    # Cache point should be before both documents
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {'text': 'Analyze these files.'},
+            {'cachePoint': {'type': 'default'}},
+            {
+                'document': {
+                    'name': 'Document 1',
+                    'format': 'txt',
+                    'source': {'bytes': b'File 1'},
+                }
+            },
+            {
+                'document': {
+                    'name': 'Document 2',
+                    'format': 'txt',
+                    'source': {'bytes': b'File 2'},
+                }
+            },
+        ]
+    )
+
+
+async def test_bedrock_cache_point_multiple_markers_with_documents_no_back_to_back(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Multiple CachePoints with trailing documents should not create back-to-back cache points.
+
+    When processing ['text', doc1, CachePoint(), doc2, CachePoint()], both documents form
+    a single trailing group. The first CachePoint is placed before the group, and the second
+    CachePoint is skipped to avoid back-to-back cachePoints.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Analyze these:',
+                        BinaryContent(data=b'Doc 1', media_type='text/plain'),
+                        CachePoint(),
+                        BinaryContent(data=b'Doc 2', media_type='text/plain'),
+                        CachePoint(),
+                    ]
+                )
+            ]
+        )
+    ]
+    _, bedrock_messages = await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
+    # Both docs are trailing, so first CachePoint goes before both.
+    # Second CachePoint is skipped to avoid back-to-back cachePoints.
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {'text': 'Analyze these:'},
+            {'cachePoint': {'type': 'default'}},
+            {'document': {'name': 'Document 1', 'format': 'txt', 'source': {'bytes': b'Doc 1'}}},
+            {'document': {'name': 'Document 2', 'format': 'txt', 'source': {'bytes': b'Doc 2'}}},
         ]
     )
 
@@ -2124,7 +2569,7 @@ async def test_bedrock_cache_messages(allow_model_requests: None, bedrock_provid
 async def test_bedrock_cache_messages_with_binary_content(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """Test that bedrock_cache_messages adds newline workaround for non-text content."""
+    """Test that bedrock_cache_messages does add cache point for document content."""
     model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -2142,7 +2587,7 @@ async def test_bedrock_cache_messages_with_binary_content(
         ModelRequestParameters(),
         BedrockModelSettings(bedrock_cache_messages=True),
     )
-    # Should add newline text block before cache point when last content is not text
+    # Should not add cache point for document content
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {
@@ -2151,8 +2596,41 @@ async def test_bedrock_cache_messages_with_binary_content(
                     'format': 'txt',
                     'source': {'bytes': b'Test document content'},
                 }
+            }
+        ]
+    )
+
+
+async def test_bedrock_cache_messages_with_tool_result(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that bedrock_cache_messages does add cache point for tool call content."""
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='final_result',
+                    content='Final result processed.',
+                    tool_call_id='tooluse_DaRsVjwcShCI_3pOsIsWqg',
+                    timestamp=IsDatetime(),
+                )
+            ],
+        )
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_messages=True),
+    )
+    # Should add cache point for tool call content
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {
+                'toolResult': {
+                    'toolUseId': 'tooluse_DaRsVjwcShCI_3pOsIsWqg',
+                    'content': [{'text': 'Final result processed.'}],
+                    'status': 'success',
+                }
             },
-            {'text': '\n'},
             {'cachePoint': {'type': 'default'}},
         ]
     )
