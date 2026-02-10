@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequen
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, overload
+from typing import TYPE_CHECKING, Any, ClassVar, cast, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
@@ -859,7 +859,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         final_usage_attrs: dict[str, str | int | float | bool] = (
             {key.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): value for key, value in usage_attrs.items()}
             if settings.use_aggregated_usage_attribute_names
-            else usage_attrs
+            else cast(dict[str, str | int | float | bool], usage_attrs)
         )
 
         result: dict[str, str | int | float | bool] = {
