@@ -853,15 +853,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # When enabled, translate token usage attribute names for agent run spans to use
         # `gen_ai.aggregated_usage.*` instead of `gen_ai.usage.*` to distinguish them
         # from per-call usage on model/request spans.
-        final_usage_attrs: dict[str, str | int | float | bool] = {}
-        if settings.use_aggregated_usage_attribute_names:
-            for key, value in usage_attrs.items():
-                if key.startswith('gen_ai.usage.'):
-                    final_usage_attrs[key.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1)] = value
-                else:
-                    final_usage_attrs[key] = value
-        else:
-            final_usage_attrs.update(usage_attrs)
+        final_usage_attrs: dict[str, str | int | float | bool] = (
+            {
+                key.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): value
+                for key, value in usage_attrs.items()
+            }
+            if settings.use_aggregated_usage_attribute_names
+            else usage_attrs
+        )
 
         result: dict[str, str | int | float | bool] = {
             **final_usage_attrs,

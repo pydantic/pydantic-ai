@@ -251,7 +251,7 @@ The following providers have dedicated documentation on Pydantic AI:
 
 ### Aggregated usage attribute names
 
-By default, both model/request spans and agent run spans use the standard `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` attributes. Some observability backends aggregate these attributes across all spans, which can cause double-counting since agent run spans report the sum of their child spans' usage.
+By default, both model/request spans and agent run spans use the standard `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` attributes. Some observability backends (e.g., Datadog, New Relic, LangSmith, Opik) aggregate these attributes across all spans, which can cause double-counting since agent run spans report the sum of their child spans' usage.
 
 To avoid this, you can enable `use_aggregated_usage_attribute_names` so that agent run spans use distinct attribute names (e.g., `gen_ai.aggregated_usage.input_tokens`, `gen_ai.aggregated_usage.output_tokens`, and `gen_ai.aggregated_usage.details.*`):
 
