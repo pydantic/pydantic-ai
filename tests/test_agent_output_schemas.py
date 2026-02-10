@@ -401,6 +401,7 @@ async def test_deferred_output_json_schema():
             ],
             '$defs': {
                 'ToolCallPart': {
+                    'description': 'A tool call from a model.',
                     'properties': {
                         'tool_name': {'title': 'Tool Name', 'type': 'string'},
                         'args': {
@@ -525,6 +526,7 @@ distinguish multiple files.\
             ],
             '$defs': {
                 'ToolCallPart': {
+                    'description': 'A tool call from a model.',
                     'properties': {
                         'tool_name': {'title': 'Tool Name', 'type': 'string'},
                         'args': {
