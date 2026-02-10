@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from typing_extensions import TypeAliasType
 
@@ -14,7 +13,7 @@ class Entry(BaseModel):
     """Entry in a map with a key and recursive value."""
 
     key: str
-    value: 'JSONValue'
+    value: JSONValue
     model_config = ConfigDict(extra='forbid')
 
 
@@ -148,7 +147,7 @@ def test_recursive_schema_collision_coverage():
         '$defs': {'Node': {'type': 'string'}},
     }
     sd = StructuredDict(schema)
-    json_schema = sd.__get_pydantic_json_schema__(None, None)  # pyright: ignore
+    json_schema = sd.__get_pydantic_json_schema__(None, None)
 
     # The transformer handling collision creates Node_root
     # Fix should unwrap it.
@@ -157,7 +156,7 @@ def test_recursive_schema_collision_coverage():
 
 class RecursiveModel(BaseModel):
     name: str
-    children: list['RecursiveModel'] | None = None
+    children: list[RecursiveModel] | None = None
 
 
 def test_structured_dict_recursive_with_agent():
