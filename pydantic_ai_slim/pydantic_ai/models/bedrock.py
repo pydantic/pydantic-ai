@@ -396,7 +396,7 @@ class BedrockConverseModel(Model):
         settings = cast(BedrockModelSettings, model_settings or {})
         system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters, settings)
         params: CountTokensRequestTypeDef = {
-            'modelId': remove_bedrock_geo_prefix(self.model_name),
+            'modelId': self._get_count_tokens_model_id(),
             'input': {
                 'converse': {
                     'messages': bedrock_messages,
@@ -412,6 +412,29 @@ class BedrockConverseModel(Model):
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.response) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
         return usage.RequestUsage(input_tokens=response['inputTokens'])
+
+
+    def _get_count_tokens_model_id(self) -> str:
+        """Get the model ID to use for the count_tokens API.
+
+        The count_tokens API only accepts foundational model IDs, not ARN-based
+        identifiers (e.g. inference profiles). If a canonical model ID is set in
+        the profile, use that; otherwise fall back to the model name with geo
+        prefix removed.
+        """
+        profile = BedrockModelProfile.from_profile(self.profile)
+        if profile.bedrock_canonical_model_id is not None:
+            return profile.bedrock_canonical_model_id
+        model_id = remove_bedrock_geo_prefix(self.model_name)
+        if model_id.startswith('arn:'):
+            raise UserError(
+                f'Bedrock count_tokens API does not support ARN-based model identifiers. '
+                f'Got: {self.model_name!r}\n'
+                f'Set bedrock_canonical_model_id in your BedrockModelProfile to the '
+                f'foundational model ID (e.g. "anthropic.claude-haiku-4-5-20251001-v1:0").'
+            )
+
+        return model_id
 
     @asynccontextmanager
     async def request_stream(

@@ -249,6 +249,72 @@ async def test_bedrock_count_tokens_non_http_error():
     )
 
 
+async def test_bedrock_count_tokens_arn_without_canonical_model_id():
+    """Test that count_tokens raises UserError when model_name is an ARN without canonical_model_id set."""
+    model = BedrockConverseModel(
+        'arn:aws:bedrock:us-east-1:123456789012:inference-profile/my-profile',
+        provider=_StubBedrockProvider(_StubBedrockClient(
+            ClientError({'Error': {'Code': 'Test', 'Message': 'test'}}, 'count_tokens')
+        )),
+    )
+    params = ModelRequestParameters()
+
+    with pytest.raises(UserError, match='Bedrock count_tokens API does not support ARN-based model identifiers'):
+        await model.count_tokens([ModelRequest.user_text_prompt('hi')], None, params)
+
+
+async def test_bedrock_count_tokens_arn_with_canonical_model_id():
+    """Test that count_tokens uses canonical_model_id when model_name is an ARN."""
+    from pydantic_ai.providers.bedrock import BedrockModelProfile
+
+    tokens_response = {'inputTokens': 42}
+
+    class _TokenCountClient:
+        def __init__(self):
+            self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub')
+            self.last_model_id = None
+
+        def count_tokens(self, **kwargs):
+            self.last_model_id = kwargs.get('modelId')
+            return tokens_response
+
+        def converse(self, **_):
+            pass
+
+        def converse_stream(self, **_):
+            pass
+
+    client = _TokenCountClient()
+
+    class _TokenCountProvider(Provider):
+        @property
+        def name(self):
+            return 'bedrock-stub'
+
+        @property
+        def base_url(self):
+            return 'https://bedrock.stub'
+
+        @property
+        def client(self):
+            return client
+
+        def model_profile(self, model_name):
+            return BedrockModelProfile(
+                bedrock_canonical_model_id='anthropic.claude-haiku-4-5-20251001-v1:0'
+            )
+
+    model = BedrockConverseModel(
+        'arn:aws:bedrock:us-east-1:123456789012:inference-profile/my-profile',
+        provider=_TokenCountProvider(),
+    )
+    params = ModelRequestParameters()
+
+    result = await model.count_tokens([ModelRequest.user_text_prompt('hi')], None, params)
+    assert result.input_tokens == 42
+    assert client.last_model_id == 'anthropic.claude-haiku-4-5-20251001-v1:0'
+
+
 async def test_bedrock_stream_non_http_error():
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse_stream')
     model = _bedrock_model_with_client_error(error)
