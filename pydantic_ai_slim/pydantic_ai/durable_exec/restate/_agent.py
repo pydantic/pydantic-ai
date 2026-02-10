@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from typing import Any, overload
@@ -7,7 +8,7 @@ from typing import Any, overload
 from pydantic.errors import PydanticUserError
 from typing_extensions import Never
 
-from pydantic_ai import models
+from pydantic_ai import _utils, models
 from pydantic_ai.agent.abstract import AbstractAgent, AgentMetadata, EventStreamHandler, Instructions, RunOutputDataT
 from pydantic_ai.agent.wrapper import WrapperAgent
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
@@ -18,7 +19,7 @@ from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.result import StreamedRunResult
 from pydantic_ai.run import AgentRun, AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import AgentDepsT, BuiltinToolFunc, DeferredToolResults, RunContext
+from pydantic_ai.tools import AgentDepsT, BuiltinToolFunc, DeferredToolResults, RunContext, Tool, ToolFuncEither
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.abstract import AbstractToolset
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -69,12 +70,12 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 'An agent needs to have a `model` in order to be used with Restate, it cannot be set at agent run time.'
             )
 
-        self.restate_context = restate_context
+        self._restate_context = restate_context
         self._event_stream_handler = event_stream_handler
         self._disable_auto_wrapping_tools = disable_auto_wrapping_tools
 
         model_event_stream_handler = event_stream_handler or super().event_stream_handler
-        self._model = RestateModelWrapper(
+        self._restate_model = RestateModelWrapper(
             wrapped.model,
             restate_context,
             event_stream_handler=model_event_stream_handler,
@@ -121,15 +122,19 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     @contextmanager
     def _restate_overrides(self) -> Iterator[None]:
         with (
-            super().override(model=self._model, toolsets=self._toolsets, tools=[]),
+            super().override(model=self._restate_model, toolsets=self._toolsets, tools=[]),
             # Restate tool calls use `ctx.run_typed(...)`, which should not be executed concurrently within a handler.
             self.parallel_tool_call_execution_mode('sequential'),
         ):
             yield
 
     @property
+    def restate_context(self) -> Context:
+        return self._restate_context
+
+    @property
     def model(self) -> models.Model | models.KnownModelName | str | None:
-        return self._model
+        return self._restate_model
 
     @property
     def event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
@@ -161,7 +166,7 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 except (UserError, PydanticUserError) as e:
                     raise TerminalError(str(e)) from e
 
-            await self.restate_context.run_typed(f'handle event: {event_kind}', call_handler)
+            await self._restate_context.run_typed(f'handle event: {event_kind}', call_handler)
 
     @property
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
@@ -326,8 +331,31 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AgentRunResult[Any]:
-        raise TerminalError(
-            '`agent.run_sync()` cannot be used inside a restate handler. Use `await agent.run()` instead.'
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise TerminalError(
+                '`agent.run_sync()` cannot be used inside a restate handler. Use `await agent.run()` instead.'
+            )
+
+        return super().run_sync(
+            user_prompt=user_prompt,
+            output_type=output_type,
+            message_history=message_history,
+            deferred_tool_results=deferred_tool_results,
+            model=model,
+            instructions=instructions,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            usage=usage,
+            metadata=metadata,
+            infer_name=infer_name,
+            toolsets=toolsets,
+            builtin_tools=builtin_tools,
+            event_stream_handler=event_stream_handler,
         )
 
     @overload
@@ -489,6 +517,40 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 **_deprecated_kwargs,
             ) as run:
                 yield run
+
+    @contextmanager
+    def override(
+        self,
+        *,
+        name: str | _utils.Unset = _utils.UNSET,
+        deps: AgentDepsT | _utils.Unset = _utils.UNSET,
+        model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
+        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
+        instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+    ) -> Iterator[None]:
+        if _utils.is_set(model):
+            raise TerminalError(
+                'Model cannot be contextually overridden inside a Restate handler, it must be set at agent creation time.'
+            )
+        if _utils.is_set(toolsets):
+            raise TerminalError(
+                'Toolsets cannot be contextually overridden inside a Restate handler, they must be set at agent creation time.'
+            )
+        if _utils.is_set(tools):
+            raise TerminalError(
+                'Tools cannot be contextually overridden inside a Restate handler, they must be set at agent creation time.'
+            )
+
+        with super().override(
+            name=name,
+            deps=deps,
+            model=model,
+            toolsets=toolsets,
+            tools=tools,
+            instructions=instructions,
+        ):
+            yield
 
     @overload
     def run_stream_events(

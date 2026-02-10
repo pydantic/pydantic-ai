@@ -5,10 +5,9 @@ from dataclasses import dataclass, replace
 from typing import Any, cast
 
 from pydantic import ValidationError
-from pydantic.errors import PydanticUserError
 from typing_extensions import Self
 
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
@@ -18,7 +17,7 @@ from pydantic_ai.toolsets.wrapper import WrapperToolset
 
 from ._restate_types import Context, RunOptions, TerminalError
 from ._serde import PydanticTypeAdapter
-from ._toolset import CONTEXT_RUN_SERDE, RestateContextRunResult, unwrap_context_run_result
+from ._toolset import CONTEXT_RUN_SERDE, RestateContextRunResult, unwrap_context_run_result, wrap_tool_call_result
 
 _RESTATE_DYNAMIC_ORIGIN_KEY = '__pydantic_ai_restate_dynamic_origin'
 
@@ -110,7 +109,7 @@ class RestateDynamicToolset(WrapperToolset[AgentDepsT]):
                 tools = await self._dynamic_toolset.get_tools(ctx)
                 real_tool = tools.get(name)
                 if real_tool is None:  # pragma: no cover
-                    raise UserError(
+                    raise TerminalError(
                         f'Tool {name!r} not found in dynamic toolset {self._dynamic_toolset.label}. '
                         'The dynamic toolset function may have returned a different toolset than expected.'
                     )
@@ -122,7 +121,7 @@ class RestateDynamicToolset(WrapperToolset[AgentDepsT]):
 
                 return await self._dynamic_toolset.call_tool(name, args_dict, ctx, real_tool)
 
-        async def call_tool_in_context() -> RestateContextRunResult:
+        async def call_tool_action() -> Any:
             # Re-instantiate the dynamic toolset inside the durable step so any underlying I/O happens
             # within `ctx.run_typed(...)`, and ensure resources are cleaned up afterwards.
             async with self._dynamic_toolset:
@@ -138,19 +137,12 @@ class RestateDynamicToolset(WrapperToolset[AgentDepsT]):
                     args_dict = real_tool.args_validator.validate_python(tool_args, context=ctx.validation_context)
                 except ValidationError as e:
                     # Convert validation errors into ModelRetry so the agent can ask the model to retry.
-                    return RestateContextRunResult(kind='model_retry', output=None, error=str(e))
+                    raise ModelRetry(str(e)) from e
 
-                try:
-                    output = await self._dynamic_toolset.call_tool(name, args_dict, ctx, real_tool)
-                    return RestateContextRunResult(kind='output', output=output, error=None)
-                except ModelRetry as e:
-                    return RestateContextRunResult(kind='model_retry', output=None, error=e.message)
-                except CallDeferred as e:
-                    return RestateContextRunResult(kind='call_deferred', output=None, metadata=e.metadata)
-                except ApprovalRequired as e:
-                    return RestateContextRunResult(kind='approval_required', output=None, metadata=e.metadata)
-                except (UserError, PydanticUserError) as e:
-                    raise TerminalError(str(e)) from e
+                return await self._dynamic_toolset.call_tool(name, args_dict, ctx, real_tool)
+
+        async def call_tool_in_context() -> RestateContextRunResult:
+            return await wrap_tool_call_result(call_tool_action)
 
         res = await self._context.run_typed(f'Calling dynamic tool {name}', call_tool_in_context, self._call_options)
         return unwrap_context_run_result(res)

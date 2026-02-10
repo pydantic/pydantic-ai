@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 
 T = TypeVar('T')
 
-__all__ = ['Context', 'RunOptions', 'TerminalError', 'Serde']
+__all__ = ['Context', 'RunOptions', 'TerminalError']
 
 
 if TYPE_CHECKING:
@@ -41,4 +41,6 @@ if TYPE_CHECKING:
         def serialize(self, obj: T | None) -> bytes: ...
 else:
     from restate import Context, RunOptions, TerminalError
-    from restate.serde import Serde
+    from restate.serde import Serde as _Serde
+
+    Serde = _Serde

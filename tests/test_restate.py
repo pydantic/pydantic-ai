@@ -240,6 +240,16 @@ async def test_restate_agent_disable_auto_wrapping_tools():
     assert 'Calling plus_one' not in fake_ctx.calls
 
 
+def test_restate_agent_run_sync_outside_event_loop():
+    fake_ctx = FakeRestateContext()
+    agent = Agent(TestModel())
+    restate_agent = RestateAgent(agent, fake_ctx)
+
+    result = restate_agent.run_sync('go')
+    assert result.output
+    assert fake_ctx.calls.count('Model call') >= 1
+
+
 @pytest.mark.anyio
 async def test_restate_agent_event_stream_handler_and_iter():
     fake_ctx = FakeRestateContext()
@@ -330,6 +340,21 @@ async def test_restate_agent_restrictions():
 
     with pytest.raises(TerminalError, match='Toolsets cannot be set at agent run time'):
         await restate_agent.run('x', toolsets=[extra_toolset])
+
+    with pytest.raises(TerminalError, match='Model cannot be contextually overridden'):
+        with restate_agent.override(model=TestModel()):
+            pass
+
+    with pytest.raises(TerminalError, match='Toolsets cannot be contextually overridden'):
+        with restate_agent.override(toolsets=[extra_toolset]):
+            pass
+
+    with pytest.raises(TerminalError, match='Tools cannot be contextually overridden'):
+        with restate_agent.override(tools=[extra]):
+            pass
+
+    with restate_agent.override(name='overridden', deps=None, instructions='ok'):
+        pass
 
     with pytest.raises(TerminalError, match=r'agent\.run_stream\(\)'):
         async with restate_agent.run_stream('x'):

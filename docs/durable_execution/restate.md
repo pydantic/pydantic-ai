@@ -37,6 +37,8 @@ pip/uv-add "pydantic-ai-slim[restate]"
 
 ### Basic usage
 
+The code examples on this page are marked with `test="skip"` because they require a running Restate deployment.
+
 ```python {title="restate_agent.py" test="skip"}
 import restate
 

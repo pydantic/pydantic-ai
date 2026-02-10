@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -46,35 +46,38 @@ def unwrap_context_run_result(res: RestateContextRunResult) -> Any:
         return res.output
 
 
+async def wrap_tool_call_result(action: Callable[[], Awaitable[Any]]) -> RestateContextRunResult:
+    try:
+        output = await action()
+        return RestateContextRunResult(kind='output', output=output, error=None)
+    except ModelRetry as e:
+        return RestateContextRunResult(kind='model_retry', output=None, error=e.message)
+    except CallDeferred as e:
+        return RestateContextRunResult(kind='call_deferred', output=None, error=None, metadata=e.metadata)
+    except ApprovalRequired as e:
+        return RestateContextRunResult(kind='approval_required', output=None, error=None, metadata=e.metadata)
+    except (UserError, PydanticUserError) as e:
+        raise TerminalError(str(e)) from e
+
+
 class RestateContextRunToolset(WrapperToolset[AgentDepsT]):
     """A toolset that automatically wraps tool calls with restate's `ctx.run_typed()`."""
 
     def __init__(self, wrapped: AbstractToolset[AgentDepsT], context: Context):
         super().__init__(wrapped)
         self._context = context
-        self.options = RunOptions[RestateContextRunResult](serde=CONTEXT_RUN_SERDE)
+        self._options = RunOptions[RestateContextRunResult](serde=CONTEXT_RUN_SERDE)
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        async def action() -> RestateContextRunResult:
-            try:
-                # A tool may raise ModelRetry, CallDeferred, ApprovalRequired, or UserError
-                # to signal special conditions to the caller.
-                # Since restate ctx.run() will retry this exception we need to convert these exceptions
-                # to a return value and handle them outside of the ctx.run().
-                output = await self.wrapped.call_tool(name, tool_args, ctx, tool)
-                return RestateContextRunResult(kind='output', output=output, error=None)
-            except ModelRetry as e:
-                return RestateContextRunResult(kind='model_retry', output=None, error=e.message)
-            except CallDeferred as e:
-                return RestateContextRunResult(kind='call_deferred', output=None, error=None, metadata=e.metadata)
-            except ApprovalRequired as e:
-                return RestateContextRunResult(kind='approval_required', output=None, error=None, metadata=e.metadata)
-            except (UserError, PydanticUserError) as e:
-                raise TerminalError(str(e)) from e
+        async def action() -> Any:
+            return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
-        res = await self._context.run_typed(f'Calling {name}', action, self.options)
+        async def action_in_context() -> RestateContextRunResult:
+            return await wrap_tool_call_result(action)
+
+        res = await self._context.run_typed(f'Calling {name}', action_in_context, self._options)
         return unwrap_context_run_result(res)
 
     def visit_and_replace(

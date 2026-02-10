@@ -4,19 +4,17 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, cast
 
-from pydantic.errors import PydanticUserError
 from typing_extensions import Self
 
 from pydantic_ai import ToolDefinition
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.fastmcp import FastMCPToolset
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
-from ._restate_types import Context, RunOptions, TerminalError
+from ._restate_types import Context, RunOptions
 from ._serde import PydanticTypeAdapter
-from ._toolset import CONTEXT_RUN_SERDE, RestateContextRunResult, unwrap_context_run_result
+from ._toolset import CONTEXT_RUN_SERDE, RestateContextRunResult, unwrap_context_run_result, wrap_tool_call_result
 
 
 @dataclass
@@ -86,18 +84,11 @@ class RestateFastMCPToolset(WrapperToolset[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
     ) -> Any:
+        async def call_tool_action() -> Any:
+            return await self._fastmcp_toolset.call_tool(name, tool_args, ctx, tool)
+
         async def call_tool_in_context() -> RestateContextRunResult:
-            try:
-                output = await self._fastmcp_toolset.call_tool(name, tool_args, ctx, tool)
-                return RestateContextRunResult(kind='output', output=output, error=None)
-            except ModelRetry as e:
-                return RestateContextRunResult(kind='model_retry', output=None, error=e.message)
-            except CallDeferred as e:
-                return RestateContextRunResult(kind='call_deferred', output=None, error=None, metadata=e.metadata)
-            except ApprovalRequired as e:
-                return RestateContextRunResult(kind='approval_required', output=None, error=None, metadata=e.metadata)
-            except (UserError, PydanticUserError) as e:
-                raise TerminalError(str(e)) from e
+            return await wrap_tool_call_result(call_tool_action)
 
         res = await self._context.run_typed(f'Calling fastmcp tool {name}', call_tool_in_context, self._options)
         return unwrap_context_run_result(res)

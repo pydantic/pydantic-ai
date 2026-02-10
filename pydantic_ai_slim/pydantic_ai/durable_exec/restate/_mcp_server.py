@@ -2,24 +2,23 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
-from pydantic.errors import PydanticUserError
 from typing_extensions import Self
 
 from pydantic_ai import ToolDefinition
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
-from ._restate_types import Context, RunOptions, TerminalError
+from ._restate_types import Context, RunOptions
 from ._serde import PydanticTypeAdapter
-from ._toolset import CONTEXT_RUN_SERDE, RestateContextRunResult, unwrap_context_run_result
+from ._toolset import CONTEXT_RUN_SERDE, RestateContextRunResult, unwrap_context_run_result, wrap_tool_call_result
 
 if TYPE_CHECKING:
     from pydantic_ai.mcp import MCPServer, ToolResult
 else:
+    MCPServer = Any
     ToolResult = Any
 
 
@@ -38,9 +37,12 @@ class RestateMCPServer(WrapperToolset[Any]):
 
     def __init__(self, wrapped: MCPServer, context: Context):
         super().__init__(wrapped)
-        self._wrapped = wrapped
         self._context = context
         self._call_options = RunOptions[RestateContextRunResult](serde=CONTEXT_RUN_SERDE)
+
+    @property
+    def _mcp_server(self) -> MCPServer:
+        return cast(MCPServer, self.wrapped)
 
     @property
     def id(self) -> str | None:  # pragma: no cover
@@ -61,7 +63,7 @@ class RestateMCPServer(WrapperToolset[Any]):
 
     async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
         async def get_tools_in_context() -> RestateMCPGetToolsContextRunResult:
-            res = await self._wrapped.get_tools(ctx)
+            res = await self._mcp_server.get_tools(ctx)
             # ToolsetTool is not serializable as it holds a SchemaValidator
             # (which is also the same for every MCP tool so unnecessary to pass along the wire every time),
             # so we just return the ToolDefinitions and wrap them in ToolsetTool outside of ctx.run_typed().
@@ -74,7 +76,7 @@ class RestateMCPServer(WrapperToolset[Any]):
 
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[Any]:
         # Wrap the underlying tool so `tool.toolset` points at the Restate wrapper.
-        tool = self._wrapped.tool_for_tool_def(tool_def)
+        tool = self._mcp_server.tool_for_tool_def(tool_def)
         return ToolsetTool(
             toolset=self,
             tool_def=tool.tool_def,
@@ -89,18 +91,11 @@ class RestateMCPServer(WrapperToolset[Any]):
         ctx: RunContext[Any],
         tool: ToolsetTool[Any],
     ) -> ToolResult:
+        async def call_tool_action() -> ToolResult:
+            return await self._mcp_server.call_tool(name, tool_args, ctx, tool)
+
         async def call_tool_in_context() -> RestateContextRunResult:
-            try:
-                res = await self._wrapped.call_tool(name, tool_args, ctx, tool)
-                return RestateContextRunResult(kind='output', output=res, error=None)
-            except ModelRetry as e:
-                return RestateContextRunResult(kind='model_retry', output=None, error=e.message)
-            except CallDeferred as e:
-                return RestateContextRunResult(kind='call_deferred', output=None, metadata=e.metadata)
-            except ApprovalRequired as e:
-                return RestateContextRunResult(kind='approval_required', output=None, metadata=e.metadata)
-            except (UserError, PydanticUserError) as e:
-                raise TerminalError(str(e)) from e
+            return await wrap_tool_call_result(call_tool_action)
 
         res = await self._context.run_typed(f'Calling mcp tool {name}', call_tool_in_context, self._call_options)
         return unwrap_context_run_result(res)

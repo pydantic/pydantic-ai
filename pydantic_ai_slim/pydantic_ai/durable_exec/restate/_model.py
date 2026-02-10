@@ -100,7 +100,7 @@ class RestateModelWrapper(WrapperModel):
                 'Set `event_stream_handler=...` on the agent and use `agent.run()` instead.'
             )
 
-        async def request_stream_run():
+        async def request_stream_run() -> ModelResponse:
             try:
                 # `run_context` (and therefore `deps`) are captured in this closure.
                 # Unlike Temporal, Restate does not require serializing the run context across durable boundaries —

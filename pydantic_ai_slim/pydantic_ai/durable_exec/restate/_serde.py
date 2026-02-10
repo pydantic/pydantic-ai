@@ -12,7 +12,7 @@ class PydanticTypeAdapter(Serde[T]):
     def deserialize(self, buf: bytes) -> T | None:
         if not buf:
             return None
-        return self._type_adapter.validate_json(buf.decode('utf-8'))  # raises if invalid
+        return self._type_adapter.validate_json(buf)
 
     def serialize(self, obj: T | None) -> bytes:
         if obj is None:
