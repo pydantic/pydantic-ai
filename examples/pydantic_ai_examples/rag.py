@@ -58,7 +58,7 @@ class Deps:
     pool: asyncpg.Pool
 
 
-agent = Agent('openai:gpt-4o', deps_type=Deps)
+agent = Agent('openai:gpt-5.2', deps_type=Deps)
 
 
 @agent.tool

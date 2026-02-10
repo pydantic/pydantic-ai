@@ -8,6 +8,7 @@ results across billions of web pages.
 from dataclasses import dataclass
 from typing import Literal, overload
 
+from exa_py.api import TextContentsOptions
 from typing_extensions import Any, TypedDict
 
 from pydantic_ai import FunctionToolset
@@ -111,8 +112,10 @@ class ExaSearchTool:
         Returns:
             The search results with text content.
         """
-        text_config: bool | dict[str, int] = {'maxCharacters': self.max_characters} if self.max_characters else True
-        response = await self.client.search(  # pyright: ignore[reportUnknownMemberType]
+        text_config: TextContentsOptions | Literal[True] = (
+            {'max_characters': self.max_characters} if self.max_characters else True
+        )
+        response = await self.client.search(
             query,
             num_results=self.num_results,
             type=search_type,
@@ -156,7 +159,7 @@ class ExaFindSimilarTool:
         Returns:
             Similar pages with text content.
         """
-        response = await self.client.find_similar(  # pyright: ignore[reportUnknownMemberType]
+        response = await self.client.find_similar(
             url,
             num_results=self.num_results,
             exclude_source_domain=exclude_source_domain,
