@@ -141,7 +141,7 @@ Feel free to click on the links to dive deeper into each story!
 
 ### Configuring Parameters
 
-The `tavily_search_tool` factory accepts optional parameters that control search behavior. Any parameter provided to the factory is **fixed for all searches and hidden from the LLM's tool schema**. Parameters left as `None` remain available for the LLM to set per-call.
+The `tavily_search_tool` factory accepts optional parameters that control search behavior. `max_results` is always developer-controlled and never appears in the LLM tool schema. Other parameters, when provided, are fixed for all searches and hidden from the LLM's tool schema. Parameters left unset remain available for the LLM to set per-call.
 
 For example, you can lock in `max_results` and `include_domains` at tool creation time while still letting the LLM control `exclude_domains`:
 
@@ -155,7 +155,7 @@ api_key = os.getenv('TAVILY_API_KEY')
 assert api_key is not None
 
 agent = Agent(
-    'openai:o3-mini',
+    'openai:gpt-5.2',
     tools=[tavily_search_tool(api_key, max_results=5, include_domains=['arxiv.org'])],
     instructions='Search for information and return the results.',
 )

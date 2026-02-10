@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from functools import partial, update_wrapper
 from inspect import signature
 from typing import Literal
@@ -49,13 +49,17 @@ class TavilySearchTool:
     client: AsyncTavilyClient
     """The Tavily search client."""
 
+    _: KW_ONLY
+
+    max_results: int | None = None
+    """The maximum number of results. If None, the Tavily default is used."""
+
     async def __call__(
         self,
         query: str,
         search_deep: Literal['basic', 'advanced'] = 'basic',
         topic: Literal['general', 'news'] = 'general',
         time_range: Literal['day', 'week', 'month', 'year', 'd', 'w', 'm', 'y'] | None = None,
-        max_results: int | None = None,
         include_domains: list[str] | None = None,
         exclude_domains: list[str] | None = None,
     ) -> list[TavilySearchResult]:
@@ -66,7 +70,6 @@ class TavilySearchTool:
             search_deep: The depth of the search.
             topic: The category of the search.
             time_range: The time range back from the current date to filter results.
-            max_results: The maximum number of results. If None, the Tavily default is used.
             include_domains: List of domains to specifically include in the search results.
             exclude_domains: List of domains to specifically exclude from the search results.
 
@@ -78,7 +81,7 @@ class TavilySearchTool:
             search_depth=search_deep,
             topic=topic,
             time_range=time_range,  # pyright: ignore[reportArgumentType]
-            max_results=max_results,  # pyright: ignore[reportArgumentType]
+            max_results=self.max_results,  # pyright: ignore[reportArgumentType]
             include_domains=include_domains,  # pyright: ignore[reportArgumentType]
             exclude_domains=exclude_domains,  # pyright: ignore[reportArgumentType]
         )
@@ -88,30 +91,31 @@ class TavilySearchTool:
 def tavily_search_tool(
     api_key: str,
     *,
+    max_results: int | None = None,
     search_deep: Literal['basic', 'advanced'] = _UNSET,
     topic: Literal['general', 'news'] = _UNSET,
     time_range: Literal['day', 'week', 'month', 'year', 'd', 'w', 'm', 'y'] | None = _UNSET,
-    max_results: int | None = _UNSET,
     include_domains: list[str] | None = _UNSET,
     exclude_domains: list[str] | None = _UNSET,
 ) -> Tool[Any]:
     """Creates a Tavily search tool.
 
-    Any parameter provided here will be fixed for all searches and hidden from the LLM's
+    `max_results` is always developer-controlled and does not appear in the LLM tool schema.
+    Other parameters, when provided, are fixed for all searches and hidden from the LLM's
     tool schema. Parameters left unset remain available for the LLM to set per-call.
 
     Args:
         api_key: The Tavily API key.
 
             You can get one by signing up at [https://app.tavily.com/home](https://app.tavily.com/home).
+        max_results: The maximum number of results. If None, the Tavily default is used.
         search_deep: The depth of the search.
         topic: The category of the search.
         time_range: The time range back from the current date to filter results.
-        max_results: The maximum number of results. If None, the Tavily default is used.
         include_domains: List of domains to specifically include in the search results.
         exclude_domains: List of domains to specifically exclude from the search results.
     """
-    func = TavilySearchTool(client=AsyncTavilyClient(api_key)).__call__
+    func = TavilySearchTool(client=AsyncTavilyClient(api_key), max_results=max_results).__call__
 
     kwargs: dict[str, Any] = {}
     if search_deep is not _UNSET:
@@ -120,8 +124,6 @@ def tavily_search_tool(
         kwargs['topic'] = topic
     if time_range is not _UNSET:
         kwargs['time_range'] = time_range
-    if max_results is not _UNSET:
-        kwargs['max_results'] = max_results
     if include_domains is not _UNSET:
         kwargs['include_domains'] = include_domains
     if exclude_domains is not _UNSET:

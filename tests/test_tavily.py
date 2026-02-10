@@ -158,11 +158,6 @@ def test_no_params_bound_exposes_all_in_schema(tavily_api_key: str):
                     'default': None,
                     'description': 'The time range back from the current date to filter results.',
                 },
-                'max_results': {
-                    'anyOf': [{'type': 'integer'}, {'type': 'null'}],
-                    'default': None,
-                    'description': 'The maximum number of results. If None, the Tavily default is used.',
-                },
                 'include_domains': {
                     'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
                     'default': None,
@@ -187,7 +182,6 @@ def test_bound_params_hidden_from_schema(tavily_api_key: str):
         search_deep='advanced',
         topic='news',
         time_range='week',
-        max_results=5,
         include_domains=['arxiv.org'],
         exclude_domains=['medium.com'],
     )
