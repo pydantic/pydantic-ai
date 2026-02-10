@@ -314,6 +314,32 @@ model = BedrockConverseModel(
 agent = Agent(model)
 ```
 
+### Token Counting with Inference Profiles
+
+The Bedrock `count_tokens` API only accepts foundational model IDs, not ARN-based identifiers like inference profiles. If you need token counting while using an inference profile, set `bedrock_count_tokens_model_id` in your [`BedrockModelProfile`][pydantic_ai.providers.bedrock.BedrockModelProfile] to the underlying foundational model ID:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.bedrock import BedrockConverseModel
+from pydantic_ai.providers.bedrock import BedrockModelProfile, BedrockProvider
+
+provider = BedrockProvider(region_name='us-east-2')
+
+profile = provider.model_profile('us.anthropic.claude-opus-4-5-20251101-v1:0')
+assert isinstance(profile, BedrockModelProfile)
+profile.bedrock_count_tokens_model_id = 'anthropic.claude-opus-4-5-20251101-v1:0'
+
+model = BedrockConverseModel(
+    'arn:aws:bedrock:us-east-2:123456789012:application-inference-profile/my-profile',
+    provider=provider,
+    profile=profile,
+)
+
+agent = Agent(model)
+```
+
+Without this setting, calling `count_tokens` with an ARN-based model identifier will raise a `UserError` with instructions on how to configure the foundational model ID.
+
 ## Configuring Retries
 
 Bedrock uses boto3's built-in retry mechanisms. You can configure retry behavior by passing a custom boto3 client with retry settings:

@@ -59,7 +59,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelName, BedrockModelSettings
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
-    from pydantic_ai.providers.bedrock import BedrockProvider
+    from pydantic_ai.providers.bedrock import BedrockModelProfile, BedrockProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
@@ -265,8 +265,6 @@ async def test_bedrock_count_tokens_arn_without_count_tokens_model_id():
 
 async def test_bedrock_count_tokens_arn_with_count_tokens_model_id():
     """Test that count_tokens uses bedrock_count_tokens_model_id when model_name is an ARN."""
-    from pydantic_ai.providers.bedrock import BedrockModelProfile
-
     tokens_response = {'inputTokens': 42}
 
     class _TokenCountClient:
