@@ -73,7 +73,7 @@ SURREALDB_USER = 'root'
 SURREALDB_PASS = 'root'
 
 embedder = Embedder('openai:text-embedding-3-small')
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 
 RecordType = TypeVar('RecordType')
 
