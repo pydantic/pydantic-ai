@@ -3305,13 +3305,18 @@ async def test_get_output_after_stream_output():
 
 
 @pytest.mark.parametrize('delta', [True, False])
-async def test_stream_text_early_break_cleanup(delta: bool):
+@pytest.mark.parametrize('debounce_by', [None, 0.1])
+async def test_stream_text_early_break_cleanup(delta: bool, debounce_by: float | None):
     """Breaking out of `stream_text()` triggers proper async generator cleanup.
 
     Regression test for https://github.com/pydantic/pydantic-ai/issues/4204
     The `aclosing` wrapper in `_stream_response_text` ensures `aclose()` propagates
     through the nested generator chain so cleanup happens in the same async context,
     preventing `RuntimeError: async generator raised StopAsyncIteration`.
+
+    Tests both `group_by_temporal` code paths:
+    - `debounce_by=None`: simple pass-through iterator
+    - `debounce_by=0.1`: asyncio.Task-based buffering with pending task cancellation
     """
     cleanup_called = False
 
@@ -3332,7 +3337,7 @@ async def test_stream_text_early_break_cleanup(delta: bool):
     agent = Agent(FunctionModel(stream_function=sf))
 
     async with agent.run_stream('test') as result:
-        async for _text in result.stream_text(delta=delta, debounce_by=None):
+        async for _text in result.stream_text(delta=delta, debounce_by=debounce_by):
             break
 
     assert cleanup_called, 'stream function cleanup should have been called by aclosing propagation'
