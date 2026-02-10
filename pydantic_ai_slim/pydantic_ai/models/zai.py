@@ -45,7 +45,7 @@ class ZaiModelSettings(ModelSettings, total=False):
     """Enable thinking/reasoning mode for the model.
 
     When enabled, the model will produce reasoning content before the final response.
-    Supported on `glm-4.7`.
+    Supported on `glm-4.7` and `glm-4.6` (hybrid thinking mode).
 
     See [the Z.AI docs](https://docs.z.ai/guides/capabilities/thinking-mode) for more details.
     """
