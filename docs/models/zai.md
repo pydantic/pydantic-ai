@@ -50,9 +50,8 @@ Z.AI's `glm-4.7` model supports thinking/reasoning mode, where the model produce
 from pydantic_ai import Agent
 from pydantic_ai.models.zai import ZaiModelSettings
 
-agent = Agent('zai:glm-4.7')
-result = agent.run_sync(
-    'What is 25 * 37?',
+agent = Agent(
+    'zai:glm-4.7',
     model_settings=ZaiModelSettings(zai_thinking=True),
 )
 ...
@@ -66,9 +65,8 @@ For multi-turn conversations, you can enable preserved thinking to retain reason
 from pydantic_ai import Agent
 from pydantic_ai.models.zai import ZaiModelSettings
 
-agent = Agent('zai:glm-4.7')
-result = agent.run_sync(
-    'Solve this step by step: what is the integral of x^2?',
+agent = Agent(
+    'zai:glm-4.7',
     model_settings=ZaiModelSettings(zai_thinking=True, zai_clear_thinking=False),
 )
 ...
