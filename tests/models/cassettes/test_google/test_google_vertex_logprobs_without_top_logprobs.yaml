@@ -1,0 +1,126 @@
+interactions:
+- request:
+    body: assertion=%5B%27scrubbed%27%5D&grant_type=%5B%27urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer%27%5D
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '809'
+      content-type:
+      - application/x-www-form-urlencoded
+    method: POST
+    uri: https://oauth2.googleapis.com/token
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '72'
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      access_token: scrubbed
+      expires_in: 3599
+      token_type: Bearer
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '149'
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is 2+2?
+        role: user
+      generationConfig:
+        responseLogprobs: true
+        responseModalities:
+        - TEXT
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1053'
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -1.054394245147705
+        content:
+          parts:
+          - text: 2 + 2 = 4
+          role: model
+        finishReason: STOP
+        logprobsResult:
+          chosenCandidates:
+          - logProbability: -0.013796607
+            token: '2'
+            tokenId: 236778
+          - logProbability: -0.00737431
+            token: ' +'
+            tokenId: 900
+          - logProbability: -2.3844768e-07
+            token: ' '
+            tokenId: 236743
+          - logProbability: -2.3844768e-07
+            token: '2'
+            tokenId: 236778
+          - logProbability: -0.015103274
+            token: ' ='
+            tokenId: 578
+          - logProbability: -0.080776855
+            token: ' '
+            tokenId: 236743
+          - logProbability: -6.5561944e-06
+            token: '4'
+            tokenId: 236812
+      createTime: '2026-02-10T10:26:09.614158Z'
+      modelVersion: gemini-2.5-flash
+      responseId: wQeLaY6-JYbtkcePyeWo2QY
+      usageMetadata:
+        candidatesTokenCount: 7
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 7
+        promptTokenCount: 7
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 7
+        thoughtsTokenCount: 73
+        totalTokenCount: 87
+        trafficType: ON_DEMAND
+    status:
+      code: 200
+      message: OK
+version: 1

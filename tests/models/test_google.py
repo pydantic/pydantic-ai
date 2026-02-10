@@ -5719,6 +5719,22 @@ async def test_google_vertex_logprobs(allow_model_requests: None, vertex_provide
     assert 'avg_logprobs' in response.provider_details
 
 
+async def test_google_vertex_logprobs_without_top_logprobs(allow_model_requests: None, vertex_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.5-flash', provider=vertex_provider)
+    agent = Agent(model=model)
+
+    settings = GoogleModelSettings(google_logprobs=True)
+    result = await agent.run('What is 2+2?', model_settings=settings)
+
+    messages = result.all_messages()
+    response = cast(ModelResponse, messages[-1])
+
+    assert result.output is not None
+    assert response.provider_details is not None
+    assert 'logprobs' in response.provider_details
+    assert 'avg_logprobs' in response.provider_details
+
+
 async def test_google_gla_logprobs_raises_error(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-flash', provider=google_provider)
     agent = Agent(model=model)
