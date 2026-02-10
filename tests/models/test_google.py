@@ -2534,9 +2534,6 @@ async def test_google_url_input(
     )
 
 
-@pytest.mark.skipif(
-    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
-)
 @pytest.mark.vcr()
 async def test_google_url_input_force_download(
     allow_model_requests: None, vertex_provider: GoogleProvider, disable_ssrf_protection_for_vcr: None
