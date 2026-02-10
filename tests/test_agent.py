@@ -1748,13 +1748,15 @@ def test_structured_dict_recursive_refs():
             '$ref': '#/$defs/Node',
         }
     )
-    with pytest.raises(
-        UserError,
-        match=re.escape(
-            '`StructuredDict` does not currently support recursive `$ref`s and `$defs`. See https://github.com/pydantic/pydantic/issues/12145 for more information.'
-        ),
-    ):
-        StructuredDict(schema)
+    sd = StructuredDict(schema)
+    assert sd is not None
+
+    # Verify schema directly
+    json_schema = sd.__get_pydantic_json_schema__(None, None)  # pyright: ignore
+    assert json_schema['type'] == 'object'
+    assert 'nodes' in json_schema['properties']
+    assert '$defs' in json_schema
+    assert 'Node' in json_schema['$defs']
 
 
 def test_default_structured_output_mode():
