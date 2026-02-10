@@ -9,7 +9,7 @@ from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema
 from typing_extensions import TypeAliasType, TypeVar, deprecated
 
-from . import _utils, exceptions
+from . import _utils
 from ._json_schema import InlineDefsJsonSchemaTransformer
 from ._run_context import RunContext
 from .messages import ToolCallPart
@@ -329,7 +329,7 @@ def StructuredDict(
     # Note: InlineDefsJsonSchemaTransformer will keep $defs for recursive schemas, which is necessary and correct
     if '$defs' in json_schema:
         json_schema = InlineDefsJsonSchemaTransformer(json_schema).walk()
-        
+
         # If the transformation resulted in a root $ref (happens with recursive schemas),
         # we need to resolve it to avoid KeyError in TypeAdapter
         if '$ref' in json_schema and '$defs' in json_schema:
