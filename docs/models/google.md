@@ -324,7 +324,8 @@ See the [Gemini API docs](https://ai.google.dev/gemini-api/docs/safety-settings)
 
 ### Logprobs
 
-You can return the Logprobs of the model in your response by setting `google_logprobs`and `google_top_logprobs`.
+You can return the Logprobs of the model in your response by setting `google_logprobs`and `google_top_logprobs` in the [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings].
+
 This feature is only supported for non-streaming requests and VertexAI.
 
 ```python
@@ -333,14 +334,15 @@ from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 from pydantic_ai.providers.google import GoogleProvider
 
 model_settings = GoogleModelSettings(
-    google_logprobs=True,google_top_logprobs=2)
+    google_logprobs=True, google_top_logprobs=2,
+    )
 
 model = GoogleModel(
     model_name='gemini-3-flash-preview',
-    provider=GoogleProvider(location='europe-west1', vertexai=True)
+    provider=GoogleProvider(location='europe-west1', vertexai=True),
     )
 agent = Agent(model, model_settings=model_settings)
 
 ```
 
-See the [Gooogle Dev Blog](https://developers.googleblog.com/unlock-gemini-reasoning-with-logprobs-on-vertex-ai/) for more information.
+See the [Google Dev Blog](https://developers.googleblog.com/unlock-gemini-reasoning-with-logprobs-on-vertex-ai/) for more information.
