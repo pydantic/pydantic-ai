@@ -931,7 +931,9 @@ async def process_tool_calls(  # noqa: C901
             output_parts.append(part)
         # Early strategy is chosen and final result is already set
         elif ctx.deps.end_strategy == 'early' and final_result:
-            for event in _skip_output_tool(call, 'Output tool not used - a final result was already processed.', output_parts):
+            for event in _skip_output_tool(
+                call, 'Output tool not used - a final result was already processed.', output_parts
+            ):
                 yield event
         # Early strategy is chosen and final result is not yet set
         # Or exhaustive strategy is chosen
@@ -943,7 +945,9 @@ async def process_tool_calls(  # noqa: C901
                 # Max retries exceeded
                 if final_result:
                     # If we already have a valid final result, skip without failing
-                    for event in _skip_output_tool(call, 'Output tool not used - output failed validation.', output_parts):
+                    for event in _skip_output_tool(
+                        call, 'Output tool not used - output failed validation.', output_parts
+                    ):
                         yield event
                     continue
                 else:
@@ -957,7 +961,9 @@ async def process_tool_calls(  # noqa: C901
                 assert validated.validation_error is not None
                 if final_result:
                     # Already have a result, just note that this tool wasn't used
-                    for event in _skip_output_tool(call, 'Output tool not used - output failed validation.', output_parts):
+                    for event in _skip_output_tool(
+                        call, 'Output tool not used - output failed validation.', output_parts
+                    ):
                         yield event
                 else:
                     ctx.state.increment_retries(
@@ -976,7 +982,9 @@ async def process_tool_calls(  # noqa: C901
                     # Max retries exceeded during execution
                     if final_result:
                         # Already have a result, just note that this tool wasn't used
-                        for event in _skip_output_tool(call, 'Output tool not used - tool execution failed.', output_parts, args_valid=True):
+                        for event in _skip_output_tool(
+                            call, 'Output tool not used - tool execution failed.', output_parts, args_valid=True
+                        ):
                             yield event
                     else:
                         ctx.state.increment_retries(
