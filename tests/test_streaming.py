@@ -3326,12 +3326,7 @@ async def test_stream_text_early_break_cleanup(delta: bool, debounce_by: float |
             for chunk in ['Hello', ' ', 'world', '!', ' More', ' text']:
                 yield chunk
         finally:
-            # This finally block runs when aclose() is called on the generator.
-            # If aclosing() properly propagates aclose() through the nested generator chain
-            # (stream_text -> _stream_response_text -> _stream_text_deltas -> ... -> sf),
-            # this executes synchronously during the break, in the same async context.
-            # Without aclosing(), the generator becomes orphaned and cleanup is deferred
-            # to GC, which may run in a different async context and raise RuntimeError.
+            # Confirms aclose() propagated synchronously, not deferred to GC.
             cleanup_called = True
 
     agent = Agent(FunctionModel(stream_function=sf))
