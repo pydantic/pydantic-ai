@@ -401,38 +401,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 )
                 await _run_report_evaluators(self.report_evaluators, report_ctx)
 
-            full_experiment_metadata: dict[str, Any] = {'n_cases': len(self.cases)}
-            if repeat > 1:
-                full_experiment_metadata['repeat'] = repeat
-            if metadata is not None:
-                full_experiment_metadata['metadata'] = metadata
-            if (averages := report.averages()) is not None:
-                full_experiment_metadata['averages'] = averages
-                if averages.assertions is not None:
-                    eval_span.set_attribute('assertion_pass_rate', averages.assertions)
-            eval_span.set_attribute('logfire.experiment.metadata', full_experiment_metadata)
-
-            # Set analyses on the experiment span
-            if report.analyses:
-                eval_span.set_attribute(
-                    'logfire.experiment.analyses',
-                    [analysis.model_dump() for analysis in report.analyses],
-                )
-
-            # Set report evaluator failures on the experiment span
-            if report.report_evaluator_failures:
-                eval_span.set_attribute(
-                    'logfire.experiment.report_evaluator_failures',
-                    [
-                        {
-                            'name': f.name,
-                            'error_message': f.error_message,
-                            'error_stacktrace': f.error_stacktrace,
-                            'source': f.source.model_dump(),
-                        }
-                        for f in report.report_evaluator_failures
-                    ],
-                )
+            _set_experiment_span_attributes(eval_span, report, metadata, len(self.cases), repeat)
         return report
 
     def evaluate_sync(
@@ -1107,6 +1076,45 @@ async def _run_report_evaluators(
                     report.analyses.extend(result)
                 else:
                     report.analyses.append(result)
+
+
+def _set_experiment_span_attributes(
+    eval_span: logfire_api.LogfireSpan,
+    report: EvaluationReport[Any, Any, Any],
+    metadata: dict[str, Any] | None,
+    n_cases: int,
+    repeat: int,
+) -> None:
+    full_experiment_metadata: dict[str, Any] = {'n_cases': n_cases}
+    if repeat > 1:
+        full_experiment_metadata['repeat'] = repeat
+    if metadata is not None:
+        full_experiment_metadata['metadata'] = metadata
+    if (averages := report.averages()) is not None:
+        full_experiment_metadata['averages'] = averages
+        if averages.assertions is not None:
+            eval_span.set_attribute('assertion_pass_rate', averages.assertions)
+    eval_span.set_attribute('logfire.experiment.metadata', full_experiment_metadata)
+
+    if report.analyses:
+        eval_span.set_attribute(
+            'logfire.experiment.analyses',
+            [analysis.model_dump() for analysis in report.analyses],
+        )
+
+    if report.report_evaluator_failures:
+        eval_span.set_attribute(
+            'logfire.experiment.report_evaluator_failures',
+            [
+                {
+                    'name': f.name,
+                    'error_message': f.error_message,
+                    'error_stacktrace': f.error_stacktrace,
+                    'source': f.source.model_dump(),
+                }
+                for f in report.report_evaluator_failures
+            ],
+        )
 
 
 async def _run_task_and_evaluators(
