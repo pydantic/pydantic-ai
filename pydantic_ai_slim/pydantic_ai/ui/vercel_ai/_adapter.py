@@ -7,7 +7,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
@@ -71,6 +71,10 @@ from .request_types import (
     UIMessagePart,
 )
 from .response_types import BaseChunk
+
+if TYPE_CHECKING:
+    pass
+
 
 __all__ = ['VercelAIAdapter']
 
