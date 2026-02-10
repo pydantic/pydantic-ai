@@ -567,6 +567,11 @@ KnownModelName = TypeAliasType(
         'openai:o4-mini-deep-research',
         'openai:o4-mini',
         'test',
+        'zai:glm-4.5-air',
+        'zai:glm-4.5-air-250723',
+        'zai:glm-4.6',
+        'zai:glm-4.6v',
+        'zai:glm-4.7',
     ],
 )
 """Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
@@ -594,6 +599,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'sambanova',
         'together',
         'vercel',
+        'zai',
     ],
 )
 OpenAIResponsesCompatibleProvider = TypeAliasType(
@@ -1242,6 +1248,10 @@ def infer_model(  # noqa: C901
         from .cerebras import CerebrasModel
 
         return CerebrasModel(model_name, provider=provider)
+    elif model_kind == 'zai':
+        from .zai import ZaiModel
+
+        return ZaiModel(model_name, provider=provider)
     elif model_kind in ('openai-chat', 'openai', *get_args(OpenAIChatCompatibleProvider.__value__)):
         from .openai import OpenAIChatModel
 
