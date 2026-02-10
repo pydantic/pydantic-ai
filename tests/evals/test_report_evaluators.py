@@ -11,6 +11,8 @@ from pydantic import BaseModel, TypeAdapter
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from logfire.testing import CaptureLogfire
+
     from pydantic_evals import Case, Dataset
     from pydantic_evals.evaluators import (
         ConfusionMatrixEvaluator,
@@ -872,6 +874,38 @@ async def test_report_evaluator_failure_does_not_block_others():
     assert len(report.analyses) == 1
     assert isinstance(report.analyses[0], ScalarResult)
     assert report.analyses[0].value == 1
+
+
+async def test_report_evaluator_failures_set_on_span(capfire: CaptureLogfire):
+    """Report evaluator failures are set as a span attribute on the experiment span."""
+
+    @dataclass
+    class BrokenEvaluator(ReportEvaluator):
+        def evaluate(self, ctx: ReportEvaluatorContext) -> ReportAnalysis:
+            raise RuntimeError('evaluator broke')
+
+    dataset = Dataset[str, str, None](
+        cases=[Case(inputs='hello', expected_output='world')],
+        report_evaluators=[BrokenEvaluator()],
+    )
+
+    async def task(inputs: str) -> str:
+        return inputs
+
+    report = await dataset.evaluate(task, progress=False)
+    assert len(report.report_evaluator_failures) == 1
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    experiment_spans = [s for s in spans if s['name'] == 'evaluate {name}']
+    assert len(experiment_spans) == 1
+    attrs = experiment_spans[0]['attributes']
+    failures = attrs.get('logfire.experiment.report_evaluator_failures')
+    assert failures is not None
+    assert len(failures) == 1
+    assert failures[0]['name'] == 'BrokenEvaluator'
+    assert 'evaluator broke' in failures[0]['error_message']
+    assert 'error_stacktrace' in failures[0]
+    assert failures[0]['source']['name'] == 'BrokenEvaluator'
 
 
 def test_builtin_report_evaluator_repr():

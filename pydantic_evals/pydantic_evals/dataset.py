@@ -384,6 +384,21 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                     'logfire.experiment.analyses',
                     [analysis.model_dump() for analysis in report.analyses],
                 )
+
+            # Set report evaluator failures on the experiment span
+            if report.report_evaluator_failures:
+                eval_span.set_attribute(
+                    'logfire.experiment.report_evaluator_failures',
+                    [
+                        {
+                            'name': f.name,
+                            'error_message': f.error_message,
+                            'error_stacktrace': f.error_stacktrace,
+                            'source': f.source.model_dump(),
+                        }
+                        for f in report.report_evaluator_failures
+                    ],
+                )
         return report
 
     def evaluate_sync(
