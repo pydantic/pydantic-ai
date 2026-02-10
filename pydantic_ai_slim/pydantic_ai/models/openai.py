@@ -474,7 +474,6 @@ class OpenAIChatModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    client: AsyncOpenAI = field(repr=False)
 
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
