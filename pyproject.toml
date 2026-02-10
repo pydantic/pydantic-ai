@@ -254,7 +254,7 @@ filterwarnings = [
     "ignore: 'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:cohere",
     # This is because of google.
     "ignore: '_UnionGenericAlias' is deprecated and slated for removal:DeprecationWarning:google.genai",
-    # TODO(Marcelo): Drop this once we drop support for Python 3.14, or we bumped voyageai enough.
+    # TODO(Marcelo): Drop this once voyageai stops using Pydantic V1 functionality.
     "ignore: Core Pydantic V1 functionality:UserWarning"
 ]
 

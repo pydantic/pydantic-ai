@@ -137,8 +137,7 @@ class _ToXml:
         if value is None:
             element.text = self.none_str
         elif isinstance(value, Enum):
-            # In Python 3.14+, str() on str-mixin enums returns the qualified name (e.g. 'MyEnum.FOO').
-            element.text = value.value if isinstance(value.value, str) else str(value)
+            element.text = str(value.value)
         elif isinstance(value, str):
             element.text = value
         elif isinstance(value, bytes | bytearray):
