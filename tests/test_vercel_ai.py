@@ -1657,7 +1657,7 @@ async def test_run_stream_tool_call():
 
 
 async def test_run_stream_tool_metadata_single_chunk():
-    """Test that a single BaseChunk in ToolReturnPart.metadata is yielded to the stream."""
+    """Test that a single data-carrying chunk in ToolReturnPart.metadata is yielded to the stream."""
 
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
