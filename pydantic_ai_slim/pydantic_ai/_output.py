@@ -573,9 +573,15 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
             # Really a PluggableSchemaValidator, but it's API-compatible
             self.validator = cast(SchemaValidator, validation_type_adapter.validator)
-            json_schema = _utils.check_object_json_schema(
-                json_schema_type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
-            )
+
+            # Bypassing TypeAdapter(...).json_schema() for types that provide their own schema
+            # like StructuredDict, to avoid issues with recursive schemas.
+            if getattr(output, '__pydantic_ai_structured_dict__', False):
+                json_schema = output.__get_pydantic_json_schema__(None, None)
+            else:
+                json_schema = json_schema_type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
+
+            json_schema = _utils.check_object_json_schema(json_schema)
 
             if self.outer_typed_dict_key:
                 # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM

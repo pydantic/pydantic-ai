@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Generic, Literal
 
@@ -334,10 +335,11 @@ def StructuredDict(
         # we need to resolve it to avoid KeyError in TypeAdapter
         if '$ref' in json_schema and '$defs' in json_schema:
             ref_key = json_schema['$ref'].replace('#/$defs/', '')
-            # Merge the referenced schema as the base, keeping $defs for recursive references
-            ref_schema = json_schema['$defs'][ref_key].copy()
-            ref_schema['$defs'] = json_schema['$defs']
-            json_schema = ref_schema
+            if ref_key in json_schema['$defs']:
+                # Merge the referenced schema as the base, keeping $defs for recursive references
+                ref_schema = deepcopy(json_schema['$defs'][ref_key])
+                ref_schema['$defs'] = json_schema['$defs']
+                json_schema = ref_schema
 
     if name:
         json_schema['title'] = name
@@ -347,6 +349,7 @@ def StructuredDict(
 
     class _StructuredDict(JsonSchemaValue):
         __is_model_like__ = True
+        __pydantic_ai_structured_dict__ = True
 
         @classmethod
         def __get_pydantic_core_schema__(
@@ -361,7 +364,7 @@ def StructuredDict(
         def __get_pydantic_json_schema__(
             cls, core_schema: core_schema.CoreSchema, handler: GetJsonSchemaHandler
         ) -> JsonSchemaValue:
-            return json_schema
+            return deepcopy(json_schema)
 
     return _StructuredDict
 

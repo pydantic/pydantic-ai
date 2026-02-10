@@ -1,12 +1,13 @@
 """Tests for StructuredDict with recursive JSON schemas (issue #4018)."""
 
+from __future__ import annotations
+
 import pytest
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from typing_extensions import TypeAliasType
 
-from pydantic_ai import StructuredDict
-
-pytestmark = pytest.mark.anyio
+from pydantic_ai import Agent, StructuredDict
+from pydantic_ai.models.test import TestModel
 
 
 class Entry(BaseModel):
@@ -48,7 +49,7 @@ def test_structured_dict_with_recursive_defs():
     assert 'JSONValue' in schema['$defs']
 
     # This should not raise an error anymore
-    MyStructuredDict = StructuredDict(json_schema=schema)
+    MyStructuredDict = StructuredDict(schema)
 
     # Verify it's a valid type
     assert MyStructuredDict is not None
@@ -58,7 +59,7 @@ def test_structured_dict_with_recursive_defs():
 def test_structured_dict_recursive_validation():
     """Test that TypeAdapter can validate data against StructuredDict with recursive schema."""
     schema = OutputWithJSONValue.model_json_schema()
-    MyStructuredDict = StructuredDict(json_schema=schema)
+    MyStructuredDict = StructuredDict(schema)
 
     # Create a TypeAdapter (this is what Pydantic AI uses internally)
     adapter = TypeAdapter(MyStructuredDict)
@@ -104,7 +105,7 @@ def test_structured_dict_with_simple_schema():
         'required': ['name', 'age'],
     }
 
-    MyStructuredDict = StructuredDict(json_schema=simple_schema)
+    MyStructuredDict = StructuredDict(simple_schema)
     adapter = TypeAdapter(MyStructuredDict)
 
     data = {'name': 'John', 'age': 30}
@@ -129,7 +130,7 @@ def test_structured_dict_with_non_recursive_defs():
     # This schema has $defs but they're not recursive
     assert '$defs' in schema
 
-    MyStructuredDict = StructuredDict(json_schema=schema)
+    MyStructuredDict = StructuredDict(schema)
     adapter = TypeAdapter(MyStructuredDict)
 
     data = {'name': 'Alice', 'address': {'street': '123 Main St', 'city': 'NYC'}}
@@ -152,3 +153,23 @@ def test_recursive_schema_collision_coverage():
     # The transformer handling collision creates Node_root
     # Fix should unwrap it.
     assert json_schema['type'] == 'object'
+
+
+class RecursiveModel(BaseModel):
+    name: str
+    children: list['RecursiveModel'] | None = None
+
+
+def test_structured_dict_recursive_with_agent():
+    """Test that Agent works with StructuredDict containing recursive $defs."""
+    schema = RecursiveModel.model_json_schema()
+    agent = Agent(
+        model=TestModel(custom_output_args={'name': 'test', 'children': [{'name': 'child', 'children': None}]}),
+        output_type=StructuredDict(schema),
+    )
+    result = agent.run_sync('test')
+    # Use a comparison that handles subclasses of dict
+
+    assert result.output['name'] == 'test'
+    assert result.output['children'][0]['name'] == 'child'
+    assert result.output['children'][0]['children'] is None
