@@ -413,24 +413,23 @@ class BedrockConverseModel(Model):
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
         return usage.RequestUsage(input_tokens=response['inputTokens'])
 
-
     def _get_count_tokens_model_id(self) -> str:
         """Get the model ID to use for the count_tokens API.
 
         The count_tokens API only accepts foundational model IDs, not ARN-based
-        identifiers (e.g. inference profiles). If a canonical model ID is set in
+        identifiers (e.g. inference profiles). If bedrock_count_tokens_model_id is set in
         the profile, use that; otherwise fall back to the model name with geo
         prefix removed.
         """
         profile = BedrockModelProfile.from_profile(self.profile)
-        if profile.bedrock_canonical_model_id is not None:
-            return profile.bedrock_canonical_model_id
+        if profile.bedrock_count_tokens_model_id is not None:
+            return profile.bedrock_count_tokens_model_id
         model_id = remove_bedrock_geo_prefix(self.model_name)
         if model_id.startswith('arn:'):
             raise UserError(
                 f'Bedrock count_tokens API does not support ARN-based model identifiers. '
                 f'Got: {self.model_name!r}\n'
-                f'Set bedrock_canonical_model_id in your BedrockModelProfile to the '
+                f'Set bedrock_count_tokens_model_id in your BedrockModelProfile to the '
                 f'foundational model ID (e.g. "anthropic.claude-haiku-4-5-20251001-v1:0").'
             )
 

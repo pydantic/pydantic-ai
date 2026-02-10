@@ -43,7 +43,7 @@ class BedrockModelProfile(ModelProfile):
     bedrock_send_back_thinking_parts: bool = False
     bedrock_supports_prompt_caching: bool = False
     bedrock_supports_tool_caching: bool = False
-    bedrock_canonical_model_id: str | None = None
+    bedrock_count_tokens_model_id: str | None = None
     """Foundational model ID for count_tokens API. Required when using ARN-based model identifiers
     (e.g. inference profiles), since the count_tokens API only accepts foundational model IDs."""
 

@@ -249,8 +249,8 @@ async def test_bedrock_count_tokens_non_http_error():
     )
 
 
-async def test_bedrock_count_tokens_arn_without_canonical_model_id():
-    """Test that count_tokens raises UserError when model_name is an ARN without canonical_model_id set."""
+async def test_bedrock_count_tokens_arn_without_count_tokens_model_id():
+    """Test that count_tokens raises UserError when model_name is an ARN without bedrock_count_tokens_model_id set."""
     model = BedrockConverseModel(
         'arn:aws:bedrock:us-east-1:123456789012:inference-profile/my-profile',
         provider=_StubBedrockProvider(_StubBedrockClient(
@@ -263,8 +263,8 @@ async def test_bedrock_count_tokens_arn_without_canonical_model_id():
         await model.count_tokens([ModelRequest.user_text_prompt('hi')], None, params)
 
 
-async def test_bedrock_count_tokens_arn_with_canonical_model_id():
-    """Test that count_tokens uses canonical_model_id when model_name is an ARN."""
+async def test_bedrock_count_tokens_arn_with_count_tokens_model_id():
+    """Test that count_tokens uses bedrock_count_tokens_model_id when model_name is an ARN."""
     from pydantic_ai.providers.bedrock import BedrockModelProfile
 
     tokens_response = {'inputTokens': 42}
@@ -301,7 +301,7 @@ async def test_bedrock_count_tokens_arn_with_canonical_model_id():
 
         def model_profile(self, model_name):
             return BedrockModelProfile(
-                bedrock_canonical_model_id='anthropic.claude-haiku-4-5-20251001-v1:0'
+                bedrock_count_tokens_model_id='anthropic.claude-haiku-4-5-20251001-v1:0'
             )
 
     model = BedrockConverseModel(
