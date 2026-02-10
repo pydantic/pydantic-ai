@@ -545,12 +545,15 @@ class OpenAIChatModel(Model):
         if isinstance(provider, str):
             provider = infer_provider('gateway/openai' if provider == 'gateway' else provider)
         self._provider = provider
-        self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 
         if system_prompt_role is not None:
             self.profile = OpenAIModelProfile(openai_system_prompt_role=system_prompt_role).update(self.profile)
+
+    @property
+    def client(self) -> AsyncOpenAI:
+        return self._provider.client
 
     @property
     def base_url(self) -> str:
