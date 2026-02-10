@@ -870,6 +870,7 @@ async def test_restate_agent_misc_properties_and_wrapped_event_handler_noop_and_
     restate_agent = RestateAgent(agent, fake_ctx)
 
     assert isinstance(restate_agent.model, RestateModelWrapper)
+    assert restate_agent.restate_context is fake_ctx
     _ = restate_agent.toolsets
 
     stream = EmptyAgentStream()
