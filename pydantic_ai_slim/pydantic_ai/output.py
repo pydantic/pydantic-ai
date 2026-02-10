@@ -326,12 +326,19 @@ def StructuredDict(
 
     # Pydantic `TypeAdapter` fails when `object.__get_pydantic_json_schema__` has `$defs`, so we inline them
     # See https://github.com/pydantic/pydantic/issues/12145
+    # Note: InlineDefsJsonSchemaTransformer will keep $defs for recursive schemas, which is necessary and correct
     if '$defs' in json_schema:
         json_schema = InlineDefsJsonSchemaTransformer(json_schema).walk()
-        if '$defs' in json_schema:
-            raise exceptions.UserError(
-                '`StructuredDict` does not currently support recursive `$ref`s and `$defs`. See https://github.com/pydantic/pydantic/issues/12145 for more information.'
-            )
+        
+        # If the transformation resulted in a root $ref (happens with recursive schemas),
+        # we need to resolve it to avoid KeyError in TypeAdapter
+        if '$ref' in json_schema and '$defs' in json_schema:
+            ref_key = json_schema['$ref'].replace('#/$defs/', '')
+            if ref_key in json_schema['$defs']:
+                # Merge the referenced schema as the base, keeping $defs for recursive references
+                ref_schema = json_schema['$defs'][ref_key].copy()
+                ref_schema['$defs'] = json_schema['$defs']
+                json_schema = ref_schema
 
     if name:
         json_schema['title'] = name
