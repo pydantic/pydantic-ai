@@ -326,7 +326,7 @@ async def test_restate_agent_restrictions():
     async def extra() -> str:
         return 'ok'
 
-    assert await extra() == 'ok'
+    assert await cast(Any, extra)() == 'ok'
 
     with pytest.raises(TerminalError, match='Toolsets cannot be set at agent run time'):
         await restate_agent.run('x', toolsets=[extra_toolset])
