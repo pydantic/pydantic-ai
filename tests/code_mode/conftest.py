@@ -8,7 +8,6 @@ from typing_extensions import TypedDict
 
 
 # Define return type as TypedDict for better type hints in signatures
-# Note: We return a plain dict at runtime for Monty compatibility
 class WeatherResult(TypedDict):
     """Weather data for a city."""
 

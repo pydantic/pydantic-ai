@@ -67,10 +67,10 @@ class CodeModeContext(TypedDict):
     with the added `results` field.
 
     Attributes:
-        checkpoint: Monty runtime checkpoint for resuming execution.
+        checkpoint: Runtime checkpoint for resuming execution.
         interrupted_calls: List of nested tool calls that were interrupted.
         completed_results: Results from calls that succeeded before the interruption.
-            Keyed by string call_id, values in Monty result format. Passed back on
+            Keyed by call_id (str), values are raw tool results. Passed back on
             resume so those calls are not re-executed.
         results: Map of call_id to result for each interrupted call. Required when resuming.
             Values can be: ToolApproved(), ToolDenied(message=...), or any external result.
@@ -293,8 +293,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 name_override=sanitized_name,
                 description_handler=self.description_handler,
             )
-            # Use `...` body for both LLM display and type checking
-            # (Monty converts to `raise NotImplementedError()` internally for ty compatibility)
+            # Use `...` body for LLM display; runtimes handle any conversion needed for type checking
             available_functions.append(sig.with_typeddicts())
 
         self._cached_signatures = available_functions
@@ -340,7 +339,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         sanitized_to_original: dict[str, str],
         results_map: dict[str, Any] | None = None,
     ) -> ToolCallback:
-        """Create a callback for Monty to invoke when code calls external functions.
+        """Create a callback for the runtime to invoke when code calls external functions.
 
         Args:
             tool: The code mode tool with original tools mapping.
@@ -381,7 +380,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # handle_call → _call_function_tool (tracing + usage) → _call_tool (validate + enrich + call)
             # wrap_validation_errors=False: let raw errors propagate to the runtime.
             # If UnexpectedModelBehavior is raised (e.g. max_retries=0 tool), it propagates
-            # naturally through the Monty runtime as CodeRuntimeError → outer ModelRetry.
+            # naturally through the runtime as CodeRuntimeError → outer ModelRetry.
             return await code_mode_tool_manager.handle_call(
                 tool_call_part,
                 wrap_validation_errors=False,
@@ -445,9 +444,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             )
 
         # Recover results from calls that completed before the interruption.
-        # Keys are converted back from str to int for Monty's result format.
-        completed_results_raw = context.get('completed_results', {})
-        completed_results = {int(k): v for k, v in completed_results_raw.items()} if completed_results_raw else None
+        # Already in the ABC's format (str keys, raw values) — passed through as-is.
+        completed_results = context.get('completed_results') or None
 
         callback = self._make_tool_callback(tool, code_mode_tool_manager, sanitized_to_original, results_map)
 
@@ -523,6 +521,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             code_mode_context: CodeModeContext = {
                 'checkpoint': e.checkpoint,
                 'interrupted_calls': interrupted_calls,
-                'completed_results': {str(k): v for k, v in e.completed_results.items()},
+                'completed_results': e.completed_results,
             }
             raise ApprovalRequired(context=cast(dict[str, Any], code_mode_context))

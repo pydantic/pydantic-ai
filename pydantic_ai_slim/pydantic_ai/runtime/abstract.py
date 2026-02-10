@@ -83,12 +83,15 @@ class CodeInterruptedError(Exception):
             [`CodeRuntime.resume`][pydantic_ai.runtime.abstract.CodeRuntime.resume]
             to continue execution.
         completed_results: Results from tool calls that completed successfully
-            before the interruption, keyed by call index.
+            before the interruption, keyed by call_id (str). Values are raw
+            tool results — runtimes handle any internal wrapping.
     """
 
     interrupted_calls: list[InterruptedToolCall]
     checkpoint: bytes
-    completed_results: dict[int, Any] = field(default_factory=lambda: {})
+    # Keyed by FunctionCall.call_id (str), values are raw tool results.
+    # Runtimes convert to their internal format (e.g. Monty wraps in {'return_value': v}).
+    completed_results: dict[str, Any] = field(default_factory=lambda: {})
 
 
 ToolCallback: TypeAlias = Callable[[FunctionCall], Awaitable[Any]]
@@ -122,7 +125,7 @@ class CodeRuntime(ABC):
         checkpoint: bytes,
         call_tool: ToolCallback,
         interrupted_calls: list[InterruptedCall],
-        completed_results: dict[int, Any] | None = None,
+        completed_results: dict[str, Any] | None = None,
     ) -> Any:
         """Resume execution from a checkpoint with resolved results.
 
@@ -135,9 +138,8 @@ class CodeRuntime(ABC):
                 Each dict contains: call_id, tool_name, args, kwargs, type.
                 These are needed to reconstruct FunctionCall objects for the callback.
             completed_results: Results from calls that already succeeded before the
-                interruption. Keyed by integer call_id, values in Monty result format
-                (e.g. ``{'return_value': ...}``). These are fed to the runtime first
-                so already-completed calls are not re-executed.
+                interruption. Keyed by call_id (str), values are raw tool results.
+                Fed to the runtime first so already-completed calls are not re-executed.
 
         Returns:
             The final output of the resumed code execution.

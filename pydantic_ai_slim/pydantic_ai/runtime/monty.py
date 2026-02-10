@@ -170,10 +170,13 @@ class MontyRuntime(CodeRuntime):
                     for remaining in tasks.values():
                         remaining.cancel()
                     checkpoint = monty_state.dump()
+                    # Convert from Monty's internal format (int keys, {'return_value': v})
+                    # to the ABC's runtime-agnostic format (str keys, raw values).
+                    completed_for_abc = {str(k): v['return_value'] for k, v in results.items()}
                     raise CodeInterruptedError(
                         interrupted_calls=interrupted_calls,
                         checkpoint=checkpoint,
-                        completed_results=results,
+                        completed_results=completed_for_abc,
                     )
 
                 monty_state = monty_state.resume(results=results)
@@ -188,16 +191,16 @@ class MontyRuntime(CodeRuntime):
         checkpoint: bytes,
         call_tool: ToolCallback,
         interrupted_calls: list[InterruptedCall],
-        completed_results: dict[int, Any] | None = None,
+        completed_results: dict[str, Any] | None = None,
     ) -> Any:
         try:
             monty_state: MontyComplete | MontyFutureSnapshot | MontySnapshot = MontyFutureSnapshot.load(checkpoint)
 
-            # Feed already-completed results to Monty first so those calls are not
-            # re-executed. Monty accepts partial results and returns a new snapshot
-            # for the remaining pending calls.
+            # Convert from the ABC's format (str keys, raw values) to Monty's internal
+            # format (int keys, {'return_value': v} wrapper) before feeding to Monty.
             if completed_results:
-                monty_state = monty_state.resume(results=completed_results)
+                monty_results = {int(k): {'return_value': v} for k, v in completed_results.items()}
+                monty_state = monty_state.resume(results=monty_results)
                 if isinstance(monty_state, MontyComplete):
                     return monty_state.output
 
