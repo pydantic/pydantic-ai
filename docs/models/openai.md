@@ -214,7 +214,7 @@ The [OpenAI Responses API](https://platform.openai.com/docs/guides/background) s
 
 Pydantic AI handles this automatically — when a background response is not yet complete, it polls via `retrieve()` until the response is finished. You can enable this with the `openai_background` model setting:
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
