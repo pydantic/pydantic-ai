@@ -653,15 +653,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions_literal, instructions_functions = self._get_instructions(additional_instructions=instructions)
 
         async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
-            parts = [
+            parts: list[str | None] = [
                 instructions_literal,
                 *[await func.run(run_context) for func in instructions_functions],
             ]
 
-            parts = [p for p in parts if p]
-            if not parts:
+            toolset_instructions = await toolset.get_instructions(run_context)
+            if toolset_instructions:
+                parts.append(toolset_instructions)
+
+            non_empty = [p for p in parts if p]
+            if not non_empty:
                 return None
-            return '\n\n'.join(parts).strip()
+            return '\n\n'.join(non_empty).strip()
 
         if isinstance(model_used, InstrumentedModel):
             instrumentation_settings = model_used.instrumentation_settings

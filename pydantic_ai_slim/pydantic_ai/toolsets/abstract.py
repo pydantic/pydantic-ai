@@ -109,6 +109,14 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         """
         return None
 
+    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> str | None:
+        """Return instructions for this toolset, included automatically in the model request.
+
+        Override to provide context-dependent instructions that help the model
+        use this toolset's tools effectively.
+        """
+        return None
+
     @abstractmethod
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         """The tools that are available in this toolset."""

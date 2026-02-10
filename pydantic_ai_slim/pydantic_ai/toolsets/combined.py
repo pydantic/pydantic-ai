@@ -60,6 +60,11 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                 await self._exit_stack.aclose()
                 self._exit_stack = None
 
+    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> str | None:
+        results = await asyncio.gather(*(ts.get_instructions(ctx) for ts in self.toolsets))
+        parts = [r for r in results if r]
+        return '\n\n'.join(parts).strip() or None
+
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         toolsets_tools = await asyncio.gather(*(toolset.get_tools(ctx) for toolset in self.toolsets))
         all_tools: dict[str, ToolsetTool[AgentDepsT]] = {}

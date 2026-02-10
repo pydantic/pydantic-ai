@@ -72,6 +72,15 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
             self._run_step = None
         return result
 
+    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> str | None:
+        # DynamicToolset instructions are only available after get_tools resolves the
+        # underlying toolset. In the agent graph, get_instructions is called before
+        # get_tools on each turn, so instructions are available from the second model
+        # request onward. This avoids interfering with get_tools's per-step resolution.
+        if self._toolset is None:
+            return None
+        return await self._toolset.get_instructions(ctx)
+
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         if self._toolset is None or (self.per_run_step and ctx.run_step != self._run_step):
             if self._toolset is not None:
