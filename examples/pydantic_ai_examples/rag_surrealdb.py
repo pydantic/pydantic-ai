@@ -86,9 +86,9 @@ class RetrievalQueryResult(BaseModel):
 
 
 async def query(
-    conn: SurrealConn, query_: str, vars: dict[str, Value], record_type: RecordType
+    conn: SurrealConn, query_: str, vars_: dict[str, Value], record_type: type[RecordType]
 ) -> list[RecordType]:
-    result = await conn.query(query_, vars)
+    result = await conn.query(query_, vars_)
     result_ta = TypeAdapter(list[record_type])
     rows = result_ta.validate_python(result)
     return rows
