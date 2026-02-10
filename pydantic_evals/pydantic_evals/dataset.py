@@ -265,6 +265,18 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             report_evaluators=list(report_evaluators),
         )
 
+    def _build_tasks_to_run(self, repeat: int) -> list[tuple[Case[InputsT, OutputT, MetadataT], str, str | None]]:
+        """Build the list of (case, report_case_name, source_case_name) tuples for evaluation."""
+        if repeat > 1:
+            return [
+                (case, f'{case_name} [{run_idx}/{repeat}]', case_name)
+                for i, case in enumerate(self.cases, 1)
+                for run_idx in range(1, repeat + 1)
+                if (case_name := case.name or f'Case {i}')
+            ]
+        else:
+            return [(case, case.name or f'Case {i}', None) for i, case in enumerate(self.cases, 1)]
+
     # TODO in v2: Make everything not required keyword-only
     async def evaluate(
         self,
@@ -277,6 +289,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         *,
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
+        repeat: int = 1,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -296,13 +309,20 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             task_name: Optional override to the name of the task being executed, otherwise the name of the task
                 function will be used.
             metadata: Optional dict of experiment metadata.
+            repeat: Number of times to run each case. When > 1, each case is run multiple times and
+                results are grouped by the original case name for aggregation. Defaults to 1.
 
         Returns:
             A report containing the results of the evaluation.
         """
+        if repeat < 1:
+            raise ValueError(f'repeat must be >= 1, got {repeat}')
+
         task_name = task_name or get_unwrapped_function_name(task)
         name = name or task_name
-        total_cases = len(self.cases)
+
+        tasks_to_run = self._build_tasks_to_run(repeat)
+        total_tasks = len(tasks_to_run)
         progress_bar = Progress() if progress else None
 
         limiter = anyio.Semaphore(max_concurrency) if max_concurrency is not None else AsyncExitStack()
@@ -310,6 +330,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         extra_attributes: dict[str, Any] = {'gen_ai.operation.name': 'experiment'}
         if metadata is not None:
             extra_attributes['metadata'] = metadata
+        if repeat > 1:
+            extra_attributes['logfire.experiment.repeat'] = repeat
         with (
             logfire_span(
                 'evaluate {name}',
@@ -321,12 +343,22 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             ) as eval_span,
             progress_bar or nullcontext(),
         ):
-            task_id = progress_bar.add_task(f'Evaluating {task_name}', total=total_cases) if progress_bar else None
+            task_id = progress_bar.add_task(f'Evaluating {task_name}', total=total_tasks) if progress_bar else None
 
-            async def _handle_case(case: Case[InputsT, OutputT, MetadataT], report_case_name: str):
+            async def _handle_case(
+                case: Case[InputsT, OutputT, MetadataT],
+                report_case_name: str,
+                source_case_name: str | None,
+            ):
                 async with limiter:
                     result = await _run_task_and_evaluators(
-                        task, case, report_case_name, self.evaluators, retry_task, retry_evaluators
+                        task,
+                        case,
+                        report_case_name,
+                        self.evaluators,
+                        retry_task,
+                        retry_evaluators,
+                        source_case_name=source_case_name,
                     )
                     if progress_bar and task_id is not None:  # pragma: no branch
                         progress_bar.update(task_id, advance=1)
@@ -340,8 +372,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 span_id = f'{context.span_id:016x}'
             cases_and_failures = await task_group_gather(
                 [
-                    lambda case=case, i=i: _handle_case(case, case.name or f'Case {i}')
-                    for i, case in enumerate(self.cases, 1)
+                    lambda case=case, rn=report_name, scn=source_name: _handle_case(case, rn, scn)
+                    for case, report_name, source_name in tasks_to_run
                 ]
             )
             cases: list[ReportCase] = []
@@ -369,36 +401,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 )
                 await _run_report_evaluators(self.report_evaluators, report_ctx)
 
-            full_experiment_metadata: dict[str, Any] = {'n_cases': len(self.cases)}
-            if metadata is not None:
-                full_experiment_metadata['metadata'] = metadata
-            if (averages := report.averages()) is not None:
-                full_experiment_metadata['averages'] = averages
-                if averages.assertions is not None:
-                    eval_span.set_attribute('assertion_pass_rate', averages.assertions)
-            eval_span.set_attribute('logfire.experiment.metadata', full_experiment_metadata)
-
-            # Set analyses on the experiment span
-            if report.analyses:
-                eval_span.set_attribute(
-                    'logfire.experiment.analyses',
-                    [analysis.model_dump() for analysis in report.analyses],
-                )
-
-            # Set report evaluator failures on the experiment span
-            if report.report_evaluator_failures:
-                eval_span.set_attribute(
-                    'logfire.experiment.report_evaluator_failures',
-                    [
-                        {
-                            'name': f.name,
-                            'error_message': f.error_message,
-                            'error_stacktrace': f.error_stacktrace,
-                            'source': f.source.model_dump(),
-                        }
-                        for f in report.report_evaluator_failures
-                    ],
-                )
+            _set_experiment_span_attributes(eval_span, report, metadata, len(self.cases), repeat)
         return report
 
     def evaluate_sync(
@@ -412,6 +415,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         *,
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
+        repeat: int = 1,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -430,6 +434,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             task_name: Optional override to the name of the task being executed, otherwise the name of the task
                 function will be used.
             metadata: Optional dict of experiment metadata.
+            repeat: Number of times to run each case. When > 1, each case is run multiple times and
+                results are grouped by the original case name for aggregation. Defaults to 1.
 
         Returns:
             A report containing the results of the evaluation.
@@ -444,6 +450,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 retry_evaluators=retry_evaluators,
                 task_name=task_name,
                 metadata=metadata,
+                repeat=repeat,
             )
         )
 
@@ -1071,6 +1078,45 @@ async def _run_report_evaluators(
                     report.analyses.append(result)
 
 
+def _set_experiment_span_attributes(
+    eval_span: logfire_api.LogfireSpan,
+    report: EvaluationReport[Any, Any, Any],
+    metadata: dict[str, Any] | None,
+    n_cases: int,
+    repeat: int,
+) -> None:
+    full_experiment_metadata: dict[str, Any] = {'n_cases': n_cases}
+    if repeat > 1:
+        full_experiment_metadata['repeat'] = repeat
+    if metadata is not None:
+        full_experiment_metadata['metadata'] = metadata
+    if (averages := report.averages()) is not None:
+        full_experiment_metadata['averages'] = averages
+        if averages.assertions is not None:
+            eval_span.set_attribute('assertion_pass_rate', averages.assertions)
+    eval_span.set_attribute('logfire.experiment.metadata', full_experiment_metadata)
+
+    if report.analyses:
+        eval_span.set_attribute(
+            'logfire.experiment.analyses',
+            [analysis.model_dump() for analysis in report.analyses],
+        )
+
+    if report.report_evaluator_failures:
+        eval_span.set_attribute(
+            'logfire.experiment.report_evaluator_failures',
+            [
+                {
+                    'name': f.name,
+                    'error_message': f.error_message,
+                    'error_stacktrace': f.error_stacktrace,
+                    'source': f.source.model_dump(),
+                }
+                for f in report.report_evaluator_failures
+            ],
+        )
+
+
 async def _run_task_and_evaluators(
     task: Callable[[InputsT], Awaitable[OutputT]] | Callable[[InputsT], OutputT],
     case: Case[InputsT, OutputT, MetadataT],
@@ -1078,6 +1124,8 @@ async def _run_task_and_evaluators(
     dataset_evaluators: list[Evaluator[InputsT, OutputT, MetadataT]],
     retry_task: RetryConfig | None,
     retry_evaluators: RetryConfig | None,
+    *,
+    source_case_name: str | None = None,
 ) -> ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT]:
     """Run a task on a case and evaluate the results.
 
@@ -1088,6 +1136,7 @@ async def _run_task_and_evaluators(
         dataset_evaluators: Evaluators from the dataset to apply to this case.
         retry_task: The retry config to use for running the task.
         retry_evaluators: The retry config to use for running the evaluators.
+        source_case_name: The original case name before run-indexing (for multi-run experiments).
 
     Returns:
         A ReportCase containing the evaluation results.
@@ -1107,6 +1156,9 @@ async def _run_task_and_evaluators(
             if context is not None:  # pragma: no branch
                 trace_id = f'{context.trace_id:032x}'
                 span_id = f'{context.span_id:016x}'
+
+            if source_case_name is not None:
+                case_span.set_attribute('logfire.experiment.source_case_name', source_case_name)
 
             t0 = time.time()
             scoring_context = await _run_task(task, case, retry_task)
@@ -1148,6 +1200,7 @@ async def _run_task_and_evaluators(
             assertions=assertions,
             task_duration=scoring_context.duration,
             total_duration=_get_span_duration(case_span, fallback_duration),
+            source_case_name=source_case_name,
             trace_id=trace_id,
             span_id=span_id,
             evaluator_failures=evaluator_failures,
@@ -1160,6 +1213,7 @@ async def _run_task_and_evaluators(
             expected_output=case.expected_output,
             error_message=f'{type(exc).__name__}: {exc}',
             error_stacktrace=traceback.format_exc(),
+            source_case_name=source_case_name,
             trace_id=trace_id,
             span_id=span_id,
         )
