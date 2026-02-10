@@ -3332,9 +3332,18 @@ def test_bedrock_strict_tool_definition_supported_model(
 
     result = model._map_tool_definition(tool_def)  # pyright: ignore[reportPrivateUsage]
 
-    tool_spec = result['toolSpec']  # pyright: ignore[reportTypedDictNotRequiredAccess]
-    assert tool_spec['name'] == 'get_weather'
-    assert tool_spec['strict'] is True  # pyright: ignore[reportGeneralTypeIssues]
+    assert result == snapshot(
+        {
+            'toolSpec': {
+                'name': 'get_weather',
+                'inputSchema': {
+                    'json': {'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']}
+                },
+                'description': 'Get the weather for a city',
+                'strict': True,
+            }
+        }
+    )
 
 
 def test_bedrock_strict_tool_definition_unsupported_model(
@@ -3649,19 +3658,20 @@ def test_bedrock_native_output_format_structure():
 
     result = BedrockConverseModel._native_output_format(params)  # pyright: ignore[reportPrivateUsage]
 
-    assert result is not None
-    assert result['textFormat']['type'] == 'json_schema'
-    assert 'structure' in result['textFormat']
-    assert 'jsonSchema' in result['textFormat']['structure']
-
-    json_schema_config = result['textFormat']['structure']['jsonSchema']
-    assert json_schema_config['name'] == 'CityInfo'
-    assert json_schema_config['description'] == 'Information about a city'
-    import json
-
-    schema_dict = json.loads(json_schema_config['schema'])
-    assert schema_dict['type'] == 'object'
-    assert 'city' in schema_dict['properties']
+    assert result == snapshot(
+        {
+            'textFormat': {
+                'type': 'json_schema',
+                'structure': {
+                    'jsonSchema': {
+                        'name': 'CityInfo',
+                        'schema': '{"type": "object", "properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"]}',
+                        'description': 'Information about a city',
+                    }
+                },
+            }
+        }
+    )
 
 
 def test_bedrock_native_output_format_auto_mode():
