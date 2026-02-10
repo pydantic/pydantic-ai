@@ -160,7 +160,7 @@ class YouSearchTool:
     """The You.com API key."""
 
     count: int | None = None
-    """Default maximum number of results per section (web/news). Range: 1-100, default: 10."""
+    """Default maximum number of results per section (web/news). Range: 1-100. API default is 10."""
 
     offset: int | None = None
     """Pagination offset (0-9). Calculated in multiples of count. Not controllable by LLM."""
