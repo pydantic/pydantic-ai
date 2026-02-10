@@ -77,7 +77,7 @@ done
 # Find timestamp of last auto-review from both issue comments and inline review comments
 echo "  - Checking for previous auto-review"
 LAST_ISSUE_COMMENT_TS=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate \
-  --jq '[.[] | select(.user.login == "github-actions" or .user.login == "github-actions[bot]") | .created_at] | last // empty')
+  | jq -s '[.[][] | select(.user.login == "github-actions" or .user.login == "github-actions[bot]") | .created_at] | sort | last // empty' -r)
 LAST_REVIEW_COMMENT_TS=$(jq -r '
   [.[] | .comments.nodes[] |
     select(.author.login == "github-actions" or .author.login == "github-actions[bot]") |
