@@ -2,12 +2,12 @@
 """Parse VCR cassette files and pretty-print request/response bodies."""
 
 import argparse
-import json
 import re
 import sys
 from pathlib import Path
 
 import yaml
+from pydantic_core import from_json, to_json
 
 
 def truncate_base64(obj: object, max_len: int = 100) -> object:
@@ -23,6 +23,25 @@ def truncate_base64(obj: object, max_len: int = 100) -> object:
     elif isinstance(obj, list):
         return [truncate_base64(item, max_len) for item in obj]
     return obj
+
+
+def _extract_body(part: dict[str, object]) -> object | None:
+    """Extract body from a request/response, handling both custom and standard VCR formats.
+
+    Custom serializer (json_body_serializer.py) stores parsed JSON as `parsed_body`.
+    Standard VCR stores raw strings: `body` (requests) or `body.string` (responses).
+    """
+    if 'parsed_body' in part:
+        return part['parsed_body']
+    body = part.get('body')
+    if isinstance(body, dict):
+        body = body.get('string')
+    if isinstance(body, str):
+        try:
+            return from_json(body)
+        except ValueError:
+            return body
+    return None
 
 
 def parse_cassette(path: Path, interaction_idx: int | None = None) -> None:
@@ -57,16 +76,18 @@ def parse_cassette(path: Path, interaction_idx: int | None = None) -> None:
         print(f'\n--- REQUEST ---')
         print(f'Method: {req.get("method", "N/A")}')
         print(f'URI: {req.get("uri", "N/A")}')
-        if 'parsed_body' in req:
-            truncated = truncate_base64(req['parsed_body'])
-            print(f'Body:\n{json.dumps(truncated, indent=2)}')
+        req_body = _extract_body(req)
+        if req_body is not None:
+            truncated = truncate_base64(req_body)
+            print(f'Body:\n{to_json(truncated, indent=2).decode() if not isinstance(truncated, str) else truncated}')
 
         print(f'\n--- RESPONSE ---')
         status = resp.get('status', {})
         print(f'Status: {status.get("code", "N/A")} {status.get("message", "")}')
-        if 'parsed_body' in resp:
-            truncated = truncate_base64(resp['parsed_body'])
-            print(f'Body:\n{json.dumps(truncated, indent=2)}')
+        resp_body = _extract_body(resp)
+        if resp_body is not None:
+            truncated = truncate_base64(resp_body)
+            print(f'Body:\n{to_json(truncated, indent=2).decode() if not isinstance(truncated, str) else truncated}')
 
 
 def main() -> None:
