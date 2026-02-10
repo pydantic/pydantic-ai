@@ -26,7 +26,7 @@ from pydantic_graph.persistence.file import FileStatePersistence
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 
-ask_agent = Agent('openai:gpt-5', output_type=str)
+ask_agent = Agent('openai:gpt-5.2', output_type=str)
 
 
 @dataclass
@@ -67,7 +67,7 @@ class EvaluationOutput(BaseModel, use_attribute_docstrings=True):
 
 
 evaluate_agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     output_type=EvaluationOutput,
     system_prompt='Given a question and answer, evaluate if the answer is correct.',
 )

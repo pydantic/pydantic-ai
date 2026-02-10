@@ -34,7 +34,7 @@ import random
 from pydantic_ai import Agent, RunContext
 
 agent = Agent(
-    'google-gla:gemini-2.5-flash',  # (1)!
+    'google-gla:gemini-3-flash-preview',  # (1)!
     deps_type=str,  # (2)!
     instructions=(
         "You're a dice game, you should roll the die and see if the number "
@@ -95,7 +95,7 @@ print(dice_result.all_messages())
             )
         ],
         usage=RequestUsage(input_tokens=54, output_tokens=2),
-        model_name='gemini-2.5-flash',
+        model_name='gemini-3-flash-preview',
         timestamp=datetime.datetime(...),
         run_id='...',
     ),
@@ -119,7 +119,7 @@ print(dice_result.all_messages())
             )
         ],
         usage=RequestUsage(input_tokens=55, output_tokens=4),
-        model_name='gemini-2.5-flash',
+        model_name='gemini-3-flash-preview',
         timestamp=datetime.datetime(...),
         run_id='...',
     ),
@@ -143,7 +143,7 @@ print(dice_result.all_messages())
             )
         ],
         usage=RequestUsage(input_tokens=56, output_tokens=12),
-        model_name='gemini-2.5-flash',
+        model_name='gemini-3-flash-preview',
         timestamp=datetime.datetime(...),
         run_id='...',
     ),
@@ -214,13 +214,13 @@ def get_player_name(ctx: RunContext[str]) -> str:
 
 
 agent_a = Agent(
-    'google-gla:gemini-2.5-flash',
+    'google-gla:gemini-3-flash-preview',
     deps_type=str,
     tools=[roll_dice, get_player_name],  # (1)!
     instructions=instructions,
 )
 agent_b = Agent(
-    'google-gla:gemini-2.5-flash',
+    'google-gla:gemini-3-flash-preview',
     deps_type=str,
     tools=[  # (2)!
         Tool(roll_dice, takes_ctx=False),

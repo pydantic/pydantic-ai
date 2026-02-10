@@ -4,6 +4,7 @@ import base64
 import datetime
 import json
 import os
+import random
 import re
 import tempfile
 from collections.abc import AsyncIterator
@@ -101,7 +102,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
-if not imports_successful():
+if not imports_successful():  # pragma: lax no cover
     # Define placeholder errors module so parametrize decorators can be parsed
     from types import SimpleNamespace
 
@@ -847,7 +848,9 @@ It looks like someone is either reviewing footage on the monitor, or using it as
 """)
 
 
-async def test_google_model_image_url_input(allow_model_requests: None, google_provider: GoogleProvider):
+async def test_google_model_image_url_input(
+    allow_model_requests: None, google_provider: GoogleProvider, disable_ssrf_protection_for_vcr: None
+):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
@@ -860,7 +863,9 @@ async def test_google_model_image_url_input(allow_model_requests: None, google_p
     assert result.output == snapshot('That is a potato.')
 
 
-async def test_google_model_video_url_input(allow_model_requests: None, google_provider: GoogleProvider):
+async def test_google_model_video_url_input(
+    allow_model_requests: None, google_provider: GoogleProvider, disable_ssrf_protection_for_vcr: None
+):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
@@ -883,6 +888,21 @@ In summary, it looks like the image shows a camera setup, perhaps in the process
 """)
 
 
+async def test_google_model_youtube_video_url_input(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(m, instructions='You are a helpful chatbot.')
+
+    result = await agent.run(
+        [
+            'Explain me this video in a few sentences',
+            VideoUrl(url='https://youtu.be/lCdaVNyHtjU'),
+        ]
+    )
+    assert result.output == snapshot(
+        'This video demonstrates using an AI agent to analyze recent 404 HTTP responses from a service. The user asks the agent, "Logfire," to identify patterns in these errors. The agent then queries a Logfire database, extracts relevant information like URL paths, HTTP methods, and timestamps, and presents a detailed analysis covering common error-prone endpoints, request patterns, timeline-related issues, and potential configuration or authentication problems. Finally, it offers a list of actionable recommendations to address these issues.'
+    )
+
+
 async def test_google_model_youtube_video_url_input_with_vendor_metadata(
     allow_model_requests: None, google_provider: GoogleProvider
 ):
@@ -891,7 +911,7 @@ async def test_google_model_youtube_video_url_input_with_vendor_metadata(
 
     result = await agent.run(
         [
-            'Explain me this video',
+            'Explain me this video in a few sentences',
             VideoUrl(
                 url='https://youtu.be/lCdaVNyHtjU',
                 vendor_metadata={'fps': 0.2},
@@ -899,17 +919,15 @@ async def test_google_model_youtube_video_url_input_with_vendor_metadata(
         ]
     )
     assert result.output == snapshot("""\
-Okay, based on the image, here's what I can infer:
+Sure, here is a summary of the video in a few sentences.
 
-*   **A camera monitor is mounted on top of a camera.**
-*   **The monitor's screen is on, displaying a view of the rocky mountains.**
-*   **This setting suggests a professional video shoot.**
-
-If you'd like a more detailed explanation, please provide additional information about the video.\
+The video is an AI analyzing recent 404 HTTP responses using Logfire. It identifies several patterns such as the most common endpoints with 404 errors, request patterns, timeline-related issues, organization/project access issues, and configuration/authentication issues. Based on the analysis, it provides several recommendations, including verifying the platform-config endpoint is properly configured, checking organization and project permissions, and investigating timeline requests.\
 """)
 
 
-async def test_google_model_document_url_input(allow_model_requests: None, google_provider: GoogleProvider):
+async def test_google_model_document_url_input(
+    allow_model_requests: None, google_provider: GoogleProvider, disable_ssrf_protection_for_vcr: None
+):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
@@ -919,7 +937,9 @@ async def test_google_model_document_url_input(allow_model_requests: None, googl
     assert result.output == snapshot('The document appears to be a dummy PDF file.\n')
 
 
-async def test_google_model_text_document_url_input(allow_model_requests: None, google_provider: GoogleProvider):
+async def test_google_model_text_document_url_input(
+    allow_model_requests: None, google_provider: GoogleProvider, disable_ssrf_protection_for_vcr: None
+):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
@@ -2000,6 +2020,34 @@ How can I help you today?\
 """)
 
 
+async def test_google_instructions_only_with_tool_calls(allow_model_requests: None, google_provider: GoogleProvider):
+    """Test that tools work when using instructions-only without a user prompt.
+
+    This tests the fix for https://github.com/pydantic/pydantic-ai/issues/3692 where the second
+    request (after tool results) would fail because contents started with role=model instead of
+    role=user. The fix prepends an empty user turn when the first content is a model response.
+    """
+    m = GoogleModel('gemini-3-flash-preview', provider=google_provider)
+    agent: Agent[None, list[str]] = Agent(m, output_type=list[str])
+
+    @agent.instructions
+    def agent_instructions() -> str:
+        return 'Tell three jokes. Generate topics with the generate_topic tool.'
+
+    @agent.tool_plain
+    def generate_topic() -> str:
+        return random.choice(('cars', 'penguins', 'golf'))
+
+    result = await agent.run()
+    assert result.output == snapshot(
+        [
+            'What kind of car does a sheep drive? A Lamborghini!',
+            "Why don't you see penguins in Great Britain? Because they're afraid of Wales!",
+            'What happened when the wheel was invented? It caused a revolution!',
+        ]
+    )
+
+
 async def test_google_model_empty_assistant_response(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
     agent = Agent(m)
@@ -2491,7 +2539,7 @@ async def test_google_url_input(
 )
 @pytest.mark.vcr()
 async def test_google_url_input_force_download(
-    allow_model_requests: None, vertex_provider: GoogleProvider
+    allow_model_requests: None, vertex_provider: GoogleProvider, disable_ssrf_protection_for_vcr: None
 ) -> None:  # pragma: lax no cover
     m = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
     agent = Agent(m)
@@ -2536,7 +2584,7 @@ async def test_google_gs_url_force_download_raises_user_error(allow_model_reques
     agent = Agent(m)
 
     url = ImageUrl(url='gs://pydantic-ai-dev/wikipedia_screenshot.png', force_download=True)
-    with pytest.raises(UserError, match='Downloading from protocol "gs://" is not supported.'):
+    with pytest.raises(ValueError, match='URL protocol "gs" is not allowed'):
         _ = await agent.run(['What is the main content of this URL?', url])
 
 
@@ -3890,7 +3938,9 @@ async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, go
     }
 
 
-async def test_google_vertexai_image_generation(allow_model_requests: None, vertex_provider: GoogleProvider):
+async def test_google_vertexai_image_generation(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+):  # pragma: lax no cover
     model = GoogleModel('gemini-2.5-flash-image', provider=vertex_provider)
 
     agent = Agent(model, output_type=BinaryImage)
@@ -4763,6 +4813,7 @@ async def test_gcs_video_url_raises_error_on_google_gla():
 
     google-gla cannot access GCS buckets, so attempting to use gs:// URLs
     should fail with a helpful error message rather than a cryptic API error.
+    SSRF protection now catches non-http(s) protocols first.
     """
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
     # google-gla is the default for GoogleProvider with api_key, but be explicit
@@ -4770,7 +4821,7 @@ async def test_gcs_video_url_raises_error_on_google_gla():
 
     video = VideoUrl(url='gs://bucket/video.mp4')
 
-    with pytest.raises(UserError, match='Downloading from protocol "gs://" is not supported'):
+    with pytest.raises(ValueError, match='URL protocol "gs" is not allowed'):
         await model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
 
 
@@ -5479,7 +5530,7 @@ def test_google_provider_respects_custom_http_client_timeout(gemini_api_key: str
 async def test_google_splits_tool_return_from_user_prompt(google_provider: GoogleProvider):
     """Test that ToolReturnPart and UserPromptPart are split into separate content objects.
 
-    TODO: Remove workaround when https://github.com/pydantic/pydantic-ai/issues/3763 is resolved
+    TODO: Remove workaround when https://github.com/pydantic/pydantic-ai/issues/4210 is resolved
     """
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
 
@@ -5594,5 +5645,59 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
                     },
                 ],
             }
+        ]
+    )
+
+
+async def test_google_prepends_empty_user_turn_when_first_content_is_model(google_provider: GoogleProvider):
+    """Test that an empty user turn is prepended when contents start with a model response.
+
+    This happens when there's a conversation history with a model response (containing tool calls)
+    followed by tool results, but no initial user prompt. The Gemini API requires that function
+    call turns come immediately after a user turn or function response turn.
+
+    See https://github.com/pydantic/pydantic-ai/issues/3692
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='generate_topic', args={}, tool_call_id='test_id'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='generate_topic', content='penguins', tool_call_id='test_id'),
+            ]
+        ),
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents == snapshot(
+        [
+            {'role': 'user', 'parts': [{'text': ''}]},
+            {
+                'role': 'model',
+                'parts': [
+                    {
+                        'function_call': {'name': 'generate_topic', 'args': {}, 'id': 'test_id'},
+                        'thought_signature': b'skip_thought_signature_validator',
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'function_response': {
+                            'name': 'generate_topic',
+                            'response': {'return_value': 'penguins'},
+                            'id': 'test_id',
+                        }
+                    },
+                ],
+            },
         ]
     )

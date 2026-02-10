@@ -17,7 +17,6 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.gemini import GeminiModel, GeminiModelSettings
 from pydantic_ai.usage import RequestUsage
 
@@ -163,7 +162,9 @@ async def test_url_input(
     not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
 )
 @pytest.mark.vcr()
-async def test_url_input_force_download(allow_model_requests: None) -> None:  # pragma: lax no cover
+async def test_url_input_force_download(
+    allow_model_requests: None, disable_ssrf_protection_for_vcr: None
+) -> None:  # pragma: lax no cover
     provider = GoogleVertexProvider(project_id='pydantic-ai', region='us-central1')
     m = GeminiModel('gemini-2.0-flash', provider=provider)
     agent = Agent(m)
@@ -207,5 +208,5 @@ async def test_gs_url_force_download_raises_user_error(allow_model_requests: Non
     agent = Agent(m)
 
     url = ImageUrl(url='gs://pydantic-ai-dev/wikipedia_screenshot.png', force_download=True)
-    with pytest.raises(UserError, match='Downloading from protocol "gs://" is not supported.'):
+    with pytest.raises(ValueError, match='URL protocol "gs" is not allowed'):
         _ = await agent.run(['What is the main content of this URL?', url])
