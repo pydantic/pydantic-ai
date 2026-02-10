@@ -363,7 +363,7 @@ class AnthropicModel(Model):
         ):
             if model_request_parameters.output_mode == 'auto':
                 output_mode = 'native' if self.profile.supports_json_schema_output else 'prompted'
-                model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
+                model_request_parameters = model_request_parameters.resolve_auto_output_mode(output_mode)
             elif (
                 model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output
             ):  # pragma: no branch
