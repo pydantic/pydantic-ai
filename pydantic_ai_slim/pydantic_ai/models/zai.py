@@ -117,7 +117,8 @@ def _zai_settings_to_openai_settings(model_settings: ZaiModelSettings) -> OpenAI
     extra_body = cast(dict[str, Any], model_settings.get('extra_body', {}))
 
     thinking_enabled = model_settings.pop('zai_thinking', None)
-    clear_thinking = model_settings.pop('zai_clear_thinking', None)
+    thinking_enabled = model_settings.get('zai_thinking')
+    clear_thinking = model_settings.get('zai_clear_thinking')
 
     if thinking_enabled is not None:
         thinking: dict[str, Any] = {
