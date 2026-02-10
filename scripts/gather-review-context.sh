@@ -22,6 +22,7 @@ gh pr view "$PR_NUMBER" --repo "$REPO" --json title,body,author,headRefName,base
 # PR comments
 echo "  - PR comments"
 gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate --jq '.[] | "### \(.user.login) (\(.author_association)) at \(.created_at)\n\(.body)\n"' > "$CTX/pr-comments.txt"
+[ -s "$CTX/pr-comments.txt" ] || echo "(No PR comments)" > "$CTX/pr-comments.txt"
 
 # Inline review comments (with diff hunks and resolved state via GraphQL)
 # Fetch all review threads first, then determine last auto-review timestamp, then format
@@ -143,6 +144,7 @@ jq -r --arg last_review "$LAST_REVIEW_TS" '
   end
 ' "$THREADS_JSON" >> "$CTX/review-comments.txt"
 rm -f "$THREADS_JSON"
+[ -s "$CTX/review-comments.txt" ] || echo "(No review comments)" > "$CTX/review-comments.txt"
 
 # Related issues: extract issue numbers from PR body
 echo "  - Related issues"
@@ -154,6 +156,7 @@ PR_BODY=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq '.body')
   echo "=== Issue #${ISSUE_NUM} ==="
   gh issue view "$ISSUE_NUM" --repo "$REPO" --json title,body,author,comments --jq '"## \(.title)\nBy: \(.author.login)\n\(.body)\n\n### Comments:\n\(.comments | map("#### \(.author.login) (\(.authorAssociation))\n\(.body)\n") | join("\n"))"'
 done > "$CTX/related-issues.txt"
+[ -s "$CTX/related-issues.txt" ] || echo "(No issues referenced in PR description)" > "$CTX/related-issues.txt"
 
 # List of ALL changed files with change counts (including generated, for awareness)
 echo "  - Changed files"
@@ -180,6 +183,7 @@ for agents_file in docs/AGENTS.md pydantic_ai_slim/pydantic_ai/models/AGENTS.md 
     echo ""
   fi
 done >> "$CTX/agents-md.txt"
+[ -s "$CTX/agents-md.txt" ] || echo "(No directory-specific AGENTS.md files for changed directories)" > "$CTX/agents-md.txt"
 
 echo ""
 echo "Context gathered in ${CTX}/:"
