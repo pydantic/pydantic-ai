@@ -169,11 +169,8 @@ class ToolManager(Generic[AgentDepsT]):
         approved: bool = False,
         metadata: Any = None,
     ) -> RunContext[AgentDepsT]:
-        """Build the execution context for a tool call.
-
-        Caller must ensure self.ctx is not None before calling this method.
-        """
-        assert self.ctx is not None  # for type checker; caller ensures this
+        """Build the execution context for a tool call."""
+        assert self.ctx is not None
         return replace(
             self.ctx,
             tool_name=call.tool_name,
@@ -252,7 +249,6 @@ class ToolManager(Generic[AgentDepsT]):
         name = call.tool_name
         tool = self.tools.get(name)
 
-        # Handle unknown tool
         if tool is None:
             if self.tools:
                 msg = f'Available tools: {", ".join(f"{n!r}" for n in self.tools)}'
@@ -295,11 +291,10 @@ class ToolManager(Generic[AgentDepsT]):
         except (ValidationError, ModelRetry) as e:
             self._check_max_retries(name, tool.max_retries, e)
 
-            if wrap_validation_errors:
-                validation_error = self._wrap_error_as_retry(name, call, e)
-            else:
-                # Re-raise original error if not wrapping
+            if not wrap_validation_errors:
                 raise
+
+            validation_error = self._wrap_error_as_retry(name, call, e)
 
             if not allow_partial:  # pragma: no branch
                 self.failed_tools.add(name)
@@ -319,11 +314,8 @@ class ToolManager(Generic[AgentDepsT]):
     ) -> Any:
         """Execute a validated tool call, within a trace span for function tools.
 
-        This method handles both successful validation (executes the tool) and failed validation
-        (creates a span to record the error and raises ToolRetryError).
-
-        For output tools, no tracing is performed.
-        For function tools, a trace span is created using the tracer from the run context.
+        For output tools, no tracing is performed. For function tools, a trace span is
+        created using the tracer from the run context.
 
         Args:
             validated: The validation result from validate_tool_call().
@@ -338,21 +330,16 @@ class ToolManager(Generic[AgentDepsT]):
         if self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
-        # Determine if this is an output tool (no tracing)
-        is_output_tool = validated.tool is not None and validated.tool.tool_def.kind == 'output'
-
-        if is_output_tool:
-            # Output tools: no tracing, no usage tracking
+        if validated.tool is not None and validated.tool.tool_def.kind == 'output':
             return await self._execute_tool_call_impl(validated)
-        else:
-            # Function tools: trace the execution
-            return await self._execute_function_tool_call(
-                validated,
-                tracer=self.ctx.tracer,
-                include_content=self.ctx.trace_include_content,
-                instrumentation_version=self.ctx.instrumentation_version,
-                usage=self.ctx.usage,
-            )
+
+        return await self._execute_function_tool_call(
+            validated,
+            tracer=self.ctx.tracer,
+            include_content=self.ctx.trace_include_content,
+            instrumentation_version=self.ctx.instrumentation_version,
+            usage=self.ctx.usage,
+        )
 
     async def _execute_tool_call_impl(
         self,
@@ -362,21 +349,13 @@ class ToolManager(Generic[AgentDepsT]):
     ) -> Any:
         """Execute a validated tool call without tracing.
 
-        Raises the stored validation error if validation previously failed,
-        otherwise executes the tool.
-
-        Raises ToolRetryError if the tool raises ModelRetry during execution.
+        Raises ToolRetryError if validation previously failed or the tool raises ModelRetry.
         Raises UnexpectedModelBehavior if max retries exceeded.
         """
-        if self.ctx is None:
-            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
-
-        # If validation failed, raise the error
         if not validated.args_valid:
             assert validated.validation_error is not None
             raise validated.validation_error
 
-        # Validation passed - execute the tool
         assert validated.tool is not None
         assert validated.validated_args is not None
 
@@ -385,7 +364,7 @@ class ToolManager(Generic[AgentDepsT]):
 
         name = validated.call.tool_name
         try:
-            result = await self.toolset.call_tool(
+            tool_result = await self.toolset.call_tool(
                 name,
                 validated.validated_args,
                 validated.ctx,
@@ -399,7 +378,7 @@ class ToolManager(Generic[AgentDepsT]):
         if usage is not None:
             usage.tool_calls += 1
 
-        return result
+        return tool_result
 
     async def _execute_function_tool_call(
         self,
@@ -483,10 +462,6 @@ class ToolManager(Generic[AgentDepsT]):
             approved: Whether the tool call has been approved.
             metadata: Additional metadata from DeferredToolResults.metadata.
         """
-        if self.ctx is None:
-            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
-
-        # Validate the tool call
         validated = await self.validate_tool_call(
             call,
             allow_partial=allow_partial,
@@ -494,6 +469,4 @@ class ToolManager(Generic[AgentDepsT]):
             approved=approved,
             metadata=metadata,
         )
-
-        # Execute the validated call (with tracing for function tools)
         return await self.execute_tool_call(validated)
