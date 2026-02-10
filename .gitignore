@@ -21,5 +21,6 @@ node_modules/
 /test_tmp/
 .mcp.json
 .claude/
+.github/.review-context/
 /.cursor/
 /.devcontainer/
