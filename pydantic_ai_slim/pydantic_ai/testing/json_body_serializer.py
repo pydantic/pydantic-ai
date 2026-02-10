@@ -7,6 +7,8 @@ This module provides custom YAML serialization for VCR cassettes that:
 - Filters sensitive headers and data
 """
 
+__all__ = ['serialize', 'deserialize']
+
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
 import gzip
 import json
