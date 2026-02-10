@@ -8,11 +8,9 @@ from ..conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.zai import (
-        ZaiModel,
         ZaiModelSettings,
         _zai_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
     )
-    from pydantic_ai.providers.zai import ZaiProvider
 
 
 pytestmark = [
