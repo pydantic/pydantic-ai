@@ -538,12 +538,6 @@ def bedrock_provider():
 def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
     # Locally, we authenticate via `gcloud` CLI, so we don't need to patch anything.
     if not os.getenv('CI', False):
-
-        @dataclass
-        class MockCredentials:
-            project_id = 'foobar'
-
-        mocker.patch('google.auth.default', return_value=(MockCredentials(), 'foobar'))
         return  # pragma: lax no cover
 
     try:
