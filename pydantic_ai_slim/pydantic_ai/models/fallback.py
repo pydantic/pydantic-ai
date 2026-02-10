@@ -60,6 +60,7 @@ class FallbackModel(Model):
 
     @property
     def model_id(self) -> str:
+        """The fully qualified model identifier, combining the wrapped models' IDs."""
         return f'fallback:{",".join(model.model_id for model in self.models)}'
 
     @property
