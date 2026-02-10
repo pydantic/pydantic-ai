@@ -857,10 +857,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # OpenTelemetry Semantic Conventions. It may be updated if OTel introduces
         # an official convention for aggregated usage.
         final_usage_attrs: dict[str, str | int | float | bool] = (
-            {
-                key.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): value
-                for key, value in usage_attrs.items()
-            }
+            {key.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): value for key, value in usage_attrs.items()}
             if settings.use_aggregated_usage_attribute_names
             else usage_attrs
         )
