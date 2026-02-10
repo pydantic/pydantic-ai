@@ -7,7 +7,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import Any, Literal, cast
 
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
@@ -35,14 +35,22 @@ from ...messages import (
     VideoUrl,
 )
 from ...output import OutputDataT
-from ...tools import AgentDepsT
+from ...tools import (
+    AgentDepsT,
+    DeferredToolApprovalResult,
+    DeferredToolResults,
+    ToolApproved,
+    ToolDenied,
+)
 from .. import MessagesBuilder, UIAdapter, UIEventStream
 from ._event_stream import VercelAIEventStream
 from ._utils import dump_provider_metadata, load_provider_metadata
 from .request_types import (
     DataUIPart,
+    DynamicToolApprovalRespondedPart,
     DynamicToolInputAvailablePart,
     DynamicToolOutputAvailablePart,
+    DynamicToolOutputDeniedPart,
     DynamicToolOutputErrorPart,
     DynamicToolUIPart,
     FileUIPart,
@@ -53,18 +61,16 @@ from .request_types import (
     SourceUrlUIPart,
     StepStartUIPart,
     TextUIPart,
+    ToolApprovalRespondedPart,
     ToolInputAvailablePart,
     ToolOutputAvailablePart,
+    ToolOutputDeniedPart,
     ToolOutputErrorPart,
     ToolUIPart,
     UIMessage,
     UIMessagePart,
 )
 from .response_types import BaseChunk
-
-if TYPE_CHECKING:
-    pass
-
 
 __all__ = ['VercelAIAdapter']
 
@@ -92,6 +98,17 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     def messages(self) -> list[ModelMessage]:
         """Pydantic AI messages from the Vercel AI run input."""
         return self.load_messages(self.run_input.messages)
+
+    @cached_property
+    def deferred_tool_results(self) -> DeferredToolResults | None:
+        """Extract deferred tool results from approval-responded parts in the run input messages."""
+        return self.extract_deferred_tool_results(self.run_input.messages)
+
+    def run_stream_native(self, *, deferred_tool_results: DeferredToolResults | None = None, **kwargs: Any) -> Any:
+        """Override to merge adapter-extracted deferred tool results."""
+        if deferred_tool_results is None:
+            deferred_tool_results = self.deferred_tool_results
+        return super().run_stream_native(deferred_tool_results=deferred_tool_results, **kwargs)
 
     @classmethod
     def load_messages(cls, messages: Sequence[UIMessage]) -> list[ModelMessage]:  # noqa: C901
@@ -278,6 +295,33 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 assert_never(msg.role)
 
         return builder.messages
+
+    @classmethod
+    def extract_deferred_tool_results(cls, messages: Sequence[UIMessage]) -> DeferredToolResults | None:
+        """Extract DeferredToolResults from approval-responded tool parts in messages."""
+        approvals: dict[str, bool | DeferredToolApprovalResult] = {}
+        for msg in messages:
+            if msg.role != 'assistant':
+                continue
+            for part in msg.parts:
+                if isinstance(
+                    part,
+                    (
+                        ToolApprovalRespondedPart,
+                        DynamicToolApprovalRespondedPart,
+                        ToolOutputDeniedPart,
+                        DynamicToolOutputDeniedPart,
+                    ),
+                ):
+                    if part.approval.approved:
+                        approvals[part.tool_call_id] = ToolApproved()
+                    else:
+                        approvals[part.tool_call_id] = ToolDenied(
+                            message=part.approval.reason or 'The tool call was denied.'
+                        )
+        if not approvals:
+            return None
+        return DeferredToolResults(approvals=approvals)
 
     @staticmethod
     def _dump_builtin_tool_meta(

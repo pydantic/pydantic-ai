@@ -4395,6 +4395,399 @@ async def test_event_stream_thinking_delta_with_provider_metadata():
     )
 
 
+async def test_run_stream_approval_request_chunks():
+    """Test that ToolApprovalRequestChunk is emitted when agent output is DeferredToolRequests."""
+    from pydantic_ai.tools import DeferredToolRequests
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {
+            0: DeltaToolCall(
+                name='delete_file',
+                json_args='{"path": "test.txt"}',
+                tool_call_id='tc_1',
+            )
+        }
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    async def delete_file(path: str) -> str:
+        return f'Deleted {path}'  # pragma: no cover
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Delete test.txt')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    # Find the tool-approval-request event
+    approval_events = [e for e in events if isinstance(e, dict) and e.get('type') == 'tool-approval-request']
+    assert len(approval_events) == 1
+    assert approval_events[0]['approvalId'] == 'tc_1'
+    assert approval_events[0]['toolCallId'] == 'tc_1'
+
+
+async def test_load_messages_approval_requested():
+    """Test that approval-requested parts produce ToolCallPart."""
+    from pydantic_ai.ui.vercel_ai.request_types import ApprovalInfo, ToolApprovalRequestedPart
+
+    messages = [
+        UIMessage(
+            id='msg_1',
+            role='assistant',
+            parts=[
+                ToolApprovalRequestedPart(
+                    type='tool-delete_file',
+                    tool_call_id='tc_1',
+                    state='approval-requested',
+                    input={'path': 'test.txt'},
+                    approval=ApprovalInfo(id='approval_1'),
+                ),
+            ],
+        ),
+    ]
+
+    result = VercelAIAdapter.load_messages(messages)
+    assert len(result) == 1
+    assert isinstance(result[0], ModelResponse)
+    assert len(result[0].parts) == 1
+    assert isinstance(result[0].parts[0], ToolCallPart)
+    assert result[0].parts[0].tool_name == 'delete_file'
+    assert result[0].parts[0].tool_call_id == 'tc_1'
+    assert result[0].parts[0].args == {'path': 'test.txt'}
+
+
+async def test_load_messages_approval_responded_approved():
+    """Test that approval-responded parts with approved=True produce ToolCallPart."""
+    from pydantic_ai.ui.vercel_ai.request_types import ApprovalInfo, ToolApprovalRespondedPart
+
+    messages = [
+        UIMessage(
+            id='msg_1',
+            role='assistant',
+            parts=[
+                ToolApprovalRespondedPart(
+                    type='tool-delete_file',
+                    tool_call_id='tc_1',
+                    state='approval-responded',
+                    input={'path': 'test.txt'},
+                    approval=ApprovalInfo(id='approval_1', approved=True),
+                ),
+            ],
+        ),
+    ]
+
+    result = VercelAIAdapter.load_messages(messages)
+    assert len(result) == 1
+    assert isinstance(result[0], ModelResponse)
+    assert len(result[0].parts) == 1
+    assert isinstance(result[0].parts[0], ToolCallPart)
+    assert result[0].parts[0].tool_name == 'delete_file'
+    assert result[0].parts[0].tool_call_id == 'tc_1'
+
+
+async def test_load_messages_approval_responded_denied():
+    """Test that approval-responded parts with approved=False produce ToolCallPart."""
+    from pydantic_ai.ui.vercel_ai.request_types import ApprovalInfo, ToolApprovalRespondedPart
+
+    messages = [
+        UIMessage(
+            id='msg_1',
+            role='assistant',
+            parts=[
+                ToolApprovalRespondedPart(
+                    type='tool-delete_file',
+                    tool_call_id='tc_1',
+                    state='approval-responded',
+                    input={'path': 'test.txt'},
+                    approval=ApprovalInfo(id='approval_1', approved=False, reason='Not allowed'),
+                ),
+            ],
+        ),
+    ]
+
+    result = VercelAIAdapter.load_messages(messages)
+    assert len(result) == 1
+    assert isinstance(result[0], ModelResponse)
+    assert len(result[0].parts) == 1
+    assert isinstance(result[0].parts[0], ToolCallPart)
+    assert result[0].parts[0].tool_name == 'delete_file'
+    assert result[0].parts[0].tool_call_id == 'tc_1'
+
+
+async def test_load_messages_output_denied():
+    """Test that output-denied parts produce ToolCallPart."""
+    from pydantic_ai.ui.vercel_ai.request_types import ApprovalInfo, ToolOutputDeniedPart
+
+    messages = [
+        UIMessage(
+            id='msg_1',
+            role='assistant',
+            parts=[
+                ToolOutputDeniedPart(
+                    type='tool-delete_file',
+                    tool_call_id='tc_1',
+                    state='output-denied',
+                    input={'path': 'test.txt'},
+                    approval=ApprovalInfo(id='approval_1', approved=False, reason='Denied by user'),
+                ),
+            ],
+        ),
+    ]
+
+    result = VercelAIAdapter.load_messages(messages)
+    assert len(result) == 1
+    assert isinstance(result[0], ModelResponse)
+    assert len(result[0].parts) == 1
+    assert isinstance(result[0].parts[0], ToolCallPart)
+    assert result[0].parts[0].tool_name == 'delete_file'
+    assert result[0].parts[0].tool_call_id == 'tc_1'
+
+
+async def test_load_messages_dynamic_tool_approval_responded():
+    """Test that dynamic tool approval-responded parts produce ToolCallPart."""
+    from pydantic_ai.ui.vercel_ai.request_types import ApprovalInfo, DynamicToolApprovalRespondedPart
+
+    messages = [
+        UIMessage(
+            id='msg_1',
+            role='assistant',
+            parts=[
+                DynamicToolApprovalRespondedPart(
+                    tool_name='delete_file',
+                    tool_call_id='tc_1',
+                    state='approval-responded',
+                    input={'path': 'test.txt'},
+                    approval=ApprovalInfo(id='approval_1', approved=True),
+                ),
+            ],
+        ),
+    ]
+
+    result = VercelAIAdapter.load_messages(messages)
+    assert len(result) == 1
+    assert isinstance(result[0], ModelResponse)
+    assert len(result[0].parts) == 1
+    assert isinstance(result[0].parts[0], ToolCallPart)
+    assert result[0].parts[0].tool_name == 'delete_file'
+    assert result[0].parts[0].tool_call_id == 'tc_1'
+
+
+async def test_extract_deferred_tool_results_approved():
+    """Test extract_deferred_tool_results returns ToolApproved for approved parts."""
+    from pydantic_ai.tools import DeferredToolResults, ToolApproved
+    from pydantic_ai.ui.vercel_ai.request_types import ApprovalInfo, ToolApprovalRespondedPart
+
+    messages = [
+        UIMessage(
+            id='msg_1',
+            role='assistant',
+            parts=[
+                ToolApprovalRespondedPart(
+                    type='tool-delete_file',
+                    tool_call_id='tc_1',
+                    state='approval-responded',
+                    input={'path': 'test.txt'},
+                    approval=ApprovalInfo(id='approval_1', approved=True),
+                ),
+            ],
+        ),
+    ]
+
+    result = VercelAIAdapter.extract_deferred_tool_results(messages)
+    assert result is not None
+    assert isinstance(result, DeferredToolResults)
+    assert 'tc_1' in result.approvals
+    assert isinstance(result.approvals['tc_1'], ToolApproved)
+
+
+async def test_extract_deferred_tool_results_denied():
+    """Test extract_deferred_tool_results returns ToolDenied for denied parts."""
+    from pydantic_ai.tools import DeferredToolResults, ToolDenied
+    from pydantic_ai.ui.vercel_ai.request_types import ApprovalInfo, ToolApprovalRespondedPart
+
+    messages = [
+        UIMessage(
+            id='msg_1',
+            role='assistant',
+            parts=[
+                ToolApprovalRespondedPart(
+                    type='tool-delete_file',
+                    tool_call_id='tc_1',
+                    state='approval-responded',
+                    input={'path': 'test.txt'},
+                    approval=ApprovalInfo(id='approval_1', approved=False, reason='Not safe'),
+                ),
+            ],
+        ),
+    ]
+
+    result = VercelAIAdapter.extract_deferred_tool_results(messages)
+    assert result is not None
+    assert isinstance(result, DeferredToolResults)
+    assert 'tc_1' in result.approvals
+    assert isinstance(result.approvals['tc_1'], ToolDenied)
+    assert result.approvals['tc_1'].message == 'Not safe'
+
+
+async def test_extract_deferred_tool_results_denied_default_message():
+    """Test extract_deferred_tool_results uses default denial message when reason is None."""
+    from pydantic_ai.tools import ToolDenied
+    from pydantic_ai.ui.vercel_ai.request_types import ApprovalInfo, DynamicToolApprovalRespondedPart
+
+    messages = [
+        UIMessage(
+            id='msg_1',
+            role='assistant',
+            parts=[
+                DynamicToolApprovalRespondedPart(
+                    tool_name='delete_file',
+                    tool_call_id='tc_1',
+                    state='approval-responded',
+                    input={'path': 'test.txt'},
+                    approval=ApprovalInfo(id='approval_1', approved=False),
+                ),
+            ],
+        ),
+    ]
+
+    result = VercelAIAdapter.extract_deferred_tool_results(messages)
+    assert result is not None
+    assert isinstance(result.approvals['tc_1'], ToolDenied)
+    assert result.approvals['tc_1'].message == 'The tool call was denied.'
+
+
+async def test_extract_deferred_tool_results_from_output_denied():
+    """Test extract_deferred_tool_results handles output-denied parts."""
+    from pydantic_ai.tools import ToolDenied
+    from pydantic_ai.ui.vercel_ai.request_types import ApprovalInfo, ToolOutputDeniedPart
+
+    messages = [
+        UIMessage(
+            id='msg_1',
+            role='assistant',
+            parts=[
+                ToolOutputDeniedPart(
+                    type='tool-delete_file',
+                    tool_call_id='tc_1',
+                    state='output-denied',
+                    input={'path': 'test.txt'},
+                    approval=ApprovalInfo(id='approval_1', approved=False, reason='Blocked'),
+                ),
+            ],
+        ),
+    ]
+
+    result = VercelAIAdapter.extract_deferred_tool_results(messages)
+    assert result is not None
+    assert isinstance(result.approvals['tc_1'], ToolDenied)
+    assert result.approvals['tc_1'].message == 'Blocked'
+
+
+async def test_extract_deferred_tool_results_none():
+    """Test extract_deferred_tool_results returns None when no approval-responded parts."""
+    messages = [
+        UIMessage(
+            id='msg_1',
+            role='assistant',
+            parts=[
+                TextUIPart(text='Hello', state='done'),
+            ],
+        ),
+    ]
+
+    result = VercelAIAdapter.extract_deferred_tool_results(messages)
+    assert result is None
+
+
+async def test_adapter_deferred_tool_results_property():
+    """Test the deferred_tool_results cached_property on VercelAIAdapter."""
+    from pydantic_ai.tools import DeferredToolResults, ToolApproved
+    from pydantic_ai.ui.vercel_ai.request_types import ApprovalInfo, DynamicToolApprovalRespondedPart
+
+    agent = Agent(model=TestModel())
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Approve the file deletion')],
+            ),
+            UIMessage(
+                id='baz',
+                role='assistant',
+                parts=[
+                    DynamicToolApprovalRespondedPart(
+                        tool_name='delete_file',
+                        tool_call_id='tc_1',
+                        state='approval-responded',
+                        input={'path': 'test.txt'},
+                        approval=ApprovalInfo(id='approval_1', approved=True),
+                    ),
+                ],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request)
+    result = adapter.deferred_tool_results
+    assert result is not None
+    assert isinstance(result, DeferredToolResults)
+    assert isinstance(result.approvals['tc_1'], ToolApproved)
+
+
+async def test_build_run_input_with_approval_parts():
+    """Test that build_run_input can parse JSON with approval-responded parts without validation errors."""
+    import json as json_mod
+
+    body = json_mod.dumps(
+        {
+            'trigger': 'submit-message',
+            'id': 'test_id',
+            'messages': [
+                {
+                    'id': 'msg_1',
+                    'role': 'user',
+                    'parts': [{'type': 'text', 'text': 'Delete test.txt'}],
+                },
+                {
+                    'id': 'msg_2',
+                    'role': 'assistant',
+                    'parts': [
+                        {
+                            'type': 'dynamic-tool',
+                            'toolName': 'delete_file',
+                            'toolCallId': 'tc_1',
+                            'state': 'approval-responded',
+                            'input': {'path': 'test.txt'},
+                            'approval': {'id': 'approval_1', 'approved': True},
+                        }
+                    ],
+                },
+            ],
+        }
+    ).encode()
+
+    run_input = VercelAIAdapter.build_run_input(body)
+    assert len(run_input.messages) == 2
+    assert run_input.messages[1].role == 'assistant'
+
+
 def _sync_timestamps(original: list[ModelMessage], new: list[ModelMessage]) -> None:
     """Utility function to sync timestamps between original and new messages."""
     for orig_msg, new_msg in zip(original, new):

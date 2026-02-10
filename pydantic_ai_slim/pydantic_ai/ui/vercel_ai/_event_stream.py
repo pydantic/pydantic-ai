@@ -25,7 +25,7 @@ from ...messages import (
 )
 from ...output import OutputDataT
 from ...run import AgentRunResultEvent
-from ...tools import AgentDepsT
+from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
 from ._utils import dump_provider_metadata
 from .request_types import RequestData
@@ -45,6 +45,7 @@ from .response_types import (
     TextDeltaChunk,
     TextEndChunk,
     TextStartChunk,
+    ToolApprovalRequestChunk,
     ToolInputAvailableChunk,
     ToolInputDeltaChunk,
     ToolInputStartChunk,
@@ -110,8 +111,13 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         pydantic_reason = event.result.response.finish_reason
         if pydantic_reason:
             self._finish_reason = _FINISH_REASON_MAP.get(pydantic_reason, 'other')
-        return
-        yield
+
+        if isinstance(event.result.output, DeferredToolRequests):
+            for tool_call in event.result.output.approvals:
+                yield ToolApprovalRequestChunk(
+                    approval_id=tool_call.tool_call_id,
+                    tool_call_id=tool_call.tool_call_id,
+                )
 
     async def on_error(self, error: Exception) -> AsyncIterator[BaseChunk]:
         self._finish_reason = 'error'
