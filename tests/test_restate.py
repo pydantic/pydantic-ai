@@ -288,6 +288,8 @@ async def test_restate_agent_event_stream_handler_maps_user_error_to_terminal_er
     async def plus_one(ctx: RunContext, x: int) -> int:
         return x + 1
 
+    assert await plus_one(_run_ctx(), 1) == 2
+
     restate_agent = RestateAgent(agent, fake_ctx, event_stream_handler=event_stream_handler)
     with pytest.raises(TerminalError, match='event handler failed'):
         await restate_agent.run('go')
@@ -323,6 +325,8 @@ async def test_restate_agent_restrictions():
     @extra_toolset.tool
     async def extra() -> str:
         return 'ok'
+
+    assert await extra() == 'ok'
 
     with pytest.raises(TerminalError, match='Toolsets cannot be set at agent run time'):
         await restate_agent.run('x', toolsets=[extra_toolset])
