@@ -1122,7 +1122,7 @@ async def test_aggregated_usage_attribute_names(capfire: CaptureLogfire) -> None
 
     def model_function(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
         # Return a response with usage that includes extra details (cache tokens)
-        # to test that non-input/output attributes are preserved
+        # to test that all gen_ai.usage.* attributes are translated
         return ModelResponse(
             parts=[TextPart('Hello!')],
             usage=RequestUsage(input_tokens=10, output_tokens=5, cache_read_tokens=2),
@@ -1134,21 +1134,35 @@ async def test_aggregated_usage_attribute_names(capfire: CaptureLogfire) -> None
     await agent.run('Hello')
 
     spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
-    agent_run_span = next(s for s in spans if s['name'] == 'agent run')
 
-    # Verify that agent run span uses aggregated_usage attribute names for all gen_ai.usage.* attributes
-    assert 'gen_ai.aggregated_usage.input_tokens' in agent_run_span['attributes']
-    assert 'gen_ai.aggregated_usage.output_tokens' in agent_run_span['attributes']
-    assert 'gen_ai.aggregated_usage.details.cache_read_tokens' in agent_run_span['attributes']
-    # Verify that the standard names are NOT used on agent run spans
-    assert 'gen_ai.usage.input_tokens' not in agent_run_span['attributes']
-    assert 'gen_ai.usage.output_tokens' not in agent_run_span['attributes']
-    assert 'gen_ai.usage.details.cache_read_tokens' not in agent_run_span['attributes']
+    # Verify that agent run span uses aggregated_usage attribute names
+    agent_run_span = next(s for s in spans if s['name'] == 'agent run')
+    assert agent_run_span['attributes'] == snapshot(
+        {
+            'model_name': 'function:model_function:',
+            'agent_name': 'agent',
+            'gen_ai.agent.name': 'agent',
+            'logfire.msg': 'agent run',
+            'logfire.span_type': 'span',
+            'final_result': 'Hello!',
+            'gen_ai.aggregated_usage.input_tokens': 10,
+            'gen_ai.aggregated_usage.output_tokens': 5,
+            'gen_ai.aggregated_usage.details.cache_read_tokens': 2,
+            'pydantic_ai.all_messages': [
+                {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
+                {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Hello!'}]},
+            ],
+            'logfire.json_schema': {
+                'type': 'object',
+                'properties': {'pydantic_ai.all_messages': {'type': 'array'}, 'final_result': {'type': 'object'}},
+            },
+        }
+    )
 
     # Verify that model/chat span still uses standard attribute names
     chat_span = next(s for s in spans if 'chat' in s['name'])
-    assert 'gen_ai.usage.input_tokens' in chat_span['attributes']
-    assert 'gen_ai.usage.output_tokens' in chat_span['attributes']
+    assert chat_span['attributes']['gen_ai.usage.input_tokens'] == 10
+    assert chat_span['attributes']['gen_ai.usage.output_tokens'] == 5
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
