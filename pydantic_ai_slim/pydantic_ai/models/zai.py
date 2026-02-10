@@ -19,7 +19,7 @@ try:
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the Z.AI model, '
-        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
+        'you can use the `zai` optional group — `pip install "pydantic-ai-slim[zai]"`'
     ) from _import_error
 
 __all__ = ('ZaiModel', 'ZaiModelName', 'ZaiModelSettings')
