@@ -27,9 +27,9 @@ def my_helper():
     ...
 
 
-@pytest.mark.parametrize('provider', ['openai', 'anthropic', 'google'], indirect=True)
+@pytest.mark.parametrize('model', ['openai', 'anthropic', 'google'], indirect=True)
 @pytest.mark.parametrize('stream', [False, True])
-async def test_feature(provider: str, stream: bool):
+async def test_feature(model: Model, stream: bool):
     ...
 ```
 
@@ -38,6 +38,8 @@ async def test_feature(provider: str, stream: bool):
 For cartesian product tests, use a dict to map parameter combinations to expected results:
 
 ```python
+from pydantic_ai.models import Model
+
 # expectation can be a dataclass, for more complex cases
 EXPECTATIONS: dict[tuple[str, bool], str] = {
     ('openai', False): 'expected output for openai non-streaming',
@@ -47,9 +49,9 @@ EXPECTATIONS: dict[tuple[str, bool], str] = {
 }
 
 
-@pytest.mark.parametrize('provider', ['openai', 'anthropic'], indirect=True)
+@pytest.mark.parametrize('model', ['openai', 'anthropic'], indirect=True)
 @pytest.mark.parametrize('stream', [False, True])
-async def test_feature(provider: str, stream: bool, request: pytest.FixtureRequest, vcr: Cassette):
+async def test_feature(model: Model, stream: bool, request: pytest.FixtureRequest, vcr: Cassette):
     """What the test is asserting.
 
     Use the `request` fixture to access test parameter values.
@@ -58,10 +60,10 @@ async def test_feature(provider: str, stream: bool, request: pytest.FixtureReque
     Another creative way of, for instance, asserting headers, is to use a patched httpx client fixture.
     This spares us the overhead of parsing cassette fields, so it is to be preferred whenever optimal.
     """
-    provider_name = request.node.callspec.params['provider']
-    expected = EXPECTATIONS[(provider_name, stream)]
+    model_name = request.node.callspec.params['model']
+    expected = EXPECTATIONS[(model_name, stream)]
 
-    agent = Agent(provider)
+    agent = Agent(model)
     if stream:
         async with agent.run_stream('hello') as result:
             output = await result.get_output()
@@ -84,15 +86,15 @@ EXPECTATIONS: dict[tuple[str, bool], str] = {
     ('anthropic', True): snapshot(),
 }
 
-@pytest.mark.parametrize('provider', ['openai', 'anthropic'], indirect=True)
+@pytest.mark.parametrize('model', ['openai', 'anthropic'], indirect=True)
 @pytest.mark.parametrize('stream', [False, True])
-async def test_feature_with_snapshots(provider: str, stream: bool, request: pytest.FixtureRequest):
-    agent = Agent(provider)
+async def test_feature_with_snapshots(model: Model, stream: bool, request: pytest.FixtureRequest):
+    agent = Agent(model)
     result = await agent.run('hello')
 
-    provider_name = request.node.callspec.params['provider']
+    model_name = request.node.callspec.params['model']
     # snapshots auto-fill per parameter combination
-    assert result.all_messages() == EXPECTATIONS[(provider_name, stream)]
+    assert result.all_messages() == EXPECTATIONS[(model_name, stream)]
 ```
 
 ## VCR Workflow
