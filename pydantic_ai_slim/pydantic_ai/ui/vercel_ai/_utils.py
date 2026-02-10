@@ -4,7 +4,13 @@ from collections.abc import Iterable, Iterator
 from typing import Any
 
 from pydantic_ai.messages import ProviderDetailsDelta, ToolReturnPart
-from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, ProviderMetadata
+from pydantic_ai.ui.vercel_ai.response_types import (
+    DataChunk,
+    FileChunk,
+    ProviderMetadata,
+    SourceDocumentChunk,
+    SourceUrlChunk,
+)
 
 __all__ = []
 
@@ -46,25 +52,42 @@ def dump_provider_metadata(
         return filtered if filtered else None
 
 
-def iter_metadata_chunks(tool_result: ToolReturnPart) -> Iterator[BaseChunk]:
-    """Iterate over BaseChunks from ToolReturnPart metadata or content.
+# Data-carrying chunk types that have a direct UIMessagePart counterpart in the
+# Vercel AI SDK (as of ai@6.0.57).  Protocol-control chunks (StartChunk,
+# FinishChunk, StartStepChunk, ToolInputStartChunk, etc.) are excluded because
+# they could corrupt the SSE stream state if injected from tool metadata.
+# See: https://github.com/vercel/ai/blob/ai%406.0.57/packages/ai/src/ui/ui-messages.ts#L75
+#
+# If the Vercel AI SDK introduces new data-carrying UIMessagePart variants,
+# the corresponding chunk type should be added here.
+_DATA_CHUNK_TYPES = (DataChunk, SourceUrlChunk, SourceDocumentChunk, FileChunk)
+
+
+def iter_metadata_chunks(
+    tool_result: ToolReturnPart,
+) -> Iterator[DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk]:
+    """Iterate over data-carrying chunks from ToolReturnPart metadata or content.
 
     Used by both the streaming path (``_event_stream.py``) and the dump path
     (``_adapter.py``) to extract user-supplied chunks from tool return metadata.
+
+    Only data-carrying chunk types (``DataChunk``, ``SourceUrlChunk``,
+    ``SourceDocumentChunk``, ``FileChunk``) are yielded.  Protocol-control
+    chunks are filtered out to prevent corruption of the SSE stream state.
 
     Args:
         tool_result: The tool return part to extract chunks from.
 
     Yields:
-        BaseChunk instances found in the metadata/content.
+        Data-carrying chunk instances found in the metadata/content.
     """
     possible = tool_result.metadata or tool_result.content
-    if isinstance(possible, BaseChunk):
+    if isinstance(possible, _DATA_CHUNK_TYPES):
         yield possible
     elif isinstance(possible, str | bytes):  # pragma: no branch
         # Avoid iterable check for strings and bytes.
         pass
     elif isinstance(possible, Iterable):  # pragma: no branch
         for item in possible:  # type: ignore[reportUnknownMemberType]
-            if isinstance(item, BaseChunk):  # pragma: no branch
+            if isinstance(item, _DATA_CHUNK_TYPES):  # pragma: no branch
                 yield item

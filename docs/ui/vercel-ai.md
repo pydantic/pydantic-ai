@@ -88,8 +88,12 @@ async def chat(request: Request) -> Response:
 ### Data Chunks
 
 Pydantic AI tools can send [Vercel AI data stream chunks](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol) by returning a
-[`ToolReturn`](../tools-advanced.md#advanced-tool-returns) object with a
-[`BaseChunk`][pydantic_ai.ui.vercel_ai.response_types.BaseChunk] (or a list of chunks) as `metadata`.
+[`ToolReturn`](../tools-advanced.md#advanced-tool-returns) object with a data-carrying chunk
+(or a list of chunks) as `metadata`.
+The supported chunk types are [`DataChunk`][pydantic_ai.ui.vercel_ai.response_types.DataChunk],
+[`SourceUrlChunk`][pydantic_ai.ui.vercel_ai.response_types.SourceUrlChunk],
+[`SourceDocumentChunk`][pydantic_ai.ui.vercel_ai.response_types.SourceDocumentChunk],
+and [`FileChunk`][pydantic_ai.ui.vercel_ai.response_types.FileChunk].
 This is useful for attaching structured data to the frontend alongside the tool result, such as source URLs or custom data payloads.
 
 ```python {title="vercel_ai_tool_chunks.py"}
@@ -117,5 +121,5 @@ async def search_docs(query: str) -> ToolReturn:
     )
 ```
 
-!!! warning
-    Avoid emitting protocol control chunks such as `StartChunk`, `FinishChunk`, `StartStepChunk`, or `FinishStepChunk` from tool metadata — these are managed by the adapter and injecting them out of order will corrupt the stream state machine, likely causing UI errors on the frontend.
+!!! note
+    Protocol-control chunks such as `StartChunk`, `FinishChunk`, `StartStepChunk`, or `FinishStepChunk` are automatically filtered out — only the four data-carrying chunk types listed above are forwarded to the stream and preserved in `dump_messages`.

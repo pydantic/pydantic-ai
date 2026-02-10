@@ -1772,10 +1772,11 @@ async def test_run_stream_tool_metadata_multiple_chunks():
     )
 
 
-async def test_run_stream_tool_metadata_yields_all_base_chunks():
-    """Test that all BaseChunk subclasses in ToolReturnPart.metadata are yielded to the stream.
+async def test_run_stream_tool_metadata_yields_data_chunks():
+    """Test that data-carrying chunks in ToolReturnPart.metadata are yielded to the stream.
 
-    Users are responsible for only emitting chunk types that make sense in context.
+    Only data-carrying chunk types (DataChunk, SourceUrlChunk, SourceDocumentChunk,
+    FileChunk) are yielded; protocol-control chunks are filtered out by iter_metadata_chunks.
     """
 
     async def stream_function(
@@ -1796,6 +1797,8 @@ async def test_run_stream_tool_metadata_yields_all_base_chunks():
                 SourceUrlChunk(source_id='src_1', url='https://example.com', title='Example'),
                 SourceDocumentChunk(source_id='doc_1', media_type='application/pdf', title='Doc', filename='doc.pdf'),
                 FileChunk(url='https://example.com/file.png', media_type='image/png'),
+                # Protocol-control chunk — filtered out by iter_metadata_chunks
+                ToolInputStartChunk(tool_call_id='call_x', tool_name='other'),
                 DataChunk(type='data-valid', data={'survived': True}),
             ],
         )
@@ -2772,12 +2775,12 @@ async def test_adapter_dump_messages_with_tool_metadata_multiple_chunks():
     )
 
 
-async def test_adapter_dump_messages_with_tool_metadata_all_base_chunks():
-    """Test that all BaseChunk subclasses in ToolReturnPart.metadata are converted in dump_messages.
+async def test_adapter_dump_messages_with_tool_metadata_data_chunks():
+    """Test that data-carrying chunks in ToolReturnPart.metadata are converted in dump_messages.
 
-    Mirrors test_run_stream_tool_metadata_yields_all_base_chunks — both paths
-    should support all BaseChunk types. Chunks with known UI part equivalents
-    are converted; others are skipped.
+    Mirrors test_run_stream_tool_metadata_yields_data_chunks — both paths
+    filter via iter_metadata_chunks to only handle data-carrying chunk types.
+    Protocol-control chunks (e.g. ToolInputStartChunk) are filtered out.
     """
     messages = [
         ModelRequest(parts=[UserPromptPart(content='Send data')]),
@@ -2802,7 +2805,7 @@ async def test_adapter_dump_messages_with_tool_metadata_all_base_chunks():
                             source_id='doc_1', media_type='application/pdf', title='Doc', filename='doc.pdf'
                         ),
                         FileChunk(url='https://example.com/file.png', media_type='image/png'),
-                        # Unknown chunk type — should be silently skipped by _extract_metadata_ui_parts
+                        # Protocol-control chunk — filtered out by iter_metadata_chunks
                         ToolInputStartChunk(tool_call_id='call_x', tool_name='other'),
                         DataChunk(type='data-valid', data={'survived': True}),
                     ],

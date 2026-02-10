@@ -255,7 +255,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         # ToolOutputAvailableChunk/ToolOutputErrorChunk.output may hold user parts
         # (e.g. text, images) that Vercel AI does not currently have chunk types for.
 
-        # Check for Vercel AI chunks returned by tool calls via metadata.
+        # Check for data-carrying Vercel AI chunks returned by tool calls via metadata.
+        # Only data-carrying chunks (DataChunk, SourceUrlChunk, etc.) are yielded;
+        # protocol-control chunks are filtered out by iter_metadata_chunks.
         if isinstance(part, ToolReturnPart):
             for chunk in iter_metadata_chunks(part):
                 yield chunk
