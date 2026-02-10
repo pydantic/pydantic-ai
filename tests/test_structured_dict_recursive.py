@@ -136,6 +136,3 @@ def test_structured_dict_with_non_recursive_defs():
     result = adapter.validate_python(data)
     assert result['name'] == 'Alice'
     assert result['address']['city'] == 'NYC'
-
-
-
