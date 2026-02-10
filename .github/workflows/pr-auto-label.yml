@@ -76,11 +76,6 @@ jobs:
     if: github.event.action == 'opened'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions:
-      id-token: write
-      contents: read
-      issues: write
-      pull-requests: write
     steps:
       - name: Check for modified config files
         if: github.event.pull_request.head.repo.fork
@@ -116,6 +111,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           allowed_non_write_users: '*'
           claude_args: |
             --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels:*)"
