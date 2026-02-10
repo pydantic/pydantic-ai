@@ -125,6 +125,10 @@ async def build_search_db():
 
         # Chunk the content if it's large
         chunks = chunker.chunk(content)
+        # Chunk the content if it's large
+        # For this example, we embed the first chunk if content was split
+        # In production, you might want to store multiple chunks per section
+        chunks = chunker.chunk(content)
         chunk_text = chunks[0].text if chunks else content
 
         records.append(
