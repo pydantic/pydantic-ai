@@ -589,4 +589,6 @@ def _extract_metadata_ui_parts(tool_result: ToolReturnPart) -> list[UIMessagePar
             )
         elif isinstance(chunk, FileChunk):
             parts.append(FileUIPart(url=chunk.url, media_type=chunk.media_type))
+        else:
+            assert_never(chunk)
     return parts
