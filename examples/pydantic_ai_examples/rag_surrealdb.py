@@ -159,10 +159,7 @@ DOCS_JSON = (
 
 
 def build_doc_rec_id(url: str) -> RecordID:
-    # url = section.url()
-    url_slug = slugify(url, '_')
-    record_id = RecordID('doc_sections', url_slug)
-    return record_id
+    return RecordID('doc_sections', slugify(url, '_'))
 
 
 async def build_search_db():
