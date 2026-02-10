@@ -1,0 +1,181 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '376'
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Use the get_file tool now to retrieve a image file, then describe what you received.
+        role: user
+      model: mistral-medium-latest
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '437'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019c486c-933a-7eb4-abae-1bb46f679c79
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{}'
+              name: get_file
+            id: 6IgxW8LfZ
+            index: 0
+      created: 1770741601
+      id: 77c6e5f45390472c80a3e022a79d13c1
+      model: mistral-medium-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 6
+        num_cached_tokens: 0
+        prompt_tokens: 64
+        total_tokens: 70
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '889'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=iOzm55mh02Lh_RFWl9ua4h9e49M8Rmtf7QL_.mLZVLA-1770741601-1.0.1.1-BHVIpEV5M.1Z34O3W9TE_5efeXjlDlPE6QlmS2IJLFVnh2C9CvXmODf9xJytzqw6jdqcn98SYYf1A77VyF3fml3TXM8qH_pM4W8Ex7_J92Y;
+        _cfuvid=Y7C3MRFZXKI3LFOlNVi_NceO4tKMzjd_WELS.kFbhVA-1770741601338-0.0.1.1-604800000
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Use the get_file tool now to retrieve a image file, then describe what you received.
+        role: user
+      - content: []
+        prefix: false
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: get_file
+          id: 6IgxW8LfZ
+          index: 0
+          type: function
+      - content: See file 6a18c6.
+        role: tool
+        tool_call_id: 6IgxW8LfZ
+      - content:
+        - text: OK
+          type: text
+        prefix: false
+        role: assistant
+      - content:
+        - text: 'This is file 6a18c6:'
+          type: text
+        - image_url:
+            url: https://www.gstatic.com/webp/gallery3/1.png
+          type: image_url
+        role: user
+      model: mistral-medium-latest
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '844'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019c486c-9550-72d6-9e42-36456f087c00
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: The image shows a beautiful rose in the process of blooming. The petals are a vibrant mix of yellow and
+            orange hues, with a soft gradient transitioning between the two colors. The outer petals have a slightly deeper
+            orange tone, while the inner petals are a brighter yellow. There are also delicate water droplets on one of the
+            petals, adding a fresh and natural touch to the flower. The rose is attached to a thin stem with small green leaves.
+            The overall appearance is serene and elegant.
+          role: assistant
+          tool_calls: null
+      created: 1770741601
+      id: 5c2b206859a249ee91b65591faa85b92
+      model: mistral-medium-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 104
+        num_cached_tokens: 32
+        prompt_tokens: 273
+        total_tokens: 377
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -7,19 +7,15 @@ from dataclasses import KW_ONLY, dataclass
 from typing import Any, Literal
 
 from pydantic_core import to_json
-from typing_extensions import assert_never
 
 from ...messages import (
     RETURN_VALUE_KEY,
     BaseToolReturnPart,
-    BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FilePart,
-    FileUrl,
     FinishReason as PydanticFinishReason,
     FunctionToolResultEvent,
-    MultiModalContent,
     RetryPromptPart,
     TextPart,
     TextPartDelta,
@@ -32,6 +28,7 @@ from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT
 from .. import UIEventStream
+from .._event_stream import describe_file
 from ._utils import dump_provider_metadata
 from .request_types import RequestData
 from .response_types import (
@@ -265,7 +262,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if not part.files:
             return result
 
-        file_descriptions = [_describe_file(f) for f in part.files]
+        file_descriptions = [describe_file(f) for f in part.files]
 
         if isinstance(result, str):
             return result + '\n' + '\n'.join(file_descriptions)
@@ -278,13 +275,3 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             return '\n'.join(file_descriptions)
         else:
             return result
-
-
-def _describe_file(file: MultiModalContent) -> str:
-    """Return a human-readable description of a file."""
-    if isinstance(file, FileUrl):
-        return f'[File: {file.url}]'
-    elif isinstance(file, BinaryContent):
-        return f'[File: {file.media_type}]'
-    else:
-        assert_never(file)

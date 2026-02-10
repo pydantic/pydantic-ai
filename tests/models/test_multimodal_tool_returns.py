@@ -2,7 +2,7 @@
 
 This module tests multimodal tool returns across all providers using a cartesian
 product of test dimensions:
-- provider: anthropic, bedrock, google, openai_chat, openai_responses, groq, xai
+- provider: anthropic, bedrock, google, openai_chat, openai_responses, groq, mistral, xai
 - file_type: image, document, audio, video
 - content_source: binary, url, url_force_download
 - return_style: direct (return file), tool_return_content (via ToolReturn.content)
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from tests.cassette_utils import CassetteContext
 
 from pydantic_ai import Agent, BinaryContent, BinaryImage
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
     AudioUrl,
     DocumentUrl,
@@ -65,6 +65,10 @@ with try_import() as bedrock_available:
 with try_import() as groq_available:
     from pydantic_ai.models.groq import GroqModel
     from pydantic_ai.providers.groq import GroqProvider
+
+with try_import() as mistral_available:
+    from pydantic_ai.models.mistral import MistralModel
+    from pydantic_ai.providers.mistral import MistralProvider
 
 with try_import() as xai_available:
     from pydantic_ai.models.xai import XaiModel
@@ -116,6 +120,10 @@ SUPPORT_MATRIX: dict[tuple[str, str], Expectation] = {
     ('groq', 'document'): 'error',
     ('groq', 'audio'): 'error',
     ('groq', 'video'): 'error',
+    ('mistral', 'image'): 'fallback',
+    ('mistral', 'document'): 'fallback',
+    ('mistral', 'audio'): 'error',
+    ('mistral', 'video'): 'error',
 }
 
 FileTypeType = Literal['image', 'document', 'audio', 'video']
@@ -393,6 +401,96 @@ ERROR_DETAILS: list[ExpectError] = [
         return_style='tool_return_content',
         match='VideoUrl is not supported in Groq',
     ),
+    ExpectError(
+        'mistral',
+        'audio',
+        content_source='binary',
+        return_style='direct',
+        error_type=UserError,
+        match='Unsupported binary content type for Mistral tool returns: audio/mpeg',
+    ),
+    ExpectError(
+        'mistral',
+        'audio',
+        content_source='binary',
+        return_style='tool_return_content',
+        match='BinaryContent other than image or PDF is not supported in Mistral',
+    ),
+    ExpectError(
+        'mistral',
+        'audio',
+        content_source='url',
+        return_style='direct',
+        error_type=UserError,
+        match='AudioUrl is not supported for Mistral tool returns',
+    ),
+    ExpectError(
+        'mistral',
+        'audio',
+        content_source='url',
+        return_style='tool_return_content',
+        match='Unsupported content type',
+    ),
+    ExpectError(
+        'mistral',
+        'audio',
+        content_source='url_force_download',
+        return_style='direct',
+        error_type=UserError,
+        match='AudioUrl is not supported for Mistral tool returns',
+    ),
+    ExpectError(
+        'mistral',
+        'audio',
+        content_source='url_force_download',
+        return_style='tool_return_content',
+        match='Unsupported content type',
+    ),
+    ExpectError(
+        'mistral',
+        'video',
+        content_source='binary',
+        return_style='direct',
+        error_type=UserError,
+        match='Unsupported binary content type for Mistral tool returns: video/mp4',
+    ),
+    ExpectError(
+        'mistral',
+        'video',
+        content_source='binary',
+        return_style='tool_return_content',
+        match='BinaryContent other than image or PDF is not supported in Mistral',
+    ),
+    ExpectError(
+        'mistral',
+        'video',
+        content_source='url',
+        return_style='direct',
+        error_type=UserError,
+        match='VideoUrl is not supported for Mistral tool returns',
+    ),
+    ExpectError(
+        'mistral',
+        'video',
+        content_source='url',
+        return_style='tool_return_content',
+        match='VideoUrl is not supported in Mistral',
+    ),
+    ExpectError(
+        'mistral',
+        'video',
+        content_source='url_force_download',
+        return_style='direct',
+        error_type=UserError,
+        match='VideoUrl is not supported for Mistral tool returns',
+    ),
+    ExpectError(
+        'mistral',
+        'video',
+        content_source='url_force_download',
+        return_style='tool_return_content',
+        match='VideoUrl is not supported in Mistral',
+    ),
 ]
 
 
@@ -418,6 +516,7 @@ MODEL_CONFIGS: dict[str, tuple[str, Any]] = {
     'openai_chat': ('gpt-5-mini', openai_available),
     'openai_responses': ('gpt-5-mini', openai_available),
     'groq': ('meta-llama/llama-4-maverick-17b-128e-instruct', groq_available),
+    'mistral': ('mistral-medium-latest', mistral_available),
     'xai': ('grok-4-1-fast-non-reasoning', xai_available),
 }
 
@@ -442,6 +541,8 @@ def create_model(
         return OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key=api_keys['openai']))
     elif provider == 'groq':
         return GroqModel(model_name, provider=GroqProvider(api_key=api_keys['groq']))
+    elif provider == 'mistral':
+        return MistralModel(model_name, provider=MistralProvider(api_key=api_keys['mistral']))
     elif provider == 'xai':
         assert xai_provider is not None
         return XaiModel(model_name, provider=xai_provider)
@@ -674,6 +775,7 @@ def api_keys(
     anthropic_api_key: str,
     gemini_api_key: str,
     groq_api_key: str,
+    mistral_api_key: str,
     xai_api_key: str,
 ) -> dict[str, str]:
     return {
@@ -681,6 +783,7 @@ def api_keys(
         'anthropic': anthropic_api_key,
         'google': gemini_api_key,
         'groq': groq_api_key,
+        'mistral': mistral_api_key,
         'xai': xai_api_key,
     }
 

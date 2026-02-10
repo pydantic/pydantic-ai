@@ -11,16 +11,11 @@ from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
 from typing import Final
 
-from typing_extensions import assert_never
-
 from ..._utils import now_utc
 from ...messages import (
-    BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
-    FileUrl,
     FunctionToolResultEvent,
-    MultiModalContent,
     RetryPromptPart,
     TextPart,
     TextPartDelta,
@@ -33,6 +28,7 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT
 from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
+from .._event_stream import describe_file
 
 try:
     from ag_ui.core import (
@@ -261,20 +257,10 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 def _tool_return_content(part: BuiltinToolReturnPart | ToolReturnPart) -> str:
     """Return tool output string with file descriptions if present."""
     output = part.model_response_str()
-    if file_descriptions := [_describe_file(f) for f in part.files]:
+    if file_descriptions := [describe_file(f) for f in part.files]:
         if output:
             return output + '\n' + '\n'.join(file_descriptions)
         else:
             return '\n'.join(file_descriptions)
     else:
         return output
-
-
-def _describe_file(file: MultiModalContent) -> str:
-    """Return a human-readable description of a file."""
-    if isinstance(file, FileUrl):
-        return f'[File: {file.url}]'
-    elif isinstance(file, BinaryContent):
-        return f'[File: {file.media_type}]'
-    else:
-        assert_never(file)
