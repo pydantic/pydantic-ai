@@ -304,7 +304,7 @@ if __name__ == '__main__':
         uvicorn.run(app, host='127.0.0.1', port=7932)
     else:
         print(
-            'uv run --extra examples -m pydantic_ai_examples.rag_surrealdb build|search',
+            'uv run --extra examples -m pydantic_ai_examples.rag_surrealdb build|search|web',
             file=sys.stderr,
         )
         sys.exit(1)
