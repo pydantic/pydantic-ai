@@ -159,7 +159,33 @@ class ToolOutputErrorPart(BaseUIPart):
     call_provider_metadata: ProviderMetadata | None = None
 
 
-ToolUIPart = ToolInputStreamingPart | ToolInputAvailablePart | ToolOutputAvailablePart | ToolOutputErrorPart
+class ToolApproval(CamelBaseModel):
+    """Approval decision for a tool invocation."""
+
+    id: str
+    approved: bool = True
+    reason: str | None = None
+
+
+class ToolApprovalRespondedPart(BaseUIPart):
+    """Tool part in approval-responded state."""
+
+    type: Annotated[str, Field(pattern=r'^tool-')]
+    tool_call_id: str
+    state: Literal['approval-responded'] = 'approval-responded'
+    input: Any | None = None
+    approval: ToolApproval
+    provider_executed: bool | None = None
+    call_provider_metadata: ProviderMetadata | None = None
+
+
+ToolUIPart = (
+    ToolInputStreamingPart
+    | ToolInputAvailablePart
+    | ToolOutputAvailablePart
+    | ToolOutputErrorPart
+    | ToolApprovalRespondedPart
+)
 """Union of all tool part types."""
 
 
@@ -211,11 +237,24 @@ class DynamicToolOutputErrorPart(BaseUIPart):
     call_provider_metadata: ProviderMetadata | None = None
 
 
+class DynamicToolApprovalRespondedPart(BaseUIPart):
+    """Dynamic tool part in approval-responded state."""
+
+    type: Literal['dynamic-tool'] = 'dynamic-tool'
+    tool_name: str
+    tool_call_id: str
+    state: Literal['approval-responded'] = 'approval-responded'
+    input: Any | None = None
+    approval: ToolApproval
+    call_provider_metadata: ProviderMetadata | None = None
+
+
 DynamicToolUIPart = (
     DynamicToolInputStreamingPart
     | DynamicToolInputAvailablePart
     | DynamicToolOutputAvailablePart
     | DynamicToolOutputErrorPart
+    | DynamicToolApprovalRespondedPart
 )
 """Union of all dynamic tool part types."""
 

@@ -385,3 +385,4 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 - [Advanced Tool Features](tools-advanced.md) - Custom schemas, dynamic tools, and execution details
 - [Toolsets](toolsets.md) - Managing collections of tools, including `ExternalToolset` for external tools
 - [Message History](message-history.md) - Understanding how to work with message history for deferred tools
+- [Vercel AI Integration](ui/vercel-ai.md#tool-approval) - Tool approval with Vercel AI frontends

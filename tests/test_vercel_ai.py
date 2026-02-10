@@ -4527,3 +4527,187 @@ class TestSdkVersion:
             e for e in events_v6 if isinstance(e, dict) and e.get('type') == 'tool-input-start'
         )
         assert 'providerMetadata' in tool_input_start_v6
+
+
+async def test_event_stream_deferred_tool_approval_request():
+    """Test that handle_run_result emits ToolApprovalRequestChunk for DeferredToolRequests."""
+    from pydantic_ai._agent_graph import GraphAgentState
+    from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
+    from pydantic_ai.tools import DeferredToolRequests
+
+    deferred = DeferredToolRequests(
+        approvals=[
+            ToolCallPart(tool_name='dangerous_tool', args={'x': 1}, tool_call_id='tc_approve_1'),
+            ToolCallPart(tool_name='risky_tool', args={'y': 2}, tool_call_id='tc_approve_2'),
+        ],
+    )
+
+    state = GraphAgentState(
+        message_history=[
+            ModelResponse(parts=[ToolCallPart(tool_name='dangerous_tool', args={'x': 1}, tool_call_id='tc_approve_1')]),
+        ]
+    )
+
+    result = AgentRunResult(output=deferred, _state=state)
+    event = AgentRunResultEvent(result=result)
+
+    async def event_generator():
+        yield event
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Do something dangerous')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'tool-approval-request', 'approvalId': 'tc_approve_1', 'toolCallId': 'tc_approve_1'},
+            {'type': 'tool-approval-request', 'approvalId': 'tc_approve_2', 'toolCallId': 'tc_approve_2'},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_adapter_load_messages_tool_approval_responded_part():
+    """Test loading ToolApprovalRespondedPart creates ToolCallPart without return."""
+    from pydantic_ai.ui.vercel_ai.request_types import ToolApproval, ToolApprovalRespondedPart
+
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                ToolApprovalRespondedPart(
+                    type='tool-dangerous_tool',
+                    tool_call_id='tc_approval_1',
+                    input='{"x": 1}',
+                    approval=ToolApproval(id='apr_1', approved=True),
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='dangerous_tool', args={'x': 1}, tool_call_id='tc_approval_1'),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+async def test_adapter_load_messages_dynamic_tool_approval_responded_part():
+    """Test loading DynamicToolApprovalRespondedPart creates ToolCallPart without return."""
+    from pydantic_ai.ui.vercel_ai.request_types import DynamicToolApprovalRespondedPart, ToolApproval
+
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                DynamicToolApprovalRespondedPart(
+                    tool_name='risky_tool',
+                    tool_call_id='tc_dyn_approval_1',
+                    input='{"y": 2}',
+                    approval=ToolApproval(id='apr_2', approved=False, reason='User denied this action.'),
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='risky_tool', args={'y': 2}, tool_call_id='tc_dyn_approval_1'),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+async def test_adapter_load_deferred_tool_results_approved():
+    """Test load_deferred_tool_results extracts approved DeferredToolResults."""
+    from pydantic_ai.tools import DeferredToolResults, ToolApproved
+    from pydantic_ai.ui.vercel_ai.request_types import DynamicToolApprovalRespondedPart, ToolApproval
+
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                DynamicToolApprovalRespondedPart(
+                    tool_name='my_tool',
+                    tool_call_id='tc_1',
+                    input='{"x": 1}',
+                    approval=ToolApproval(id='apr_1', approved=True),
+                )
+            ],
+        )
+    ]
+
+    result = VercelAIAdapter.load_deferred_tool_results(ui_messages)
+    assert result == DeferredToolResults(approvals={'tc_1': ToolApproved()})
+
+
+async def test_adapter_load_deferred_tool_results_denied():
+    """Test load_deferred_tool_results extracts denied DeferredToolResults."""
+    from pydantic_ai.tools import DeferredToolResults, ToolDenied
+    from pydantic_ai.ui.vercel_ai.request_types import DynamicToolApprovalRespondedPart, ToolApproval
+
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                DynamicToolApprovalRespondedPart(
+                    tool_name='my_tool',
+                    tool_call_id='tc_2',
+                    input='{"x": 1}',
+                    approval=ToolApproval(id='apr_2', approved=False, reason='Not allowed.'),
+                )
+            ],
+        )
+    ]
+
+    result = VercelAIAdapter.load_deferred_tool_results(ui_messages)
+    assert result == DeferredToolResults(approvals={'tc_2': ToolDenied(message='Not allowed.')})
+
+
+async def test_adapter_load_deferred_tool_results_none_when_no_approvals():
+    """Test load_deferred_tool_results returns None when there are no approval-responded parts."""
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='user',
+            parts=[TextUIPart(text='Hello')],
+        )
+    ]
+
+    result = VercelAIAdapter.load_deferred_tool_results(ui_messages)
+    assert result is None
+
+
+async def test_run_stream_explicit_deferred_tool_results():
+    """Cover the branch where deferred_tool_results is explicitly provided to run_stream_native."""
+    from pydantic_ai.tools import DeferredToolResults
+
+    agent = Agent(model=TestModel())
+    request = SubmitMessage(id='x', messages=[UIMessage(id='u', role='user', parts=[TextUIPart(text='Hi')])])
+    adapter = VercelAIAdapter(agent, request)
+    events = [e async for e in adapter.encode_stream(adapter.run_stream(deferred_tool_results=DeferredToolResults()))]
+    assert any('[DONE]' in e for e in events)

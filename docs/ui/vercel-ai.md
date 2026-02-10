@@ -84,3 +84,7 @@ async def chat(request: Request) -> Response:
     sse_event_stream = adapter.encode_stream(event_stream)
     return StreamingResponse(sse_event_stream, media_type=accept)
 ```
+
+## Tool Approval
+
+The adapter supports [human-in-the-loop tool approval](../deferred-tools.md#human-in-the-loop-tool-approval). When an agent returns [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests], the adapter streams `tool-approval-request` events to the frontend. When the frontend sends back `approval-responded` parts, the adapter automatically converts them into [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] and passes them to the next agent run.

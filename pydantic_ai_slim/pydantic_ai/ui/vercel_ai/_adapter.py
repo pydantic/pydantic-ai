@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -35,12 +35,13 @@ from ...messages import (
     VideoUrl,
 )
 from ...output import OutputDataT
-from ...tools import AgentDepsT
+from ...tools import AgentDepsT, DeferredToolResults, ToolApproved, ToolDenied
 from .. import MessagesBuilder, UIAdapter, UIEventStream
 from ._event_stream import VercelAIEventStream
 from ._utils import dump_provider_metadata, load_provider_metadata
 from .request_types import (
     DataUIPart,
+    DynamicToolApprovalRespondedPart,
     DynamicToolInputAvailablePart,
     DynamicToolOutputAvailablePart,
     DynamicToolOutputErrorPart,
@@ -53,6 +54,7 @@ from .request_types import (
     SourceUrlUIPart,
     StepStartUIPart,
     TextUIPart,
+    ToolApprovalRespondedPart,
     ToolInputAvailablePart,
     ToolOutputAvailablePart,
     ToolOutputErrorPart,
@@ -63,7 +65,14 @@ from .request_types import (
 from .response_types import BaseChunk
 
 if TYPE_CHECKING:
-    pass
+    from ...agent.abstract import AgentMetadata, Instructions
+    from ...builtin_tools import AbstractBuiltinTool
+    from ...models import KnownModelName, Model
+    from ...output import OutputSpec
+    from ...settings import ModelSettings
+    from ...toolsets import AbstractToolset
+    from ...usage import RunUsage, UsageLimits
+    from .._event_stream import NativeEvent
 
 
 __all__ = ['VercelAIAdapter']
@@ -88,10 +97,72 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         """Build a Vercel AI event stream transformer."""
         return VercelAIEventStream(self.run_input, accept=self.accept, sdk_version=self.sdk_version)
 
+    def run_stream_native(
+        self,
+        *,
+        output_type: OutputSpec[Any] | None = None,
+        message_history: Sequence[ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        model: Model | KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: UsageLimits | None = None,
+        usage: RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+    ) -> AsyncIterator[NativeEvent]:
+        if deferred_tool_results is None:
+            deferred_tool_results = self.deferred_tool_results
+        return super().run_stream_native(
+            output_type=output_type,
+            message_history=message_history,
+            deferred_tool_results=deferred_tool_results,
+            model=model,
+            instructions=instructions,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            usage=usage,
+            metadata=metadata,
+            infer_name=infer_name,
+            toolsets=toolsets,
+            builtin_tools=builtin_tools,
+        )
+
     @cached_property
     def messages(self) -> list[ModelMessage]:
         """Pydantic AI messages from the Vercel AI run input."""
         return self.load_messages(self.run_input.messages)
+
+    @cached_property
+    def deferred_tool_results(self) -> DeferredToolResults | None:
+        """Extract deferred tool results from approval-responded parts in the request messages."""
+        return self.load_deferred_tool_results(self.run_input.messages)
+
+    @classmethod
+    def load_deferred_tool_results(cls, messages: Sequence[UIMessage]) -> DeferredToolResults | None:
+        """Extract deferred tool results from approval-responded parts in the UI messages."""
+        approvals: dict[str, bool | ToolApproved | ToolDenied] = {}
+
+        for msg in messages:
+            if msg.role != 'assistant':
+                continue
+            for part in msg.parts:
+                if isinstance(part, ToolApprovalRespondedPart | DynamicToolApprovalRespondedPart):
+                    if part.approval.approved:
+                        approvals[part.tool_call_id] = ToolApproved()
+                    else:
+                        approvals[part.tool_call_id] = ToolDenied(
+                            message=part.approval.reason or 'The tool call was denied.'
+                        )
+
+        if not approvals:
+            return None
+
+        return DeferredToolResults(approvals=approvals)
 
     @classmethod
     def load_messages(cls, messages: Sequence[UIMessage]) -> list[ModelMessage]:  # noqa: C901
