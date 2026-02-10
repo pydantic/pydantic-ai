@@ -114,9 +114,8 @@ def _zai_settings_to_openai_settings(model_settings: ZaiModelSettings) -> OpenAI
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
     """
-    extra_body = cast(dict[str, Any], model_settings.get('extra_body', {}))
+    extra_body = dict(cast(dict[str, Any], model_settings.get('extra_body', {})))
 
-    thinking_enabled = model_settings.pop('zai_thinking', None)
     thinking_enabled = model_settings.get('zai_thinking')
     clear_thinking = model_settings.get('zai_clear_thinking')
 
@@ -128,7 +127,8 @@ def _zai_settings_to_openai_settings(model_settings: ZaiModelSettings) -> OpenAI
             thinking['clear_thinking'] = clear_thinking
         extra_body['thinking'] = thinking
 
+    filtered = {k: v for k, v in model_settings.items() if not k.startswith('zai_')}
     if extra_body:
-        model_settings['extra_body'] = extra_body
+        filtered['extra_body'] = extra_body
 
-    return OpenAIChatModelSettings(**model_settings)  # type: ignore[reportCallIssue]
+    return OpenAIChatModelSettings(**filtered)  # type: ignore[reportCallIssue]
