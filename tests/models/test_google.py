@@ -2578,7 +2578,9 @@ async def test_google_url_input_force_download(
     )
 
 
-async def test_google_gs_url_force_download_raises_user_error(allow_model_requests: None) -> None:
+async def test_google_gs_url_force_download_raises_user_error(
+    allow_model_requests: None, disable_ssrf_protection_for_vcr: None
+) -> None:
     provider = GoogleProvider(project='pydantic-ai', location='us-central1')
     m = GoogleModel('gemini-2.0-flash', provider=provider)
     agent = Agent(m)
@@ -4808,7 +4810,7 @@ async def test_gcs_video_url_with_vendor_metadata_on_google_vertex(mocker: Mocke
     }
 
 
-async def test_gcs_video_url_raises_error_on_google_gla():
+async def test_gcs_video_url_raises_error_on_google_gla(disable_ssrf_protection_for_vcr: None):
     """GCS URIs on google-gla fall through to FileUrl and raise a clear error.
 
     google-gla cannot access GCS buckets, so attempting to use gs:// URLs
