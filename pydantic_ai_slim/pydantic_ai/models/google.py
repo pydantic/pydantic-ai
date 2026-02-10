@@ -194,18 +194,21 @@ class GoogleModelSettings(ModelSettings, total=False):
     """
 
     google_logprobs: bool
-    """Include log probabilities in the response. Only supported by the Vertex AI API.
+    """Include log probabilities in the response.
 
     See <https://docs.cloud.google.com/vertex-ai/generative-ai/docs/multimodal/content-generation-parameters#log-probabilities-output-tokens> for more information
-    Note: Only supported for non-streaming requests.
 
+    Note: Only supported for Vertex AI and non-streaming requests.
+
+    These will be included in `ModelResponse.provider_details['logprobs']`.
     """
 
     google_top_logprobs: int
-    """Include log probabilities of the top n tokens in the response. Only supported by the Vertex AI API.
+    """Include log probabilities of the top n tokens in the response.
 
-    <https://docs.cloud.google.com/vertex-ai/generative-ai/docs/multimodal/content-generation-parameters#log-probabilities-output-tokens>
-    Note: Only supported for non-streaming requests.
+    See <https://docs.cloud.google.com/vertex-ai/generative-ai/docs/multimodal/content-generation-parameters#log-probabilities-output-tokens>
+
+    Note: Only supported for Vertex AI and non-streaming requests.
     """
 
 
@@ -589,8 +592,8 @@ class GoogleModel(Model):
                 'Use non-streaming mode to get logprobs'
             )
 
-        if 'google_logprobs' in model_settings:
-            config['response_logprobs'] = model_settings.get('google_logprobs')
+        if logprobs_requested:
+            config['response_logprobs'] = True
 
             if 'google_top_logprobs' in model_settings:
                 config['logprobs'] = model_settings.get('google_top_logprobs')
