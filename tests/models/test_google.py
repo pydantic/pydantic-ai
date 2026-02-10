@@ -9,7 +9,7 @@ import re
 import tempfile
 from collections.abc import AsyncIterator
 from datetime import date, timezone
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from httpx import AsyncClient as HttpxAsyncClient, Timeout
@@ -2689,8 +2689,6 @@ async def test_google_extra_headers(allow_model_requests: None, google_provider:
 
 
 async def test_google_extra_headers_in_config(allow_model_requests: None):
-    from typing import cast
-
     m = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
     model_settings = GoogleModelSettings(extra_headers={'Extra-Header-Key': 'Extra-Header-Value'})
 
