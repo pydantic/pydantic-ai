@@ -255,7 +255,7 @@ class ToolManager(Generic[AgentDepsT]):
         # Handle unknown tool
         if tool is None:
             if self.tools:
-                msg = f'Available tools: {", ".join(f"{name!r}" for name in self.tools.keys())}'
+                msg = f'Available tools: {", ".join(f"{n!r}" for n in self.tools)}'
             else:
                 msg = 'No tools available.'
             error_msg = f'Unknown tool name: {name!r}. {msg}'
@@ -316,26 +316,17 @@ class ToolManager(Generic[AgentDepsT]):
     async def execute_tool_call(
         self,
         validated: ToolCallValidation[AgentDepsT],
-        *,
-        tracer: Tracer | None = None,
-        include_content: bool = True,
-        instrumentation_version: int | None = None,
-        usage: RunUsage | None = None,
     ) -> Any:
-        """Execute a validated tool call, optionally within a trace span.
+        """Execute a validated tool call, within a trace span for function tools.
 
         This method handles both successful validation (executes the tool) and failed validation
         (creates a span to record the error and raises ToolRetryError).
 
         For output tools, no tracing is performed.
-        For function tools, a trace span is created if tracer is provided.
+        For function tools, a trace span is created using the tracer from the run context.
 
         Args:
             validated: The validation result from validate_tool_call().
-            tracer: Optional tracer for creating spans. If None, no tracing is performed.
-            include_content: Whether to include tool arguments and results in the span.
-            instrumentation_version: The instrumentation version for span attribute names.
-            usage: Usage tracking object to increment tool_calls count.
 
         Returns:
             The tool result if validation passed and execution succeeded.
@@ -350,17 +341,17 @@ class ToolManager(Generic[AgentDepsT]):
         # Determine if this is an output tool (no tracing)
         is_output_tool = validated.tool is not None and validated.tool.tool_def.kind == 'output'
 
-        if is_output_tool or tracer is None:
-            # Output tools and calls without tracer: no tracing
-            return await self._execute_tool_call_impl(validated, usage=usage)
+        if is_output_tool:
+            # Output tools: no tracing, no usage tracking
+            return await self._execute_tool_call_impl(validated)
         else:
             # Function tools: trace the execution
             return await self._execute_function_tool_call(
                 validated,
-                tracer=tracer,
-                include_content=include_content,
-                instrumentation_version=instrumentation_version or self.ctx.instrumentation_version,
-                usage=usage,
+                tracer=self.ctx.tracer,
+                include_content=self.ctx.trace_include_content,
+                instrumentation_version=self.ctx.instrumentation_version,
+                usage=self.ctx.usage,
             )
 
     async def _execute_tool_call_impl(
@@ -505,10 +496,4 @@ class ToolManager(Generic[AgentDepsT]):
         )
 
         # Execute the validated call (with tracing for function tools)
-        return await self.execute_tool_call(
-            validated,
-            tracer=self.ctx.tracer,
-            include_content=self.ctx.trace_include_content,
-            instrumentation_version=self.ctx.instrumentation_version,
-            usage=self.ctx.usage,
-        )
+        return await self.execute_tool_call(validated)

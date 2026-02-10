@@ -875,13 +875,22 @@ def build_validation_context(
         return validation_ctx
 
 
-def _skipped_output_part(call: _messages.ToolCallPart, content: str) -> _messages.ToolReturnPart:
-    """Build a ToolReturnPart for an output tool call that was skipped."""
-    return _messages.ToolReturnPart(
+def _skip_output_tool(
+    call: _messages.ToolCallPart,
+    message: str,
+    output_parts: list[_messages.ModelRequestPart],
+    *,
+    args_valid: bool = False,
+) -> Iterator[_messages.HandleResponseEvent]:
+    """Yield events for an output tool call that was skipped, and append the result to output_parts."""
+    yield _messages.FunctionToolCallEvent(call, args_valid=args_valid)
+    part = _messages.ToolReturnPart(
         tool_name=call.tool_name,
-        content=content,
+        content=message,
         tool_call_id=call.tool_call_id,
     )
+    output_parts.append(part)
+    yield _messages.FunctionToolResultEvent(part)
 
 
 async def process_tool_calls(  # noqa: C901
@@ -922,10 +931,8 @@ async def process_tool_calls(  # noqa: C901
             output_parts.append(part)
         # Early strategy is chosen and final result is already set
         elif ctx.deps.end_strategy == 'early' and final_result:
-            yield _messages.FunctionToolCallEvent(call)
-            part = _skipped_output_part(call, 'Output tool not used - a final result was already processed.')
-            output_parts.append(part)
-            yield _messages.FunctionToolResultEvent(part)
+            for event in _skip_output_tool(call, 'Output tool not used - a final result was already processed.', output_parts):
+                yield event
         # Early strategy is chosen and final result is not yet set
         # Or exhaustive strategy is chosen
         else:
@@ -936,10 +943,8 @@ async def process_tool_calls(  # noqa: C901
                 # Max retries exceeded
                 if final_result:
                     # If we already have a valid final result, skip without failing
-                    yield _messages.FunctionToolCallEvent(call, args_valid=False)
-                    part = _skipped_output_part(call, 'Output tool not used - output failed validation.')
-                    output_parts.append(part)
-                    yield _messages.FunctionToolResultEvent(part)
+                    for event in _skip_output_tool(call, 'Output tool not used - output failed validation.', output_parts):
+                        yield event
                     continue
                 else:
                     ctx.state.increment_retries(
@@ -952,10 +957,8 @@ async def process_tool_calls(  # noqa: C901
                 assert validated.validation_error is not None
                 if final_result:
                     # Already have a result, just note that this tool wasn't used
-                    yield _messages.FunctionToolCallEvent(call, args_valid=False)
-                    part = _skipped_output_part(call, 'Output tool not used - output failed validation.')
-                    output_parts.append(part)
-                    yield _messages.FunctionToolResultEvent(part)
+                    for event in _skip_output_tool(call, 'Output tool not used - output failed validation.', output_parts):
+                        yield event
                 else:
                     ctx.state.increment_retries(
                         ctx.deps.max_result_retries,
@@ -973,10 +976,8 @@ async def process_tool_calls(  # noqa: C901
                     # Max retries exceeded during execution
                     if final_result:
                         # Already have a result, just note that this tool wasn't used
-                        yield _messages.FunctionToolCallEvent(call, args_valid=True)
-                        part = _skipped_output_part(call, 'Output tool not used - tool execution failed.')
-                        output_parts.append(part)
-                        yield _messages.FunctionToolResultEvent(part)
+                        for event in _skip_output_tool(call, 'Output tool not used - tool execution failed.', output_parts, args_valid=True):
+                            yield event
                     else:
                         ctx.state.increment_retries(
                             ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
@@ -1082,7 +1083,7 @@ async def process_tool_calls(  # noqa: C901
                 try:
                     validated = await tool_manager.validate_tool_call(call)
                 except exceptions.UnexpectedModelBehavior:
-                    # Max retries exceeded - re-raise
+                    yield _messages.FunctionToolCallEvent(call, args_valid=False)
                     raise
 
                 yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
@@ -1097,17 +1098,8 @@ async def process_tool_calls(  # noqa: C901
                     # Validation failed — no tool is actually executed here. We call
                     # execute_tool_call so the validation error is raised inside a trace span.
                     # Retries are already tracked by validate_tool_call() via failed_tools.
-                    run_context = tool_manager.ctx
-                    if run_context is None:
-                        raise RuntimeError('Expected run context to be set')  # pragma: no cover
                     try:
-                        await tool_manager.execute_tool_call(
-                            validated,
-                            tracer=ctx.deps.tracer,
-                            include_content=run_context.trace_include_content,
-                            instrumentation_version=run_context.instrumentation_version,
-                            usage=ctx.state.usage,
-                        )
+                        await tool_manager.execute_tool_call(validated)
                     except ToolRetryError as e:
                         output_parts.append(e.tool_retry)
                         yield _messages.FunctionToolResultEvent(e.tool_retry)
@@ -1296,14 +1288,7 @@ async def _call_tool(
     try:
         if tool_call_result is None:
             if validated is not None:
-                assert tool_manager.ctx is not None
-                tool_result = await tool_manager.execute_tool_call(
-                    validated,
-                    tracer=tool_manager.ctx.tracer,
-                    include_content=tool_manager.ctx.trace_include_content,
-                    instrumentation_version=tool_manager.ctx.instrumentation_version,
-                    usage=tool_manager.ctx.usage,
-                )
+                tool_result = await tool_manager.execute_tool_call(validated)
             else:
                 raise RuntimeError('Expected validated tool call')  # pragma: no cover
         elif isinstance(tool_call_result, ToolApproved):
