@@ -196,7 +196,7 @@ class GoogleModelSettings(ModelSettings, total=False):
     google_logprobs: bool
     """Include log probabilities in the response.
 
-    See <https://docs.cloud.google.com/vertex-ai/generative-ai/docs/multimodal/content-generation-parameters#log-probabilities-output-tokens> for more information
+    See <https://docs.cloud.google.com/vertex-ai/generative-ai/docs/multimodal/content-generation-parameters#log-probabilities-output-tokens> for more information.
 
     Note: Only supported for Vertex AI and non-streaming requests.
 
@@ -206,7 +206,7 @@ class GoogleModelSettings(ModelSettings, total=False):
     google_top_logprobs: int
     """Include log probabilities of the top n tokens in the response.
 
-    See <https://docs.cloud.google.com/vertex-ai/generative-ai/docs/multimodal/content-generation-parameters#log-probabilities-output-tokens>
+    See <https://docs.cloud.google.com/vertex-ai/generative-ai/docs/multimodal/content-generation-parameters#log-probabilities-output-tokens> for more information.
 
     Note: Only supported for Vertex AI and non-streaming requests.
     """
@@ -581,7 +581,7 @@ class GoogleModel(Model):
         if logprobs_requested and self._provider.name != 'google-vertex':
             raise UserError(
                 'Logprobs are only supported on Vertex AI. '
-                'Use provider="google-vertex" to enable logprobs. '
+                'Use `GoogleProvider(vertexai=True)`or the `google-vertex` provider prefix to enable logprobs. '
                 f'Current provider: {self._provider.name}'
             )
 
@@ -589,7 +589,7 @@ class GoogleModel(Model):
         if logprobs_requested and stream:
             raise UserError(
                 'Logprobs are not supported for streaming requests with Google models. '
-                'Use non-streaming mode to get logprobs'
+                'Use non-streaming mode to get logprobs.'
             )
 
         if logprobs_requested:
