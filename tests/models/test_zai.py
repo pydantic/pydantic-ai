@@ -7,10 +7,13 @@ import pytest
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.zai import (
+        ZaiModel,
         ZaiModelSettings,
         _zai_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.providers.zai import ZaiProvider
 
 
 pytestmark = [
@@ -59,3 +62,14 @@ async def test_zai_settings_preserves_existing_extra_body():
     extra_body = cast(dict[str, Any], transformed.get('extra_body', {}))
     assert extra_body.get('thinking') == {'type': 'enabled'}
     assert extra_body.get('custom_key') == 'value'
+
+
+async def test_zai_model_prepare_request(zai_api_key: str):
+    provider = ZaiProvider(api_key=zai_api_key)
+    model = ZaiModel('glm-4.7', provider=provider)
+    settings = ZaiModelSettings(zai_thinking=True, zai_clear_thinking=False)
+    params = ModelRequestParameters()
+    merged_settings, _ = model.prepare_request(settings, params)
+    assert merged_settings is not None
+    extra_body = cast(dict[str, Any], merged_settings.get('extra_body', {}))
+    assert extra_body.get('thinking') == {'type': 'enabled', 'clear_thinking': False}
