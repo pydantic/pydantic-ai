@@ -940,3 +940,125 @@ Don't include any text or Markdown fencing before or after.
             },
         ]
     )
+
+
+# --- Continuation pinning tests ---
+
+
+def test_fallback_primary_continuation_then_succeeds() -> None:
+    """Primary returns expects_continuation=True, gets pinned, then returns normally. Fallback never called."""
+    call_count = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[TextPart('paused')], expects_continuation=True, finish_reason='incomplete')
+        return ModelResponse(parts=[TextPart('done')])
+
+    def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise AssertionError('Fallback should not be called')
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    fallback_model_instance = FunctionModel(fallback, model_name='fallback')
+    model = FallbackModel(primary_model, fallback_model_instance)
+    agent = Agent(model=model)
+
+    result = agent.run_sync('test')
+    assert result.output == 'done'
+    assert call_count == 2
+
+
+def test_fallback_secondary_continuation_back_to_primary() -> None:
+    """Primary fails, fallback returns expects_continuation, gets pinned, finishes with tool call,
+    then tool executes. On new request: primary succeeds (pin cleared)."""
+    primary_calls = 0
+    fallback_calls = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal primary_calls
+        primary_calls += 1
+        if primary_calls == 1:
+            raise ModelHTTPError(status_code=500, model_name='primary', body='error')
+        return ModelResponse(parts=[TextPart('final answer')])
+
+    def fallback_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        if fallback_calls == 1:
+            return ModelResponse(parts=[TextPart('working...')], expects_continuation=True, finish_reason='incomplete')
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call_1')],
+        )
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    fallback_model_instance = FunctionModel(fallback_fn, model_name='fallback')
+    model = FallbackModel(primary_model, fallback_model_instance)
+
+    agent = Agent(model=model)
+
+    @agent.tool_plain
+    def my_tool() -> str:
+        return 'tool result'
+
+    result = agent.run_sync('test')
+    # After fallback finishes continuation (no more expects_continuation), pin is cleared.
+    # Next request (after tool execution) goes through normal fallback chain → primary succeeds.
+    assert result.output == 'final answer'
+    assert primary_calls == 2  # first call failed, second succeeded
+    assert fallback_calls == 2  # first returned continuation, second returned tool call
+
+
+def test_fallback_primary_continuation_fails() -> None:
+    """Primary returns expects_continuation, gets pinned, then primary raises error.
+    Error propagates — fallback NOT tried."""
+    call_count = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[TextPart('paused')], expects_continuation=True, finish_reason='incomplete')
+        raise ModelHTTPError(status_code=500, model_name='primary', body='continuation failed')
+
+    def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise AssertionError('Fallback should not be called during pinned continuation')
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    fallback_model_instance = FunctionModel(fallback, model_name='fallback')
+    model = FallbackModel(primary_model, fallback_model_instance)
+    agent = Agent(model=model)
+
+    with pytest.raises(ModelHTTPError, match='500'):
+        agent.run_sync('test')
+    assert call_count == 2
+
+
+def test_fallback_secondary_continuation_fails() -> None:
+    """Primary fails, fallback returns expects_continuation, gets pinned, then fallback raises error.
+    Error propagates — primary NOT retried."""
+    primary_calls = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal primary_calls
+        primary_calls += 1
+        raise ModelHTTPError(status_code=500, model_name='primary', body='error')
+
+    fallback_calls = 0
+
+    def fallback_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        if fallback_calls == 1:
+            return ModelResponse(parts=[TextPart('working...')], expects_continuation=True, finish_reason='incomplete')
+        raise ModelHTTPError(status_code=500, model_name='fallback', body='continuation failed')
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    fallback_model_instance = FunctionModel(fallback_fn, model_name='fallback')
+    model = FallbackModel(primary_model, fallback_model_instance)
+    agent = Agent(model=model)
+
+    with pytest.raises(ModelHTTPError, match='500'):
+        agent.run_sync('test')
+    assert primary_calls == 1  # failed once, never retried
+    assert fallback_calls == 2  # first returned continuation, second failed

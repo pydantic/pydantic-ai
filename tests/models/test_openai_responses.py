@@ -53,7 +53,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, TestEnv, try_import
-from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
+from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, get_mock_retrieve_kwargs, response_message
 
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
@@ -10011,3 +10011,283 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
     response2 = cast(ModelResponse, messages2[1])
     text_part2 = next(part for part in response2.parts if isinstance(part, TextPart))
     assert not (text_part2.provider_details or {}).get('annotations')
+
+
+# --- Background mode VCR tests ---
+
+
+async def test_background_mode_vcr(allow_model_requests: None, openai_api_key: str):
+    """VCR test: background mode with a simple prompt.
+
+    When background=True, the API may return 'queued'/'in_progress' before completing.
+    The agent's continuation loop handles polling via retrieve().
+    """
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model)
+
+    result = await agent.run(
+        'What is 2 + 2?',
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
+    )
+
+    assert '4' in result.output
+
+    messages = result.all_messages()
+    # Verify the final response completed successfully
+    final_response = messages[-1]
+    assert isinstance(final_response, ModelResponse)
+    assert final_response.expects_continuation is False
+
+
+async def test_background_mode_with_tool_vcr(allow_model_requests: None, openai_api_key: str):
+    """VCR test: background mode with a tool call."""
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model)
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        """Get current weather for a city."""
+        return f'Sunny and 72F in {city}'
+
+    result = await agent.run(
+        'What is the weather in Paris? Use the get_weather tool.',
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
+    )
+
+    assert 'Paris' in result.output or 'Sunny' in result.output
+
+    messages = result.all_messages()
+    final_response = messages[-1]
+    assert isinstance(final_response, ModelResponse)
+    assert final_response.expects_continuation is False
+
+
+# --- Background mode mock tests ---
+
+
+async def test_background_queued_then_completed(allow_model_requests: None):
+    """Background mode: create returns status='queued', retrieve returns status='completed'."""
+    queued_response = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    queued_response.status = 'queued'
+
+    completed_response = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(
+                    list[Content], [ResponseOutputText(text='The answer is 42.', type='output_text', annotations=[])]
+                ),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    completed_response.status = 'completed'
+
+    mock_client = MockOpenAIResponses(
+        response=queued_response,
+        retrieve_responses=[completed_response],
+    )
+    mock_client = cast(AsyncOpenAI, mock_client)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    result = await agent.run(
+        'What is the meaning of life?',
+        model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+    )
+    assert result.output == 'The answer is 42.'
+
+    # Verify the first response had expects_continuation=True
+    messages = result.all_messages()
+    first_response = messages[1]
+    assert isinstance(first_response, ModelResponse)
+    assert first_response.expects_continuation is True
+    assert first_response.finish_reason == 'incomplete'
+
+    # Verify the final response has expects_continuation=False
+    final_response = messages[-1]
+    assert isinstance(final_response, ModelResponse)
+    assert final_response.expects_continuation is False
+
+
+async def test_background_in_progress_then_completed(allow_model_requests: None):
+    """Background mode: create returns status='in_progress', retrieve returns status='completed'."""
+    in_progress_response = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(
+                    list[Content], [ResponseOutputText(text='thinking...', type='output_text', annotations=[])]
+                ),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    in_progress_response.status = 'in_progress'
+
+    completed_response = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='Done!', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    completed_response.status = 'completed'
+
+    mock_client = MockOpenAIResponses(
+        response=in_progress_response,
+        retrieve_responses=[completed_response],
+    )
+    mock_client = cast(AsyncOpenAI, mock_client)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    result = await agent.run(
+        'Hello',
+        model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+    )
+    assert result.output == 'Done!'
+
+
+async def test_background_passes_parameter(allow_model_requests: None):
+    """Verify background=True appears in create kwargs."""
+    completed_response = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    completed_response.status = 'completed'
+
+    mock_client = MockOpenAIResponses.create_mock(completed_response)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    await agent.run(
+        'test',
+        model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+    )
+
+    kwargs = get_mock_responses_kwargs(mock_client)
+    assert kwargs[0]['background'] is True
+
+
+async def test_background_max_continuations(allow_model_requests: None):
+    """Background mode: stays in_progress beyond limit → UnexpectedModelBehavior."""
+    in_progress_response = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(
+                    list[Content], [ResponseOutputText(text='still working...', type='output_text', annotations=[])]
+                ),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    in_progress_response.status = 'in_progress'
+
+    # Create enough retrieve responses to exceed the limit
+    retrieve_response = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(
+                    list[Content], [ResponseOutputText(text='still working...', type='output_text', annotations=[])]
+                ),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    retrieve_response.status = 'in_progress'
+
+    mock_client = MockOpenAIResponses(
+        response=in_progress_response,
+        retrieve_responses=[retrieve_response, retrieve_response, retrieve_response],
+    )
+    mock_client = cast(AsyncOpenAI, mock_client)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum continuations \\(2\\)'):
+        await agent.run(
+            'test',
+            model_settings=OpenAIResponsesModelSettings(
+                openai_background=True, openai_background_poll_interval=0, max_continuations=2
+            ),
+        )
+
+
+async def test_background_retrieve_uses_response_id(allow_model_requests: None):
+    """Verify that the retrieve call uses the response ID from the create response."""
+    queued_response = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    queued_response.status = 'queued'
+    queued_response.id = 'resp_bg_123'
+
+    completed_response = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='final', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    completed_response.status = 'completed'
+
+    mock_client = MockOpenAIResponses(
+        response=queued_response,
+        retrieve_responses=[completed_response],
+    )
+    mock_client = cast(AsyncOpenAI, mock_client)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    result = await agent.run(
+        'test',
+        model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+    )
+    assert result.output == 'final'
+
+    retrieve_kwargs = get_mock_retrieve_kwargs(mock_client)
+    assert len(retrieve_kwargs) == 1
+    assert retrieve_kwargs[0]['response_id'] == 'resp_bg_123'

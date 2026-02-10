@@ -305,6 +305,7 @@ async def test_pause_turn_continues_run(allow_model_requests: None):
                 provider_details={'finish_reason': 'pause_turn'},
                 provider_response_id='123',
                 finish_reason='incomplete',
+                expects_continuation=True,
                 run_id=IsStr(),
             ),
             ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),

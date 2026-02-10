@@ -113,7 +113,8 @@ FinishReason: TypeAlias = Literal[
 """Reason the model finished generating the response.
 
 Mostly normalized to OpenTelemetry semantic convention values. `incomplete` is a Pydantic AI-specific value
-indicating the provider paused the turn and expects the client to continue with a follow-up request.
+indicating the response content is not final. Whether the agent should automatically continue
+is determined by `ModelResponse.expects_continuation`, not by this field.
 """
 
 ForceDownloadMode: TypeAlias = bool | Literal['allow-local']
@@ -1345,6 +1346,17 @@ class ModelResponse:
 
     finish_reason: FinishReason | None = None
     """Reason the model finished generating the response, normalized to OpenTelemetry values."""
+
+    expects_continuation: bool = False
+    """Whether the model expects a follow-up request to continue generating.
+
+    When True, the agent graph will automatically send a continuation request.
+    This is set by providers that pause mid-turn (e.g. Anthropic `pause_turn`)
+    or return background/async responses (e.g. OpenAI background mode).
+
+    Note: `finish_reason='incomplete'` is informational only — it indicates the
+    response content is not final, but does NOT by itself trigger continuation.
+    """
 
     run_id: str | None = None
     """The unique identifier of the agent run in which this message originated."""

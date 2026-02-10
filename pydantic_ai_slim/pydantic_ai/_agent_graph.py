@@ -617,8 +617,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             output_schema = ctx.deps.output_schema
 
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
-                if self.model_response.finish_reason == 'incomplete':
-                    # Some providers (e.g. Anthropic pause_turn) pause mid-turn and expect us to continue.
+                if self.model_response.expects_continuation:
+                    # Some providers (e.g. Anthropic pause_turn, OpenAI background mode) pause mid-turn
+                    # and expect us to continue.
                     # Yield events for any builtin tool calls/results already in the response,
                     # so stream consumers (UI, logging) can observe server-side tool activity.
                     for part in self.model_response.parts:

@@ -31,6 +31,7 @@ class FallbackModel(Model):
 
     _model_name: str = field(repr=False)
     _fallback_on: Callable[[Exception], bool]
+    _continuation_model: Model | None = field(default=None, repr=False)
 
     def __init__(
         self,
@@ -52,6 +53,8 @@ class FallbackModel(Model):
             self._fallback_on = _default_fallback_condition_factory(fallback_on)  # pyright: ignore[reportUnknownArgumentType]
         else:
             self._fallback_on = fallback_on
+
+        self._continuation_model = None
 
     @property
     def model_name(self) -> str:
@@ -75,7 +78,22 @@ class FallbackModel(Model):
         """Try each model in sequence until one succeeds.
 
         In case of failure, raise a FallbackExceptionGroup with all exceptions.
+
+        If a previous response set `expects_continuation`, the request is routed directly
+        to the model that produced that response, bypassing the fallback chain.
         """
+        if self._continuation_model is not None and _expects_continuation(messages):
+            # Route directly to the pinned model — falling back mid-continuation is incoherent
+            model = self._continuation_model
+            _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
+            response = await model.request(messages, model_settings, model_request_parameters)
+            self._set_span_attributes(model, prepared_parameters)
+            if not response.expects_continuation:
+                self._continuation_model = None
+            return response
+
+        # Clear any stale pin before running the normal fallback chain
+        self._continuation_model = None
         exceptions: list[Exception] = []
 
         for model in self.models:
@@ -89,6 +107,9 @@ class FallbackModel(Model):
                 raise exc
 
             self._set_span_attributes(model, prepared_parameters)
+            self._continuation_model = model
+            if not response.expects_continuation:
+                self._continuation_model = None
             return response
 
         raise FallbackExceptionGroup('All models from FallbackModel failed', exceptions)
@@ -101,7 +122,28 @@ class FallbackModel(Model):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
-        """Try each model in sequence until one succeeds."""
+        """Try each model in sequence until one succeeds.
+
+        If a previous response set `expects_continuation`, the request is routed directly
+        to the model that produced that response, bypassing the fallback chain.
+        """
+        if self._continuation_model is not None and _expects_continuation(messages):
+            model = self._continuation_model
+            async with AsyncExitStack() as stack:
+                _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
+                response = await stack.enter_async_context(
+                    model.request_stream(messages, model_settings, model_request_parameters, run_context)
+                )
+                self._set_span_attributes(model, prepared_parameters)
+                yield response
+                # After stream consumption, check if continuation should continue.
+                # We set the pin optimistically; the non-stream path clears it when expects_continuation is False,
+                # but for streaming we can't inspect the response until it's consumed, so we rely on the
+                # next call's _expects_continuation() check to gate usage.
+                return
+
+        # Clear any stale pin before running the normal fallback chain
+        self._continuation_model = None
         exceptions: list[Exception] = []
 
         for model in self.models:
@@ -118,6 +160,7 @@ class FallbackModel(Model):
                     raise exc  # pragma: no cover
 
                 self._set_span_attributes(model, prepared_parameters)
+                self._continuation_model = model
                 yield response
                 return
 
@@ -147,6 +190,16 @@ class FallbackModel(Model):
                             **InstrumentedModel.model_request_parameters_attributes(model_request_parameters),
                         }
                     )
+
+
+def _expects_continuation(messages: list[ModelMessage]) -> bool:
+    """Check if the last ModelResponse in messages has expects_continuation=True."""
+    from ..messages import ModelResponse
+
+    for message in reversed(messages):
+        if isinstance(message, ModelResponse):
+            return message.expects_continuation
+    return False
 
 
 def _default_fallback_condition_factory(exceptions: tuple[type[Exception], ...]) -> Callable[[Exception], bool]:
