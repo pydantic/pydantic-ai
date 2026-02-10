@@ -189,10 +189,6 @@ async def build_search_db():
                     [section.embedding_content() for section in missing_sections]
                 )
                 embeddings = result.embeddings
-            assert len(embeddings) == len(missing_sections), (
-                'Expected embeddings to match sections count, '
-                f'got {len(embeddings)} embeddings for {len(missing_sections)} sections'
-            )
 
             for section, embedding_vector in zip(
                 missing_sections, embeddings, strict=True
