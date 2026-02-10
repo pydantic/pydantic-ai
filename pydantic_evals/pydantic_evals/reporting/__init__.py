@@ -11,11 +11,20 @@ from rich.console import Console, Group, RenderableType
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
-from typing_extensions import TypedDict, TypeVar
+from typing_extensions import TypedDict, TypeVar, assert_never
 
 from pydantic_evals._utils import UNSET, Unset
 
 from ..evaluators import EvaluationResult
+from .analyses import (
+    ConfusionMatrix,
+    PrecisionRecall,
+    PrecisionRecallCurve,
+    PrecisionRecallPoint,
+    ReportAnalysis,
+    ScalarResult,
+    TableResult,
+)
 from .render_numbers import (
     default_render_duration,
     default_render_duration_diff,
@@ -36,6 +45,13 @@ __all__ = (
     'RenderValueConfig',
     'RenderNumberConfig',
     'ReportCaseAggregate',
+    'ReportAnalysis',
+    'ConfusionMatrix',
+    'PrecisionRecall',
+    'PrecisionRecallCurve',
+    'PrecisionRecallPoint',
+    'ScalarResult',
+    'TableResult',
 )
 
 from ..evaluators.evaluator import EvaluatorFailure
@@ -293,6 +309,12 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
     )
     """The failures in the report. These are cases where task execution raised an exception."""
 
+    analyses: list[ReportAnalysis] = field(default_factory=list[ReportAnalysis])
+    """Experiment-wide analyses produced by report evaluators."""
+
+    report_evaluator_failures: list[EvaluatorFailure] = field(default_factory=list[EvaluatorFailure])
+    """Failures from report evaluators that raised exceptions."""
+
     experiment_metadata: dict[str, Any] | None = None
     """Metadata associated with the specific experiment represented by this report."""
     trace_id: str | None = None
@@ -362,6 +384,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         include_errors: bool = True,
         include_error_stacktrace: bool = False,
         include_evaluator_failures: bool = True,
+        include_analyses: bool = True,
         input_config: RenderValueConfig | None = None,
         metadata_config: RenderValueConfig | None = None,
         output_config: RenderValueConfig | None = None,
@@ -392,6 +415,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             include_errors=include_errors,
             include_error_stacktrace=include_error_stacktrace,
             include_evaluator_failures=include_evaluator_failures,
+            include_analyses=include_analyses,
             input_config=input_config,
             metadata_config=metadata_config,
             output_config=output_config,
@@ -420,6 +444,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         include_errors: bool = True,
         include_error_stacktrace: bool = False,
         include_evaluator_failures: bool = True,
+        include_analyses: bool = True,
         input_config: RenderValueConfig | None = None,
         metadata_config: RenderValueConfig | None = None,
         output_config: RenderValueConfig | None = None,
@@ -462,6 +487,16 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         if metadata_panel:
             renderable = Group(metadata_panel, renderable)
         console.print(renderable)
+        if include_analyses and self.analyses:
+            for analysis in self.analyses:
+                console.print(_render_analysis(analysis))
+        if include_evaluator_failures and self.report_evaluator_failures:
+            console.print(
+                Text('\nReport Evaluator Failures:', style='bold red'),
+            )
+            for failure in self.report_evaluator_failures:
+                msg = f'  {failure.name}: {failure.error_message}'
+                console.print(Text(msg, style='red'))
         if include_errors and self.failures:  # pragma: no cover
             failures_table = self.failures_table(
                 include_input=include_input,
@@ -1571,3 +1606,36 @@ class EvaluationRenderer:
         if self.include_total_duration:
             all_durations += [x.total_duration for x in all_cases]
         return _NumberRenderer.infer_from_config(self.duration_config, 'duration', all_durations)
+
+
+def _render_analysis(analysis: ConfusionMatrix | PrecisionRecall | ScalarResult | TableResult) -> RenderableType:
+    """Render a single report analysis as a Rich renderable."""
+    if isinstance(analysis, ConfusionMatrix):
+        table = Table(title=analysis.title, show_lines=True)
+        table.add_column('Expected \\ Predicted', style='bold')
+        for label in analysis.class_labels:
+            table.add_column(label, justify='right')
+        for i, row_label in enumerate(analysis.class_labels):
+            row = [row_label] + [str(v) for v in analysis.matrix[i]]
+            table.add_row(*row)
+        return table
+    elif isinstance(analysis, ScalarResult):
+        value_str = str(analysis.value)
+        if analysis.unit:
+            value_str += f' {analysis.unit}'
+        return Text(f'{analysis.title}: {value_str}')
+    elif isinstance(analysis, PrecisionRecall):
+        lines: list[str] = [analysis.title]
+        for curve in analysis.curves:
+            auc_str = f', AUC={curve.auc:.4f}' if curve.auc is not None else ''
+            lines.append(f'  {curve.name}: {len(curve.points)} points{auc_str}')
+        return Text('\n'.join(lines))
+    elif isinstance(analysis, TableResult):
+        table = Table(title=analysis.title, show_lines=True)
+        for col in analysis.columns:
+            table.add_column(col)
+        for row in analysis.rows:
+            table.add_row(*[str(v) if v is not None else '' for v in row])
+        return table
+    else:
+        assert_never(analysis)
