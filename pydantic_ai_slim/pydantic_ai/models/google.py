@@ -209,6 +209,8 @@ class GoogleModelSettings(ModelSettings, total=False):
     See <https://docs.cloud.google.com/vertex-ai/generative-ai/docs/multimodal/content-generation-parameters#log-probabilities-output-tokens> for more information.
 
     Note: Only supported for Vertex AI and non-streaming requests.
+
+    These will be included in `ModelResponse.provider_details['logprobs']`.
     """
 
 
@@ -581,7 +583,7 @@ class GoogleModel(Model):
         if logprobs_requested and self._provider.name != 'google-vertex':
             raise UserError(
                 'Logprobs are only supported on Vertex AI. '
-                'Use `GoogleProvider(vertexai=True)`or the `google-vertex` provider prefix to enable logprobs. '
+                'Use `GoogleProvider(vertexai=True)` or the `google-vertex` provider prefix to enable logprobs. '
                 f'Current provider: {self._provider.name}'
             )
 

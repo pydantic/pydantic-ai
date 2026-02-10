@@ -338,7 +338,7 @@ model_settings = GoogleModelSettings(
     )
 
 model = GoogleModel(
-    model_name='gemini-3-flash-preview',
+    model_name='gemini-2.5-flash',
     provider=GoogleProvider(location='europe-west1', vertexai=True),
     )
 agent = Agent(model, model_settings=model_settings)
