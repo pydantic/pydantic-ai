@@ -342,7 +342,12 @@ model = GoogleModel(
     provider=GoogleProvider(location='europe-west1', vertexai=True),
     )
 agent = Agent(model, model_settings=model_settings)
+agent = Agent(model, model_settings=model_settings)
 
+result = await agent.run('Your prompt here')
+# Access logprobs from provider_details
+logprobs = result.response.provider_details.get('logprobs')
+avg_logprobs = result.response.provider_details.get('avg_logprobs')
 ```
 
 See the [Google Dev Blog](https://developers.googleblog.com/unlock-gemini-reasoning-with-logprobs-on-vertex-ai/) for more information.
