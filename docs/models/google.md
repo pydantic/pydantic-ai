@@ -344,7 +344,7 @@ model = GoogleModel(
 agent = Agent(model, model_settings=model_settings)
 agent = Agent(model, model_settings=model_settings)
 
-result = await agent.run('Your prompt here')
+result = agent.run_sync('Your prompt here')
 # Access logprobs from provider_details
 logprobs = result.response.provider_details.get('logprobs')
 avg_logprobs = result.response.provider_details.get('avg_logprobs')
