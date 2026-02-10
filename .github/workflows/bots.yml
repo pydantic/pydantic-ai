@@ -199,7 +199,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Gather PR context
-        run: scripts/gather-review-context.sh ${{ github.event.pull_request.number }} ${{ github.repository }}
+        run: |
+          # Use the script from the base repo (main branch), not the fork
+          gh api repos/${{ github.repository }}/contents/scripts/gather-review-context.sh?ref=${{ github.event.pull_request.base.ref }} --jq .content | base64 -d > /tmp/gather-review-context.sh
+          bash /tmp/gather-review-context.sh ${{ github.event.pull_request.number }} ${{ github.repository }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
