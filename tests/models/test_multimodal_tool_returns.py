@@ -1067,6 +1067,64 @@ async def test_text_plain_document_anthropic(
     ctx.verify_contains('Dummy TXT file')
 
 
+MISTRAL_PROVIDERS = [pytest.param('mistral', id='mistral')]
+
+
+@pytest.mark.parametrize('provider', MISTRAL_PROVIDERS)
+async def test_non_pdf_document_url_error(
+    provider: str,
+    api_keys: dict[str, str],
+    bedrock_provider: Any,
+    xai_provider: Any,
+    allow_model_requests: None,
+):
+    """Test that Mistral raises UserError for non-PDF DocumentUrl in tool returns."""
+    if not is_provider_available(provider):  # pragma: no cover
+        pytest.skip(f'{provider} dependencies not installed')
+
+    model = create_model(provider, api_keys, bedrock_provider, xai_provider)
+    agent: Agent[None, str] = Agent(model)
+
+    @agent.tool_plain
+    def get_file() -> DocumentUrl:
+        return DocumentUrl(url='https://example.com/file.txt', media_type='text/plain')
+
+    with pytest.raises(UserError, match='DocumentUrl other than PDF is not supported for Mistral tool returns'):
+        await agent.run(
+            'Use the get_file tool to retrieve a file.',
+            usage_limits=UsageLimits(output_tokens_limit=100000),
+        )
+
+
+BEDROCK_PROVIDERS = [pytest.param('bedrock', id='bedrock')]
+
+
+@pytest.mark.parametrize('provider', BEDROCK_PROVIDERS)
+async def test_empty_tool_return(
+    provider: str,
+    api_keys: dict[str, str],
+    bedrock_provider: Any,
+    xai_provider: Any,
+    allow_model_requests: None,
+):
+    """Test that Bedrock handles tools returning empty strings by falling back to empty text."""
+    if not is_provider_available(provider):  # pragma: no cover
+        pytest.skip(f'{provider} dependencies not installed')
+
+    model = create_model(provider, api_keys, bedrock_provider, xai_provider)
+    agent: Agent[None, str] = Agent(model)
+
+    @agent.tool_plain
+    def get_empty() -> str:
+        return ''
+
+    result = await agent.run(
+        'Use the get_empty tool.',
+        usage_limits=UsageLimits(output_tokens_limit=100000),
+    )
+    assert result.output
+
+
 @pytest.mark.skipif(not bedrock_available(), reason='bedrock dependencies not installed')
 async def test_s3_document_url_bedrock():
     """Test that S3 URLs are correctly parsed for Bedrock documents."""

@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '376'
+      - '333'
       content-type:
       - application/json
       host:
@@ -16,7 +16,7 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: Use the get_file tool now to retrieve a audio file, then describe what you received.
+      - content: Use the get_file tool to retrieve a file.
         role: user
       model: mistral-medium-latest
       n: 1
@@ -41,11 +41,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '438'
+      - '437'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019c486d-3ecd-7151-928b-08870f296aab
+      - 019c48aa-6dfd-7df5-950f-0767dca5eb04
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -61,17 +61,17 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: eDhOvT2fR
+            id: ylXogSwAK
             index: 0
-      created: 1770741645
-      id: 9af13990df79451397d3728bb06c8c24
+      created: 1770745654
+      id: 6cfaa427fb23422987b510310a3e2484
       model: mistral-medium-latest
       object: chat.completion
       usage:
         completion_tokens: 6
-        num_cached_tokens: 32
-        prompt_tokens: 64
-        total_tokens: 70
+        num_cached_tokens: 0
+        prompt_tokens: 56
+        total_tokens: 62
     status:
       code: 200
       message: OK
@@ -84,7 +84,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '376'
+      - '333'
       content-type:
       - application/json
       host:
@@ -92,7 +92,7 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: Use the get_file tool now to retrieve a audio file, then describe what you received.
+      - content: Use the get_file tool to retrieve a file.
         role: user
       model: mistral-medium-latest
       n: 1
@@ -121,7 +121,7 @@ interactions:
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019c48b1-fabf-747a-8de3-031b3c4d9e66
+      - 019c48b2-3da9-7def-80f8-e88b0525bc41
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -137,17 +137,17 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: kJeetjJrz
+            id: Gy99IVOkU
             index: 0
-      created: 1770746149
-      id: 8cf58d624ded42c6af85fb8fc2ef2810
+      created: 1770746166
+      id: a5b22e9e221b4f76a9fd48ed7f427237
       model: mistral-medium-latest
       object: chat.completion
       usage:
         completion_tokens: 6
         num_cached_tokens: 32
-        prompt_tokens: 64
-        total_tokens: 70
+        prompt_tokens: 56
+        total_tokens: 62
     status:
       code: 200
       message: OK
