@@ -46,6 +46,13 @@ _checkpoint_result_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
 )
 
 
+@dataclass
+class _DeserializedCheckpoint:
+    monty_dump: bytes
+    completed_results: dict[str, Any]
+    pending_calls: dict[str, dict[str, Any]]
+
+
 def _build_type_check_prefix(signatures: list[str]) -> str:
     """Build the prefix code used for Monty type checking.
 
@@ -113,13 +120,6 @@ def _serialize_checkpoint(
     return json.dumps(payload).encode('utf-8')
 
 
-@dataclass
-class _DeserializedCheckpoint:
-    monty_dump: bytes
-    completed_results: dict[str, Any]
-    pending_calls: dict[str, dict[str, Any]]
-
-
 def _deserialize_checkpoint(checkpoint: bytes) -> _DeserializedCheckpoint:
     """Deserialize a Monty checkpoint back into its components."""
     payload = json.loads(checkpoint)
@@ -180,7 +180,7 @@ class MontyRuntime(CodeRuntime):
 
         try:
             monty = Monty(code=code, external_functions=functions)
-            await self._type_check(code, signatures, functions)
+            await self._type_check(monty, code, signatures, functions)
         except MontyTypingError as e:
             raise CodeTypingError(e.display(format='concise'))
         except MontyRuntimeError as e:
@@ -236,9 +236,7 @@ class MontyRuntime(CodeRuntime):
             checkpoint_ids = set(ckpt.pending_calls.keys())
             missing = {str(cid) for cid in pending_ids} - checkpoint_ids
             if missing:
-                raise CodeRuntimeError(
-                    f'Checkpoint corrupt: pending call IDs {missing} not found in checkpoint data'
-                )
+                raise CodeRuntimeError(f'Checkpoint corrupt: pending call IDs {missing} not found in checkpoint data')
 
             for cid in pending_ids:
                 call_id_str = str(cid)
@@ -267,9 +265,8 @@ class MontyRuntime(CodeRuntime):
             '- No imports - use only the provided functions and builtins (len, sum, str, etc.) or write your own functions.'
         )
 
-    async def _type_check(self, code: str, signatures: list[str], external_functions: list[str]):
+    async def _type_check(self, monty: Monty, code: str, signatures: list[str], external_functions: list[str]):
         prefix_code = _build_type_check_prefix(signatures)
-        monty = Monty(code=code, external_functions=external_functions)
         monty.type_check(prefix_code=prefix_code)
 
     @staticmethod
