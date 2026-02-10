@@ -255,6 +255,9 @@ By default, both model/request spans and agent run spans use the standard `gen_a
 
 To avoid this, you can enable `use_aggregated_usage_attribute_names` so that agent run spans use distinct attribute names (e.g., `gen_ai.aggregated_usage.input_tokens`, `gen_ai.aggregated_usage.output_tokens`, and `gen_ai.aggregated_usage.details.*`):
 
+!!! note "Custom namespace"
+    The `gen_ai.aggregated_usage.*` namespace is a custom extension not part of the [OpenTelemetry Semantic Conventions for GenAI](https://opentelemetry.io/docs/specs/semconv/gen-ai/). It was introduced to work around double-counting in observability backends. If OpenTelemetry introduces an official convention for aggregated usage in the future, this namespace may be updated or deprecated.
+
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.instrumented import InstrumentationSettings

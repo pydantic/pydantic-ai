@@ -138,6 +138,8 @@ class InstrumentationSettings:
                 for token usage on agent run spans instead of the standard `gen_ai.usage.*` names.
                 Enable this to prevent double-counting in observability backends that aggregate span
                 attributes across parent and child spans. Defaults to False.
+                Note: `gen_ai.aggregated_usage.*` is a custom namespace, not part of the OpenTelemetry
+                Semantic Conventions. It may be updated if OTel introduces an official convention.
         """
         from pydantic_ai import __version__
 

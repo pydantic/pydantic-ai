@@ -853,6 +853,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # When enabled, translate token usage attribute names for agent run spans to use
         # `gen_ai.aggregated_usage.*` instead of `gen_ai.usage.*` to distinguish them
         # from per-call usage on model/request spans.
+        # NOTE: `gen_ai.aggregated_usage.*` is a custom namespace, not part of the
+        # OpenTelemetry Semantic Conventions. It may be updated if OTel introduces
+        # an official convention for aggregated usage.
         final_usage_attrs: dict[str, str | int | float | bool] = (
             {
                 key.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): value
