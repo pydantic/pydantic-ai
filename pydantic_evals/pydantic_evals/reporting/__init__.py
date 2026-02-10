@@ -1499,7 +1499,7 @@ class EvaluationRenderer:
             # group — a rare edge case. We can revisit if users report confusing behavior.
             report_average = ReportCaseAggregate.average(report_cases) if report_cases else None
             baseline_average = ReportCaseAggregate.average(baseline_cases) if baseline_cases else None
-            if report_average and baseline_average:  # pragma: no branch
+            if report_average and baseline_average:
                 table.add_row(*case_renderer.build_diff_aggregate_row(report_average, baseline_average))
 
         return table
