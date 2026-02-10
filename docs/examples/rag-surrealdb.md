@@ -37,7 +37,7 @@ uv run -m pydantic_ai_examples.rag_surrealdb search "How do I configure logfire 
 Or use the web UI:
 
 ```bash
-uv run uvicorn pydantic_ai_examples.rag_surrealdb:app --host 127.0.0.1 --port 7932
+uv run -m pydantic_ai_examples.rag_surrealdb web
 ```
 
 This example runs SurrealDB embedded. To run it in a separate process (useful if you want to explore the database with [Surrealist](https://surrealdb.com/surrealist)), follow the [installation instructions](https://surrealdb.com/docs/surrealdb/installation) or [run with docker](https://surrealdb.com/docs/surrealdb/installation/running/docker):
