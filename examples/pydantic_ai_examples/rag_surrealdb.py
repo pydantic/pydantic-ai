@@ -35,12 +35,12 @@ from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeVar, cast
+from typing import TypeVar
 
 import httpx
 import logfire
 import uvicorn
-from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic import BaseModel, TypeAdapter
 from surrealdb import (
     AsyncEmbeddedSurrealConnection,
     AsyncHttpSurrealConnection,
@@ -86,7 +86,10 @@ class RetrievalQueryResult(BaseModel):
 
 
 async def query(
-    conn: SurrealConn, query_: str, vars_: dict[str, Value], record_type: type[RecordType]
+    conn: SurrealConn,
+    query_: str,
+    vars_: dict[str, Value],
+    record_type: type[RecordType],
 ) -> list[RecordType]:
     result = await conn.query(query_, vars_)
     result_ta = TypeAdapter(list[record_type])
@@ -120,7 +123,7 @@ async def retrieve(search_query: str) -> str:
             WHERE embedding <|8, 40|> $vector
             ORDER BY dist ASC
             """,
-            {'vector': cast(Value, embedding_vector)},
+            {'vector': list(embedding_vector)},
             RetrievalQueryResult,
         )
 
