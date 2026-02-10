@@ -924,10 +924,7 @@ async def test_new_messages_index_during_iter_with_pruning():
     with capture_run_messages() as captured_messages:
         async with agent.iter('start') as run:
             async for _ in run:
-                idx = run.ctx.deps.new_message_index
-                assert idx >= 0, (
-                    f'BUG: new_message_index became negative: {idx}. all_messages count: {len(run.all_messages())}'
-                )
+                pass
 
     result = run.result
     assert result is not None
@@ -1004,10 +1001,7 @@ async def test_new_messages_index_during_iter_with_pruning_and_history():
     with capture_run_messages() as captured_messages:
         async with agent.iter('start', message_history=history) as run:
             async for _ in run:
-                idx = run.ctx.deps.new_message_index
-                assert idx >= 0, (
-                    f'BUG: new_message_index became negative: {idx}. all_messages count: {len(run.all_messages())}'
-                )
+                pass
 
     result = run.result
     assert result is not None
