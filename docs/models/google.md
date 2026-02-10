@@ -342,7 +342,6 @@ model = GoogleModel(
     provider=GoogleProvider(location='europe-west1', vertexai=True),
     )
 agent = Agent(model, model_settings=model_settings)
-agent = Agent(model, model_settings=model_settings)
 
 result = agent.run_sync('Your prompt here')
 # Access logprobs from provider_details
