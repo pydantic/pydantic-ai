@@ -82,19 +82,13 @@ from ..parts_from_messages import part_types_from_messages
 with try_import() as imports_successful:
     from google.genai import errors
     from google.genai.types import (
-        Candidate,
-        Content,
         FinishReason as GoogleFinishReason,
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
         HarmBlockThreshold,
         HarmCategory,
-        LogprobsResult,
-        LogprobsResultCandidate,
-        LogprobsResultTopCandidates,
         MediaModality,
         ModalityTokenCount,
-        Part,
     )
 
     from pydantic_ai.models.google import (
@@ -5709,7 +5703,7 @@ async def test_google_prepends_empty_user_turn_when_first_content_is_model(googl
     )
 
 
-async def test_google_vertex_logprobs(vertex_provider: GoogleProvider):
+async def test_google_vertex_logprobs(allow_model_requests: None, vertex_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-flash', provider=vertex_provider)
     agent = Agent(model=model)
 
@@ -5734,7 +5728,7 @@ async def test_google_gla_logprobs_raises_error(allow_model_requests: None, goog
         await agent.run('What is 2+2?', model_settings=settings)
 
 
-async def test_google_logprobs_streaming_raises_error(vertex_provider: GoogleProvider):
+async def test_google_logprobs_streaming_raises_error(allow_model_requests: None, vertex_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-flash', provider=vertex_provider)
     agent = Agent(model=model)
 
@@ -5745,52 +5739,19 @@ async def test_google_logprobs_streaming_raises_error(vertex_provider: GooglePro
 
 
 async def test_google_vertex_logprobs_structure(
-    allow_model_requests: None, vertex_provider: GoogleProvider, mocker: MockerFixture
+    allow_model_requests: None,
+    vertex_provider: GoogleProvider,
 ):
     model = GoogleModel('gemini-2.5-flash', provider=vertex_provider)
     agent = Agent(model=model)
 
-    # Construct mock logprobs matching the provided structure
-    logprobs_result = LogprobsResult(
-        chosen_candidates=[
-            LogprobsResultCandidate(log_probability=-0.18970422, token='H', token_id=236814),
-            LogprobsResultCandidate(log_probability=-0.08993984, token='ere', token_id=627),
-        ],
-        top_candidates=[
-            LogprobsResultTopCandidates(
-                candidates=[
-                    LogprobsResultCandidate(log_probability=-0.18970422, token='H', token_id=236814),
-                    LogprobsResultCandidate(log_probability=-1.7739637, token='Here', token_id=8291),
-                ]
-            )
-        ],
-    )
-
-    candidate = Candidate(
-        content=Content(role='model', parts=[Part(text='Here')]),
-        finish_reason=GoogleFinishReason.STOP,
-        logprobs_result=logprobs_result,
-        avg_logprobs=-0.1398,
-    )
-
-    response = GenerateContentResponse(
-        candidates=[candidate],
-        model_version='gemini-2.5-flash',
-        usage_metadata=GenerateContentResponseUsageMetadata(prompt_token_count=10, candidates_token_count=5),
-        response_id='test-response-id',
-        create_time=datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-    )
-
-    # Mock the client
-    mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
-
     settings = GoogleModelSettings(google_logprobs=True, google_top_logprobs=2)
-    result = await agent.run('Hello', model_settings=settings)
+    result = await agent.run('Answer only with "Hello"', model_settings=settings)
 
     messages = result.all_messages()
     response = cast(ModelResponse, messages[-1])
 
-    assert result.output == 'Here'
+    assert result.output == snapshot('Hello')
 
     assert response.provider_details is not None
     assert response.provider_details == snapshot(
@@ -5798,19 +5759,16 @@ async def test_google_vertex_logprobs_structure(
             'finish_reason': 'STOP',
             'timestamp': IsDatetime(),
             'logprobs': {
-                'chosenCandidates': [
-                    {'logProbability': -0.18970422, 'token': 'H', 'tokenId': 236814},
-                    {'logProbability': -0.08993984, 'token': 'ere', 'tokenId': 627},
-                ],
+                'chosenCandidates': [{'logProbability': -1.3112389e-05, 'token': 'Hello', 'tokenId': 9259}],
                 'topCandidates': [
                     {
                         'candidates': [
-                            {'logProbability': -0.18970422, 'token': 'H', 'tokenId': 236814},
-                            {'logProbability': -1.7739637, 'token': 'Here', 'tokenId': 8291},
+                            {'logProbability': -1.3112389e-05, 'token': 'Hello', 'tokenId': 9259},
+                            {'logProbability': -11.490758, 'token': '"', 'tokenId': 236775},
                         ]
                     }
                 ],
             },
-            'avg_logprobs': -0.1398,
+            'avg_logprobs': -15.658978462219238,
         }
     )
