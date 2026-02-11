@@ -57,9 +57,9 @@ class TavilySearchTool:
     async def __call__(
         self,
         query: str,
-        search_deep: Literal['basic', 'advanced'] = 'basic',
-        topic: Literal['general', 'news'] = 'general',
-        time_range: Literal['day', 'week', 'month', 'year', 'd', 'w', 'm', 'y'] | None = None,
+        search_deep: Literal['basic', 'advanced', 'fast', 'ultra-fast'] = 'basic',
+        topic: Literal['general', 'news', 'finance'] = 'general',
+        time_range: Literal['day', 'week', 'month', 'year'] | None = None,
         include_domains: list[str] | None = None,
         exclude_domains: list[str] | None = None,
     ) -> list[TavilySearchResult]:
@@ -92,9 +92,9 @@ def tavily_search_tool(
     api_key: str,
     *,
     max_results: int | None = None,
-    search_deep: Literal['basic', 'advanced'] = _UNSET,
-    topic: Literal['general', 'news'] = _UNSET,
-    time_range: Literal['day', 'week', 'month', 'year', 'd', 'w', 'm', 'y'] | None = _UNSET,
+    search_deep: Literal['basic', 'advanced', 'fast', 'ultra-fast'] = _UNSET,
+    topic: Literal['general', 'news', 'finance'] = _UNSET,
+    time_range: Literal['day', 'week', 'month', 'year'] | None = _UNSET,
     include_domains: list[str] | None = _UNSET,
     exclude_domains: list[str] | None = _UNSET,
 ) -> Tool[Any]:

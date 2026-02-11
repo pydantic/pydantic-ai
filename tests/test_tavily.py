@@ -4,20 +4,14 @@ from __future__ import annotations
 
 import pytest
 from inline_snapshot import snapshot
+from tavily import AsyncTavilyClient
 
 from pydantic_ai._run_context import RunContext
+from pydantic_ai.common_tools.tavily import TavilySearchTool, tavily_search_tool
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
-from .conftest import IsStr, try_import
-
-with try_import() as imports_successful:
-    from tavily import AsyncTavilyClient
-
-    from pydantic_ai.common_tools.tavily import TavilySearchTool, tavily_search_tool
-
-from pydantic_ai.models.test import TestModel
-
-pytestmark = pytest.mark.skipif(not imports_successful(), reason='tavily-python not installed')
+from .conftest import IsStr
 
 
 @pytest.mark.vcr()
@@ -141,18 +135,18 @@ def test_no_params_bound_exposes_all_in_schema(tavily_api_key: str):
                 'search_deep': {
                     'default': 'basic',
                     'description': 'The depth of the search.',
-                    'enum': ['basic', 'advanced'],
+                    'enum': ['basic', 'advanced', 'fast', 'ultra-fast'],
                     'type': 'string',
                 },
                 'topic': {
                     'default': 'general',
                     'description': 'The category of the search.',
-                    'enum': ['general', 'news'],
+                    'enum': ['general', 'news', 'finance'],
                     'type': 'string',
                 },
                 'time_range': {
                     'anyOf': [
-                        {'enum': ['day', 'week', 'month', 'year', 'd', 'w', 'm', 'y'], 'type': 'string'},
+                        {'enum': ['day', 'week', 'month', 'year'], 'type': 'string'},
                         {'type': 'null'},
                     ],
                     'default': None,
