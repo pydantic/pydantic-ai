@@ -317,7 +317,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 text_chunks.append(part.content)
             elif isinstance(part, BuiltinToolCallPart):
                 builtin_id = '|'.join([BUILTIN_TOOL_CALL_ID_PREFIX, part.provider_name or '', part.tool_call_id])
-                function = FunctionCall(name=part.tool_name, arguments=part.args_as_json_str() if part.args else '{}')
+                function = FunctionCall(name=part.tool_name, arguments=part.args_as_json_str())
                 tool_calls.append(ToolCall(id=builtin_id, type='function', function=function))
                 if builtin_return := local_builtin_returns.get(part.tool_call_id):
                     result.append(
