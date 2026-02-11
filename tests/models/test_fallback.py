@@ -1234,7 +1234,7 @@ class _ContinuationModel(Model):
     _stream_expects_continuation: list[bool] = field(default_factory=list[bool])
     _stream_call_index: int = field(default=0)
 
-    async def request(
+    async def request(  # pragma: no cover
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
@@ -1253,7 +1253,7 @@ class _ContinuationModel(Model):
         async with self._inner.request_stream(
             messages, model_settings, model_request_parameters, run_context
         ) as streamed_response:
-            if self._stream_call_index < len(self._stream_expects_continuation):
+            if self._stream_call_index < len(self._stream_expects_continuation):  # pragma: no branch
                 streamed_response.expects_continuation = self._stream_expects_continuation[self._stream_call_index]
             self._stream_call_index += 1
             yield streamed_response
@@ -1263,7 +1263,7 @@ class _ContinuationModel(Model):
         return self._inner.model_name
 
     @property
-    def system(self) -> str:
+    def system(self) -> str:  # pragma: no cover
         return self._inner.system
 
 
@@ -1368,3 +1368,114 @@ async def test_fallback_streaming_pinned_continuation_still_continuing() -> None
             pass
     assert streamed_response.expects_continuation is False
     assert call_count == 3
+
+
+async def test_fallback_continuation_without_stamp_falls_through() -> None:
+    """When expects_continuation=True but provider_details lacks fallback_model_name,
+    normal fallback chain is used (no pinning)."""
+    call_count = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(parts=[TextPart('primary response')])
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    model = FallbackModel(primary_model)
+
+    # Manually construct messages with expects_continuation but no fallback_model_name stamp
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='test')]),
+        ModelResponse(parts=[TextPart('incomplete')], expects_continuation=True),
+        ModelRequest(parts=[]),
+    ]
+
+    result = await model.request(messages, None, ModelRequestParameters())
+    assert call_count == 1
+    assert result.parts[0].content == 'primary response'  # type: ignore[union-attr]
+
+
+async def test_fallback_continuation_with_unknown_model_falls_through() -> None:
+    """When fallback_model_name doesn't match any model in the FallbackModel,
+    normal fallback chain is used (no pinning)."""
+    call_count = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(parts=[TextPart('primary response')])
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    model = FallbackModel(primary_model)
+
+    # Construct messages with a fallback_model_name that doesn't match any model
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='test')]),
+        ModelResponse(
+            parts=[TextPart('incomplete')],
+            expects_continuation=True,
+            provider_details={'fallback_model_name': 'nonexistent-model'},
+        ),
+        ModelRequest(parts=[]),
+    ]
+
+    result = await model.request(messages, None, ModelRequestParameters())
+    assert call_count == 1
+    assert result.parts[0].content == 'primary response'  # type: ignore[union-attr]
+
+
+def test_fallback_stamp_with_existing_provider_details() -> None:
+    """When model response already has provider_details, the stamp merges into existing dict."""
+    call_count = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[TextPart('paused')],
+                expects_continuation=True,
+                finish_reason='incomplete',
+                provider_details={'existing_key': 'existing_value'},
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    model = FallbackModel(primary_model)
+    agent = Agent(model=model)
+
+    result = agent.run_sync('test')
+    assert result.output == 'done'
+    assert call_count == 2
+    # Verify provider_details was merged, not replaced
+    continuation_msg = result.all_messages()[1]
+    assert isinstance(continuation_msg, ModelResponse)
+    assert continuation_msg.provider_details == snapshot(
+        {'existing_key': 'existing_value', 'fallback_model_name': 'primary'}
+    )
+
+
+async def test_fallback_stream_stamp_with_existing_provider_details() -> None:
+    """When streamed response already has provider_details, the stamp merges into existing dict."""
+
+    async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hello'
+
+    primary_inner = FunctionModel(stream_function=primary_stream, model_name='primary')
+    # Single call: expects_continuation=True
+    primary_model = _ContinuationModel(_inner=primary_inner, _stream_expects_continuation=[True])
+    model = FallbackModel(primary_model)
+
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')])]
+    params = ModelRequestParameters()
+
+    async with model.request_stream(messages, None, params) as streamed_response:
+        # Set provider_details before FallbackModel stamps it (simulates a provider that sets details during streaming)
+        streamed_response.provider_details = {'existing_key': 'existing_value'}
+        async for _ in streamed_response:
+            pass
+
+    assert streamed_response.expects_continuation is True
+    assert streamed_response.provider_details == snapshot(
+        {'existing_key': 'existing_value', 'fallback_model_name': 'primary'}
+    )

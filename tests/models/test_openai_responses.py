@@ -61,6 +61,7 @@ with try_import() as imports_successful:
     from openai.types.responses import (
         ResponseCreatedEvent,
         ResponseFunctionWebSearch,
+        ResponseQueuedEvent,
     )
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_text import ResponseOutputText
@@ -10560,3 +10561,27 @@ async def test_request_stream_model_response_with_parts(allow_model_requests: No
     assert model_response.finish_reason == 'content_filter'
     # Parts are set up via handle_part in __post_init__, but _get_event_iterator yields nothing
     assert events == []
+
+
+async def test_stream_handles_queued_event(allow_model_requests: None):
+    """ResponseQueuedEvent during streaming sets expects_continuation and accumulates usage."""
+    queued_response = response_message([])
+    queued_response.status = 'queued'
+
+    mock_client = MockOpenAIResponses.create_mock_stream(
+        [
+            ResponseCreatedEvent(response=queued_response, sequence_number=0, type='response.created'),
+            ResponseQueuedEvent(response=queued_response, sequence_number=1, type='response.queued'),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        messages=[ModelRequest(parts=[UserPromptPart(content='test')])],
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        model_request_parameters=ModelRequestParameters(),
+    ) as request_stream:
+        events = [event async for event in request_stream]
+
+    assert events == []
+    assert request_stream.expects_continuation is True
