@@ -2581,6 +2581,7 @@ async def test_adapter_dispatch_request():
     )
 
 
+@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
 async def test_dispatch_request_with_tool_approval():
     """Test that dispatch_request with sdk_version=6 enables tool approval."""
 
