@@ -304,3 +304,113 @@ passing a custom `fallback_on` argument to the `FallbackModel` constructor.
 
 !!! note
     Validation errors (from [structured output](../output.md#structured-output) or [tool parameters](../tools.md)) do **not** trigger fallback. These errors use the [retry mechanism](../agent.md#reflection-and-self-correction) instead, which re-prompts the same model to try again. This is intentional: validation errors stem from the non-deterministic nature of LLMs and may succeed on retry, whereas API errors (4xx/5xx) generally indicate issues that won't resolve by retrying the same request.
+
+### Exception Handling in Middleware and Decorators
+
+When using `FallbackModel`, it's important to understand that [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup]
+inherits from Python's [`ExceptionGroup`](https://docs.python.org/3/library/exceptions.html#ExceptionGroup). This means
+that existing exception handling code that catches specific exceptions (like `ModelAPIError`) won't automatically catch
+the individual exceptions wrapped inside the group.
+
+For example, if you have middleware or a decorator that catches `ModelAPIError`:
+
+```python {title="middleware_without_fallback.py"}
+from collections.abc import Callable
+from functools import wraps
+from typing import TypeVar
+
+from pydantic_ai import ModelAPIError
+
+T = TypeVar('T')
+
+
+# This handler will NOT catch ModelAPIError when using FallbackModel!
+def handle_api_errors(func: Callable[..., T]) -> Callable[..., T]:
+    @wraps(func)
+    def wrapper(*args, **kwargs) -> T:
+        try:
+            return func(*args, **kwargs)
+        except ModelAPIError as e:  # Won't catch FallbackExceptionGroup
+            print(f'API error: {e}')
+            raise
+
+    return wrapper
+```
+
+This decorator will miss `ModelAPIError` exceptions when using `FallbackModel`, because they're wrapped in a
+`FallbackExceptionGroup` containing one exception per failed model, in the order the models were tried.
+
+To handle both cases, you can use Python 3.11+ `except*` syntax, which catches matching exceptions from
+exception groups as well as bare exceptions. Note that `except*` always delivers the caught exceptions as an
+`ExceptionGroup` (even if the original was a bare exception), so re-raising will propagate an `ExceptionGroup`
+rather than the original exception type:
+
+=== "Python >=3.11"
+
+    ```python {title="middleware_with_fallback.py" py="3.11"}
+    from collections.abc import Callable
+    from functools import wraps
+    from typing import TypeVar
+
+    from pydantic_ai import ModelAPIError
+
+    T = TypeVar('T')
+
+
+    def handle_api_errors(func: Callable[..., T]) -> Callable[..., T]:
+        @wraps(func)
+        def wrapper(*args, **kwargs) -> T:
+            try:
+                return func(*args, **kwargs)
+            except* ModelAPIError as exc_group:
+                for exc in exc_group.exceptions:
+                    print(f'API error: {exc}')
+                raise
+
+        return wrapper
+    ```
+
+=== "Python <3.11"
+
+    ```python {title="middleware_with_fallback.py" noqa="F821" test="skip"}
+    from collections.abc import Callable
+    from functools import wraps
+    from typing import TypeVar
+
+    from pydantic_ai import FallbackExceptionGroup, ModelAPIError
+
+    T = TypeVar('T')
+
+
+    def handle_api_errors(func: Callable[..., T]) -> Callable[..., T]:
+        @wraps(func)
+        def wrapper(*args, **kwargs) -> T:
+            try:
+                return func(*args, **kwargs)
+            except FallbackExceptionGroup as exc_group:
+                for exc in exc_group.exceptions:
+                    if isinstance(exc, ModelAPIError):
+                        print(f'API error from fallback: {exc}')
+                raise
+            except ModelAPIError as e:
+                print(f'API error: {e}')
+                raise
+
+        return wrapper
+    ```
+
+You can also catch `FallbackExceptionGroup` directly if you want to handle it specifically:
+
+```python {title="catch_fallback_exception_group.py" test="skip"}
+from pydantic_ai import Agent, FallbackExceptionGroup
+from pydantic_ai.models.fallback import FallbackModel
+
+agent = Agent(FallbackModel('openai:gpt-5-mini', 'anthropic:claude-sonnet-4-5'))
+
+try:
+    response = agent.run_sync('What is the capital of France?')
+except FallbackExceptionGroup as exc_group:
+    print(f'All {len(exc_group.exceptions)} models failed:')
+    for exc in exc_group.exceptions:
+        print(f'  - {exc}')
+```
