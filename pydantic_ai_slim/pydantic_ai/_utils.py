@@ -199,6 +199,7 @@ async def group_by_temporal(
 
     # we might wait for the next item more than once, so we store the task to await next time
     task: asyncio.Task[T] | None = None
+    aiterator = aiter(aiterable)
 
     async def async_iter_groups() -> AsyncIterator[list[T]]:
         nonlocal task
@@ -207,7 +208,6 @@ async def group_by_temporal(
         buffer: list[T] = []
         group_start_time = time.monotonic()
 
-        aiterator = aiter(aiterable)
         while True:
             if group_start_time is None:
                 # group hasn't started, we just wait for the maximum interval
@@ -258,6 +258,9 @@ async def group_by_temporal(
             task.cancel('Cancelling due to error in iterator')
             with suppress(asyncio.CancelledError, StopAsyncIteration):
                 await task
+        # explicitly close the underlying async iterator to propagate
+        # cleanup to the source generator (e.g. on early consumer break)
+        await aiterator.aclose()  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
 
 
 def sync_anext(iterator: Iterator[T]) -> T:
