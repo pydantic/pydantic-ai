@@ -88,10 +88,9 @@ import sys
 
 if sys.version_info >= (3, 14):  # pragma: no cover
     pytest.skip(
-        'temporalio 1.20 is incompatible with Python 3.14: '
-        'coverage sys.monitoring hooks trigger lazy imports inside the workflow sandbox, '
-        'and beartype/dirty_equals interactions cause NameError during sandbox validation '
-        '(see https://github.com/temporalio/sdk-python/issues/XXXX)',
+        'temporalio sandbox is incompatible with Python 3.14: '
+        'sandbox module state accumulates across validation cycles causing import failures after ~22 workflows '
+        '(remove when https://github.com/temporalio/sdk-python/issues/1326 closes)',
         allow_module_level=True,
     )
 

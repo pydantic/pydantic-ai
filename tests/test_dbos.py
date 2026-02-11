@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import sys
 import time
 import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
@@ -841,13 +842,21 @@ async def test_dbos_agent_run_in_workflow_with_event_stream_handler(allow_model_
     ):
         pass
 
-    with pytest.raises(Exception) as exc_info:
-        await simple_dbos_agent.run('What is the capital of Mexico?', event_stream_handler=simple_event_stream_handler)
+    if sys.version_info >= (3, 14):
+        import _pickle
 
-    assert (
-        "local object 'test_dbos_agent_run_in_workflow_with_event_stream_handler.<locals>.simple_event_stream_handler'"
-        in str(exc_info.value)
-    )
+        with pytest.raises(_pickle.PicklingError, match=r"Can't pickle local object.*simple_event_stream_handler"):
+            await simple_dbos_agent.run(
+                'What is the capital of Mexico?', event_stream_handler=simple_event_stream_handler
+            )
+    else:
+        with pytest.raises(
+            AttributeError,
+            match=r"Can't get local object 'test_dbos_agent_run_in_workflow_with_event_stream_handler\.<locals>\.simple_event_stream_handler'",
+        ):
+            await simple_dbos_agent.run(
+                'What is the capital of Mexico?', event_stream_handler=simple_event_stream_handler
+            )
 
 
 async def test_dbos_agent_run_in_workflow_with_model(allow_model_requests: None, dbos: DBOS):
