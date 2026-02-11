@@ -334,6 +334,30 @@ print(result2.all_messages())
 """
 ```
 
+### Converting Logfire OTEL Messages
+
+If you store OTEL message attributes from Logfire (for example `pydantic_ai.all_messages` on agent spans or
+`gen_ai.input.messages`/`gen_ai.output.messages` on model spans), you can convert them back into
+`ModelMessage` objects for reuse.
+
+```python {title="otel_messages_to_model_messages.py" test="skip"}
+from pydantic_ai import Agent, model_messages_to_openai_format, otel_messages_to_model_messages
+
+agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+
+# OTEL attributes are JSON strings of chat messages
+otel_messages = span.attributes['gen_ai.input.messages']
+history = otel_messages_to_model_messages(otel_messages)
+
+result = agent.run_sync('Continue', message_history=history)
+
+# Optionally convert to OpenAI chat completion format for display or interop
+openai_messages = model_messages_to_openai_format(history)
+```
+
+Note: the OTEL → `ModelMessage` conversion is lossy — timestamps, `instructions`, provider details, and content
+excluded by `include_content=False` are not preserved.
+
 ## Processing Message History
 
 Sometimes you may want to modify the message history before it's sent to the model. This could be for privacy
