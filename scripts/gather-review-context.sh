@@ -162,21 +162,16 @@ PR_BODY=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq '.body')
 done > "$CTX/related-issues.txt"
 [ -s "$CTX/related-issues.txt" ] || echo "(No issues referenced in PR description)" > "$CTX/related-issues.txt"
 
-# Compute merge base for function-context diffs
-echo "  - Computing merge base for function-context diffs"
+# Fetch base branch for function-context diffs
+# Always fetch from the target repo URL, not origin — for fork PRs, origin points to
+# the fork (which may have an outdated base branch), causing incorrect merge bases
+# and diffs that include unrelated changes from the base repo.
+echo "  - Fetching base branch for function-context diffs"
 BASE_REF=$(jq -r '.baseRefName' "$CTX/pr-details.json")
 MERGE_BASE=""
 if [ -n "$BASE_REF" ]; then
-  # Try origin first (works for same-repo PRs)
-  if git fetch origin "$BASE_REF" --quiet 2>/dev/null; then
-    MERGE_BASE=$(git merge-base HEAD "origin/$BASE_REF" 2>/dev/null || echo "")
-  fi
-  # For fork PRs, origin is the fork — fetch from the base repo instead
-  if [ -z "$MERGE_BASE" ]; then
-    git remote add base-repo "https://github.com/${REPO}.git" 2>/dev/null || true
-    if git fetch base-repo "$BASE_REF" --quiet 2>/dev/null; then
-      MERGE_BASE=$(git merge-base HEAD "base-repo/$BASE_REF" 2>/dev/null || echo "")
-    fi
+  if git fetch "https://github.com/${REPO}.git" "$BASE_REF" --quiet 2>/dev/null; then
+    MERGE_BASE=$(git merge-base HEAD FETCH_HEAD 2>/dev/null || echo "")
   fi
 fi
 if [ -n "$MERGE_BASE" ]; then
@@ -219,10 +214,6 @@ fi | awk -v dir="$CTX/diff" '
 '
 
 # List of ALL changed files with change counts + diff file paths
-# NOTE: This uses the GitHub API (not local git) for accurate per-file addition/deletion counts.
-# The diff files above come from local git when the merge base is available. In rare edge cases
-# (force pushes, rebases between steps), the two sources could disagree — this is acceptable
-# since it only affects the diff file path column, and missing diffs degrade gracefully.
 echo "  - Changed files"
 gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate \
   --jq '.[] | "\(.filename)\t+\(.additions) -\(.deletions)\t\(.filename | gsub("/"; "__") | gsub("^\\.+"; "")).diff"' \
