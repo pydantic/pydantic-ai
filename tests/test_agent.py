@@ -7825,3 +7825,238 @@ async def test_delegate_agent_approval_propagation():
     )
 
     assert result.output == 'All done!'
+
+
+async def test_deep_nested_agent_approval_propagation():
+    """Test that approval propagates through three levels: Agent A -> Agent B -> Agent C.
+
+    Each intermediate tool must explicitly handle the DeferredToolRequests from the
+    inner agent and re-raise ApprovalRequired to bubble up. When the user approves at
+    the top level, each layer re-runs its inner agent with the approval forwarded.
+
+    Flow (first run):
+        1. A calls call_agent_b
+        2. call_agent_b runs B, which calls call_agent_c
+        3. call_agent_c runs C, which calls sensitive_action
+        4. sensitive_action raises ApprovalRequired
+        5. C returns DeferredToolRequests -> call_agent_c re-raises -> B returns DeferredToolRequests
+        6. call_agent_b re-raises -> A returns DeferredToolRequests to user
+
+    Flow (second run, user approves):
+        7. A resumes call_agent_b with approval
+        8. call_agent_b re-runs B fresh, B's call_agent_c raises again
+        9. call_agent_b re-runs B with approval forwarded to call_agent_c
+        10. call_agent_c re-runs C fresh, sensitive_action raises again
+        11. call_agent_c re-runs C with approval forwarded to sensitive_action
+        12. sensitive_action executes with ctx.tool_call_approved=True
+        13. Result flows back: C -> B -> A -> user
+    """
+    from pydantic_ai.exceptions import ApprovalRequired
+
+    # --- Agent C: the innermost agent with a tool requiring approval ---
+
+    def agent_c_llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        for msg in messages:
+            if isinstance(msg, ModelRequest):
+                if any(isinstance(p, ToolReturnPart) for p in msg.parts):
+                    return ModelResponse(parts=[TextPart('agent_c done')])
+        return ModelResponse(parts=[ToolCallPart('sensitive_action', {'value': 42}, tool_call_id='sa_1')])
+
+    agent_c: Agent[None, str | DeferredToolRequests] = Agent(
+        FunctionModel(agent_c_llm),
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent_c.tool
+    def sensitive_action(ctx: RunContext[None], value: int) -> str:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired(metadata={'value': value})
+        return f'executed with {value}'
+
+    # --- Agent B: middle layer that delegates to Agent C ---
+
+    def agent_b_llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        for msg in messages:
+            if isinstance(msg, ModelRequest):
+                if any(isinstance(p, ToolReturnPart) for p in msg.parts):
+                    return ModelResponse(parts=[TextPart('agent_b done')])
+        return ModelResponse(parts=[ToolCallPart('call_agent_c', tool_call_id='bc_1')])
+
+    agent_b: Agent[None, str | DeferredToolRequests] = Agent(
+        FunctionModel(agent_b_llm),
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent_b.tool
+    async def call_agent_c(ctx: RunContext[None]) -> str:
+        # Step 1: Run agent C fresh
+        result = await agent_c.run('do sensitive thing', usage=ctx.usage)
+
+        if isinstance(result.output, DeferredToolRequests):
+            if not ctx.tool_call_approved:
+                # Not approved yet — bubble up to agent B's caller
+                raise ApprovalRequired(metadata={'nested_approvals': result.output.approvals})
+
+            # Approved — re-run C with approval forwarded to its deferred tools
+            result = await agent_c.run(
+                message_history=result.all_messages(),
+                deferred_tool_results=DeferredToolResults(
+                    approvals={tc.tool_call_id: True for tc in result.output.approvals}
+                ),
+                usage=ctx.usage,
+            )
+            assert isinstance(result.output, str)
+
+        return result.output
+
+    # --- Agent A: outermost agent that delegates to Agent B ---
+
+    def agent_a_llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        for msg in messages:
+            if isinstance(msg, ModelRequest):
+                for p in msg.parts:
+                    if isinstance(p, ToolReturnPart):
+                        assert p.content == 'agent_b done'
+                        return ModelResponse(parts=[TextPart('All three levels done!')])
+        return ModelResponse(parts=[ToolCallPart('call_agent_b', tool_call_id='ab_1')])
+
+    agent_a: Agent[None, str | DeferredToolRequests] = Agent(
+        FunctionModel(agent_a_llm),
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent_a.tool
+    async def call_agent_b(ctx: RunContext[None]) -> str:
+        # Step 1: Run agent B fresh
+        result = await agent_b.run('do the task', usage=ctx.usage)
+
+        if isinstance(result.output, DeferredToolRequests):
+            if not ctx.tool_call_approved:
+                # Not approved yet — bubble up to agent A's caller (the user)
+                raise ApprovalRequired(metadata={'nested_approvals': result.output.approvals})
+
+            # Approved — re-run B with approval forwarded to its deferred tools
+            result = await agent_b.run(
+                message_history=result.all_messages(),
+                deferred_tool_results=DeferredToolResults(
+                    approvals={tc.tool_call_id: True for tc in result.output.approvals}
+                ),
+                usage=ctx.usage,
+            )
+            assert isinstance(result.output, str)
+
+        return result.output
+
+    # --- Run 1: Approval bubbles up through all three levels ---
+    result = await agent_a.run('Do the task')
+
+    assert isinstance(result.output, DeferredToolRequests)
+    assert len(result.output.approvals) == 1
+    assert result.output.approvals[0].tool_name == 'call_agent_b'
+
+    # --- Run 2: User approves at top level, approval cascades A -> B -> C ---
+    result = await agent_a.run(
+        message_history=result.all_messages(),
+        deferred_tool_results=DeferredToolResults(approvals={result.output.approvals[0].tool_call_id: True}),
+    )
+
+    assert result.output == 'All three levels done!'
+
+
+async def test_delegate_agent_approval_denial():
+    """Test that denying a delegated tool call skips re-execution entirely.
+
+    When the user provides ToolDenied instead of approving, the framework returns
+    the denial message as the tool return directly — the tool function never re-runs.
+    The model sees the denial message and must generate a text response.
+
+    This contrasts with the approval flow where the tool function re-runs with
+    ctx.tool_call_approved=True.
+    """
+    from pydantic_ai.exceptions import ApprovalRequired
+
+    # --- Delegate agent (same as approval test) ---
+
+    def delegate_llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        for msg in messages:
+            if isinstance(msg, ModelRequest):
+                if any(isinstance(p, ToolReturnPart) for p in msg.parts):
+                    return ModelResponse(parts=[TextPart('delegate done')])
+        return ModelResponse(parts=[ToolCallPart('sensitive_action', {'value': 42}, tool_call_id='sens_1')])
+
+    delegate_agent: Agent[None, str | DeferredToolRequests] = Agent(
+        FunctionModel(delegate_llm),
+        output_type=[str, DeferredToolRequests],
+    )
+
+    tool_executed = False
+
+    @delegate_agent.tool
+    def sensitive_action(ctx: RunContext[None], value: int) -> str:
+        nonlocal tool_executed
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired(metadata={'value': value})
+        tool_executed = True
+        return f'executed with {value}'
+
+    # --- Parent agent ---
+
+    call_count = 0
+
+    def parent_llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart('call_delegate', tool_call_id='del_1')])
+        # Second call: the tool was denied, so we see the denial message as the tool return.
+        # The tool function was never re-executed.
+        last_request = messages[-1]
+        assert isinstance(last_request, ModelRequest)
+        tool_return = next(p for p in last_request.parts if isinstance(p, ToolReturnPart))
+        assert tool_return.content == 'Not allowed'
+        return ModelResponse(parts=[TextPart('Action was denied by user')])
+
+    parent_agent: Agent[None, str | DeferredToolRequests] = Agent(
+        FunctionModel(parent_llm),
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @parent_agent.tool
+    async def call_delegate(ctx: RunContext[None]) -> str:
+        result = await delegate_agent.run('do sensitive thing', usage=ctx.usage)
+
+        if isinstance(result.output, DeferredToolRequests):
+            if not ctx.tool_call_approved:
+                raise ApprovalRequired(metadata={'nested_approvals': result.output.approvals})
+
+            # This branch only runs if approved — never reached in this test
+            result = await delegate_agent.run(
+                message_history=result.all_messages(),
+                deferred_tool_results=DeferredToolResults(
+                    approvals={tc.tool_call_id: True for tc in result.output.approvals}
+                ),
+                usage=ctx.usage,
+            )
+            assert isinstance(result.output, str)
+
+        return result.output
+
+    # --- Run 1: Same as approval test — parent bubbles up ApprovalRequired ---
+    result = await parent_agent.run('Do the task')
+
+    assert isinstance(result.output, DeferredToolRequests)
+    assert len(result.output.approvals) == 1
+    assert result.output.approvals[0].tool_name == 'call_delegate'
+
+    # --- Run 2: User DENIES — tool function is never re-executed ---
+    result = await parent_agent.run(
+        message_history=result.all_messages(),
+        deferred_tool_results=DeferredToolResults(
+            approvals={result.output.approvals[0].tool_call_id: ToolDenied('Not allowed')}
+        ),
+    )
+
+    # The model saw the denial message and responded with text
+    assert result.output == 'Action was denied by user'
+    # The sensitive_action tool was never executed
+    assert not tool_executed
