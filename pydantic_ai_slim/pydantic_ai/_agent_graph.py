@@ -1448,9 +1448,14 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
 
     clean_messages: list[_messages.ModelMessage] = []
     for message in messages:
-        # Filter unprocessed tool calls from incomplete responses
+        # Filter unprocessed tool calls from interrupted responses.
+        # If the interrupted response has no parts left after filtering, drop it entirely —
+        # an empty assistant message is invalid for most provider APIs (e.g. OpenAI, Mistral)
+        # and an interrupted response with no usable content carries no information.
         if isinstance(message, _messages.ModelResponse):
             message = _filter_incomplete_tool_calls(message, processed_tool_call_ids)
+            if message.interrupted and not message.parts:
+                continue
 
         last_message = clean_messages[-1] if len(clean_messages) > 0 else None
 

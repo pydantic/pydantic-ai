@@ -4012,8 +4012,8 @@ class TestCleanMessageHistoryFiltersIncomplete:
 
         cleaned = _clean_message_history(messages)
 
-        # Should have 6 messages (requests and responses don't merge across types)
-        assert len(cleaned) == 6
+        # Should have 5 messages: the third response (interrupted, all parts filtered) is dropped
+        assert len(cleaned) == 5
 
         # First response (complete) - tool call preserved
         assert isinstance(cleaned[1], ModelResponse)
@@ -4026,9 +4026,10 @@ class TestCleanMessageHistoryFiltersIncomplete:
         assert len(cleaned[3].parts) == 1
         assert isinstance(cleaned[3].parts[0], TextPart)
 
-        # Third response (interrupted) - all unprocessed tool calls filtered, empty parts
-        assert isinstance(cleaned[5], ModelResponse)
-        assert len(cleaned[5].parts) == 0
+        # Third response was interrupted with only unprocessed tool calls — dropped entirely
+        # (an empty assistant message is invalid for most provider APIs)
+        assert isinstance(cleaned[4], ModelRequest)
+        assert cleaned[4].parts[0].content == 'Continue'
 
     def test_clean_message_history_preserves_builtin_tool_calls_with_results(self):
         """_clean_message_history should preserve BuiltinToolCallPart when matching BuiltinToolReturnPart exists.
