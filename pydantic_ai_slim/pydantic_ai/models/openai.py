@@ -697,13 +697,6 @@ class OpenAIChatModel(Model):
 
         _drop_unsupported_params(profile, model_settings)
 
-        extra_body = cast(dict[str, Any] | None, model_settings.get('extra_body'))
-        extra_body, response_format = self._customize_request_payload(
-            extra_body=extra_body,
-            response_format=response_format,
-            model_request_parameters=model_request_parameters,
-        )
-
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
@@ -739,7 +732,7 @@ class OpenAIChatModel(Model):
                 prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
                 prompt_cache_retention=prompt_cache_retention,
                 extra_headers=extra_headers,
-                extra_body=extra_body,
+                extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
             if model_response := _check_azure_content_filter(e, self.system, self.model_name):
@@ -756,19 +749,6 @@ class OpenAIChatModel(Model):
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom completion validations.
         """
         return chat.ChatCompletion.model_validate(response.model_dump())
-
-    def _customize_request_payload(
-        self,
-        *,
-        extra_body: dict[str, Any] | None,
-        response_format: chat.completion_create_params.ResponseFormat | None,
-        model_request_parameters: ModelRequestParameters,
-    ) -> tuple[dict[str, Any] | None, chat.completion_create_params.ResponseFormat | None]:
-        """Hook for subclasses to customize the request payload.
-
-        This is intended for OpenAI-compatible providers that need to map OpenAI fields into provider-specific fields.
-        """
-        return extra_body, response_format
 
     def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any] | None:
         """Hook that response content to provider details.
