@@ -49,6 +49,8 @@ while true; do
               isOutdated
               comments(first: 50) {
                 nodes {
+                  id
+                  databaseId
                   author { login }
                   authorAssociation
                   body
@@ -105,9 +107,10 @@ fi
 # Format review threads with compaction
 > "$CTX/review-comments.txt"
 jq -r --arg last_review "$LAST_REVIEW_TS" '
+  def truncate: gsub("[\\r\\n]+"; "  ") | if length > 200 then .[:200] + "..." else . end;
+
   [ .[] |
     {
-      id: .id,
       resolved: .isResolved,
       outdated: .isOutdated,
       state: (
@@ -116,7 +119,7 @@ jq -r --arg last_review "$LAST_REVIEW_TS" '
       ),
       first: .comments.nodes[0],
       lastCommentAt: (.comments.nodes | last | .createdAt),
-      replies: [ .comments.nodes[1:][] | { author: .author.login, body: .body, createdAt: .createdAt } ]
+      replies: [ .comments.nodes[1:][] | { author: .author.login, databaseId: .databaseId, body: .body, createdAt: .createdAt } ]
     }
   ] as $arr |
   range($arr | length) as $i |
@@ -130,16 +133,17 @@ jq -r --arg last_review "$LAST_REVIEW_TS" '
   ) as $compact |
 
   if $compact then
-    "- [\($t.state)] \($first.author.login) at \($first.createdAt) on \($first.path)\(if $first.line then ":\($first.line)" else "" end) (thread \($t.id)) — \($first.body | gsub("\n"; "  ") | if length > 200 then .[:200] + "..." else . end)"
+    "- [\($t.state)] \($first.author.login) at \($first.createdAt) on \($first.path)\(if $first.line then ":\($first.line)" else "" end) (comment \($first.databaseId)) — \($first.body | truncate)" +
+    ([ $t.replies[] | "\n  > \(.author) at \(.createdAt) (comment \(.databaseId)): \(.body | truncate)" ] | join(""))
   else
     (
       ($first.path + ":" + ($first.diffHunk | split("\n")[0])) as $hunkKey |
       (if $i > 0 then ($arr[$i - 1].first.path + ":" + ($arr[$i - 1].first.diffHunk | split("\n")[0])) else "" end) as $prevKey |
       (if $hunkKey != $prevKey then true else false end) as $showHunk |
-      "### \($first.author.login) (\($first.authorAssociation)) at \($first.createdAt) on \($first.path)\(if $first.line then ":\($first.line)" else "" end) [\($t.state)] (thread \($t.id))" +
+      "### [\($t.state)] \($first.author.login) (\($first.authorAssociation)) at \($first.createdAt) on \($first.path)\(if $first.line then ":\($first.line)" else "" end) (comment \($first.databaseId))" +
       (if $showHunk then "\n```diff\n\($first.diffHunk)\n```" else "" end) +
       "\n\($first.body)\n" +
-      ([ $t.replies[] | "  > **\(.author)** at \(.createdAt) (reply): \(.body)\n" ] | join(""))
+      ([ $t.replies[] | "  > **\(.author)** at \(.createdAt) (comment \(.databaseId)): \(.body)\n" ] | join(""))
     )
   end
 ' "$THREADS_JSON" >> "$CTX/review-comments.txt"
@@ -158,19 +162,43 @@ PR_BODY=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq '.body')
 done > "$CTX/related-issues.txt"
 [ -s "$CTX/related-issues.txt" ] || echo "(No issues referenced in PR description)" > "$CTX/related-issues.txt"
 
-# List of ALL changed files with change counts (including generated, for awareness)
+# Per-file diffs (excluding generated files)
+echo "  - Per-file diffs (excluding generated files)"
+mkdir -p "$CTX/diff"
+gh pr diff "$PR_NUMBER" --repo "$REPO" | awk -v dir="$CTX/diff" '
+  /^diff --git/ {
+    # Close previous file to avoid running out of file descriptors
+    if (outfile) close(outfile)
+    outfile = ""
+
+    # Extract new (b/) filename from "diff --git a/path b/path"
+    # Uses b/ side so renamed files match the GitHub API .filename field
+    fname = $0
+    sub(/^.* b\//, "", fname)
+
+    skip = (fname ~ /uv\.lock/ || fname ~ /\/cassettes\//)
+    if (!skip) {
+      # Sanitize path: replace / with __, strip leading dots to avoid hidden files
+      safe = fname
+      gsub(/\//, "__", safe)
+      sub(/^\.+/, "", safe)
+      outfile = dir "/" safe ".diff"
+    }
+  }
+  !skip && outfile { print > outfile }
+'
+
+# List of ALL changed files with change counts + diff file paths
 echo "  - Changed files"
 gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate \
-  --jq '.[] | "\(.filename)\t+\(.additions) -\(.deletions)"' > "$CTX/changed-files.txt"
-
-# Diff of non-generated files only
-echo "  - Diff (excluding generated files)"
-gh pr diff "$PR_NUMBER" --repo "$REPO" | awk '
-  /^diff --git/ {
-    skip = ($0 ~ /uv\.lock/ || $0 ~ /\/cassettes\//)
-  }
-  !skip { print }
-' > "$CTX/diff.txt"
+  --jq '.[] | "\(.filename)\t+\(.additions) -\(.deletions)\t\(.filename | gsub("/"; "__") | gsub("^\\.+"; "")).diff"' \
+  | while IFS=$'\t' read -r fname counts diffname; do
+    if echo "$fname" | grep -qE 'uv\.lock|/cassettes/'; then
+      printf '%s\t%s\n' "$fname" "$counts"
+    else
+      printf '%s\t%s\tdiff/%s\n' "$fname" "$counts" "$diffname"
+    fi
+  done > "$CTX/changed-files.txt"
 
 # Gather directory-specific AGENTS.md files for changed directories
 echo "  - Directory AGENTS.md files"
@@ -188,3 +216,5 @@ done >> "$CTX/agents-md.txt"
 echo ""
 echo "Context gathered in ${CTX}/:"
 ls -lh "$CTX/"
+DIFF_COUNT=$(find "$CTX/diff" -name '*.diff' 2>/dev/null | wc -l)
+echo "  Per-file diffs: ${DIFF_COUNT} files in ${CTX}/diff/"
