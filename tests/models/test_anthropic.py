@@ -1409,6 +1409,32 @@ async def test_anthropic_specific_metadata(allow_model_requests: None) -> None:
     assert get_mock_chat_completion_kwargs(mock_client)[0]['metadata']['user_id'] == '123'
 
 
+async def test_anthropic_speed_passthrough_and_fast_mode_beta(allow_model_requests: None) -> None:
+    c = completion_message([BetaTextBlock(text='hi', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run('hello', model_settings=AnthropicModelSettings(anthropic_speed='fast'))
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['speed'] == 'fast'
+    assert 'fast-mode-2026-02-01' in completion_kwargs['betas']
+
+
+async def test_anthropic_speed_standard_does_not_add_fast_mode_beta(allow_model_requests: None) -> None:
+    c = completion_message([BetaTextBlock(text='hi', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run('hello', model_settings=AnthropicModelSettings(anthropic_speed='standard'))
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['speed'] == 'standard'
+    betas = completion_kwargs.get('betas')
+    if isinstance(betas, (list, tuple)):
+        assert 'fast-mode-2026-02-01' not in betas
+
+
 async def test_stream_structured(allow_model_requests: None):
     """Test streaming structured responses with Anthropic's API.
 
