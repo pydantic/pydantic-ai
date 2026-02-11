@@ -151,7 +151,9 @@ class MockOpenAIResponses:
         if stream:
             assert self.retrieve_stream is not None, 'retrieve_stream must be provided for retrieve(stream=True) calls'
             if isinstance(self.retrieve_stream[0], Sequence):
-                response = MockAsyncStream(iter(cast(list[MockResponseStreamEvent], self.retrieve_stream[self.retrieve_index])))
+                response = MockAsyncStream(
+                    iter(cast(list[MockResponseStreamEvent], self.retrieve_stream[self.retrieve_index]))
+                )
             else:
                 response = MockAsyncStream(iter(cast(list[MockResponseStreamEvent], self.retrieve_stream)))
         else:

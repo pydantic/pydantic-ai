@@ -78,7 +78,9 @@ class FallbackModel(Model):
         In case of failure, raise a FallbackExceptionGroup with all exceptions.
 
         If a previous response set `expects_continuation`, the request is routed directly
-        to the pinned continuation model, bypassing the fallback chain.
+        to the pinned continuation model, bypassing the fallback chain. If the pinned model
+        raises an error during continuation, it propagates directly without falling back to
+        other models.
         """
         run_id = _get_run_id(messages)
         if run_id and (pinned := self._continuation_models.get(run_id)):
@@ -119,7 +121,9 @@ class FallbackModel(Model):
         """Try each model in sequence until one succeeds.
 
         If a previous response set `expects_continuation`, the request is routed directly
-        to the pinned continuation model, bypassing the fallback chain.
+        to the pinned continuation model, bypassing the fallback chain. If the pinned model
+        raises an error during continuation, it propagates directly without falling back to
+        other models.
         """
         run_id = _get_run_id(messages)
         if run_id and (pinned := self._continuation_models.get(run_id)):

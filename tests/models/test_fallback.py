@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from datetime import timezone
 from typing import Any, Literal
 
@@ -25,8 +27,9 @@ from pydantic_ai import (
     ToolDefinition,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai._run_context import RunContext
+from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models.fallback import FallbackModel, _get_run_id
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
@@ -957,7 +960,7 @@ def test_fallback_primary_continuation_then_succeeds() -> None:
         return ModelResponse(parts=[TextPart('done')])
 
     def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        raise AssertionError('Fallback should not be called')
+        raise AssertionError('Fallback should not be called')  # pragma: no cover
 
     primary_model = FunctionModel(primary, model_name='primary')
     fallback_model_instance = FunctionModel(fallback, model_name='fallback')
@@ -967,6 +970,30 @@ def test_fallback_primary_continuation_then_succeeds() -> None:
     result = agent.run_sync('test')
     assert result.output == 'done'
     assert call_count == 2
+
+
+def test_fallback_primary_continuation_multiple_pauses() -> None:
+    """Primary returns expects_continuation=True twice (stays pinned), then finishes. Fallback never called."""
+    call_count = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count <= 2:
+            return ModelResponse(parts=[TextPart('paused')], expects_continuation=True, finish_reason='incomplete')
+        return ModelResponse(parts=[TextPart('done')])
+
+    def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise AssertionError('Fallback should not be called')  # pragma: no cover
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    fallback_model_instance = FunctionModel(fallback, model_name='fallback')
+    model = FallbackModel(primary_model, fallback_model_instance)
+    agent = Agent(model=model)
+
+    result = agent.run_sync('test')
+    assert result.output == 'done'
+    assert call_count == 3
 
 
 def test_fallback_secondary_continuation_back_to_primary() -> None:
@@ -1022,7 +1049,7 @@ def test_fallback_primary_continuation_fails() -> None:
         raise ModelHTTPError(status_code=500, model_name='primary', body='continuation failed')
 
     def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        raise AssertionError('Fallback should not be called during pinned continuation')
+        raise AssertionError('Fallback should not be called during pinned continuation')  # pragma: no cover
 
     primary_model = FunctionModel(primary, model_name='primary')
     fallback_model_instance = FunctionModel(fallback, model_name='fallback')
@@ -1064,3 +1091,162 @@ def test_fallback_secondary_continuation_fails() -> None:
     assert fallback_calls == 2  # first returned continuation, second failed
 
 
+# --- Streaming continuation pinning tests ---
+
+
+@dataclass
+class _ContinuationModel(Model):
+    """Test model that wraps FunctionModel and supports expects_continuation in streaming."""
+
+    _inner: FunctionModel
+    _stream_expects_continuation: list[bool] = field(default_factory=list)
+    _stream_call_index: int = field(default=0)
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        return await self._inner.request(messages, model_settings, model_request_parameters)
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncIterator[StreamedResponse]:
+        async with self._inner.request_stream(
+            messages, model_settings, model_request_parameters, run_context
+        ) as streamed_response:
+            if self._stream_call_index < len(self._stream_expects_continuation):
+                streamed_response.expects_continuation = self._stream_expects_continuation[self._stream_call_index]
+            self._stream_call_index += 1
+            yield streamed_response
+
+    @property
+    def model_name(self) -> str:
+        return self._inner.model_name
+
+    @property
+    def system(self) -> str:
+        return self._inner.system
+
+
+async def test_fallback_streaming_continuation_pinning() -> None:
+    """Primary fails in streaming, fallback streams with expects_continuation=True (pinned),
+    then second call to fallback goes through pinned continuation path and finishes."""
+
+    async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        raise ModelHTTPError(status_code=500, model_name='primary', body='error')
+        yield ''  # pragma: no cover
+
+    fallback_calls = 0
+
+    async def fallback_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        yield f'fallback response {fallback_calls}'
+
+    primary_inner = FunctionModel(stream_function=primary_stream, model_name='primary')
+    primary_model = _ContinuationModel(_inner=primary_inner)
+    fallback_inner = FunctionModel(stream_function=fallback_stream, model_name='fallback')
+    # First stream call: expects_continuation=True (pin); second: False (clear pin)
+    fallback_model = _ContinuationModel(_inner=fallback_inner, _stream_expects_continuation=[True, False])
+    model = FallbackModel(primary_model, fallback_model)
+
+    run_id = 'test-run-1'
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')], run_id=run_id)]
+    params = ModelRequestParameters()
+
+    # First call: primary fails, fallback streams with expects_continuation=True → pinned
+    async with model.request_stream(messages, None, params) as streamed_response:
+        async for _ in streamed_response:
+            pass
+    assert streamed_response.expects_continuation is True
+    assert fallback_calls == 1
+
+    resp1 = streamed_response.get()
+    messages.append(resp1)
+    messages.append(ModelRequest(parts=[], run_id=run_id))
+
+    # Second call: goes through pinned continuation path (fallback.py lines 126-136)
+    async with model.request_stream(messages, None, params) as streamed_response:
+        async for _ in streamed_response:
+            pass
+    assert streamed_response.expects_continuation is False
+    assert fallback_calls == 2
+
+    resp2 = streamed_response.get()
+    assert resp2.parts[0].content == 'fallback response 2'  # type: ignore[union-attr]
+
+
+async def test_fallback_streaming_pinned_continuation_still_continuing() -> None:
+    """Streaming: pinned model returns expects_continuation=True again — pin stays (87->89 branch)."""
+    call_count = 0
+
+    async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal call_count
+        call_count += 1
+        yield f'response {call_count}'
+
+    primary_inner = FunctionModel(stream_function=primary_stream, model_name='primary')
+    # First two calls return expects_continuation=True, third returns False
+    primary_model = _ContinuationModel(_inner=primary_inner, _stream_expects_continuation=[True, True, False])
+
+    async def fallback_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        raise AssertionError('Fallback should not be called')  # pragma: no cover
+        yield ''  # pragma: no cover
+
+    fallback_inner = FunctionModel(stream_function=fallback_stream, model_name='fallback')
+    fallback_model = _ContinuationModel(_inner=fallback_inner)
+    model = FallbackModel(primary_model, fallback_model)
+
+    run_id = 'test-run-2'
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')], run_id=run_id)]
+    params = ModelRequestParameters()
+
+    # First call: primary streams with expects_continuation=True → pinned
+    async with model.request_stream(messages, None, params) as streamed_response:
+        async for _ in streamed_response:
+            pass
+    assert streamed_response.expects_continuation is True
+    assert call_count == 1
+
+    resp1 = streamed_response.get()
+    messages.append(resp1)
+    messages.append(ModelRequest(parts=[], run_id=run_id))
+
+    # Second call: pinned, still expects_continuation=True → pin stays (87->89 branch)
+    async with model.request_stream(messages, None, params) as streamed_response:
+        async for _ in streamed_response:
+            pass
+    assert streamed_response.expects_continuation is True
+    assert call_count == 2
+
+    resp2 = streamed_response.get()
+    messages.append(resp2)
+    messages.append(ModelRequest(parts=[], run_id=run_id))
+
+    # Third call: pinned, expects_continuation=False → pin cleared
+    async with model.request_stream(messages, None, params) as streamed_response:
+        async for _ in streamed_response:
+            pass
+    assert streamed_response.expects_continuation is False
+    assert call_count == 3
+
+
+def test_get_run_id_empty_messages() -> None:
+    """_get_run_id returns None for empty message list."""
+    assert _get_run_id([]) is None  # pyright: ignore[reportPrivateUsage]
+
+
+def test_get_run_id_no_run_id() -> None:
+    """_get_run_id returns None when messages don't have run_id set."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='test')]),
+        ModelResponse(parts=[TextPart('response')]),
+    ]
+    assert _get_run_id(messages) is None  # pyright: ignore[reportPrivateUsage]

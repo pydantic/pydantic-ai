@@ -57,7 +57,12 @@ from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, get_moc
 
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
-    from openai.types.responses import ResponseCreatedEvent, ResponseFunctionWebSearch
+    from openai.types.responses import (
+        ResponseCreatedEvent,
+        ResponseFunctionWebSearch,
+        ResponseInProgressEvent,
+        ResponseQueuedEvent,
+    )
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_text import ResponseOutputText
     from openai.types.responses.response_reasoning_item import (
@@ -10306,7 +10311,14 @@ async def test_background_request_stream_uses_retrieve_stream(allow_model_reques
     queued_response.id = 'resp_bg_123'
     queued_response.status = 'queued'
 
-    mock_client = cast(AsyncOpenAI, MockOpenAIResponses(retrieve_stream=[[ResponseCreatedEvent(response=queued_response, sequence_number=0, type='response.created')]]))
+    mock_client = cast(
+        AsyncOpenAI,
+        MockOpenAIResponses(
+            retrieve_stream=[
+                [ResponseCreatedEvent(response=queued_response, sequence_number=0, type='response.created')]
+            ]
+        ),
+    )
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
 
     async with model.request_stream(
@@ -10392,3 +10404,89 @@ async def test_stream_sets_expects_continuation_for_pending_statuses(
     model_response = request_stream.get()
     assert model_response.expects_continuation is True
     assert model_response.provider_response_id == f'resp_{status}'
+
+
+async def test_request_stream_model_response_with_parts(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
+    """`_ModelResponseStreamedResponse` should handle pre-built `ModelResponse` with parts."""
+    mock_client = cast(AsyncOpenAI, MockOpenAIResponses())
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    returned_response = ModelResponse(
+        parts=[TextPart('filtered content')],
+        model_name='gpt-4o',
+        provider_name='azure',
+        finish_reason='content_filter',
+    )
+
+    async def mock_responses_create(
+        messages: list[ModelRequest | ModelResponse],
+        stream: bool,
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        return returned_response
+
+    monkeypatch.setattr(model, '_responses_create', mock_responses_create)
+
+    async with model.request_stream(
+        messages=[ModelRequest(parts=[UserPromptPart(content='test')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    ) as request_stream:
+        events = [event async for event in request_stream]
+
+    model_response = request_stream.get()
+    assert model_response.parts == [TextPart('filtered content')]
+    assert model_response.finish_reason == 'content_filter'
+    # Parts are set up via handle_part in __post_init__, but _get_event_iterator yields nothing
+    assert events == []
+
+
+async def test_stream_handles_queued_event(allow_model_requests: None):
+    """Streaming should handle ResponseQueuedEvent by setting expects_continuation."""
+    response = response_message([])
+    response.id = 'resp_queued'
+    response.status = 'queued'
+
+    mock_client = MockOpenAIResponses.create_mock_stream(
+        [
+            ResponseCreatedEvent(response=response, sequence_number=0, type='response.created'),
+            ResponseQueuedEvent(response=response, sequence_number=1, type='response.queued'),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        messages=[ModelRequest(parts=[UserPromptPart(content='test')])],
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        model_request_parameters=ModelRequestParameters(),
+    ) as request_stream:
+        assert [event async for event in request_stream] == []
+
+    model_response = request_stream.get()
+    assert model_response.expects_continuation is True
+
+
+async def test_stream_handles_in_progress_event(allow_model_requests: None):
+    """Streaming should handle ResponseInProgressEvent by setting expects_continuation."""
+    response = response_message([])
+    response.id = 'resp_in_progress'
+    response.status = 'in_progress'
+
+    mock_client = MockOpenAIResponses.create_mock_stream(
+        [
+            ResponseCreatedEvent(response=response, sequence_number=0, type='response.created'),
+            ResponseInProgressEvent(response=response, sequence_number=1, type='response.in_progress'),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        messages=[ModelRequest(parts=[UserPromptPart(content='test')])],
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        model_request_parameters=ModelRequestParameters(),
+    ) as request_stream:
+        assert [event async for event in request_stream] == []
+
+    model_response = request_stream.get()
+    assert model_response.expects_continuation is True
