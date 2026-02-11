@@ -347,12 +347,13 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 assert_never(part)
 
         if text_chunks or tool_calls:
-            kwargs: dict[str, Any] = {'id': uuid.uuid4().hex}
-            if text_chunks:
-                kwargs['content'] = ''.join(text_chunks)
-            if tool_calls:
-                kwargs['tool_calls'] = tool_calls
-            result.append(AssistantMessage(**kwargs))
+            result.append(
+                AssistantMessage(
+                    id=uuid.uuid4().hex,
+                    content=''.join(text_chunks) if text_chunks else None,
+                    tool_calls=tool_calls if tool_calls else None,
+                )
+            )
 
     @classmethod
     def _dump_model_request(
