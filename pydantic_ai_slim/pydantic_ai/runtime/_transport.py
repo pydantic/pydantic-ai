@@ -341,8 +341,6 @@ async def _cancel_all(
     """Cancel all pending tasks and kill the driver process."""
     all_tasks = [*tool_tasks.values(), stdout_task]
     for t in all_tasks:
-        t.cancel()
-    for t in all_tasks:
         await _cancel_task(t)
     try:
         await process.kill()

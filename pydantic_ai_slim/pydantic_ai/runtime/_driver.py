@@ -79,7 +79,7 @@ def _build_proxy(
     """Build an eager proxy function for a declared tool.
 
     Calling the proxy immediately sends a call message and returns a future.
-    ``await`` just waits for the result. This enables fire-then-await xparallelism:
+    ``await`` just waits for the result. This enables fire-then-await parallelism:
     ``f1 = tool_a(); f2 = tool_b(); r1 = await f1; r2 = await f2`` fires both
     calls instantly.
 

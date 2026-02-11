@@ -57,21 +57,15 @@ class CodeExecutionError(Exception):
 
 
 class CodeSyntaxError(CodeExecutionError):
-    """Code has a syntax error."""
-
-    pass
+    """The generated code has a syntax error."""
 
 
 class CodeTypingError(CodeExecutionError):
-    """Code has a typing error."""
-
-    pass
+    """The generated code has a type error."""
 
 
 class CodeRuntimeError(CodeExecutionError):
-    """Code raised an exception at runtime."""
-
-    pass
+    """The generated code raised an exception at runtime."""
 
 
 @dataclass

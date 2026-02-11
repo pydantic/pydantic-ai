@@ -374,7 +374,7 @@ def _schema_to_signature(
     *,
     namespace_defs: bool = False,
 ) -> Signature:
-    """Convert JSON schema to Signature using closures for state management."""
+    """Convert JSON schema to a Signature."""
     # Merge all $defs into a single dict
     defs: dict[str, dict[str, Any]] = {}
     typeddicts: dict[str, str] = {}  # name -> definition string
