@@ -57,11 +57,10 @@ from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, get_moc
 
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
+    from openai.types import responses
     from openai.types.responses import (
         ResponseCreatedEvent,
         ResponseFunctionWebSearch,
-        ResponseInProgressEvent,
-        ResponseQueuedEvent,
     )
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_text import ResponseOutputText
@@ -10018,7 +10017,21 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
     assert not (text_part2.provider_details or {}).get('annotations')
 
 
-# --- Background mode VCR tests ---
+def _text_response(text: str, *, status: str = 'completed') -> responses.Response:
+    """Create a Response with a single text output message."""
+    r = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text=text, type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    r.status = status
+    return r
 
 
 @pytest.mark.vcr()
@@ -10036,13 +10049,60 @@ async def test_background_mode_vcr(allow_model_requests: None, openai_api_key: s
         model_settings=OpenAIResponsesModelSettings(openai_background=True),
     )
 
-    assert '4' in result.output
-
-    messages = result.all_messages()
-    # Verify the final response completed successfully
-    final_response = messages[-1]
-    assert isinstance(final_response, ModelResponse)
-    assert final_response.expects_continuation is False
+    assert result.output == snapshot('2 + 2 equals 4.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 2 + 2?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[],
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'queued', 'timestamp': IsDatetime()},
+                provider_response_id='resp_06a562f31ab7703300698b9df109c481979ebf760b2ff5fc75',
+                finish_reason='incomplete',
+                expects_continuation=True,
+                run_id=IsStr(),
+            ),
+            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[],
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'in_progress', 'timestamp': IsDatetime()},
+                provider_response_id='resp_06a562f31ab7703300698b9df109c481979ebf760b2ff5fc75',
+                finish_reason='incomplete',
+                expects_continuation=True,
+                run_id=IsStr(),
+            ),
+            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='2 + 2 equals 4.',
+                        id='msg_06a562f31ab7703300698b9df26c708197991b3cb162a20505',
+                        provider_name='openai',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=15, output_tokens=9, details={'reasoning_tokens': 0}),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id='resp_06a562f31ab7703300698b9df109c481979ebf760b2ff5fc75',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 @pytest.mark.vcr()
@@ -10061,50 +10121,116 @@ async def test_background_mode_with_tool_vcr(allow_model_requests: None, openai_
         model_settings=OpenAIResponsesModelSettings(openai_background=True),
     )
 
-    assert 'Paris' in result.output or 'Sunny' in result.output
-
-    messages = result.all_messages()
-    final_response = messages[-1]
-    assert isinstance(final_response, ModelResponse)
-    assert final_response.expects_continuation is False
-
-
-# --- Background mode mock tests ---
+    assert result.output == snapshot('The weather in Paris is currently sunny with a temperature of 72°F.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the weather in Paris? Use the get_weather tool.', timestamp=IsDatetime()
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[],
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'queued', 'timestamp': IsDatetime()},
+                provider_response_id='resp_01b4d93abce33afe00698b9df44be4819bb99fff16d77a0236',
+                finish_reason='incomplete',
+                expects_continuation=True,
+                run_id=IsStr(),
+            ),
+            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_weather',
+                        args='{"city":"Paris"}',
+                        tool_call_id='call_JcaYgcpgGGTn4GjzjNDDB1xE',
+                        id='fc_01b4d93abce33afe00698b9df584a8819ba20ca908088cf338',
+                        provider_name='openai',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=15, details={'reasoning_tokens': 0}),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id='resp_01b4d93abce33afe00698b9df44be4819bb99fff16d77a0236',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='Sunny and 72F in Paris',
+                        tool_call_id='call_JcaYgcpgGGTn4GjzjNDDB1xE',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[],
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'queued', 'timestamp': IsDatetime()},
+                provider_response_id='resp_0e6b15873828668f00698b9df63cb08196a7f29ecc4788d6b6',
+                finish_reason='incomplete',
+                expects_continuation=True,
+                run_id=IsStr(),
+            ),
+            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[],
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'in_progress', 'timestamp': IsDatetime()},
+                provider_response_id='resp_0e6b15873828668f00698b9df63cb08196a7f29ecc4788d6b6',
+                finish_reason='incomplete',
+                expects_continuation=True,
+                run_id=IsStr(),
+            ),
+            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='The weather in Paris is currently sunny with a temperature of 72°F.',
+                        id='msg_0e6b15873828668f00698b9df7c0bc8196ab1a99ca534cf1cd',
+                        provider_name='openai',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=78, output_tokens=17, details={'reasoning_tokens': 0}),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id='resp_0e6b15873828668f00698b9df63cb08196a7f29ecc4788d6b6',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_background_queued_then_completed(allow_model_requests: None):
     """Background mode: create returns status='queued', retrieve returns status='completed'."""
-    queued_response = response_message(
-        [
-            ResponseOutputMessage(
-                id='output-1',
-                content=cast(list[Content], [ResponseOutputText(text='', type='output_text', annotations=[])]),
-                role='assistant',
-                status='completed',
-                type='message',
-            )
-        ]
-    )
-    queued_response.status = 'queued'
-
-    completed_response = response_message(
-        [
-            ResponseOutputMessage(
-                id='output-1',
-                content=cast(
-                    list[Content], [ResponseOutputText(text='The answer is 42.', type='output_text', annotations=[])]
-                ),
-                role='assistant',
-                status='completed',
-                type='message',
-            )
-        ]
-    )
-    completed_response.status = 'completed'
-
     mock_client = MockOpenAIResponses(
-        response=queued_response,
-        retrieve_responses=[completed_response],
+        response=_text_response('', status='queued'),
+        retrieve_responses=[_text_response('The answer is 42.')],
     )
     mock_client = cast(AsyncOpenAI, mock_client)
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -10115,53 +10241,46 @@ async def test_background_queued_then_completed(allow_model_requests: None):
         model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
     )
     assert result.output == 'The answer is 42.'
-
-    # Verify the first response had expects_continuation=True
-    messages = result.all_messages()
-    first_response = messages[1]
-    assert isinstance(first_response, ModelResponse)
-    assert first_response.expects_continuation is True
-    assert first_response.finish_reason == 'incomplete'
-
-    # Verify the final response has expects_continuation=False
-    final_response = messages[-1]
-    assert isinstance(final_response, ModelResponse)
-    assert final_response.expects_continuation is False
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the meaning of life?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='', id='output-1', provider_name='openai')],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={'finish_reason': 'queued', 'timestamp': IsDatetime()},
+                provider_response_id='123',
+                finish_reason='incomplete',
+                expects_continuation=True,
+                run_id=IsStr(),
+            ),
+            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content='The answer is 42.', id='output-1', provider_name='openai')],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_background_in_progress_then_completed(allow_model_requests: None):
     """Background mode: create returns status='in_progress', retrieve returns status='completed'."""
-    in_progress_response = response_message(
-        [
-            ResponseOutputMessage(
-                id='output-1',
-                content=cast(
-                    list[Content], [ResponseOutputText(text='thinking...', type='output_text', annotations=[])]
-                ),
-                role='assistant',
-                status='completed',
-                type='message',
-            )
-        ]
-    )
-    in_progress_response.status = 'in_progress'
-
-    completed_response = response_message(
-        [
-            ResponseOutputMessage(
-                id='output-1',
-                content=cast(list[Content], [ResponseOutputText(text='Done!', type='output_text', annotations=[])]),
-                role='assistant',
-                status='completed',
-                type='message',
-            )
-        ]
-    )
-    completed_response.status = 'completed'
-
     mock_client = MockOpenAIResponses(
-        response=in_progress_response,
-        retrieve_responses=[completed_response],
+        response=_text_response('thinking...', status='in_progress'),
+        retrieve_responses=[_text_response('Done!')],
     )
     mock_client = cast(AsyncOpenAI, mock_client)
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -10172,24 +10291,44 @@ async def test_background_in_progress_then_completed(allow_model_requests: None)
         model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
     )
     assert result.output == 'Done!'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='thinking...', id='output-1', provider_name='openai')],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={'finish_reason': 'in_progress', 'timestamp': IsDatetime()},
+                provider_response_id='123',
+                finish_reason='incomplete',
+                expects_continuation=True,
+                run_id=IsStr(),
+            ),
+            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content='Done!', id='output-1', provider_name='openai')],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_background_passes_parameter(allow_model_requests: None):
     """Verify background=True appears in create kwargs."""
-    completed_response = response_message(
-        [
-            ResponseOutputMessage(
-                id='output-1',
-                content=cast(list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]),
-                role='assistant',
-                status='completed',
-                type='message',
-            )
-        ]
-    )
-    completed_response.status = 'completed'
-
-    mock_client = MockOpenAIResponses.create_mock(completed_response)
+    mock_client = MockOpenAIResponses.create_mock(_text_response('ok'))
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model=model)
 
@@ -10204,39 +10343,10 @@ async def test_background_passes_parameter(allow_model_requests: None):
 
 async def test_background_max_continuations(allow_model_requests: None):
     """Background mode: stays in_progress beyond limit → UnexpectedModelBehavior."""
-    in_progress_response = response_message(
-        [
-            ResponseOutputMessage(
-                id='output-1',
-                content=cast(
-                    list[Content], [ResponseOutputText(text='still working...', type='output_text', annotations=[])]
-                ),
-                role='assistant',
-                status='completed',
-                type='message',
-            )
-        ]
-    )
-    in_progress_response.status = 'in_progress'
-
-    # Create enough retrieve responses to exceed the limit
-    retrieve_response = response_message(
-        [
-            ResponseOutputMessage(
-                id='output-1',
-                content=cast(
-                    list[Content], [ResponseOutputText(text='still working...', type='output_text', annotations=[])]
-                ),
-                role='assistant',
-                status='completed',
-                type='message',
-            )
-        ]
-    )
-    retrieve_response.status = 'in_progress'
+    retrieve_response = _text_response('still working...', status='in_progress')
 
     mock_client = MockOpenAIResponses(
-        response=in_progress_response,
+        response=_text_response('still working...', status='in_progress'),
         retrieve_responses=[retrieve_response, retrieve_response, retrieve_response],
     )
     mock_client = cast(AsyncOpenAI, mock_client)
@@ -10254,36 +10364,12 @@ async def test_background_max_continuations(allow_model_requests: None):
 
 async def test_background_retrieve_uses_response_id(allow_model_requests: None):
     """Verify that the retrieve call uses the response ID from the create response."""
-    queued_response = response_message(
-        [
-            ResponseOutputMessage(
-                id='output-1',
-                content=cast(list[Content], [ResponseOutputText(text='', type='output_text', annotations=[])]),
-                role='assistant',
-                status='completed',
-                type='message',
-            )
-        ]
-    )
-    queued_response.status = 'queued'
+    queued_response = _text_response('', status='queued')
     queued_response.id = 'resp_bg_123'
-
-    completed_response = response_message(
-        [
-            ResponseOutputMessage(
-                id='output-1',
-                content=cast(list[Content], [ResponseOutputText(text='final', type='output_text', annotations=[])]),
-                role='assistant',
-                status='completed',
-                type='message',
-            )
-        ]
-    )
-    completed_response.status = 'completed'
 
     mock_client = MockOpenAIResponses(
         response=queued_response,
-        retrieve_responses=[completed_response],
+        retrieve_responses=[_text_response('final')],
     )
     mock_client = cast(AsyncOpenAI, mock_client)
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -10294,6 +10380,39 @@ async def test_background_retrieve_uses_response_id(allow_model_requests: None):
         model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
     )
     assert result.output == 'final'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='', id='output-1', provider_name='openai')],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={'finish_reason': 'queued', 'timestamp': IsDatetime()},
+                provider_response_id='resp_bg_123',
+                finish_reason='incomplete',
+                expects_continuation=True,
+                run_id=IsStr(),
+            ),
+            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content='final', id='output-1', provider_name='openai')],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
     retrieve_kwargs = get_mock_retrieve_kwargs(mock_client)
     assert len(retrieve_kwargs) == 1
@@ -10440,53 +10559,3 @@ async def test_request_stream_model_response_with_parts(allow_model_requests: No
     assert model_response.finish_reason == 'content_filter'
     # Parts are set up via handle_part in __post_init__, but _get_event_iterator yields nothing
     assert events == []
-
-
-async def test_stream_handles_queued_event(allow_model_requests: None):
-    """Streaming should handle ResponseQueuedEvent by setting expects_continuation."""
-    response = response_message([])
-    response.id = 'resp_queued'
-    response.status = 'queued'
-
-    mock_client = MockOpenAIResponses.create_mock_stream(
-        [
-            ResponseCreatedEvent(response=response, sequence_number=0, type='response.created'),
-            ResponseQueuedEvent(response=response, sequence_number=1, type='response.queued'),
-        ]
-    )
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-
-    async with model.request_stream(
-        messages=[ModelRequest(parts=[UserPromptPart(content='test')])],
-        model_settings=OpenAIResponsesModelSettings(openai_background=True),
-        model_request_parameters=ModelRequestParameters(),
-    ) as request_stream:
-        assert [event async for event in request_stream] == []
-
-    model_response = request_stream.get()
-    assert model_response.expects_continuation is True
-
-
-async def test_stream_handles_in_progress_event(allow_model_requests: None):
-    """Streaming should handle ResponseInProgressEvent by setting expects_continuation."""
-    response = response_message([])
-    response.id = 'resp_in_progress'
-    response.status = 'in_progress'
-
-    mock_client = MockOpenAIResponses.create_mock_stream(
-        [
-            ResponseCreatedEvent(response=response, sequence_number=0, type='response.created'),
-            ResponseInProgressEvent(response=response, sequence_number=1, type='response.in_progress'),
-        ]
-    )
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-
-    async with model.request_stream(
-        messages=[ModelRequest(parts=[UserPromptPart(content='test')])],
-        model_settings=OpenAIResponsesModelSettings(openai_background=True),
-        model_request_parameters=ModelRequestParameters(),
-    ) as request_stream:
-        assert [event async for event in request_stream] == []
-
-    model_response = request_stream.get()
-    assert model_response.expects_continuation is True

@@ -29,7 +29,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
-from pydantic_ai.models.fallback import FallbackModel, _get_run_id
+from pydantic_ai.models.fallback import FallbackModel, _get_run_id  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
@@ -1099,7 +1099,7 @@ class _ContinuationModel(Model):
     """Test model that wraps FunctionModel and supports expects_continuation in streaming."""
 
     _inner: FunctionModel
-    _stream_expects_continuation: list[bool] = field(default_factory=list)
+    _stream_expects_continuation: list[bool] = field(default_factory=list[bool])
     _stream_call_index: int = field(default=0)
 
     async def request(
@@ -1240,7 +1240,7 @@ async def test_fallback_streaming_pinned_continuation_still_continuing() -> None
 
 def test_get_run_id_empty_messages() -> None:
     """_get_run_id returns None for empty message list."""
-    assert _get_run_id([]) is None  # pyright: ignore[reportPrivateUsage]
+    assert _get_run_id([]) is None
 
 
 def test_get_run_id_no_run_id() -> None:
@@ -1249,4 +1249,4 @@ def test_get_run_id_no_run_id() -> None:
         ModelRequest(parts=[UserPromptPart(content='test')]),
         ModelResponse(parts=[TextPart('response')]),
     ]
-    assert _get_run_id(messages) is None  # pyright: ignore[reportPrivateUsage]
+    assert _get_run_id(messages) is None

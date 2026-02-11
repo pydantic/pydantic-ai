@@ -2481,6 +2481,8 @@ class _ModelResponseStreamedResponse(StreamedResponse):
 
     @property
     def model_name(self) -> str:
+        # model_name is always set when _ModelResponseStreamedResponse is constructed
+        assert self._model_response.model_name is not None
         return self._model_response.model_name
 
     @property
