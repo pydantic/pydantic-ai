@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import sys
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import pydantic_core
@@ -101,7 +102,7 @@ class ApprovalRequired(Exception):
     """
 
     def __init__(
-        self, metadata: dict[str, Any] | None = None, *, context: dict[str, Any] | None = None
+        self, metadata: dict[str, Any] | None = None, *, context: Mapping[str, Any] | None = None
     ):
         self.metadata = metadata
         self.context = context

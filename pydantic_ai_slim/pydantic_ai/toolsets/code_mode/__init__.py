@@ -279,6 +279,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     max_retries: int = 3
     tool_name_prefix: str | None = None
     description_handler: DescriptionHandler | None = None
+    # TODO: _cached_signatures and _name_mapping are populated in get_tools() and consumed in
+    # call_tool(). The agent framework guarantees get_tools() runs first, but this implicit ordering
+    # dependency could trip up future contributors modifying either method independently.
     _cached_signatures: list[str] = field(default_factory=lambda: [], init=False, repr=False)
     _name_mapping: ToolNameMapping = field(default_factory=ToolNameMapping, init=False, repr=False)
 

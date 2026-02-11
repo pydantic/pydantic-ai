@@ -169,7 +169,7 @@ class MontyRuntime(CodeRuntime):
 
         try:
             monty = Monty(code=code, external_functions=functions)
-            await self._type_check(monty, code, signatures, functions)
+            self._type_check(monty, code, signatures, functions)
         except MontyTypingError as e:
             raise CodeTypingError(e.display(format='concise'))
         except MontyRuntimeError as e:
@@ -254,7 +254,7 @@ class MontyRuntime(CodeRuntime):
             '- No imports - use only the provided functions and builtins (len, sum, str, etc.) or write your own functions.'
         )
 
-    async def _type_check(self, monty: Monty, code: str, signatures: list[str], external_functions: list[str]):
+    def _type_check(self, monty: Monty, code: str, signatures: list[str], external_functions: list[str]) -> None:
         prefix_code = _build_type_check_prefix(signatures)
         monty.type_check(prefix_code=prefix_code)
 
@@ -263,7 +263,7 @@ class MontyRuntime(CodeRuntime):
         monty_state: MontyComplete | MontyFutureSnapshot | MontySnapshot,
         tasks: dict[int, asyncio.Task[Any]],
         call_tool: ToolCallback,
-    ):
+    ) -> MontyComplete:
         tool_call_id_to_call: dict[int, FunctionCall] = {}
 
         while not isinstance(monty_state, MontyComplete):

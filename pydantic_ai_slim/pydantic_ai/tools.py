@@ -160,7 +160,7 @@ class DeferredToolRequests:
     """Tool calls that require external execution."""
     approvals: list[ToolCallPart] = field(default_factory=list[ToolCallPart])
     """Tool calls that require human-in-the-loop approval."""
-    context: dict[str, dict[str, Any]] = field(default_factory=dict)
+    context: dict[str, Mapping[str, Any]] = field(default_factory=dict)
     """Opaque context data provided by toolsets for use during resumption, keyed by `tool_call_id`.
 
     Pass this back unchanged in [`DeferredToolResults.context`][pydantic_ai.tools.DeferredToolResults.context].

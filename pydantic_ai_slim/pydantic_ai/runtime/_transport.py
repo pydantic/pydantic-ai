@@ -235,6 +235,15 @@ class DriverBasedRuntime(CodeRuntime):
                 # from the driver, confirming all call messages for this batch
                 # have been sent. Without this, network-based runtimes (Modal,
                 # E2B, etc.) could lose in-transit call messages.
+                #
+                # Known limitation: if a successful tool result sent back to the
+                # driver causes the code to fire new calls (a subsequent "wave"),
+                # those calls may not yet be on stdout when this condition is
+                # checked, resulting in a premature interrupt. This is not a
+                # correctness bug — re-execution with the result cache on resume
+                # will replay the missed calls — but it adds an extra
+                # interrupt+resume round-trip. The Monty runtime does not have
+                # this issue because its snapshot captures full interpreter state.
                 if interrupted_calls and not tool_tasks and calls_ready_seen:
                     await _cancel_task(stdout_task)
                     await process.kill()
@@ -320,7 +329,10 @@ class DriverBasedRuntime(CodeRuntime):
         try:
             result = task.result()
             completed_results[cid] = result
-            result_msg = json.dumps({'type': 'result', 'id': cid, 'result': result}, default=str) + '\n'
+            # Serialize via tool_return_ta to preserve type fidelity (bytes, Pydantic models, etc.)
+            # before embedding in the JSON protocol message.
+            json_result = tool_return_ta.dump_python(result, mode='json')
+            result_msg = json.dumps({'type': 'result', 'id': cid, 'result': json_result}) + '\n'
             await process.write_line(result_msg.encode())
         except (ApprovalRequired, CallDeferred) as e:
             fc = call_id_to_fc[cid]

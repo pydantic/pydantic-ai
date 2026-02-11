@@ -1010,7 +1010,7 @@ async def process_tool_calls(  # noqa: C901
 
     deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]] = defaultdict(list)
     deferred_metadata: dict[str, dict[str, Any]] = {}
-    deferred_context: dict[str, Any] = {}
+    deferred_context: dict[str, Mapping[str, Any]] = {}
 
     if calls_to_run:
         async for event in _call_tools(
@@ -1081,13 +1081,13 @@ async def _call_tools(  # noqa: C901
     output_parts: list[_messages.ModelRequestPart],
     output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
     output_deferred_metadata: dict[str, dict[str, Any]],
-    output_deferred_context: dict[str, dict[str, Any]],
+    output_deferred_context: dict[str, Mapping[str, Any]],
 ) -> AsyncIterator[_messages.HandleResponseEvent]:
     tool_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
     user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
     deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
     deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
-    deferred_context_by_index: dict[int, dict[str, Any] | None] = {}
+    deferred_context_by_index: dict[int, Mapping[str, Any] | None] = {}
 
     if usage_limits.tool_calls_limit is not None:
         projected_usage = deepcopy(usage)
@@ -1211,10 +1211,10 @@ def _populate_deferred_calls(
     tool_calls: list[_messages.ToolCallPart],
     deferred_calls_by_index: dict[int, Literal['external', 'unapproved']],
     deferred_metadata_by_index: dict[int, dict[str, Any] | None],
-    deferred_context_by_index: dict[int, dict[str, Any] | None],
+    deferred_context_by_index: dict[int, Mapping[str, Any] | None],
     output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
     output_deferred_metadata: dict[str, dict[str, Any]],
-    output_deferred_context: dict[str, dict[str, Any]],
+    output_deferred_context: dict[str, Mapping[str, Any]],
 ) -> None:
     """Populate deferred calls and metadata from indexed mappings."""
     for k in sorted(deferred_calls_by_index):

@@ -7,7 +7,6 @@ than raw JSON schemas.
 
 from __future__ import annotations
 
-import ast
 import dataclasses
 import re
 import types
@@ -158,19 +157,6 @@ def signature_from_schema(
         return_json_schema,
         namespace_defs=namespace_defs,
     )
-
-
-def validate_signature(signature_str: str) -> bool:
-    """Validate that a signature string is valid Python syntax.
-
-    Args:
-        signature_str: The signature string to validate.
-
-    Returns:
-        True if valid, raises SyntaxError if invalid.
-    """
-    ast.parse(signature_str)
-    return True
 
 
 # =============================================================================
