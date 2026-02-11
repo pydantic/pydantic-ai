@@ -112,6 +112,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             request: The incoming Starlette/FastAPI request.
             agent: The Pydantic AI agent to run.
             sdk_version: Vercel AI SDK version. Set to 6 to enable tool approval streaming.
+            **kwargs: Additional keyword arguments (unused, accepted for forward compatibility).
         """
         return cls(
             agent=agent,
@@ -167,6 +168,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult]
                 and can optionally yield additional Vercel AI events.
+            **kwargs: Additional keyword arguments forwarded to the base class.
 
         Returns:
             A streaming Starlette response with Vercel AI events encoded per the request's `Accept` header value.
