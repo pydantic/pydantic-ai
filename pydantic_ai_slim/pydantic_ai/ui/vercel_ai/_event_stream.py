@@ -274,4 +274,4 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         elif not result:
             return '\n'.join(file_descriptions)
         else:
-            return result
+            return str(result) + '\n' + '\n'.join(file_descriptions)

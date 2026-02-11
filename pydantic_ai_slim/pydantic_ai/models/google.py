@@ -711,6 +711,7 @@ class GoogleModel(Model):
                     fr_part = await self._map_file_to_function_response_part(item)
                     function_response_parts.append(fr_part)
                 else:
+                    fallback_parts.append({'text': f'This is file {item.identifier}:'})
                     file_part = await self._map_file_to_part(item)
                     fallback_parts.append(file_part)
 

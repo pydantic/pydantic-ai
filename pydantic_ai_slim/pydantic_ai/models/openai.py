@@ -2139,10 +2139,7 @@ class OpenAIResponsesModel(Model):
                     if item.is_image:
                         detail: Literal['auto', 'low', 'high'] = 'auto'
                         if metadata := item.vendor_metadata:
-                            detail = cast(
-                                Literal['auto', 'low', 'high'],
-                                metadata.get('detail', 'auto'),
-                            )
+                            detail = metadata.get('detail', 'auto')
                         content.append(
                             responses.ResponseInputImageParam(
                                 image_url=item.data_uri,
@@ -2171,7 +2168,7 @@ class OpenAIResponsesModel(Model):
                     detail: Literal['auto', 'low', 'high'] = 'auto'
                     image_url = item.url
                     if metadata := item.vendor_metadata:
-                        detail = cast(Literal['auto', 'low', 'high'], metadata.get('detail', 'auto'))
+                        detail = metadata.get('detail', 'auto')
                     if item.force_download:
                         downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
                         image_url = downloaded_item['data']
@@ -2230,7 +2227,7 @@ class OpenAIResponsesModel(Model):
                 if item.is_image:
                     detail: Literal['auto', 'low', 'high'] = 'auto'
                     if metadata := item.vendor_metadata:
-                        detail = cast(Literal['auto', 'low', 'high'], metadata.get('detail', 'auto'))
+                        detail = metadata.get('detail', 'auto')
                     output.append(
                         ResponseInputImageContentParam(type='input_image', image_url=item.data_uri, detail=detail)
                     )
@@ -2250,7 +2247,7 @@ class OpenAIResponsesModel(Model):
                 detail: Literal['auto', 'low', 'high'] = 'auto'
                 image_url = item.url
                 if metadata := item.vendor_metadata:
-                    detail = cast(Literal['auto', 'low', 'high'], metadata.get('detail', 'auto'))
+                    detail = metadata.get('detail', 'auto')
                 if item.force_download:
                     downloaded = await download_item(item, data_format='base64_uri', type_format='extension')
                     image_url = downloaded['data']

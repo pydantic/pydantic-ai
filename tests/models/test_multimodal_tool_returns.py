@@ -40,12 +40,11 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
-    iter_message_parts,
 )
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 
-from ..conftest import try_import
+from ..conftest import iter_message_parts, try_import
 
 with try_import() as openai_available:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
