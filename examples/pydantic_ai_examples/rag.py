@@ -26,9 +26,7 @@ Ask the agent a question with:
 from __future__ import annotations as _annotations
 
 import asyncio
-import re
 import sys
-import unicodedata
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
@@ -38,18 +36,19 @@ import logfire
 import pydantic_core
 from anyio import create_task_group
 from chonkie import RecursiveChunker
-from pydantic import TypeAdapter
 from typing_extensions import AsyncGenerator
 
 from pydantic_ai import Agent, Embedder, RunContext
+
+from ._rag_common import DOCS_JSON, DocsSection, sections_ta
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_asyncpg()
 logfire.instrument_pydantic_ai()
 
-# Create an embedder using pydantic-ai's unified interface
 embedder = Embedder('openai:text-embedding-3-small')
+chunker = RecursiveChunker(chunk_size=512)
 
 
 @dataclass
@@ -97,21 +96,8 @@ async def run_agent(question: str):
 
 #######################################################
 # The rest of this file is dedicated to preparing the #
-# search database, and some utilities.                #
+# search database.                                    #
 #######################################################
-
-# JSON document from
-# https://gist.github.com/samuelcolvin/4b5bb9bb163b1122ff17e29e48c10992
-DOCS_JSON = (
-    'https://gist.githubusercontent.com/'
-    'samuelcolvin/4b5bb9bb163b1122ff17e29e48c10992/raw/'
-    '80c5925c42f1442c24963aaf5eb1a324d47afe95/logfire_docs.json'
-)
-
-# Create a chunker for splitting large content
-# Using recursive chunking with 512 tokens
-# Note: RecursiveChunker uses a rules-based system, not overlap
-chunker = RecursiveChunker(chunk_size=512)
 
 
 async def build_search_db():
@@ -145,50 +131,22 @@ async def insert_doc_section(
             logfire.info('Skipping {url=}', url=url)
             return
 
-        # Get the content to embed
         content = section.embedding_content()
-
-        # Chunk the content if it's large
-        # The JSON data already has sections, but we chunk them further if needed
         chunks = chunker.chunk(content)
-
-        # For this example, we embed the first chunk if content was split
-        # In production, you might want to store multiple chunks per section
-        chunk_text = chunks[0].text if chunks else content
+        chunk_texts = [c.text for c in chunks] if chunks else [content]
 
         with logfire.span('create embedding for {url=}', url=url):
-            result = await embedder.embed_documents([chunk_text])
+            result = await embedder.embed_documents(chunk_texts)
 
-        embedding_json = pydantic_core.to_json(result.embeddings[0]).decode()
-        await pool.execute(
-            'INSERT INTO doc_sections (url, title, content, embedding) VALUES ($1, $2, $3, $4)',
-            url,
-            section.title,
-            section.content,
-            embedding_json,
-        )
-
-
-@dataclass
-class DocsSection:
-    id: int
-    parent: int | None
-    path: str
-    level: int
-    title: str
-    content: str
-
-    def url(self) -> str:
-        url_path = re.sub(r'\.md$', '', self.path)
-        return (
-            f'https://logfire.pydantic.dev/docs/{url_path}/#{slugify(self.title, "-")}'
-        )
-
-    def embedding_content(self) -> str:
-        return '\n\n'.join((f'path: {self.path}', f'title: {self.title}', self.content))
-
-
-sections_ta = TypeAdapter(list[DocsSection])
+        for chunk_text, embedding in zip(chunk_texts, result.embeddings, strict=False):
+            embedding_json = pydantic_core.to_json(embedding).decode()
+            await pool.execute(
+                'INSERT INTO doc_sections (url, title, content, embedding) VALUES ($1, $2, $3, $4)',
+                url,
+                section.title,
+                chunk_text,
+                embedding_json,
+            )
 
 
 # pyright: reportUnknownMemberType=false
@@ -225,7 +183,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS doc_sections (
     id serial PRIMARY KEY,
-    url text NOT NULL UNIQUE,
+    url text NOT NULL,
     title text NOT NULL,
     content text NOT NULL,
     -- text-embedding-3-small returns a vector of 1536 floats
@@ -233,17 +191,6 @@ CREATE TABLE IF NOT EXISTS doc_sections (
 );
 CREATE INDEX IF NOT EXISTS idx_doc_sections_embedding ON doc_sections USING hnsw (embedding vector_l2_ops);
 """
-
-
-def slugify(value: str, separator: str, unicode: bool = False) -> str:
-    """Slugify a string, to make it URL friendly."""
-    # Taken unchanged from https://github.com/Python-Markdown/markdown/blob/3.7/markdown/extensions/toc.py#L38
-    if not unicode:
-        # Replace Extended Latin characters with ASCII, i.e. `žlutý` => `zluty`
-        value = unicodedata.normalize('NFKD', value)
-        value = value.encode('ascii', 'ignore').decode('ascii')
-    value = re.sub(r'[^\w\s-]', '', value).strip().lower()
-    return re.sub(rf'[{separator}\s]+', separator, value)
 
 
 if __name__ == '__main__':

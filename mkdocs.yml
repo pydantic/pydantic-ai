@@ -118,7 +118,6 @@ nav:
           - examples/sql-gen.md
           - examples/data-analyst.md
       - RAG & Embeddings:
-          - examples/chunking.md
           - examples/rag.md
           - examples/rag-lancedb.md
       - Streaming:

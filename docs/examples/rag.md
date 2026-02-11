@@ -37,39 +37,20 @@ We also mount the PostgreSQL `data` directory locally to persist the data if you
 With pgvector running and [dependencies installed and environment variables set](./setup.md#usage), build the search database:
 
 !!! warning "API Costs"
-    This requires the `OPENAI_API_KEY` env variable and will call the OpenAI embedding API around 300 times to generate embeddings for each section of the documentation.
+    This requires the `OPENAI_API_KEY` env variable and will call the OpenAI embedding API to generate embeddings for each chunk of documentation.
 
 ```bash
 python/uv-run -m pydantic_ai_examples.rag build
 ```
 
-The build process:
-
-1. Fetches documentation sections from a JSON file
-2. Chunks each section using [`RecursiveChunker`](https://github.com/chonkie-inc/chonkie) (512 tokens)
-3. Generates embeddings using pydantic-ai's [`Embedder`][pydantic_ai.embeddings.Embedder] with OpenAI's `text-embedding-3-small`
-4. Stores chunks and embeddings in pgvector
-
 ## Querying
-
-You can then ask the agent a question:
 
 ```bash
 python/uv-run -m pydantic_ai_examples.rag search "How do I configure logfire to work with FastAPI?"
 ```
 
-The agent uses a retrieval tool that:
-
-1. Embeds the search query
-2. Finds similar chunks using pgvector's vector similarity search
-3. Returns the most relevant documentation sections as context
-
 ## Example Code
 
 ```snippet {path="/examples/pydantic_ai_examples/rag.py"}```
 
-## Next Steps
-
-- See the [LanceDB RAG example](./rag-lancedb.md) for a simpler setup without Docker
-- Learn more about [chunking strategies](../embeddings.md#chunking-strategies)
-- Explore [embeddings providers](../embeddings.md#providers)
+For a simpler setup without Docker, see the [LanceDB RAG example](./rag-lancedb.md).
