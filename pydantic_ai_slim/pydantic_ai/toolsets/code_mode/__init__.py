@@ -103,7 +103,9 @@ class CodeModeContext(TypedDict):
 __all__ = (
     'CodeModeToolset',
     'CodeModeContext',
+    'DescriptionHandler',
     'InterruptedCall',
+    'build_code_mode_prompt',
 )
 
 
@@ -500,7 +502,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # Propagate as a fresh ApprovalRequired so the user can handle the next round.
             raise ApprovalRequired(
                 context=self._build_interruption_context(
-                    e, resume_code, resume_functions, resume_signatures,
+                    e,
+                    resume_code,
+                    resume_functions,
+                    resume_signatures,
                 )
             )
 
@@ -532,7 +537,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             tools=original_name_tools,
         )
 
-        # Check if this is a resume from deferred (tool_call_approved indicates resumption)
+        # When the agent replays a tool call from DeferredToolResults, it sets
+        # tool_call_approved=True. For code mode, this signals resume-from-checkpoint
+        # rather than fresh execution. The flag serves double duty: "user approved
+        # the run_code call" AND "resume with pre-resolved nested results in context".
         if ctx.tool_call_approved:
             return await self._handle_resume(ctx, tool, code_mode_tool_manager, sanitized_to_original)
 
@@ -551,6 +559,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         except CodeInterruptedError as e:
             raise ApprovalRequired(
                 context=self._build_interruption_context(
-                    e, code, functions, self._cached_signatures,
+                    e,
+                    code,
+                    functions,
+                    self._cached_signatures,
                 )
             )

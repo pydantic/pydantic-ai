@@ -12,7 +12,20 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, TypeAlias
 
+import pydantic
+
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
+from pydantic_ai.messages import ToolReturnContent
+
+# Shared TypeAdapter for deserializing checkpoint values with proper type reconstruction.
+# Uses ToolReturnContent (which includes the discriminated MultiModalContent union)
+# so that rich types like BinaryContent and ImageUrl subclasses are reconstructed
+# from their JSON representations via the `kind` discriminator, rather than being
+# left as plain dicts after round-tripping through JSON.
+checkpoint_result_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
+    ToolReturnContent,
+    config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64'),
+)
 
 
 @dataclass(frozen=True)

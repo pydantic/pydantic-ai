@@ -1,6 +1,6 @@
-"""Host-side ABC for stdio-pipe-based code runtimes.
+"""Host-side ABC for driver-based code runtimes.
 
-Provides ``StdioSandboxRuntime``, an intermediate abstract base class that
+Provides ``DriverBasedRuntime``, an intermediate abstract base class that
 handles the NDJSON protocol, tool dispatch, interrupt/checkpoint logic, and
 resume-via-re-execution. Concrete subclasses (Docker, E2B, Modal, etc.)
 implement a single method: ``_start_driver``.
@@ -11,14 +11,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-import pydantic
-
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
-from pydantic_ai.messages import ToolReturnContent, tool_return_ta
+from pydantic_ai.messages import tool_return_ta
 from pydantic_ai.runtime.abstract import (
     CodeInterruptedError,
     CodeRuntime,
@@ -27,37 +25,36 @@ from pydantic_ai.runtime.abstract import (
     FunctionCall,
     InterruptedToolCall,
     ToolCallback,
-)
-
-# TypeAdapter for deserializing checkpoint values with proper type reconstruction.
-_checkpoint_result_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
-    ToolReturnContent,
-    config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64'),
+    checkpoint_result_ta,
 )
 
 
-class DriverProcess:
-    """Interface for communicating with a driver subprocess.
+class DriverTransport(ABC):
+    """Interface for communicating with a driver process.
 
-    Concrete implementations wrap platform-specific process types
-    (``asyncio.subprocess.Process``, SDK handles, etc.).
+    Concrete implementations wrap platform-specific transport types
+    (``asyncio.subprocess.Process``, SDK handles, WebSocket connections, etc.).
     """
 
+    @abstractmethod
     async def read_line(self) -> bytes:
         """Read a single newline-terminated line from the driver's stdout."""
-        raise NotImplementedError
+        ...
 
+    @abstractmethod
     async def write_line(self, data: bytes) -> None:
         """Write a line to the driver's stdin (must include trailing newline)."""
-        raise NotImplementedError
+        ...
 
+    @abstractmethod
     async def read_stderr(self) -> bytes:
         """Read all available stderr output from the driver."""
-        raise NotImplementedError
+        ...
 
+    @abstractmethod
     async def kill(self) -> None:
         """Terminate the driver process."""
-        raise NotImplementedError
+        ...
 
 
 def _serialize_checkpoint(
@@ -103,8 +100,8 @@ def _deserialize_checkpoint(checkpoint: bytes) -> _DeserializedCheckpoint:
 
 
 @dataclass
-class StdioSandboxRuntime(CodeRuntime):
-    """Abstract base for all stdio-pipe-based code runtimes.
+class DriverBasedRuntime(CodeRuntime):
+    """Abstract base for all driver-based code runtimes.
 
     Subclasses implement ``_start_driver`` to launch the driver script inside
     their specific sandbox environment. Everything else — protocol handling,
@@ -112,19 +109,19 @@ class StdioSandboxRuntime(CodeRuntime):
     """
 
     @abstractmethod
-    async def _start_driver(self, init_msg: dict[str, Any]) -> DriverProcess:
+    async def _start_driver(self, init_msg: dict[str, Any]) -> DriverTransport:
         """Launch the driver process and send the init message.
 
         The implementation should:
         1. Start a process running ``_driver.py``
         2. Write the JSON-encoded init message as the first line to stdin
-        3. Return a ``DriverProcess`` wrapping the subprocess handles
+        3. Return a ``DriverTransport`` wrapping the subprocess handles
 
         Args:
             init_msg: The init message dict to send to the driver.
 
         Returns:
-            A DriverProcess for communicating with the driver.
+            A DriverTransport for communicating with the driver.
         """
         ...
 
@@ -172,7 +169,7 @@ class StdioSandboxRuntime(CodeRuntime):
         # that aren't JSON-serializable without an explicit dump step.
         result_cache: dict[str, Any] = {}
         for k, v in ckpt.completed_results.items():
-            reconstructed = _checkpoint_result_ta.validate_json(base64.b64decode(v))
+            reconstructed = checkpoint_result_ta.validate_json(base64.b64decode(v))
             result_cache[k] = tool_return_ta.dump_python(reconstructed, mode='json')
 
         init_msg: dict[str, Any] = {
@@ -189,7 +186,7 @@ class StdioSandboxRuntime(CodeRuntime):
         except Exception as e:
             raise CodeRuntimeError(f'Driver communication error: {e}') from e
 
-    async def _execution_loop(self, process: DriverProcess, call_tool: ToolCallback) -> Any:
+    async def _execution_loop(self, process: DriverTransport, call_tool: ToolCallback) -> Any:
         """Run the dual-wait event loop: read driver stdout + dispatch tool tasks.
 
         Simultaneously reads protocol messages from the driver and manages
@@ -224,8 +221,14 @@ class StdioSandboxRuntime(CodeRuntime):
                         stdout_task = asyncio.ensure_future(process.read_line())
                     else:
                         await self._handle_tool_done(
-                            task, process, tool_tasks, task_id_to_cid, call_id_to_fc,
-                            completed_results, interrupted_calls, stdout_task,
+                            task,
+                            process,
+                            tool_tasks,
+                            task_id_to_cid,
+                            call_id_to_fc,
+                            completed_results,
+                            interrupted_calls,
+                            stdout_task,
                         )
 
                 # Only interrupt once we've received the calls_ready fence
@@ -247,7 +250,7 @@ class StdioSandboxRuntime(CodeRuntime):
     @staticmethod
     async def _handle_stdout(
         task: asyncio.Task[bytes],
-        process: DriverProcess,
+        process: DriverTransport,
         call_tool: ToolCallback,
         tool_tasks: dict[int, asyncio.Task[Any]],
         task_id_to_cid: dict[int, int],
@@ -302,7 +305,7 @@ class StdioSandboxRuntime(CodeRuntime):
     @staticmethod
     async def _handle_tool_done(
         task: asyncio.Task[Any],
-        process: DriverProcess,
+        process: DriverTransport,
         tool_tasks: dict[int, asyncio.Task[Any]],
         task_id_to_cid: dict[int, int],
         call_id_to_fc: dict[int, FunctionCall],
@@ -323,6 +326,10 @@ class StdioSandboxRuntime(CodeRuntime):
             fc = call_id_to_fc[cid]
             interrupted_calls.append(InterruptedToolCall(type=e, call=fc))
         except Exception as e:
+            # Intentional broad catch: this is a defensive boundary between the runtime
+            # protocol and the tool execution layer. Tool implementation bugs get wrapped
+            # as CodeRuntimeError (→ ModelRetry) rather than crashing the runtime protocol.
+            # The original exception message is preserved so the LLM sees what went wrong.
             await _cancel_all(tool_tasks, stdout_task, process)
             raise CodeRuntimeError(f'Tool execution error: {e}') from e
 
@@ -345,7 +352,7 @@ async def _cancel_task(task: asyncio.Task[Any]) -> None:
 async def _cancel_all(
     tool_tasks: dict[int, asyncio.Task[Any]],
     stdout_task: asyncio.Task[Any],
-    process: DriverProcess,
+    process: DriverTransport,
 ) -> None:
     """Cancel all pending tasks and kill the driver process."""
     for t in tool_tasks.values():

@@ -1,4 +1,8 @@
-from ._stdio import DriverProcess, StdioSandboxRuntime
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from ._transport import DriverBasedRuntime, DriverTransport
 from .abstract import (
     CodeExecutionError,
     CodeInterruptedError,
@@ -13,6 +17,9 @@ from .abstract import (
 from .docker import DockerRuntime
 from .modal import ModalRuntime
 
+if TYPE_CHECKING:
+    from .monty import MontyRuntime
+
 __all__ = (
     'CodeExecutionError',
     'CodeInterruptedError',
@@ -21,10 +28,19 @@ __all__ = (
     'CodeSyntaxError',
     'CodeTypingError',
     'DockerRuntime',
-    'DriverProcess',
+    'DriverBasedRuntime',
+    'DriverTransport',
     'FunctionCall',
     'InterruptedToolCall',
     'ModalRuntime',
-    'StdioSandboxRuntime',
+    'MontyRuntime',
     'ToolCallback',
 )
+
+
+def __getattr__(name: str) -> Any:
+    if name == 'MontyRuntime':
+        from .monty import MontyRuntime
+
+        return MontyRuntime
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

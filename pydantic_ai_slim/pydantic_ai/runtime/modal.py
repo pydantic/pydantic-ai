@@ -15,11 +15,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pydantic_ai.runtime._stdio import DriverProcess, StdioSandboxRuntime
+from pydantic_ai.runtime._transport import DriverBasedRuntime, DriverTransport
 
 
-class _ModalDriverProcess(DriverProcess):
-    """DriverProcess wrapping a Modal ``ContainerProcess``."""
+class _ModalDriverTransport(DriverTransport):
+    """DriverTransport wrapping a Modal ``ContainerProcess``."""
 
     def __init__(self, process: Any, sandbox: Any):
         self._process = process
@@ -46,7 +46,7 @@ class _ModalDriverProcess(DriverProcess):
 
 
 @dataclass
-class ModalRuntime(StdioSandboxRuntime):
+class ModalRuntime(DriverBasedRuntime):
     """CodeRuntime that executes code inside a Modal sandbox.
 
     Creates an ephemeral gVisor-isolated sandbox per execution.
@@ -63,7 +63,7 @@ class ModalRuntime(StdioSandboxRuntime):
     image: Any = None
     timeout: int = 300
 
-    async def _start_driver(self, init_msg: dict[str, Any]) -> DriverProcess:
+    async def _start_driver(self, init_msg: dict[str, Any]) -> DriverTransport:
         try:
             import modal
         except ImportError as _e:
@@ -87,7 +87,7 @@ class ModalRuntime(StdioSandboxRuntime):
         # Start the driver process with line buffering
         process = await sandbox.exec.aio('python', '-u', '/tmp/pydantic_ai_driver.py', bufsize=1)
 
-        driver = _ModalDriverProcess(process, sandbox)
+        driver = _ModalDriverTransport(process, sandbox)
         init_line = json.dumps(init_msg).encode() + b'\n'
         await driver.write_line(init_line)
         return driver

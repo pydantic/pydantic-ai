@@ -6,10 +6,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-import pydantic
-
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
-from pydantic_ai.messages import ToolReturnContent, tool_return_ta
+from pydantic_ai.messages import tool_return_ta
 from pydantic_ai.runtime.abstract import (
     CodeInterruptedError,
     CodeRuntime,
@@ -19,6 +17,7 @@ from pydantic_ai.runtime.abstract import (
     FunctionCall,
     InterruptedToolCall,
     ToolCallback,
+    checkpoint_result_ta,
 )
 
 try:
@@ -34,16 +33,6 @@ try:
     )
 except ImportError:
     raise ImportError("MontyRuntime requires 'monty'. Install with: pip install 'pydantic-ai-slim[monty]'")
-
-# TypeAdapter for deserializing checkpoint values with proper type reconstruction.
-# Uses ToolReturnContent (which includes the discriminated MultiModalContent union)
-# so that rich types like BinaryContent and FileUrl subclasses are reconstructed
-# from their JSON representations via the `kind` discriminator, rather than being
-# left as plain dicts after round-tripping through JSON.
-_checkpoint_result_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
-    ToolReturnContent,
-    config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64'),
-)
 
 
 @dataclass
@@ -88,7 +77,7 @@ def _serialize_checkpoint(
 
     Each completed result is individually serialized to JSON bytes via Pydantic's
     ``tool_return_ta``, then base64-encoded for embedding in the outer JSON payload.
-    On deserialization, ``_checkpoint_result_ta`` (backed by ``ToolReturnContent``)
+    On deserialization, ``checkpoint_result_ta`` (backed by ``ToolReturnContent``)
     reconstructs rich types (``BinaryContent``, ``ImageUrl``, etc.) from their JSON
     via the ``kind`` discriminator — plain dicts/strings/numbers pass through unchanged.
 
@@ -216,12 +205,12 @@ class MontyRuntime(CodeRuntime):
             monty_state: MontyComplete | MontyFutureSnapshot | MontySnapshot = MontyFutureSnapshot.load(ckpt.monty_dump)
 
             # Feed completed results (calls that succeeded before the interruption).
-            # Values are deserialized through _checkpoint_result_ta (ToolReturnContent)
+            # Values are deserialized through checkpoint_result_ta (ToolReturnContent)
             # which reconstructs rich types (BinaryContent, etc.) via validate_json.
             if ckpt.completed_results:
                 monty_results: dict[int, ExternalResult] = {}
                 for k, v in ckpt.completed_results.items():
-                    reconstructed = _checkpoint_result_ta.validate_json(base64.b64decode(v))
+                    reconstructed = checkpoint_result_ta.validate_json(base64.b64decode(v))
                     monty_results[int(k)] = {'return_value': reconstructed}
                 monty_state = monty_state.resume(results=monty_results)
                 if isinstance(monty_state, MontyComplete):
@@ -311,6 +300,11 @@ class MontyRuntime(CodeRuntime):
                     except (CallDeferred, ApprovalRequired) as e:
                         interrupted_calls.append(InterruptedToolCall(type=e, call=tool_call_id_to_call[cid]))
                     except Exception as e:
+                        # Intentional broad catch: this is a defensive boundary between
+                        # the runtime and the tool execution layer. Tool implementation
+                        # bugs get wrapped as CodeRuntimeError (→ ModelRetry) rather than
+                        # crashing the runtime protocol. The original exception message
+                        # is preserved so the LLM sees what went wrong.
                         for remaining in tasks.values():
                             remaining.cancel()
                         raise CodeRuntimeError(f'Tool execution error: {e}') from e

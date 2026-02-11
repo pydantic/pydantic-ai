@@ -16,11 +16,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pydantic_ai.runtime._stdio import DriverProcess, StdioSandboxRuntime
+from pydantic_ai.runtime._transport import DriverBasedRuntime, DriverTransport
 
 
-class _AsyncSubprocessDriver(DriverProcess):
-    """DriverProcess wrapping an ``asyncio.subprocess.Process``."""
+class _AsyncSubprocessDriver(DriverTransport):
+    """DriverTransport wrapping an ``asyncio.subprocess.Process``."""
 
     def __init__(self, proc: asyncio.subprocess.Process):
         self._proc = proc
@@ -47,7 +47,7 @@ class _AsyncSubprocessDriver(DriverProcess):
 
 
 @dataclass
-class DockerRuntime(StdioSandboxRuntime):
+class DockerRuntime(DriverBasedRuntime):
     """CodeRuntime that executes code inside a Docker container.
 
     The container must already be running. Use ``copy_driver_to_container()``
@@ -63,7 +63,7 @@ class DockerRuntime(StdioSandboxRuntime):
     python_path: str = 'python'
     driver_path: str = '/tmp/pydantic_ai_driver.py'
 
-    async def _start_driver(self, init_msg: dict[str, Any]) -> DriverProcess:
+    async def _start_driver(self, init_msg: dict[str, Any]) -> DriverTransport:
         proc = await asyncio.create_subprocess_exec(
             'docker',
             'exec',
