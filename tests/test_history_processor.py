@@ -1212,7 +1212,9 @@ async def test_history_processor_overrides_run_id_uses_response_as_new_messages(
     assert result.new_messages() == result.all_messages()[-1:]
 
 
-async def test_history_processor_reused_history_request(function_model: FunctionModel, received_messages: list[ModelMessage]):
+async def test_history_processor_reused_history_request(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
     """
     Exercise the `reused_history_request` path:
     - run with `user_prompt=None`
