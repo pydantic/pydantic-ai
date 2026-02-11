@@ -301,7 +301,7 @@ class FunctionStreamedResponse(StreamedResponse):
     def __post_init__(self):
         self._usage += _estimate_usage([])
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         async for item in self._iter:
             if isinstance(item, str):
                 response_tokens = _estimate_string_tokens(item)
@@ -367,7 +367,7 @@ class FunctionStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
+def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:  # noqa: C901
     """Very rough guesstimate of the token usage associated with a series of messages.
 
     This is designed to be used solely to give plausible numbers for testing!

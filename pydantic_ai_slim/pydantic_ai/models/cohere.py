@@ -228,7 +228,7 @@ class CohereModel(Model):
             provider_details=provider_details,
         )
 
-    def _map_messages(
+    def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[ChatMessageV2]:
         """Just maps a `pydantic_ai.Message` to a `cohere.ChatMessageV2`."""
