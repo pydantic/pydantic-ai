@@ -1,20 +1,12 @@
 from __future__ import annotations as _annotations
 
-import asyncio
-import contextlib
 import inspect
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
-from dataclasses import dataclass, field
 from types import FrameType
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
-import anyio
-from anyio.streams.memory import (
-    MemoryObjectReceiveStream,
-    MemoryObjectSendStream,
-)
 from pydantic import TypeAdapter
 from typing_extensions import Self, TypeIs, TypeVar, deprecated
 
@@ -36,8 +28,8 @@ from .._output import types_from_output_spec
 from .._tool_manager import ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..output import OutputDataT, OutputSpec
-from ..result import AgentStream, FinalResult, StreamedRunResult
-from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
+from ..result import AgentStream, FinalResult, StreamedRunResult, StreamEventsResult
+from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings
 from ..tools import (
     AgentDepsT,
@@ -82,177 +74,6 @@ Instructions = (
 )
 
 AgentMetadata = dict[str, Any] | Callable[[RunContext[AgentDepsT]], dict[str, Any]]
-
-
-@dataclass(repr=False)
-class StreamEventsResult(Generic[AgentDepsT, OutputDataT]):
-    """Wrapper for streaming events from an agent run.
-
-    Supports two usage patterns:
-
-    **Context manager (recommended)** — cleanup is guaranteed by the context manager:
-
-    ```python
-    from pydantic_ai import Agent
-
-    agent = Agent('openai:gpt-4o')
-
-    async def main():
-        async with agent.run_stream_events('What is the capital of France?') as events:
-            async for event in events:
-                ...
-    ```
-
-    **Direct iteration (deprecated)** — cleanup via `break` is not guaranteed in all scenarios:
-
-    ```python
-    from pydantic_ai import Agent
-
-    agent = Agent('openai:gpt-4o')
-
-    async def main():
-        async for event in agent.run_stream_events('What is the capital of France?'):
-            ...
-    ```
-    """
-
-    _agent: AbstractAgent[AgentDepsT, OutputDataT]
-    _user_prompt: str | Sequence[_messages.UserContent] | None
-    _output_type: OutputSpec[Any] | None
-    _message_history: Sequence[_messages.ModelMessage] | None
-    _deferred_tool_results: DeferredToolResults | None
-    _model: models.Model | models.KnownModelName | str | None
-    _instructions: Instructions[AgentDepsT]
-    _deps: AgentDepsT
-    _model_settings: ModelSettings | None
-    _usage_limits: _usage.UsageLimits | None
-    _usage: _usage.RunUsage | None
-    _metadata: AgentMetadata[AgentDepsT] | None
-    _toolsets: Sequence[AbstractToolset[AgentDepsT]] | None
-    _builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None
-
-    _active_iter: AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]] | None = field(
-        default=None, init=False
-    )
-    _task: asyncio.Task[AgentRunResult[Any]] = field(init=False)
-    _send_stream: MemoryObjectSendStream[_messages.AgentStreamEvent | AgentRunResultEvent[Any]] = field(init=False)
-    _receive_stream: MemoryObjectReceiveStream[_messages.AgentStreamEvent | AgentRunResultEvent[Any]] = field(
-        init=False
-    )
-    _managed: bool = field(default=False, init=False)
-    _cleaned_up: bool = field(default=False, init=False)
-
-    def __repr__(self) -> str:
-        return f'StreamEventsResult(is_closed={self._cleaned_up})'
-
-    async def _event_stream_handler(
-        self,
-        _: RunContext[AgentDepsT],
-        events: AsyncIterable[_messages.AgentStreamEvent],
-    ) -> None:
-        try:
-            async for event in events:
-                await self._send_stream.send(event)
-        except anyio.BrokenResourceError:
-            # Receiver/consumer closed, so we cancel the stream
-            if isinstance(events, AgentStream):  # pragma: no cover
-                await events.cancel()
-        except asyncio.CancelledError:
-            if isinstance(events, AgentStream):  # pragma: no branch
-                await events.cancel()
-            raise
-
-    async def _setup(self) -> None:
-        self._send_stream, self._receive_stream = anyio.create_memory_object_stream[
-            _messages.AgentStreamEvent | AgentRunResultEvent[Any]
-        ]()
-
-        async def run_agent() -> AgentRunResult[Any]:
-            async with self._send_stream:
-                return await self._agent.run(
-                    user_prompt=self._user_prompt,
-                    output_type=self._output_type,
-                    message_history=self._message_history,
-                    deferred_tool_results=self._deferred_tool_results,
-                    model=self._model,
-                    instructions=self._instructions,
-                    deps=self._deps,
-                    model_settings=self._model_settings,
-                    usage_limits=self._usage_limits,
-                    usage=self._usage,
-                    metadata=self._metadata,
-                    toolsets=self._toolsets,
-                    builtin_tools=self._builtin_tools,
-                    infer_name=False,
-                    event_stream_handler=self._event_stream_handler,
-                )
-
-        self._task = asyncio.create_task(run_agent())
-
-    async def _cleanup(self) -> None:
-        if self._cleaned_up:
-            return
-        await self._receive_stream.aclose()
-        if not self._task.done():
-            self._task.cancel()
-        # Always await the task to retrieve its result/exception and prevent
-        # "Task exception was never retrieved" warnings
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await self._task
-        self._cleaned_up = True
-
-    def _ensure_iter(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
-        if self._cleaned_up:
-            raise RuntimeError('StreamEventsResult has been closed and cannot be reused')
-        if self._active_iter is None:
-            if self._managed:
-                self._active_iter = self._cm_iterate()
-            else:
-                self._active_iter = self._standalone_iterate()
-        return self._active_iter
-
-    @property
-    def is_closed(self) -> bool:
-        """Whether this result has been closed and can no longer be iterated."""
-        return self._cleaned_up
-
-    async def __aenter__(self) -> Self:
-        self._managed = True
-        await self._setup()
-        return self
-
-    async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
-        await self._cleanup()
-
-    def __aiter__(self) -> Self:
-        return self
-
-    async def __anext__(self) -> _messages.AgentStreamEvent | AgentRunResultEvent[Any]:
-        """Added for compatibility with previous `AsyncIterator` return types of `run_stream_events()`."""
-        return await anext(self._ensure_iter())
-
-    async def _cm_iterate(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
-        """Yields events. Context manager handles cleanup."""
-        async for event in self._receive_stream:
-            yield event
-        result = await self._task
-        yield AgentRunResultEvent(result)
-
-    async def _standalone_iterate(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
-        """Legacy: manages full lifecycle in the generator itself."""
-        await self._setup()
-        try:
-            async for event in self._receive_stream:
-                yield event
-            result = await self._task
-            yield AgentRunResultEvent(result)
-        except asyncio.CancelledError as e:
-            self._task.cancel(msg=e.args[0] if e.args else None)
-            raise
-        finally:
-            # Best-effort cleanup, but not guaranteed on break
-            # (same limitation as current async generator)
-            await self._cleanup()
 
 
 class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
@@ -1021,7 +842,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] and
         uses the `event_stream_handler` kwarg to get a stream of events from the run.
 
-        Returns a [`StreamEventsResult`][pydantic_ai.agent.abstract.StreamEventsResult] that can be
+        Returns a [`StreamEventsResult`][pydantic_ai.result.StreamEventsResult] that can be
         used as a context manager or iterated directly:
 
         Context manager (recommended):
@@ -1069,7 +890,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             builtin_tools: Optional additional builtin tools for this run.
 
         Returns:
-            A [`StreamEventsResult`][pydantic_ai.agent.abstract.StreamEventsResult] that yields
+            A [`StreamEventsResult`][pydantic_ai.result.StreamEventsResult] that yields
             `AgentStreamEvent` items and finally an `AgentRunResultEvent` with the run result.
         """
         if infer_name and self.name is None:

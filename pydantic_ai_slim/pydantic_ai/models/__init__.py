@@ -1035,7 +1035,7 @@ class StreamedResponse(ABC):
             provider_response_id=self.provider_response_id,
             provider_details=self.provider_details,
             finish_reason=self.finish_reason,
-            incomplete=self._cancelled,
+            interrupted=self._cancelled,
         )
 
     async def cancel(self) -> None:
@@ -1043,7 +1043,7 @@ class StreamedResponse(ABC):
 
         After calling this method:
         - Iteration will stop immediately
-        - get() will return a ModelResponse with incomplete=True
+        - get() will return a ModelResponse with interrupted=True
 
         Subclasses should override to close the underlying HTTP stream.
         """

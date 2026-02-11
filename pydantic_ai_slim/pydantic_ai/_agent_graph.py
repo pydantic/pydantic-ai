@@ -1414,7 +1414,7 @@ def _filter_incomplete_tool_calls(
         response: The model response to filter.
         processed_tool_call_ids: Set of tool call IDs that have corresponding tool results.
     """
-    if not response.incomplete:
+    if not response.interrupted:
         return response
 
     filtered_parts = [
@@ -1430,7 +1430,10 @@ def _filter_incomplete_tool_calls(
 
 
 def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
-    """Clean the message history by merging consecutive messages of the same type."""
+    """Clean the message history.
+
+    Filters unprocessed tool calls from interrupted responses and merges consecutive messages of the same type.
+    """
     # First, collect all tool return IDs so we know which tool calls have been processed
     processed_tool_call_ids: set[str] = set()
     for message in messages:

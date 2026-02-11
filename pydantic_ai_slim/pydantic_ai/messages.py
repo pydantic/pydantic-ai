@@ -1266,10 +1266,14 @@ class BaseToolCallPart:
 
         Incomplete arguments can occur when the agent run is cancelled or interrupted.
         """
-        try:
-            self.args_as_dict()
+        if not self.args:
             return False
-        except Exception:
+        if isinstance(self.args, dict):
+            return False
+        try:
+            pydantic_core.from_json(self.args)
+            return False
+        except ValueError:
             return True
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -1359,10 +1363,10 @@ class ModelResponse:
     metadata: dict[str, Any] | None = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
-    incomplete: bool = False
-    """Whether the response is incomplete, e.g. because the stream was cancelled before finishing.
+    interrupted: bool = False
+    """Whether the response was interrupted, e.g. because the stream was cancelled before finishing.
 
-    Incomplete responses may contain partial text or tool calls with truncated arguments.
+    Interrupted responses may contain partial text or tool calls with truncated arguments.
     When passed as message history, incomplete tool calls without corresponding results
     are automatically filtered out by the agent before sending to the model.
     """

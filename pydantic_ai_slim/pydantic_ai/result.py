@@ -1,13 +1,17 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
+import asyncio
+import contextlib
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Generic, cast, overload
 
+import anyio
+from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from pydantic import ValidationError
-from typing_extensions import TypeVar, deprecated
+from typing_extensions import Self, TypeVar, deprecated
 
 from . import _utils, exceptions, messages as _messages, models
 from ._output import (
@@ -28,7 +32,13 @@ from .output import (
 from .usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
-    from .run import AgentRunResult
+    from .agent.abstract import AbstractAgent, AgentMetadata, Instructions
+    from .builtin_tools import AbstractBuiltinTool
+    from .output import OutputSpec
+    from .run import AgentRunResult, AgentRunResultEvent
+    from .settings import ModelSettings
+    from .tools import BuiltinToolFunc, DeferredToolResults
+    from .toolsets import AbstractToolset
 
 __all__ = (
     'OutputDataT',
@@ -179,7 +189,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         After calling this method:
         - Iteration will stop immediately
         - The underlying HTTP connection will be closed
-        - response will return a ModelResponse with incomplete=True
+        - response will return a ModelResponse with interrupted=True
         """
         self._cancelled = True
         await self._raw_stream_response.cancel()
@@ -205,7 +215,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         last_text_index: int | None = None
         try:
             async for event in self._raw_stream_response:
-                if self._cancelled:  # pragma: no cover
+                if self._cancelled:
                     return
                 if (
                     isinstance(event, _messages.PartStartEvent)
@@ -231,9 +241,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     last_text_index = None
         except Exception:
             # Closing the stream mid-read can raise exceptions
-            if self._cancelled:  # pragma: no cover
+            if self._cancelled:
                 return
-            raise  # pragma: no cover
+            raise
 
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate the output and return it."""
@@ -341,13 +351,190 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                         yield event
                 except Exception:
                     # Closing the stream mid-read can raise exceptions. Reraise if not cancelled.
-                    if self._cancelled:  # pragma: no cover
-                        return  # pragma: no cover
+                    if self._cancelled:
+                        return
                     raise
 
             self._agent_stream_iterator = _cancellation_aware_iterator()
 
         return self._agent_stream_iterator
+
+
+@dataclass(repr=False)
+class StreamEventsResult(Generic[AgentDepsT, OutputDataT]):
+    """Wrapper for streaming events from an agent run.
+
+    Supports two usage patterns:
+
+    **Context manager (recommended)** — cleanup is guaranteed by the context manager:
+
+    ```python
+    from pydantic_ai import Agent
+
+    agent = Agent('openai:gpt-4o')
+
+    async def main():
+        async with agent.run_stream_events('What is the capital of France?') as events:
+            async for event in events:
+                ...
+    ```
+
+    **Direct iteration (deprecated)** — cleanup via `break` is not guaranteed in all scenarios:
+
+    ```python
+    from pydantic_ai import Agent
+
+    agent = Agent('openai:gpt-4o')
+
+    async def main():
+        async for event in agent.run_stream_events('What is the capital of France?'):
+            ...
+    ```
+    """
+
+    _agent: AbstractAgent[AgentDepsT, OutputDataT]
+    _user_prompt: str | Sequence[_messages.UserContent] | None
+    _output_type: OutputSpec[Any] | None
+    _message_history: Sequence[_messages.ModelMessage] | None
+    _deferred_tool_results: DeferredToolResults | None
+    _model: models.Model | models.KnownModelName | str | None
+    _instructions: Instructions[AgentDepsT]
+    _deps: AgentDepsT
+    _model_settings: ModelSettings | None
+    _usage_limits: UsageLimits | None
+    _usage: RunUsage | None
+    _metadata: AgentMetadata[AgentDepsT] | None
+    _toolsets: Sequence[AbstractToolset[AgentDepsT]] | None
+    _builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None
+
+    _active_iter: AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]] | None = field(
+        default=None, init=False
+    )
+    _task: asyncio.Task[AgentRunResult[Any]] = field(init=False)
+    _send_stream: MemoryObjectSendStream[_messages.AgentStreamEvent | AgentRunResultEvent[Any]] = field(init=False)
+    _receive_stream: MemoryObjectReceiveStream[_messages.AgentStreamEvent | AgentRunResultEvent[Any]] = field(
+        init=False
+    )
+    _managed: bool = field(default=False, init=False)
+    _cleaned_up: bool = field(default=False, init=False)
+
+    def __repr__(self) -> str:
+        return f'StreamEventsResult(is_closed={self._cleaned_up})'
+
+    async def _event_stream_handler(
+        self,
+        _: RunContext[AgentDepsT],
+        events: AsyncIterable[_messages.AgentStreamEvent],
+    ) -> None:
+        try:
+            async for event in events:
+                await self._send_stream.send(event)
+        except anyio.BrokenResourceError:
+            # Receiver/consumer closed, so we cancel the stream
+            if isinstance(events, AgentStream):
+                await events.cancel()
+        except asyncio.CancelledError:
+            if isinstance(events, AgentStream):  # pragma: no branch
+                await events.cancel()
+            raise
+
+    async def _setup(self) -> None:
+        from .run import AgentRunResultEvent as _AgentRunResultEvent
+
+        self._send_stream, self._receive_stream = anyio.create_memory_object_stream[
+            _messages.AgentStreamEvent | _AgentRunResultEvent[Any]
+        ]()
+
+        async def run_agent() -> AgentRunResult[Any]:
+            async with self._send_stream:
+                return await self._agent.run(
+                    user_prompt=self._user_prompt,
+                    output_type=self._output_type,
+                    message_history=self._message_history,
+                    deferred_tool_results=self._deferred_tool_results,
+                    model=self._model,
+                    instructions=self._instructions,
+                    deps=self._deps,
+                    model_settings=self._model_settings,
+                    usage_limits=self._usage_limits,
+                    usage=self._usage,
+                    metadata=self._metadata,
+                    toolsets=self._toolsets,
+                    builtin_tools=self._builtin_tools,
+                    infer_name=False,
+                    event_stream_handler=self._event_stream_handler,
+                )
+
+        self._task = asyncio.create_task(run_agent())
+
+    async def _cleanup(self) -> None:
+        if self._cleaned_up:
+            return
+        await self._receive_stream.aclose()
+        if not self._task.done():
+            self._task.cancel()
+        # Always await the task to retrieve its result/exception and prevent
+        # "Task exception was never retrieved" warnings
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await self._task
+        self._cleaned_up = True
+
+    def _ensure_iter(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+        if self._cleaned_up:
+            raise RuntimeError('StreamEventsResult has been closed and cannot be reused')
+        if self._active_iter is None:
+            if self._managed:
+                self._active_iter = self._cm_iterate()
+            else:
+                self._active_iter = self._standalone_iterate()
+        return self._active_iter
+
+    @property
+    def is_closed(self) -> bool:
+        """Whether this result has been closed and can no longer be iterated."""
+        return self._cleaned_up
+
+    async def __aenter__(self) -> Self:
+        self._managed = True
+        await self._setup()
+        return self
+
+    async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
+        await self._cleanup()
+
+    def __aiter__(self) -> Self:
+        return self
+
+    async def __anext__(self) -> _messages.AgentStreamEvent | AgentRunResultEvent[Any]:
+        """Added for compatibility with previous `AsyncIterator` return types of `run_stream_events()`."""
+        return await anext(self._ensure_iter())
+
+    async def _cm_iterate(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+        """Yields events. Context manager handles cleanup."""
+        from .run import AgentRunResultEvent as _AgentRunResultEvent
+
+        async for event in self._receive_stream:
+            yield event
+        result = await self._task
+        yield _AgentRunResultEvent(result)
+
+    async def _standalone_iterate(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+        """Legacy: manages full lifecycle in the generator itself."""
+        from .run import AgentRunResultEvent as _AgentRunResultEvent
+
+        await self._setup()
+        try:
+            async for event in self._receive_stream:
+                yield event
+            result = await self._task
+            yield _AgentRunResultEvent(result)
+        except asyncio.CancelledError as e:
+            self._task.cancel(msg=e.args[0] if e.args else None)
+            raise
+        finally:
+            # Best-effort cleanup, but not guaranteed on break
+            # (same limitation as current async generator)
+            await self._cleanup()
 
 
 @dataclass(init=False)
@@ -647,7 +834,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
-    async def _marked_completed(self, message: _messages.ModelResponse | None = None) -> None:
+    async def _marked_completed(
+        self, message: _messages.ModelResponse | None = None, *, on_complete: bool = True
+    ) -> None:
         if self.is_complete:
             return
         self.is_complete = True
@@ -655,7 +844,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             if self._stream_response:  # pragma: no branch
                 message.run_id = self._stream_response.run_id
             self._all_messages.append(message)
-        if self._on_complete is not None:
+        if on_complete and self._on_complete is not None:
             await self._on_complete()
 
     async def cancel(self) -> None:
@@ -664,19 +853,13 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         After calling this method:
         - Iteration will stop immediately
         - The underlying HTTP connection will be closed
-        - response will return a ModelResponse with incomplete=True
-        - The incomplete response will be added to all_messages()
+        - response will return a ModelResponse with interrupted=True
+        - The interrupted response will be added to all_messages()
         """
         if self._stream_response is not None:
             await self._stream_response.cancel()
-            # Add the incomplete response to message history immediately.
-            # We don't call _marked_completed here because its _on_complete callback
-            # may try to validate the partial output, which will fail for incomplete data.
-            if not self.is_complete:
-                self.is_complete = True
-                response = self.response
-                response.run_id = self._stream_response.run_id
-                self._all_messages.append(response)
+            # Skip on_complete callback — it may validate partial output, which fails for interrupted data.
+            await self._marked_completed(self.response, on_complete=False)
 
     @property
     def is_cancelled(self) -> bool:

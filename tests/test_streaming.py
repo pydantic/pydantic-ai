@@ -3316,7 +3316,7 @@ class TestStreamCancellation:
     """Tests for streaming cancellation functionality."""
 
     async def test_stream_cancel_basic(self):
-        """Test that cancel() stops iteration and sets incomplete=True."""
+        """Test that cancel() stops iteration and sets interrupted=True."""
         agent = Agent(TestModel())
 
         async with agent.run_stream('Hello') as result:
@@ -3329,7 +3329,7 @@ class TestStreamCancellation:
                     break
 
             assert result.is_cancelled
-            assert result.response.incomplete
+            assert result.response.interrupted
 
     async def test_stream_cancel_idempotent(self):
         """Test that calling cancel() multiple times is safe."""
@@ -3341,7 +3341,7 @@ class TestStreamCancellation:
             await result.cancel()  # Should not raise
 
             assert result.is_cancelled
-            assert result.response.incomplete
+            assert result.response.interrupted
 
     async def test_stream_cancel_in_stream_text(self):
         """Test cancellation during stream_text()."""
@@ -3359,7 +3359,7 @@ class TestStreamCancellation:
             assert len(chunks) >= 1
 
     async def test_stream_cancel_message_history(self):
-        """Test that cancelled response appears in all_messages() with incomplete=True."""
+        """Test that cancelled response appears in all_messages() with interrupted=True."""
         agent = Agent(TestModel())
 
         async with agent.run_stream('Hello') as result:
@@ -3369,12 +3369,12 @@ class TestStreamCancellation:
                 break
 
             messages = result.all_messages()
-            # Should have request + incomplete response
+            # Should have request + interrupted response
             assert len(messages) == 2
-            # Find the ModelResponse - it should be present and marked incomplete
+            # Find the ModelResponse - it should be present and marked interrupted
             responses = [m for m in messages if isinstance(m, ModelResponse)]
             assert len(responses) == 1, 'Cancelled response should be in all_messages()'
-            assert responses[0].incomplete, 'Cancelled response should be marked incomplete'
+            assert responses[0].interrupted, 'Cancelled response should be marked interrupted'
 
     async def test_stream_cancel_before_iteration(self):
         """Test that cancel() works before iteration starts."""
@@ -3391,7 +3391,7 @@ class TestStreamCancellation:
 
             assert result.is_cancelled
             # May or may not have any chunks depending on timing
-            assert result.response.incomplete
+            assert result.response.interrupted
 
     async def test_stream_cancel_structured_output(self):
         """Test that cancel() works with structured output streaming via stream_output()."""
@@ -3415,7 +3415,7 @@ class TestStreamCancellation:
                     break
 
             assert result.is_cancelled
-            assert result.response.incomplete
+            assert result.response.interrupted
             assert len(outputs) >= 2
 
     async def test_stream_cancel_stream_responses(self):
@@ -3431,7 +3431,7 @@ class TestStreamCancellation:
                     break
 
             assert result.is_cancelled
-            assert result.response.incomplete
+            assert result.response.interrupted
             assert len(responses) >= 2
 
     async def test_stream_cancel_agent_iter(self):
@@ -3450,7 +3450,7 @@ class TestStreamCancellation:
                                 break
 
                         assert stream.is_cancelled
-                        assert stream.response.incomplete
+                        assert stream.response.interrupted
                         assert len(chunks) >= 2
 
     async def test_stream_cancel_tool_call_with_run_stream(self):
@@ -3486,7 +3486,7 @@ class TestStreamCancellation:
                     break
 
             assert result.is_cancelled
-            assert result.response.incomplete
+            assert result.response.interrupted
 
             # The tool call was complete before cancellation, so args_incomplete should be False
             tool_call_parts = [p for p in result.response.parts if isinstance(p, ToolCallPart)]
@@ -3525,7 +3525,7 @@ class TestStreamCancellation:
                                 break
 
                         assert stream.is_cancelled
-                        assert stream.response.incomplete
+                        assert stream.response.interrupted
 
                         # Check that tool call parts have args_incomplete=True if args are truncated
                         tool_call_parts = [p for p in stream.response.parts if isinstance(p, ToolCallPart)]
@@ -3541,7 +3541,7 @@ class TestStreamCancellation:
                     break  # Don't continue the agent loop
 
     async def test_stream_cancel_tool_call_complete_args_not_marked_incomplete_run_stream(self):
-        """Test that tool calls with complete args before cancellation are not marked incomplete (run_stream API)."""
+        """Test that tool calls with complete args before cancellation are not marked interrupted (run_stream API)."""
 
         async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
             # First yield a complete tool call
@@ -3567,7 +3567,7 @@ class TestStreamCancellation:
                     break
 
             assert result.is_cancelled
-            assert result.response.incomplete
+            assert result.response.interrupted
 
             # Check that the complete tool call is NOT marked as args_incomplete
             tool_call_parts = [p for p in result.response.parts if isinstance(p, ToolCallPart)]
@@ -3579,7 +3579,7 @@ class TestStreamCancellation:
             assert tool_call.args_as_dict() == {'complete': True}
 
     async def test_stream_cancel_tool_call_complete_args_not_marked_incomplete_agent_iter(self):
-        """Test that tool calls with complete args before cancellation are not marked incomplete (agent.iter API)."""
+        """Test that tool calls with complete args before cancellation are not marked interrupted (agent.iter API)."""
 
         async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
             # First yield a complete tool call
@@ -3608,7 +3608,7 @@ class TestStreamCancellation:
                                 break
 
                         assert stream.is_cancelled
-                        assert stream.response.incomplete
+                        assert stream.response.interrupted
 
                         # Check that the complete tool call is NOT marked as args_incomplete
                         tool_call_parts = [p for p in stream.response.parts if isinstance(p, ToolCallPart)]
@@ -3649,7 +3649,7 @@ class TestStreamCancellation:
                 break
 
             assert result.is_cancelled
-            assert result.response.incomplete
+            assert result.response.interrupted
 
             # After cancellation, check all_messages()
             messages = result.all_messages()
@@ -3659,33 +3659,103 @@ class TestStreamCancellation:
             assert len(model_responses) == 1
 
             response = model_responses[0]
-            assert response.incomplete is True
+            assert response.interrupted is True
 
             # Check that the response has tool call parts
             tool_calls = [p for p in response.parts if isinstance(p, ToolCallPart)]
             assert len(tool_calls) == 1
             # With run_stream + stream_responses, deltas are accumulated before yielding,
             # so the tool call may have complete args depending on timing.
-            # The key point is that incomplete=True is set on the response.
+            # The key point is that interrupted=True is set on the response.
+
+    async def test_stream_text_cancelled_flag_stops_iteration(self):
+        """Setting _cancelled directly on AgentStream stops _stream_text_deltas_ungrouped at the inner check."""
+        agent = Agent(TestModel())
+
+        async with agent.run_stream('Hello') as result:
+            assert result._stream_response is not None  # pyright: ignore[reportPrivateUsage]
+            chunks: list[str] = []
+            async for text in result.stream_text(delta=True, debounce_by=None):
+                chunks.append(text)
+                if len(chunks) >= 1:
+                    # Set cancelled directly on AgentStream without closing the underlying StreamedResponse.
+                    # This tests the defensive _cancelled check inside the async for loop in
+                    # _stream_text_deltas_ungrouped, since the StreamedResponse wrappers keep yielding.
+                    result._stream_response._cancelled = True  # pyright: ignore[reportPrivateUsage]
+
+            # Iteration should have stopped after the check fired
+            assert len(chunks) >= 1
+
+    async def test_stream_text_exception_suppressed_when_cancelled(self):
+        """Exceptions from the underlying stream are suppressed when _cancelled is set."""
+        cancel_gate = asyncio.Event()
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            yield 'first '
+            await cancel_gate.wait()
+            raise RuntimeError('HTTP stream closed mid-read')
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        async with agent.run_stream('test') as result:
+            assert result._stream_response is not None  # pyright: ignore[reportPrivateUsage]
+            chunks: list[str] = []
+            async for text in result.stream_text(delta=True, debounce_by=None):
+                chunks.append(text)
+                if len(chunks) >= 1:
+                    # Set cancelled on AgentStream, then let the stream function raise
+                    result._stream_response._cancelled = True  # pyright: ignore[reportPrivateUsage]
+                    cancel_gate.set()
+
+            # Should have stopped gracefully without propagating the RuntimeError
+            assert len(chunks) >= 1
+
+    async def test_agent_stream_aiter_exception_suppressed_when_cancelled(self):
+        """Exceptions in AgentStream.__aiter__ are suppressed when _cancelled is set."""
+        cancel_gate = asyncio.Event()
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            yield 'first '
+            await cancel_gate.wait()
+            raise RuntimeError('HTTP stream closed mid-read')
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        async with agent.iter('test') as run:
+            async for node in run:
+                if agent.is_model_request_node(node):
+                    async with node.stream(run.ctx) as stream:
+                        events: list[Any] = []
+                        async for event in stream:
+                            events.append(event)
+                            if len(events) >= 1:
+                                # Set cancelled directly to test the exception suppression
+                                # in _cancellation_aware_iterator
+                                stream._cancelled = True  # pyright: ignore[reportPrivateUsage]
+                                cancel_gate.set()
+
+                        # Should have stopped gracefully
+                        assert len(events) >= 1
+                    break
 
 
 class TestFilterIncompleteToolCalls:
     """Tests for _filter_incomplete_tool_calls helper function.
 
-    This function filters unprocessed tool calls from incomplete responses.
+    This function filters unprocessed tool calls from interrupted responses.
     Tool calls are kept only if they have a corresponding tool result
     (identified by tool_call_id in processed_tool_call_ids).
     """
 
     def test_filter_unprocessed_tool_calls_from_incomplete_response(self):
-        """Tool calls without corresponding results should be filtered from incomplete responses."""
+        """Tool calls without corresponding results should be filtered from interrupted responses."""
         response = ModelResponse(
             parts=[
                 TextPart(content='Some text'),
                 ToolCallPart(tool_name='processed_tool', args='{"valid": true}', tool_call_id='tc1'),
                 ToolCallPart(tool_name='unprocessed_tool', args='{"also_valid": true}', tool_call_id='tc2'),
             ],
-            incomplete=True,
+            interrupted=True,
         )
 
         # Only tc1 has a corresponding result
@@ -3698,19 +3768,19 @@ class TestFilterIncompleteToolCalls:
         assert filtered.parts[1].tool_name == 'processed_tool'
 
     def test_no_filter_for_complete_response(self):
-        """Tool calls should NOT be filtered from complete (non-incomplete) responses."""
+        """Tool calls should NOT be filtered from complete (non-interrupted) responses."""
         response = ModelResponse(
             parts=[
                 TextPart(content='Some text'),
                 ToolCallPart(tool_name='some_tool', args='{"data": true}', tool_call_id='tc1'),
             ],
-            incomplete=False,  # Response is complete
+            interrupted=False,  # Response is complete
         )
 
         # Even with no processed results, complete responses are not filtered
         filtered = _filter_incomplete_tool_calls(response, processed_tool_call_ids=set())
 
-        # Nothing should be filtered since response.incomplete is False
+        # Nothing should be filtered since response.interrupted is False
         assert len(filtered.parts) == 2
         assert filtered is response  # Should return same object
 
@@ -3721,7 +3791,7 @@ class TestFilterIncompleteToolCalls:
                 ToolCallPart(tool_name='tool1', args='{"valid": true}', tool_call_id='tc1'),
                 ToolCallPart(tool_name='tool2', args='{"also_valid": 1}', tool_call_id='tc2'),
             ],
-            incomplete=True,
+            interrupted=True,
         )
 
         # Both tool calls have corresponding results
@@ -3739,7 +3809,7 @@ class TestFilterIncompleteToolCalls:
                 ToolCallPart(tool_name='tool1', args='{"data1": true}', tool_call_id='tc1'),
                 ToolCallPart(tool_name='tool2', args='{"data2": true}', tool_call_id='tc2'),
             ],
-            incomplete=True,
+            interrupted=True,
         )
 
         # No tool calls have corresponding results
@@ -3752,7 +3822,7 @@ class TestFilterIncompleteToolCalls:
 
     def test_filter_empty_parts_list(self):
         """Filtering empty parts list should work correctly."""
-        response = ModelResponse(parts=[], incomplete=True)
+        response = ModelResponse(parts=[], interrupted=True)
 
         filtered = _filter_incomplete_tool_calls(response, processed_tool_call_ids=set())
 
@@ -3771,7 +3841,7 @@ class TestFilterIncompleteToolCalls:
                 ),
                 ToolCallPart(tool_name='regular_tool', args='{"valid": true}', tool_call_id='tc2'),
             ],
-            incomplete=True,
+            interrupted=True,
         )
 
         # Only tc2 has a corresponding result
@@ -3791,7 +3861,7 @@ class TestFilterIncompleteToolCalls:
                 TextPart(content='Here is my response'),
                 ToolCallPart(tool_name='some_tool', args='{"data": true}', tool_call_id='tc1'),
             ],
-            incomplete=True,
+            interrupted=True,
         )
 
         # No tool calls have results
@@ -3805,14 +3875,14 @@ class TestFilterIncompleteToolCalls:
 
 
 class TestCleanMessageHistoryFiltersIncomplete:
-    """Tests for _clean_message_history filtering unprocessed tool calls from incomplete responses.
+    """Tests for _clean_message_history filtering unprocessed tool calls from interrupted responses.
 
-    Tool calls are filtered from incomplete responses only if they don't have
+    Tool calls are filtered from interrupted responses only if they don't have
     corresponding tool results in subsequent messages.
     """
 
     def test_clean_message_history_filters_unprocessed_tool_calls(self):
-        """_clean_message_history should filter unprocessed tool calls from incomplete responses."""
+        """_clean_message_history should filter unprocessed tool calls from interrupted responses."""
         messages = [
             ModelRequest(parts=[UserPromptPart(content='Hello')]),
             ModelResponse(
@@ -3821,7 +3891,7 @@ class TestCleanMessageHistoryFiltersIncomplete:
                     ToolCallPart(tool_name='tool1', args='{"valid": true}', tool_call_id='tc1'),
                     ToolCallPart(tool_name='tool2', args='{"also_valid": true}', tool_call_id='tc2'),
                 ],
-                incomplete=True,
+                interrupted=True,
             ),
             # No tool results for tc1 or tc2
         ]
@@ -3845,7 +3915,7 @@ class TestCleanMessageHistoryFiltersIncomplete:
                     ToolCallPart(tool_name='processed_tool', args='{"valid": true}', tool_call_id='tc1'),
                     ToolCallPart(tool_name='unprocessed_tool', args='{"also_valid": true}', tool_call_id='tc2'),
                 ],
-                incomplete=True,
+                interrupted=True,
             ),
             # Only tc1 has a result
             ModelRequest(parts=[ToolReturnPart(tool_name='processed_tool', content='result', tool_call_id='tc1')]),
@@ -3874,13 +3944,13 @@ class TestCleanMessageHistoryFiltersIncomplete:
                         tool_call_id='tc1',
                     ),
                 ],
-                incomplete=False,  # Response is complete, so no filtering should happen
+                interrupted=False,  # Response is complete, so no filtering should happen
             ),
         ]
 
         cleaned = _clean_message_history(messages)
 
-        # Nothing should be filtered since response.incomplete is False
+        # Nothing should be filtered since response.interrupted is False
         assert len(cleaned) == 2
         response = cleaned[1]
         assert isinstance(response, ModelResponse)
@@ -3896,7 +3966,7 @@ class TestCleanMessageHistoryFiltersIncomplete:
                     TextPart(content='Response'),
                     ToolCallPart(tool_name='unprocessed', args='{"data": true}', tool_call_id='tc1'),
                 ],
-                incomplete=True,
+                interrupted=True,
             ),
             # No tool result for tc1
         ]
@@ -3921,7 +3991,7 @@ class TestCleanMessageHistoryFiltersIncomplete:
                 parts=[
                     ToolCallPart(tool_name='tool1', args='{"complete": true}', tool_call_id='tc1'),
                 ],
-                incomplete=False,  # Complete response - no filtering
+                interrupted=False,  # Complete response - no filtering
             ),
             ModelRequest(parts=[ToolReturnPart(tool_name='tool1', content='result', tool_call_id='tc1')]),
             ModelResponse(
@@ -3929,14 +3999,14 @@ class TestCleanMessageHistoryFiltersIncomplete:
                     TextPart(content='Partial response'),
                     ToolCallPart(tool_name='tool2', args='{"data": true}', tool_call_id='tc2'),
                 ],
-                incomplete=True,  # Incomplete response - tool2 has no result, should filter
+                interrupted=True,  # Interrupted response - tool2 has no result, should filter
             ),
             ModelRequest(parts=[UserPromptPart(content='Continue')]),
             ModelResponse(
                 parts=[
                     ToolCallPart(tool_name='tool3', args='{"data": true}', tool_call_id='tc3'),
                 ],
-                incomplete=True,  # Another incomplete response - tool3 has no result, should filter
+                interrupted=True,  # Another interrupted response - tool3 has no result, should filter
             ),
         ]
 
@@ -3951,12 +4021,12 @@ class TestCleanMessageHistoryFiltersIncomplete:
         assert isinstance(cleaned[1].parts[0], ToolCallPart)
         assert cleaned[1].parts[0].tool_name == 'tool1'
 
-        # Second response (incomplete) - unprocessed tool call filtered, text preserved
+        # Second response (interrupted) - unprocessed tool call filtered, text preserved
         assert isinstance(cleaned[3], ModelResponse)
         assert len(cleaned[3].parts) == 1
         assert isinstance(cleaned[3].parts[0], TextPart)
 
-        # Third response (incomplete) - all unprocessed tool calls filtered, empty parts
+        # Third response (interrupted) - all unprocessed tool calls filtered, empty parts
         assert isinstance(cleaned[5], ModelResponse)
         assert len(cleaned[5].parts) == 0
 
@@ -3964,7 +4034,7 @@ class TestCleanMessageHistoryFiltersIncomplete:
         """_clean_message_history should preserve BuiltinToolCallPart when matching BuiltinToolReturnPart exists.
 
         Built-in tools (like web_search, code_execution) have both call and return parts
-        in the same ModelResponse. When filtering incomplete responses, we must check
+        in the same ModelResponse. When filtering interrupted responses, we must check
         BuiltinToolReturnPart (in ModelResponse) not just ToolReturnPart (in ModelRequest).
         """
         messages = [
@@ -3982,7 +4052,7 @@ class TestCleanMessageHistoryFiltersIncomplete:
                     # Regular tool call without result - should be filtered
                     ToolCallPart(tool_name='regular_tool', args='{"data": true}', tool_call_id='tc2'),
                 ],
-                incomplete=True,
+                interrupted=True,
             ),
         ]
 
@@ -4011,7 +4081,7 @@ class TestIncompleteToolCallsNotSentToApi:
         """Simulate a cancelled stream's message history going through _clean_message_history.
 
         This test constructs a message history that matches what would result from a
-        cancelled stream (ModelResponse with incomplete=True), then verifies that
+        cancelled stream (ModelResponse with interrupted=True), then verifies that
         _clean_message_history filters out unprocessed tool calls (those without
         corresponding results) before they would be sent to the model API.
         """
@@ -4032,7 +4102,7 @@ class TestIncompleteToolCallsNotSentToApi:
                         tool_call_id='tc2',
                     ),
                 ],
-                incomplete=True,  # Response was incomplete due to cancellation
+                interrupted=True,  # Response was interrupted due to cancellation
             ),
             # No tool results - both tool calls are unprocessed
         ]
@@ -4051,7 +4121,7 @@ class TestIncompleteToolCallsNotSentToApi:
         assert response.parts[0].content == 'Let me fetch that data'
 
     def test_cancelled_stream_preserves_processed_tool_calls(self):
-        """Tool calls with corresponding results should be preserved even from incomplete responses."""
+        """Tool calls with corresponding results should be preserved even from interrupted responses."""
         message_history = [
             ModelRequest(parts=[UserPromptPart(content='Get some data')]),
             ModelResponse(
@@ -4068,7 +4138,7 @@ class TestIncompleteToolCallsNotSentToApi:
                         tool_call_id='tc2',
                     ),
                 ],
-                incomplete=True,  # Response was incomplete due to cancellation
+                interrupted=True,  # Response was interrupted due to cancellation
             ),
             # Only tc1 has a result
             ModelRequest(parts=[ToolReturnPart(tool_name='get_user', content='User data', tool_call_id='tc1')]),
@@ -4095,7 +4165,7 @@ class TestIncompleteToolCallsNotSentToApi:
     def test_complete_response_tool_calls_preserved(self):
         """Tool calls in complete responses should NOT be filtered.
 
-        This tests that the filtering only happens for incomplete responses (cancelled streams),
+        This tests that the filtering only happens for interrupted responses (cancelled streams),
         not for complete responses.
         """
         message_history = [
@@ -4108,14 +4178,14 @@ class TestIncompleteToolCallsNotSentToApi:
                         tool_call_id='tc1',
                     ),
                 ],
-                incomplete=False,  # Response is complete
+                interrupted=False,  # Response is complete
             ),
             # No tool result, but response is complete so no filtering
         ]
 
         cleaned = _clean_message_history(message_history)
 
-        # Tool call should be preserved since response.incomplete is False
+        # Tool call should be preserved since response.interrupted is False
         assert len(cleaned) == 2
         response = cleaned[1]
         assert isinstance(response, ModelResponse)
@@ -4124,7 +4194,7 @@ class TestIncompleteToolCallsNotSentToApi:
         assert response.parts[0].tool_name == 'some_tool'
 
     async def test_end_to_end_cancel_then_continue_conversation(self):
-        """True end-to-end test: cancel stream → continue conversation → verify model doesn't receive incomplete tool calls.
+        """True end-to-end test: cancel stream -> continue conversation -> verify model doesn't receive incomplete tool calls.
 
         This tests the complete user journey:
         1. Start a streaming run that returns a tool call
@@ -4182,7 +4252,7 @@ class TestIncompleteToolCallsNotSentToApi:
 
                         # Verify we got an incomplete tool call
                         assert stream.is_cancelled
-                        assert stream.response.incomplete
+                        assert stream.response.interrupted
                         tool_calls = [p for p in stream.response.parts if isinstance(p, ToolCallPart)]
                         assert len(tool_calls) == 1
                         assert tool_calls[0].args_incomplete is True
@@ -4343,6 +4413,27 @@ class TestRunStreamEventsCancellation:
 
         # Should have events but not the final AgentRunResultEvent
         assert len(events) == 5
+        assert not any(isinstance(e, AgentRunResultEvent) for e in events)
+
+    async def test_context_manager_break_cancels_stream(self):
+        """Breaking from run_stream_events context manager triggers BrokenResourceError in the handler."""
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            for i in range(100):  # pragma: no branch
+                yield f'chunk {i} '
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        async with agent.run_stream_events('test') as stream_events:
+            async for event in stream_events:  # pragma: no branch
+                events.append(event)
+                if len(events) >= 3:
+                    break
+
+        # Should have exactly 3 events (we broke at 3)
+        assert len(events) == 3
+        # Should NOT have completed with AgentRunResultEvent
         assert not any(isinstance(e, AgentRunResultEvent) for e in events)
 
     async def test_break_is_detected_via_closed_resource_error(self):

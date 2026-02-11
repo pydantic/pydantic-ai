@@ -1105,7 +1105,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'finish_reason': 'content_filter',
                 'run_id': IsStr(),
                 'metadata': None,
-                'incomplete': False,
+                'interrupted': False,
             }
         ]
     )

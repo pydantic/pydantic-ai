@@ -4081,7 +4081,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                 'finish_reason': 'content_filter',
                 'run_id': IsStr(),
                 'metadata': None,
-                'incomplete': False,
+                'interrupted': False,
             }
         ]
     )

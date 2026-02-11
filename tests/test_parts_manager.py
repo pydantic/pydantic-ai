@@ -784,6 +784,16 @@ class TestArgsIncompleteProperty:
         assert parts[0].args_incomplete is False
         assert parts[0].args == {'arg1': 'value'}
 
+    def test_non_dict_valid_json_args_are_not_incomplete(self):
+        """Tool calls with valid JSON that isn't an object should have args_incomplete=False."""
+        # A JSON array is valid JSON but not a dict — args_incomplete should still be False
+        part = ToolCallPart(tool_name='my_tool', args='[1, 2, 3]', tool_call_id='tc1')
+        assert part.args_incomplete is False
+
+        # A JSON string is valid JSON but not a dict
+        part2 = ToolCallPart(tool_name='my_tool', args='"hello"', tool_call_id='tc2')
+        assert part2.args_incomplete is False
+
     def test_empty_args_are_not_incomplete(self):
         """Tool calls with empty/None args should have args_incomplete=False."""
         manager = ModelResponsePartsManager()

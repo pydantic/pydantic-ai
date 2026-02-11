@@ -161,6 +161,9 @@ def is_set(t_or_unset: T | Unset) -> TypeGuard[T]:
 
 
 @asynccontextmanager
+# Complexity is from async generator lifecycle management (closing flag, explicit aclose,
+# GeneratorExit handling) tightly coupled with buffering/task logic — not extractable
+# into a reusable helper without losing clarity given the single use case.
 async def group_by_temporal(  # noqa: C901
     aiterable: AsyncIterable[T], soft_max_interval: float | None
 ) -> AsyncIterator[AsyncIterable[list[T]]]:
