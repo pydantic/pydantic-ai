@@ -1210,3 +1210,63 @@ async def test_history_processor_overrides_run_id_uses_response_as_new_messages(
     assert all(message.run_id != response_run_id for message in result.all_messages()[:-1])
 
     assert result.new_messages() == result.all_messages()[-1:]
+
+
+async def test_history_processor_reused_history_request(function_model: FunctionModel, received_messages: list[ModelMessage]):
+    """
+    Exercise the `reused_history_request` path:
+    - run with `user_prompt=None`
+    - history ends with `ModelRequest`
+    - `UserPromptNode.run()` pops and reuses the last request
+    - `_prepare_request()` should treat it as reused history and set `new_message_index` to `len(message_history)`
+    """
+
+    def no_op(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return messages
+
+    agent = Agent(function_model, history_processors=[no_op])
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Original prompt')]),
+    ]
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run(message_history=message_history)
+
+    assert received_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Original prompt',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            )
+        ]
+    )
+    assert captured_messages == result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Original prompt',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Provider response')],
+                usage=RequestUsage(input_tokens=52, output_tokens=2),
+                model_name='function:capture_model_function:capture_model_stream_function',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+    assert result.new_messages() == result.all_messages()[-1:]
