@@ -1219,7 +1219,7 @@ class FilePart:
 
     def has_content(self) -> bool:
         """Return `True` if the file content is non-empty."""
-        return bool(self.content.data)  # pragma: no cover
+        return bool(self.content.data)  # pragma: lax no cover
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
