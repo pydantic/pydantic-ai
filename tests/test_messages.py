@@ -26,10 +26,10 @@ from pydantic_ai import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.messages import UploadedFile
 
 from .conftest import IsDatetime, IsNow, IsStr
 

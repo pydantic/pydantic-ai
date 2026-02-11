@@ -745,7 +745,7 @@ class UploadedFile:
 
         Required by some providers (e.g., Bedrock) for certain file types.
         """
-        if self._media_type:
+        if self._media_type is not None:
             return self._media_type
         parsed = urlparse(self.file_id)
         mime_type, _ = _mime_types.guess_type(parsed.path)

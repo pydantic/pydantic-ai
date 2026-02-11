@@ -137,7 +137,7 @@ Some model providers have their own file storage APIs where you can upload files
 
 Use [`UploadedFile`][pydantic_ai.messages.UploadedFile] to reference files that have been uploaded to a provider's file storage API.
 
-!!! tip "Fun fact"
+!!! tip
     For providers that return a file URL (like Google Files API), you can also use [`DocumentUrl`][pydantic_ai.messages.DocumentUrl] directly, but we recommend using `UploadedFile` for consistent provider name validation.
 
 ### Supported Models
@@ -181,8 +181,7 @@ Follow the [Anthropic Files API docs](https://docs.anthropic.com/en/docs/build-w
 ```py {title="uploaded_file_anthropic.py" test="skip"}
 import asyncio
 
-from pydantic_ai import Agent, ModelSettings
-from pydantic_ai.messages import UploadedFile
+from pydantic_ai import Agent, ModelSettings, UploadedFile
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -218,8 +217,7 @@ Follow the [OpenAI Files API docs](https://platform.openai.com/docs/api-referenc
 ```py {title="uploaded_file_openai.py" test="skip"}
 import asyncio
 
-from pydantic_ai import Agent
-from pydantic_ai.messages import UploadedFile
+from pydantic_ai import Agent, UploadedFile
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -254,8 +252,7 @@ Follow the [Google Files API docs](https://ai.google.dev/gemini-api/docs/files) 
 ```py {title="uploaded_file_google.py" test="skip"}
 import asyncio
 
-from pydantic_ai import Agent
-from pydantic_ai.messages import UploadedFile
+from pydantic_ai import Agent, UploadedFile
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 
@@ -294,8 +291,7 @@ For Bedrock, files must be uploaded to S3 separately (e.g., using [boto3](https:
 ```py {title="uploaded_file_bedrock.py" test="skip"}
 import asyncio
 
-from pydantic_ai import Agent
-from pydantic_ai.messages import UploadedFile
+from pydantic_ai import Agent, UploadedFile
 from pydantic_ai.models.bedrock import BedrockConverseModel
 
 
@@ -328,8 +324,7 @@ Follow the [xAI Files API docs](https://docs.x.ai/docs/guides/files) to upload f
 ```py {title="uploaded_file_xai.py" test="skip"}
 import asyncio
 
-from pydantic_ai import Agent
-from pydantic_ai.messages import UploadedFile
+from pydantic_ai import Agent, UploadedFile
 from pydantic_ai.models.xai import XaiModel
 from pydantic_ai.providers.xai import XaiProvider
 
