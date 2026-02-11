@@ -2,9 +2,20 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
+import uuid
+from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
+import pytest
 from typing_extensions import TypedDict
+
+from pydantic_ai._run_context import RunContext
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.runtime.abstract import CodeRuntime
+from pydantic_ai.usage import RunUsage
 
 
 # Define return type as TypedDict for better type hints in signatures
@@ -38,3 +49,90 @@ def get_weather(city: str) -> WeatherResult:
     """
     data = _WEATHER_DATA.get(city, {'temperature': 20.0, 'conditions': 'unknown'})
     return {'city': city, 'temperature': data['temperature'], 'unit': 'celsius', 'conditions': data['conditions']}
+
+
+def build_run_context() -> RunContext[None]:
+    """Build a minimal RunContext for direct call_tool tests."""
+    return RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        prompt=None,
+        messages=[],
+        run_step=0,
+    )
+
+
+def _docker_is_available() -> bool:
+    """Check whether Docker is installed and the daemon is reachable."""
+    if not shutil.which('docker'):
+        return False
+    try:
+        subprocess.run(['docker', 'info'], check=True, capture_output=True)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+    return True
+
+
+@pytest.fixture(scope='session')
+def _docker_container() -> Iterator[str]:
+    """Create a long-lived Docker container for the test session.
+
+    Copies the driver script into the container so that DockerRuntime
+    can execute code inside it.
+    """
+    container_name = f'pydantic-ai-test-{uuid.uuid4().hex[:8]}'
+    subprocess.run(
+        ['docker', 'run', '-d', '--name', container_name, 'python:3.12-slim', 'sleep', 'infinity'],
+        check=True,
+        capture_output=True,
+    )
+    driver_src = Path(__file__).parents[2] / 'pydantic_ai_slim' / 'pydantic_ai' / 'runtime' / '_driver.py'
+    subprocess.run(
+        ['docker', 'cp', str(driver_src), f'{container_name}:/tmp/pydantic_ai_driver.py'],
+        check=True,
+        capture_output=True,
+    )
+    yield container_name
+    subprocess.run(['docker', 'rm', '-f', container_name], capture_output=True)
+
+
+def _modal_is_available() -> bool:
+    """Check whether the Modal SDK is installed and configured."""
+    try:
+        import modal
+
+        modal.App.lookup('pydantic-ai-test', create_if_missing=True)
+        return True
+    except Exception:
+        return False
+
+
+@pytest.fixture(params=['monty', 'docker', 'modal'])
+def code_runtime(request: pytest.FixtureRequest) -> CodeRuntime:
+    """Parameterized fixture providing each CodeRuntime implementation."""
+    if request.param == 'monty':
+        from pydantic_ai.runtime.monty import MontyRuntime
+
+        return MontyRuntime()
+
+    if request.param == 'docker':
+        if not _docker_is_available():
+            pytest.skip('Docker is not available')
+
+        from pydantic_ai.runtime.docker import DockerRuntime
+
+        container_id: str = request.getfixturevalue('_docker_container')
+        return DockerRuntime(
+            container_id=container_id,
+            python_path='python3',
+            driver_path='/tmp/pydantic_ai_driver.py',
+        )
+
+    # modal
+    if not _modal_is_available():
+        pytest.skip('Modal is not available')
+
+    from pydantic_ai.runtime.modal import ModalRuntime
+
+    return ModalRuntime()

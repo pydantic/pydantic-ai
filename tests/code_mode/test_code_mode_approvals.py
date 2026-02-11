@@ -1,9 +1,11 @@
 """Test ApprovalRequired and CallDeferred within code mode execution.
 
+Parameterized across all CodeRuntime implementations (Monty, stdio subprocess).
+
 Flow being tested:
 1. LLM generates code that calls tools
 2. Tools raise ApprovalRequired/CallDeferred
-3. Monty bundles interrupted calls into CodeInterruptedError with checkpoint
+3. Runtime bundles interrupted calls into CodeInterruptedError with checkpoint
 4. Code mode catches it and raises ApprovalRequired with checkpoint in context
 5. Agent returns DeferredToolRequests with run_code in approvals, nested call details in context
 6. User approves run_code and provides nested call results in context['results']
@@ -20,6 +22,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.runtime.abstract import CodeRuntime
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved
 from pydantic_ai.toolsets.code_mode import CodeModeContext, CodeModeToolset
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -29,7 +32,7 @@ from ..conftest import IsBytes, IsList, IsStr
 pytestmark = pytest.mark.anyio
 
 
-async def test_code_mode_mixed_approval_and_deferred():
+async def test_code_mode_mixed_approval_and_deferred(code_runtime: CodeRuntime):
     """Test both ApprovalRequired and CallDeferred in parallel within code mode.
 
     The run_code tool ends up in approvals, with nested call details in context.
@@ -47,7 +50,7 @@ async def test_code_mode_mixed_approval_and_deferred():
     toolset: FunctionToolset[None] = FunctionToolset()
     toolset.add_function(sensitive_action, takes_ctx=True)
     toolset.add_function(external_service, takes_ctx=False)
-    code_toolset = CodeModeToolset(wrapped=toolset)
+    code_toolset = CodeModeToolset(wrapped=toolset, runtime=code_runtime)
 
     call_count = 0
 
@@ -156,7 +159,7 @@ r2 = await f2
     assert result.output == snapshot('Both done!')
 
 
-async def test_code_mode_resume_missing_context_error():
+async def test_code_mode_resume_missing_context_error(code_runtime: CodeRuntime):
     """Test that resuming without context raises a clear error."""
 
     def sensitive_action(ctx: RunContext[None], value: int) -> int:
@@ -166,7 +169,7 @@ async def test_code_mode_resume_missing_context_error():
 
     toolset: FunctionToolset[None] = FunctionToolset()
     toolset.add_function(sensitive_action, takes_ctx=True)
-    code_toolset = CodeModeToolset(wrapped=toolset)
+    code_toolset = CodeModeToolset(wrapped=toolset, runtime=code_runtime)
 
     call_count = 0
 
@@ -235,7 +238,7 @@ async def test_code_mode_resume_missing_context_error():
     )
 
 
-async def test_code_mode_resume_missing_results_error():
+async def test_code_mode_resume_missing_results_error(code_runtime: CodeRuntime):
     """Test that resuming without results for interrupted calls raises a clear error."""
 
     def sensitive_action(ctx: RunContext[None], value: int) -> int:
@@ -245,7 +248,7 @@ async def test_code_mode_resume_missing_results_error():
 
     toolset: FunctionToolset[None] = FunctionToolset()
     toolset.add_function(sensitive_action, takes_ctx=True)
-    code_toolset = CodeModeToolset(wrapped=toolset)
+    code_toolset = CodeModeToolset(wrapped=toolset, runtime=code_runtime)
 
     call_count = 0
 
@@ -322,11 +325,11 @@ async def test_code_mode_resume_missing_results_error():
     )
 
 
-async def test_code_mode_mixed_success_and_interrupted():
+async def test_code_mode_mixed_success_and_interrupted(code_runtime: CodeRuntime):
     """Test that calls which succeed before an interruption are NOT re-executed on resume.
 
     3 parallel tools: 1 succeeds immediately, 1 needs approval, 1 is deferred.
-    On resume the successful call's result is fed back to Monty via completed_results,
+    On resume the successful call's result is fed back via completed_results,
     avoiding double execution.
     """
     call_counts: dict[str, int] = {'fast': 0, 'sensitive': 0, 'external': 0}
@@ -349,7 +352,7 @@ async def test_code_mode_mixed_success_and_interrupted():
     toolset.add_function(fast_lookup, takes_ctx=False)
     toolset.add_function(sensitive_action, takes_ctx=True)
     toolset.add_function(external_service, takes_ctx=False)
-    code_toolset = CodeModeToolset(wrapped=toolset)
+    code_toolset = CodeModeToolset(wrapped=toolset, runtime=code_runtime)
 
     call_count = 0
 
@@ -429,7 +432,7 @@ r3 = await f3
     assert call_counts['external'] == 1
 
 
-async def test_code_mode_nested_approvals():
+async def test_code_mode_nested_approvals(code_runtime: CodeRuntime):
     """Test that a resumed execution can trigger a second round of approvals.
 
     Scenario: sequential code where a later tool call depends on an earlier
@@ -456,7 +459,7 @@ async def test_code_mode_nested_approvals():
     toolset: FunctionToolset[None] = FunctionToolset()
     toolset.add_function(action_1, takes_ctx=True)
     toolset.add_function(action_2, takes_ctx=True)
-    code_toolset = CodeModeToolset(wrapped=toolset)
+    code_toolset = CodeModeToolset(wrapped=toolset, runtime=code_runtime)
 
     call_count = 0
 

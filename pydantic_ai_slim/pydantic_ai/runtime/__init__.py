@@ -1,3 +1,4 @@
+from ._stdio import DriverProcess, StdioSandboxRuntime
 from .abstract import (
     CodeExecutionError,
     CodeInterruptedError,
@@ -9,6 +10,8 @@ from .abstract import (
     InterruptedToolCall,
     ToolCallback,
 )
+from .docker import DockerRuntime
+from .modal import ModalRuntime
 
 __all__ = (
     'CodeExecutionError',
@@ -17,7 +20,11 @@ __all__ = (
     'CodeRuntimeError',
     'CodeSyntaxError',
     'CodeTypingError',
+    'DockerRuntime',
+    'DriverProcess',
     'FunctionCall',
     'InterruptedToolCall',
+    'ModalRuntime',
+    'StdioSandboxRuntime',
     'ToolCallback',
 )
