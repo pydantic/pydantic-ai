@@ -162,10 +162,40 @@ PR_BODY=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq '.body')
 done > "$CTX/related-issues.txt"
 [ -s "$CTX/related-issues.txt" ] || echo "(No issues referenced in PR description)" > "$CTX/related-issues.txt"
 
-# Per-file diffs (excluding generated files)
+# Compute merge base for function-context diffs
+echo "  - Computing merge base for function-context diffs"
+BASE_REF=$(jq -r '.baseRefName' "$CTX/pr-details.json")
+MERGE_BASE=""
+if [ -n "$BASE_REF" ]; then
+  # Try origin first (works for same-repo PRs)
+  if git fetch origin "$BASE_REF" --quiet 2>/dev/null; then
+    MERGE_BASE=$(git merge-base HEAD "origin/$BASE_REF" 2>/dev/null || echo "")
+  fi
+  # For fork PRs, origin is the fork — fetch from the base repo instead
+  if [ -z "$MERGE_BASE" ]; then
+    git remote add base-repo "https://github.com/${REPO}.git" 2>/dev/null || true
+    if git fetch base-repo "$BASE_REF" --quiet 2>/dev/null; then
+      MERGE_BASE=$(git merge-base HEAD "base-repo/$BASE_REF" 2>/dev/null || echo "")
+    fi
+  fi
+fi
+if [ -n "$MERGE_BASE" ]; then
+  echo "    Merge base: ${MERGE_BASE:0:12} (using function-context diffs)"
+else
+  echo "    Could not determine merge base (falling back to API diff)"
+fi
+
+# Per-file diffs with function context (excluding generated files)
 echo "  - Per-file diffs (excluding generated files)"
 mkdir -p "$CTX/diff"
-gh pr diff "$PR_NUMBER" --repo "$REPO" | awk -v dir="$CTX/diff" '
+if [ -n "$MERGE_BASE" ]; then
+  # -W (--function-context) shows the full function body around each change,
+  # so the reviewer can see the function signature and surrounding logic without
+  # needing to read the full source file separately.
+  git diff -W --no-color "$MERGE_BASE"...HEAD
+else
+  gh pr diff "$PR_NUMBER" --repo "$REPO"
+fi | awk -v dir="$CTX/diff" '
   /^diff --git/ {
     # Close previous file to avoid running out of file descriptors
     if (outfile) close(outfile)
