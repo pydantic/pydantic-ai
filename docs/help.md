@@ -14,7 +14,7 @@ The [Pydantic AI GitHub Issues][github-issues] are a great place to ask question
 
 ## :material-bookshelf: Community Resources
 
-- [Awesome Pydantic AI](https://github.com/vstorm-co/awesome-pydantic-ai) — a community-curated list of Pydantic AI frameworks, libraries, templates, examples, and resources.
+- [Awesome Pydantic AI](https://github.com/vstorm-co/awesome-pydantic-ai) by [Vstorm](https://vstorm.co/) — a community-curated list of Pydantic AI frameworks, libraries, templates, examples, and resources.
 
 [slack]: https://logfire.pydantic.dev/docs/join-slack/
 [github-issues]: https://github.com/pydantic/pydantic-ai/issues

@@ -341,10 +341,10 @@ In addition, the community maintains packages that bring these concepts together
 
 Or that implement individual capabilities:
 
-- [`subagents-pydantic-ai`](https://github.com/vstorm-co/subagents-pydantic-ai) — multi-agent orchestration with dual-mode execution
-- [`summarization-pydantic-ai`](https://github.com/vstorm-co/summarization-pydantic-ai) — conversation summarization and context management
-- [`pydantic-ai-backend`](https://github.com/vstorm-co/pydantic-ai-backend) — file operations and sandboxed code execution backends
-- [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) — task planning and progress tracking
+- [`subagents-pydantic-ai`](https://github.com/vstorm-co/subagents-pydantic-ai) by [Vstorm](https://vstorm.co/) — multi-agent orchestration with dual-mode execution
+- [`summarization-pydantic-ai`](https://github.com/vstorm-co/summarization-pydantic-ai) by [Vstorm](https://vstorm.co/) — conversation summarization and context management
+- [`pydantic-ai-backend`](https://github.com/vstorm-co/pydantic-ai-backend) by [Vstorm](https://vstorm.co/) — file operations and sandboxed code execution backends
+- [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) by [Vstorm](https://vstorm.co/) — task planning and progress tracking
 
 
 ## Observing Multi-Agent Systems

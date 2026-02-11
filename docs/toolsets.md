@@ -677,39 +677,39 @@ Toolsets that implement [Agent Skills](https://agentskills.io) support so agents
 
 Toolsets for task planning and progress tracking help agents organize complex work and provide visibility into agent progress:
 
-- [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) - `TodoToolset` with `read_todos` and `write_todos` tools. Included in the third-party [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) [deep agent](multi-agent-applications.md#deep-agents) framework.
+- [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) by [Vstorm](https://vstorm.co/) - `TodoToolset` with `read_todos` and `write_todos` tools. Included in the third-party [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) [deep agent](multi-agent-applications.md#deep-agents) framework.
 
 ### Agent Delegation
 
 Toolsets for multi-agent orchestration help agents delegate tasks to specialized sub-agents:
 
-- [`subagents-pydantic-ai`](https://github.com/vstorm-co/subagents-pydantic-ai) — `SubAgentToolset` with sync, async, and auto execution modes. Supports nested sub-agents, dynamic agent creation, and parent-child communication. Included in the third-party [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) [deep agent](multi-agent-applications.md#deep-agents) framework.
+- [`subagents-pydantic-ai`](https://github.com/vstorm-co/subagents-pydantic-ai) by [Vstorm](https://vstorm.co/) — `SubAgentToolset` with sync, async, and auto execution modes. Supports nested sub-agents, dynamic agent creation, and parent-child communication. Included in the third-party [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) [deep agent](multi-agent-applications.md#deep-agents) framework.
 
 ### Context Management
 
 Processors for managing conversation context help agents handle long sessions without exceeding token limits:
 
-- [`summarization-pydantic-ai`](https://github.com/vstorm-co/summarization-pydantic-ai) — `SummarizationProcessor` for LLM-based context compression and `SlidingWindowProcessor` for zero-cost message trimming. Works with Pydantic AI's [`history_processors`](message-history.md#processing-message-history) mechanism. Included in the third-party [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) [deep agent](multi-agent-applications.md#deep-agents) framework.
+- [`summarization-pydantic-ai`](https://github.com/vstorm-co/summarization-pydantic-ai) by [Vstorm](https://vstorm.co/) — `SummarizationProcessor` for LLM-based context compression and `SlidingWindowProcessor` for zero-cost message trimming. Works with Pydantic AI's [`history_processors`](message-history.md#processing-message-history) mechanism. Included in the third-party [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) [deep agent](multi-agent-applications.md#deep-agents) framework.
 
 ### File Operations
 
 Toolsets for file operations help agents read, write, and edit files:
 
 - [`pydantic-ai-filesystem-sandbox`](https://github.com/zby/pydantic-ai-filesystem-sandbox) - `FileSystemToolset` with a sandbox and LLM-friendly errors
-- [`pydantic-ai-backend`](https://github.com/vstorm-co/pydantic-ai-backend) — Console toolset with file operations (`ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `execute`) and multiple backends (in-memory, local filesystem, Docker sandbox). Included in the third-party [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) [deep agent](multi-agent-applications.md#deep-agents) framework.
+- [`pydantic-ai-backend`](https://github.com/vstorm-co/pydantic-ai-backend) by [Vstorm](https://vstorm.co/) — Console toolset with file operations (`ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `execute`) and multiple backends (in-memory, local filesystem, Docker sandbox). Included in the third-party [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) [deep agent](multi-agent-applications.md#deep-agents) framework.
 
 ### Code Execution
 
 Toolsets for sandboxed code execution help agents run code in a sandboxed environment:
 
 - [`mcp-run-python`](https://github.com/pydantic/mcp-run-python) - MCP server by the Pydantic team that runs Python code in a sandboxed environment. Can be used as `MCPServerStdio('uv', args=['run', 'mcp-run-python', 'stdio'])`.
-- [`pydantic-ai-backend`](https://github.com/vstorm-co/pydantic-ai-backend) — Includes `DockerSandbox` backend for running code in isolated Docker containers with pre-configured Python and Node.js runtimes.
+- [`pydantic-ai-backend`](https://github.com/vstorm-co/pydantic-ai-backend) by [Vstorm](https://vstorm.co/) — Includes `DockerSandbox` backend for running code in isolated Docker containers with pre-configured Python and Node.js runtimes.
 
 ### Database
 
 Toolsets for database access help agents explore schemas, run queries, and interact with SQL databases:
 
-- [`database-pydantic-ai`](https://github.com/vstorm-co/database-pydantic-ai) — `DatabaseToolset` with `list_tables`, `get_schema`, `describe_table`, `explain_query`, and `query` tools. Supports SQLite and PostgreSQL with built-in security controls (read-only mode, query timeouts, row limits).
+- [`database-pydantic-ai`](https://github.com/vstorm-co/database-pydantic-ai) by [Vstorm](https://vstorm.co/) — `DatabaseToolset` with `list_tables`, `get_schema`, `describe_table`, `explain_query`, and `query` tools. Supports SQLite and PostgreSQL with built-in security controls (read-only mode, query timeouts, row limits).
 
 ### LangChain Tools {#langchain-tools}
 

@@ -6,7 +6,7 @@ Community-maintained examples and projects showing how to use Pydantic AI in var
     These examples are maintained by the community and hosted in external repositories.
     For official examples, see the other pages in this section.
 
-## [Pydantic AI Examples](https://github.com/vstorm-co/pydantic-ai-examples)
+## [Pydantic AI Examples](https://github.com/vstorm-co/pydantic-ai-examples) by [Vstorm](https://vstorm.co/)
 
 A collection of community-maintained examples demonstrating how to use Pydantic AI, including working with local models.
 
