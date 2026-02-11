@@ -68,6 +68,7 @@ class Contains(Evaluator[object, object, object]):
     For strings, checks if expected_output is a substring of output.
     For lists/tuples, checks if expected_output is in output.
     For dicts, checks if all key-value pairs in expected_output are in output.
+    For model-like types (BaseModel, dataclasses), converts to a dict and checks key-value pairs.
 
     Note: case_sensitive only applies when both the value and output are strings.
     """
