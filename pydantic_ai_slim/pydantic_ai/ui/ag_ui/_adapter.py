@@ -311,7 +311,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         }
 
         for part in msg.parts:
-            if isinstance(part, BuiltinToolReturnPart) or isinstance(part, ThinkingPart) or isinstance(part, FilePart):
+            if isinstance(part, (BuiltinToolReturnPart, ThinkingPart, FilePart)):
                 continue
             elif isinstance(part, TextPart):
                 text_chunks.append(part.content)
