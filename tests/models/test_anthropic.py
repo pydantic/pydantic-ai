@@ -1435,6 +1435,19 @@ async def test_anthropic_speed_standard_does_not_add_fast_mode_beta(allow_model_
         assert 'fast-mode-2026-02-01' not in betas
 
 
+async def test_anthropic_speed_omitted_does_not_add_fast_mode_beta(allow_model_requests: None) -> None:
+    c = completion_message([BetaTextBlock(text='hi', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run('hello')
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    betas = completion_kwargs.get('betas')
+    if isinstance(betas, (list, tuple)):
+        assert 'fast-mode-2026-02-01' not in betas
+
+
 async def test_stream_structured(allow_model_requests: None):
     """Test streaming structured responses with Anthropic's API.
 
