@@ -3995,3 +3995,60 @@ def test_tool_call_metadata_not_available_for_unapproved_calls():
     # For regular tool calls (not via ToolApproved), metadata should be None
     assert len(received_metadata) == 1
     assert received_metadata[0] is None
+
+
+def test_per_tool_return_schema_opt_in():
+    """Per-tool include_return_schema=True enables return schema even when agent-level default is off."""
+    agent = Agent(
+        FunctionModel(
+            get_json_schema,
+            profile=ModelProfile(
+                supports_json_schema_output=True,
+                supports_json_object_output=True,
+                supports_tool_return_schema=True,
+            ),
+        ),
+    )
+
+    @agent.tool(include_return_schema=True)
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        """Get a value.
+
+        Args:
+            x: An integer value.
+        """
+        return x  # pragma: no cover
+
+    result = agent.run_sync('Hello')
+    tool_def = json.loads(result.output)
+    assert tool_def['return_schema'] == snapshot({'type': 'integer'})
+    assert tool_def['include_return_schema'] is True
+
+
+def test_per_tool_return_schema_opt_out():
+    """Per-tool include_return_schema=False disables return schema even when agent-level default is on."""
+    agent = Agent(
+        FunctionModel(
+            get_json_schema,
+            profile=ModelProfile(
+                supports_json_schema_output=True,
+                supports_json_object_output=True,
+                supports_tool_return_schema=True,
+            ),
+        ),
+        include_tool_return_schema=True,
+    )
+
+    @agent.tool_plain(include_return_schema=False)
+    def my_tool(x: int) -> int:
+        """Get a value.
+
+        Args:
+            x: An integer value.
+        """
+        return x  # pragma: no cover
+
+    result = agent.run_sync('Hello')
+    tool_def = json.loads(result.output)
+    assert tool_def['return_schema'] is None
+    assert tool_def['include_return_schema'] is False
