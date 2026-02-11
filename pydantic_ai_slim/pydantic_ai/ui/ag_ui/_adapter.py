@@ -397,7 +397,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     if content:
                         result.append(UserMessage(id=uuid.uuid4().hex, content=content))
             elif isinstance(part, ToolReturnPart):
-                # Tool results from the request are emitted as ToolMessage objects, but only if they are referenced by a tool call in the response.
+                # Handled when processing the corresponding ToolCallPart in _dump_model_response.
                 pass
             elif isinstance(part, RetryPromptPart):
                 # Tool-related retries are handled when processing ToolCallPart in ModelResponse
