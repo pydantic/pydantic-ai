@@ -438,7 +438,9 @@ async def test_openrouter_binary_content_video_public_api(
 
     result = await agent.run(['What is in this video? Answer in one short sentence.', video_content])
     assert isinstance(result.output, str)
-    assert len(result.output) > 0
+    assert result.output == snapshot(
+        "The video shows a camera on a tripod recording a scenic mountain landscape, with a preview of the shot visible on the camera's screen."
+    )
 
     assert vcr is not None
     assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]

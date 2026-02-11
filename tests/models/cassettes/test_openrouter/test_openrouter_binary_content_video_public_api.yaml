@@ -33,7 +33,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '880'
+      - '939'
       content-type:
       - application/json
       permissions-policy:
@@ -52,25 +52,26 @@ interactions:
         logprobs: null
         message:
           annotations: []
-          content: This video showcases a camera setup filming a scenic mountainous landscape.
+          content: The video shows a camera on a tripod recording a scenic mountain landscape, with a preview of the shot
+            visible on the camera's screen.
           reasoning: null
           refusal: null
           role: assistant
         native_finish_reason: STOP
-      created: 1770721476
-      id: gen-1770721476-pDztsULUdTXOqxu5ySzD
+      created: 1770801366
+      id: gen-1770801366-IouWKZpi7lhQmBAIw41N
       model: google/gemini-2.5-flash
       object: chat.completion
       provider: Google
       usage:
-        completion_tokens: 12
+        completion_tokens: 28
         completion_tokens_details:
           image_tokens: 0
           reasoning_tokens: 0
-        cost: 0.000111
+        cost: 0.000151
         cost_details:
-          upstream_inference_completions_cost: 3.0e-05
-          upstream_inference_cost: 0.000111
+          upstream_inference_completions_cost: 7.0e-05
+          upstream_inference_cost: 0.000151
           upstream_inference_prompt_cost: 8.1e-05
         is_byok: false
         prompt_tokens: 270
@@ -79,7 +80,7 @@ interactions:
           cache_write_tokens: 0
           cached_tokens: 0
           video_tokens: 258
-        total_tokens: 282
+        total_tokens: 298
     status:
       code: 200
       message: OK

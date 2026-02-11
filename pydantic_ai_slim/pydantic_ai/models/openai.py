@@ -1232,25 +1232,13 @@ class OpenAIChatModel(Model):
             )
 
     async def _map_video_url_item(self, item: VideoUrl) -> ChatCompletionContentPartParam:  # pragma: no cover
-        """Map a VideoUrl to a chat completion content part.
-
-        Raises NotImplementedError by default. Override in subclasses to support VideoUrl.
-        """
+        """Map a VideoUrl to a chat completion content part."""
         raise NotImplementedError('VideoUrl is not supported for OpenAI')
 
     async def _map_content_item(
         self, item: str | ImageUrl | BinaryContent | AudioUrl | DocumentUrl | VideoUrl | CachePoint
     ) -> ChatCompletionContentPartParam | None:
-        """Map a single content item to a chat completion content part.
-
-        Returns a chat completion content part, or None if the item should be filtered out.
-
-        Args:
-            item: The content item to map.
-
-        Returns:
-            A chat completion content part, or None if the item should be filtered out.
-        """
+        """Map a single content item to a chat completion content part, or None to filter it out."""
         profile = OpenAIModelProfile.from_profile(self.profile)
         if isinstance(item, str):
             return ChatCompletionContentPartTextParam(text=item, type='text')

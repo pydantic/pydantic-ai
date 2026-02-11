@@ -43,6 +43,12 @@ _CHAT_FINISH_REASON_MAP: dict[Literal['stop', 'length', 'tool_calls', 'content_f
 }
 
 
+class _VideoURL(TypedDict):
+    """Video URL payload for OpenRouter content parts."""
+
+    url: str
+
+
 class ChatCompletionContentPartVideoUrlParam(TypedDict):
     """Video URL content part parameter for OpenRouter.
 
@@ -50,8 +56,7 @@ class ChatCompletionContentPartVideoUrlParam(TypedDict):
     The structure mirrors the image_url format with a video_url field.
     """
 
-    video_url: dict[str, str]
-    """The video URL dict with 'url' key."""
+    video_url: _VideoURL
 
     type: Literal['video_url']
     """The type of content part."""
@@ -613,15 +618,9 @@ class OpenRouterModel(OpenAIChatModel):
     async def _map_binary_content_item(
         self, item: BinaryContent, profile: OpenAIModelProfile
     ) -> ChatCompletionContentPartParam:
-        """Map a BinaryContent item to a chat completion content part for OpenRouter.
-
-        OpenRouter supports video inputs via the ``video_url`` content type with either
-        a direct URL or a base64-encoded data URL. For video ``BinaryContent`` we map
-        the bytes to a ``video_url`` part using a data URI, and defer all other types
-        to the base ``OpenAIChatModel`` implementation.
-        """
+        """Map a BinaryContent item to a chat completion content part for OpenRouter."""
         if item.is_video:
-            video_url: dict[str, str] = {'url': item.data_uri}
+            video_url: _VideoURL = {'url': item.data_uri}
             return cast(
                 ChatCompletionContentPartParam,
                 ChatCompletionContentPartVideoUrlParam(video_url=video_url, type='video_url'),
@@ -632,7 +631,7 @@ class OpenRouterModel(OpenAIChatModel):
     @override
     async def _map_video_url_item(self, item: VideoUrl) -> ChatCompletionContentPartParam:
         """Map a VideoUrl to a chat completion content part for OpenRouter."""
-        video_url: dict[str, str] = {'url': item.url}
+        video_url: _VideoURL = {'url': item.url}
         if item.force_download:
             video_content = await download_item(item, data_format='base64_uri', type_format='extension')
             video_url['url'] = video_content['data']
