@@ -192,7 +192,7 @@ if [ -n "$MERGE_BASE" ]; then
   # -W (--function-context) shows the full function body around each change,
   # so the reviewer can see the function signature and surrounding logic without
   # needing to read the full source file separately.
-  git diff -W --no-color "$MERGE_BASE"...HEAD
+  git diff -W --no-color "$MERGE_BASE" HEAD
 else
   gh pr diff "$PR_NUMBER" --repo "$REPO"
 fi | awk -v dir="$CTX/diff" '
@@ -219,6 +219,10 @@ fi | awk -v dir="$CTX/diff" '
 '
 
 # List of ALL changed files with change counts + diff file paths
+# NOTE: This uses the GitHub API (not local git) for accurate per-file addition/deletion counts.
+# The diff files above come from local git when the merge base is available. In rare edge cases
+# (force pushes, rebases between steps), the two sources could disagree — this is acceptable
+# since it only affects the diff file path column, and missing diffs degrade gracefully.
 echo "  - Changed files"
 gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate \
   --jq '.[] | "\(.filename)\t+\(.additions) -\(.deletions)\t\(.filename | gsub("/"; "__") | gsub("^\\.+"; "")).diff"' \

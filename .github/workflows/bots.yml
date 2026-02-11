@@ -156,6 +156,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      issues: write
       pull-requests: write
       actions: read
     steps:
@@ -235,7 +236,7 @@ jobs:
             - `.github/.review-context/agents-md.txt` — directory-specific `AGENTS.md` files for changed directories
 
             The diff is split into per-file diffs under `.github/.review-context/diff/` (excluding `uv.lock` and cassettes), that you can read on demand.
-            The diffs include function-level context (`git diff -W`), so you can see the full function/method being modified without needing to read the source file separately.
+            When available, the diffs include function-level context (`git diff -W`), so you can usually see the full function/method being modified without needing to read the source file separately.
             The diff file paths are listed in the third column of `changed-files.txt`.
 
             When you need context beyond what the diffs provide (e.g. code in other files, type definitions, related implementations), use the `Read` tool directly on the checked-out source files.
