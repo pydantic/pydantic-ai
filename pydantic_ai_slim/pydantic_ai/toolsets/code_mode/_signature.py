@@ -14,7 +14,7 @@ import re
 import types
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from inspect import Parameter, signature
+from inspect import Parameter, Signature as InspectSignature, signature
 from typing import Any, Union, cast, get_origin
 
 from pydantic import BaseModel, TypeAdapter
@@ -240,7 +240,7 @@ def _get_type_name(t: Any) -> str:
 
 
 # =============================================================================
-# Function signature builder (using closures)
+# Function signature builder
 # =============================================================================
 
 
@@ -291,7 +291,7 @@ def _collect_typeddicts_from_annotation(
 
 
 def _build_function_params(
-    sig: Any,
+    sig: InspectSignature,
     type_hints: dict[str, Any],
     typeddicts: dict[str, str],
     tool_name: str,
@@ -361,7 +361,7 @@ def _function_to_signature(
 
 
 # =============================================================================
-# Schema signature builder (using closures)
+# Schema signature builder
 # =============================================================================
 
 
