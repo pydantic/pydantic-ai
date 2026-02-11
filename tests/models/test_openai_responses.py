@@ -10016,6 +10016,7 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
 # --- Background mode VCR tests ---
 
 
+@pytest.mark.vcr()
 async def test_background_mode_vcr(allow_model_requests: None, openai_api_key: str):
     """VCR test: background mode with a simple prompt.
 
@@ -10039,6 +10040,7 @@ async def test_background_mode_vcr(allow_model_requests: None, openai_api_key: s
     assert final_response.expects_continuation is False
 
 
+@pytest.mark.vcr()
 async def test_background_mode_with_tool_vcr(allow_model_requests: None, openai_api_key: str):
     """VCR test: background mode with a tool call."""
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))

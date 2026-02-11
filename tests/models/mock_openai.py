@@ -147,7 +147,7 @@ class MockOpenAIResponses:
     async def responses_retrieve(  # pragma: lax no cover
         self, *_args: Any, stream: bool = False, **kwargs: Any
     ) -> responses.Response | MockAsyncStream[MockResponseStreamEvent]:
-        self.retrieve_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
+        self.retrieve_kwargs.append({'stream': stream, **{k: v for k, v in kwargs.items() if v is not NOT_GIVEN}})
         if stream:
             assert self.retrieve_stream is not None, 'retrieve_stream must be provided for retrieve(stream=True) calls'
             if isinstance(self.retrieve_stream[0], Sequence):
