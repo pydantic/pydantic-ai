@@ -1354,7 +1354,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
             args_validator: custom method to validate tool arguments after schema validation has passed,
                 before execution. The validator receives the already-validated and type-converted parameters,
-                with `RunContext` as the first argument.
+                with [`RunContext`][pydantic_ai.tools.RunContext] as the first argument — even though the
+                tool function itself does not take `RunContext` when using `tool_plain`.
                 Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
                 return `None` on success.
                 See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].

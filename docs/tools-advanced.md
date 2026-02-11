@@ -403,7 +403,7 @@ async def fast_tool() -> str:
 
 When a timeout occurs, the tool is considered to have failed and the model receives a retry prompt with the message `"Timed out after {timeout} seconds."`. This counts towards the tool's retry limit just like validation errors or explicit [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exceptions.
 
-### Custom Args Validators {#args-validator}
+### Custom Args Validator {#args-validator}
 
 The `args_validator` parameter lets you define custom validation that runs after Pydantic schema validation but before the tool executes. This is useful for business logic validation, cross-field validation, or validating arguments before requesting [human approval](deferred-tools.md) for deferred tools.
 
@@ -438,7 +438,7 @@ When validation fails, the error message is sent back to the LLM as a retry prom
 
 The `args_validator` parameter is available on [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], [`Tool`][pydantic_ai.tools.Tool], [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema], and [`FunctionToolset`][pydantic_ai.toolsets.function.FunctionToolset]. Validators can be sync or async functions. When used with [`prepare`](#tool-prepare), the prepare function runs first to customize the tool definition, then `args_validator` runs at call time.
 
-The validation result is exposed via the `args_valid` field on [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent], allowing applications to track validation status when streaming events.
+The validation result is exposed via the `args_valid` field on [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent]: `True` means all validation passed, `False` means validation failed, and `None` means validation was not performed (e.g. for output tool calls skipped due to the `'early'` end strategy).
 
 ### Parallel tool calls & concurrency
 
