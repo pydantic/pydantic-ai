@@ -949,7 +949,7 @@ class OpenAIChatModel(Model):
                     self._map_response_builtin_part(item)
                 elif isinstance(item, FilePart):  # pragma: no cover
                     self._map_response_file_part(item)
-                elif isinstance(item, CompactionPart):
+                elif isinstance(item, CompactionPart):  # pragma: no cover
                     self._map_compaction_part(item)
                 else:
                     assert_never(item)

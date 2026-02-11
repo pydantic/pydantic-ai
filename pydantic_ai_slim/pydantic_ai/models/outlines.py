@@ -485,7 +485,7 @@ class OutlinesModel(Model):
                             raise UserError(
                                 'File parts other than `BinaryImage` are not supported for Outlines models yet.'
                             )
-                    elif isinstance(part, CompactionPart):
+                    elif isinstance(part, CompactionPart):  # pragma: no cover
                         # NOTE: We don't send CompactionPart to the providers
                         pass
                     else:
