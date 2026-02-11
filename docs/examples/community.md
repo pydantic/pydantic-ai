@@ -12,4 +12,4 @@ A collection of community-maintained examples demonstrating how to use Pydantic 
 
 ## [Pydantic AI RLM](https://github.com/vstorm-co/pydantic-ai-rlm)
 
-An example showing how to use Pydantic AI to implement a Recursive Language Model (RLM).
+An example showing how to use Pydantic AI to implement a Recursive Language Model (RLM). Created by [Vstorm](https://vstorm.co/).
