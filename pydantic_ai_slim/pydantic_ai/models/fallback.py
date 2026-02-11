@@ -29,8 +29,8 @@ class FallbackModel(Model):
 
     models: list[Model]
 
-    _model_name: str = field(repr=False)
     _fallback_on: Callable[[Exception], bool]
+    _continuation_models: dict[str, Model] = field(repr=False)
 
     def __init__(
         self,
@@ -47,6 +47,7 @@ class FallbackModel(Model):
         """
         super().__init__()
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
+        self._continuation_models = {}
 
         if isinstance(fallback_on, tuple):
             self._fallback_on = _default_fallback_condition_factory(fallback_on)  # pyright: ignore[reportUnknownArgumentType]
@@ -77,13 +78,15 @@ class FallbackModel(Model):
         In case of failure, raise a FallbackExceptionGroup with all exceptions.
 
         If a previous response set `expects_continuation`, the request is routed directly
-        to the model identified by the latest response identity, bypassing the fallback chain.
+        to the pinned continuation model, bypassing the fallback chain.
         """
-        if continuation_route := _continuation_route(messages, self.models):
-            model = continuation_route
-            _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
-            response = await model.request(messages, model_settings, model_request_parameters)
-            self._set_span_attributes(model, prepared_parameters)
+        run_id = _get_run_id(messages)
+        if run_id and (pinned := self._continuation_models.get(run_id)):
+            _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
+            response = await pinned.request(messages, model_settings, model_request_parameters)
+            if not response.expects_continuation:
+                del self._continuation_models[run_id]
+            self._set_span_attributes(pinned, prepared_parameters)
             return response
 
         exceptions: list[Exception] = []
@@ -98,6 +101,8 @@ class FallbackModel(Model):
                     continue
                 raise exc
 
+            if response.expects_continuation and run_id:
+                self._continuation_models[run_id] = model
             self._set_span_attributes(model, prepared_parameters)
             return response
 
@@ -114,17 +119,20 @@ class FallbackModel(Model):
         """Try each model in sequence until one succeeds.
 
         If a previous response set `expects_continuation`, the request is routed directly
-        to the model identified by the latest response identity, bypassing the fallback chain.
+        to the pinned continuation model, bypassing the fallback chain.
         """
-        if continuation_route := _continuation_route(messages, self.models):
-            model = continuation_route
+        run_id = _get_run_id(messages)
+        if run_id and (pinned := self._continuation_models.get(run_id)):
             async with AsyncExitStack() as stack:
-                _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
+                _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                 streamed_response = await stack.enter_async_context(
-                    model.request_stream(messages, model_settings, model_request_parameters, run_context)
+                    pinned.request_stream(messages, model_settings, model_request_parameters, run_context)
                 )
-                self._set_span_attributes(model, prepared_parameters)
+                self._set_span_attributes(pinned, prepared_parameters)
                 yield streamed_response
+                # After stream consumed: clear pin if continuation is done
+                if not streamed_response.expects_continuation:
+                    del self._continuation_models[run_id]
                 return
 
         exceptions: list[Exception] = []
@@ -144,6 +152,9 @@ class FallbackModel(Model):
 
                 self._set_span_attributes(model, prepared_parameters)
                 yield streamed_response
+                # After stream consumed: pin model if it expects continuation
+                if streamed_response.expects_continuation and run_id:
+                    self._continuation_models[run_id] = model
                 return
 
         raise FallbackExceptionGroup('All models from FallbackModel failed', exceptions)
@@ -174,43 +185,14 @@ class FallbackModel(Model):
                     )
 
 
-def _latest_model_response(messages: list[ModelMessage]) -> ModelResponse | None:
-    """Return the most recent model response in the message history."""
-    from ..messages import ModelResponse
+def _get_run_id(messages: list[ModelMessage]) -> str | None:
+    """Extract the run_id from the most recent message."""
+    from ..messages import ModelRequest, ModelResponse
 
     for message in reversed(messages):
-        if isinstance(message, ModelResponse):
-            return message
+        if isinstance(message, (ModelRequest, ModelResponse)) and message.run_id:
+            return message.run_id
     return None
-
-
-def _continuation_route(messages: list[ModelMessage], models: list[Model]) -> Model | None:
-    """Resolve the pinned continuation model from the latest response identity."""
-    if (latest_response := _latest_model_response(messages)) is None or not latest_response.expects_continuation:
-        return None
-
-    matches = [model for model in models if _model_matches_response(model, latest_response)]
-    if len(matches) == 1:
-        return matches[0]
-    return None
-
-
-def _model_matches_response(model: Model, response: ModelResponse) -> bool:
-    """Return True if model identity matches the response identity."""
-    matched = False
-    if model_name := response.model_name:
-        matched = True
-        if model.model_name != model_name:
-            return False
-    if provider_name := response.provider_name:
-        matched = True
-        if model.system != provider_name:
-            return False
-    if provider_url := response.provider_url:
-        matched = True
-        if model.base_url != provider_url:
-            return False
-    return matched
 
 
 def _default_fallback_condition_factory(exceptions: tuple[type[Exception], ...]) -> Callable[[Exception], bool]:

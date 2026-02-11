@@ -61,6 +61,9 @@ T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
 EndStrategy = Literal['early', 'exhaustive']
+
+MAX_CONTINUATIONS = 5
+"""Maximum number of continuations allowed for incomplete responses (e.g., Anthropic pause_turn)."""
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 
@@ -628,7 +631,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         elif isinstance(part, _messages.BuiltinToolReturnPart):
                             yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
 
-                    max_continuations = (ctx.deps.model_settings or {}).get('max_continuations', 5)
+                    max_continuations = (ctx.deps.model_settings or {}).get('max_continuations', MAX_CONTINUATIONS)
                     ctx.state.continuations += 1
                     if ctx.state.continuations > max_continuations:
                         raise exceptions.UnexpectedModelBehavior(

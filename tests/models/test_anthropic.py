@@ -357,6 +357,7 @@ async def test_pause_turn_exceeds_custom_max_continuations(allow_model_requests:
         await agent.run('test prompt', model_settings=ModelSettings(max_continuations=2))
 
 
+@pytest.mark.vcr()
 async def test_pause_turn_web_search_vcr(allow_model_requests: None, anthropic_api_key: str):
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 4096}, max_tokens=15000)
