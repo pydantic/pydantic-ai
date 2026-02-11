@@ -293,7 +293,7 @@ def test_parse_model_id(model_id: str, expected: tuple[str | None, str]):
         pytest.param('gateway/openai:gpt-5', False, id='gateway-openai'),
         pytest.param('unknown-provider:some-model', True, id='unknown-provider'),
         pytest.param('unknown-model', True, id='unknown-no-prefix'),
-        pytest.param('nebius:model-without-slash', True, id='provider-model-profile-raises'),
+        pytest.param('nebius:model-without-slash', False, id='provider-unknown-model'),
     ],
 )
 def test_infer_model_profile(model_id: str, is_default: bool):
