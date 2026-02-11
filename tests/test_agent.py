@@ -41,6 +41,7 @@ from pydantic_ai import (
     RunContext,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
@@ -6522,8 +6523,6 @@ async def test_wrapper_agent():
 
 async def test_thinking_only_response_retry():
     """Test that thinking-only responses trigger a retry mechanism."""
-    from pydantic_ai import ThinkingPart
-    from pydantic_ai.models.function import FunctionModel
 
     call_count = 0
 
@@ -6594,9 +6593,6 @@ async def test_thinking_only_response_retry():
 
 async def test_retry_message_no_tools():
     """Test that retry message triggered by thinking-only response, does not suggest 'call a tool' when no function tools are registered."""
-    from pydantic_ai import ThinkingPart
-    from pydantic_ai.models.function import FunctionModel
-
     call_count = 0
 
     def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
