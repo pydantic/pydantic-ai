@@ -270,7 +270,7 @@ class DriverBasedRuntime(CodeRuntime):
                 kwargs=msg.get('kwargs', {}),
             )
             call_id_to_fc[cid] = fc
-            t = asyncio.create_task(call_tool(fc))
+            t = asyncio.ensure_future(call_tool(fc))
             tool_tasks[cid] = t
             task_id_to_cid[id(t)] = cid
             return _StdoutSignal.NEW_CALL

@@ -175,7 +175,7 @@ class MontyRuntime(CodeRuntime):
                     args=tuple(details.get('args', ())),
                     kwargs=details.get('kwargs', {}),
                 )
-                tasks[cid] = asyncio.create_task(call_tool(call))
+                tasks[cid] = asyncio.ensure_future(call_tool(call))
                 initial_calls[cid] = call
 
             monty_state = await MontyRuntime._execution_loop(monty_state, tasks, call_tool, initial_calls=initial_calls)
@@ -221,7 +221,7 @@ class MontyRuntime(CodeRuntime):
                     args=monty_state.args,
                     kwargs=monty_state.kwargs,
                 )
-                tasks[monty_state.call_id] = asyncio.create_task(call_tool(call))
+                tasks[monty_state.call_id] = asyncio.ensure_future(call_tool(call))
                 tool_call_id_to_call[monty_state.call_id] = call
 
                 monty_state = monty_state.resume(future=...)
