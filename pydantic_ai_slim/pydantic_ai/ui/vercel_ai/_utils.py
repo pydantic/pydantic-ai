@@ -66,20 +66,10 @@ _DATA_CHUNK_TYPES = (DataChunk, SourceUrlChunk, SourceDocumentChunk, FileChunk)
 def iter_metadata_chunks(
     tool_result: ToolReturnPart,
 ) -> Iterator[DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk]:
-    """Iterate over data-carrying chunks from ToolReturnPart metadata or content.
+    """Yield data-carrying chunks from ``tool_result.metadata`` (or ``.content``).
 
-    Used by both the streaming path (``_event_stream.py``) and the dump path
-    (``_adapter.py``) to extract user-supplied chunks from tool return metadata.
-
-    Only data-carrying chunk types (``DataChunk``, ``SourceUrlChunk``,
-    ``SourceDocumentChunk``, ``FileChunk``) are yielded.  Protocol-control
-    chunks are filtered out to prevent corruption of the SSE stream state.
-
-    Args:
-        tool_result: The tool return part to extract chunks from.
-
-    Yields:
-        Data-carrying chunk instances found in the metadata/content.
+    Used by both the streaming and dump paths. Only ``_DATA_CHUNK_TYPES`` are
+    yielded; protocol-control chunks are filtered out.
     """
     possible = tool_result.metadata or tool_result.content
     if isinstance(possible, _DATA_CHUNK_TYPES):
