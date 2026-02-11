@@ -556,6 +556,11 @@ def _extract_metadata_ui_parts(tool_result: ToolReturnPart) -> list[UIMessagePar
     Protocol-control chunks are filtered out at the source to prevent
     corruption of the SSE stream state and to keep both paths consistent.
 
+    Note: the streaming path yields raw chunk objects (preserving ``transient``
+    and other chunk-specific fields), while this dump path converts to
+    ``UIMessagePart`` equivalents without those fields — matching Vercel AI SDK
+    semantics where transient data is streamed but not persisted.
+
     These four types correspond to the full set of data-carrying Vercel AI
     ``UIMessagePart`` types as of ``ai@6.0.57``:
     https://github.com/vercel/ai/blob/ai%406.0.57/packages/ai/src/ui/ui-messages.ts#L75

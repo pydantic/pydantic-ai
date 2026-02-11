@@ -84,7 +84,7 @@ def iter_metadata_chunks(
     possible = tool_result.metadata or tool_result.content
     if isinstance(possible, _DATA_CHUNK_TYPES):
         yield possible
-    elif isinstance(possible, str | bytes):  # pragma: no branch
+    elif isinstance(possible, (str, bytes)):  # pragma: no branch
         # Avoid iterable check for strings and bytes.
         pass
     elif isinstance(possible, Iterable):  # pragma: no branch
