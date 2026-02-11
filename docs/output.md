@@ -841,7 +841,7 @@ You can cancel a streaming response early to stop token generation and close the
 ```python {title="cancel_stream.py"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 
 
 async def main():
@@ -853,8 +853,8 @@ async def main():
                 await result.cancel()
                 break
 
-        # The response is marked as incomplete
-        print(result.response.incomplete)
+        # The response is marked as interrupted
+        print(result.response.interrupted)
         #> True
         print(result.is_cancelled)
         #> True
@@ -869,8 +869,8 @@ When a stream is cancelled:
 
 - Iteration stops immediately
 - The underlying HTTP connection is closed (stopping token generation)
-- The response is marked with `incomplete=True`
-- The incomplete response is added to [`all_messages()`][pydantic_ai.result.StreamedRunResult.all_messages] for conversation continuity
+- The response is marked with `interrupted=True`
+- The interrupted response is added to [`all_messages()`][pydantic_ai.result.StreamedRunResult.all_messages] for conversation continuity
 - Usage data received before cancellation is preserved via [`usage()`][pydantic_ai.result.StreamedRunResult.usage]
 
 !!! note
