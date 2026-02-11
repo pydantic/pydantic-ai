@@ -240,7 +240,6 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     yield '\n\n', event.index
                     last_text_index = None
         except Exception:
-            # Closing the stream mid-read can raise exceptions
             if self._cancelled:
                 return
             raise
@@ -430,8 +429,8 @@ class StreamEventsResult(Generic[AgentDepsT, OutputDataT]):
             async for event in events:
                 await self._send_stream.send(event)
         except anyio.BrokenResourceError:
-            # Receiver/consumer closed, so we cancel the stream
-            if isinstance(events, AgentStream):
+            # Receiver/consumer closed, so we cancel the stream.
+            if isinstance(events, AgentStream):  # pragma: no cover
                 await events.cancel()
         except asyncio.CancelledError:
             if isinstance(events, AgentStream):  # pragma: no branch

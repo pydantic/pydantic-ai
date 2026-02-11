@@ -3675,13 +3675,12 @@ class TestStreamCancellation:
         async with agent.run_stream('Hello') as result:
             assert result._stream_response is not None  # pyright: ignore[reportPrivateUsage]
             chunks: list[str] = []
-            async for text in result.stream_text(delta=True, debounce_by=None):
+            async for text in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
                 chunks.append(text)
-                if len(chunks) >= 1:
-                    # Set cancelled directly on AgentStream without closing the underlying StreamedResponse.
-                    # This tests the defensive _cancelled check inside the async for loop in
-                    # _stream_text_deltas_ungrouped, since the StreamedResponse wrappers keep yielding.
-                    result._stream_response._cancelled = True  # pyright: ignore[reportPrivateUsage]
+                # Set cancelled directly on AgentStream without closing the underlying StreamedResponse.
+                # This tests the defensive _cancelled check inside the async for loop in
+                # _stream_text_deltas_ungrouped, since the StreamedResponse wrappers keep yielding.
+                result._stream_response._cancelled = True  # pyright: ignore[reportPrivateUsage]
 
             # Iteration should have stopped after the check fired
             assert len(chunks) >= 1
@@ -3700,42 +3699,59 @@ class TestStreamCancellation:
         async with agent.run_stream('test') as result:
             assert result._stream_response is not None  # pyright: ignore[reportPrivateUsage]
             chunks: list[str] = []
-            async for text in result.stream_text(delta=True, debounce_by=None):
+            async for text in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
                 chunks.append(text)
-                if len(chunks) >= 1:
-                    # Set cancelled on AgentStream, then let the stream function raise
-                    result._stream_response._cancelled = True  # pyright: ignore[reportPrivateUsage]
-                    cancel_gate.set()
+                # Set cancelled on AgentStream, then let the stream function raise
+                result._stream_response._cancelled = True  # pyright: ignore[reportPrivateUsage]
+                cancel_gate.set()
 
             # Should have stopped gracefully without propagating the RuntimeError
             assert len(chunks) >= 1
 
-    async def test_agent_stream_aiter_exception_suppressed_when_cancelled(self):
-        """Exceptions in AgentStream.__aiter__ are suppressed when _cancelled is set."""
-        cancel_gate = asyncio.Event()
+    async def test_stream_text_reraises_exception_when_not_cancelled(self):
+        """Exceptions from the underlying stream are reraised when the stream is not cancelled."""
 
         async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-            yield 'first '
-            await cancel_gate.wait()
+            yield 'hello '
+            raise RuntimeError('connection lost')
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        async with agent.iter('test') as run:
+            async for node in run:  # pragma: no branch
+                if agent.is_model_request_node(node):
+                    async with node.stream(run.ctx) as stream:
+                        with pytest.raises(RuntimeError, match='connection lost'):
+                            async for _ in stream.stream_text(delta=True, debounce_by=None):
+                                pass
+                    break
+
+    async def test_agent_stream_aiter_exception_suppressed_when_cancelled(self):
+        """Exceptions in AgentStream.__aiter__ are suppressed when _cancelled is set."""
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            yield 'a'
+            yield 'b'
+            yield 'c'
             raise RuntimeError('HTTP stream closed mid-read')
 
         agent = Agent(FunctionModel(stream_function=stream_function))
 
         async with agent.iter('test') as run:
-            async for node in run:
+            async for node in run:  # pragma: no branch
                 if agent.is_model_request_node(node):
                     async with node.stream(run.ctx) as stream:
                         events: list[Any] = []
                         async for event in stream:
                             events.append(event)
-                            if len(events) >= 1:
-                                # Set cancelled directly to test the exception suppression
-                                # in _cancellation_aware_iterator
+                            # Set cancelled after consuming all buffered wrapper events
+                            # (PartStartEvent, FinalResultEvent, PartDelta, PartDelta).
+                            # The next __anext__() triggers the RuntimeError, which is caught
+                            # by _cancellation_aware_iterator's except handler.
+                            if len(events) >= 4:
                                 stream._cancelled = True  # pyright: ignore[reportPrivateUsage]
-                                cancel_gate.set()
 
-                        # Should have stopped gracefully
-                        assert len(events) >= 1
+                        assert len(events) >= 4
                     break
 
 
@@ -4272,19 +4288,10 @@ class TestIncompleteToolCallsNotSentToApi:
         # Check the messages sent to the model on the second call
         second_call_messages = received_messages_per_call[1]
 
-        # Find all tool calls in the messages sent to the model
-        tool_calls_sent_to_model: list[ToolCallPart] = []
-        for msg in second_call_messages:
-            if isinstance(msg, ModelResponse):
-                for part in msg.parts:
-                    if isinstance(part, ToolCallPart):  # pragma: no cover
-                        tool_calls_sent_to_model.append(part)  # pragma: no cover
-
-        # The incomplete tool call should NOT be in the messages sent to the model
-        for tc in tool_calls_sent_to_model:
-            assert tc.args_incomplete is False, f'Incomplete tool call was sent to model: {tc}'  # pragma: no cover
-            # Also verify the args are valid JSON
-            tc.args_as_dict()  # Should not raise  # pragma: no cover
+        # The interrupted ModelResponse (which only had the incomplete tool call) should be
+        # dropped entirely — an empty assistant message is invalid for most provider APIs.
+        model_responses = [msg for msg in second_call_messages if isinstance(msg, ModelResponse)]
+        assert model_responses == [], 'Interrupted ModelResponse with incomplete tool call should be dropped'
 
 
 class TestRunStreamEventsCancellation:
