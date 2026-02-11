@@ -1102,11 +1102,7 @@ _LEGACY_MODEL_PREFIXES: dict[str, str] = {
     'claude': 'anthropic',
     'gemini': 'google-gla',
 }
-"""Mapping of legacy model name prefixes to provider names.
-
-These prefixes allow using model names without the `provider:` prefix for backwards compatibility.
-For example, `gpt-4` is equivalent to `openai:gpt-4`.
-"""
+"""Backward compat: allows prefix-only model names like `gpt-4` without `provider:`."""
 
 
 def parse_model_id(model: str) -> tuple[str | None, str]:
@@ -1146,7 +1142,10 @@ def infer_model_profile(model: str) -> ModelProfile:
     except ValueError:
         return DEFAULT_PROFILE
 
-    return provider_class.model_profile(model_name) or DEFAULT_PROFILE
+    try:
+        return provider_class.model_profile(model_name) or DEFAULT_PROFILE
+    except (UserError, ValueError):
+        return DEFAULT_PROFILE
 
 
 def infer_model(  # noqa: C901

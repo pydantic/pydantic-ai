@@ -2769,23 +2769,18 @@ class MultiModelWorkflow:
 class _BuiltinToolModel(TestModel):
     SUPPORTED_TOOLS: frozenset[type[AbstractBuiltinTool]] = frozenset()
 
-    def __init__(self, *, response_text: str, model_name: str) -> None:
-        self._response_text = response_text
-        super().__init__(custom_output_text=response_text, model_name=model_name)
-
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         return cls.SUPPORTED_TOOLS
 
-    async def request(
+    def _request(
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
-        self.last_model_request_parameters = model_request_parameters
-        return ModelResponse(parts=[TextPart(self._response_text)], model_name=self.model_name)
+        # Override to skip TestModel._request's builtin tools rejection
+        return ModelResponse(parts=[TextPart(self.custom_output_text or '')], model_name=self.model_name)
 
 
 class _WebSearchOnlyModel(_BuiltinToolModel):
@@ -2802,8 +2797,8 @@ def _select_builtin_tool(ctx: RunContext[Any]) -> AbstractBuiltinTool:
     return CodeExecutionTool()
 
 
-web_search_builtin_model = _WebSearchOnlyModel(response_text='search model', model_name='web-search')
-code_execution_builtin_model = _CodeExecutionOnlyModel(response_text='code model', model_name='code-exec')
+web_search_builtin_model = _WebSearchOnlyModel(custom_output_text='search model', model_name='web-search')
+code_execution_builtin_model = _CodeExecutionOnlyModel(custom_output_text='code model', model_name='code-exec')
 
 builtin_tool_agent = Agent(
     web_search_builtin_model,
@@ -2828,11 +2823,11 @@ class BuiltinToolWorkflow:
 
 
 # Model that does NOT support any builtin tools (used as default)
-no_builtin_support_model = _BuiltinToolModel(response_text='no builtin support', model_name='no-builtin-test')
+no_builtin_support_model = _BuiltinToolModel(custom_output_text='no builtin support', model_name='no-builtin-test')
 
 # Model that DOES support WebSearchTool (registered as alternate model)
 web_search_builtin_override_model = _WebSearchOnlyModel(
-    response_text='web search response',
+    custom_output_text='web search response',
     model_name='web-search-override',
 )
 
