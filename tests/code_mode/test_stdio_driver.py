@@ -25,7 +25,9 @@ async def start_driver(
 ) -> asyncio.subprocess.Process:
     """Start the driver subprocess and send the init message."""
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, '-u', str(DRIVER_PATH),
+        sys.executable,
+        '-u',
+        str(DRIVER_PATH),
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -69,6 +71,10 @@ async def test_simple_tool_call():
     assert msg['kwargs'] == {'x': 1, 'y': 2}
     assert msg['id'] == 1
 
+    # Read calls_ready fence (batch boundary)
+    msg = await read_msg(proc)
+    assert msg['type'] == 'calls_ready'
+
     # Send result
     await send_msg(proc, {'type': 'result', 'id': 1, 'result': 3})
 
@@ -83,13 +89,7 @@ async def test_simple_tool_call():
 
 async def test_parallel_tool_calls():
     """Fire-then-await pattern sends multiple calls before awaiting."""
-    code = (
-        'f1 = add(x=1, y=2)\n'
-        'f2 = add(x=3, y=4)\n'
-        'r1 = await f1\n'
-        'r2 = await f2\n'
-        'r1 + r2'
-    )
+    code = 'f1 = add(x=1, y=2)\nf2 = add(x=3, y=4)\nr1 = await f1\nr2 = await f2\nr1 + r2'
     proc = await start_driver(code, functions=['add'])
 
     # Read 2 call messages (both sent before any result)
@@ -99,6 +99,10 @@ async def test_parallel_tool_calls():
     assert msg1['id'] == 1
     assert msg2['type'] == 'call'
     assert msg2['id'] == 2
+
+    # Read calls_ready fence (batch boundary after last synchronous call)
+    msg = await read_msg(proc)
+    assert msg['type'] == 'calls_ready'
 
     # Send both results
     await send_msg(proc, {'type': 'result', 'id': 1, 'result': 3})
@@ -132,19 +136,17 @@ async def test_result_cache_all_hits():
 
 async def test_result_cache_partial_hit():
     """Partial cache: cached calls skip RPC, uncached go through."""
-    code = (
-        'f1 = add(x=1, y=2)\n'
-        'f2 = add(x=3, y=4)\n'
-        'r1 = await f1\n'
-        'r2 = await f2\n'
-        'r1 + r2'
-    )
+    code = 'f1 = add(x=1, y=2)\nf2 = add(x=3, y=4)\nr1 = await f1\nr2 = await f2\nr1 + r2'
     proc = await start_driver(code, functions=['add'], result_cache={'1': 3})
 
     # Only 1 call message (call 2, since call 1 is cached)
     msg = await read_msg(proc)
     assert msg['type'] == 'call'
     assert msg['id'] == 2
+
+    # Read calls_ready fence
+    msg = await read_msg(proc)
+    assert msg['type'] == 'calls_ready'
 
     # Send result for call 2
     await send_msg(proc, {'type': 'result', 'id': 2, 'result': 7})
@@ -238,23 +240,21 @@ async def test_print_goes_to_stderr():
 
 async def test_tool_error_propagated():
     """Host error message surfaces as exception in code."""
-    code = (
-        'result = "no error"\n'
-        'try:\n'
-        '    await bad_tool()\n'
-        'except Exception as e:\n'
-        '    result = str(e)\n'
-        'result'
-    )
+    code = 'result = "no error"\ntry:\n    await bad_tool()\nexcept Exception as e:\n    result = str(e)\nresult'
     proc = await start_driver(code, functions=['bad_tool'])
 
     # Read call message
     msg = await read_msg(proc)
     assert msg['type'] == 'call'
     assert msg['function'] == 'bad_tool'
+    call_id = msg['id']
+
+    # Read calls_ready fence
+    msg = await read_msg(proc)
+    assert msg['type'] == 'calls_ready'
 
     # Send error response
-    await send_msg(proc, {'type': 'error', 'id': msg['id'], 'error': 'tool failed'})
+    await send_msg(proc, {'type': 'error', 'id': call_id, 'error': 'tool failed'})
 
     # Code catches the exception and returns the error string
     msg = await read_msg(proc)
@@ -301,6 +301,10 @@ async def test_sequential_call_ids():
     assert msg2['function'] == 'tool_b'
     assert msg3['id'] == 3
     assert msg3['function'] == 'tool_a'
+
+    # Read calls_ready fence (one per batch, after all 3 synchronous calls)
+    msg = await read_msg(proc)
+    assert msg['type'] == 'calls_ready'
 
     # Send all results
     await send_msg(proc, {'type': 'result', 'id': 1, 'result': 'a1'})
