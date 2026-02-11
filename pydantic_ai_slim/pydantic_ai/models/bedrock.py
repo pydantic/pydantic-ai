@@ -54,7 +54,12 @@ if TYPE_CHECKING:
     from botocore.client import BaseClient
     from botocore.eventstream import EventStream
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
-    from mypy_boto3_bedrock_runtime.literals import StopReasonType
+    from mypy_boto3_bedrock_runtime.literals import (
+        DocumentFormatType,
+        ImageFormatType,
+        StopReasonType,
+        VideoFormatType,
+    )
     from mypy_boto3_bedrock_runtime.type_defs import (
         ContentBlockOutputTypeDef,
         ContentBlockUnionTypeDef,
@@ -171,6 +176,11 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
 _BEDROCK_IMAGE_FORMATS = ('gif', 'jpeg', 'png', 'webp')
 _BEDROCK_DOCUMENT_FORMATS = ('csv', 'doc', 'docx', 'html', 'md', 'pdf', 'txt', 'xls', 'xlsx')
 _BEDROCK_VIDEO_FORMATS = ('flv', 'mkv', 'mov', 'mp4', 'mpeg', 'mpg', 'three_gp', 'webm', 'wmv')
+_BEDROCK_FORMATS: dict[str, tuple[str, ...]] = {
+    'image': _BEDROCK_IMAGE_FORMATS,
+    'document': _BEDROCK_DOCUMENT_FORMATS,
+    'video': _BEDROCK_VIDEO_FORMATS,
+}
 
 
 class _ImageFileBlock(TypedDict):
@@ -708,8 +718,13 @@ class BedrockConverseModel(Model):
                             if isinstance(item, (BinaryContent, ImageUrl, DocumentUrl, VideoUrl)):
                                 file_block = await self._map_file_to_content_block(item, document_count)
                                 if file_block is not None:
-                                    if 'image' in file_block:
+                                    kind = next(k for k in ('image', 'document', 'video') if k in file_block)
+                                    if kind in profile.bedrock_native_tool_return_content:
                                         tool_result_content.append(file_block)
+                                    elif 'image' in file_block:
+                                        tool_result_content.append({'text': f'See file {item.identifier}.'})
+                                        sibling_content.append({'text': f'This is file {item.identifier}:'})
+                                        sibling_content.append({'image': file_block['image']})
                                     elif 'document' in file_block:
                                         tool_result_content.append({'text': f'See file {item.identifier}.'})
                                         sibling_content.append({'text': f'This is file {item.identifier}:'})
@@ -718,8 +733,6 @@ class BedrockConverseModel(Model):
                                         tool_result_content.append({'text': f'See file {item.identifier}.'})
                                         sibling_content.append({'text': f'This is file {item.identifier}:'})
                                         sibling_content.append({'video': file_block['video']})
-                                    else:
-                                        assert_never(file_block)
                                 elif isinstance(item, BinaryContent):
                                     raise NotImplementedError(
                                         f'Unsupported binary content type for Bedrock tool returns: {item.media_type}'
@@ -891,71 +904,59 @@ class BedrockConverseModel(Model):
         return content
 
     @staticmethod
-    async def _map_file_to_content_block(  # noqa: C901
+    async def _map_file_to_content_block(
         file: ImageUrl | DocumentUrl | VideoUrl | AudioUrl | BinaryContent,
         document_count: Iterator[int],
     ) -> _FileContentBlock | None:
         """Map a multimodal file directly to a Bedrock content block for tool results."""
+        if isinstance(file, AudioUrl):  # pragma: no cover
+            return None
+
+        # Resolve content kind
+        kind: Literal['image', 'document', 'video']
         if isinstance(file, BinaryContent):
-            format = file.format
-            if file.is_document:
-                if format not in _BEDROCK_DOCUMENT_FORMATS:
-                    raise ValueError(
-                        f'Unsupported document format for Bedrock: {format!r}. Supported: {_BEDROCK_DOCUMENT_FORMATS}'
-                    )
-                name = f'Document {next(document_count)}'
-                return {'document': {'name': name, 'format': format, 'source': {'bytes': file.data}}}
-            elif file.is_image:
-                if format not in _BEDROCK_IMAGE_FORMATS:
-                    raise ValueError(
-                        f'Unsupported image format for Bedrock: {format!r}. Supported: {_BEDROCK_IMAGE_FORMATS}'
-                    )
-                return {'image': {'format': format, 'source': {'bytes': file.data}}}
+            if file.is_image:
+                kind = 'image'
+            elif file.is_document:
+                kind = 'document'
             elif file.is_video:
-                if format not in _BEDROCK_VIDEO_FORMATS:
-                    raise ValueError(
-                        f'Unsupported video format for Bedrock: {format!r}. Supported: {_BEDROCK_VIDEO_FORMATS}'
-                    )
-                return {'video': {'format': format, 'source': {'bytes': file.data}}}
+                kind = 'video'
             else:
                 return None
-        elif isinstance(file, (ImageUrl, DocumentUrl, VideoUrl)):
-            source: DocumentSourceTypeDef
-            if file.url.startswith('s3://'):
-                parsed = urlparse(file.url)
-                s3_location: S3LocationTypeDef = {'uri': f'{parsed.scheme}://{parsed.netloc}{parsed.path}'}
-                if bucket_owner := parse_qs(parsed.query).get('bucketOwner', [None])[0]:
-                    s3_location['bucketOwner'] = bucket_owner
-                source = {'s3Location': s3_location}
-            else:
-                downloaded_item = await download_item(file, data_format='bytes', type_format='extension')
-                source = {'bytes': downloaded_item['data']}
-
-            if isinstance(file, ImageUrl):
-                format = file.media_type.split('/')[1]
-                if format not in _BEDROCK_IMAGE_FORMATS:
-                    raise ValueError(
-                        f'Unsupported image format for Bedrock: {format!r}. Supported: {_BEDROCK_IMAGE_FORMATS}'
-                    )
-                return {'image': {'format': format, 'source': source}}
-            elif isinstance(file, DocumentUrl):
-                name = f'Document {next(document_count)}'
-                return {'document': {'name': name, 'format': file.format, 'source': source}}
-            elif isinstance(file, VideoUrl):
-                format = file.media_type.split('/')[1]
-                if format not in _BEDROCK_VIDEO_FORMATS:
-                    raise ValueError(
-                        f'Unsupported video format for Bedrock: {format!r}. Supported: {_BEDROCK_VIDEO_FORMATS}'
-                    )
-                return {'video': {'format': format, 'source': source}}
-            else:
-                assert_never(file)
-        elif isinstance(file, AudioUrl):  # pragma: no cover
-            # Audio not supported in Bedrock tool results, only in user messages
-            # See: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolResultContentBlock.html
-            return None
+        elif isinstance(file, ImageUrl):
+            kind = 'image'
+        elif isinstance(file, DocumentUrl):
+            kind = 'document'
         else:
-            assert_never(file)
+            kind = 'video'
+
+        # Validate format
+        format = file.format
+        valid_formats = _BEDROCK_FORMATS[kind]
+        if format not in valid_formats:
+            raise ValueError(f'Unsupported {kind} format for Bedrock: {format!r}. Supported: {valid_formats}')
+
+        # Resolve source
+        if isinstance(file, BinaryContent):
+            source: DocumentSourceTypeDef = {'bytes': file.data}
+        elif file.url.startswith('s3://'):
+            parsed = urlparse(file.url)
+            s3_location: S3LocationTypeDef = {'uri': f'{parsed.scheme}://{parsed.netloc}{parsed.path}'}
+            if bucket_owner := parse_qs(parsed.query).get('bucketOwner', [None])[0]:
+                s3_location['bucketOwner'] = bucket_owner
+            source = {'s3Location': s3_location}
+        else:
+            downloaded = await download_item(file, data_format='bytes', type_format='extension')
+            source = {'bytes': downloaded['data']}
+
+        # Build typed block — format is runtime-validated above, cast to satisfy Literal types
+        if kind == 'image':
+            return {'image': {'format': cast('ImageFormatType', format), 'source': source}}
+        elif kind == 'document':
+            name = f'Document {next(document_count)}'
+            return {'document': {'name': name, 'format': cast('DocumentFormatType', format), 'source': source}}
+        else:
+            return {'video': {'format': cast('VideoFormatType', format), 'source': source}}
 
     @staticmethod
     async def _map_user_prompt(

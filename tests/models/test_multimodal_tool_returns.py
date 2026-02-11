@@ -91,6 +91,10 @@ SUPPORT_MATRIX: dict[tuple[str, str], Expectation] = {
     ('bedrock', 'document'): 'native',
     ('bedrock', 'audio'): 'error',
     ('bedrock', 'video'): 'native',
+    ('bedrock_claude', 'image'): 'native',
+    ('bedrock_claude', 'document'): 'native',
+    ('bedrock_claude', 'audio'): 'error',
+    ('bedrock_claude', 'video'): 'error',
     ('anthropic', 'image'): 'native',
     ('anthropic', 'document'): 'native',
     ('anthropic', 'audio'): 'error',
@@ -294,6 +298,109 @@ ERROR_DETAILS: list[ExpectError] = [
         return_style='tool_return_content',
         error_type=NotImplementedError,
         match='Audio is not supported yet',
+    ),
+    ExpectError(
+        'bedrock_claude',
+        'audio',
+        content_source='binary',
+        return_style='direct',
+        error_type=NotImplementedError,
+        match='Unsupported binary content type for Bedrock tool returns: audio/mpeg',
+    ),
+    ExpectError(
+        'bedrock_claude',
+        'audio',
+        content_source='url',
+        return_style='direct',
+        error_type=NotImplementedError,
+        match='AudioUrl is not supported for Bedrock tool returns',
+    ),
+    ExpectError(
+        'bedrock_claude',
+        'audio',
+        content_source='url_force_download',
+        return_style='direct',
+        error_type=NotImplementedError,
+        match='AudioUrl is not supported for Bedrock tool returns',
+    ),
+    ExpectError(
+        'bedrock_claude',
+        'audio',
+        content_source='binary',
+        return_style='tool_return_content',
+        error_type=NotImplementedError,
+        match='Unsupported content type for Bedrock user prompts: BinaryContent',
+    ),
+    ExpectError(
+        'bedrock_claude',
+        'audio',
+        content_source='url',
+        return_style='tool_return_content',
+        error_type=NotImplementedError,
+        match='Audio is not supported yet',
+    ),
+    ExpectError(
+        'bedrock_claude',
+        'audio',
+        content_source='url_force_download',
+        return_style='tool_return_content',
+        error_type=NotImplementedError,
+        match='Audio is not supported yet',
+    ),
+    ExpectError(
+        'bedrock_claude',
+        'document',
+        return_style='tool_return_content',
+        error_type=ModelHTTPError,
+        match='text block must be included',
+    ),
+    ExpectError(
+        'bedrock_claude',
+        'video',
+        content_source='binary',
+        return_style='direct',
+        error_type=ModelHTTPError,
+        match="doesn't support the video content block",
+    ),
+    ExpectError(
+        'bedrock_claude',
+        'video',
+        content_source='url',
+        return_style='direct',
+        error_type=ModelHTTPError,
+        match="doesn't support the video content block",
+    ),
+    ExpectError(
+        'bedrock_claude',
+        'video',
+        content_source='url_force_download',
+        return_style='direct',
+        error_type=ModelHTTPError,
+        match="doesn't support the video content block",
+    ),
+    ExpectError(
+        'bedrock_claude',
+        'video',
+        content_source='binary',
+        return_style='tool_return_content',
+        error_type=ModelHTTPError,
+        match="doesn't support the video content block",
+    ),
+    ExpectError(
+        'bedrock_claude',
+        'video',
+        content_source='url',
+        return_style='tool_return_content',
+        error_type=ModelHTTPError,
+        match="doesn't support the video content block",
+    ),
+    ExpectError(
+        'bedrock_claude',
+        'video',
+        content_source='url_force_download',
+        return_style='tool_return_content',
+        error_type=ModelHTTPError,
+        match="doesn't support the video content block",
     ),
     ExpectError(
         'openai_chat',
@@ -510,6 +617,7 @@ def get_error_details(
 MODEL_CONFIGS: dict[str, tuple[str, Any]] = {
     'anthropic': ('claude-sonnet-4-5', anthropic_available),
     'bedrock': ('us.amazon.nova-pro-v1:0', bedrock_available),
+    'bedrock_claude': ('us.anthropic.claude-sonnet-4-5-20250929-v1:0', bedrock_available),
     'google': ('gemini-2.5-flash', google_available),
     'google_gemini3': ('gemini-3-flash-preview', google_available),
     'openai_chat': ('gpt-5-mini', openai_available),
@@ -529,7 +637,7 @@ def create_model(
     model_name = MODEL_CONFIGS[provider][0]
     if provider == 'anthropic':
         return AnthropicModel(model_name, provider=AnthropicProvider(api_key=api_keys['anthropic']))
-    elif provider == 'bedrock':
+    elif provider in ('bedrock', 'bedrock_claude'):
         assert bedrock_provider is not None
         return BedrockConverseModel(model_name, provider=bedrock_provider)
     elif provider in ('google', 'google_gemini3'):
@@ -1095,7 +1203,7 @@ async def test_non_pdf_document_url_error(
         )
 
 
-BEDROCK_PROVIDERS = [pytest.param('bedrock', id='bedrock')]
+BEDROCK_PROVIDERS = [pytest.param('bedrock', id='bedrock'), pytest.param('bedrock_claude', id='bedrock_claude')]
 
 
 @pytest.mark.parametrize('provider', BEDROCK_PROVIDERS)

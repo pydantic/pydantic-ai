@@ -4693,19 +4693,22 @@ class TestSdkVersion:
         pytest.param(
             {'return_value': 'hello'},
             [BinaryContent(data=b'x', media_type='image/png')],
-            'hello\n[File: image/png]',
+            snapshot('hello\n[File: image/png]'),
             id='string_with_files',
         ),
         pytest.param(
             {'return_value': None},
             [BinaryContent(data=b'x', media_type='audio/wav')],
-            '[File: audio/wav]',
+            snapshot('[File: audio/wav]'),
             id='falsy_with_files',
         ),
         pytest.param(
             {'return_value': 42},
             [BinaryContent(data=b'x', media_type='video/mp4')],
-            42,
+            snapshot("""\
+42
+[File: video/mp4]\
+"""),
             id='truthy_non_container_with_files',
         ),
     ],
