@@ -196,6 +196,7 @@ class StdioSandboxRuntime(CodeRuntime):
         interrupted_calls: list[InterruptedToolCall] = []
         tool_tasks: dict[int, asyncio.Task[Any]] = {}
         call_id_to_fc: dict[int, FunctionCall] = {}
+        calls_ready_seen = False
 
         stdout_task: asyncio.Task[bytes] = asyncio.ensure_future(process.read_line())
 
@@ -207,7 +208,9 @@ class StdioSandboxRuntime(CodeRuntime):
                 for task in done:
                     if task is stdout_task:
                         result = await self._handle_stdout(task, process, call_tool, tool_tasks, call_id_to_fc)
-                        if result is not _SENTINEL:
+                        if result is _CALLS_READY:
+                            calls_ready_seen = True
+                        elif result is not _SENTINEL:
                             return result
                         stdout_task = asyncio.ensure_future(process.read_line())
                     else:
@@ -215,18 +218,11 @@ class StdioSandboxRuntime(CodeRuntime):
                             task, process, tool_tasks, call_id_to_fc, completed_results, interrupted_calls, stdout_task
                         )
 
-                if interrupted_calls and not tool_tasks:
-                    # Before interrupting, drain any pending call messages from
-                    # stdout. With network-based runtimes (e.g. Modal) stdout
-                    # messages may arrive with inter-line latency, so later call
-                    # messages might not have been read yet.
-                    try:
-                        drain_done, _ = await asyncio.wait([stdout_task], timeout=0.5)
-                    except Exception:
-                        drain_done = set()
-                    if drain_done:
-                        # More data available — process it before interrupting
-                        continue
+                # Only interrupt once we've received the calls_ready fence
+                # from the driver, confirming all call messages for this batch
+                # have been sent. Without this, network-based runtimes (Modal,
+                # E2B, etc.) could lose in-transit call messages.
+                if interrupted_calls and not tool_tasks and calls_ready_seen:
                     await _cancel_task(stdout_task)
                     await process.kill()
                     checkpoint = _serialize_checkpoint(completed_results, interrupted_calls)
@@ -274,6 +270,8 @@ class StdioSandboxRuntime(CodeRuntime):
             )
             call_id_to_fc[cid] = fc
             tool_tasks[cid] = asyncio.ensure_future(call_tool(fc))
+        elif msg_type == 'calls_ready':
+            return _CALLS_READY
         elif msg_type == 'complete':
             await process.kill()
             return msg.get('result')
@@ -336,8 +334,9 @@ class StdioSandboxRuntime(CodeRuntime):
             pass
 
 
-# Sentinel object for _handle_stdout to signal "continue loop"
-_SENTINEL = object()
+# Sentinel objects for _handle_stdout return values
+_SENTINEL = object()  # "continue loop, no special action"
+_CALLS_READY = object()  # "all calls for this batch have been dispatched"
 
 
 def _task_to_cid(task: asyncio.Task[Any], tool_tasks: dict[int, asyncio.Task[Any]]) -> int | None:

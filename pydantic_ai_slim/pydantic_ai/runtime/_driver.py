@@ -6,7 +6,7 @@ host via NDJSON (newline-delimited JSON) over stdin/stdout.
 
 Protocol:
     Host -> Driver: init, result, error
-    Driver -> Host: call, complete, error
+    Driver -> Host: call, calls_ready, complete, error
 
 This file is both a module (importable for path resolution) and an executable
 script (python -u _driver.py).
@@ -74,6 +74,7 @@ def _build_proxy(
     call_counter: list[int],
     pending_futures: dict[int, asyncio.Future[Any]],
     result_cache: dict[str, Any],
+    calls_ready_handle: list[asyncio.Handle | None],
 ) -> Any:
     """Build an eager proxy function for a declared tool.
 
@@ -84,6 +85,12 @@ def _build_proxy(
 
     NOT async — returns a future directly. If this were ``async def``, calling
     without ``await`` would return an unstarted coroutine (no parallelism).
+
+    After sending a call message, a ``calls_ready`` boundary message is
+    scheduled via ``loop.call_soon``. Each proxy call cancels the previous
+    handle, so exactly one ``calls_ready`` is emitted after the last
+    synchronous proxy call in a batch — when the event loop runs on the
+    next ``await``.
     """
 
     def proxy(**kwargs: Any) -> asyncio.Future[Any]:
@@ -98,6 +105,12 @@ def _build_proxy(
         future: asyncio.Future[Any] = loop.create_future()
         pending_futures[cid] = future
         _write_msg({'type': 'call', 'id': cid, 'function': name, 'args': [], 'kwargs': kwargs})
+
+        # Schedule a calls_ready fence to fire when the event loop runs next.
+        if calls_ready_handle[0] is not None:
+            calls_ready_handle[0].cancel()
+        calls_ready_handle[0] = loop.call_soon(_write_msg, {'type': 'calls_ready'})
+
         return future
 
     return proxy
@@ -169,10 +182,11 @@ async def _execute(init_msg: dict[str, Any], reader: asyncio.StreamReader) -> No
     loop = asyncio.get_event_loop()
     call_counter: list[int] = [0]
     pending_futures: dict[int, asyncio.Future[Any]] = {}
+    calls_ready_handle: list[asyncio.Handle | None] = [None]
 
     code_globals: dict[str, Any] = {'__builtins__': __builtins__}
     for name in functions:
-        code_globals[name] = _build_proxy(name, loop, call_counter, pending_futures, result_cache)
+        code_globals[name] = _build_proxy(name, loop, call_counter, pending_futures, result_cache, calls_ready_handle)
 
     code_fn = _compile_code(code, code_globals)
     if code_fn is None:
