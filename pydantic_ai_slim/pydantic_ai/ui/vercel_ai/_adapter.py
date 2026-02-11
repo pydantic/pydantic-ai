@@ -7,10 +7,9 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
-from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
 from ...agent import AbstractAgent
@@ -105,6 +104,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         *,
         agent: AbstractAgent[AgentDepsT, OutputDataT],
         sdk_version: Literal[5, 6] = 5,
+        **kwargs: Any,
     ) -> VercelAIAdapter[AgentDepsT, OutputDataT]:
         """Create a Vercel AI adapter from a request.
 
@@ -141,11 +141,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         on_complete: OnCompleteFunc[BaseChunk] | None = None,
+        **kwargs: Any,
     ) -> Response:
         """Handle a Vercel AI HTTP request by running the agent and returning a streaming response.
-
-        Extends the base [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] with
-        Vercel AI-specific parameters.
 
         Args:
             request: The incoming Starlette/FastAPI request.
@@ -173,48 +171,24 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         Returns:
             A streaming Starlette response with Vercel AI events encoded per the request's `Accept` header value.
         """
-        try:
-            from starlette.responses import Response
-        except ImportError as e:  # pragma: no cover
-            raise ImportError(
-                'Please install the `starlette` package to use `dispatch_request()` method, '
-                'you can use the `ui` optional group — `pip install "pydantic-ai-slim[ui]"`'
-            ) from e
-
-        try:
-            # The DepsT and OutputDataT come from `agent`, not from `cls`; the cast is necessary to explain this to pyright
-            adapter = cast(
-                VercelAIAdapter[DispatchDepsT, DispatchOutputDataT],
-                await cls.from_request(
-                    request,
-                    agent=cast(AbstractAgent[AgentDepsT, OutputDataT], agent),
-                    sdk_version=sdk_version,
-                ),
-            )
-        except ValidationError as e:  # pragma: no cover
-            return Response(
-                content=e.json(),
-                media_type='application/json',
-                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-            )
-
-        return adapter.streaming_response(
-            adapter.run_stream(
-                message_history=message_history,
-                deferred_tool_results=deferred_tool_results,
-                deps=deps,
-                output_type=output_type,
-                model=model,
-                instructions=instructions,
-                model_settings=model_settings,
-                usage_limits=usage_limits,
-                usage=usage,
-                metadata=metadata,
-                infer_name=infer_name,
-                toolsets=toolsets,
-                builtin_tools=builtin_tools,
-                on_complete=on_complete,
-            ),
+        return await super().dispatch_request(
+            request,
+            agent=agent,
+            sdk_version=sdk_version,
+            message_history=message_history,
+            deferred_tool_results=deferred_tool_results,
+            model=model,
+            instructions=instructions,
+            deps=deps,
+            output_type=output_type,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            usage=usage,
+            metadata=metadata,
+            infer_name=infer_name,
+            toolsets=toolsets,
+            builtin_tools=builtin_tools,
+            on_complete=on_complete,
         )
 
     def build_event_stream(self) -> UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
