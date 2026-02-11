@@ -75,14 +75,14 @@ class ModalRuntime(DriverBasedRuntime):
         app = await modal.App.lookup.aio(self.app_name, create_if_missing=True)
         image = self.image if self.image is not None else modal.Image.debian_slim()
 
-        sandbox = await modal.Sandbox.create.aio(app=app, image=image, timeout=self.timeout)
+        sandbox = await modal.Sandbox.create.aio(app=app, image=image, timeout=self.timeout)  # pyright: ignore[reportUnknownMemberType]
 
         # Upload the driver script into the sandbox
         driver_src = Path(__file__).parent / '_driver.py'
         driver_content = driver_src.read_text()
 
         def _upload_driver() -> None:
-            with sandbox.open('/tmp/pydantic_ai_driver.py', 'w') as f:
+            with sandbox.open('/tmp/pydantic_ai_driver.py', 'w') as f:  # pyright: ignore[reportUnknownVariableType]
                 f.write(driver_content)
 
         await asyncio.to_thread(_upload_driver)

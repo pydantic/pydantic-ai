@@ -45,7 +45,7 @@ class FunctionCall:
     call_id: str
     function_name: str
     args: tuple[Any, ...] = ()  # Positional args
-    kwargs: dict[str, Any] = field(default_factory=dict)  # keyword args
+    kwargs: dict[str, Any] = field(default_factory=lambda: {})  # keyword args
 
 
 class CodeExecutionError(Exception):
@@ -181,8 +181,7 @@ def serialize_checkpoint_results(
         interpreter_state: Optional raw interpreter state bytes (used by Monty runtime).
     """
     raw_results = {
-        str(k): base64.b64encode(tool_return_ta.dump_json(v)).decode('ascii')
-        for k, v in completed_results.items()
+        str(k): base64.b64encode(tool_return_ta.dump_json(v)).decode('ascii') for k, v in completed_results.items()
     }
     pending_calls = {
         ic.call.call_id: {

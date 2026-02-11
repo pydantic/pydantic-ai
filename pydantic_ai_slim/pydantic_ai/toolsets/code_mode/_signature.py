@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import json
 import re
 import types
 from collections.abc import Callable
@@ -243,6 +244,85 @@ def _get_type_name(t: Any) -> str:
 # =============================================================================
 
 
+def _collect_typeddicts_from_annotation(
+    annotation: Any,
+    typeddicts: dict[str, str],
+    tool_name: str,
+    path: str = '',
+) -> None:
+    """Recursively collect TypedDict definitions from type annotations."""
+    if annotation is None or annotation is type(None):
+        return
+
+    if _is_named_type(annotation):
+        type_name = annotation.__name__
+        if type_name not in typeddicts:
+            schema = _get_schema_from_type(annotation)
+            schema_defs = schema.get('$defs', {})
+
+            def to_type(s: dict[str, Any], p: str) -> str:
+                return _schema_type_to_str(s, schema_defs, typeddicts, tool_name, p)
+
+            # Process any $defs first
+            for def_name, def_schema in schema_defs.items():
+                if (
+                    def_name not in typeddicts
+                    and def_schema.get('type') == 'object'
+                    and 'properties' in def_schema
+                ):
+                    typeddicts[def_name] = _generate_typeddict_str(def_name, def_schema, to_type, path)
+
+            # Then process the main schema
+            if schema.get('type') == 'object' and 'properties' in schema:
+                typeddicts[type_name] = _generate_typeddict_str(type_name, schema, to_type, path)
+            elif '$ref' in schema:
+                ref_name = schema['$ref'][8:] if schema['$ref'].startswith('#/$defs/') else schema['$ref'].split('/')[-1]
+                if ref_name in schema_defs and ref_name not in typeddicts:
+                    ref_schema = schema_defs[ref_name]
+                    if ref_schema.get('type') == 'object' and 'properties' in ref_schema:
+                        typeddicts[ref_name] = _generate_typeddict_str(ref_name, ref_schema, to_type, path)
+        return
+
+    origin = get_origin(annotation)
+    args = getattr(annotation, '__args__', None)
+    if origin is not None and args:
+        for arg in args:
+            _collect_typeddicts_from_annotation(arg, typeddicts, tool_name, path)
+
+
+def _build_function_params(
+    sig: Any,
+    type_hints: dict[str, Any],
+    typeddicts: dict[str, str],
+    tool_name: str,
+) -> list[str]:
+    """Build parameter strings from a function's signature and type hints."""
+    params: list[str] = []
+    for i, (param_name, param) in enumerate(sig.parameters.items()):
+        annotation = type_hints.get(param_name)
+
+        if i == 0 and annotation is not None and _is_call_ctx(annotation):
+            continue
+
+        if annotation is not None:
+            _collect_typeddicts_from_annotation(annotation, typeddicts, tool_name, param_name)
+
+        annotation_str = _format_annotation(annotation) if annotation else ''
+
+        if param.default is Parameter.empty:
+            if annotation_str:
+                params.append(f'{param_name}: {annotation_str}')
+            else:
+                params.append(param_name)
+        else:
+            default_str = repr(param.default)
+            if annotation_str:
+                params.append(f'{param_name}: {annotation_str} = {default_str}')
+            else:
+                params.append(f'{param_name}={default_str}')
+    return params
+
+
 def _function_to_signature(
     func: Callable[..., Any],
     name: str | None = None,
@@ -259,93 +339,12 @@ def _function_to_signature(
     except Exception:
         type_hints = {}
 
-    # Closure state for collecting TypedDicts
     typeddicts: dict[str, str] = {}
+    params = _build_function_params(sig, type_hints, typeddicts, name)
 
-    def collect_typeddicts_from_annotation(annotation: Any, path: str = '') -> None:
-        """Recursively collect TypedDicts from complex type annotations."""
-        if annotation is None or annotation is type(None):
-            return
-
-        if _is_named_type(annotation):
-            type_name = annotation.__name__
-            if type_name not in typeddicts:
-                schema = _get_schema_from_type(annotation)
-                # Process any $defs first
-                if '$defs' in schema:
-                    for def_name, def_schema in schema['$defs'].items():
-                        if (
-                            def_name not in typeddicts
-                            and def_schema.get('type') == 'object'
-                            and 'properties' in def_schema
-                        ):
-                            typeddicts[def_name] = _generate_typeddict_str(
-                                def_name,
-                                def_schema,
-                                lambda s, p: _schema_type_to_str(s, schema.get('$defs', {}), typeddicts, name or '', p),
-                                path,
-                            )
-                # Then process the main schema
-                if schema.get('type') == 'object' and 'properties' in schema:
-                    typeddicts[type_name] = _generate_typeddict_str(
-                        type_name,
-                        schema,
-                        lambda s, p: _schema_type_to_str(s, schema.get('$defs', {}), typeddicts, name or '', p),
-                        path,
-                    )
-                elif '$ref' in schema:
-                    # Handle $ref at top level - ensure referenced def is generated
-                    ref_name = (
-                        schema['$ref'][8:] if schema['$ref'].startswith('#/$defs/') else schema['$ref'].split('/')[-1]
-                    )
-                    if ref_name in schema.get('$defs', {}) and ref_name not in typeddicts:
-                        ref_schema = schema['$defs'][ref_name]
-                        if ref_schema.get('type') == 'object' and 'properties' in ref_schema:
-                            typeddicts[ref_name] = _generate_typeddict_str(
-                                ref_name,
-                                ref_schema,
-                                lambda s, p: _schema_type_to_str(s, schema.get('$defs', {}), typeddicts, name or '', p),
-                                path,
-                            )
-            return
-
-        origin = get_origin(annotation)
-        args = getattr(annotation, '__args__', None)
-
-        if origin is not None and args:
-            for arg in args:
-                collect_typeddicts_from_annotation(arg, path)
-
-    params: list[str] = []
-
-    for i, (param_name, param) in enumerate(sig.parameters.items()):
-        annotation = type_hints.get(param_name)
-
-        # Skip RunContext parameter (first param only)
-        if i == 0 and annotation is not None and _is_call_ctx(annotation):
-            continue
-
-        if annotation is not None:
-            collect_typeddicts_from_annotation(annotation, param_name)
-
-        annotation_str = _format_annotation(annotation) if annotation else ''
-
-        if param.default is Parameter.empty:
-            if annotation_str:
-                params.append(f'{param_name}: {annotation_str}')
-            else:
-                params.append(param_name)
-        else:
-            default_str = repr(param.default)
-            if annotation_str:
-                params.append(f'{param_name}: {annotation_str} = {default_str}')
-            else:
-                params.append(f'{param_name}={default_str}')
-
-    # Handle return type
     return_annotation = type_hints.get('return')
     if return_annotation is not None:
-        collect_typeddicts_from_annotation(return_annotation, 'Return')
+        _collect_typeddicts_from_annotation(return_annotation, typeddicts, name, 'Return')
 
     if include_return_type:
         return_type_str = _format_annotation(return_annotation) if return_annotation else 'Any'
@@ -417,8 +416,6 @@ def _schema_to_signature(
     # Handle case where return type couldn't be resolved
     final_description = description
     if return_schema is not None and resolved_return_type == 'Any':
-        import json
-
         return_schema_blob = json.dumps(return_schema, indent=2)
         return_schema_note = f'\n\nReturn schema:\n{return_schema_blob}'
         final_description = (description or '') + return_schema_note
