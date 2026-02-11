@@ -5726,3 +5726,63 @@ async def test_google_prepends_empty_user_turn_when_first_content_is_model(googl
             },
         ]
     )
+
+
+@pytest.mark.parametrize(
+    'service_tier,expected_headers',
+    [
+        pytest.param(
+            'flex',
+            {'X-Vertex-AI-LLM-Shared-Request-Type': 'flex'},
+            id='flex',
+        ),
+        pytest.param(
+            'flex_only',
+            {
+                'X-Vertex-AI-LLM-Request-Type': 'shared',
+                'X-Vertex-AI-LLM-Shared-Request-Type': 'flex',
+            },
+            id='flex_only',
+        ),
+    ],
+)
+async def test_google_service_tier_flex_paygo(
+    allow_model_requests: None,
+    service_tier: str,
+    expected_headers: dict[str, str],
+):
+    """Test that Flex PayGo service tier headers are set correctly."""
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model_settings = GoogleModelSettings(google_service_tier=service_tier)  # type: ignore[typeddict-item]
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    headers = config_dict['http_options']['headers']
+
+    for header_name, header_value in expected_headers.items():
+        assert headers.get(header_name) == header_value, (
+            f'Expected header {header_name}={header_value}, got {headers.get(header_name)}'
+        )
+
+
+async def test_google_service_tier_not_set_no_headers(allow_model_requests: None):
+    """Test that no Flex PayGo headers are set when service_tier is not specified."""
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model_settings = GoogleModelSettings()
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    headers = config_dict['http_options']['headers']
+
+    assert 'X-Vertex-AI-LLM-Request-Type' not in headers
+    assert 'X-Vertex-AI-LLM-Shared-Request-Type' not in headers

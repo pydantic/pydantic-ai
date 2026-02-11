@@ -158,6 +158,17 @@ _GOOGLE_IMAGE_OUTPUT_FORMAT = Literal['png', 'jpeg', 'webp']
 _GOOGLE_IMAGE_OUTPUT_FORMATS: tuple[_GOOGLE_IMAGE_OUTPUT_FORMAT, ...] = _utils.get_args(_GOOGLE_IMAGE_OUTPUT_FORMAT)
 
 
+GoogleServiceTier = Literal['flex', 'flex_only']
+"""Service tier options for Google models on Vertex AI.
+
+- `'flex'`: Use Flex PayGo with provisioned throughput fallback. If you have provisioned throughput quota,
+  it will be used first, then Flex PayGo for spillover traffic.
+- `'flex_only'`: Use only Flex PayGo without provisioned throughput fallback.
+
+See <https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo> for more details.
+"""
+
+
 class GoogleModelSettings(ModelSettings, total=False):
     """Settings used for a Gemini model request."""
 
@@ -191,6 +202,20 @@ class GoogleModelSettings(ModelSettings, total=False):
     """The name of the cached content to use for the model.
 
     See <https://ai.google.dev/gemini-api/docs/caching> for more information.
+    """
+
+    google_service_tier: GoogleServiceTier
+    """The service tier to use for requests, flex is cheaper with potential longer
+    response times. Only supported by the Vertex AI API.
+    Please note that not all models support all service tiers, check the docs for more details.
+
+    Options:
+    - If not specified, standard pricing (not flex) is used.
+    - `'flex'`: Use Flex PayGo pricing with provisioned throughput fallback.
+      If you have provisioned throughput quota, it will be used first, then Flex PayGo.
+    - `'flex_only'`: Use only Flex PayGo pricing without provisioned throughput fallback.
+
+    See [Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) for more details.
     """
 
 
@@ -526,6 +551,18 @@ class GoogleModel(Model):
         headers: dict[str, str] = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         if extra_headers := model_settings.get('extra_headers'):
             headers.update(extra_headers)
+
+        # Handle Flex PayGo service tier for Vertex AI
+        # See https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo
+        if service_tier := model_settings.get('google_service_tier'):
+            if service_tier == 'flex':
+                # Use provisioned throughput first, then Flex PayGo
+                headers['X-Vertex-AI-LLM-Shared-Request-Type'] = 'flex'
+            elif service_tier == 'flex_only':
+                # Use only Flex PayGo
+                headers['X-Vertex-AI-LLM-Request-Type'] = 'shared'
+                headers['X-Vertex-AI-LLM-Shared-Request-Type'] = 'flex'
+
         http_options: HttpOptionsDict = {'headers': headers}
         if timeout := model_settings.get('timeout'):
             if isinstance(timeout, int | float):
