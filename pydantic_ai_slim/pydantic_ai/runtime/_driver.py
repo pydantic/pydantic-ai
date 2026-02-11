@@ -79,7 +79,7 @@ def _build_proxy(
     """Build an eager proxy function for a declared tool.
 
     Calling the proxy immediately sends a call message and returns a future.
-    ``await`` just waits for the result. This enables fire-then-await parallelism:
+    ``await`` just waits for the result. This enables fire-then-await xparallelism:
     ``f1 = tool_a(); f2 = tool_b(); r1 = await f1; r2 = await f2`` fires both
     calls instantly.
 
@@ -179,7 +179,7 @@ async def _execute(init_msg: dict[str, Any], reader: asyncio.StreamReader) -> No
         _write_msg({'type': 'complete', 'result': None})
         return
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     call_counter: list[int] = [0]
     pending_futures: dict[int, asyncio.Future[Any]] = {}
     calls_ready_handle: list[asyncio.Handle | None] = [None]
@@ -192,7 +192,7 @@ async def _execute(init_msg: dict[str, Any], reader: asyncio.StreamReader) -> No
     if code_fn is None:
         return
 
-    stdin_task = asyncio.ensure_future(_stdin_reader(reader, pending_futures))
+    stdin_task = asyncio.create_task(_stdin_reader(reader, pending_futures))
 
     try:
         result = await code_fn()
@@ -211,7 +211,7 @@ async def _execute(init_msg: dict[str, Any], reader: asyncio.StreamReader) -> No
 
 async def _main() -> None:
     """Entry point: connect stdin, read init message, execute code."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     reader = asyncio.StreamReader()
     protocol = asyncio.StreamReaderProtocol(reader)
     await loop.connect_read_pipe(lambda: protocol, sys.stdin.buffer)

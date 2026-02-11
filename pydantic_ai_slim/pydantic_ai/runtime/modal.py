@@ -13,7 +13,10 @@ import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import modal
 
 from pydantic_ai.runtime._transport import DriverBasedRuntime, DriverTransport
 
@@ -60,7 +63,7 @@ class ModalRuntime(DriverBasedRuntime):
     """
 
     app_name: str = 'pydantic-ai-code-runtime'
-    image: Any = None
+    image: modal.Image | None = None
     timeout: int = 300
 
     async def _start_driver(self, init_msg: dict[str, Any]) -> DriverTransport:

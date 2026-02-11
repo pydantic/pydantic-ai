@@ -499,7 +499,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 checkpoint=checkpoint,
             )
         except (CodeTypingError, CodeSyntaxError, CodeRuntimeError) as e:
-            raise ModelRetry(f'Error in resumed code execution:\n{e.message}')
+            raise ModelRetry(f'Error in resumed code execution:\n{e.message}') from e
         except CodeInterruptedError as e:
             # Resumed execution discovered new tool calls that need approval/deferral.
             # Propagate as a fresh ApprovalRequired so the user can handle the next round.
@@ -554,11 +554,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         try:
             return await self.runtime.run(code, functions, callback, signatures=self._cached_signatures)
         except CodeTypingError as e:
-            raise ModelRetry(f'Type error in generated code:\n{e.message}')
+            raise ModelRetry(f'Type error in generated code:\n{e.message}') from e
         except CodeSyntaxError as e:
-            raise ModelRetry(f'Syntax error in generated code:\n{e.message}')
+            raise ModelRetry(f'Syntax error in generated code:\n{e.message}') from e
         except CodeRuntimeError as e:
-            raise ModelRetry(f'Runtime error in generated code:\n{e.message}')
+            raise ModelRetry(f'Runtime error in generated code:\n{e.message}') from e
         except CodeInterruptedError as e:
             raise ApprovalRequired(
                 context=self._build_interruption_context(

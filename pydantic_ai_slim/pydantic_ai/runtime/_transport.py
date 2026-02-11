@@ -13,6 +13,7 @@ import base64
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import Enum, auto
 from typing import Any
 
 from pydantic import ValidationError
@@ -28,6 +29,8 @@ from pydantic_ai.runtime.abstract import (
     InterruptedToolCall,
     ToolCallback,
     checkpoint_result_ta,
+    deserialize_checkpoint,
+    serialize_checkpoint_results,
 )
 
 
@@ -59,46 +62,19 @@ class DriverTransport(ABC):
         ...
 
 
-def _serialize_checkpoint(
-    completed_results: dict[int, Any],
-    interrupted_calls: list[InterruptedToolCall],
-) -> bytes:
-    """Serialize a stdio checkpoint into an opaque bytes blob.
+class _StdoutSignal(Enum):
+    """Typed signals from _handle_stdout indicating what happened."""
 
-    Each completed result is individually serialized to JSON bytes via Pydantic's
-    ``tool_return_ta``, then base64-encoded for embedding in the outer JSON payload.
-    """
-    raw_results = {
-        str(k): base64.b64encode(tool_return_ta.dump_json(v)).decode('ascii') for k, v in completed_results.items()
-    }
-    pending_calls = {
-        ic.call.call_id: {
-            'function_name': ic.call.function_name,
-            'args': list(ic.call.args),
-            'kwargs': ic.call.kwargs,
-        }
-        for ic in interrupted_calls
-    }
-    payload = {
-        'completed_results': raw_results,
-        'pending_calls': pending_calls,
-    }
-    return json.dumps(payload).encode('utf-8')
+    CONTINUE = auto()
+    CALLS_READY = auto()
+    NEW_CALL = auto()
 
 
-@dataclass
-class _DeserializedCheckpoint:
-    completed_results: dict[str, Any]
-    pending_calls: dict[str, dict[str, Any]]
+@dataclass(frozen=True)
+class _FinalResult:
+    """Wraps the final result value from a completed driver execution."""
 
-
-def _deserialize_checkpoint(checkpoint: bytes) -> _DeserializedCheckpoint:
-    """Deserialize a stdio checkpoint back into its components."""
-    payload = json.loads(checkpoint)
-    return _DeserializedCheckpoint(
-        completed_results=payload.get('completed_results', {}),
-        pending_calls=payload.get('pending_calls', {}),
-    )
+    value: Any
 
 
 @dataclass
@@ -161,7 +137,7 @@ class DriverBasedRuntime(CodeRuntime):
     ) -> Any:
         """Resume execution from a serialized checkpoint via re-execution with a result cache."""
         try:
-            ckpt = _deserialize_checkpoint(checkpoint)
+            ckpt = deserialize_checkpoint(checkpoint)
 
             # Build result cache: decode base64-encoded results for the driver.
             # Normalize to JSON-compatible form so the init_msg can be serialized
@@ -172,7 +148,7 @@ class DriverBasedRuntime(CodeRuntime):
                 reconstructed = checkpoint_result_ta.validate_json(base64.b64decode(v))
                 result_cache[k] = tool_return_ta.dump_python(reconstructed, mode='json')
         except (json.JSONDecodeError, KeyError, ValueError, ValidationError) as e:
-            raise CodeRuntimeError(f'Invalid checkpoint data: {e}')
+            raise CodeRuntimeError(f'Invalid checkpoint data: {e}') from e
 
         init_msg: dict[str, Any] = {
             'type': 'init',
@@ -202,7 +178,7 @@ class DriverBasedRuntime(CodeRuntime):
         call_id_to_fc: dict[int, FunctionCall] = {}
         calls_ready_seen = False
 
-        stdout_task: asyncio.Task[bytes] = asyncio.ensure_future(process.read_line())
+        stdout_task: asyncio.Task[bytes] = asyncio.create_task(process.read_line())
 
         try:
             while True:
@@ -214,13 +190,13 @@ class DriverBasedRuntime(CodeRuntime):
                         result = await self._handle_stdout(
                             task, process, call_tool, tool_tasks, task_id_to_cid, call_id_to_fc
                         )
-                        if result is _CALLS_READY:
+                        if isinstance(result, _FinalResult):
+                            return result.value
+                        elif result is _StdoutSignal.CALLS_READY:
                             calls_ready_seen = True
-                        elif result is _NEW_CALL:
+                        elif result is _StdoutSignal.NEW_CALL:
                             calls_ready_seen = False
-                        elif result is not _SENTINEL:
-                            return result
-                        stdout_task = asyncio.ensure_future(process.read_line())
+                        stdout_task = asyncio.create_task(process.read_line())
                     else:
                         await self._handle_tool_done(
                             task,
@@ -249,7 +225,7 @@ class DriverBasedRuntime(CodeRuntime):
                 if interrupted_calls and not tool_tasks and calls_ready_seen:
                     await _cancel_task(stdout_task)
                     await process.kill()
-                    checkpoint = _serialize_checkpoint(completed_results, interrupted_calls)
+                    checkpoint = serialize_checkpoint_results(completed_results, interrupted_calls)
                     raise CodeInterruptedError(interrupted_calls=interrupted_calls, checkpoint=checkpoint)
 
         except (CodeInterruptedError, CodeSyntaxError, CodeRuntimeError):
@@ -266,8 +242,8 @@ class DriverBasedRuntime(CodeRuntime):
         tool_tasks: dict[int, asyncio.Task[Any]],
         task_id_to_cid: dict[int, int],
         call_id_to_fc: dict[int, FunctionCall],
-    ) -> Any:
-        """Handle a completed stdout read task. Returns _SENTINEL to continue, or the final result."""
+    ) -> _StdoutSignal | _FinalResult:
+        """Handle a completed stdout read task. Returns a signal or the final result."""
         raw = task.result()
         if not raw:
             stderr = b''
@@ -294,15 +270,15 @@ class DriverBasedRuntime(CodeRuntime):
                 kwargs=msg.get('kwargs', {}),
             )
             call_id_to_fc[cid] = fc
-            t = asyncio.ensure_future(call_tool(fc))
+            t = asyncio.create_task(call_tool(fc))
             tool_tasks[cid] = t
             task_id_to_cid[id(t)] = cid
-            return _NEW_CALL
+            return _StdoutSignal.NEW_CALL
         elif msg_type == 'calls_ready':
-            return _CALLS_READY
+            return _StdoutSignal.CALLS_READY
         elif msg_type == 'complete':
             await process.kill()
-            return msg.get('result')
+            return _FinalResult(value=msg.get('result'))
         elif msg_type == 'error':
             await process.kill()
             error_type = msg.get('error_type', 'runtime')
@@ -311,7 +287,7 @@ class DriverBasedRuntime(CodeRuntime):
                 raise CodeSyntaxError(error_msg)
             raise CodeRuntimeError(error_msg)
 
-        return _SENTINEL
+        return _StdoutSignal.CONTINUE
 
     @staticmethod
     async def _handle_tool_done(
@@ -348,14 +324,8 @@ class DriverBasedRuntime(CodeRuntime):
             raise CodeRuntimeError(f'Tool execution error: {e}') from e
 
 
-# Sentinel objects for _handle_stdout return values
-_SENTINEL = object()  # "continue loop, no special action"
-_CALLS_READY = object()  # "all calls for this batch have been dispatched"
-_NEW_CALL = object()  # "a new call was dispatched; reset calls_ready_seen"
-
-
 async def _cancel_task(task: asyncio.Task[Any]) -> None:
-    """Cancel a task and suppress the CancelledError."""
+    """Cancel a task and suppress CancelledError."""
     task.cancel()
     try:
         await task
@@ -369,10 +339,10 @@ async def _cancel_all(
     process: DriverTransport,
 ) -> None:
     """Cancel all pending tasks and kill the driver process."""
-    for t in tool_tasks.values():
+    all_tasks = [*tool_tasks.values(), stdout_task]
+    for t in all_tasks:
         t.cancel()
-    stdout_task.cancel()
-    for t in [*tool_tasks.values(), stdout_task]:
+    for t in all_tasks:
         await _cancel_task(t)
     try:
         await process.kill()

@@ -59,7 +59,7 @@ class DockerRuntime(DriverBasedRuntime):
         driver_path: Path where the driver script is installed inside the container.
     """
 
-    container_id: str = ''
+    container_id: str
     python_path: str = 'python'
     driver_path: str = '/tmp/pydantic_ai_driver.py'
 

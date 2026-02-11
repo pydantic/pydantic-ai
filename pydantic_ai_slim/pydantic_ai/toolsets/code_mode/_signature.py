@@ -7,6 +7,7 @@ than raw JSON schemas.
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import re
 import types
@@ -678,8 +679,6 @@ def _generate_typeddict_str(
 
 def _update_refs_with_prefix(schema: dict[str, Any], prefix: str) -> dict[str, Any]:
     """Return a copy of a schema with $ref names prefixed."""
-    import copy
-
     def update_refs(obj: Any) -> Any:
         if isinstance(obj, dict):
             obj_dict = cast(dict[str, Any], obj)

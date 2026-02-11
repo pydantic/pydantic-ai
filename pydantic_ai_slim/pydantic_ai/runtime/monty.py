@@ -2,12 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import json
-from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
-from pydantic_ai.messages import tool_return_ta
 from pydantic_ai.runtime.abstract import (
     CodeInterruptedError,
     CodeRuntime,
@@ -18,6 +15,8 @@ from pydantic_ai.runtime.abstract import (
     InterruptedToolCall,
     ToolCallback,
     checkpoint_result_ta,
+    deserialize_checkpoint,
+    serialize_checkpoint_results,
 )
 
 try:
@@ -33,13 +32,6 @@ try:
     )
 except ImportError:
     raise ImportError("MontyRuntime requires 'monty'. Install with: pip install 'pydantic-ai-slim[monty]'")
-
-
-@dataclass
-class _DeserializedCheckpoint:
-    monty_dump: bytes
-    completed_results: dict[str, Any]
-    pending_calls: dict[str, dict[str, Any]]
 
 
 def _build_type_check_prefix(signatures: list[str]) -> str:
@@ -63,62 +55,6 @@ def _build_type_check_prefix(signatures: list[str]) -> str:
     # The body is always on its own line with 4-space indent at the end of the function
     converted = [sig.replace('\n    ...', '\n    raise NotImplementedError()') for sig in signatures]
     return imports + '\n\n'.join(converted)
-
-
-def _serialize_checkpoint(
-    monty_dump: bytes,
-    completed_results: dict[int, Any],
-    interrupted_calls: list[InterruptedToolCall],
-) -> bytes:
-    """Serialize a Monty checkpoint into an opaque bytes blob.
-
-    Bundles interpreter state, completed results, and interrupted call details
-    so the runtime can fully resume without any external data.
-
-    Each completed result is individually serialized to JSON bytes via Pydantic's
-    ``tool_return_ta``, then base64-encoded for embedding in the outer JSON payload.
-    On deserialization, ``checkpoint_result_ta`` (backed by ``ToolReturnContent``)
-    reconstructs rich types (``BinaryContent``, ``ImageUrl``, etc.) from their JSON
-    via the ``kind`` discriminator — plain dicts/strings/numbers pass through unchanged.
-
-    Args:
-        monty_dump: Raw Monty interpreter state bytes from MontyFutureSnapshot.dump().
-        completed_results: Results from tool calls that completed before the interruption,
-            keyed by Monty's internal int call IDs, values in Monty's {'return_value': v} format.
-        interrupted_calls: The tool calls that were interrupted, with full FunctionCall details.
-    """
-    # Each value is serialized to JSON bytes individually so that deserialization can
-    # use validate_json (which respects val_json_bytes='base64') for proper round-tripping.
-    raw_results = {
-        str(k): base64.b64encode(tool_return_ta.dump_json(v['return_value'])).decode('ascii')
-        for k, v in completed_results.items()
-    }
-    pending_calls = {
-        ic.call.call_id: {
-            'function_name': ic.call.function_name,
-            'args': list(ic.call.args),
-            'kwargs': ic.call.kwargs,
-        }
-        for ic in interrupted_calls
-    }
-    payload = {
-        'interpreter_state': base64.b64encode(monty_dump).decode('ascii'),
-        'completed_results': raw_results,
-        'pending_calls': pending_calls,
-    }
-    return json.dumps(payload).encode('utf-8')
-
-
-def _deserialize_checkpoint(checkpoint: bytes) -> _DeserializedCheckpoint:
-    """Deserialize a Monty checkpoint back into its components."""
-    payload = json.loads(checkpoint)
-    if 'interpreter_state' not in payload:
-        raise ValueError("Checkpoint missing required 'interpreter_state' key")
-    return _DeserializedCheckpoint(
-        monty_dump=base64.b64decode(payload['interpreter_state']),
-        completed_results=payload.get('completed_results', {}),
-        pending_calls=payload.get('pending_calls', {}),
-    )
 
 
 class MontyRuntime(CodeRuntime):
@@ -171,11 +107,11 @@ class MontyRuntime(CodeRuntime):
             monty = Monty(code=code, external_functions=functions)
             self._type_check(monty, code, signatures, functions)
         except MontyTypingError as e:
-            raise CodeTypingError(e.display(format='concise'))
+            raise CodeTypingError(e.display(format='concise')) from e
         except MontyRuntimeError as e:
-            raise CodeRuntimeError(e.display())
+            raise CodeRuntimeError(e.display()) from e
         except MontySyntaxError as e:
-            raise CodeSyntaxError(e.display())
+            raise CodeSyntaxError(e.display()) from e
 
         monty_state: MontyComplete | MontyFutureSnapshot | MontySnapshot | None = None
         tasks: dict[int, asyncio.Task[Any]] = {}
@@ -185,7 +121,7 @@ class MontyRuntime(CodeRuntime):
             monty_state = await MontyRuntime._execution_loop(monty_state, tasks, call_tool)
 
         except MontyRuntimeError as e:
-            raise CodeRuntimeError(e.display())
+            raise CodeRuntimeError(e.display()) from e
 
         return monty_state.output
 
@@ -201,8 +137,10 @@ class MontyRuntime(CodeRuntime):
             The final output of the resumed code execution.
         """
         try:
-            ckpt = _deserialize_checkpoint(checkpoint)
-            monty_state: MontyComplete | MontyFutureSnapshot | MontySnapshot = MontyFutureSnapshot.load(ckpt.monty_dump)
+            ckpt = deserialize_checkpoint(checkpoint)
+            if ckpt.interpreter_state is None:
+                raise ValueError("Checkpoint missing required 'interpreter_state' key")
+            monty_state: MontyComplete | MontyFutureSnapshot | MontySnapshot = MontyFutureSnapshot.load(ckpt.interpreter_state)
 
             # Feed completed results (calls that succeeded before the interruption).
             # Values are deserialized through checkpoint_result_ta (ToolReturnContent)
@@ -237,16 +175,18 @@ class MontyRuntime(CodeRuntime):
                     args=tuple(details.get('args', ())),
                     kwargs=details.get('kwargs', {}),
                 )
-                tasks[cid] = asyncio.ensure_future(call_tool(call))
+                tasks[cid] = asyncio.create_task(call_tool(call))
                 initial_calls[cid] = call
 
             monty_state = await MontyRuntime._execution_loop(monty_state, tasks, call_tool, initial_calls=initial_calls)
         except MontyRuntimeError as e:
-            raise CodeRuntimeError(e.display())
-        except (MontySyntaxError, MontyTypingError) as e:
-            raise CodeRuntimeError(e.display())
-        except (json.JSONDecodeError, KeyError, ValueError) as e:
-            raise CodeRuntimeError(f'Invalid checkpoint data: {e}')
+            raise CodeRuntimeError(e.display()) from e
+        except MontySyntaxError as e:
+            raise CodeSyntaxError(e.display()) from e
+        except MontyTypingError as e:
+            raise CodeTypingError(e.display(format='concise')) from e
+        except (KeyError, ValueError) as e:
+            raise CodeRuntimeError(f'Invalid checkpoint data: {e}') from e
 
         return monty_state.output
 
@@ -281,7 +221,7 @@ class MontyRuntime(CodeRuntime):
                     args=monty_state.args,
                     kwargs=monty_state.kwargs,
                 )
-                tasks[monty_state.call_id] = asyncio.ensure_future(call_tool(call))
+                tasks[monty_state.call_id] = asyncio.create_task(call_tool(call))
                 tool_call_id_to_call[monty_state.call_id] = call
 
                 monty_state = monty_state.resume(future=...)
@@ -325,7 +265,8 @@ class MontyRuntime(CodeRuntime):
                     for remaining in tasks.values():
                         remaining.cancel()
                     monty_dump = monty_state.dump()
-                    checkpoint = _serialize_checkpoint(monty_dump, results, interrupted_calls)
+                    unwrapped = {k: v['return_value'] for k, v in results.items()}
+                    checkpoint = serialize_checkpoint_results(unwrapped, interrupted_calls, interpreter_state=monty_dump)
                     raise CodeInterruptedError(
                         interrupted_calls=interrupted_calls,
                         checkpoint=checkpoint,

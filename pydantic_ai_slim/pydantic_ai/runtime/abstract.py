@@ -7,6 +7,8 @@ callback whenever the code calls an external function (tool).
 
 from __future__ import annotations
 
+import base64
+import json
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -15,13 +17,21 @@ from typing import Any, TypeAlias
 import pydantic
 
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
-from pydantic_ai.messages import ToolReturnContent
+from pydantic_ai.messages import ToolReturnContent, tool_return_ta
 
 # Shared TypeAdapter for deserializing checkpoint values with proper type reconstruction.
 # Uses ToolReturnContent (which includes the discriminated MultiModalContent union)
 # so that rich types like BinaryContent and ImageUrl subclasses are reconstructed
 # from their JSON representations via the `kind` discriminator, rather than being
 # left as plain dicts after round-tripping through JSON.
+#
+# Known limitation: Pydantic BaseModel instances returned by tools lose their
+# model identity after checkpoint round-trip (they become plain dicts after
+# dump_python(mode='json')). This is acceptable for the current use case where
+# tool results are consumed as JSON-like data by the LLM code, but would need
+# addressing if downstream code relies on isinstance checks against specific
+# model classes.
+# TODO: Investigate preserving model identity through checkpoint serialization.
 checkpoint_result_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
     ToolReturnContent,
     config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64'),
@@ -148,3 +158,66 @@ class CodeRuntime(ABC):
         guidelines. Return an empty string (the default) to add nothing.
         """
         return ''
+
+
+def serialize_checkpoint_results(
+    completed_results: dict[int, Any],
+    interrupted_calls: list[InterruptedToolCall],
+    *,
+    interpreter_state: bytes | None = None,
+) -> bytes:
+    """Serialize checkpoint results into an opaque bytes blob.
+
+    Each completed result is individually serialized to JSON bytes via Pydantic's
+    ``tool_return_ta``, then base64-encoded for embedding in the outer JSON payload.
+    On deserialization, ``checkpoint_result_ta`` (backed by ``ToolReturnContent``)
+    reconstructs rich types (``BinaryContent``, ``ImageUrl``, etc.) from their JSON
+    via the ``kind`` discriminator — plain dicts/strings/numbers pass through unchanged.
+
+    Args:
+        completed_results: Results from tool calls that completed before the interruption,
+            keyed by internal int call IDs.
+        interrupted_calls: The tool calls that were interrupted, with full FunctionCall details.
+        interpreter_state: Optional raw interpreter state bytes (used by Monty runtime).
+    """
+    raw_results = {
+        str(k): base64.b64encode(tool_return_ta.dump_json(v)).decode('ascii')
+        for k, v in completed_results.items()
+    }
+    pending_calls = {
+        ic.call.call_id: {
+            'function_name': ic.call.function_name,
+            'args': list(ic.call.args),
+            'kwargs': ic.call.kwargs,
+        }
+        for ic in interrupted_calls
+    }
+    payload: dict[str, Any] = {
+        'completed_results': raw_results,
+        'pending_calls': pending_calls,
+    }
+    if interpreter_state is not None:
+        payload['interpreter_state'] = base64.b64encode(interpreter_state).decode('ascii')
+    return json.dumps(payload).encode('utf-8')
+
+
+@dataclass(frozen=True)
+class DeserializedCheckpoint:
+    """Deserialized checkpoint data shared across runtimes."""
+
+    completed_results: dict[str, Any]
+    pending_calls: dict[str, dict[str, Any]]
+    interpreter_state: bytes | None = None
+
+
+def deserialize_checkpoint(checkpoint: bytes) -> DeserializedCheckpoint:
+    """Deserialize a checkpoint back into its components."""
+    payload = json.loads(checkpoint)
+    interpreter_state = None
+    if 'interpreter_state' in payload:
+        interpreter_state = base64.b64decode(payload['interpreter_state'])
+    return DeserializedCheckpoint(
+        completed_results=payload.get('completed_results', {}),
+        pending_calls=payload.get('pending_calls', {}),
+        interpreter_state=interpreter_state,
+    )

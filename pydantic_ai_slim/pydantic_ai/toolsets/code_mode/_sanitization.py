@@ -47,7 +47,8 @@ def sanitize_tool_name(name: str, prefix: str | None = None) -> str:
 
     # Convert to snake_case if it's camelCase or PascalCase
     # Insert underscore before uppercase letters that follow lowercase
-    sanitized = re.sub(r'([a-z])([A-Z])', r'\1_\2', sanitized).lower()
+    sanitized = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', sanitized)
+    sanitized = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1_\2', sanitized).lower()
 
     # Handle Python keywords by appending underscore
     if keyword.iskeyword(sanitized):
