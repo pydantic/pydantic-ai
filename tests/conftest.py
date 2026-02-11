@@ -19,12 +19,13 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
-from inline_snapshot import customize_repr  # pyright: ignore[reportUnknownVariableType]
+from inline_snapshot.plugin import Builder, Custom, customize
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
+from pydantic_ai.messages import DocumentUrl, ImageUrl, VideoUrl
 from pydantic_ai.models import Model
 
 __all__ = (
@@ -124,18 +125,93 @@ def sanitize_filename(name: str, max_len: int) -> str:
     return re.sub('[' + re.escape('<>:"/\\|?*') + ']', '-', name)[:max_len]
 
 
-@customize_repr
-def _(value: bytes):  # pragma: no cover
-    """Use IsBytes() for large byte sequences in snapshots."""
-    if len(value) > SNAPSHOT_BYTES_COLLAPSE_THRESHOLD:
-        return 'IsBytes()'
-    return bytes.__repr__(value)
+@customize
+def binary_handler(value: Any) -> Any | None:
+    # Use IsBytes() for large byte sequences in snapshots.
+    if isinstance(value, bytes) and len(value) > SNAPSHOT_BYTES_COLLAPSE_THRESHOLD:
+        return IsBytes()
 
 
-@customize_repr
-def _(value: datetime):  # pragma: no cover
-    """Use IsDatetime() for datetime values in snapshots."""
-    return 'IsDatetime()'
+@customize
+def isdatetime_handler(value: Any, builder: Builder) -> Any | None:
+    # Use IsDatetime() for datetime values in snapshots.
+    if isinstance(value, datetime):
+        return IsDatetime()
+
+
+@customize
+def content_handler(value: Any, builder: Builder) -> Custom | None:
+    # special handler for types which have need an identifier argument for __init__ but declare an _identifier in the class
+    if isinstance(value, BinaryImage):
+        return builder.create_call(
+            BinaryImage,
+            [],
+            {
+                'data': builder.create_code(f'{value.data!r}'),  # prevent generation of IsBytes()
+                'media_type': value.media_type,
+                'identifier': builder.with_default(value.identifier, None),
+                'vendor_metadata': builder.with_default(value.vendor_metadata, None),
+                # kind is always "binary"
+                # 'kind': builder.with_default(value.kind, 'binary'),
+            },
+        )
+
+    if isinstance(value, BinaryContent):
+        return builder.create_call(
+            BinaryContent,
+            [],
+            {
+                'data': builder.create_code(f'{value.data!r}'),  # prevent generation of IsBytes()
+                'media_type': value.media_type,
+                'identifier': builder.with_default(value.identifier, None),
+                'vendor_metadata': builder.with_default(value.vendor_metadata, None),
+                'kind': builder.with_default(value.kind, 'binary'),
+            },
+        )
+
+    for cls, kind in [(VideoUrl, 'video-url'), (DocumentUrl, 'document-url'), (ImageUrl, 'image-url')]:
+        if type(value) is cls:
+            return builder.create_call(
+                cls,
+                [],
+                {
+                    'url': value.url,
+                    'media_type': builder.with_default(value.media_type, None),
+                    # TODO: identifier is not used for == comparison should we ignore it?
+                    'identifier': builder.with_default(value.identifier, None),
+                    'force_download': builder.with_default(value.force_download, False),
+                    'vendor_metadata': builder.with_default(value.vendor_metadata, None),
+                    'kind': builder.with_default(value.kind, kind),
+                },
+            )
+
+
+@customize
+def variable_handler(value: Any, builder: Builder, local_vars: dict[str, Any]) -> Custom | None:
+    for name, local_variable in local_vars.items():
+        # use local_function.__qualname__ when there exist a local_function with the wanted name
+        if hasattr(local_variable, '__qualname__') and value == local_variable.__qualname__:
+            return builder.create_code(f'{name}.__qualname__')
+
+        # use `part.tool_call_id` when there is an local variable part with the wanted id
+        if name == 'part' and hasattr(local_variable, 'tool_call_id') and local_variable.tool_call_id == value:
+            return builder.create_code(f'{name}.tool_call_id')
+
+        # prevent that IsSameStr is not compared before it has an value
+        if hasattr(local_variable, '_first_other') and local_variable._first_other is None:
+            return
+
+        # uses local variables like part* *_content or thread_id when their value is equal to the wanted value in the snapshot
+        if (
+            (name.startswith('part') or name.endswith('_content') or name in ('thread_id',))
+            and name != 'parts'
+            and local_variable == value
+        ):
+            return builder.create_code(name)
+
+        # match the the local var like `var := IsSameStr()` a second time
+        if type(local_variable) is IsSameStr and local_variable == value:
+            return builder.create_code(name)
 
 
 class TestEnv:
