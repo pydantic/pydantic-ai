@@ -23,6 +23,8 @@ Use this skill when recording or re-recording VCR cassettes for tests, or when d
 - `-vv` : Verbose output
 - `--tb=line` : Short traceback output
 - `-k=""` : Run tests matching the given substring expression
+- `-n 1` : Run tests in parallel with a single worker. Increase the number of workers for faster execution.
+	- particularly useful when running a large number of tests
 
 ## Recording Cassettes
 
