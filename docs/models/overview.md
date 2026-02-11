@@ -313,7 +313,9 @@ passing a custom `fallback_on` argument to the `FallbackModel` constructor.
 In addition to exception-based fallback, you can also trigger fallback based on the **content** of a model's response. This is useful when a model returns a successful HTTP response (no exception), but the response content indicates a semantic failure — for example, an unexpected finish reason or a built-in tool reporting failure.
 
 !!! note "Streaming limitation"
-    For streaming requests, only exception-based fallback is currently supported, and only for errors during stream **initialization** (e.g., connection errors, authentication failures). If an exception occurs mid-stream after events have started flowing, it will propagate to the caller without triggering fallback. Response-based fallback for streaming is planned for a future release (see [#4140](https://github.com/pydantic/pydantic-ai/issues/4140)).
+    For streaming requests, only exception-based fallback is currently supported. Response handlers
+    are ignored for streaming requests. Response-based fallback for streaming is planned for a future
+    release (see [#4140](https://github.com/pydantic/pydantic-ai/issues/4140)).
 
 The `fallback_on` parameter accepts:
 
@@ -359,11 +361,7 @@ print(result.output)
     To keep exception-based fallback alongside a response handler, pass them together as a list — see the [mixed example below](#combining-handlers).
 
 !!! note "Why check finish reasons explicitly?"
-    By default, Pydantic AI only rejects responses with **0 parts** (no content) and finish reasons `'length'` or `'content_filter'` — these raise exceptions immediately. Empty responses with other finish reasons (including `'error'`) trigger a retry instead.
-
-    For non-empty responses, **all finish reasons are accepted** — even `'error'` — because the response may contain partial results or useful information. This is why explicit checking via `fallback_on` is useful: it allows you to inspect the response content and make semantic decisions about whether to accept it or fallback to another model.
-
-    For details on default finish reason handling and retries, see [Reflection and Self-Correction](../agent.md#reflection-and-self-correction).
+    By default, Pydantic AI doesn't reject non-empty responses based on finish reason — even `'error'` is accepted if the response has content. Use a response handler as shown above to fallback on specific finish reasons.
 
 #### Built-in Tool Failure Example
 

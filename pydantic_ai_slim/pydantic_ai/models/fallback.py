@@ -5,14 +5,13 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, overload
+from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard
 
 from opentelemetry.trace import get_current_span
 from typing_extensions import assert_never
 
-from pydantic_ai._function_schema import _get_first_param_type  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._utils import is_async_callable
+from pydantic_ai._utils import get_first_param_type, is_async_callable
 from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..exceptions import FallbackExceptionGroup, ModelAPIError
@@ -25,17 +24,17 @@ if TYPE_CHECKING:
     from ..settings import ModelSettings
 
 # Type aliases for handlers (support both sync and async)
-ExceptionHandler = Callable[[Exception], Awaitable[bool]] | Callable[[Exception], bool]
-ResponseHandler = Callable[[ModelResponse], Awaitable[bool]] | Callable[[ModelResponse], bool]
+_ExceptionHandler = Callable[[Exception], Awaitable[bool]] | Callable[[Exception], bool]
+_ResponseHandler = Callable[[ModelResponse], Awaitable[bool]] | Callable[[ModelResponse], bool]
 
 
 # The unified fallback_on type
-FallbackOn = (
+_FallbackOn = (
     type[Exception]
     | tuple[type[Exception], ...]
-    | ExceptionHandler
-    | ResponseHandler
-    | Sequence[type[Exception] | ExceptionHandler | ResponseHandler]
+    | _ExceptionHandler
+    | _ResponseHandler
+    | Sequence[type[Exception] | _ExceptionHandler | _ResponseHandler]
 )
 
 
@@ -45,7 +44,7 @@ def _is_response_handler(handler: Callable[..., Any]) -> bool:
     Returns True if the first parameter is type-hinted as ModelResponse.
     Returns False otherwise (including if there are no type hints).
     """
-    first_param_type = _get_first_param_type(handler)
+    first_param_type = get_first_param_type(handler)
     if first_param_type is None:
         return False
     # Only support exact ModelResponse type (no Optional, no subclasses)
@@ -67,14 +66,14 @@ class FallbackModel(Model):
     models: list[Model]
 
     _model_name: str = field(repr=False)
-    _exception_handlers: list[ExceptionHandler] = field(repr=False)
-    _response_handlers: list[ResponseHandler] = field(repr=False)
+    _exception_handlers: list[_ExceptionHandler] = field(repr=False)
+    _response_handlers: list[_ResponseHandler] = field(repr=False)
 
     def __init__(
         self,
         default_model: Model | KnownModelName | str,
         *fallback_models: Model | KnownModelName | str,
-        fallback_on: FallbackOn = (ModelAPIError,),
+        fallback_on: _FallbackOn = (ModelAPIError,),
     ):
         """Initialize a fallback model instance.
 
@@ -104,7 +103,7 @@ class FallbackModel(Model):
         self._response_handlers = []
         self._parse_fallback_on(fallback_on)
 
-    def _parse_fallback_on(self, fallback_on: FallbackOn) -> None:
+    def _parse_fallback_on(self, fallback_on: _FallbackOn) -> None:
         """Parse the fallback_on parameter into exception and response handlers."""
         if isinstance(fallback_on, tuple):
             if fallback_on:
@@ -145,12 +144,6 @@ class FallbackModel(Model):
             self._response_handlers.append(handler)
         else:
             self._exception_handlers.append(handler)
-
-    @overload
-    async def _should_fallback(self, value: Exception) -> bool: ...
-
-    @overload
-    async def _should_fallback(self, value: ModelResponse) -> bool: ...
 
     async def _should_fallback(self, value: Exception | ModelResponse) -> bool:
         """Check if any handler wants to trigger fallback."""
@@ -269,7 +262,7 @@ class FallbackModel(Model):
                     )
 
 
-def _exception_types_to_handler(exceptions: tuple[type[Exception], ...]) -> ExceptionHandler:
+def _exception_types_to_handler(exceptions: tuple[type[Exception], ...]) -> _ExceptionHandler:
     """Create an exception handler from a tuple of exception types."""
 
     def handler(exc: Exception) -> bool:
@@ -286,7 +279,11 @@ def _raise_fallback_exception_group(exceptions: list[Exception], rejected_respon
         rejected_responses: List of responses that were rejected by fallback_on handlers.
     """
     if rejected_responses:
-        rejection_error = RuntimeError(f'{len(rejected_responses)} model response(s) rejected by fallback_on handler')
+        model_names = ', '.join(r.model_name for r in rejected_responses if r.model_name)
+        rejection_error = RuntimeError(
+            f'{len(rejected_responses)} model response(s) rejected by fallback_on handler'
+            + (f' (models: {model_names})' if model_names else '')
+        )
         all_errors: list[Exception] = [*exceptions, rejection_error]
     else:
         all_errors = exceptions
