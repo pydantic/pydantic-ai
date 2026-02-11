@@ -4436,7 +4436,7 @@ async def test_run_stream_approval_request_chunks():
     # Find the tool-approval-request event
     approval_events = [e for e in events if isinstance(e, dict) and e.get('type') == 'tool-approval-request']
     assert len(approval_events) == 1
-    assert approval_events[0]['approvalId'] == 'tc_1'
+    assert approval_events[0]['approvalId'] != approval_events[0]['toolCallId']
     assert approval_events[0]['toolCallId'] == 'tc_1'
 
 
