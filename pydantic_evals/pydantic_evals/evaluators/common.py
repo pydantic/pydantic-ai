@@ -106,7 +106,7 @@ class Contains(Evaluator[object, object, object]):
             if isinstance(ctx.output, dict) or output_is_model_like:
                 if output_is_model_like:
                     adapter: TypeAdapter[Any] = TypeAdapter(output_type)
-                    output_dict = adapter.dump_python(ctx.output, exclude_defaults=True)  # pyright: ignore[reportUnknownMemberType]
+                    output_dict = adapter.dump_python(ctx.output)  # pyright: ignore[reportUnknownMemberType]
                 else:
                     # Cast to Any to avoid type checking issues
                     output_dict = cast(dict[Any, Any], ctx.output)  # pyright: ignore[reportUnknownMemberType]

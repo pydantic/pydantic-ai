@@ -136,7 +136,7 @@ async def test_contains_basemodel():
 
     # Test model key missing
     assert evaluator.evaluate(MockContext(output=MockModel(extra='data'))) == snapshot(
-        EvaluationReason(value=False, reason="Output does not contain expected key 'key'")
+        EvaluationReason(value=False, reason="Output has different value for key 'key': None != 'value'")
     )
 
     # Test model value mismatch
@@ -165,7 +165,7 @@ async def test_contains_dataclass():
 
     # Test dataclass key missing
     assert evaluator.evaluate(MockContext(output=MockDataClass(extra='data'))) == snapshot(
-        EvaluationReason(value=False, reason="Output does not contain expected key 'key'")
+        EvaluationReason(value=False, reason="Output has different value for key 'key': None != 'value'")
     )
 
     # Test dataclass value mismatch
