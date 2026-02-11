@@ -69,6 +69,7 @@ with try_import() as imports_successful:
         ResponseReasoningItem,
         Summary,
     )
+    from openai.types.responses.response_status import ResponseStatus
     from openai.types.responses.response_usage import ResponseUsage
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
@@ -10017,7 +10018,7 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
     assert not (text_part2.provider_details or {}).get('annotations')
 
 
-def _text_response(text: str, *, status: str = 'completed') -> responses.Response:
+def _text_response(text: str, *, status: ResponseStatus = 'completed') -> responses.Response:
     """Create a Response with a single text output message."""
     r = response_message(
         [
