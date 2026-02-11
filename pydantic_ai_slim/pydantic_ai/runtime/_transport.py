@@ -15,6 +15,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic import ValidationError
+
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.messages import tool_return_ta
 from pydantic_ai.runtime.abstract import (
@@ -160,17 +162,17 @@ class DriverBasedRuntime(CodeRuntime):
         """Resume execution from a serialized checkpoint via re-execution with a result cache."""
         try:
             ckpt = _deserialize_checkpoint(checkpoint)
-        except (json.JSONDecodeError, KeyError, ValueError) as e:
-            raise CodeRuntimeError(f'Invalid checkpoint data: {e}')
 
-        # Build result cache: decode base64-encoded results for the driver.
-        # Normalize to JSON-compatible form so the init_msg can be serialized
-        # with json.dumps — validate_json may reconstruct Pydantic model instances
-        # that aren't JSON-serializable without an explicit dump step.
-        result_cache: dict[str, Any] = {}
-        for k, v in ckpt.completed_results.items():
-            reconstructed = checkpoint_result_ta.validate_json(base64.b64decode(v))
-            result_cache[k] = tool_return_ta.dump_python(reconstructed, mode='json')
+            # Build result cache: decode base64-encoded results for the driver.
+            # Normalize to JSON-compatible form so the init_msg can be serialized
+            # with json.dumps — validate_json may reconstruct Pydantic model instances
+            # that aren't JSON-serializable without an explicit dump step.
+            result_cache: dict[str, Any] = {}
+            for k, v in ckpt.completed_results.items():
+                reconstructed = checkpoint_result_ta.validate_json(base64.b64decode(v))
+                result_cache[k] = tool_return_ta.dump_python(reconstructed, mode='json')
+        except (json.JSONDecodeError, KeyError, ValueError, ValidationError) as e:
+            raise CodeRuntimeError(f'Invalid checkpoint data: {e}')
 
         init_msg: dict[str, Any] = {
             'type': 'init',

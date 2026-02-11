@@ -219,6 +219,7 @@ class MontyRuntime(CodeRuntime):
             # Fire tasks for each pending call, reconstructing FunctionCall from
             # the details stored in the checkpoint.
             tasks: dict[int, asyncio.Task[Any]] = {}
+            initial_calls: dict[int, FunctionCall] = {}
             pending_ids = monty_state.pending_call_ids if isinstance(monty_state, MontyFutureSnapshot) else []
 
             # Validate that checkpoint data matches interpreter state
@@ -237,8 +238,9 @@ class MontyRuntime(CodeRuntime):
                     kwargs=details.get('kwargs', {}),
                 )
                 tasks[cid] = asyncio.ensure_future(call_tool(call))
+                initial_calls[cid] = call
 
-            monty_state = await MontyRuntime._execution_loop(monty_state, tasks, call_tool)
+            monty_state = await MontyRuntime._execution_loop(monty_state, tasks, call_tool, initial_calls=initial_calls)
         except MontyRuntimeError as e:
             raise CodeRuntimeError(e.display())
         except (MontySyntaxError, MontyTypingError) as e:
@@ -263,8 +265,13 @@ class MontyRuntime(CodeRuntime):
         monty_state: MontyComplete | MontyFutureSnapshot | MontySnapshot,
         tasks: dict[int, asyncio.Task[Any]],
         call_tool: ToolCallback,
+        initial_calls: dict[int, FunctionCall] | None = None,
     ) -> MontyComplete:
-        tool_call_id_to_call: dict[int, FunctionCall] = {}
+        # Seed with any calls created outside the loop (resume path).
+        # Without this, tasks pre-created in _resume_from_checkpoint would not have
+        # entries in tool_call_id_to_call, causing a KeyError if they raise
+        # ApprovalRequired/CallDeferred during the MontyFutureSnapshot branch.
+        tool_call_id_to_call: dict[int, FunctionCall] = dict(initial_calls) if initial_calls else {}
 
         while not isinstance(monty_state, MontyComplete):
             if isinstance(monty_state, MontySnapshot):

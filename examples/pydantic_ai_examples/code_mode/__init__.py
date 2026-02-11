@@ -9,6 +9,7 @@ Available Demos:
     - expense_analysis_demo.py: Analyze team expenses with aggregation (no external deps)
     - file_processing_demo.py: Process files with dynamic loops (no external deps)
     - sql_analysis_demo.py: Regional sales SQL analysis with N+1 pattern (no external deps)
+    - modal_runtime_demo.py: Batch calendar events using Modal cloud sandbox (requires modal)
 
 Run any demo:
     uv run -m pydantic_ai_examples.code_mode.<demo_name>
