@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -25,9 +24,11 @@ from pydantic_ai import (
     TextPart,
     ToolCallPart,
     ToolDefinition,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai._run_context import RunContext
+from pydantic_ai.exceptions import FallbackExceptionGroup
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -36,11 +37,6 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsNow, IsStr, try_import
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
-else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
@@ -59,6 +55,17 @@ def failure_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo
 
 success_model = FunctionModel(success_response)
 failure_model = FunctionModel(failure_response)
+
+
+def _assert_fallback_all_failed(exc_info: pytest.ExceptionInfo[FallbackExceptionGroup]) -> None:
+    """Assert that a FallbackExceptionGroup contains 2 ModelHTTPError 500s from test-function-model."""
+    assert 'All models from FallbackModel failed' in exc_info.value.args[0]
+    exceptions = exc_info.value.exceptions
+    assert len(exceptions) == 2
+    assert isinstance(exceptions[0], ModelHTTPError)
+    assert exceptions[0].status_code == 500
+    assert exceptions[0].model_name == 'test-function-model'
+    assert exceptions[0].body == {'error': 'test error'}
 
 
 def test_init() -> None:
@@ -335,15 +342,9 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
 def test_all_failed() -> None:
     fallback_model = FallbackModel(failure_model, failure_model)
     agent = Agent(model=fallback_model)
-    with pytest.raises(ExceptionGroup) as exc_info:
+    with pytest.raises(FallbackExceptionGroup) as exc_info:
         agent.run_sync('hello')
-    assert 'All models from FallbackModel failed' in exc_info.value.args[0]
-    exceptions = exc_info.value.exceptions
-    assert len(exceptions) == 2
-    assert isinstance(exceptions[0], ModelHTTPError)
-    assert exceptions[0].status_code == 500
-    assert exceptions[0].model_name == 'test-function-model'
-    assert exceptions[0].body == {'error': 'test error'}
+    _assert_fallback_all_failed(exc_info)
 
 
 def add_missing_response_model(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -358,15 +359,9 @@ def add_missing_response_model(spans: list[dict[str, Any]]) -> list[dict[str, An
 def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model, failure_model)
     agent = Agent(model=fallback_model, instrument=True)
-    with pytest.raises(ExceptionGroup) as exc_info:
+    with pytest.raises(FallbackExceptionGroup) as exc_info:
         agent.run_sync('hello')
-    assert 'All models from FallbackModel failed' in exc_info.value.args[0]
-    exceptions = exc_info.value.exceptions
-    assert len(exceptions) == 2
-    assert isinstance(exceptions[0], ModelHTTPError)
-    assert exceptions[0].status_code == 500
-    assert exceptions[0].model_name == 'test-function-model'
-    assert exceptions[0].body == {'error': 'test error'}
+    _assert_fallback_all_failed(exc_info)
     assert add_missing_response_model(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)) == snapshot(
         [
             {
@@ -542,16 +537,10 @@ async def test_first_failed_streaming() -> None:
 async def test_all_failed_streaming() -> None:
     fallback_model = FallbackModel(failure_model_stream, failure_model_stream)
     agent = Agent(model=fallback_model)
-    with pytest.raises(ExceptionGroup) as exc_info:
+    with pytest.raises(FallbackExceptionGroup) as exc_info:
         async with agent.run_stream('hello') as result:
             [c async for c, _is_last in result.stream_responses(debounce_by=None)]  # pragma: lax no cover
-    assert 'All models from FallbackModel failed' in exc_info.value.args[0]
-    exceptions = exc_info.value.exceptions
-    assert len(exceptions) == 2
-    assert isinstance(exceptions[0], ModelHTTPError)
-    assert exceptions[0].status_code == 500
-    assert exceptions[0].model_name == 'test-function-model'
-    assert exceptions[0].body == {'error': 'test error'}
+    _assert_fallback_all_failed(exc_info)
 
 
 async def test_fallback_condition_override() -> None:
@@ -578,6 +567,22 @@ async def test_fallback_condition_tuple() -> None:
 
     response = await agent.run('hello')
     assert response.output == 'success'
+    assert response.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success')],
+                usage=RequestUsage(input_tokens=51, output_tokens=1),
+                model_name='function:success_response:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_fallback_connection_error() -> None:
@@ -590,6 +595,22 @@ async def test_fallback_connection_error() -> None:
 
     response = await agent.run('hello')
     assert response.output == 'success'
+    assert response.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success')],
+                usage=RequestUsage(input_tokens=51, output_tokens=1),
+                model_name='function:success_response:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_fallback_model_settings_merge():
@@ -970,6 +991,33 @@ def test_fallback_primary_continuation_then_succeeds() -> None:
     result = agent.run_sync('test')
     assert result.output == 'done'
     assert call_count == 2
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='test', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='paused')],
+                usage=RequestUsage(input_tokens=51, output_tokens=1),
+                model_name='primary',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_details={'fallback_model_name': 'primary'},
+                finish_reason='incomplete',
+                expects_continuation=True,
+                run_id=IsStr(),
+            ),
+            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='primary',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_fallback_primary_continuation_multiple_pauses() -> None:
@@ -994,6 +1042,44 @@ def test_fallback_primary_continuation_multiple_pauses() -> None:
     result = agent.run_sync('test')
     assert result.output == 'done'
     assert call_count == 3
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='test', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='paused')],
+                usage=RequestUsage(input_tokens=51, output_tokens=1),
+                model_name='primary',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_details={'fallback_model_name': 'primary'},
+                finish_reason='incomplete',
+                expects_continuation=True,
+                run_id=IsStr(),
+            ),
+            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content='paused')],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='primary',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_details={'fallback_model_name': 'primary'},
+                finish_reason='incomplete',
+                expects_continuation=True,
+                run_id=IsStr(),
+            ),
+            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=51, output_tokens=3),
+                model_name='primary',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_fallback_secondary_continuation_back_to_primary() -> None:
@@ -1034,6 +1120,52 @@ def test_fallback_secondary_continuation_back_to_primary() -> None:
     assert result.output == 'final answer'
     assert primary_calls == 2  # first call failed, second succeeded
     assert fallback_calls == 2  # first returned continuation, second returned tool call
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='test', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='working...')],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='fallback',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_details={'fallback_model_name': 'fallback'},
+                finish_reason='incomplete',
+                expects_continuation=True,
+                run_id=IsStr(),
+            ),
+            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call_1')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='fallback',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool',
+                        content='tool result',
+                        tool_call_id='call_1',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='final answer')],
+                usage=RequestUsage(input_tokens=53, output_tokens=6),
+                model_name='primary',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_fallback_primary_continuation_fails() -> None:

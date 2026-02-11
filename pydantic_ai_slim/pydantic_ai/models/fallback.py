@@ -12,11 +12,12 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..exceptions import FallbackExceptionGroup, ModelAPIError
+from ..messages import ModelResponse
 from ..profiles import ModelProfile
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
 if TYPE_CHECKING:
-    from ..messages import ModelMessage, ModelResponse
+    from ..messages import ModelMessage
     from ..settings import ModelSettings
 
 _FALLBACK_MODEL_NAME_KEY = 'fallback_model_name'
