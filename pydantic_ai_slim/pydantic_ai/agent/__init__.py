@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequen
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
@@ -848,22 +848,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if metadata is not None:
             attrs['metadata'] = json.dumps(InstrumentedModel.serialize_any(metadata))
 
-        usage_attrs: dict[str, int] = usage.opentelemetry_attributes()
-
-        # When enabled, translate token usage attribute names for agent run spans to use
-        # `gen_ai.aggregated_usage.*` instead of `gen_ai.usage.*` to distinguish them
-        # from per-call usage on model/request spans.
-        # NOTE: `gen_ai.aggregated_usage.*` is a custom namespace, not part of the
-        # OpenTelemetry Semantic Conventions. It may be updated if OTel introduces
-        # an official convention for aggregated usage.
-        final_usage_attrs: dict[str, str | int | float | bool] = (
-            {key.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): value for key, value in usage_attrs.items()}
+        usage_attrs = (
+            {
+                k.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): v
+                for k, v in usage.opentelemetry_attributes().items()
+            }
             if settings.use_aggregated_usage_attribute_names
-            else cast(dict[str, str | int | float | bool], usage_attrs)
+            else usage.opentelemetry_attributes()
         )
 
-        result: dict[str, str | int | float | bool] = {
-            **final_usage_attrs,
+        return {
+            **usage_attrs,
             **attrs,
             'logfire.json_schema': json.dumps(
                 {
@@ -875,8 +870,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 }
             ),
         }
-
-        return result
 
     @contextmanager
     def override(

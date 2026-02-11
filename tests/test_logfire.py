@@ -21,6 +21,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.wrapper import WrapperToolset
+from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsStr
 
@@ -1118,7 +1119,6 @@ def test_instrument_all():
 @pytest.mark.anyio
 async def test_aggregated_usage_attribute_names(capfire: CaptureLogfire) -> None:
     """Test that use_aggregated_usage_attribute_names changes attribute names on agent run spans."""
-    from pydantic_ai.usage import RequestUsage
 
     def model_function(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
         # Return a response with usage that includes extra details (cache tokens)
