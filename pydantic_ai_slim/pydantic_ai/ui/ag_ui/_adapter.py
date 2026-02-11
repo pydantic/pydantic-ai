@@ -326,7 +326,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         )
                     )
             elif isinstance(part, ToolCallPart):
-                function = FunctionCall(name=part.tool_name, arguments=part.args_as_json_str() if part.args else '{}')
+                function = FunctionCall(name=part.tool_name, arguments=part.args_as_json_str())
                 tool_calls.append(ToolCall(id=part.tool_call_id, type='function', function=function))
                 tool_result = tool_results.get(part.tool_call_id)
                 if isinstance(tool_result, ToolReturnPart):
