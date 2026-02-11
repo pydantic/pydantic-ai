@@ -1427,12 +1427,15 @@ async def test_anthropic_speed_standard_does_not_add_fast_mode_beta(allow_model_
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    await agent.run('hello', model_settings=AnthropicModelSettings(anthropic_speed='standard'))
+    await agent.run(
+        'hello',
+        model_settings=AnthropicModelSettings(anthropic_speed='standard', anthropic_betas=['custom-beta']),
+    )
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert completion_kwargs['speed'] == 'standard'
     betas = completion_kwargs.get('betas')
-    if isinstance(betas, (list, tuple)):
-        assert 'fast-mode-2026-02-01' not in betas
+    assert isinstance(betas, (list, tuple))
+    assert 'fast-mode-2026-02-01' not in betas
 
 
 async def test_anthropic_speed_omitted_does_not_add_fast_mode_beta(allow_model_requests: None) -> None:
@@ -1441,11 +1444,11 @@ async def test_anthropic_speed_omitted_does_not_add_fast_mode_beta(allow_model_r
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    await agent.run('hello')
+    await agent.run('hello', model_settings=AnthropicModelSettings(anthropic_betas=['custom-beta']))
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     betas = completion_kwargs.get('betas')
-    if isinstance(betas, (list, tuple)):
-        assert 'fast-mode-2026-02-01' not in betas
+    assert isinstance(betas, (list, tuple))
+    assert 'fast-mode-2026-02-01' not in betas
 
 
 async def test_stream_structured(allow_model_requests: None):
