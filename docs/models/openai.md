@@ -212,7 +212,7 @@ print(result2.output)
 
 The [OpenAI Responses API](https://platform.openai.com/docs/guides/background) supports running requests in the background for long-running tasks. When enabled, the API may return a response with status `'queued'` or `'in_progress'` before the model has finished generating.
 
-Pydantic AI handles this automatically — when a background response is not yet complete, it polls via `retrieve()` until the response is finished. You can enable this with the `openai_background` model setting:
+Pydantic AI handles this automatically — when a background response is not yet complete, it polls via `retrieve()` until the response is finished. You can enable this with the [`openai_background`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_background] model setting:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -228,7 +228,7 @@ result = agent.run_sync(
 print(result.output)
 ```
 
-Polling is capped at 5 iterations by default, cumulative across all pauses within a single `agent.run()` call, with a 1-second delay between each poll. You can configure these via the [`max_continuations`][pydantic_ai.settings.ModelSettings.max_continuations] and `openai_background_poll_interval` model settings. For long-running tasks, you may need to increase `max_continuations` (e.g., `max_continuations=60` for up to ~1 minute with the default polling interval).
+Polling is capped at 5 iterations by default, cumulative across all pauses within a single `agent.run()` call, with a 1-second delay between each poll. You can configure these via the [`max_continuations`][pydantic_ai.settings.ModelSettings.max_continuations] and [`openai_background_poll_interval`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_background_poll_interval] model settings. For long-running tasks, you may need to increase `max_continuations` (e.g., `max_continuations=60` for up to ~1 minute with the default polling interval).
 
 This also works correctly with [`FallbackModel`](../multi-model-agents.md#fallback-model) — continuation requests are pinned to the same model rather than restarting the fallback chain.
 

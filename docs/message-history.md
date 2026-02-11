@@ -342,8 +342,8 @@ indicating that the model paused mid-turn and expects a follow-up request to con
 This can happen, for example, with Anthropic's `pause_turn` stop reason or OpenAI's background mode.
 
 The agent handles these automatically by sending continuation requests, so no user action is required.
-In the message history, you'll see paired entries: a `ModelResponse` with `expects_continuation=True`,
-followed by a `ModelRequest` with empty `parts` representing the automatic follow-up.
+In the message history, you'll see paired entries: a [`ModelResponse`][pydantic_ai.messages.ModelResponse] with `expects_continuation=True`,
+followed by a [`ModelRequest`][pydantic_ai.messages.ModelRequest] with empty `parts` representing the automatic follow-up.
 The number of continuations is capped by the
 [`max_continuations`][pydantic_ai.settings.ModelSettings.max_continuations] model setting (default: 5).
 

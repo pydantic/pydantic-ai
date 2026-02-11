@@ -357,8 +357,8 @@ mid-turn if operations take a long time (e.g. performing many web searches in se
 Pydantic AI handles this automatically by continuing the conversation with a follow-up request. No user action
 is required. You may notice the following in your [message history](../message-history.md):
 
-- `ModelResponse` objects with `finish_reason='incomplete'` and `expects_continuation=True` for paused responses
-- `ModelRequest` objects with empty `parts` for the automatic continuation requests
+- [`ModelResponse`][pydantic_ai.messages.ModelResponse] objects with [`finish_reason='incomplete'`][pydantic_ai.messages.ModelResponse.finish_reason] and [`expects_continuation=True`][pydantic_ai.messages.ModelResponse.expects_continuation] for paused responses
+- [`ModelRequest`][pydantic_ai.messages.ModelRequest] objects with empty `parts` for the automatic continuation requests
 
 Continuations are capped at 5 by default, cumulative across all pauses within a single `agent.run()` call, to prevent unbounded requests. You can configure this limit via the [`max_continuations`][pydantic_ai.settings.ModelSettings.max_continuations] model setting.
 
