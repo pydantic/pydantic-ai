@@ -20,7 +20,7 @@ from genai_prices import calc_price, types as genai_types
 from opentelemetry._logs import LogRecord
 from opentelemetry.util.types import AnyValue
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import TypeVar, TypeAliasType, deprecated
+from typing_extensions import TypeAliasType, TypeVar, deprecated
 
 from . import _otel_messages, _utils
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc

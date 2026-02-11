@@ -101,9 +101,7 @@ class ApprovalRequired(Exception):
             (e.g., checkpoints for code mode execution).
     """
 
-    def __init__(
-        self, metadata: dict[str, Any] | None = None, *, context: Mapping[str, Any] | None = None
-    ):
+    def __init__(self, metadata: dict[str, Any] | None = None, *, context: Mapping[str, Any] | None = None):
         self.metadata = metadata
         self.context = context
         super().__init__()

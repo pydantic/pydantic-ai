@@ -11,12 +11,11 @@ import keyword
 import re
 
 
-def sanitize_tool_name(name: str, prefix: str | None = None) -> str:
+def sanitize_tool_name(name: str) -> str:
     """Convert a tool name to a valid Python identifier.
 
     Args:
         name: The original tool name (may contain hyphens, dots, etc.)
-        prefix: Optional prefix to prepend (e.g., MCP server name)
 
     Returns:
         A valid Python identifier in snake_case.
@@ -26,8 +25,6 @@ def sanitize_tool_name(name: str, prefix: str | None = None) -> str:
         'search_records'
         >>> sanitize_tool_name('get.user.data')
         'get_user_data'
-        >>> sanitize_tool_name('search-records', prefix='pinecone')
-        'pinecone_search_records'
         >>> sanitize_tool_name('class')  # Python keyword
         'class_'
     """
@@ -54,13 +51,6 @@ def sanitize_tool_name(name: str, prefix: str | None = None) -> str:
     if keyword.iskeyword(sanitized):
         sanitized = f'{sanitized}_'
 
-    # Add prefix if provided
-    if prefix:
-        prefix_sanitized = re.sub(r'[-.\s]+', '_', prefix).lower()
-        prefix_sanitized = re.sub(r'[^a-zA-Z0-9_]', '', prefix_sanitized)
-        if prefix_sanitized:
-            sanitized = f'{prefix_sanitized}_{sanitized}'
-
     return sanitized
 
 
@@ -72,13 +62,8 @@ class ToolNameMapping:
     2. Map back to original names when calling tools
     """
 
-    def __init__(self, prefix: str | None = None):
-        """Initialize the mapping.
-
-        Args:
-            prefix: Optional prefix to add to all sanitized names (e.g., MCP server name)
-        """
-        self.prefix = prefix
+    def __init__(self):
+        """Initialize the mapping."""
         self._sanitized_to_original: dict[str, str] = {}
         self._original_to_sanitized: dict[str, str] = {}
 
@@ -94,7 +79,7 @@ class ToolNameMapping:
         if original_name in self._original_to_sanitized:
             return self._original_to_sanitized[original_name]
 
-        sanitized = sanitize_tool_name(original_name, self.prefix)
+        sanitized = sanitize_tool_name(original_name)
 
         # Handle collisions by appending a number
         base_sanitized = sanitized

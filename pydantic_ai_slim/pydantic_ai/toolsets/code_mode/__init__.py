@@ -31,10 +31,6 @@ from ..wrapper import WrapperToolset
 from ._sanitization import ToolNameMapping
 from ._signature import Signature, signature_from_function, signature_from_schema
 
-# Type alias for description handler callback
-# Takes (description, tool_definition) and returns processed description
-DescriptionHandler = Callable[[str, ToolDefinition], str]
-
 
 class InterruptedCall(TypedDict):
     """Details of a nested tool call that was interrupted during code execution.
@@ -103,7 +99,6 @@ class CodeModeContext(TypedDict):
 __all__ = (
     'CodeModeToolset',
     'CodeModeContext',
-    'DescriptionHandler',
     'InterruptedCall',
     'build_code_mode_prompt',
 )
@@ -197,7 +192,6 @@ class _CodeModeTool(ToolsetTool[AgentDepsT]):
 def _get_tool_signature(
     tool: ToolsetTool[Any],
     name_override: str | None = None,
-    description_handler: DescriptionHandler | None = None,
 ) -> Signature:
     """Get a Signature object for a tool.
 
@@ -208,7 +202,6 @@ def _get_tool_signature(
         tool: The tool to generate a signature for.
         name_override: Optional name to use instead of the tool's original name.
             Used to show sanitized names (valid Python identifiers) to the LLM.
-        description_handler: Optional callback to process/truncate tool descriptions.
 
     Returns:
         A Signature object. Use str(sig) for type checking, sig.with_typeddicts('...') for LLM.
@@ -217,11 +210,7 @@ def _get_tool_signature(
     what structure each function returns to write correct code.
     """
     signature_name = name_override or tool.tool_def.name
-
-    # Process description through handler if provided
     description = tool.tool_def.description
-    if description and description_handler:
-        description = description_handler(description, tool.tool_def)
 
     if isinstance(tool, FunctionToolsetTool) and isinstance(tool.toolset, FunctionToolset):
         tool_name = tool.tool_def.name
@@ -255,23 +244,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             keyword argument containing the list of Python function signatures.
         max_retries: Maximum number of retries for code execution errors (type/syntax/runtime).
             Defaults to 3. Increase for complex code generation tasks or less capable models.
-        tool_name_prefix: Optional prefix to add to all sanitized tool names (e.g., MCP server name).
-            Helps avoid name collisions when combining tools from multiple sources.
-        description_handler: Optional callback to process tool descriptions on a per-tool basis.
-            Takes (description, tool_definition) and returns the processed description.
-            Useful for truncating long descriptions, removing embedded JSON schemas, etc.
-
-            .. warning::
-                This callback is not serializable. If you need to serialize the toolset
-                (e.g., for distributed execution), you'll need to recreate it with the
-                callback after deserialization.
     """
 
     runtime: CodeRuntime
     prompt_builder: Callable[..., str] = build_code_mode_prompt
     max_retries: int = 3
-    tool_name_prefix: str | None = None
-    description_handler: DescriptionHandler | None = None
     # TODO: _cached_signatures and _name_mapping are populated in get_tools() and consumed in
     # call_tool(). The agent framework guarantees get_tools() runs first, but this implicit ordering
     # dependency could trip up future contributors modifying either method independently.
@@ -282,7 +259,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         wrapped_tools = await super().get_tools(ctx)
 
         # Sanitize tool names to valid Python identifiers and build mapping
-        self._name_mapping = ToolNameMapping(prefix=self.tool_name_prefix)
+        self._name_mapping = ToolNameMapping()
         sanitized_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         available_functions: list[str] = []
 
@@ -292,7 +269,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             sig = _get_tool_signature(
                 tool,
                 name_override=sanitized_name,
-                description_handler=self.description_handler,
             )
             # Use `...` body for LLM display; runtimes handle any conversion needed for type checking
             available_functions.append(sig.with_typeddicts())
@@ -524,9 +500,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 f'CodeModeToolset.call_tool expected code to be a string, got {type(code).__name__}'
             )
         if self._cached_signatures is None:
-            raise exceptions.UserError(
-                'CodeModeToolset.call_tool called before get_tools — signatures not initialized'
-            )
+            raise exceptions.UserError('CodeModeToolset.call_tool called before get_tools — signatures not initialized')
 
         original_name_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         sanitized_to_original: dict[str, str] = {}

@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import partial
 from inspect import Parameter, signature
-from typing import TYPE_CHECKING, Any, Concatenate, cast, get_args, get_origin, get_type_hints
+from typing import TYPE_CHECKING, Any, Concatenate, cast, get_args, get_origin
 
 from pydantic import ConfigDict, TypeAdapter
 from pydantic._internal import _decorators, _generate_schema, _typing_extra
@@ -19,7 +19,7 @@ from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
-from typing_extensions import ParamSpec, TypeIs, TypeVar
+from typing_extensions import ParamSpec, TypeIs, TypeVar, get_type_hints
 
 from ._griffe import doc_descriptions
 from ._run_context import RunContext
@@ -119,18 +119,6 @@ def function_schema(  # noqa: C901
         original_func, sig, docstring_format=docstring_format
     )
     missing_param_descriptions: set[str] = set()
-
-    if require_parameter_descriptions:
-        if takes_ctx:
-            parameters_without_ctx = set(
-                name for name in sig.parameters if not _is_call_ctx(sig.parameters[name].annotation)
-            )
-            missing_params = parameters_without_ctx - set(field_descriptions)
-        else:
-            missing_params = set(sig.parameters) - set(field_descriptions)
-
-        if missing_params:
-            errors.append(f'Missing parameter descriptions for {", ".join(missing_params)}')
 
     for index, (name, p) in enumerate(sig.parameters.items()):
         if index == 0 and takes_ctx is None:
@@ -240,7 +228,7 @@ def function_schema(  # noqa: C901
                 return_schema['description'] = return_description
         except (PydanticSchemaGenerationError, PydanticUserError):
             pass
-    elif return_annotation:  # ELIF!
+    elif return_annotation:
         try:
             return_schema = TypeAdapter(return_annotation).json_schema(schema_generator=schema_generator)
             if return_description and 'description' not in return_schema:

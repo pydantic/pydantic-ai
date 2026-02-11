@@ -261,18 +261,16 @@ def _collect_typeddicts_from_annotation(
 
             # Process any $defs first
             for def_name, def_schema in schema_defs.items():
-                if (
-                    def_name not in typeddicts
-                    and def_schema.get('type') == 'object'
-                    and 'properties' in def_schema
-                ):
+                if def_name not in typeddicts and def_schema.get('type') == 'object' and 'properties' in def_schema:
                     typeddicts[def_name] = _generate_typeddict_str(def_name, def_schema, to_type, path)
 
             # Then process the main schema
             if schema.get('type') == 'object' and 'properties' in schema:
                 typeddicts[type_name] = _generate_typeddict_str(type_name, schema, to_type, path)
             elif '$ref' in schema:
-                ref_name = schema['$ref'][8:] if schema['$ref'].startswith('#/$defs/') else schema['$ref'].split('/')[-1]
+                ref_name = (
+                    schema['$ref'][8:] if schema['$ref'].startswith('#/$defs/') else schema['$ref'].split('/')[-1]
+                )
                 if ref_name in schema_defs and ref_name not in typeddicts:
                     ref_schema = schema_defs[ref_name]
                     if ref_schema.get('type') == 'object' and 'properties' in ref_schema:
@@ -672,6 +670,7 @@ def _generate_typeddict_str(
 
 def _update_refs_with_prefix(schema: dict[str, Any], prefix: str) -> dict[str, Any]:
     """Return a copy of a schema with $ref names prefixed."""
+
     def update_refs(obj: Any) -> Any:
         if isinstance(obj, dict):
             obj_dict = cast(dict[str, Any], obj)

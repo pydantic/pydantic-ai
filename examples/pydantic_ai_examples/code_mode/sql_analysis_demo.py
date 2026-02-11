@@ -66,7 +66,12 @@ def _generate_sales_data() -> dict[str, list[dict[str, Any]]]:
     sales: dict[str, list[dict[str, Any]]] = {}
 
     # Revenue targets to ensure interesting results
-    revenue_targets: dict[str, int] = {'West': 65000, 'East': 55000, 'North': 45000, 'South': 70000}
+    revenue_targets: dict[str, int] = {
+        'West': 65000,
+        'East': 55000,
+        'North': 45000,
+        'South': 70000,
+    }
 
     for region in _regions:
         region_sales: list[dict[str, Any]] = []

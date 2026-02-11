@@ -163,7 +163,12 @@ def get_expenses(user_id: int, quarter: str, category: str) -> dict[str, Any]:
         Dictionary with expense items.
     """
     items = _expenses.get(user_id, [])
-    return {'user_id': user_id, 'quarter': quarter, 'category': category, 'items': items}
+    return {
+        'user_id': user_id,
+        'quarter': quarter,
+        'category': category,
+        'items': items,
+    }
 
 
 def get_custom_budget(user_id: int) -> dict[str, Any] | None:

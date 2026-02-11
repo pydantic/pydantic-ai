@@ -108,10 +108,7 @@ async def _resume(
 
 def _approve_all(interrupted_calls: list[InterruptedCall]) -> dict[str, object]:
     """Build results dict: ToolApproved for approvals, 'ext_result' for externals."""
-    return {
-        ic['call_id']: ToolApproved() if ic['kind'] == 'approval' else 'ext_result'
-        for ic in interrupted_calls
-    }
+    return {ic['call_id']: ToolApproved() if ic['kind'] == 'approval' else 'ext_result' for ic in interrupted_calls}
 
 
 # --- Tests ---
@@ -332,7 +329,11 @@ r2 = await action_2(value=r1)
 
     # Run 2: approve action_1 -> hits action_2 interruption
     result = await _resume(
-        agent, code_toolset, result, call_id, ctx1,
+        agent,
+        code_toolset,
+        result,
+        call_id,
+        ctx1,
         {ctx1['interrupted_calls'][0]['call_id']: ToolApproved()},
     )
     assert isinstance(result.output, DeferredToolRequests)
@@ -343,7 +344,11 @@ r2 = await action_2(value=r1)
 
     # Run 3: approve action_2 -> completes
     result = await _resume(
-        agent, code_toolset, result, call_id_2, ctx2,
+        agent,
+        code_toolset,
+        result,
+        call_id_2,
+        ctx2,
         {ctx2['interrupted_calls'][0]['call_id']: ToolApproved()},
     )
     assert result.output == snapshot('All done!')
@@ -359,7 +364,11 @@ async def test_code_mode_tool_denied_on_resume(code_runtime: CodeRuntime):
     result, call_id, ctx = await _run_to_interrupt(agent, code_toolset)
 
     result = await _resume(
-        agent, code_toolset, result, call_id, ctx,
+        agent,
+        code_toolset,
+        result,
+        call_id,
+        ctx,
         {ctx['interrupted_calls'][0]['call_id']: ToolDenied(message='Not allowed')},
     )
     assert result.output == snapshot('Action was denied.')

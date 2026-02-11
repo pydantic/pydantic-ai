@@ -53,7 +53,6 @@ from ..tools import (
     GenerateToolJsonSchema,
     RunContext,
     Tool,
-    ToolDefinition,
     ToolFuncContext,
     ToolFuncEither,
     ToolFuncPlain,
@@ -95,7 +94,6 @@ __all__ = (
     'WrapperAgent',
     'AbstractAgent',
     'EventStreamHandler',
-    'ToolDefinition',
 )
 
 
