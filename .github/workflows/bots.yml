@@ -236,11 +236,12 @@ jobs:
             - `.github/.review-context/agents-md.txt` — directory-specific `AGENTS.md` files for changed directories
 
             The diff is split into per-file diffs under `.github/.review-context/diff/` (excluding `uv.lock` and cassettes), that you can read on demand.
-            When available, the diffs include function-level context (`git diff -W`), so you can usually see the full function/method being modified without needing to read the source file separately.
+            The diffs include function-level context (`git diff -W`), so you can see the full function/method being modified without needing to read the source file separately.
+            For newly added files, the diff contains the complete file contents — do not re-read these from disk.
             The diff file paths are listed in the third column of `changed-files.txt`.
 
-            When you need context beyond what the diffs provide (e.g. code in other files, type definitions, related implementations), use the `Read` tool directly on the checked-out source files.
-            Do not use remote Git operations to understand what changed — the diffs already cover this.
+            The pre-gathered diffs are the source of truth for what this PR changes. Do not re-fetch diffs or file lists using `gh pr diff` or `gh api`.
+            When you need context beyond what the diffs provide (e.g. code in other files, type definitions, related implementations), use the `Read` tool on the checked-out source files.
 
             Use the `gh` CLI only when you need additional information not already in these files (e.g. to read other referenced PRs or issues, check CI status, or read files excluded from the gathered diff).
             When using `gh api`, prefer using the built-in `--jq` and `--template` flags for filtering/formatting since `python3` is not allowed.
@@ -270,6 +271,7 @@ jobs:
               - Include a concrete suggestion if appropriate (but to not use ` ```suggestion ` blocks as they can render incorrectly when the line numbers are off)
               - Include a ping to the maintainer (`@DouweM`) on any change that requires maintainer input before the PR author can move forward.
               - If the same issue shows up in multiple places, post a comment on each instance but have later comments refer to the first comment.
+              - Note that GitHub inline comments can only target lines that appear in GitHub's own diff (with ~3 lines of context around changes), not all lines visible in the function-context diffs. If a comment fails, try targeting a nearby changed line instead.
             - Use `gh pr comment` only for important feedback that doesn't relate to a specific line or file, not for a summary of feedback you've already posted inline.
 
             Your comments should be:
