@@ -171,10 +171,10 @@ gh pr diff "$PR_NUMBER" --repo "$REPO" | awk -v dir="$CTX/diff" '
     if (outfile) close(outfile)
     outfile = ""
 
-    # Extract filename from "diff --git a/path b/path"
+    # Extract new (b/) filename from "diff --git a/path b/path"
+    # Uses b/ side so renamed files match the GitHub API .filename field
     fname = $0
-    sub(/^diff --git a\//, "", fname)
-    sub(/ b\/.*$/, "", fname)
+    sub(/^.* b\//, "", fname)
 
     skip = (fname ~ /uv\.lock/ || fname ~ /\/cassettes\//)
     if (!skip) {
