@@ -140,7 +140,9 @@ class MontyRuntime(CodeRuntime):
             ckpt = deserialize_checkpoint(checkpoint)
             if ckpt.interpreter_state is None:
                 raise ValueError("Checkpoint missing required 'interpreter_state' key")
-            monty_state: MontyComplete | MontyFutureSnapshot | MontySnapshot = MontyFutureSnapshot.load(ckpt.interpreter_state)
+            monty_state: MontyComplete | MontyFutureSnapshot | MontySnapshot = MontyFutureSnapshot.load(
+                ckpt.interpreter_state
+            )
 
             # Feed completed results (calls that succeeded before the interruption).
             # Values are deserialized through checkpoint_result_ta (ToolReturnContent)
@@ -266,7 +268,9 @@ class MontyRuntime(CodeRuntime):
                         remaining.cancel()
                     monty_dump = monty_state.dump()
                     unwrapped = {k: v['return_value'] for k, v in results.items()}
-                    checkpoint = serialize_checkpoint_results(unwrapped, interrupted_calls, interpreter_state=monty_dump)
+                    checkpoint = serialize_checkpoint_results(
+                        unwrapped, interrupted_calls, interpreter_state=monty_dump
+                    )
                     raise CodeInterruptedError(
                         interrupted_calls=interrupted_calls,
                         checkpoint=checkpoint,

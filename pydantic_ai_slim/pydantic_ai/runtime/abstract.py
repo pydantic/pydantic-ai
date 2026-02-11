@@ -44,8 +44,17 @@ class FunctionCall:
 
     call_id: str
     function_name: str
-    args: tuple[Any, ...] = ()  # Positional args
-    kwargs: dict[str, Any] = field(default_factory=lambda: {})  # keyword args
+    args: tuple[Any, ...] = ()
+    kwargs: dict[str, Any] = field(default_factory=lambda: {})
+
+
+@dataclass(frozen=True)
+class DeserializedCheckpoint:
+    """Deserialized checkpoint data shared across runtimes."""
+
+    completed_results: dict[str, Any]
+    pending_calls: dict[str, dict[str, Any]]
+    interpreter_state: bytes | None = None
 
 
 class CodeExecutionError(Exception):
@@ -192,15 +201,6 @@ def serialize_checkpoint_results(
     if interpreter_state is not None:
         payload['interpreter_state'] = base64.b64encode(interpreter_state).decode('ascii')
     return json.dumps(payload).encode('utf-8')
-
-
-@dataclass(frozen=True)
-class DeserializedCheckpoint:
-    """Deserialized checkpoint data shared across runtimes."""
-
-    completed_results: dict[str, Any]
-    pending_calls: dict[str, dict[str, Any]]
-    interpreter_state: bytes | None = None
 
 
 def deserialize_checkpoint(checkpoint: bytes) -> DeserializedCheckpoint:
