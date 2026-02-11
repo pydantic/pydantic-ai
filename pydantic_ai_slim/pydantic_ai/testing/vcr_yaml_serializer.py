@@ -42,7 +42,7 @@ except ImportError as _import_error:
 # Fixing these manually in the snapshots doesn't help,
 # because the snapshots are asserted on test reruns against the cassettes.
 # Normalizing to ASCII equivalents ensures consistent, portable cassette files and stable snapshots.
-SMART_CHAR_MAP = {
+_SMART_CHAR_MAP = {
     '\u2018': "'",  # LEFT SINGLE QUOTATION MARK
     '\u2019': "'",  # RIGHT SINGLE QUOTATION MARK
     '\u201c': '"',  # LEFT DOUBLE QUOTATION MARK
@@ -51,25 +51,25 @@ SMART_CHAR_MAP = {
     '\u2014': '--',  # EM DASH
     '\u2026': '...',  # HORIZONTAL ELLIPSIS
 }
-SMART_CHAR_TRANS = str.maketrans(SMART_CHAR_MAP)
+_SMART_CHAR_TRANS = str.maketrans(_SMART_CHAR_MAP)
 
 
-def normalize_smart_chars(text: str) -> str:
+def _normalize_smart_chars(text: str) -> str:
     """Normalize smart quotes and special characters to ASCII equivalents."""
     # First use the translation table for known characters
-    text = text.translate(SMART_CHAR_TRANS)
+    text = text.translate(_SMART_CHAR_TRANS)
     # Then apply NFKC normalization for any remaining special chars
     return unicodedata.normalize('NFKC', text)
 
 
-def normalize_body(obj: Any) -> Any:
+def _normalize_body(obj: Any) -> Any:
     """Recursively normalize smart characters in all strings within a data structure."""
     if isinstance(obj, str):
-        return normalize_smart_chars(obj)
+        return _normalize_smart_chars(obj)
     elif isinstance(obj, dict):
-        return {k: normalize_body(v) for k, v in obj.items()}
+        return {k: _normalize_body(v) for k, v in obj.items()}
     elif isinstance(obj, list):  # pragma: no cover
-        return [normalize_body(item) for item in obj]
+        return [_normalize_body(item) for item in obj]
     return obj  # pragma: no cover
 
 
@@ -81,15 +81,15 @@ else:
     except ImportError:  # pragma: no cover
         from yaml import Dumper, SafeLoader
 
-FILTERED_HEADER_PREFIXES = ['anthropic-', 'cf-', 'x-']
-FILTERED_HEADERS = {'authorization', 'date', 'request-id', 'server', 'user-agent', 'via', 'set-cookie', 'api-key'}
-ALLOWED_HEADER_PREFIXES = {
+_FILTERED_HEADER_PREFIXES = ['anthropic-', 'cf-', 'x-']
+_FILTERED_HEADERS = {'authorization', 'date', 'request-id', 'server', 'user-agent', 'via', 'set-cookie', 'api-key'}
+_ALLOWED_HEADER_PREFIXES = {
     # required by huggingface_hub.file_download used by test_embeddings.py::TestSentenceTransformers
     'x-xet-',
     # required for Bedrock embeddings to preserve token count headers
     'x-amzn-bedrock-',
 }
-ALLOWED_HEADERS = {
+_ALLOWED_HEADERS = {
     # required by huggingface_hub.file_download used by test_embeddings.py::TestSentenceTransformers
     'x-repo-commit',
     'x-linked-size',
@@ -100,11 +100,11 @@ ALLOWED_HEADERS = {
 }
 
 
-class LiteralDumper(Dumper):
+class _LiteralDumper(Dumper):
     """A custom dumper that will represent multi-line strings using literal style."""
 
 
-def str_presenter(dumper: Dumper, data: str):
+def _str_presenter(dumper: Dumper, data: str):
     """If the string contains newlines, represent it as a literal block."""
     if '\n' in data:
         return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='|')
@@ -112,7 +112,7 @@ def str_presenter(dumper: Dumper, data: str):
 
 
 # Register the custom presenter on our dumper
-LiteralDumper.add_representer(str, str_presenter)
+_LiteralDumper.add_representer(str, _str_presenter)
 
 
 def deserialize(cassette_string: str) -> dict[str, Any]:
@@ -157,14 +157,14 @@ def serialize(cassette_dict: Any) -> str:  # pragma: lax no cover
             # make headers lowercase
             headers = {k.lower(): v for k, v in headers.items()}
             # filter headers by name
-            headers = {k: v for k, v in headers.items() if k not in FILTERED_HEADERS}
+            headers = {k: v for k, v in headers.items() if k not in _FILTERED_HEADERS}
             # filter headers by prefix
             headers = {
                 k: v
                 for k, v in headers.items()
-                if not any(k.startswith(prefix) for prefix in FILTERED_HEADER_PREFIXES)
-                or k in ALLOWED_HEADERS
-                or any(k.startswith(prefix) for prefix in ALLOWED_HEADER_PREFIXES)
+                if not any(k.startswith(prefix) for prefix in _FILTERED_HEADER_PREFIXES)
+                or k in _ALLOWED_HEADERS
+                or any(k.startswith(prefix) for prefix in _ALLOWED_HEADER_PREFIXES)
             }
             # update headers on source object
             data['headers'] = headers
@@ -194,7 +194,7 @@ def serialize(cassette_dict: Any) -> str:  # pragma: lax no cover
                         body = body.decode('utf-8')
                     parsed = json.loads(body)  # pyright: ignore[reportUnknownArgumentType]
                     # Normalize smart quotes and special characters
-                    data['parsed_body'] = normalize_body(parsed)
+                    data['parsed_body'] = _normalize_body(parsed)
                     if 'access_token' in data['parsed_body']:
                         data['parsed_body']['access_token'] = 'scrubbed'
                     del data['body']
@@ -212,4 +212,4 @@ def serialize(cassette_dict: Any) -> str:  # pragma: lax no cover
                         data['body'] = urllib.parse.urlencode(query_params)
 
     # Use our custom dumper
-    return yaml.dump(cassette_dict, Dumper=LiteralDumper, allow_unicode=True, width=120)
+    return yaml.dump(cassette_dict, Dumper=_LiteralDumper, allow_unicode=True, width=120)
