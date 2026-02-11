@@ -188,23 +188,27 @@ r2 = await f2
     assert result.output == snapshot('Both done!')
 
 
-async def test_code_mode_resume_missing_context_error(code_runtime: CodeRuntime):
-    """Test that resuming without context raises a clear error."""
+async def _setup_resume_error(
+    code_runtime: CodeRuntime,
+) -> tuple[Agent[None, str | DeferredToolRequests], CodeModeToolset[None], Any, str, CodeModeContext]:
+    """Shared setup for resume validation error tests."""
     toolset: FunctionToolset[None] = FunctionToolset()
     toolset.add_function(sensitive_action, takes_ctx=True)
     code_toolset = CodeModeToolset(wrapped=toolset, runtime=code_runtime)
-
     agent = _make_code_agent('await sensitive_action(value=42)')
-    result, call_id, _ = await _run_to_interrupt(agent, code_toolset)
+    result, call_id, ctx = await _run_to_interrupt(agent, code_toolset)
+    return agent, code_toolset, result, call_id, ctx
 
-    # Resume WITHOUT context -> error
+
+async def test_code_mode_resume_missing_context(code_runtime: CodeRuntime):
+    """Test that resuming without context raises a clear error."""
+    agent, code_toolset, result, call_id, _ = await _setup_resume_error(code_runtime)
+
     async with code_toolset:
         with pytest.raises(UserError) as exc_info:
             await agent.run(
                 message_history=result.all_messages(),
-                deferred_tool_results=DeferredToolResults(
-                    approvals={call_id: ToolApproved()},
-                ),
+                deferred_tool_results=DeferredToolResults(approvals={call_id: ToolApproved()}),
                 toolsets=[code_toolset],
             )
 
@@ -213,23 +217,16 @@ async def test_code_mode_resume_missing_context_error(code_runtime: CodeRuntime)
     )
 
 
-async def test_code_mode_resume_missing_results_error(code_runtime: CodeRuntime):
-    """Test that resuming without results for interrupted calls raises a clear error."""
-    toolset: FunctionToolset[None] = FunctionToolset()
-    toolset.add_function(sensitive_action, takes_ctx=True)
-    code_toolset = CodeModeToolset(wrapped=toolset, runtime=code_runtime)
+async def test_code_mode_resume_missing_results(code_runtime: CodeRuntime):
+    """Test that resuming without results in context raises a clear error."""
+    agent, code_toolset, result, call_id, ctx = await _setup_resume_error(code_runtime)
 
-    agent = _make_code_agent('await sensitive_action(value=42)')
-    result, call_id, ctx = await _run_to_interrupt(agent, code_toolset)
-
-    # Resume with context but MISSING results -> error
     async with code_toolset:
         with pytest.raises(UserError) as exc_info:
             await agent.run(
                 message_history=result.all_messages(),
                 deferred_tool_results=DeferredToolResults(
-                    approvals={call_id: ToolApproved()},
-                    context={call_id: {**ctx}},
+                    approvals={call_id: ToolApproved()}, context={call_id: {**ctx}}
                 ),
                 toolsets=[code_toolset],
             )
@@ -242,16 +239,21 @@ async def test_code_mode_resume_missing_results_error(code_runtime: CodeRuntime)
 async def test_code_mode_mixed_success_and_interrupted(code_runtime: CodeRuntime):
     """Test that calls which succeed before an interruption are NOT re-executed on resume.
 
-    3 parallel tools: 1 succeeds immediately, 1 needs approval, 1 is deferred.
+    3 parallel tools: 1 succeeds immediately (returning complex nested data),
+    1 needs approval, 1 is deferred.
     On resume the successful call's result is fed back via completed_results,
-    avoiding double execution.
+    avoiding double execution. The complex dict must round-trip through checkpoint
+    serialize/deserialize for resume to succeed.
     """
     call_counts: dict[str, int] = {'fast': 0, 'sensitive': 0, 'external': 0}
 
     # Local tools with closures for call counting
-    def fast_lookup(key: str) -> str:
+    def fast_lookup(key: str) -> dict[str, Any]:
         call_counts['fast'] += 1
-        return f'found:{key}'
+        return {
+            'items': [{'id': 1, 'name': 'widget', 'tags': ['a', 'b']}, {'id': 2, 'name': 'gadget', 'tags': ['c']}],
+            'metadata': {'total': 2, 'key': key},
+        }
 
     def counted_sensitive(ctx: RunContext[None], value: int) -> int:
         call_counts['sensitive'] += 1
@@ -361,37 +363,3 @@ async def test_code_mode_tool_denied_on_resume(code_runtime: CodeRuntime):
         {ctx['interrupted_calls'][0]['call_id']: ToolDenied(message='Not allowed')},
     )
     assert result.output == snapshot('Action was denied.')
-
-
-async def test_code_mode_complex_types_through_checkpoint(code_runtime: CodeRuntime):
-    """Test that complex nested dicts survive checkpoint serialize -> deserialize round-trip."""
-
-    def get_complex_data(key: str) -> dict:
-        return {
-            'items': [{'id': 1, 'name': 'widget', 'tags': ['a', 'b']}, {'id': 2, 'name': 'gadget', 'tags': ['c']}],
-            'metadata': {'total': 2, 'key': key},
-        }
-
-    toolset: FunctionToolset[None] = FunctionToolset()
-    toolset.add_function(get_complex_data, takes_ctx=False)
-    toolset.add_function(sensitive_action, takes_ctx=True)
-    code_toolset = CodeModeToolset(wrapped=toolset, runtime=code_runtime)
-
-    code = """\
-f1 = get_complex_data(key="test")
-f2 = sensitive_action(value=5)
-data = await f1
-val = await f2
-{"data": data, "val": val}"""
-
-    agent = _make_code_agent(code, 'Got complex data!')
-    result, call_id, ctx = await _run_to_interrupt(agent, code_toolset)
-
-    assert len(ctx['interrupted_calls']) == 1
-    assert ctx['interrupted_calls'][0]['tool_name'] == 'sensitive_action'
-
-    result = await _resume(
-        agent, code_toolset, result, call_id, ctx,
-        {ctx['interrupted_calls'][0]['call_id']: ToolApproved()},
-    )
-    assert result.output == snapshot('Got complex data!')

@@ -8,24 +8,13 @@ import pytest
 from pydantic_core import SchemaValidator, core_schema
 
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.code_mode import CodeModeToolset
-from pydantic_ai.usage import RunUsage
+
+from .conftest import build_run_context
 
 pytestmark = pytest.mark.anyio
-
-
-def build_run_context() -> RunContext[None]:
-    return RunContext(
-        deps=None,
-        model=TestModel(),
-        usage=RunUsage(),
-        prompt=None,
-        messages=[],
-        run_step=0,
-    )
 
 
 class ReturnSchemaToolset(AbstractToolset[None]):

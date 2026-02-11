@@ -6,26 +6,14 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic_monty import Monty
 
-from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.models.test import TestModel
 from pydantic_ai.runtime.monty import _build_type_check_prefix  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.toolsets.code_mode import CodeModeToolset
 from pydantic_ai.toolsets.function import FunctionToolset
-from pydantic_ai.usage import RunUsage
+
+from .conftest import build_run_context
 
 pytestmark = pytest.mark.anyio
-
-
-def build_run_context() -> RunContext[None]:
-    return RunContext(
-        deps=None,
-        model=TestModel(),
-        usage=RunUsage(),
-        prompt=None,
-        messages=[],
-        run_step=0,
-    )
 
 
 def add(x: int, y: int) -> int:
@@ -85,28 +73,7 @@ Expected an identifier, but found a keyword `while` that cannot be used here at 
 
 
 async def test_valid_code_executes_successfully():
-    """Valid code passes type checking and executes normally."""
-    toolset: FunctionToolset[None] = FunctionToolset()
-    toolset.add_function(add, takes_ctx=False)
-
-    code_mode = CodeModeToolset(wrapped=toolset)
-    ctx = build_run_context()
-    tools = await code_mode.get_tools(ctx)
-
-    run_code_tool = tools['run_code']
-
-    result = await code_mode.call_tool(
-        'run_code',
-        {'code': 'await add(x=1, y=2)'},
-        ctx,
-        run_code_tool,
-    )
-
-    assert result == 3
-
-
-async def test_await_on_sync_tool_executes_successfully():
-    """Sync tools can be awaited in code mode — signatures are always async def."""
+    """Valid code passes type checking and executes normally (sync tool `add` is awaited)."""
     toolset: FunctionToolset[None] = FunctionToolset()
     toolset.add_function(add, takes_ctx=False)
 

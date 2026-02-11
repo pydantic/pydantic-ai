@@ -6,6 +6,7 @@ complex task in both modes and comparing metrics like request count and token us
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import pytest
@@ -13,7 +14,7 @@ from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.toolsets.code_mode import CodeModeToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_evals import Case, Dataset
@@ -318,6 +319,17 @@ class TokenCountEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
 # =============================================================================
 
 
+def _count_usage(messages: Sequence[ModelMessage]) -> tuple[int, int, int]:
+    """Return (request_count, input_tokens, output_tokens) from messages."""
+    requests = input_tok = output_tok = 0
+    for msg in messages:
+        if isinstance(msg, ModelResponse):
+            requests += 1
+            input_tok += msg.usage.input_tokens
+            output_tok += msg.usage.output_tokens
+    return requests, input_tok, output_tok
+
+
 def _create_toolset() -> FunctionToolset[None]:
     """Create the function toolset with all tools."""
     toolset: FunctionToolset[None] = FunctionToolset()
@@ -336,17 +348,7 @@ async def run_traditional(inputs: TaskInput) -> TaskOutput:
 
     result = await agent.run(inputs.prompt, toolsets=[toolset])
 
-    # Count requests and tokens from messages
-    request_count = 0
-    total_input = 0
-    total_output = 0
-    for msg in result.all_messages():
-        if not isinstance(msg, ModelResponse):
-            continue
-        request_count += 1
-        total_input += msg.usage.input_tokens
-        total_output += msg.usage.output_tokens
-
+    request_count, total_input, total_output = _count_usage(result.all_messages())
     return TaskOutput(
         result=result.output,
         request_count=request_count,
@@ -364,17 +366,7 @@ async def run_code_mode(inputs: TaskInput) -> TaskOutput:
     async with code_toolset:
         result = await agent.run(inputs.prompt, toolsets=[code_toolset])
 
-    # Count requests and tokens from messages
-    request_count = 0
-    total_input = 0
-    total_output = 0
-    for msg in result.all_messages():
-        if not isinstance(msg, ModelResponse):
-            continue
-        request_count += 1
-        total_input += msg.usage.input_tokens
-        total_output += msg.usage.output_tokens
-
+    request_count, total_input, total_output = _count_usage(result.all_messages())
     return TaskOutput(
         result=result.output,
         request_count=request_count,
