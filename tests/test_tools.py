@@ -1131,7 +1131,7 @@ def test_schema_generator():
                 'metadata': None,
                 'timeout': None,
                 'return_schema': None,
-                'include_return_schema': False,
+                'include_return_schema': None,
             },
             {
                 'description': None,
@@ -1147,7 +1147,7 @@ def test_schema_generator():
                 'metadata': None,
                 'timeout': None,
                 'return_schema': None,
-                'include_return_schema': False,
+                'include_return_schema': None,
             },
         ]
     )
@@ -2890,7 +2890,8 @@ def test_tool_return_schema():
 
     # DeferredToolResult has an insane token footprint, unsure if it is wise to do this but I will read more.
 
-    result = agent.run_sync('Hello')
+    with pytest.warns(UserWarning, match=r"Tool 'tool_with_return_tool_return' has `include_return_schema` enabled"):
+        result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         [
@@ -3729,7 +3730,8 @@ def test_tool_none_return_annotation_no_schema():
         """A tool that returns None."""
         pass  # pragma: no cover
 
-    result = agent.run_sync('Hello')
+    with pytest.warns(UserWarning, match=r"Tool 'tool_with_none_return' has `include_return_schema` enabled"):
+        result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
     assert json_schema['return_schema'] is None
 
@@ -4052,3 +4054,30 @@ def test_per_tool_return_schema_opt_out():
     tool_def = json.loads(result.output)
     assert tool_def['return_schema'] is None
     assert tool_def['include_return_schema'] is False
+
+
+def test_include_return_schema_warning_when_no_return_schema():
+    """Warning is emitted when include_return_schema is enabled but no return schema was generated."""
+    agent = Agent(
+        FunctionModel(
+            get_json_schema,
+            profile=ModelProfile(
+                supports_json_schema_output=True,
+                supports_json_object_output=True,
+                supports_tool_return_schema=True,
+            ),
+        ),
+        include_tool_return_schema=True,
+    )
+
+    @agent.tool_plain
+    def my_tool(x: int):
+        """Get a value.
+
+        Args:
+            x: An integer value.
+        """
+        return x  # pragma: no cover
+
+    with pytest.warns(UserWarning, match=r"Tool 'my_tool' has `include_return_schema` enabled but no return schema"):
+        agent.run_sync('Hello')

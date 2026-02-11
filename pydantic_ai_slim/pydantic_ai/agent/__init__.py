@@ -324,9 +324,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tool_timeout: Default timeout in seconds for tool execution. If a tool takes longer than this,
                 the tool is considered to have failed and a retry prompt is returned to the model (counting towards the retry limit).
                 Individual tools can override this with their own timeout. Defaults to None (no timeout).
-            include_tool_return_schema: Whether to include the return schema in tool descriptions. When True, all tools
-                will have their return schemas appended to their descriptions. Individual tools can also opt-in
-                via their own `include_return_schema` flag. Defaults to False.
+            include_tool_return_schema: Whether to send tool return schemas to the model. Sets the default for all tools;
+                individual tools can override this via their own `include_return_schema` flag. Defaults to False.
         """
         if model is None or defer_model_check:
             self._model = model
@@ -1552,8 +1551,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 )
                 if not include and td.return_schema is not None:
                     td = dataclasses.replace(td, return_schema=None, include_return_schema=False)
-                else:
-                    td = dataclasses.replace(td, include_return_schema=bool(include))
+                elif td.include_return_schema is None and agent_include_return_schema:
+                    td = dataclasses.replace(td, include_return_schema=True)
+                if include and td.return_schema is None:
+                    warnings.warn(
+                        f'Tool {td.name!r} has `include_return_schema` enabled but no return schema was generated. '
+                        f'Set `include_return_schema=False` on this tool to suppress this warning.',
+                        UserWarning,
+                        stacklevel=2,
+                    )
                 resolved.append(td)
             return resolved
 
