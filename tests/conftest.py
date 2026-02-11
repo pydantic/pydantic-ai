@@ -7,14 +7,14 @@ import os
 import re
 import secrets
 import sys
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
 
 import httpx
 import pytest
@@ -25,6 +25,21 @@ from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
+from pydantic_ai.messages import (
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
+    FilePart,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    SystemPromptPart,
+    TextPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import Model
 
 __all__ = (
@@ -725,3 +740,42 @@ def disable_ssrf_protection_for_vcr():
 
     with patch('pydantic_ai._ssrf.validate_and_resolve_url', mock_validate_and_resolve):
         yield
+
+
+_RequestPartT = TypeVar('_RequestPartT', bound=SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart)
+_ResponsePartT = TypeVar(
+    '_ResponsePartT',
+    bound=TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart,
+)
+
+
+@overload
+def iter_message_parts(
+    messages: Sequence[ModelMessage],
+    message_type: type[ModelRequest],
+    part_type: type[_RequestPartT],
+) -> Iterator[_RequestPartT]: ...
+
+
+@overload
+def iter_message_parts(
+    messages: Sequence[ModelMessage],
+    message_type: type[ModelResponse],
+    part_type: type[_ResponsePartT],
+) -> Iterator[_ResponsePartT]: ...
+
+
+def iter_message_parts(
+    messages: Sequence[ModelMessage],
+    message_type: type[ModelRequest] | type[ModelResponse],
+    part_type: type[_RequestPartT] | type[_ResponsePartT],
+) -> Iterator[_RequestPartT | _ResponsePartT]:
+    """Iterate over all parts of a given type in messages of a given type."""
+    for msg in messages:
+        if isinstance(msg, message_type):
+            for part in msg.parts:
+                if isinstance(part, part_type):
+                    yield part
+
+
+# endregion
