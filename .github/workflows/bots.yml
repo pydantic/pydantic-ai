@@ -156,6 +156,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      issues: write
       pull-requests: write
       actions: read
     steps:
@@ -224,7 +225,7 @@ jobs:
             PR NUMBER: ${{ github.event.pull_request.number }}
             PR AUTHOR: ${{ github.event.pull_request.user.login }} (${{ github.event.pull_request.author_association }})
 
-            Review this pull request. The PR branch is already checked out in the current working directory.
+            Review this pull request. The PR branch is already checked out in the current working directory and the `CLAUDE.md` at the root (symlinked to `AGENTS.md`) is already loaded in your system prompt.
 
             Before doing anything else, read ALL of the following pre-gathered context files in a single parallel tool call:
             - `.github/.review-context/pr-details.json` — PR title, body, author, branch info, labels, state, review decision, timestamps
@@ -235,10 +236,11 @@ jobs:
             - `.github/.review-context/agents-md.txt` — directory-specific `AGENTS.md` files for changed directories
 
             The diff is split into per-file diffs under `.github/.review-context/diff/` (excluding `uv.lock` and cassettes), that you can read on demand.
+            When available, the diffs include function-level context (`git diff -W`), so you can usually see the full function/method being modified without needing to read the source file separately.
             The diff file paths are listed in the third column of `changed-files.txt`.
-            Do not read full source files from the checkout unless you need context outside the diff hunks (e.g. to understand surrounding code).
 
-            The `CLAUDE.md` at the root (symlinked to `AGENTS.md`) is already loaded in your system prompt. The version policy in `docs/version-policy.md` is also available in the checked-out repo if you need to reference it.
+            When you need context beyond what the diffs provide (e.g. code in other files, type definitions, related implementations), use the `Read` tool directly on the checked-out source files.
+            Do not use remote Git operations to understand what changed — the diffs already cover this.
 
             Use the `gh` CLI only when you need additional information not already in these files (e.g. to read other referenced PRs or issues, check CI status, or read files excluded from the gathered diff).
             When using `gh api`, prefer using the built-in `--jq` and `--template` flags for filtering/formatting since `python3` is not allowed.
@@ -282,3 +284,9 @@ jobs:
             - Do not post multiple comments for the same exact issue unless it shows up in different places.
 
             It bears repeating that you are the first line of defense against low-quality contributions and maintainer headaches, and you have a big role in ensuring that every contribution to this project meets or exceeds the high standards that the Pydantic brand is known and loved for.
+
+      - name: Remove auto-review label
+        if: always()
+        run: gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/auto-review" --method DELETE 2>/dev/null || true
+        env:
+          GH_TOKEN: ${{ github.token }}
