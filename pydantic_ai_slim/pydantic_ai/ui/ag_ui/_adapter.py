@@ -247,21 +247,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
     @classmethod
     def dump_messages(cls, messages: Sequence[ModelMessage]) -> list[Message]:
-        """Convert a sequence of Pydantic AI `ModelMessage` objects into AG-UI protocol `Message` objects.
-
-        Uses a two-pass algorithm:
-        1. First pass: Collects tool results (ToolReturnPart and RetryPromptPart) from ModelRequest messages
-        2. Second pass: Converts each message, emitting tool results when referenced by tool calls
-
-        Text content is concatenated within responses, and tool calls are collected and emitted
-        as AssistantMessage or ToolMessage objects depending on their type.
-
-        Args:
-            messages: Sequence of Pydantic AI ModelMessage objects (ModelRequest or ModelResponse)
-
-        Returns:
-            List of AG-UI Message objects (SystemMessage, UserMessage, AssistantMessage, ToolMessage)
-        """
+        """Transform Pydantic AI messages into AG-UI messages."""
         tool_results: dict[str, ToolReturnPart | RetryPromptPart] = {}
 
         for msg in messages:
@@ -276,9 +262,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         for msg in messages:
             if isinstance(msg, ModelRequest):
-                cls._dump_model_request(msg.parts, result)
+                result.extend(cls._dump_model_request(msg.parts))
             elif isinstance(msg, ModelResponse):
-                cls._dump_model_response(msg, result, tool_results)
+                result.extend(cls._dump_model_response(msg, tool_results))
             else:
                 assert_never(msg)
 
@@ -286,25 +272,12 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
     @classmethod
     def _dump_model_response(
-        cls, msg: ModelResponse, result: list[Message], tool_results: dict[str, ToolReturnPart | RetryPromptPart]
-    ) -> None:
-        """Convert a `ModelResponse` into AG-UI `AssistantMessage` and `ToolMessage` objects.
-
-        Processes all parts in the response:
-        - TextPart: Concatenated into a single content string
-        - ToolCallPart / BuiltinToolCallPart: Collected and emitted via AssistantMessage
-        - ToolReturnPart: Looked up from tool_results and emitted as ToolMessage
-        - ThinkingPart / FilePart / BuiltinToolReturnPart: Skipped (not emitted to AG-UI)
-
-        If no text or tool calls present, no message is emitted.
-
-        Args:
-            msg: The ModelResponse to convert
-            result: List to append generated Message objects to
-            tool_results: Dict mapping tool_call_id to result parts from prior requests
-        """
+        cls, msg: ModelResponse, tool_results: dict[str, ToolReturnPart | RetryPromptPart]
+    ) -> list[Message]:
+        """Convert a `ModelResponse` into AG-UI `AssistantMessage` and `ToolMessage` objects."""
         text_chunks: list[str] = []
         tool_calls: list[ToolCall] = []
+        tool_messages: list[Message] = []
 
         local_builtin_returns: dict[str, BuiltinToolReturnPart] = {
             part.tool_call_id: part for part in msg.parts if isinstance(part, BuiltinToolReturnPart)
@@ -320,7 +293,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 function = FunctionCall(name=part.tool_name, arguments=part.args_as_json_str())
                 tool_calls.append(ToolCall(id=builtin_id, type='function', function=function))
                 if builtin_return := local_builtin_returns.get(part.tool_call_id):
-                    result.append(
+                    tool_messages.append(
                         ToolMessage(
                             id=uuid.uuid4().hex, content=builtin_return.model_response_str(), tool_call_id=builtin_id
                         )
@@ -330,7 +303,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 tool_calls.append(ToolCall(id=part.tool_call_id, type='function', function=function))
                 tool_result = tool_results.get(part.tool_call_id)
                 if isinstance(tool_result, ToolReturnPart):
-                    result.append(
+                    tool_messages.append(
                         ToolMessage(
                             id=uuid.uuid4().hex,
                             content=tool_result.model_response_str(),
@@ -338,7 +311,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         )
                     )
                 elif isinstance(tool_result, RetryPromptPart):
-                    result.append(
+                    tool_messages.append(
                         ToolMessage(
                             id=uuid.uuid4().hex, content=tool_result.model_response(), tool_call_id=part.tool_call_id
                         )
@@ -346,6 +319,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             else:
                 assert_never(part)
 
+        result: list[Message] = []
         if text_chunks or tool_calls:
             result.append(
                 AssistantMessage(
@@ -354,27 +328,13 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     tool_calls=tool_calls if tool_calls else None,
                 )
             )
+        result.extend(tool_messages)
+        return result
 
     @classmethod
-    def _dump_model_request(
-        cls,
-        parts: Sequence[ModelRequestPart],
-        result: list[Message],
-    ) -> None:
-        """Convert ModelRequest parts into AG-UI `Message` objects.
-
-        Emits:
-        - SystemPromptPart: SystemMessage
-        - UserPromptPart: UserMessage (handles both text and multimodal content)
-        - ToolReturnPart: ToolMessage with result content
-        - RetryPromptPart: ToolMessage (if tool-specific) or UserMessage (if general retry)
-
-        Multimodal content (images, videos, audio, documents) is converted to BinaryInputContent.
-
-        Args:
-            parts: Sequence of ModelRequestPart objects
-            result: List to append generated Message objects to
-        """
+    def _dump_model_request(cls, parts: Sequence[ModelRequestPart]) -> list[Message]:
+        """Convert ModelRequest parts into AG-UI `Message` objects."""
+        result: list[Message] = []
         for part in parts:
             if isinstance(part, SystemPromptPart):
                 result.append(SystemMessage(id=uuid.uuid4().hex, content=part.content))
@@ -401,10 +361,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 # Handled when processing the corresponding ToolCallPart in _dump_model_response.
                 pass
             elif isinstance(part, RetryPromptPart):
-                # Tool-related retries are handled when processing ToolCallPart in ModelResponse
-                if part.tool_name:
-                    pass
-                else:
+                # Tool-related retries are handled when processing ToolCallPart in _dump_model_response.
+                if not part.tool_name:
                     result.append(UserMessage(id=uuid.uuid4().hex, content=part.model_response()))
             else:
                 assert_never(part)
+        return result

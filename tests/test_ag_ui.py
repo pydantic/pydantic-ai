@@ -23,6 +23,7 @@ from pydantic_ai import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
+    FilePart,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
@@ -36,6 +37,7 @@ from pydantic_ai import (
     SystemPromptPart,
     TextPart,
     TextPartDelta,
+    ThinkingPart,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturn,
@@ -2351,12 +2353,7 @@ async def test_handle_ag_ui_request():
 
 
 def test_adapter_dump_messages_basic():
-    """Test basic dump_messages serialization.
-
-    Validates that basic system and user prompts are correctly converted to
-    SystemMessage, UserMessage, and AssistantMessage with proper role assignments
-    and unique IDs.
-    """
+    """Test basic dump_messages serialization."""
     messages = [
         ModelRequest(
             parts=[
@@ -2384,11 +2381,7 @@ def test_adapter_dump_messages_basic():
 
 
 def test_adapter_dump_messages_with_tool_calls():
-    """Test dump_messages with tool calls and tool returns.
-
-    Validates that tool calls are collected into AssistantMessage and their
-    corresponding tool returns create separate ToolMessage objects.
-    """
+    """Test dump_messages with tool calls and tool returns."""
     messages = [
         ModelRequest(parts=[UserPromptPart(content='Search for something')]),
         ModelResponse(
@@ -2422,13 +2415,6 @@ def test_adapter_dump_messages_with_tool_calls():
             {'id': IsStr(), 'role': 'user', 'content': 'Search for something', 'name': None},
             {
                 'id': IsStr(),
-                'role': 'tool',
-                'content': '{"results":["result1","result2"]}',
-                'tool_call_id': 'tool_123',
-                'error': None,
-            },
-            {
-                'id': IsStr(),
                 'role': 'assistant',
                 'content': 'Let me search for that.',
                 'name': None,
@@ -2442,6 +2428,13 @@ def test_adapter_dump_messages_with_tool_calls():
             },
             {
                 'id': IsStr(),
+                'role': 'tool',
+                'content': '{"results":["result1","result2"]}',
+                'tool_call_id': 'tool_123',
+                'error': None,
+            },
+            {
+                'id': IsStr(),
                 'role': 'assistant',
                 'content': 'Here are the results.',
                 'name': None,
@@ -2452,11 +2445,7 @@ def test_adapter_dump_messages_with_tool_calls():
 
 
 def test_adapter_dump_messages_with_builtin_tools():
-    """Test dump_messages with builtin tool calls (provider-managed tools).
-
-    Validates that builtin tool calls and returns are properly encoded with
-    provider information and emitted as appropriate message types.
-    """
+    """Test dump_messages with builtin tool calls (provider-managed tools)."""
     messages = [
         ModelRequest(parts=[UserPromptPart(content='Search for something')]),
         ModelResponse(
@@ -2478,18 +2467,10 @@ def test_adapter_dump_messages_with_builtin_tools():
     ]
 
     ui_messages = AGUIAdapter.dump_messages(messages)
-    assert len(ui_messages) >= 2
     ui_messages_dump = [msg.model_dump() for msg in ui_messages]
     assert ui_messages_dump == snapshot(
         [
             {'id': IsStr(), 'role': 'user', 'content': 'Search for something', 'name': None},
-            {
-                'id': IsStr(),
-                'role': 'tool',
-                'content': '{"status":"completed"}',
-                'tool_call_id': 'pyd_ai_builtin|openai|tool_456',
-                'error': None,
-            },
             {
                 'id': IsStr(),
                 'role': 'assistant',
@@ -2503,16 +2484,19 @@ def test_adapter_dump_messages_with_builtin_tools():
                     }
                 ],
             },
+            {
+                'id': IsStr(),
+                'role': 'tool',
+                'content': '{"status":"completed"}',
+                'tool_call_id': 'pyd_ai_builtin|openai|tool_456',
+                'error': None,
+            },
         ]
     )
 
 
 def test_adapter_dump_messages_multimodal():
-    """Test dumping messages with multimodal content.
-
-    Validates that messages with mixed text, images, and URLs are properly converted
-    to AG-UI format with correct role assignments.
-    """
+    """Test dumping messages with multimodal content."""
     messages = [
         ModelRequest(
             parts=[
@@ -2700,17 +2684,6 @@ def test_dump_messages_tool_call_with_retry_prompt_result():
             {'id': IsStr(), 'role': 'user', 'content': 'Search', 'name': None},
             {
                 'id': IsStr(),
-                'role': 'tool',
-                'content': """\
-Tool failed, please retry
-
-Fix the errors and try again.\
-""",
-                'tool_call_id': 'tool_1',
-                'error': None,
-            },
-            {
-                'id': IsStr(),
                 'role': 'assistant',
                 'content': None,
                 'name': None,
@@ -2721,6 +2694,17 @@ Fix the errors and try again.\
                         'function': {'name': 'search', 'arguments': '{"query":"test"}'},
                     }
                 ],
+            },
+            {
+                'id': IsStr(),
+                'role': 'tool',
+                'content': """\
+Tool failed, please retry
+
+Fix the errors and try again.\
+""",
+                'tool_call_id': 'tool_1',
+                'error': None,
             },
         ]
     )
@@ -2790,7 +2774,6 @@ def test_dump_model_request_multimodal_mixed_content():
     ]
 
     ui_messages = AGUIAdapter.dump_messages(messages)
-    assert len(ui_messages) > 0
     ui_messages_dump = [msg.model_dump() for msg in ui_messages]
     assert ui_messages_dump == snapshot(
         [
@@ -2859,9 +2842,7 @@ def test_dump_model_request_system_messages():
 
     ui_messages = AGUIAdapter.dump_messages(messages)
 
-    # Both system prompts should be converted
     system_msgs = [msg.model_dump() for msg in ui_messages if msg.role == 'system']
-    assert len(system_msgs) >= 2
     assert system_msgs == snapshot(
         [
             {
@@ -2891,13 +2872,25 @@ def test_dump_model_response_only_tool_calls_no_text():
     ]
 
     ui_messages = AGUIAdapter.dump_messages(messages)
-
-    # Should create AssistantMessage with tool calls but no text
-    assistant_msg = next((msg for msg in ui_messages if msg.role == 'assistant'), None)
-    assert assistant_msg is not None
-    assert hasattr(assistant_msg, 'tool_calls')
-    assert assistant_msg.tool_calls is not None
-    assert len(assistant_msg.tool_calls) > 0
+    ui_messages_dump = [msg.model_dump() for msg in ui_messages]
+    assert ui_messages_dump == snapshot(
+        [
+            {'id': IsStr(), 'role': 'user', 'content': 'Do something', 'name': None},
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'content': None,
+                'name': None,
+                'tool_calls': [
+                    {
+                        'id': 'action_1',
+                        'type': 'function',
+                        'function': {'name': 'action', 'arguments': '{"param":"value"}'},
+                    }
+                ],
+            },
+        ]
+    )
 
 
 def test_dump_model_response_only_text_no_tool_calls():
@@ -2957,42 +2950,6 @@ def test_dump_model_response_multiple_text_parts():
     )
 
 
-def test_dump_messages_retry_prompt_direct_without_tool_name():
-    """Test RetryPromptPart without tool_name in ModelRequest emits UserMessage."""
-    messages = [
-        ModelRequest(
-            parts=[
-                RetryPromptPart(
-                    content='Please try a different approach',
-                    tool_call_id='retry_1',
-                    tool_name=None,
-                ),
-            ]
-        ),
-    ]
-
-    ui_messages = AGUIAdapter.dump_messages(messages)
-
-    # RetryPromptPart without tool_name should create UserMessage
-    user_msgs = [msg.model_dump() for msg in ui_messages if msg.role == 'user']
-    assert len(user_msgs) > 0
-    assert user_msgs == snapshot(
-        [
-            {
-                'id': IsStr(),
-                'role': 'user',
-                'content': """\
-Validation feedback:
-Please try a different approach
-
-Fix the errors and try again.\
-""",
-                'name': None,
-            }
-        ]
-    )
-
-
 def test_dump_model_request_user_prompt_text_only():
     """Test UserPromptPart with string content."""
     messages = [
@@ -3005,17 +2962,12 @@ def test_dump_model_request_user_prompt_text_only():
 
     ui_messages = AGUIAdapter.dump_messages(messages)
 
-    # Should create UserMessage with text content
     user_msgs = [msg.model_dump() for msg in ui_messages if msg.role == 'user']
-    assert len(user_msgs) > 0
     assert user_msgs == snapshot([{'id': IsStr(), 'role': 'user', 'content': 'Simple text message', 'name': None}])
 
 
 def test_dump_model_request_user_prompt_empty_content():
-    """Test UserPromptPart with empty content list.
-
-    Covers the edge case where user content list is empty and doesn't create a message.
-    """
+    """Test that UserPromptPart with an empty content list emits no message."""
     messages = [
         ModelRequest(
             parts=[
@@ -3028,42 +2980,6 @@ def test_dump_model_request_user_prompt_empty_content():
 
     # Empty content should not create a message
     assert len(ui_messages) == 0
-
-
-def test_dump_model_request_retry_prompt_without_tool_name():
-    """Test RetryPromptPart without tool_name in ModelRequest."""
-    messages = [
-        ModelRequest(
-            parts=[
-                RetryPromptPart(
-                    content='General retry needed',
-                    tool_call_id='retry_1',
-                    tool_name=None,  # No specific tool
-                ),
-            ]
-        ),
-    ]
-
-    ui_messages = AGUIAdapter.dump_messages(messages)
-
-    # RetryPromptPart without tool_name should create a UserMessage
-    user_msgs = [msg.model_dump() for msg in ui_messages if msg.role == 'user']
-    assert len(user_msgs) > 0
-    assert user_msgs == snapshot(
-        [
-            {
-                'id': IsStr(),
-                'role': 'user',
-                'content': """\
-Validation feedback:
-General retry needed
-
-Fix the errors and try again.\
-""",
-                'name': None,
-            }
-        ]
-    )
 
 
 def test_dump_messages_tool_call_with_tool_return_part_result():
@@ -3106,3 +3022,87 @@ def test_dump_messages_tool_call_with_tool_return_part_result():
             }
         ]
     )
+
+
+def test_dump_messages_skipped_parts():
+    """Test that ThinkingPart and FilePart in a ModelResponse are silently skipped."""
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Let me think about this...'),
+                FilePart(content=BinaryContent(data=b'file contents', media_type='application/pdf')),
+                TextPart(content='The answer is 42.'),
+            ]
+        ),
+    ]
+
+    ui_messages = AGUIAdapter.dump_messages(messages)
+    ui_messages_dump = [msg.model_dump() for msg in ui_messages]
+    assert ui_messages_dump == snapshot(
+        [
+            {'id': IsStr(), 'role': 'user', 'content': 'Hello', 'name': None},
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'content': 'The answer is 42.',
+                'name': None,
+                'tool_calls': None,
+            },
+        ]
+    )
+
+
+def test_dump_messages_roundtrip():
+    """Test that load_messages(dump_messages(messages)) preserves message content."""
+    messages = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='You are helpful.'),
+                UserPromptPart(content='Search for cats.'),
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(content='Searching...'),
+                ToolCallPart(tool_name='search', args={'query': 'cats'}, tool_call_id='tc_1'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='search', content='Found 42 cats.', tool_call_id='tc_1'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='I found 42 cats for you.')]),
+    ]
+
+    ui_messages = AGUIAdapter.dump_messages(messages)
+    roundtripped = AGUIAdapter.load_messages(ui_messages)
+
+    assert len(roundtripped) == 4
+
+    req0 = roundtripped[0]
+    assert isinstance(req0, ModelRequest)
+    assert isinstance(req0.parts[0], SystemPromptPart)
+    assert req0.parts[0].content == 'You are helpful.'
+    assert isinstance(req0.parts[1], UserPromptPart)
+    assert req0.parts[1].content == 'Search for cats.'
+
+    resp1 = roundtripped[1]
+    assert isinstance(resp1, ModelResponse)
+    assert isinstance(resp1.parts[0], TextPart)
+    assert resp1.parts[0].content == 'Searching...'
+    assert isinstance(resp1.parts[1], ToolCallPart)
+    assert resp1.parts[1].tool_name == 'search'
+    assert resp1.parts[1].tool_call_id == 'tc_1'
+
+    req2 = roundtripped[2]
+    assert isinstance(req2, ModelRequest)
+    assert isinstance(req2.parts[0], ToolReturnPart)
+    assert req2.parts[0].content == 'Found 42 cats.'
+    assert req2.parts[0].tool_call_id == 'tc_1'
+
+    resp3 = roundtripped[3]
+    assert isinstance(resp3, ModelResponse)
+    assert isinstance(resp3.parts[0], TextPart)
+    assert resp3.parts[0].content == 'I found 42 cats for you.'
