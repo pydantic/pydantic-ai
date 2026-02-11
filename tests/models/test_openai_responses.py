@@ -57,7 +57,7 @@ from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, get_moc
 
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
-    from openai.types.responses import ResponseFunctionWebSearch
+    from openai.types.responses import ResponseCreatedEvent, ResponseFunctionWebSearch
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_text import ResponseOutputText
     from openai.types.responses.response_reasoning_item import (
@@ -10291,3 +10291,102 @@ async def test_background_retrieve_uses_response_id(allow_model_requests: None):
     retrieve_kwargs = get_mock_retrieve_kwargs(mock_client)
     assert len(retrieve_kwargs) == 1
     assert retrieve_kwargs[0]['response_id'] == 'resp_bg_123'
+
+
+async def test_background_request_stream_uses_retrieve_stream(allow_model_requests: None):
+    initial_response = ModelResponse(
+        parts=[],
+        model_name='gpt-4o',
+        provider_response_id='resp_bg_123',
+        expects_continuation=True,
+    )
+    queued_response = response_message([])
+    queued_response.id = 'resp_bg_123'
+    queued_response.status = 'queued'
+
+    mock_client = cast(AsyncOpenAI, MockOpenAIResponses(retrieve_stream=[[ResponseCreatedEvent(response=queued_response, sequence_number=0, type='response.created')]]))
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        messages=[
+            ModelRequest(parts=[UserPromptPart(content='test')]),
+            initial_response,
+        ],
+        model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+        model_request_parameters=ModelRequestParameters(),
+    ) as request_stream:
+        assert request_stream.expects_continuation is True
+        assert [event async for event in request_stream] == []
+
+    retrieve_kwargs = get_mock_retrieve_kwargs(mock_client)
+    assert len(retrieve_kwargs) == 1
+    assert retrieve_kwargs[0]['response_id'] == 'resp_bg_123'
+    assert retrieve_kwargs[0]['stream'] is True
+
+
+async def test_request_stream_handles_model_response_from_responses_create(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+):
+    """`request_stream` should gracefully handle `_responses_create()` returning `ModelResponse`."""
+    mock_client = cast(AsyncOpenAI, MockOpenAIResponses())
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    returned_response = ModelResponse(
+        parts=[],
+        model_name='gpt-4o',
+        provider_name='azure',
+        finish_reason='content_filter',
+        provider_details={'finish_reason': 'content_filter'},
+    )
+
+    async def mock_responses_create(
+        messages: list[ModelRequest | ModelResponse],
+        stream: bool,
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        assert stream is True
+        return returned_response
+
+    monkeypatch.setattr(model, '_responses_create', mock_responses_create)
+
+    async with model.request_stream(
+        messages=[ModelRequest(parts=[UserPromptPart(content='bad prompt')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    ) as request_stream:
+        assert [event async for event in request_stream] == []
+
+    model_response = request_stream.get()
+    assert model_response.parts == []
+    assert model_response.finish_reason == 'content_filter'
+    assert model_response.provider_name == 'azure'
+    assert model_response.provider_details == {'finish_reason': 'content_filter'}
+    assert model_response.expects_continuation is False
+
+
+@pytest.mark.parametrize('status', ['queued', 'in_progress'])
+async def test_stream_sets_expects_continuation_for_pending_statuses(
+    allow_model_requests: None,
+    status: Literal['queued', 'in_progress'],
+):
+    response = response_message([])
+    response.id = f'resp_{status}'
+    response.status = status
+
+    mock_client = MockOpenAIResponses.create_mock_stream(
+        [ResponseCreatedEvent(response=response, sequence_number=0, type='response.created')]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        messages=[ModelRequest(parts=[UserPromptPart(content='test')])],
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        model_request_parameters=ModelRequestParameters(),
+    ) as request_stream:
+        assert request_stream.expects_continuation is True
+        assert [event async for event in request_stream] == []
+
+    model_response = request_stream.get()
+    assert model_response.expects_continuation is True
+    assert model_response.provider_response_id == f'resp_{status}'

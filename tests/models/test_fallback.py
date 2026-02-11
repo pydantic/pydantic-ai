@@ -1062,3 +1062,74 @@ def test_fallback_secondary_continuation_fails() -> None:
         agent.run_sync('test')
     assert primary_calls == 1  # failed once, never retried
     assert fallback_calls == 2  # first returned continuation, second failed
+
+
+async def test_fallback_continuation_pin_isolated_per_run_id() -> None:
+    primary_calls: dict[str, int] = {}
+    fallback_calls: dict[str, int] = {}
+
+    def get_run_id(messages: list[ModelMessage]) -> str:
+        for message in reversed(messages):
+            if isinstance(message, (ModelRequest, ModelResponse)) and message.run_id is not None:
+                return message.run_id
+        raise AssertionError('expected `run_id` in message history')
+
+    def primary(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        run_id = get_run_id(messages)
+        primary_calls[run_id] = primary_calls.get(run_id, 0) + 1
+        if run_id == 'run-a':
+            if primary_calls[run_id] == 1:
+                return ModelResponse(
+                    parts=[TextPart('run-a pending')],
+                    expects_continuation=True,
+                    finish_reason='incomplete',
+                )
+            return ModelResponse(parts=[TextPart('run-a done')])
+        if run_id == 'run-b':
+            if primary_calls[run_id] == 1:
+                raise ModelHTTPError(status_code=500, model_name='primary', body='error')
+            raise AssertionError('run-b continuation should stay pinned to fallback')
+        raise AssertionError(f'unexpected run_id: {run_id}')
+
+    def fallback(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        run_id = get_run_id(messages)
+        fallback_calls[run_id] = fallback_calls.get(run_id, 0) + 1
+        if run_id == 'run-b':
+            if fallback_calls[run_id] == 1:
+                return ModelResponse(
+                    parts=[TextPart('run-b pending')],
+                    expects_continuation=True,
+                    finish_reason='incomplete',
+                )
+            return ModelResponse(parts=[TextPart('run-b done')])
+        raise AssertionError('run-a continuation should stay pinned to primary')
+
+    model = FallbackModel(FunctionModel(primary, model_name='primary'), FunctionModel(fallback, model_name='fallback'))
+    request_parameters = ModelRequestParameters()
+
+    run_a_first_messages = [ModelRequest(parts=[UserPromptPart('run-a')], run_id='run-a')]
+    run_a_first_response = await model.request(run_a_first_messages, None, request_parameters)
+    assert run_a_first_response.expects_continuation is True
+
+    run_b_first_messages = [ModelRequest(parts=[UserPromptPart('run-b')], run_id='run-b')]
+    run_b_first_response = await model.request(run_b_first_messages, None, request_parameters)
+    assert run_b_first_response.expects_continuation is True
+
+    run_a_continuation_messages = [
+        run_a_first_messages[0],
+        run_a_first_response,
+        ModelRequest(parts=[], run_id='run-a'),
+    ]
+    run_a_final_response = await model.request(run_a_continuation_messages, None, request_parameters)
+    assert run_a_final_response.text == 'run-a done'
+
+    run_b_continuation_messages = [
+        run_b_first_messages[0],
+        run_b_first_response,
+        ModelRequest(parts=[], run_id='run-b'),
+    ]
+    run_b_final_response = await model.request(run_b_continuation_messages, None, request_parameters)
+    assert run_b_final_response.text == 'run-b done'
+
+    assert primary_calls == {'run-a': 2, 'run-b': 1}
+    assert fallback_calls == {'run-b': 2}

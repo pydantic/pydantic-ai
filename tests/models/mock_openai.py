@@ -104,6 +104,7 @@ class MockOpenAIResponses:
     response_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     retrieve_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     retrieve_responses: Sequence[MockResponse] | None = None
+    retrieve_stream: Sequence[MockResponseStreamEvent] | Sequence[Sequence[MockResponseStreamEvent]] | None = None
     base_url: str = 'https://api.openai.com/v1'
 
     @cached_property
@@ -147,9 +148,16 @@ class MockOpenAIResponses:
         self, *_args: Any, stream: bool = False, **kwargs: Any
     ) -> responses.Response | MockAsyncStream[MockResponseStreamEvent]:
         self.retrieve_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
-        assert self.retrieve_responses is not None, 'retrieve_responses must be provided for retrieve calls'
-        raise_if_exception(self.retrieve_responses[self.retrieve_index])
-        response = cast(responses.Response, self.retrieve_responses[self.retrieve_index])
+        if stream:
+            assert self.retrieve_stream is not None, 'retrieve_stream must be provided for retrieve(stream=True) calls'
+            if isinstance(self.retrieve_stream[0], Sequence):
+                response = MockAsyncStream(iter(cast(list[MockResponseStreamEvent], self.retrieve_stream[self.retrieve_index])))
+            else:
+                response = MockAsyncStream(iter(cast(list[MockResponseStreamEvent], self.retrieve_stream)))
+        else:
+            assert self.retrieve_responses is not None, 'retrieve_responses must be provided for retrieve calls'
+            raise_if_exception(self.retrieve_responses[self.retrieve_index])
+            response = cast(responses.Response, self.retrieve_responses[self.retrieve_index])
         self.retrieve_index += 1
         return response
 

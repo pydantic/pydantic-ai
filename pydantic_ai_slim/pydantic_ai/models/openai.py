@@ -166,6 +166,11 @@ _RESPONSES_FINISH_REASON_MAP: dict[Literal['max_output_tokens', 'content_filter'
     'queued': 'incomplete',
 }
 
+
+def _response_status_expects_continuation(status: ResponseStatus | None) -> bool:
+    return status in ('queued', 'in_progress')
+
+
 _OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x1536', '1536x1024']] = {
     '1:1': '1024x1024',
     '2:3': '1024x1536',
@@ -1415,6 +1420,12 @@ class OpenAIResponsesModel(Model):
             response = await self._responses_retrieve(response_id, settings, stream=True)
         else:
             response = await self._responses_create(messages, True, settings, model_request_parameters)
+        if isinstance(response, ModelResponse):
+            yield _ModelResponseStreamedResponse(
+                model_request_parameters=model_request_parameters,
+                _model_response=response,
+            )
+            return
         async with response:
             yield await self._process_streamed_response(response, settings, model_request_parameters)
 
@@ -1536,7 +1547,7 @@ class OpenAIResponsesModel(Model):
             provider_details['timestamp'] = number_to_datetime(response.created_at)
 
         # Background mode: queued/in_progress responses expect a continuation via retrieve()
-        expects_continuation = response.status in ('queued', 'in_progress')
+        expects_continuation = _response_status_expects_continuation(response.status)
 
         return ModelResponse(
             parts=items,
@@ -1564,7 +1575,7 @@ class OpenAIResponsesModel(Model):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
         assert isinstance(first_chunk, responses.ResponseCreatedEvent)
-        return OpenAIResponsesStreamedResponse(
+        streamed_response = OpenAIResponsesStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=first_chunk.response.model,
             _model_settings=model_settings,
@@ -1575,6 +1586,8 @@ class OpenAIResponsesModel(Model):
             if first_chunk.response.created_at
             else None,
         )
+        streamed_response.expects_continuation = _response_status_expects_continuation(first_chunk.response.status)
+        return streamed_response
 
     @overload
     async def _responses_create(
@@ -1592,7 +1605,7 @@ class OpenAIResponsesModel(Model):
         stream: Literal[True],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> AsyncStream[responses.ResponseStreamEvent]: ...
+    ) -> AsyncStream[responses.ResponseStreamEvent] | ModelResponse: ...
 
     async def _responses_create(
         self,
@@ -2448,6 +2461,42 @@ class OpenAIStreamedResponse(StreamedResponse):
 
 
 @dataclass
+class _ModelResponseStreamedResponse(StreamedResponse):
+    """`StreamedResponse` wrapper for pre-built `ModelResponse` objects."""
+
+    _model_response: ModelResponse
+
+    def __post_init__(self) -> None:
+        self._usage = self._model_response.usage
+        self.provider_response_id = self._model_response.provider_response_id
+        self.provider_details = self._model_response.provider_details
+        self.finish_reason = self._model_response.finish_reason
+        self.expects_continuation = self._model_response.expects_continuation
+        for index, part in enumerate(self._model_response.parts):
+            self._parts_manager.handle_part(vendor_part_id=index, part=part)
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        if False:  # pragma: no cover
+            yield cast(ModelResponseStreamEvent, None)
+
+    @property
+    def model_name(self) -> str:
+        return self._model_response.model_name
+
+    @property
+    def provider_name(self) -> str | None:
+        return self._model_response.provider_name
+
+    @property
+    def provider_url(self) -> str | None:
+        return self._model_response.provider_url
+
+    @property
+    def timestamp(self) -> datetime:
+        return self._model_response.timestamp
+
+
+@dataclass
 class OpenAIResponsesStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for OpenAI Responses API."""
 
@@ -2458,6 +2507,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
+
+    def _set_expects_continuation(self, status: ResponseStatus | None) -> None:
+        self.expects_continuation = _response_status_expects_continuation(status)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         # Track annotations by item_id and content_index
@@ -2470,6 +2522,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
             if isinstance(chunk, responses.ResponseCompletedEvent):
                 self._usage += self._map_usage(chunk.response)
+                self._set_expects_continuation(chunk.response.status)
 
                 raw_finish_reason = (
                     details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
@@ -2486,11 +2539,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseCreatedEvent):
+                self._set_expects_continuation(chunk.response.status)
                 if chunk.response.id:  # pragma: no branch
                     self.provider_response_id = chunk.response.id
 
             elif isinstance(chunk, responses.ResponseFailedEvent):  # pragma: no cover
                 self._usage += self._map_usage(chunk.response)
+                self._set_expects_continuation(chunk.response.status)
 
             elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
                 maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -2505,9 +2560,15 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             elif isinstance(chunk, responses.ResponseIncompleteEvent):  # pragma: no cover
                 self._usage += self._map_usage(chunk.response)
+                self._set_expects_continuation(chunk.response.status)
 
             elif isinstance(chunk, responses.ResponseInProgressEvent):
                 self._usage += self._map_usage(chunk.response)
+                self._set_expects_continuation(chunk.response.status)
+
+            elif isinstance(chunk, responses.ResponseQueuedEvent):
+                self._usage += self._map_usage(chunk.response)
+                self._set_expects_continuation(chunk.response.status)
 
             elif isinstance(chunk, responses.ResponseOutputItemAddedEvent):
                 if isinstance(chunk.item, responses.ResponseFunctionToolCall):
