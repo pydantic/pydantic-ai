@@ -28,7 +28,7 @@ from ...tools import ToolApproved, ToolDefinition, ToolDenied
 from ..abstract import SchemaValidatorProt, ToolsetTool
 from ..function import FunctionToolset, FunctionToolsetTool
 from ..wrapper import WrapperToolset
-from ._sanitization import ToolNameMapping
+from ._sanitization import sanitize_tool_name
 from ._signature import Signature, signature_from_function, signature_from_schema
 
 
@@ -249,22 +249,38 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     runtime: CodeRuntime
     prompt_builder: Callable[..., str] = build_code_mode_prompt
     max_retries: int = 3
-    # TODO: _cached_signatures and _name_mapping are populated in get_tools() and consumed in
+    # TODO: _cached_signatures and _name_map are populated in get_tools() and consumed in
     # call_tool(). The agent framework guarantees get_tools() runs first, but this implicit ordering
     # dependency could trip up future contributors modifying either method independently.
     _cached_signatures: list[str] | None = field(default=None, init=False, repr=False)
-    _name_mapping: ToolNameMapping = field(default_factory=ToolNameMapping, init=False, repr=False)
+    _name_map: dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         wrapped_tools = await super().get_tools(ctx)
 
-        # Sanitize tool names to valid Python identifiers and build mapping
-        self._name_mapping = ToolNameMapping()
+        # Build sanitized name map: {sanitized_name: original_name}
+        # Code mode presents tools as Python function signatures to the LLM, which writes
+        # Python code calling them. Tool names from MCP etc. may not be valid Python
+        # identifiers (e.g. 'search-records', 'get.data'), so we sanitize them here.
+        # We don't use RenamedToolset because the name map is computed dynamically at
+        # get_tools() time and the renaming is internal (never exposed to the agent
+        # framework — all tools are collapsed into a single 'run_code' tool).
+        name_map: dict[str, str] = {}  # {sanitized: original}
+        for original_name in wrapped_tools:
+            sanitized = sanitize_tool_name(original_name)
+            base = sanitized
+            counter = 2
+            while sanitized in name_map:
+                sanitized = f'{base}_{counter}'
+                counter += 1
+            name_map[sanitized] = original_name
+        self._name_map = name_map
+
         sanitized_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         available_functions: list[str] = []
 
-        for original_name, tool in wrapped_tools.items():
-            sanitized_name = self._name_mapping.add(original_name)
+        for sanitized_name, original_name in name_map.items():
+            tool = wrapped_tools[original_name]
             sanitized_tools[sanitized_name] = tool
             sig = _get_tool_signature(
                 tool,
@@ -505,7 +521,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         original_name_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         sanitized_to_original: dict[str, str] = {}
         for sanitized, t in tool.original_tools.items():
-            orig = self._name_mapping.get_original(sanitized) or sanitized
+            orig = self._name_map.get(sanitized, sanitized)
             original_name_tools[orig] = t
             sanitized_to_original[sanitized] = orig
 
