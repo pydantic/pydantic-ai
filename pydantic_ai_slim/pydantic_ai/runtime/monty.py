@@ -5,6 +5,7 @@ import base64
 from typing import Any
 
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
+from pydantic_ai.messages import tool_return_ta
 from pydantic_ai.runtime.abstract import (
     CodeInterruptedError,
     CodeRuntime,
@@ -151,7 +152,8 @@ class MontyRuntime(CodeRuntime):
                 monty_results: dict[int, ExternalResult] = {}
                 for k, v in ckpt.completed_results.items():
                     reconstructed = checkpoint_result_ta.validate_json(base64.b64decode(v))
-                    monty_results[int(k)] = {'return_value': reconstructed}
+                    # Normalize to JSON-compatible form, matching the normal path
+                    monty_results[int(k)] = {'return_value': tool_return_ta.dump_python(reconstructed, mode='json')}
                 monty_state = monty_state.resume(results=monty_results)
                 if isinstance(monty_state, MontyComplete):
                     return monty_state.output
@@ -245,7 +247,13 @@ class MontyRuntime(CodeRuntime):
                 for task in done:
                     cid = task_to_cid[id(task)]
                     try:
-                        results[cid] = {'return_value': task.result()}
+                        raw = task.result()
+                        # Normalize to JSON-compatible form (dicts, lists, strings, numbers)
+                        # so that Monty's restricted interpreter can handle the value and
+                        # behavior is consistent with checkpoint resume (which also
+                        # round-trips through JSON) and with driver-based runtimes
+                        # (which serialize results over the JSON protocol).
+                        results[cid] = {'return_value': tool_return_ta.dump_python(raw, mode='json')}
                     except (CallDeferred, ApprovalRequired) as e:
                         interrupted_calls.append(InterruptedToolCall(reason=e, call=tool_call_id_to_call[cid]))
                     except Exception as e:

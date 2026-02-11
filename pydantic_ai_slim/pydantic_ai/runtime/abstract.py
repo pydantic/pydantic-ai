@@ -25,13 +25,11 @@ from pydantic_ai.messages import ToolReturnContent, tool_return_ta
 # from their JSON representations via the `kind` discriminator, rather than being
 # left as plain dicts after round-tripping through JSON.
 #
-# Known limitation: Pydantic BaseModel instances returned by tools lose their
-# model identity after checkpoint round-trip (they become plain dicts after
-# dump_python(mode='json')). This is acceptable for the current use case where
-# tool results are consumed as JSON-like data by the LLM code, but would need
-# addressing if downstream code relies on isinstance checks against specific
-# model classes.
-# TODO: Investigate preserving model identity through checkpoint serialization.
+# All runtimes normalize tool results to JSON-compatible form (via
+# tool_return_ta.dump_python(mode='json')) before the executing code sees them.
+# This means Pydantic BaseModel instances become plain dicts, bytes become base64
+# strings, etc. — ensuring consistent behavior between fresh runs and checkpoint
+# resumes, and across runtime implementations.
 checkpoint_result_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
     ToolReturnContent,
     config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64'),
