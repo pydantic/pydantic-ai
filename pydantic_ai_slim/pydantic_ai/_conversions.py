@@ -350,14 +350,20 @@ def _convert_legacy_request_events(event_name: str, event_list: list[dict[str, A
 def _convert_legacy_choice(message_body: dict[str, Any]) -> list[ModelResponsePart]:
     """Convert a ``gen_ai.choice`` event body to response parts."""
     parts: list[ModelResponsePart] = []
-    if 'content' not in message_body:
-        return parts
+    if 'content' in message_body:
+        content = message_body['content']
+        if isinstance(content, str):
+            parts.append(TextPart(content))
+        elif isinstance(content, list):
+            _extend_from_legacy_content_list(parts, cast(list[dict[str, Any]], content))
 
-    content = message_body['content']
-    if isinstance(content, str):
-        parts.append(TextPart(content))
-    elif isinstance(content, list):
-        _extend_from_legacy_content_list(parts, cast(list[dict[str, Any]], content))
+    tool_calls: list[dict[str, Any]] = message_body.get('tool_calls', [])
+    for tool_call in tool_calls:
+        tc_id: str = tool_call.get('id', _utils.generate_tool_call_id())
+        func: dict[str, Any] = tool_call.get('function', {})
+        tc_name: str = func.get('name', '')
+        tc_args: str | dict[str, Any] | None = func.get('arguments')
+        parts.append(ToolCallPart(tool_name=tc_name, args=tc_args, tool_call_id=tc_id))
     return parts
 
 

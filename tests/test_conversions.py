@@ -374,6 +374,75 @@ class TestLegacyEventsToModelMessages:
         assert isinstance(result[3], ModelResponse)
         assert result[3].text == 'It is sunny in London.'
 
+    def test_tool_calls_in_choice(self):
+        events = [
+            {'event.name': 'gen_ai.user.message', 'role': 'user', 'content': 'Weather?', 'gen_ai.message.index': 0},
+            {
+                'event.name': 'gen_ai.choice',
+                'gen_ai.message.index': 1,
+                'message': {
+                    'role': 'assistant',
+                    'tool_calls': [
+                        {
+                            'id': 'call_1',
+                            'type': 'function',
+                            'function': {'name': 'get_weather', 'arguments': '{"city":"London"}'},
+                        },
+                    ],
+                },
+            },
+            {
+                'event.name': 'gen_ai.tool.message',
+                'role': 'tool',
+                'id': 'call_1',
+                'name': 'get_weather',
+                'content': 'Sunny',
+                'gen_ai.message.index': 2,
+            },
+            {
+                'event.name': 'gen_ai.choice',
+                'gen_ai.message.index': 3,
+                'message': {
+                    'role': 'assistant',
+                    'content': 'It is sunny.',
+                    'tool_calls': [
+                        {
+                            'id': 'call_2',
+                            'type': 'function',
+                            'function': {'name': 'get_temp', 'arguments': '{"city":"London"}'},
+                        },
+                    ],
+                },
+            },
+        ]
+        result = otel_messages_to_model_messages(events)
+        assert len(result) == 4
+
+        # User
+        assert isinstance(result[0], ModelRequest)
+
+        # Choice with only tool calls
+        assert isinstance(result[1], ModelResponse)
+        assert len(result[1].parts) == 1
+        tc = result[1].parts[0]
+        assert isinstance(tc, ToolCallPart)
+        assert tc.tool_name == 'get_weather'
+        assert tc.args == '{"city":"London"}'
+        assert tc.tool_call_id == 'call_1'
+
+        # Tool return
+        assert isinstance(result[2], ModelRequest)
+
+        # Choice with both content and tool calls
+        assert isinstance(result[3], ModelResponse)
+        assert len(result[3].parts) == 2
+        assert isinstance(result[3].parts[0], TextPart)
+        assert result[3].parts[0].content == 'It is sunny.'
+        tc2 = result[3].parts[1]
+        assert isinstance(tc2, ToolCallPart)
+        assert tc2.tool_name == 'get_temp'
+        assert tc2.tool_call_id == 'call_2'
+
     def test_thinking_in_choice(self):
         events = [
             {'event.name': 'gen_ai.user.message', 'role': 'user', 'content': 'Think', 'gen_ai.message.index': 0},

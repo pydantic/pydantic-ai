@@ -340,7 +340,7 @@ If you store OTEL message attributes from Logfire (for example `pydantic_ai.all_
 `gen_ai.input.messages`/`gen_ai.output.messages` on model spans), you can convert them back into
 `ModelMessage` objects for reuse.
 
-```python {title="otel_messages_to_model_messages.py" test="skip"}
+```python {title="otel_messages_to_model_messages.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, model_messages_to_openai_format, otel_messages_to_model_messages
 
 agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
