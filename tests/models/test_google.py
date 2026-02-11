@@ -9,7 +9,7 @@ import re
 import tempfile
 from collections.abc import AsyncIterator
 from datetime import date, timezone
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from httpx import AsyncClient as HttpxAsyncClient, Timeout
@@ -2678,6 +2678,31 @@ async def test_google_timeout(allow_model_requests: None, google_provider: Googl
 
     with pytest.raises(UserError, match='Google does not support setting ModelSettings.timeout to a httpx.Timeout'):
         await agent.run('Hello!', model_settings={'timeout': Timeout(10)})
+
+
+async def test_google_extra_headers(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    agent = Agent(m, model_settings=GoogleModelSettings(extra_headers={'Extra-Header-Key': 'Extra-Header-Value'}))
+    result = await agent.run('Hello')
+    assert result.output == snapshot('Hello there! How can I help you today?\n')
+
+
+async def test_google_extra_headers_in_config(allow_model_requests: None):
+    m = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model_settings = GoogleModelSettings(extra_headers={'Extra-Header-Key': 'Extra-Header-Value'})
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    # Cast to work around GenerateContentConfigDict having partially unknown types
+    # (same pattern as google.py:308)
+    config_dict = cast(dict[str, Any], config)
+    headers = config_dict['http_options']['headers']
+    assert headers['Extra-Header-Key'] == 'Extra-Header-Value'
+    assert headers['Content-Type'] == 'application/json'
 
 
 async def test_google_tool_output(allow_model_requests: None, google_provider: GoogleProvider):
