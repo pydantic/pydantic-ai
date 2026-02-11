@@ -945,6 +945,82 @@ Don't include any text or Markdown fencing before or after.
 # --- Continuation pinning tests ---
 
 
+async def test_fallback_continuation_routes_from_identity_with_fresh_instance() -> None:
+    primary_calls = 0
+    fallback_calls = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal primary_calls
+        primary_calls += 1
+        if primary_calls == 1:
+            raise ModelHTTPError(status_code=500, model_name='primary', body='error')
+        raise AssertionError('Primary must not be used for metadata-routed continuation')
+
+    def fallback_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        if fallback_calls == 1:
+            return ModelResponse(parts=[TextPart('working...')], expects_continuation=True, finish_reason='incomplete')
+        return ModelResponse(parts=[TextPart('done')])
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    fallback_model_instance = FunctionModel(fallback_fn, model_name='fallback')
+    request_parameters = ModelRequestParameters()
+
+    first_request = ModelRequest(parts=[UserPromptPart(content='test')], run_id='run-a')
+    first_model = FallbackModel(primary_model, fallback_model_instance)
+    first_response = await first_model.request(
+        [first_request], model_settings=None, model_request_parameters=request_parameters
+    )
+    assert first_response.model_name == fallback_model_instance.model_name
+
+    fresh_model = FallbackModel(primary_model, fallback_model_instance)
+    second_response = await fresh_model.request(
+        [first_request, first_response, ModelRequest(parts=[], run_id='run-a')],
+        model_settings=None,
+        model_request_parameters=request_parameters,
+    )
+    assert second_response.text == 'done'
+    assert primary_calls == 1
+    assert fallback_calls == 2
+
+
+async def test_fallback_ambiguous_continuation_identity_falls_back_chain() -> None:
+    primary_calls = 0
+    secondary_calls = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal primary_calls
+        primary_calls += 1
+        raise ModelHTTPError(status_code=500, model_name='shared', body='error')
+
+    def secondary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal secondary_calls
+        secondary_calls += 1
+        return ModelResponse(parts=[TextPart('done')], model_name='shared')
+
+    model = FallbackModel(
+        FunctionModel(primary, model_name='shared'),
+        FunctionModel(secondary, model_name='shared'),
+    )
+    request_parameters = ModelRequestParameters()
+    continuation_response = ModelResponse(parts=[TextPart('pending')], model_name='shared', expects_continuation=True)
+
+    response = await model.request(
+        [
+            ModelRequest(parts=[UserPromptPart(content='test')], run_id='run-a'),
+            continuation_response,
+            ModelRequest(parts=[], run_id='run-a'),
+        ],
+        model_settings=None,
+        model_request_parameters=request_parameters,
+    )
+
+    assert response.text == 'done'
+    assert primary_calls == 1
+    assert secondary_calls == 1
+
+
 def test_fallback_primary_continuation_then_succeeds() -> None:
     """Primary returns expects_continuation=True, gets pinned, then returns normally. Fallback never called."""
     call_count = 0
