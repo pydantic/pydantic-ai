@@ -317,3 +317,51 @@ async def test_sequential_call_ids():
 
     proc.kill()
     await proc.wait()
+
+
+async def test_positional_args():
+    """Positional args are sent in the call message's args field."""
+    proc = await start_driver('await add(1, 2)', functions=['add'])
+
+    msg = await read_msg(proc)
+    assert msg['type'] == 'call'
+    assert msg['function'] == 'add'
+    assert msg['args'] == [1, 2]
+    assert msg['kwargs'] == {}
+
+    # Read calls_ready fence
+    msg = await read_msg(proc)
+    assert msg['type'] == 'calls_ready'
+
+    await send_msg(proc, {'type': 'result', 'id': 1, 'result': 3})
+
+    msg = await read_msg(proc)
+    assert msg['type'] == 'complete'
+    assert msg['result'] == 3
+
+    proc.kill()
+    await proc.wait()
+
+
+async def test_mixed_positional_and_keyword_args():
+    """Mixed positional and keyword args are split correctly."""
+    proc = await start_driver('await add(1, y=2)', functions=['add'])
+
+    msg = await read_msg(proc)
+    assert msg['type'] == 'call'
+    assert msg['function'] == 'add'
+    assert msg['args'] == [1]
+    assert msg['kwargs'] == {'y': 2}
+
+    # Read calls_ready fence
+    msg = await read_msg(proc)
+    assert msg['type'] == 'calls_ready'
+
+    await send_msg(proc, {'type': 'result', 'id': 1, 'result': 3})
+
+    msg = await read_msg(proc)
+    assert msg['type'] == 'complete'
+    assert msg['result'] == 3
+
+    proc.kill()
+    await proc.wait()

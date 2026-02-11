@@ -8,7 +8,7 @@ from typing import Any
 
 import pydantic
 
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.messages import ToolReturnContent, tool_return_ta
 from pydantic_ai.runtime.abstract import (
     CodeInterruptedError,
@@ -291,7 +291,10 @@ class MontyRuntime(CodeRuntime):
                 monty_state = monty_state.resume(future=...)
             elif isinstance(monty_state, MontyFutureSnapshot):
                 pending_ids = monty_state.pending_call_ids or []
-                pending = [tasks[cid] for cid in pending_ids if cid in tasks]
+                missing = [cid for cid in pending_ids if cid not in tasks]
+                if missing:
+                    raise CodeRuntimeError(f'Monty expects results for call IDs {missing} but no tasks exist')
+                pending = [tasks[cid] for cid in pending_ids]
                 if not pending:
                     # No pending tasks - this can happen if all results are already available
                     # Just provide empty results and let Monty continue
@@ -307,14 +310,10 @@ class MontyRuntime(CodeRuntime):
                         results[cid] = {'return_value': task.result()}
                     except (CallDeferred, ApprovalRequired) as e:
                         interrupted_calls.append(InterruptedToolCall(type=e, call=tool_call_id_to_call[cid]))
-                    except ModelRetry:
-                        for remaining in tasks.values():
-                            remaining.cancel()
-                        raise
                     except Exception as e:
                         for remaining in tasks.values():
                             remaining.cancel()
-                        raise ModelRetry(str(e))
+                        raise CodeRuntimeError(f'Tool execution error: {e}') from e
                     del tasks[cid]
 
                 # Save checkpoint BEFORE advancing if there are interrupted calls.

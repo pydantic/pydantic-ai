@@ -93,7 +93,7 @@ def _build_proxy(
     next ``await``.
     """
 
-    def proxy(**kwargs: Any) -> asyncio.Future[Any]:
+    def proxy(*args: Any, **kwargs: Any) -> asyncio.Future[Any]:
         call_counter[0] += 1
         cid = call_counter[0]
 
@@ -104,7 +104,7 @@ def _build_proxy(
 
         future: asyncio.Future[Any] = loop.create_future()
         pending_futures[cid] = future
-        _write_msg({'type': 'call', 'id': cid, 'function': name, 'args': [], 'kwargs': kwargs})
+        _write_msg({'type': 'call', 'id': cid, 'function': name, 'args': list(args), 'kwargs': kwargs})
 
         # Schedule a calls_ready fence to fire when the event loop runs next.
         if calls_ready_handle[0] is not None:

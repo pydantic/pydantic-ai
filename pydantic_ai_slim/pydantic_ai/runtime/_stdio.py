@@ -17,7 +17,7 @@ from typing import Any
 
 import pydantic
 
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.messages import ToolReturnContent, tool_return_ta
 from pydantic_ai.runtime.abstract import (
     CodeInterruptedError,
@@ -148,7 +148,7 @@ class StdioSandboxRuntime(CodeRuntime):
         process = await self._start_driver(init_msg)
         try:
             return await self._execution_loop(process, call_tool)
-        except (CodeInterruptedError, CodeSyntaxError, CodeRuntimeError, ModelRetry):
+        except (CodeInterruptedError, CodeSyntaxError, CodeRuntimeError):
             raise
         except Exception as e:
             raise CodeRuntimeError(f'Driver communication error: {e}') from e
@@ -166,10 +166,14 @@ class StdioSandboxRuntime(CodeRuntime):
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             raise CodeRuntimeError(f'Invalid checkpoint data: {e}')
 
-        # Build result cache: decode base64-encoded results for the driver
+        # Build result cache: decode base64-encoded results for the driver.
+        # Normalize to JSON-compatible form so the init_msg can be serialized
+        # with json.dumps — validate_json may reconstruct Pydantic model instances
+        # that aren't JSON-serializable without an explicit dump step.
         result_cache: dict[str, Any] = {}
         for k, v in ckpt.completed_results.items():
-            result_cache[k] = _checkpoint_result_ta.validate_json(base64.b64decode(v))
+            reconstructed = _checkpoint_result_ta.validate_json(base64.b64decode(v))
+            result_cache[k] = tool_return_ta.dump_python(reconstructed, mode='json')
 
         init_msg: dict[str, Any] = {
             'type': 'init',
@@ -180,7 +184,7 @@ class StdioSandboxRuntime(CodeRuntime):
         process = await self._start_driver(init_msg)
         try:
             return await self._execution_loop(process, call_tool)
-        except (CodeInterruptedError, CodeSyntaxError, CodeRuntimeError, ModelRetry):
+        except (CodeInterruptedError, CodeSyntaxError, CodeRuntimeError):
             raise
         except Exception as e:
             raise CodeRuntimeError(f'Driver communication error: {e}') from e
@@ -195,6 +199,7 @@ class StdioSandboxRuntime(CodeRuntime):
         completed_results: dict[int, Any] = {}
         interrupted_calls: list[InterruptedToolCall] = []
         tool_tasks: dict[int, asyncio.Task[Any]] = {}
+        task_id_to_cid: dict[int, int] = {}
         call_id_to_fc: dict[int, FunctionCall] = {}
         calls_ready_seen = False
 
@@ -207,15 +212,20 @@ class StdioSandboxRuntime(CodeRuntime):
 
                 for task in done:
                     if task is stdout_task:
-                        result = await self._handle_stdout(task, process, call_tool, tool_tasks, call_id_to_fc)
+                        result = await self._handle_stdout(
+                            task, process, call_tool, tool_tasks, task_id_to_cid, call_id_to_fc
+                        )
                         if result is _CALLS_READY:
                             calls_ready_seen = True
+                        elif result is _NEW_CALL:
+                            calls_ready_seen = False
                         elif result is not _SENTINEL:
                             return result
                         stdout_task = asyncio.ensure_future(process.read_line())
                     else:
                         await self._handle_tool_done(
-                            task, process, tool_tasks, call_id_to_fc, completed_results, interrupted_calls, stdout_task
+                            task, process, tool_tasks, task_id_to_cid, call_id_to_fc,
+                            completed_results, interrupted_calls, stdout_task,
                         )
 
                 # Only interrupt once we've received the calls_ready fence
@@ -228,10 +238,10 @@ class StdioSandboxRuntime(CodeRuntime):
                     checkpoint = _serialize_checkpoint(completed_results, interrupted_calls)
                     raise CodeInterruptedError(interrupted_calls=interrupted_calls, checkpoint=checkpoint)
 
-        except (CodeInterruptedError, CodeSyntaxError, CodeRuntimeError, ModelRetry):
+        except (CodeInterruptedError, CodeSyntaxError, CodeRuntimeError):
             raise
         except Exception as e:
-            await self._cancel_all(tool_tasks, stdout_task, process)
+            await _cancel_all(tool_tasks, stdout_task, process)
             raise CodeRuntimeError(f'Execution loop error: {e}') from e
 
     @staticmethod
@@ -240,6 +250,7 @@ class StdioSandboxRuntime(CodeRuntime):
         process: DriverProcess,
         call_tool: ToolCallback,
         tool_tasks: dict[int, asyncio.Task[Any]],
+        task_id_to_cid: dict[int, int],
         call_id_to_fc: dict[int, FunctionCall],
     ) -> Any:
         """Handle a completed stdout read task. Returns _SENTINEL to continue, or the final result."""
@@ -256,7 +267,7 @@ class StdioSandboxRuntime(CodeRuntime):
         try:
             msg = json.loads(raw)
         except json.JSONDecodeError:
-            return _SENTINEL
+            raise CodeRuntimeError(f'Malformed protocol message from driver: {raw[:200]!r}')
 
         msg_type = msg.get('type')
 
@@ -269,7 +280,10 @@ class StdioSandboxRuntime(CodeRuntime):
                 kwargs=msg.get('kwargs', {}),
             )
             call_id_to_fc[cid] = fc
-            tool_tasks[cid] = asyncio.ensure_future(call_tool(fc))
+            t = asyncio.ensure_future(call_tool(fc))
+            tool_tasks[cid] = t
+            task_id_to_cid[id(t)] = cid
+            return _NEW_CALL
         elif msg_type == 'calls_ready':
             return _CALLS_READY
         elif msg_type == 'complete':
@@ -290,15 +304,14 @@ class StdioSandboxRuntime(CodeRuntime):
         task: asyncio.Task[Any],
         process: DriverProcess,
         tool_tasks: dict[int, asyncio.Task[Any]],
+        task_id_to_cid: dict[int, int],
         call_id_to_fc: dict[int, FunctionCall],
         completed_results: dict[int, Any],
         interrupted_calls: list[InterruptedToolCall],
         stdout_task: asyncio.Task[Any],
     ) -> None:
         """Handle a completed tool task: send result, accumulate interrupt, or propagate error."""
-        cid = _task_to_cid(task, tool_tasks)
-        if cid is None:
-            return
+        cid = task_id_to_cid.pop(id(task))
         del tool_tasks[cid]
 
         try:
@@ -309,42 +322,15 @@ class StdioSandboxRuntime(CodeRuntime):
         except (ApprovalRequired, CallDeferred) as e:
             fc = call_id_to_fc[cid]
             interrupted_calls.append(InterruptedToolCall(type=e, call=fc))
-        except ModelRetry:
-            await _cancel_all(tool_tasks, stdout_task, process)
-            raise
         except Exception as e:
             await _cancel_all(tool_tasks, stdout_task, process)
-            raise ModelRetry(str(e))
-
-    @staticmethod
-    async def _cancel_all(
-        tool_tasks: dict[int, asyncio.Task[Any]],
-        stdout_task: asyncio.Task[Any],
-        process: DriverProcess,
-    ) -> None:
-        """Cancel all pending tasks and kill the driver process."""
-        for t in tool_tasks.values():
-            t.cancel()
-        stdout_task.cancel()
-        for t in [*tool_tasks.values(), stdout_task]:
-            await _cancel_task(t)
-        try:
-            await process.kill()
-        except Exception:
-            pass
+            raise CodeRuntimeError(f'Tool execution error: {e}') from e
 
 
 # Sentinel objects for _handle_stdout return values
 _SENTINEL = object()  # "continue loop, no special action"
 _CALLS_READY = object()  # "all calls for this batch have been dispatched"
-
-
-def _task_to_cid(task: asyncio.Task[Any], tool_tasks: dict[int, asyncio.Task[Any]]) -> int | None:
-    """Find the call ID for a completed tool task."""
-    for cid, t in tool_tasks.items():
-        if t is task:
-            return cid
-    return None
+_NEW_CALL = object()  # "a new call was dispatched; reset calls_ready_seen"
 
 
 async def _cancel_task(task: asyncio.Task[Any]) -> None:
