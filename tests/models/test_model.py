@@ -248,6 +248,7 @@ def test_infer_model(
 
         # Test that model_id matches the provider:model string that was passed in
         assert m.model_id == f'{expected_system}:{expected_model_name}'
+
         m2 = infer_model(m)
         assert m2 is m
 
