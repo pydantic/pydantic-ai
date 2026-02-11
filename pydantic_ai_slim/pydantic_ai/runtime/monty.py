@@ -247,7 +247,7 @@ class MontyRuntime(CodeRuntime):
                     try:
                         results[cid] = {'return_value': task.result()}
                     except (CallDeferred, ApprovalRequired) as e:
-                        interrupted_calls.append(InterruptedToolCall(type=e, call=tool_call_id_to_call[cid]))
+                        interrupted_calls.append(InterruptedToolCall(reason=e, call=tool_call_id_to_call[cid]))
                     except Exception as e:
                         # Intentional broad catch: this is a defensive boundary between
                         # the runtime and the tool execution layer. Tool implementation

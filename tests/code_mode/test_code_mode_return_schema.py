@@ -8,6 +8,7 @@ import pytest
 from pydantic_core import SchemaValidator, core_schema
 
 from pydantic_ai._run_context import RunContext
+from pydantic_ai.runtime.monty import MontyRuntime
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.code_mode import CodeModeToolset
@@ -52,7 +53,7 @@ class ReturnSchemaToolset(AbstractToolset[None]):
 
 
 async def test_code_mode_includes_return_schema_signature():
-    code_mode = CodeModeToolset(wrapped=ReturnSchemaToolset())
+    code_mode = CodeModeToolset(wrapped=ReturnSchemaToolset(), runtime=MontyRuntime())
     tools = await code_mode.get_tools(build_run_context())
     description = tools['run_code'].tool_def.description or ''
 

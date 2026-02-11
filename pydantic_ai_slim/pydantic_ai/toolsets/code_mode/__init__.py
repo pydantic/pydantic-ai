@@ -44,14 +44,14 @@ class InterruptedCall(TypedDict):
         tool_name: The name of the tool that was called.
         args: Positional arguments passed to the tool.
         kwargs: Keyword arguments passed to the tool.
-        type: Whether this call needs 'approval' or 'external' execution.
+        kind: Whether this call needs 'approval' or 'external' execution.
     """
 
     call_id: str
     tool_name: str
     args: tuple[Any, ...]
     kwargs: dict[str, Any]
-    type: Literal['approval', 'external']
+    kind: Literal['approval', 'external']
 
 
 class CodeModeContext(TypedDict):
@@ -107,13 +107,6 @@ __all__ = (
     'InterruptedCall',
     'build_code_mode_prompt',
 )
-
-
-def _default_runtime() -> CodeRuntime:
-    """Lazy default factory: imports MontyRuntime only at instantiation time."""
-    from pydantic_ai.runtime.monty import MontyRuntime
-
-    return MontyRuntime()
 
 
 class _CodeToolArguments(TypedDict):
@@ -274,7 +267,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 callback after deserialization.
     """
 
-    runtime: CodeRuntime = field(default_factory=_default_runtime)
+    runtime: CodeRuntime
     prompt_builder: Callable[..., str] = build_code_mode_prompt
     max_retries: int = 3
     tool_name_prefix: str | None = None
@@ -282,7 +275,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     # TODO: _cached_signatures and _name_mapping are populated in get_tools() and consumed in
     # call_tool(). The agent framework guarantees get_tools() runs first, but this implicit ordering
     # dependency could trip up future contributors modifying either method independently.
-    _cached_signatures: list[str] = field(default_factory=lambda: [], init=False, repr=False)
+    _cached_signatures: list[str] | None = field(default=None, init=False, repr=False)
     _name_mapping: ToolNameMapping = field(default_factory=ToolNameMapping, init=False, repr=False)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
@@ -414,7 +407,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 'tool_name': ic.call.function_name,
                 'args': ic.call.args,
                 'kwargs': ic.call.kwargs,
-                'type': 'approval' if isinstance(ic.type, ApprovalRequired) else 'external',
+                'kind': 'approval' if isinstance(ic.reason, ApprovalRequired) else 'external',
             }
             for ic in e.interrupted_calls
         ]
@@ -529,6 +522,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         if not isinstance(code, str):
             raise exceptions.UserError(
                 f'CodeModeToolset.call_tool expected code to be a string, got {type(code).__name__}'
+            )
+        if self._cached_signatures is None:
+            raise exceptions.UserError(
+                'CodeModeToolset.call_tool called before get_tools — signatures not initialized'
             )
 
         original_name_tools: dict[str, ToolsetTool[AgentDepsT]] = {}

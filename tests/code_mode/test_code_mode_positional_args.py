@@ -8,6 +8,7 @@ import pytest
 from pydantic_core import SchemaValidator, core_schema
 
 from pydantic_ai._run_context import RunContext
+from pydantic_ai.runtime.monty import MontyRuntime
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.code_mode import CodeModeToolset
@@ -56,7 +57,7 @@ class MisorderedParamsToolset(AbstractToolset[None]):
 )
 async def test_code_mode_positional_args_respects_signature_order():
     """Positional args should map to the tool signature, not schema property order."""
-    code_mode = CodeModeToolset(wrapped=MisorderedParamsToolset())
+    code_mode = CodeModeToolset(wrapped=MisorderedParamsToolset(), runtime=MontyRuntime())
     run_context = build_run_context()
 
     tools = await code_mode.get_tools(run_context)

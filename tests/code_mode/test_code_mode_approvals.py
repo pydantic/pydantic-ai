@@ -109,7 +109,7 @@ async def _resume(
 def _approve_all(interrupted_calls: list[InterruptedCall]) -> dict[str, object]:
     """Build results dict: ToolApproved for approvals, 'ext_result' for externals."""
     return {
-        ic['call_id']: ToolApproved() if ic['type'] == 'approval' else 'ext_result'
+        ic['call_id']: ToolApproved() if ic['kind'] == 'approval' else 'ext_result'
         for ic in interrupted_calls
     }
 
@@ -166,14 +166,14 @@ r2 = await f2
                             'tool_name': 'external_service',
                             'args': (),
                             'kwargs': {'data': 'test'},
-                            'type': 'external',
+                            'kind': 'external',
                         },
                         {
                             'call_id': IsStr(),
                             'tool_name': 'sensitive_action',
                             'args': (),
                             'kwargs': {'value': 42},
-                            'type': 'approval',
+                            'kind': 'approval',
                         },
                     ],
                     'code': IsStr(),

@@ -7,7 +7,7 @@ from inline_snapshot import snapshot
 from pydantic_monty import Monty
 
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.runtime.monty import _build_type_check_prefix  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.runtime.monty import MontyRuntime, _build_type_check_prefix  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.toolsets.code_mode import CodeModeToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 
@@ -26,7 +26,7 @@ async def test_type_error_raises_model_retry():
     toolset: FunctionToolset[None] = FunctionToolset()
     toolset.add_function(add, takes_ctx=False)
 
-    code_mode = CodeModeToolset(wrapped=toolset)
+    code_mode = CodeModeToolset(wrapped=toolset, runtime=MontyRuntime())
     ctx = build_run_context()
     tools = await code_mode.get_tools(ctx)
 
@@ -52,7 +52,7 @@ async def test_syntax_error_raises_model_retry():
     toolset: FunctionToolset[None] = FunctionToolset()
     toolset.add_function(add, takes_ctx=False)
 
-    code_mode = CodeModeToolset(wrapped=toolset)
+    code_mode = CodeModeToolset(wrapped=toolset, runtime=MontyRuntime())
     ctx = build_run_context()
     tools = await code_mode.get_tools(ctx)
 
@@ -77,7 +77,7 @@ async def test_valid_code_executes_successfully():
     toolset: FunctionToolset[None] = FunctionToolset()
     toolset.add_function(add, takes_ctx=False)
 
-    code_mode = CodeModeToolset(wrapped=toolset)
+    code_mode = CodeModeToolset(wrapped=toolset, runtime=MontyRuntime())
     ctx = build_run_context()
     tools = await code_mode.get_tools(ctx)
 
@@ -98,11 +98,12 @@ async def test_generated_signatures_are_valid_python():
     toolset: FunctionToolset[None] = FunctionToolset()
     toolset.add_function(add, takes_ctx=False)
 
-    code_mode = CodeModeToolset(wrapped=toolset)
+    code_mode = CodeModeToolset(wrapped=toolset, runtime=MontyRuntime())
     ctx = build_run_context()
     await code_mode.get_tools(ctx)
 
     # Build the prefix that will be used for type checking
+    assert code_mode._cached_signatures is not None  # pyright: ignore[reportPrivateUsage]
     prefix = _build_type_check_prefix(code_mode._cached_signatures)  # pyright: ignore[reportPrivateUsage]
 
     # `...` and `pass` are not valid for Monty/ty type checking - ty is intentionally
@@ -126,7 +127,7 @@ async def test_signatures_use_ellipsis_monty_converts_for_type_check():
     toolset: FunctionToolset[None] = FunctionToolset()
     toolset.add_function(add, takes_ctx=False)
 
-    code_mode = CodeModeToolset(wrapped=toolset)
+    code_mode = CodeModeToolset(wrapped=toolset, runtime=MontyRuntime())
     ctx = build_run_context()
     tools = await code_mode.get_tools(ctx)
 
@@ -136,6 +137,7 @@ async def test_signatures_use_ellipsis_monty_converts_for_type_check():
     assert 'raise NotImplementedError()' not in description
 
     # Cached signatures should also have '...' (not NotImplementedError)
+    assert code_mode._cached_signatures is not None  # pyright: ignore[reportPrivateUsage]
     assert all('...' in sig for sig in code_mode._cached_signatures)  # pyright: ignore[reportPrivateUsage]
     assert not any('raise NotImplementedError()' in sig for sig in code_mode._cached_signatures)  # pyright: ignore[reportPrivateUsage]
 

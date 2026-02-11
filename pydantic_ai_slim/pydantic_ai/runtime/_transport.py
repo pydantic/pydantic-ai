@@ -313,8 +313,8 @@ class DriverBasedRuntime(CodeRuntime):
             result_msg = json.dumps({'type': 'result', 'id': cid, 'result': json_result}) + '\n'
             await process.write_line(result_msg.encode())
         except (ApprovalRequired, CallDeferred) as e:
-            fc = call_id_to_fc[cid]
-            interrupted_calls.append(InterruptedToolCall(type=e, call=fc))
+            fc = call_id_to_fc.pop(cid)
+            interrupted_calls.append(InterruptedToolCall(reason=e, call=fc))
         except Exception as e:
             # Intentional broad catch: this is a defensive boundary between the runtime
             # protocol and the tool execution layer. Tool implementation bugs get wrapped

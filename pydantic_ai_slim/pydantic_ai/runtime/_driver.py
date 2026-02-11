@@ -154,6 +154,7 @@ async def _stdin_reader(
         try:
             msg = json.loads(raw)
         except json.JSONDecodeError:
+            sys.stderr.write(f'Warning: malformed JSON from host: {raw[:200]!r}\n')
             continue
 
         msg_type = msg.get('type')

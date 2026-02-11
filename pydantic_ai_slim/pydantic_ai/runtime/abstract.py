@@ -87,11 +87,11 @@ class InterruptedToolCall:
     deferred ([`CallDeferred`][pydantic_ai.exceptions.CallDeferred]).
 
     Attributes:
-        type: The exception that caused the interruption.
+        reason: The exception that caused the interruption.
         call: The function call that was interrupted.
     """
 
-    type: ApprovalRequired | CallDeferred
+    reason: ApprovalRequired | CallDeferred
     call: FunctionCall
 
 

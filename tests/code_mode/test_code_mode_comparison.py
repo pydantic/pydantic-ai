@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai.runtime.monty import MontyRuntime
 from pydantic_ai.toolsets.code_mode import CodeModeToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 
@@ -26,7 +27,7 @@ async def test_code_mode_with_real_model(allow_model_requests: None):
     toolset: FunctionToolset[None] = FunctionToolset()
     toolset.add_function(get_weather, takes_ctx=False)
 
-    code_mode_toolset = CodeModeToolset(wrapped=toolset)
+    code_mode_toolset = CodeModeToolset(wrapped=toolset, runtime=MontyRuntime())
 
     agent: Agent[None, str] = Agent('gateway/anthropic:claude-sonnet-4-5')
 

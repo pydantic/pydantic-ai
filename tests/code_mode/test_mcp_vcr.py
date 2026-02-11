@@ -18,6 +18,7 @@ with try_import() as imports_successful:
     from pydantic_ai.mcp import MCPServerStdio
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.runtime.monty import MontyRuntime
     from pydantic_ai.toolsets.code_mode import CodeModeToolset
     from pydantic_ai.toolsets.combined import CombinedToolset
     from pydantic_ai.toolsets.function import FunctionToolset
@@ -61,7 +62,7 @@ async def test_code_mode_with_logfire_mcp(
     user_toolset.add_function(format_as_csv, takes_ctx=False)
 
     combined = CombinedToolset([logfire_server, user_toolset])
-    code_mode = CodeModeToolset(wrapped=combined)
+    code_mode = CodeModeToolset(wrapped=combined, runtime=MontyRuntime())
 
     async with code_mode:
         result = await agent.run(

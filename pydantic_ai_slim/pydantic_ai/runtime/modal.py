@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import modal
+    import modal.container_process
 
 from pydantic_ai.runtime._transport import DriverBasedRuntime, DriverTransport
 
@@ -24,7 +25,7 @@ from pydantic_ai.runtime._transport import DriverBasedRuntime, DriverTransport
 class _ModalDriverTransport(DriverTransport):
     """DriverTransport wrapping a Modal ``ContainerProcess``."""
 
-    def __init__(self, process: Any, sandbox: Any):
+    def __init__(self, process: modal.container_process.ContainerProcess[str], sandbox: modal.Sandbox):
         self._process = process
         self._sandbox = sandbox
         self._stdout_iter = process.stdout.__aiter__()

@@ -19,20 +19,16 @@ from typing import Any, Union, cast, get_origin
 
 from pydantic import BaseModel, TypeAdapter
 from pydantic._internal import _typing_extra
+from typing_extensions import is_typeddict
 
 from ..._function_schema import _is_call_ctx  # pyright: ignore[reportPrivateUsage]
-
-
-def _is_typeddict(t: Any) -> bool:
-    """Check if a type is a `TypedDict` subclass."""
-    return isinstance(t, type) and hasattr(t, '__annotations__') and hasattr(t, '__total__')
 
 
 def _is_named_type(t: Any) -> bool:
     """Check if a type is a `BaseModel`, dataclass, or `TypedDict` that needs a definition."""
     if not isinstance(t, type):
         return False
-    return issubclass(t, BaseModel) or dataclasses.is_dataclass(t) or _is_typeddict(t)  # pyright: ignore[reportUnknownArgumentType]
+    return issubclass(t, BaseModel) or dataclasses.is_dataclass(t) or is_typeddict(t)  # pyright: ignore[reportUnknownArgumentType]
 
 
 def _get_schema_from_type(t: Any) -> dict[str, Any]:

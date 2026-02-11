@@ -15,6 +15,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.runtime.monty import MontyRuntime
 from pydantic_ai.toolsets.code_mode import CodeModeToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_evals import Case, Dataset
@@ -360,7 +361,7 @@ async def run_traditional(inputs: TaskInput) -> TaskOutput:
 async def run_code_mode(inputs: TaskInput) -> TaskOutput:
     """Run task in code mode - Python code execution."""
     toolset = _create_toolset()
-    code_toolset = CodeModeToolset(wrapped=toolset)
+    code_toolset = CodeModeToolset(wrapped=toolset, runtime=MontyRuntime())
     agent: Agent[None, str] = Agent('gateway/anthropic:claude-sonnet-4-5')
 
     async with code_toolset:
