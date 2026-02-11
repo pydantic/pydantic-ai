@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import AsyncIterator, Callable
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
@@ -19,6 +19,8 @@ if TYPE_CHECKING:
     from ..messages import ModelMessage, ModelResponse
     from ..settings import ModelSettings
 
+_FALLBACK_MODEL_NAME_KEY = 'fallback_model_name'
+
 
 @dataclass(init=False)
 class FallbackModel(Model):
@@ -30,7 +32,6 @@ class FallbackModel(Model):
     models: list[Model]
 
     _fallback_on: Callable[[Exception], bool]
-    _continuation_models: dict[str, Model] = field(repr=False)
 
     def __init__(
         self,
@@ -47,7 +48,6 @@ class FallbackModel(Model):
         """
         super().__init__()
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
-        self._continuation_models = {}
 
         if isinstance(fallback_on, tuple):
             self._fallback_on = _default_fallback_condition_factory(fallback_on)  # pyright: ignore[reportUnknownArgumentType]
@@ -82,12 +82,11 @@ class FallbackModel(Model):
         raises an error during continuation, it propagates directly without falling back to
         other models.
         """
-        run_id = _get_run_id(messages)
-        if run_id and (pinned := self._continuation_models.get(run_id)):
+        if pinned := self._get_continuation_model(messages):
             _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
             response = await pinned.request(messages, model_settings, model_request_parameters)
-            if not response.expects_continuation:
-                del self._continuation_models[run_id]
+            if response.expects_continuation:
+                _stamp_continuation(response, pinned)
             self._set_span_attributes(pinned, prepared_parameters)
             return response
 
@@ -103,8 +102,8 @@ class FallbackModel(Model):
                     continue
                 raise exc
 
-            if response.expects_continuation and run_id:
-                self._continuation_models[run_id] = model
+            if response.expects_continuation:
+                _stamp_continuation(response, model)
             self._set_span_attributes(model, prepared_parameters)
             return response
 
@@ -125,8 +124,7 @@ class FallbackModel(Model):
         raises an error during continuation, it propagates directly without falling back to
         other models.
         """
-        run_id = _get_run_id(messages)
-        if run_id and (pinned := self._continuation_models.get(run_id)):
+        if pinned := self._get_continuation_model(messages):
             async with AsyncExitStack() as stack:
                 _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                 streamed_response = await stack.enter_async_context(
@@ -134,9 +132,8 @@ class FallbackModel(Model):
                 )
                 self._set_span_attributes(pinned, prepared_parameters)
                 yield streamed_response
-                # After stream consumed: clear pin if continuation is done
-                if not streamed_response.expects_continuation:
-                    del self._continuation_models[run_id]
+                if streamed_response.expects_continuation:
+                    _stamp_continuation_stream(streamed_response, pinned)
                 return
 
         exceptions: list[Exception] = []
@@ -156,9 +153,8 @@ class FallbackModel(Model):
 
                 self._set_span_attributes(model, prepared_parameters)
                 yield streamed_response
-                # After stream consumed: pin model if it expects continuation
-                if streamed_response.expects_continuation and run_id:
-                    self._continuation_models[run_id] = model
+                if streamed_response.expects_continuation:
+                    _stamp_continuation_stream(streamed_response, model)
                 return
 
         raise FallbackExceptionGroup('All models from FallbackModel failed', exceptions)
@@ -175,6 +171,25 @@ class FallbackModel(Model):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         return model_settings, model_request_parameters
 
+    def _get_continuation_model(self, messages: list[ModelMessage]) -> Model | None:
+        """Find the model that should handle continuation from message history.
+
+        When a model returns `expects_continuation=True`, its `model_name` is stamped into
+        the response's `provider_details`. On the next request, we extract that name and
+        match it back to the correct model in `self.models`.
+        """
+        for message in reversed(messages):
+            if isinstance(message, ModelResponse):
+                if not message.expects_continuation:
+                    return None
+                name = (message.provider_details or {}).get(_FALLBACK_MODEL_NAME_KEY)
+                if name:
+                    for model in self.models:
+                        if model.model_name == name:
+                            return model
+                return None
+        return None
+
     def _set_span_attributes(self, model: Model, model_request_parameters: ModelRequestParameters):
         with suppress(Exception):
             span = get_current_span()
@@ -189,14 +204,18 @@ class FallbackModel(Model):
                     )
 
 
-def _get_run_id(messages: list[ModelMessage]) -> str | None:
-    """Extract the run_id from the most recent message."""
-    from ..messages import ModelRequest, ModelResponse
+def _stamp_continuation(response: ModelResponse, model: Model) -> None:
+    """Stamp the model's name into the response's provider_details for stateless continuation routing."""
+    if response.provider_details is None:
+        response.provider_details = {}
+    response.provider_details[_FALLBACK_MODEL_NAME_KEY] = model.model_name
 
-    for message in reversed(messages):
-        if isinstance(message, (ModelRequest, ModelResponse)) and message.run_id:
-            return message.run_id
-    return None
+
+def _stamp_continuation_stream(streamed_response: StreamedResponse, model: Model) -> None:
+    """Stamp the model's name into the streamed response's provider_details for stateless continuation routing."""
+    if streamed_response.provider_details is None:
+        streamed_response.provider_details = {}
+    streamed_response.provider_details[_FALLBACK_MODEL_NAME_KEY] = model.model_name
 
 
 def _default_fallback_condition_factory(exceptions: tuple[type[Exception], ...]) -> Callable[[Exception], bool]:

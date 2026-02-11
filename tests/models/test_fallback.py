@@ -29,7 +29,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
-from pydantic_ai.models.fallback import FallbackModel, _get_run_id  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
@@ -1236,17 +1236,3 @@ async def test_fallback_streaming_pinned_continuation_still_continuing() -> None
             pass
     assert streamed_response.expects_continuation is False
     assert call_count == 3
-
-
-def test_get_run_id_empty_messages() -> None:
-    """_get_run_id returns None for empty message list."""
-    assert _get_run_id([]) is None
-
-
-def test_get_run_id_no_run_id() -> None:
-    """_get_run_id returns None when messages don't have run_id set."""
-    messages: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='test')]),
-        ModelResponse(parts=[TextPart('response')]),
-    ]
-    assert _get_run_id(messages) is None
