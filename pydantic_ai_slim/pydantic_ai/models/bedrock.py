@@ -814,7 +814,7 @@ class BedrockConverseModel(Model):
                             if item.tool_name == CodeExecutionTool.kind:
                                 result_content: list[ToolResultContentBlockOutputTypeDef] = [
                                     {'json': cast(dict[str, Any], item.content)}
-                                ] or []
+                                ]
                                 tool_result: ToolResultBlockOutputTypeDef = {
                                     'toolUseId': _utils.guard_tool_call_id(t=item),
                                     'content': result_content,
@@ -891,7 +891,7 @@ class BedrockConverseModel(Model):
         return content
 
     @staticmethod
-    async def _map_file_to_content_block(
+    async def _map_file_to_content_block(  # noqa: C901
         file: ImageUrl | DocumentUrl | VideoUrl | AudioUrl | BinaryContent,
         document_count: Iterator[int],
     ) -> _FileContentBlock | None:
@@ -899,14 +899,23 @@ class BedrockConverseModel(Model):
         if isinstance(file, BinaryContent):
             format = file.format
             if file.is_document:
+                if format not in _BEDROCK_DOCUMENT_FORMATS:
+                    raise ValueError(
+                        f'Unsupported document format for Bedrock: {format!r}. Supported: {_BEDROCK_DOCUMENT_FORMATS}'
+                    )
                 name = f'Document {next(document_count)}'
-                assert format in _BEDROCK_DOCUMENT_FORMATS
                 return {'document': {'name': name, 'format': format, 'source': {'bytes': file.data}}}
             elif file.is_image:
-                assert format in _BEDROCK_IMAGE_FORMATS
+                if format not in _BEDROCK_IMAGE_FORMATS:
+                    raise ValueError(
+                        f'Unsupported image format for Bedrock: {format!r}. Supported: {_BEDROCK_IMAGE_FORMATS}'
+                    )
                 return {'image': {'format': format, 'source': {'bytes': file.data}}}
             elif file.is_video:
-                assert format in _BEDROCK_VIDEO_FORMATS
+                if format not in _BEDROCK_VIDEO_FORMATS:
+                    raise ValueError(
+                        f'Unsupported video format for Bedrock: {format!r}. Supported: {_BEDROCK_VIDEO_FORMATS}'
+                    )
                 return {'video': {'format': format, 'source': {'bytes': file.data}}}
             else:
                 return None
@@ -924,14 +933,20 @@ class BedrockConverseModel(Model):
 
             if isinstance(file, ImageUrl):
                 format = file.media_type.split('/')[1]
-                assert format in _BEDROCK_IMAGE_FORMATS, f'Unsupported image format: {format}'
+                if format not in _BEDROCK_IMAGE_FORMATS:
+                    raise ValueError(
+                        f'Unsupported image format for Bedrock: {format!r}. Supported: {_BEDROCK_IMAGE_FORMATS}'
+                    )
                 return {'image': {'format': format, 'source': source}}
             elif isinstance(file, DocumentUrl):
                 name = f'Document {next(document_count)}'
                 return {'document': {'name': name, 'format': file.format, 'source': source}}
             elif isinstance(file, VideoUrl):
                 format = file.media_type.split('/')[1]
-                assert format in _BEDROCK_VIDEO_FORMATS
+                if format not in _BEDROCK_VIDEO_FORMATS:
+                    raise ValueError(
+                        f'Unsupported video format for Bedrock: {format!r}. Supported: {_BEDROCK_VIDEO_FORMATS}'
+                    )
                 return {'video': {'format': format, 'source': source}}
             else:
                 assert_never(file)
