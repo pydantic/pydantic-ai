@@ -10,6 +10,8 @@ from .common import (
 )
 from .context import EvaluatorContext
 from .evaluator import EvaluationReason, EvaluationResult, Evaluator, EvaluatorFailure, EvaluatorOutput, EvaluatorSpec
+from .report_common import ConfusionMatrixEvaluator, PrecisionRecallEvaluator
+from .report_evaluator import ReportEvaluator, ReportEvaluatorContext
 
 __all__ = (
     # common
@@ -29,8 +31,12 @@ __all__ = (
     'EvaluatorFailure',
     'EvaluatorOutput',
     'EvaluatorSpec',
-    'EvaluationReason',
     'EvaluationResult',
+    # report evaluators
+    'ReportEvaluator',
+    'ReportEvaluatorContext',
+    'ConfusionMatrixEvaluator',
+    'PrecisionRecallEvaluator',
 )
 
 

@@ -300,6 +300,7 @@ async def main():
       evaluators:
       - EqualsExpected
     evaluators: []
+    report_evaluators: []
     """
 ```
 
@@ -376,7 +377,8 @@ async def main():
           ]
         }
       ],
-      "evaluators": []
+      "evaluators": [],
+      "report_evaluators": []
     }
     """
 ```
