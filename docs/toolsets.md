@@ -362,7 +362,6 @@ DeferredToolRequests(
             tool_call_id='pyd_ai_tool_call_id__temperature_fahrenheit',
         ),
     ],
-    context={},
     metadata={},
 )
 """

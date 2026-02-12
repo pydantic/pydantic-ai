@@ -65,18 +65,28 @@ def build_run_context() -> RunContext[None]:
     )
 
 
-async def run_code_with_tools(
-    code: str,
+async def build_code_mode_toolset(
     runtime: CodeRuntime,
     *tool_specs: tuple[Callable[..., Any], bool],
-) -> Any:
-    """Run code through CodeModeToolset. Each tool_spec is (function, takes_ctx)."""
+) -> tuple[CodeModeToolset[None], dict[str, Any]]:
+    """Build and initialize a CodeModeToolset, returning it along with its tools dict."""
     toolset: FunctionToolset[None] = FunctionToolset()
     for func, takes_ctx in tool_specs:
         toolset.add_function(func, takes_ctx=takes_ctx)
     code_mode = CodeModeToolset(wrapped=toolset, runtime=runtime)
     ctx = build_run_context()
     tools = await code_mode.get_tools(ctx)
+    return code_mode, tools
+
+
+async def run_code_with_tools(
+    code: str,
+    runtime: CodeRuntime,
+    *tool_specs: tuple[Callable[..., Any], bool],
+) -> Any:
+    """Run code through CodeModeToolset. Each tool_spec is (function, takes_ctx)."""
+    code_mode, tools = await build_code_mode_toolset(runtime, *tool_specs)
+    ctx = build_run_context()
     return await code_mode.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
 
 
@@ -129,7 +139,10 @@ def _modal_is_available() -> bool:
 def code_runtime(request: pytest.FixtureRequest) -> CodeRuntime:
     """Parameterized fixture providing each CodeRuntime implementation."""
     if request.param == 'monty':
-        from pydantic_ai.runtime.monty import MontyRuntime
+        try:
+            from pydantic_ai.runtime.monty import MontyRuntime
+        except ImportError:
+            pytest.skip('pydantic-monty is not installed')
 
         return MontyRuntime()
 

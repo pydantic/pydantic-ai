@@ -17,7 +17,7 @@ from typing import Any, Union, get_origin
 from pydantic import BaseModel, TypeAdapter
 from typing_extensions import get_type_hints, is_typeddict
 
-from ..._function_schema import _is_call_ctx  # pyright: ignore[reportPrivateUsage]
+from ..._run_context import RunContext
 
 
 def _is_named_type(t: Any) -> bool:
@@ -271,7 +271,7 @@ def _build_function_params(
     for i, (param_name, param) in enumerate(sig.parameters.items()):
         annotation = type_hints.get(param_name)
 
-        if i == 0 and annotation is not None and _is_call_ctx(annotation):
+        if i == 0 and annotation is not None and (annotation is RunContext or get_origin(annotation) is RunContext):
             continue
 
         if annotation is not None:

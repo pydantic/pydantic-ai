@@ -17,8 +17,9 @@ With code mode, the model writes a script that does it all at once:
 # The model writes this code, which runs in a sandbox
 items = await get_items(category="electronics")
 
-# Parallel: fire all detail lookups at once
+# Fire all detail lookups at once (each returns a Future immediately)
 futures = [get_details(id=item["id"]) for item in items]
+# Await results — all calls are already in flight
 details = [await f for f in futures]
 
 # Process locally — no model calls needed

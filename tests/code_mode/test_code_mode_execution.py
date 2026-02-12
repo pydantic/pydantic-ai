@@ -8,11 +8,14 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.runtime.abstract import CodeRuntime
-from pydantic_ai.runtime.monty import MontyRuntime
+
+pydantic_monty = pytest.importorskip('pydantic_monty')
+from pydantic_ai.runtime.monty import MontyRuntime  # noqa: E402
 
 from .conftest import run_code_with_tools
 
@@ -50,6 +53,17 @@ async def test_syntax_error_raises_model_retry(code_runtime: CodeRuntime):
     """Syntax errors raise ModelRetry so the LLM can fix them."""
     with pytest.raises(ModelRetry):
         await run_code_with_tools('def while invalid', code_runtime)
+
+
+async def test_monty_syntax_error_message():
+    """Monty syntax errors include a descriptive message for the LLM."""
+    with pytest.raises(ModelRetry) as exc_info:
+        await run_code_with_tools('def while invalid syntax', MontyRuntime())
+
+    assert str(exc_info.value) == snapshot("""\
+Syntax error in generated code:
+Expected an identifier, but found a keyword `while` that cannot be used here at byte range 4..9\
+""")
 
 
 async def test_runtime_error_raises_model_retry(code_runtime: CodeRuntime):
