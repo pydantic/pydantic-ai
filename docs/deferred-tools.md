@@ -399,7 +399,6 @@ from pydantic_ai import (
     ToolApproved,
     ToolDenied,
 )
-from pydantic_ai.messages import ToolCallPart
 
 agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
 
