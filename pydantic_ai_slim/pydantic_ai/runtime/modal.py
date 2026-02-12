@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -60,12 +61,12 @@ class ModalRuntime(DriverBasedRuntime):
     Args:
         app_name: Modal app name to use (created if missing).
         image: Modal Image to use for the sandbox. Defaults to ``modal.Image.debian_slim()``.
-        timeout: Maximum sandbox lifetime in seconds.
+        timeout: Maximum sandbox lifetime in seconds. If ``None``, Modal's default is used.
     """
 
     app_name: str = 'pydantic-ai-code-runtime'
     image: modal.Image | None = None
-    timeout: int = 300
+    timeout: int | None = None
 
     async def _start_driver(self, init_msg: dict[str, Any]) -> DriverTransport:
         try:
@@ -76,7 +77,10 @@ class ModalRuntime(DriverBasedRuntime):
         app = await modal.App.lookup.aio(self.app_name, create_if_missing=True)
         image = self.image if self.image is not None else modal.Image.debian_slim()
 
-        sandbox = await modal.Sandbox.create.aio(app=app, image=image, timeout=self.timeout)  # pyright: ignore[reportUnknownMemberType]
+        sandbox_kwargs: dict[str, Any] = {'app': app, 'image': image}
+        if self.timeout is not None:
+            sandbox_kwargs['timeout'] = self.timeout
+        sandbox = await modal.Sandbox.create.aio(**sandbox_kwargs)  # pyright: ignore[reportUnknownMemberType]
 
         # Upload the driver script into the sandbox
         driver_src = Path(__file__).parent / '_driver.py'
@@ -88,8 +92,11 @@ class ModalRuntime(DriverBasedRuntime):
 
         await asyncio.to_thread(_upload_driver)
 
-        # Start the driver process with line buffering
-        process = await sandbox.exec.aio('python', '-u', '/tmp/pydantic_ai_driver.py', bufsize=1)
+        # Start the driver process with line buffering.
+        # Pass execution_timeout as a native per-exec timeout so Modal kills
+        # the process server-side even if the local asyncio.wait_for doesn't fire.
+        exec_timeout = math.ceil(self.execution_timeout) if self.execution_timeout is not None else None
+        process = await sandbox.exec.aio('python', '-u', '/tmp/pydantic_ai_driver.py', bufsize=1, timeout=exec_timeout)
 
         driver = _ModalDriverTransport(process, sandbox)
         init_line = json.dumps(init_msg).encode() + b'\n'

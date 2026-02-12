@@ -136,9 +136,7 @@ class DriverBasedRuntime(CodeRuntime):
                 return await asyncio.wait_for(coro, timeout=self.execution_timeout)
             except asyncio.TimeoutError:
                 await process.kill()
-                raise CodeExecutionTimeout(
-                    f'Code execution timed out after {self.execution_timeout} seconds'
-                )
+                raise CodeExecutionTimeout(f'Code execution timed out after {self.execution_timeout} seconds')
         return await coro
 
     async def _resume_from_checkpoint(

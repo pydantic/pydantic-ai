@@ -212,9 +212,7 @@ class MontyRuntime(CodeRuntime):
     def _raise_if_timeout(self, e: MontyRuntimeError) -> None:
         """Raise CodeExecutionTimeout if the MontyRuntimeError is a time limit violation."""
         if self.execution_timeout is not None and 'time limit exceeded' in e.display():
-            raise CodeExecutionTimeout(
-                f'Code execution timed out after {self.execution_timeout} seconds'
-            ) from e
+            raise CodeExecutionTimeout(f'Code execution timed out after {self.execution_timeout} seconds') from e
 
     def _type_check(self, monty: Monty, code: str, signatures: list[str], external_functions: list[str]) -> None:
         prefix_code = _build_type_check_prefix(signatures)

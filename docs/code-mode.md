@@ -13,7 +13,7 @@ With standard tool calling, each tool call is a separate round-trip to the model
 
 With code mode, the model writes a script that does it all at once:
 
-```python
+```python {test="skip" lint="skip"}
 # The model writes this code, which runs in a sandbox
 items = await get_items(category="electronics")
 
@@ -48,14 +48,14 @@ pip/uv-add "pydantic-ai-slim[monty]"
 
 ```python {title="code_mode_example.py" test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.toolsets import CodeModeToolset, FunctionToolset
 from pydantic_ai.runtime import MontyRuntime
+from pydantic_ai.toolsets import CodeModeToolset, FunctionToolset
 
 
 def get_weather(city: str) -> dict:
     """Get current weather for a city."""
     # In production, this would call a real API
-    return {"city": city, "temp_f": 72, "condition": "sunny"}
+    return {'city': city, 'temp_f': 72, 'condition': 'sunny'}
 
 
 def convert_temp(fahrenheit: float) -> float:
@@ -77,7 +77,7 @@ print(result.output)
 
 The model sees `get_weather` and `convert_temp` as callable Python functions, and writes code like:
 
-```python
+```python {test="skip" lint="skip"}
 # Parallel weather lookups
 future_paris = get_weather(city="Paris")
 future_tokyo = get_weather(city="Tokyo")
