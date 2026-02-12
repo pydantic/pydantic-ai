@@ -518,8 +518,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
         original_history = ctx.state.message_history[:]
-        # Detect if we're reusing the last history request (a "no-prompt run")
-        reused_history_request = ctx.deps.new_message_index == len(original_history)
+        # In no-prompt resume runs, `UserPromptNode` pops the last historical `ModelRequest`
+        # and this node appends it back, so we should keep `new_message_index` at the end.
+        is_resuming_without_prompt = ctx.deps.new_message_index == len(original_history)
         message_history = await _process_message_history(original_history, ctx.deps.history_processors, run_context)
         if message_history[-1].run_id is None:
             message_history[-1].run_id = ctx.state.run_id
@@ -527,7 +528,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.message_history[:] = message_history
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index = (
-            len(message_history) if reused_history_request else _first_run_id_index(message_history, ctx.state.run_id)
+            len(message_history)
+            if is_resuming_without_prompt
+            else _first_run_id_index(message_history, ctx.state.run_id)
         )
 
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
