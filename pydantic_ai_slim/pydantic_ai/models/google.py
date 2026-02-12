@@ -63,6 +63,7 @@ try:
     from google.genai import Client, errors
     from google.genai.types import (
         BlobDict,
+        BlockedReason,
         CodeExecutionResult,
         CodeExecutionResultDict,
         ContentDict,
@@ -573,6 +574,18 @@ class GoogleModel(Model):
                 vendor_details['safety_ratings'] = [r.model_dump(by_alias=True) for r in candidate.safety_ratings]
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
+        # Check prompt_feedback for request-level content blocking (no candidates returned)
+        if (prompt_feedback := response.prompt_feedback) and (block_reason := prompt_feedback.block_reason):
+            if block_reason != BlockedReason.BLOCKED_REASON_UNSPECIFIED:
+                vendor_details['block_reason'] = block_reason.value
+                if prompt_feedback.block_reason_message:
+                    vendor_details['block_reason_message'] = prompt_feedback.block_reason_message
+                if prompt_feedback.safety_ratings:
+                    vendor_details['safety_ratings'] = [
+                        r.model_dump(by_alias=True) for r in prompt_feedback.safety_ratings
+                    ]
+                finish_reason = 'content_filter'
+
         if response.create_time is not None:  # pragma: no branch
             vendor_details['timestamp'] = response.create_time
 
@@ -788,7 +801,19 @@ class GeminiStreamedResponse(StreamedResponse):
             self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url)
 
             if not chunk.candidates:
-                continue  # pragma: no cover
+                # Check prompt_feedback for request-level content blocking
+                if (prompt_feedback := chunk.prompt_feedback) and (block_reason := prompt_feedback.block_reason):
+                    if block_reason != BlockedReason.BLOCKED_REASON_UNSPECIFIED:
+                        details: dict[str, Any] = {'block_reason': block_reason.value}
+                        if prompt_feedback.block_reason_message:
+                            details['block_reason_message'] = prompt_feedback.block_reason_message
+                        if prompt_feedback.safety_ratings:
+                            details['safety_ratings'] = [
+                                r.model_dump(by_alias=True) for r in prompt_feedback.safety_ratings
+                            ]
+                        self.provider_details = details
+                        self.finish_reason = 'content_filter'
+                continue
 
             candidate = chunk.candidates[0]
 
