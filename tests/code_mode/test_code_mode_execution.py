@@ -14,8 +14,10 @@ from pydantic import BaseModel
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.runtime.abstract import CodeRuntime
 
-pydantic_monty = pytest.importorskip('pydantic_monty')
-from pydantic_ai.runtime.monty import MontyRuntime  # noqa: E402
+try:
+    from pydantic_ai.runtime.monty import MontyRuntime
+except ImportError:  # pragma: lax no cover
+    pytest.skip('pydantic-monty is not installed', allow_module_level=True)
 
 from .conftest import run_code_with_tools
 

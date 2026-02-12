@@ -5,16 +5,19 @@ from __future__ import annotations
 import pytest
 from inline_snapshot import snapshot
 
-pydantic_monty = pytest.importorskip('pydantic_monty')
-from pydantic_monty import Monty  # noqa: E402
+try:
+    from pydantic_monty import Monty
 
-from pydantic_ai.exceptions import ModelRetry  # noqa: E402
-from pydantic_ai.runtime.monty import (  # noqa: E402  # pyright: ignore[reportPrivateUsage]
-    MontyRuntime,
-    _build_type_check_prefix,
-)
+    from pydantic_ai.runtime.monty import (  # pyright: ignore[reportPrivateUsage]
+        MontyRuntime,
+        _build_type_check_prefix,
+    )
+except ImportError:  # pragma: lax no cover
+    pytest.skip('pydantic-monty is not installed', allow_module_level=True)
 
-from .conftest import build_code_mode_toolset, run_code_with_tools  # noqa: E402
+from pydantic_ai.exceptions import ModelRetry
+
+from .conftest import build_code_mode_toolset, run_code_with_tools
 
 pytestmark = pytest.mark.anyio
 
