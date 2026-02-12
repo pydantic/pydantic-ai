@@ -335,12 +335,12 @@ from pydantic_ai.providers.google import GoogleProvider
 
 model_settings = GoogleModelSettings(
     google_logprobs=True, google_top_logprobs=2,
-    )
+)
 
 model = GoogleModel(
     model_name='gemini-2.5-flash',
     provider=GoogleProvider(location='europe-west1', vertexai=True),
-    )
+)
 agent = Agent(model, model_settings=model_settings)
 
 result = agent.run_sync('Your prompt here')
