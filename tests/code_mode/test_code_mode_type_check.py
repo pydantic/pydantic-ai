@@ -8,14 +8,17 @@ from inline_snapshot import snapshot
 try:
     from pydantic_monty import Monty
 
-    from pydantic_ai.runtime.monty import (  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.runtime.monty import (
         MontyRuntime,
-        _build_type_check_prefix,
+        _build_type_check_prefix,  # pyright: ignore[reportPrivateUsage]
     )
 except ImportError:  # pragma: lax no cover
     pytest.skip('pydantic-monty is not installed', allow_module_level=True)
 
+from pydantic_ai._python_schema_types import _to_pascal_case  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai._python_signature import Signature
 from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.toolsets.code_mode import _dedup_typeddicts  # pyright: ignore[reportPrivateUsage]
 
 from .conftest import build_code_mode_toolset, run_code_with_tools
 
@@ -65,7 +68,7 @@ async def test_signatures_use_ellipsis_monty_converts_for_type_check():
     code_mode, tools = await build_code_mode_toolset(MontyRuntime(), (add, False))
 
     # LLM-facing description should have '...'
-    description = tools['run_code'].tool_def.description or ''
+    description = tools['pydantic_ai_code_mode'].tool_def.description or ''
     assert '...' in description
     assert 'raise NotImplementedError()' not in description
 
@@ -78,3 +81,33 @@ async def test_signatures_use_ellipsis_monty_converts_for_type_check():
     prefix = _build_type_check_prefix(code_mode._cached_signatures)  # pyright: ignore[reportPrivateUsage]
     assert 'raise NotImplementedError()' in prefix
     assert '    ...' not in prefix
+
+
+def test_build_type_check_prefix_preserves_docstring_ellipsis():
+    """Docstrings containing '...' should not be corrupted by the body replacement."""
+    sig = 'async def foo() -> int:\n    """Returns ... something."""\n    ...'
+    result = _build_type_check_prefix([sig])
+    assert '"""Returns ... something."""' in result
+    assert result.endswith('raise NotImplementedError()')
+
+
+def test_dedup_typeddicts_substring_names():
+    """Renaming 'User' must not corrupt 'UserMeta' in the same signature."""
+    sig1 = Signature(
+        name='tool_a', params=['user: User'], return_type='Any', typeddicts=['class User(TypedDict):\n    name: str']
+    )
+    sig2 = Signature(
+        name='tool_b',
+        params=['user: User', 'meta: UserMeta'],
+        return_type='UserMeta',
+        typeddicts=['class User(TypedDict):\n    id: int', 'class UserMeta(TypedDict):\n    role: str'],
+    )
+    _dedup_typeddicts([sig1, sig2])
+    # UserMeta must be untouched despite User being renamed
+    assert sig2.params == ['user: tool_b_User', 'meta: UserMeta']
+    assert sig2.return_type == 'UserMeta'
+
+
+def test_to_pascal_case_digit_prefix():
+    """PascalCase of a name starting with digits gets a leading underscore."""
+    assert _to_pascal_case('123_tool') == '_123Tool'

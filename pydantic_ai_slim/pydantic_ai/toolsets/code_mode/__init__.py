@@ -42,7 +42,7 @@ class _CodeToolArguments(TypedDict):
 
 
 _CODE_ADAPTER = TypeAdapter(_CodeToolArguments)
-_CODE_MODE_TOOL_NAME = 'run_code'
+_CODE_MODE_TOOL_NAME = 'pydantic_ai_code_mode'
 
 _TYPEDDICT_NAME_RE = re.compile(r'^class (\w+)\(TypedDict\):')
 
@@ -78,14 +78,14 @@ def _dedup_typeddicts(signatures: list[Signature]) -> None:
                 # Same name, different definition — rename to avoid conflict
                 new_name = f'{sig.name}_{td_name}'
                 renamed_td = td_str.replace(f'class {td_name}(TypedDict):', f'class {new_name}(TypedDict):')
-                # Also update references to this type in the signature's params and return type
-                sig.params = [p.replace(td_name, new_name) for p in sig.params]
-                if sig.return_type == td_name:
-                    sig.return_type = new_name
+                # Update references using word boundaries to avoid corrupting names
+                # that contain td_name as a substring (e.g. renaming "User" must not
+                # affect "UserMeta").
+                td_pattern = re.compile(r'\b' + re.escape(td_name) + r'\b')
+                sig.params = [td_pattern.sub(new_name, p) for p in sig.params]
+                sig.return_type = td_pattern.sub(new_name, sig.return_type)
                 # Update references in other TypedDicts already in this signature's deduped list
-                deduped = [
-                    d.replace(f': {td_name}', f': {new_name}').replace(f'[{td_name}]', f'[{new_name}]') for d in deduped
-                ]
+                deduped = [td_pattern.sub(new_name, d) for d in deduped]
                 seen[new_name] = renamed_td
                 deduped.append(renamed_td)
         sig.typeddicts = deduped
@@ -111,52 +111,26 @@ def build_code_mode_prompt(*, signatures: list[str], runtime_hints: str) -> str:
 
     # TODO: The first line of the prompt should be customizable by the user using Prompt Templates #3656
     return f"""\
-Use run_code to write Python code that solves the task. Rather than calling tools individually, prefer writing a script that combines multiple steps.
+Use pydantic_ai_code_mode to write Python code that calls the available functions. You can make a single call or combine multiple steps in a script — use your judgment based on the task.
 
-Execution context:
-- Each run_code call is isolated — variables do not persist between calls
-- Plan your solution before writing code
-{restrictions_block}
-How to write effective code:
-- External functions return coroutines — use `await` to get results
-- For sequential execution: `items = await get_items()`
-- For parallel execution of independent calls, fire first then await:
+Execution model:
+- Each pydantic_ai_code_mode call runs in an isolated environment — variables don't persist between calls
+- Functions are async — call with `await`, e.g. `result = await get_items()`
+- To run independent calls concurrently, fire them first, then await:
   ```python
-  future_items = get_items()   # Fire (no await)
-  future_users = get_users()   # Fire (no await)
-  items = await future_items   # Both execute in parallel
-  users = await future_users
+  future_a = get_items()    # starts immediately
+  future_b = get_users()    # starts immediately
+  items = await future_a    # wait for results
+  users = await future_b
   ```
-- Use keyword arguments (e.g., `get_user(id=123)` not `get_user(123)`)
-- Use for loops to handle multiple items
-- The last expression evaluated becomes the return value
-
+- Use keyword arguments: `get_user(id=123)` not `get_user(123)`
+- The last expression evaluated is the return value
+- Return raw data when it answers the question directly; extract or transform when needed
+{restrictions_block}
 Available functions:
 
 ```python
 {functions_block}
-```
-
-Example — parallel fetching, then sequential processing:
-```python
-# Parallel: fire independent calls first (no await yet)
-future_items = get_items(category="electronics")
-future_users = get_users(status="active")
-
-# Await results — both calls execute in parallel
-items = await future_items
-users = await future_users
-
-# Sequential: process items (each depends on previous result)
-results = []
-total = 0
-for item in items:
-    details = await get_item_details(id=item["id"])
-    if details["status"] == "active":
-        total = total + details["price"]
-        results.append({{"name": item["name"], "price": details["price"]}})
-
-{{"total": total, "count": len(results), "items": results, "user_count": len(users)}}
 ```"""
 
 
@@ -201,11 +175,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     runtime: CodeRuntime
     prompt_builder: Callable[..., str] = build_code_mode_prompt
     max_retries: int = 3
-    # TODO: _cached_signatures and _name_map are populated in get_tools() and consumed in
-    # call_tool(). The agent framework guarantees get_tools() runs first, but this implicit ordering
-    # dependency could trip up future contributors modifying either method independently.
-    # If call_tool() is invoked before get_tools(), both will raise UserError
-    # (via the `self._cached_signatures is None` check on line ~306).
+    # Note: _cached_signatures and _name_map are mutable instance state populated in get_tools()
+    # and consumed in call_tool(). This class is not safe for concurrent use from multiple agent
+    # runs on the same instance. The agent framework runs a single loop per toolset instance,
+    # so this is fine in practice.
     _cached_signatures: list[str] | None = field(default=None, init=False, repr=False)
     _name_map: dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
@@ -218,7 +191,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # identifiers (e.g. 'search-records', 'get.data'), so we sanitize them here.
         # We don't use RenamedToolset because the name map is computed dynamically at
         # get_tools() time and the renaming is internal (never exposed to the agent
-        # framework — all tools are collapsed into a single 'run_code' tool).
+        # framework — all tools are collapsed into a single 'pydantic_ai_code_mode' tool).
         name_map: dict[str, str] = {}  # {sanitized: original}
         for original_name in wrapped_tools:
             sanitized = sanitize_tool_name(original_name)

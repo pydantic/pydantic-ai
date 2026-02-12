@@ -87,7 +87,7 @@ async def run_code_with_tools(
     """Run code through CodeModeToolset. Each tool_spec is (function, takes_ctx)."""
     code_mode, tools = await build_code_mode_toolset(runtime, *tool_specs)
     ctx = build_run_context()
-    return await code_mode.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
+    return await code_mode.call_tool('pydantic_ai_code_mode', {'code': code}, ctx, tools['pydantic_ai_code_mode'])
 
 
 def _docker_is_available() -> bool:

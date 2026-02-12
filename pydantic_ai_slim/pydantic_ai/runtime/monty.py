@@ -53,9 +53,14 @@ def _build_type_check_prefix(signatures: list[str]) -> str:
         Complete prefix code string with imports and signatures.
     """
     imports = 'from typing import Any, TypedDict, NotRequired, Literal\n\n'
-    # Convert `...` body to `raise NotImplementedError()` for ty/Monty compatibility
-    # The body is always on its own line with 4-space indent at the end of the function
-    converted = [sig.replace('\n    ...', '\n    raise NotImplementedError()') for sig in signatures]
+    # Convert `...` body to `raise NotImplementedError()` for ty/Monty compatibility.
+    # The body `...` is always the last line of the function, so we replace only the
+    # last occurrence to avoid corrupting `...` inside docstrings.
+    converted = [
+        '\n    raise NotImplementedError()'.join(sig.rsplit('\n    ...', 1)) if sig.endswith('\n    ...')
+        else sig
+        for sig in signatures
+    ]
     return imports + '\n\n'.join(converted)
 
 
@@ -199,8 +204,8 @@ class MontyRuntime(CodeRuntime):
 
     def prompt_hints(self) -> str:
         return (
-            'CRITICAL Syntax restrictions (the runtime uses a restricted Python subset):\n'
-            '- No imports - use only the provided functions and builtins (len, sum, str, etc.) or write your own functions.'
+            'Syntax note: the runtime uses a restricted Python subset.\n'
+            '- Imports are not available — use the provided functions and builtins (len, sum, str, etc.) or define your own helpers.'
         )
 
     def _build_resource_limits(self) -> ResourceLimits | None:

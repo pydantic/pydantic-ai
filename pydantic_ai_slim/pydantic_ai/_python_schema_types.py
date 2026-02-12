@@ -23,7 +23,10 @@ def _to_pascal_case(s: str) -> str:
     """Convert a string to PascalCase."""
     s = re.sub(r'[^a-zA-Z0-9]', '_', s)
     parts = s.split('_')
-    return ''.join(part.capitalize() for part in parts if part)
+    result = ''.join(part.capitalize() for part in parts if part)
+    if result and result[0].isdigit():
+        result = '_' + result
+    return result
 
 
 def _path_to_typename(tool_name: str, path: str) -> str:
