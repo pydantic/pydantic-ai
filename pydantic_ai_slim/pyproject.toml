@@ -130,9 +130,6 @@ dbos = ["dbos>=2.10.0"]
 # Prefect
 prefect = ["prefect>=3.4.21"]
 
-[tool.hatch.metadata]
-allow-direct-references = true
-
 [project.scripts]
 pai = "pydantic_ai._cli:cli_exit" # TODO remove this when clai has been out for a while
 
@@ -141,4 +138,3 @@ packages = ["pydantic_ai"]
 
 [tool.uv.sources]
 pydantic-graph = { workspace = true }
-pydantic-monty = { git = "git+ssh://git@github.com/pydantic/monty.git", subdirectory="crates/monty-python" }
