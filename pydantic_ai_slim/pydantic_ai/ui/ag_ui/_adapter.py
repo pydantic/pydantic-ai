@@ -60,7 +60,7 @@ try:
     )
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
-    from ._event_stream import BUILTIN_TOOL_CALL_ID_PREFIX, AGUIEventStream
+    from ._event_stream import BUILTIN_TOOL_CALL_ID_PREFIX, AGUIEventStream, make_builtin_tool_call_id
 except ImportError as e:  # pragma: no cover
     raise ImportError(
         'Please install the `ag-ui-protocol` package to use AG-UI integration, '
@@ -289,13 +289,13 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             elif isinstance(part, TextPart):
                 text_chunks.append(part.content)
             elif isinstance(part, BuiltinToolCallPart):
-                builtin_id = '|'.join([BUILTIN_TOOL_CALL_ID_PREFIX, part.provider_name or '', part.tool_call_id])
+                builtin_id = make_builtin_tool_call_id(part.provider_name, part.tool_call_id)
                 function = FunctionCall(name=part.tool_name, arguments=part.args_as_json_str())
                 tool_calls.append(ToolCall(id=builtin_id, type='function', function=function))
                 if builtin_return := local_builtin_returns.get(part.tool_call_id):
                     tool_messages.append(
                         ToolMessage(
-                            id=uuid.uuid4().hex, content=builtin_return.model_response_str(), tool_call_id=builtin_id
+                            id=str(uuid.uuid4()), content=builtin_return.model_response_str(), tool_call_id=builtin_id
                         )
                     )
             elif isinstance(part, ToolCallPart):
@@ -305,7 +305,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 if isinstance(tool_result, ToolReturnPart):
                     tool_messages.append(
                         ToolMessage(
-                            id=uuid.uuid4().hex,
+                            id=str(uuid.uuid4()),
                             content=tool_result.model_response_str(),
                             tool_call_id=part.tool_call_id,
                         )
@@ -313,7 +313,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 elif isinstance(tool_result, RetryPromptPart):
                     tool_messages.append(
                         ToolMessage(
-                            id=uuid.uuid4().hex, content=tool_result.model_response(), tool_call_id=part.tool_call_id
+                            id=str(uuid.uuid4()), content=tool_result.model_response(), tool_call_id=part.tool_call_id
                         )
                     )
             else:
@@ -323,7 +323,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         if text_chunks or tool_calls:
             result.append(
                 AssistantMessage(
-                    id=uuid.uuid4().hex,
+                    id=str(uuid.uuid4()),
                     content=''.join(text_chunks) if text_chunks else None,
                     tool_calls=tool_calls if tool_calls else None,
                 )
@@ -331,16 +331,16 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         result.extend(tool_messages)
         return result
 
-    @classmethod
-    def _dump_model_request(cls, parts: Sequence[ModelRequestPart]) -> list[Message]:
+    @staticmethod
+    def _dump_model_request(parts: Sequence[ModelRequestPart]) -> list[Message]:
         """Convert ModelRequest parts into AG-UI `Message` objects."""
         result: list[Message] = []
         for part in parts:
             if isinstance(part, SystemPromptPart):
-                result.append(SystemMessage(id=uuid.uuid4().hex, content=part.content))
+                result.append(SystemMessage(id=str(uuid.uuid4()), content=part.content))
             elif isinstance(part, UserPromptPart):
                 if isinstance(part.content, str):
-                    result.append(UserMessage(id=uuid.uuid4().hex, content=part.content))
+                    result.append(UserMessage(id=str(uuid.uuid4()), content=part.content))
                 else:
                     content: list[TextInputContent | BinaryInputContent] = []
                     for item in part.content:
@@ -356,14 +356,14 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             assert_never(item)
 
                     if content:
-                        result.append(UserMessage(id=uuid.uuid4().hex, content=content))
+                        result.append(UserMessage(id=str(uuid.uuid4()), content=content))
             elif isinstance(part, ToolReturnPart):
                 # Handled when processing the corresponding ToolCallPart in _dump_model_response.
                 pass
             elif isinstance(part, RetryPromptPart):
                 # Tool-related retries are handled when processing ToolCallPart in _dump_model_response.
                 if not part.tool_name:
-                    result.append(UserMessage(id=uuid.uuid4().hex, content=part.model_response()))
+                    result.append(UserMessage(id=str(uuid.uuid4()), content=part.model_response()))
             else:
                 assert_never(part)
         return result
