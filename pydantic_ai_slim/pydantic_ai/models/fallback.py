@@ -153,7 +153,7 @@ class FallbackModel(Model):
                     self._set_span_attributes(pinned, prepared_parameters)
                     yield streamed_response
                     if streamed_response.state == 'suspended':
-                        _stamp_continuation_stream(streamed_response, pinned)
+                        _stamp_continuation(streamed_response, pinned)
                     return
 
         for model in self.models:
@@ -172,7 +172,7 @@ class FallbackModel(Model):
                 self._set_span_attributes(model, prepared_parameters)
                 yield streamed_response
                 if streamed_response.state == 'suspended':
-                    _stamp_continuation_stream(streamed_response, model)
+                    _stamp_continuation(streamed_response, model)
                 return
 
         raise FallbackExceptionGroup('All models from FallbackModel failed', exceptions)
@@ -222,18 +222,11 @@ class FallbackModel(Model):
                     )
 
 
-def _stamp_continuation(response: ModelResponse, model: Model) -> None:
-    """Stamp the model's name into the response's provider_details for stateless continuation routing."""
+def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:
+    """Stamp the model's name into provider_details for stateless continuation routing."""
     if response.provider_details is None:
         response.provider_details = {}
     response.provider_details[_FALLBACK_MODEL_NAME_KEY] = model.model_name
-
-
-def _stamp_continuation_stream(streamed_response: StreamedResponse, model: Model) -> None:
-    """Stamp the model's name into the streamed response's provider_details for stateless continuation routing."""
-    if streamed_response.provider_details is None:
-        streamed_response.provider_details = {}
-    streamed_response.provider_details[_FALLBACK_MODEL_NAME_KEY] = model.model_name
 
 
 def _rewind_messages(messages: list[ModelMessage]) -> list[ModelMessage]:

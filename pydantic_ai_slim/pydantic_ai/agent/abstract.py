@@ -623,10 +623,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 on_complete,
                             )
                             break
-                elif self.is_call_tools_node(node) and event_stream_handler is not None:
-                    async with node.stream(agent_run.ctx) as stream:
-                        await event_stream_handler(_agent_graph.build_run_context(agent_run.ctx), stream)
-                elif self.is_continuation_node(node) and event_stream_handler is not None:
+                elif (
+                    self.is_call_tools_node(node) or self.is_continuation_node(node)
+                ) and event_stream_handler is not None:
                     async with node.stream(agent_run.ctx) as stream:
                         await event_stream_handler(_agent_graph.build_run_context(agent_run.ctx), stream)
 

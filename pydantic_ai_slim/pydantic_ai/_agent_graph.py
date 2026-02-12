@@ -86,6 +86,17 @@ Can optionally accept a `RunContext` as a parameter.
 """
 
 
+def _builtin_tool_events(
+    parts: Sequence[_messages.ModelResponsePart],
+) -> Iterator[_messages.HandleResponseEvent]:
+    """Yield builtin tool call/result events from response parts."""
+    for part in parts:
+        if isinstance(part, _messages.BuiltinToolCallPart):
+            yield _messages.BuiltinToolCallEvent(part)  # pyright: ignore[reportDeprecated]
+        elif isinstance(part, _messages.BuiltinToolReturnPart):
+            yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
+
+
 @dataclasses.dataclass(kw_only=True)
 class GraphAgentState:
     """State kept across the execution of the agent graph."""
@@ -633,11 +644,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # and expect us to continue.
                     # Yield events for any builtin tool calls/results already in the response,
                     # so stream consumers (UI, logging) can observe server-side tool activity.
-                    for part in self.model_response.parts:
-                        if isinstance(part, _messages.BuiltinToolCallPart):
-                            yield _messages.BuiltinToolCallEvent(part)  # pyright: ignore[reportDeprecated]
-                        elif isinstance(part, _messages.BuiltinToolReturnPart):
-                            yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
+                    for event in _builtin_tool_events(self.model_response.parts):
+                        yield event
 
                     self._next_node = ContinuationNode[DepsT, NodeRunEndT](self.model_response)
                     return
@@ -943,11 +951,8 @@ class ContinuationNode(AgentNode[DepsT, NodeRunEndT]):
                 break
 
             # Yield builtin tool events for intermediate responses
-            for part in new_response.parts:
-                if isinstance(part, _messages.BuiltinToolCallPart):
-                    yield _messages.BuiltinToolCallEvent(part)  # pyright: ignore[reportDeprecated]
-                elif isinstance(part, _messages.BuiltinToolReturnPart):
-                    yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
+            for event in _builtin_tool_events(new_response.parts):
+                yield event
 
         self._result = CallToolsNode(merged_response)
 
