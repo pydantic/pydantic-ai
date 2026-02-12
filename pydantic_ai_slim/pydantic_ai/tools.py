@@ -238,14 +238,10 @@ class DeferredToolResults:
     context: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     """Context to pass back for deferred tool calls, keyed by `tool_call_id`.
 
-    For code mode, pass back the original context from DeferredToolRequests with an added 'results' key:
-
-    - `checkpoint`: bytes (unchanged from request)
-    - `interrupted_calls`: list (unchanged from request)
-    - `results`: dict mapping nested call_id to one of:
-        - `ToolApproved()` for approved calls (will be executed)
-        - `ToolDenied(message=...)` for denied calls (will raise error)
-        - Any other value for external execution results (returned directly)
+    Contains opaque context data from the corresponding
+    [`DeferredToolRequests.context`][pydantic_ai.tools.DeferredToolRequests.context],
+    passed back to the toolset during resumption. See the specific toolset's
+    documentation for the expected structure and any additional fields required.
     """
 
 
