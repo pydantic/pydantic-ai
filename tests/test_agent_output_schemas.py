@@ -240,6 +240,7 @@ async def test_custom_output_json_schema():
     agent = Agent("test", output_type=HumanDict)
     assert agent.output_json_schema() == snapshot(
         {
+            "description": "A human with a name and age",
             "type": "object",
             "properties": {"name": {"type": "string"}, "age": {"type": "integer"}},
             "title": "Human",

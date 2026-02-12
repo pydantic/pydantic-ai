@@ -365,7 +365,7 @@ def StructuredDict(
         def __get_pydantic_json_schema__(
             cls, core_schema: core_schema.CoreSchema, handler: GetJsonSchemaHandler
         ) -> JsonSchemaValue:
-            return json_schema
+            return deepcopy(json_schema)
 
     return _StructuredDict
 
