@@ -45,6 +45,7 @@ from ..messages import (
     UserPromptPart,
 )
 from ..profiles import ModelProfileSpec
+from ..profiles.anthropic import AnthropicModelProfile
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, merge_model_settings
@@ -453,7 +454,7 @@ class AnthropicModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 metadata=model_settings.get('anthropic_metadata', OMIT),
                 container=container or OMIT,
-                speed=model_settings.get('anthropic_speed', OMIT),
+                speed=self._effective_speed(model_settings),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -485,7 +486,9 @@ class AnthropicModel(Model):
         if has_strict_tools or model_request_parameters.output_mode == 'native':
             betas.add('structured-outputs-2025-11-13')
 
-        if model_settings.get('anthropic_speed') == 'fast':
+        if model_settings.get('anthropic_speed') == 'fast' and AnthropicModelProfile.from_profile(
+            self.profile
+        ).supports_fast_speed:
             betas.add('fast-mode-2026-02-01')
 
         if betas_from_setting := model_settings.get('anthropic_betas'):
@@ -495,6 +498,13 @@ class AnthropicModel(Model):
             betas.update({stripped_beta for beta in beta_header.split(',') if (stripped_beta := beta.strip())})
 
         return betas, extra_headers
+
+    def _effective_speed(self, model_settings: AnthropicModelSettings) -> Literal['standard', 'fast'] | Any:
+        """Speed to pass to the API: only 'fast' when profile supports it, otherwise setting or OMIT."""
+        s = model_settings.get('anthropic_speed', OMIT)
+        if s == 'fast' and not AnthropicModelProfile.from_profile(self.profile).supports_fast_speed:
+            return OMIT
+        return s if s in ('standard', 'fast') else OMIT
 
     def _get_container(
         self, messages: list[ModelMessage], model_settings: AnthropicModelSettings
@@ -540,7 +550,7 @@ class AnthropicModel(Model):
                 output_config=output_config or OMIT,
                 thinking=model_settings.get('anthropic_thinking', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
-                speed=model_settings.get('anthropic_speed', OMIT),
+                speed=self._effective_speed(model_settings),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
