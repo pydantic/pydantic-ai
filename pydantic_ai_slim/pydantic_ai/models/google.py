@@ -320,7 +320,7 @@ class GoogleModel(Model):
         )
         model_settings = cast(GoogleModelSettings, model_settings or {})
         contents, generation_config = await self._build_content_and_config(
-            messages, model_settings, model_request_parameters, False
+            messages, model_settings, model_request_parameters
         )
 
         # Annoyingly, the type of `GenerateContentConfigDict.get` is "partially `Unknown`" because `response_schema` includes `typing._UnionGenericAlias`,
@@ -498,7 +498,9 @@ class GoogleModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> GenerateContentResponse | Awaitable[AsyncIterator[GenerateContentResponse]]:
         contents, config = await self._build_content_and_config(
-            messages, model_settings, model_request_parameters, stream
+            messages,
+            model_settings,
+            model_request_parameters,
         )
         func = self.client.aio.models.generate_content_stream if stream else self.client.aio.models.generate_content
         try:
@@ -517,7 +519,6 @@ class GoogleModel(Model):
         messages: list[ModelMessage],
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
-        stream: bool,
     ) -> tuple[list[ContentUnionDict], GenerateContentConfigDict]:
         tools, image_config = self._get_tools(model_request_parameters)
         if model_request_parameters.function_tools and not self.profile.supports_tools:
@@ -580,20 +581,6 @@ class GoogleModel(Model):
 
         # Validate logprobs settings
         logprobs_requested = model_settings.get('google_logprobs')
-        if logprobs_requested and self._provider.name != 'google-vertex':
-            raise UserError(
-                'Logprobs are only supported on Vertex AI. '
-                'Use `GoogleProvider(vertexai=True)` or the `google-vertex` provider prefix to enable logprobs. '
-                f'Current provider: {self._provider.name}'
-            )
-
-        # Check if logprobs are requested with streaming
-        if logprobs_requested and stream:
-            raise UserError(
-                'Logprobs are not supported for streaming requests with Google models. '
-                'Use non-streaming mode to get logprobs.'
-            )
-
         if logprobs_requested:
             config['response_logprobs'] = True
 
@@ -628,7 +615,7 @@ class GoogleModel(Model):
         logprob_results = candidate.logprobs_result if candidate else None
         if logprob_results and candidate:
             vendor_details['logprobs'] = logprob_results.model_dump(mode='json', by_alias=True)
-            vendor_details['avg_logprobs'] = candidate.avg_logprobs
+            vendor_details['logprobs']['avg_logprobs'] = candidate.avg_logprobs
 
         usage = _metadata_as_usage(response, provider=self._provider.name, provider_url=self._provider.base_url)
         grounding_metadata = candidate.grounding_metadata if candidate else None
