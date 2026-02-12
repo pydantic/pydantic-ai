@@ -137,6 +137,7 @@ class ToolManager(Generic[AgentDepsT]):
             wrap_validation_errors: Whether to wrap validation errors in a retry prompt part.
             approved: Whether the tool call has been approved.
             metadata: Additional metadata from DeferredToolResults.metadata.
+            context: Context data from DeferredToolResults.context.
         """
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover

@@ -148,9 +148,7 @@ class MontyRuntime(CodeRuntime):
             # decode_checkpoint_results handles base64 → validate_json → dump_python(mode='json').
             if ckpt.completed_results:
                 decoded = decode_checkpoint_results(ckpt.completed_results)
-                monty_results: dict[int, ExternalResult] = {
-                    int(k): {'return_value': v} for k, v in decoded.items()
-                }
+                monty_results: dict[int, ExternalResult] = {int(k): {'return_value': v} for k, v in decoded.items()}
                 monty_state = monty_state.resume(results=monty_results)
                 if isinstance(monty_state, MontyComplete):
                     return monty_state.output
