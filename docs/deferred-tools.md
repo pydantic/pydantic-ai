@@ -77,6 +77,7 @@ DeferredToolRequests(
             tool_call_id='delete_file',
         ),
     ],
+    context={},
     metadata={'update_file_dotenv': {'reason': 'protected'}},
 )
 """
@@ -297,6 +298,7 @@ async def main():
             )
         ],
         approvals=[],
+        context={},
         metadata={'pyd_ai_tool_call_id': {'task_id': 'task_0'}},
     )
     """
