@@ -12,7 +12,6 @@
         - PrefixedToolset
         - RenamedToolset
         - PreparedToolset
-        - ReturnSchemaToolset
         - WrapperToolset
         - ToolsetFunc
 

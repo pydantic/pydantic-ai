@@ -159,7 +159,7 @@ def _get_tool_signature(
         name=signature_name,
         parameters_json_schema=tool.tool_def.parameters_json_schema,
         description=description,
-        return_json_schema=tool.tool_def.return_schema,  # Always include if available
+        return_json_schema=(tool.tool_def.metadata or {}).get('output_schema'),
         namespace_defs=True,
     )
 

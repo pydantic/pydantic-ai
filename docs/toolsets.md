@@ -286,7 +286,6 @@ print(test_model.last_model_request_parameters.function_tools)
             'type': 'object',
         },
         description='Get the temperature in degrees Celsius',
-        return_schema={'type': 'number'},
     ),
     ToolDefinition(
         name='temperature_fahrenheit',
@@ -297,7 +296,6 @@ print(test_model.last_model_request_parameters.function_tools)
             'type': 'object',
         },
         description='Get the temperature in degrees Fahrenheit',
-        return_schema={'type': 'number'},
     ),
     ToolDefinition(
         name='weather_conditions',
@@ -308,7 +306,6 @@ print(test_model.last_model_request_parameters.function_tools)
             'type': 'object',
         },
         description='Get the current weather conditions',
-        return_schema={'type': 'string'},
     ),
     ToolDefinition(
         name='current_time',
@@ -384,58 +381,6 @@ print(result.output)
 ```
 
 1. We're using [`TestModel`][pydantic_ai.models.test.TestModel] here because it makes it easy to specify which tools to call.
-
-_(This example is complete, it can be run "as is")_
-
-### Including Return Schemas {#return-schema-toolset}
-
-[`ReturnSchemaToolset`][pydantic_ai.toolsets.ReturnSchemaToolset] wraps a toolset and appends each tool's return schema to its description. This helps LLMs understand what data a tool returns, enabling better planning for multi-step operations and tool chaining.
-
-When tools return complex types like Pydantic models or dataclasses, Pydantic AI automatically infers the return schema from the function's return type annotation. By including this schema in the tool description, the LLM can:
-
-- Plan sequences of tool calls where one tool's output feeds into another
-- Determine upfront if a requested data point is available
-- Understand the semantic meaning of each field in complex return types
-
-The return schema can be controlled at multiple levels:
-
-- **Toolset-level**: `ReturnSchemaToolset` has `include_return_schema=True` by default
-- **Tool-level**: Individual tools can opt-in via their `include_return_schema` flag on [`Tool`][pydantic_ai.tools.Tool]
-- **Agent-level**: Set `include_tool_return_schema=True` on the [`Agent`][pydantic_ai.agent.Agent] constructor (defaults to `False` to avoid breaking changes)
-
-To easily chain different modifications, you can also call [`with_return_schema()`][pydantic_ai.toolsets.AbstractToolset.with_return_schema] on any toolset instead of directly constructing a `ReturnSchemaToolset`.
-
-```python {title="return_schema_toolset.py"}
-from pydantic import BaseModel
-
-from pydantic_ai import Agent, FunctionToolset
-from pydantic_ai.models.test import TestModel
-
-
-class UserDetails(BaseModel):
-    """Details about a user."""
-
-    id: int
-    name: str
-    email: str
-
-
-toolset = FunctionToolset()
-
-
-@toolset.tool
-def get_user(user_id: int) -> UserDetails:
-    """Get user details by ID."""
-    return UserDetails(id=user_id, name='Alice', email='alice@example.com')
-
-
-# Use the convenience method to include return schemas
-toolset_with_schemas = toolset.with_return_schema()
-
-test_model = TestModel()
-agent = Agent(test_model, toolsets=[toolset_with_schemas])
-result = agent.run_sync('Get user 1')
-```
 
 _(This example is complete, it can be run "as is")_
 

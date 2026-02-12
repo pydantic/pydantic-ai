@@ -11,7 +11,7 @@ from datetime import datetime
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
 from urllib.parse import urlparse
 
 import pydantic
@@ -20,7 +20,7 @@ from genai_prices import calc_price, types as genai_types
 from opentelemetry._logs import LogRecord
 from opentelemetry.util.types import AnyValue
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import TypeAliasType, TypeVar, deprecated
+from typing_extensions import TypeAliasType, deprecated
 
 from . import _otel_messages, _utils
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -676,11 +676,9 @@ MultiModalContent = Annotated[
 
 UserContent: TypeAlias = str | MultiModalContent | CachePoint
 
-T = TypeVar('T')
-
 
 @dataclass(repr=False)
-class ToolReturn(Generic[T]):
+class ToolReturn:
     """A structured return value for tools that need to provide both a return value and custom content to the model.
 
     This class allows tools to return complex responses that include:
@@ -689,7 +687,7 @@ class ToolReturn(Generic[T]):
     - Optional metadata for application use
     """
 
-    return_value: T
+    return_value: Any
     """The return value to be used in the tool response."""
 
     _: KW_ONLY

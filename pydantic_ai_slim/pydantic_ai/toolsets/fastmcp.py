@@ -141,7 +141,6 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
                             'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
                             'output_schema': mcp_tool.outputSchema or None,
                         },
-                        return_schema=mcp_tool.outputSchema or None,
                     )
                 )
                 for mcp_tool in await self.client.list_tools()

@@ -9,12 +9,11 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import partial
 from inspect import Parameter, signature
-from typing import TYPE_CHECKING, Any, Concatenate, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Concatenate, cast, get_origin
 
-from pydantic import ConfigDict, TypeAdapter
+from pydantic import ConfigDict
 from pydantic._internal import _decorators, _generate_schema, _typing_extra
 from pydantic._internal._config import ConfigWrapper
-from pydantic.errors import PydanticSchemaGenerationError, PydanticUserError
 from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
@@ -24,7 +23,6 @@ from typing_extensions import ParamSpec, TypeIs, TypeVar, get_type_hints
 from ._griffe import doc_descriptions
 from ._run_context import RunContext
 from ._utils import check_object_json_schema, is_async_callable, is_model_like, run_in_executor
-from .messages import ToolReturn
 
 if TYPE_CHECKING:
     from .tools import DocstringFormat, ObjectJsonSchema
@@ -47,7 +45,6 @@ class FunctionSchema:
     single_arg_name: str | None = None
     positional_fields: list[str] = field(default_factory=list[str])
     var_positional_field: str | None = None
-    return_schema: ObjectJsonSchema | None = None
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
@@ -115,9 +112,7 @@ def function_schema(  # noqa: C901
     var_positional_field: str | None = None
     decorators = _decorators.DecoratorInfos()
 
-    description, field_descriptions, return_description = doc_descriptions(
-        original_func, sig, docstring_format=docstring_format
-    )
+    description, field_descriptions = doc_descriptions(original_func, sig, docstring_format=docstring_format)
     missing_param_descriptions: set[str] = set()
 
     for index, (name, p) in enumerate(sig.parameters.items()):
@@ -216,26 +211,6 @@ def function_schema(  # noqa: C901
         # and set it on the tool
         description = json_schema.pop('description', None)
 
-    return_annotation = type_hints.get('return')
-    return_schema = None
-    # Check if origin of return annotation is ToolReturn which needs special handling
-    if get_origin(return_annotation) is ToolReturn or return_annotation is ToolReturn:
-        type_args = get_args(return_annotation)
-        inner_type = type_args[0] if type_args else Any
-        try:
-            return_schema = TypeAdapter(inner_type).json_schema(schema_generator=schema_generator)
-            if return_description and 'description' not in return_schema:
-                return_schema['description'] = return_description
-        except (PydanticSchemaGenerationError, PydanticUserError):
-            pass
-    elif return_annotation:
-        try:
-            return_schema = TypeAdapter(return_annotation).json_schema(schema_generator=schema_generator)
-            if return_description and 'description' not in return_schema:
-                return_schema['description'] = return_description
-        except (PydanticSchemaGenerationError, PydanticUserError):
-            pass
-
     return FunctionSchema(
         description=description,
         validator=schema_validator,
@@ -246,7 +221,6 @@ def function_schema(  # noqa: C901
         takes_ctx=bool(takes_ctx),
         is_async=is_async_callable(function),
         function=function,
-        return_schema=return_schema,
     )
 
 

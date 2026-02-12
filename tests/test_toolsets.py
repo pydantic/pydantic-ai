@@ -76,7 +76,7 @@ async def test_function_toolset():
                     'type': 'object',
                 },
                 description='Add two numbers',
-                return_schema={'type': 'integer'},
+
             )
         ]
     )
@@ -95,7 +95,7 @@ async def test_function_toolset():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
-                return_schema={'type': 'integer'},
+
             )
         ]
     )
@@ -119,7 +119,7 @@ async def test_function_toolset():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
-                return_schema={'type': 'integer'},
+
             ),
             ToolDefinition(
                 name='subtract',
@@ -130,7 +130,7 @@ async def test_function_toolset():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
-                return_schema={'type': 'integer'},
+
             ),
         ]
     )
@@ -328,7 +328,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
-                return_schema={'type': 'integer'},
+
             ),
             ToolDefinition(
                 name='math_subtract',
@@ -339,7 +339,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
-                return_schema={'type': 'integer'},
+
             ),
             ToolDefinition(
                 name='math_multiply',
@@ -350,7 +350,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
-                return_schema={'type': 'integer'},
+
             ),
             ToolDefinition(
                 name='adv_power',
@@ -361,7 +361,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['base', 'exponent'],
                     'type': 'object',
                 },
-                return_schema={'type': 'integer'},
+
             ),
         ]
     )
@@ -384,7 +384,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
-                return_schema={'type': 'integer'},
+
             ),
             ToolDefinition(
                 name='math_subtract',
@@ -395,7 +395,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
-                return_schema={'type': 'integer'},
+
             ),
             ToolDefinition(
                 name='math_multiply',
@@ -406,7 +406,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
-                return_schema={'type': 'integer'},
+
             ),
             ToolDefinition(
                 name='str_concat',
@@ -417,7 +417,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['s1', 's2'],
                     'type': 'object',
                 },
-                return_schema={'type': 'string'},
+
             ),
             ToolDefinition(
                 name='str_uppercase',
@@ -428,7 +428,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['text'],
                     'type': 'object',
                 },
-                return_schema={'type': 'string'},
+
             ),
             ToolDefinition(
                 name='str_reverse',
@@ -439,7 +439,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['text'],
                     'type': 'object',
                 },
-                return_schema={'type': 'string'},
+
             ),
             ToolDefinition(
                 name='adv_power',
@@ -450,7 +450,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['base', 'exponent'],
                     'type': 'object',
                 },
-                return_schema={'type': 'integer'},
+
             ),
         ]
     )
@@ -474,7 +474,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
-                return_schema={'type': 'integer'},
+
             ),
             ToolDefinition(
                 name='math_subtract',
@@ -485,7 +485,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
-                return_schema={'type': 'integer'},
+
             ),
             ToolDefinition(
                 name='math_multiply',
@@ -496,7 +496,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
-                return_schema={'type': 'integer'},
+
             ),
         ]
     )

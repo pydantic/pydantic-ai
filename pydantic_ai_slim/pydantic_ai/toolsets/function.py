@@ -363,7 +363,6 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 call_func=tool.function_schema.call,
                 is_async=tool.function_schema.is_async,
                 timeout=tool_def.timeout,
-                include_return_schema=tool.include_return_schema,
             )
         return tools
 

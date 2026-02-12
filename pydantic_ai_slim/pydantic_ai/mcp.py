@@ -581,7 +581,6 @@ class MCPServer(AbstractToolset[Any], ABC):
                         'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
                         'output_schema': mcp_tool.outputSchema or None,
                     },
-                    return_schema=mcp_tool.outputSchema or None,
                 ),
             )
             for mcp_tool in await self.list_tools()
@@ -594,7 +593,6 @@ class MCPServer(AbstractToolset[Any], ABC):
             tool_def=tool_def,
             max_retries=self.max_retries,
             args_validator=TOOL_SCHEMA_VALIDATOR,
-            include_return_schema=False,
         )
 
     async def list_resources(self) -> list[Resource]:
