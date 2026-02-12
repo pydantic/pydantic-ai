@@ -86,7 +86,7 @@ except ImportError:  # pragma: lax no cover
 
 import sys
 
-if sys.version_info >= (3, 14):  # pragma: no cover
+if sys.version_info >= (3, 14):
     pytest.skip(
         'temporalio sandbox is incompatible with Python 3.14: '
         'sandbox module state accumulates across validation cycles causing import failures after ~22 workflows '
