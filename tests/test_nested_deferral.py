@@ -8,7 +8,7 @@ and reconstruct per-parent `DeferredToolResults` on resume.
 from __future__ import annotations
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.exceptions import CallDeferred
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -16,7 +16,6 @@ from pydantic_ai.messages import (
     ToolCallPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDenied
 
 
