@@ -761,21 +761,27 @@ def _infer_modality_from_media_type(media_type: str) -> Literal['image', 'audio'
 
 
 def _convert_binary_to_otel_part(
-    media_type: str, base64_content: str, settings: InstrumentationSettings
+    media_type: str, base64_content: Callable[[], str], settings: InstrumentationSettings
 ) -> _otel_messages.BlobPart | _otel_messages.BinaryDataPart:
-    """Convert binary content to OTel message part based on version."""
+    """Convert binary content to OTel message part based on version.
+
+    Args:
+        media_type: The MIME type of the binary content.
+        base64_content: A callable that returns the base64-encoded content (only called if needed).
+        settings: The instrumentation settings.
+    """
     if settings.version >= 4:
         blob_part = _otel_messages.BlobPart(type='blob', mime_type=media_type)
         modality = _infer_modality_from_media_type(media_type)
         if modality is not None:
             blob_part['modality'] = modality
         if settings.include_content and settings.include_binary_content:
-            blob_part['content'] = base64_content
+            blob_part['content'] = base64_content()
         return blob_part
     else:
         converted_part = _otel_messages.BinaryDataPart(type='binary', media_type=media_type)
         if settings.include_content and settings.include_binary_content:
-            converted_part['content'] = base64_content
+            converted_part['content'] = base64_content()
         return converted_part
 
 
@@ -836,7 +842,7 @@ class UserPromptPart:
                         )
                     )
             elif isinstance(part, BinaryContent):
-                parts.append(_convert_binary_to_otel_part(part.media_type, part.base64, settings))
+                parts.append(_convert_binary_to_otel_part(part.media_type, lambda p=part: p.base64, settings))
             elif isinstance(part, CachePoint):
                 # CachePoint is a marker, not actual content - skip it for otel
                 pass
@@ -1542,7 +1548,9 @@ class ModelResponse:
                     )
                 )
             elif isinstance(part, FilePart):
-                parts.append(_convert_binary_to_otel_part(part.content.media_type, part.content.base64, settings))
+                parts.append(
+                    _convert_binary_to_otel_part(part.content.media_type, lambda p=part: p.content.base64, settings)
+                )
             elif isinstance(part, BaseToolCallPart):
                 call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
                 if isinstance(part, BuiltinToolCallPart):
