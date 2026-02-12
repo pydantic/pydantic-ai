@@ -257,7 +257,13 @@ def test_google_style_with_returns():
     assert json_schema == snapshot(
         {
             'name': 'my_tool',
-            'description': 'A function that does something.',
+            'description': """\
+<summary>A function that does something.</summary>
+<returns>
+<type>str</type>
+<description>The result as a string.</description>
+</returns>\
+""",
             'parameters_json_schema': {
                 'additionalProperties': False,
                 'properties': {'x': {'description': 'The input value.', 'type': 'integer'}},
@@ -293,7 +299,13 @@ def test_sphinx_style_with_returns():
     assert json_schema == snapshot(
         {
             'name': 'my_tool',
-            'description': 'A sphinx function with returns.',
+            'description': """\
+<summary>A sphinx function with returns.</summary>
+<returns>
+<type>str</type>
+<description>The result as a string with type.</description>
+</returns>\
+""",
             'parameters_json_schema': {
                 'additionalProperties': False,
                 'properties': {'x': {'description': 'The input value.', 'type': 'integer'}},
@@ -335,7 +347,13 @@ def test_numpy_style_with_returns():
     assert json_schema == snapshot(
         {
             'name': 'my_tool',
-            'description': 'A numpy function with returns.',
+            'description': """\
+<summary>A numpy function with returns.</summary>
+<returns>
+<type>str</type>
+<description>The result as a string with type.</description>
+</returns>\
+""",
             'parameters_json_schema': {
                 'additionalProperties': False,
                 'properties': {'x': {'description': 'The input value.', 'type': 'integer'}},
@@ -371,7 +389,12 @@ def test_only_returns_type():
     assert json_schema == snapshot(
         {
             'name': 'only_returns_type',
-            'description': '',
+            'description': """\
+<returns>
+<type>str</type>
+<description>The result as a string.</description>
+</returns>\
+""",
             'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
             'outer_typed_dict_key': None,
             'strict': None,

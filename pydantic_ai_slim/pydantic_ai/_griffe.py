@@ -23,8 +23,16 @@ def doc_descriptions(
 ) -> tuple[str | None, dict[str, str]]:
     """Extract the function description and parameter descriptions from a function's docstring.
 
+    The function parses the docstring using the specified format (or infers it if 'auto')
+    and extracts both the main description and parameter descriptions. If a returns section
+    is present in the docstring, the main description will be formatted as XML.
+
     Returns:
-        A tuple of (main description, parameter descriptions dict).
+        A tuple containing:
+        - str: Main description string, which may be either:
+            * Plain text if no returns section is present
+            * XML-formatted if returns section exists, including <summary> and <returns> tags
+        - dict[str, str]: Dictionary mapping parameter names to their descriptions
     """
     doc = func.__doc__
     if doc is None:
@@ -56,6 +64,18 @@ def doc_descriptions(
     main_desc = ''
     if main := next((p for p in sections if p.kind == DocstringSectionKind.text), None):
         main_desc = main.value
+
+    if return_ := next((p for p in sections if p.kind == DocstringSectionKind.returns), None):
+        return_statement = return_.value[0]
+        return_desc = return_statement.description
+        return_type = return_statement.annotation
+        type_tag = f'<type>{return_type}</type>\n' if return_type else ''
+        return_xml = f'<returns>\n{type_tag}<description>{return_desc}</description>\n</returns>'
+
+        if main_desc:
+            main_desc = f'<summary>{main_desc}</summary>\n{return_xml}'
+        else:
+            main_desc = return_xml
 
     return main_desc, params
 
