@@ -124,18 +124,7 @@ def _docker_container() -> Iterator[str]:
     subprocess.run(['docker', 'rm', '-f', container_name], capture_output=True)
 
 
-def _modal_is_available() -> bool:
-    """Check whether the Modal SDK is installed and configured."""
-    try:
-        import modal
-
-        modal.App.lookup('pydantic-ai-test', create_if_missing=True)
-        return True
-    except Exception:
-        return False
-
-
-@pytest.fixture(params=['monty', 'docker', 'modal'])
+@pytest.fixture(params=['monty', 'docker'])
 def code_runtime(request: pytest.FixtureRequest) -> CodeRuntime:
     """Parameterized fixture providing each CodeRuntime implementation."""
     if request.param == 'monty':
@@ -146,23 +135,14 @@ def code_runtime(request: pytest.FixtureRequest) -> CodeRuntime:
 
         return MontyRuntime()
 
-    if request.param == 'docker':
-        if not _docker_is_available():
-            pytest.skip('Docker is not available')
+    if not _docker_is_available():
+        pytest.skip('Docker is not available')
 
-        from pydantic_ai.runtime.docker import DockerRuntime
+    from pydantic_ai.runtime.docker import DockerRuntime
 
-        container_id: str = request.getfixturevalue('_docker_container')
-        return DockerRuntime(
-            container_id=container_id,
-            python_path='python3',
-            driver_path='/tmp/pydantic_ai_driver.py',
-        )
-
-    # modal
-    if not _modal_is_available():
-        pytest.skip('Modal is not available')
-
-    from pydantic_ai.runtime.modal import ModalRuntime
-
-    return ModalRuntime()
+    container_id: str = request.getfixturevalue('_docker_container')
+    return DockerRuntime(
+        container_id=container_id,
+        python_path='python3',
+        driver_path='/tmp/pydantic_ai_driver.py',
+    )
