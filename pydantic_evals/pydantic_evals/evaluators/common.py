@@ -245,7 +245,7 @@ class LLMJudge(Evaluator[object, object, object]):
         result = super().build_serialization_arguments()
         # always serialize the model as a string when present; use its name if it's a KnownModelName
         if (model := result.get('model')) and isinstance(model, models.Model):  # pragma: no branch
-            result['model'] = f'{model.system}:{model.model_name}'
+            result['model'] = model.model_id
 
         # Note: this may lead to confusion if you try to serialize-then-deserialize with a custom model.
         # I expect that is rare enough to be worth not solving yet, but common enough that we probably will want to
