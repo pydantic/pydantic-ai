@@ -59,11 +59,15 @@ class DockerRuntime(DriverBasedRuntime):
         driver_path: Path where the driver script is installed inside the container.
     """
 
-    container_id: str
+    container_id: str | None = None
     python_path: str = 'python'
     driver_path: str = '/tmp/pydantic_ai_driver.py'
 
     async def _start_driver(self, init_msg: dict[str, Any]) -> DriverTransport:
+        if self.container_id is None:
+            # TODO (DouweM): start a new container with a basic Python image?
+            raise ValueError('Container ID is required')
+
         proc = await asyncio.create_subprocess_exec(
             'docker',
             'exec',

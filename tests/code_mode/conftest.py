@@ -73,7 +73,7 @@ async def build_code_mode_toolset(
     toolset: FunctionToolset[None] = FunctionToolset()
     for func, takes_ctx in tool_specs:
         toolset.add_function(func, takes_ctx=takes_ctx)
-    code_mode = CodeModeToolset(wrapped=toolset, runtime=runtime)
+    code_mode = CodeModeToolset(toolset, runtime=runtime)
     ctx = build_run_context()
     tools = await code_mode.get_tools(ctx)
     return code_mode, tools

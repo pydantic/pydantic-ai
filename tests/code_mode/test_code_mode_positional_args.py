@@ -61,7 +61,7 @@ class MisorderedParamsToolset(AbstractToolset[None]):
 )
 async def test_code_mode_positional_args_respects_signature_order():
     """Positional args should map to the tool signature, not schema property order."""
-    code_mode = CodeModeToolset(wrapped=MisorderedParamsToolset(), runtime=MontyRuntime())
+    code_mode = CodeModeToolset(MisorderedParamsToolset(), runtime=MontyRuntime())
     run_context = build_run_context()
 
     tools = await code_mode.get_tools(run_context)

@@ -64,11 +64,10 @@ def convert_temp(fahrenheit: float) -> float:
 
 
 tools = FunctionToolset(tools=[get_weather, convert_temp])
-runtime = MontyRuntime()
 
 agent = Agent(
     'anthropic:claude-sonnet-4-5',
-    toolsets=[CodeModeToolset(wrapped=tools, runtime=runtime)],
+    toolsets=[CodeModeToolset(tools)],
 )
 
 result = agent.run_sync("What's the weather in Paris and Tokyo, in Celsius?")
@@ -197,10 +196,9 @@ def my_prompt_builder(*, signatures: list[str], runtime_hints: str) -> str:
     return f'Write Python code using these functions:\n\n{funcs}'
 
 
-tools = FunctionToolset(tools=[...])
+toolset = FunctionToolset(tools=[...])
 toolset = CodeModeToolset(
-    wrapped=tools,
-    runtime=MontyRuntime(),
+    toolset,
     prompt_builder=my_prompt_builder,
 )
 ```

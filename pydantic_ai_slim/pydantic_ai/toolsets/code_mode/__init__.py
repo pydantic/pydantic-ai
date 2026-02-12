@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, cast
 
 from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
+from pydantic_ai.runtime import RuntimeName, get_runtime
 from pydantic_ai.runtime.abstract import (
     CodeInterruptedError,
     CodeRuntime,
@@ -27,7 +28,7 @@ from ..._tool_manager import ToolManager
 from ...exceptions import ModelRetry
 from ...messages import ToolCallPart
 from ...tools import ToolDefinition
-from ..abstract import SchemaValidatorProt, ToolsetTool
+from ..abstract import AbstractToolset, SchemaValidatorProt, ToolsetTool
 from ..wrapper import WrapperToolset
 from ._sanitization import sanitize_tool_name
 
@@ -159,7 +160,7 @@ def _get_tool_signature(
     return tool.python_signature(name_override=name_override)
 
 
-@dataclass(kw_only=True)
+@dataclass(init=False)
 class CodeModeToolset(WrapperToolset[AgentDepsT]):
     """A toolset that exposes wrapped tools as callable Python functions in a code execution context.
 
@@ -172,15 +173,33 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             Defaults to 3. Increase for complex code generation tasks or less capable models.
     """
 
+    _: KW_ONLY
+
     runtime: CodeRuntime
     prompt_builder: Callable[..., str] = build_code_mode_prompt
     max_retries: int = 3
+
     # Note: _cached_signatures and _name_map are mutable instance state populated in get_tools()
     # and consumed in call_tool(). This class is not safe for concurrent use from multiple agent
     # runs on the same instance. The agent framework runs a single loop per toolset instance,
     # so this is fine in practice.
     _cached_signatures: list[str] | None = field(default=None, init=False, repr=False)
     _name_map: dict[str, str] = field(default_factory=dict[str, str], init=False, repr=False)
+
+    def __init__(
+        self,
+        wrapped: AbstractToolset[AgentDepsT],
+        *,
+        runtime: CodeRuntime | RuntimeName = 'monty',
+        prompt_builder: Callable[..., str] = build_code_mode_prompt,
+        max_retries: int = 3,
+    ) -> None:
+        if isinstance(runtime, str):
+            runtime = get_runtime(runtime)
+        self.runtime = runtime
+        self.prompt_builder = prompt_builder
+        self.max_retries = max_retries
+        super().__init__(wrapped)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         wrapped_tools = await super().get_tools(ctx)
