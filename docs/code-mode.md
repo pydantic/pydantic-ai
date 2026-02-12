@@ -191,7 +191,7 @@ from pydantic_ai.toolsets import CodeModeToolset, FunctionToolset
 from pydantic_ai.runtime import MontyRuntime
 
 
-def my_prompt_builder(*, signatures: list[str], runtime_hints: str) -> str:
+def my_prompt_builder(*, signatures: list[str], runtime_instructions: str) -> str:
     funcs = '\n'.join(signatures)
     return f'Write Python code using these functions:\n\n{funcs}'
 

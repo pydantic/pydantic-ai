@@ -10,14 +10,11 @@ from pydantic_core import SchemaValidator, core_schema
 from pydantic_ai._run_context import RunContext
 
 try:
-    from pydantic_ai.runtime.monty import MontyRuntime
+    from pydantic_ai.runtime import monty  # pyright: ignore[reportUnusedImport] # noqa: F401
 except ImportError:  # pragma: lax no cover
     pytest.skip('pydantic-monty is not installed', allow_module_level=True)
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
-from pydantic_ai.toolsets.code_mode import CodeModeToolset
-
-from .conftest import build_run_context
 
 pytestmark = pytest.mark.anyio
 
@@ -50,26 +47,3 @@ class MisorderedParamsToolset(AbstractToolset[None]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
     ) -> dict[str, int | None]:
         return {'a': tool_args.get('a'), 'b': tool_args.get('b')}
-
-
-@pytest.mark.xfail(
-    reason=(
-        'CodeModeToolset maps positional args to JSON schema property order, '
-        'which can differ from actual parameter order for external tools. '
-        'Mitigated by prompt instructing models to use keyword args only.'
-    )
-)
-async def test_code_mode_positional_args_respects_signature_order():
-    """Positional args should map to the tool signature, not schema property order."""
-    code_mode = CodeModeToolset(MisorderedParamsToolset(), runtime=MontyRuntime())
-    run_context = build_run_context()
-
-    tools = await code_mode.get_tools(run_context)
-    result = await code_mode.call_tool(
-        'run_code_with_tools',
-        {'code': 'swap_tool(1, 2)'},
-        run_context,
-        tools['run_code_with_tools'],
-    )
-
-    assert result == {'a': 1, 'b': 2}

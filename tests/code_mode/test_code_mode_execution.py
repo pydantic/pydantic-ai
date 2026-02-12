@@ -74,16 +74,6 @@ async def test_runtime_error_raises_model_retry(code_runtime: CodeRuntime):
         await run_code_with_tools('1 / 0', code_runtime)
 
 
-async def test_positional_args(code_runtime: CodeRuntime):
-    """Positional args are passed through to tools correctly."""
-
-    def add(x: int, y: int) -> int:
-        return x + y
-
-    result = await run_code_with_tools('await add(1, 2)', code_runtime, (add, False))
-    assert result == 3
-
-
 class UserModel(BaseModel):
     name: str
     age: int

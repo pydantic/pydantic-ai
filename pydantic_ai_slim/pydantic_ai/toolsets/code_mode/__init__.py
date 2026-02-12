@@ -47,6 +47,24 @@ _CODE_MODE_TOOL_NAME = 'run_code_with_tools'
 
 _TYPEDDICT_NAME_RE = re.compile(r'^class (\w+)\(TypedDict\):')
 
+# TODO: The first line of the prompt should be customizable by the user using Prompt Templates #3656
+_CODE_MODE_PROMPT = """
+Use `run_code_with_tools` to write Python code that calls the available functions. You can make a single call or combine multiple steps in a script — use your judgment based on the task.
+
+Execution model:
+- Each `run_code_with_tools` call runs in an isolated environment — variables don't persist between calls
+- Functions are async — call with `await`, e.g. `result = await get_items()`
+- To run independent calls concurrently, fire them first, then await:
+  ```python
+  future_a = get_items()    # starts immediately
+  future_b = get_users()    # starts immediately
+  items = await future_a    # wait for results
+  users = await future_b
+  ```
+- The last expression evaluated is the return value
+- Return raw data when it answers the question directly; extract or transform when needed
+"""
+
 
 def _dedup_typeddicts(signatures: list[Signature]) -> None:
     """Deduplicate TypedDict definitions across multiple tool signatures in place.
@@ -92,7 +110,7 @@ def _dedup_typeddicts(signatures: list[Signature]) -> None:
         sig.typeddicts = deduped
 
 
-def build_code_mode_prompt(*, signatures: list[str], runtime_hints: str) -> str:
+def build_code_mode_prompt(signatures: list[Signature], runtime_instructions: str | None) -> str:
     """Build the default code mode prompt with the given tool signatures.
 
     This is the default prompt builder used by CodeModeToolset. Users can provide
@@ -100,39 +118,21 @@ def build_code_mode_prompt(*, signatures: list[str], runtime_hints: str) -> str:
 
     Args:
         signatures: List of Python function signatures for available tools.
-        runtime_hints: Runtime-specific text to include in the prompt (from
-            `CodeRuntime.prompt_hints()`). Inserted verbatim if non-empty.
+        runtime_instructions: Runtime-specific text to include in the prompt (from
+            `CodeRuntime.instructions()`). Inserted verbatim if non-empty.
 
     Returns:
         The complete prompt describing code mode capabilities and available functions.
     """
-    functions_block = '\n\n'.join(signatures)
+    parts = [_CODE_MODE_PROMPT]
 
-    restrictions_block = f'\n{runtime_hints}\n' if runtime_hints else ''
+    if runtime_instructions:
+        parts.append(runtime_instructions)
 
-    # TODO: The first line of the prompt should be customizable by the user using Prompt Templates #3656
-    return f"""\
-Use run_code_with_tools to write Python code that calls the available functions. You can make a single call or combine multiple steps in a script — use your judgment based on the task.
-
-Execution model:
-- Each run_code_with_tools call runs in an isolated environment — variables don't persist between calls
-- Functions are async — call with `await`, e.g. `result = await get_items()`
-- To run independent calls concurrently, fire them first, then await:
-  ```python
-  future_a = get_items()    # starts immediately
-  future_b = get_users()    # starts immediately
-  items = await future_a    # wait for results
-  users = await future_b
-  ```
-- Use keyword arguments: `get_user(id=123)` not `get_user(123)`
-- The last expression evaluated is the return value
-- Return raw data when it answers the question directly; extract or transform when needed
-{restrictions_block}
-Available functions:
-
-```python
-{functions_block}
-```"""
+    parts.append('Available functions:')
+    joined_signatures = '\n\n'.join(sig.with_typeddicts() for sig in signatures)
+    parts.append(f'```python\n{joined_signatures}\n```')
+    return '\n\n'.join(parts)
 
 
 @dataclass(kw_only=True)
@@ -176,14 +176,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     _: KW_ONLY
 
     runtime: CodeRuntime
-    prompt_builder: Callable[..., str] = build_code_mode_prompt
+    prompt_builder: Callable[[list[Signature], str | None], str] = build_code_mode_prompt
     max_retries: int = 3
 
     # Note: _cached_signatures and _name_map are mutable instance state populated in get_tools()
     # and consumed in call_tool(). This class is not safe for concurrent use from multiple agent
     # runs on the same instance. The agent framework runs a single loop per toolset instance,
     # so this is fine in practice.
-    _cached_signatures: list[str] | None = field(default=None, init=False, repr=False)
+    _cached_signatures: list[Signature] | None = field(default=None, init=False, repr=False)
     _name_map: dict[str, str] = field(default_factory=dict[str, str], init=False, repr=False)
 
     def __init__(
@@ -191,7 +191,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         wrapped: AbstractToolset[AgentDepsT],
         *,
         runtime: CodeRuntime | RuntimeName = 'monty',
-        prompt_builder: Callable[..., str] = build_code_mode_prompt,
+        prompt_builder: Callable[[list[Signature], str | None], str] = build_code_mode_prompt,
         max_retries: int = 3,
     ) -> None:
         if isinstance(runtime, str):
@@ -232,10 +232,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         _dedup_typeddicts(signatures)
 
-        available_functions = [sig.with_typeddicts() for sig in signatures]
-        self._cached_signatures = available_functions
+        self._cached_signatures = signatures
 
-        description = self.prompt_builder(signatures=available_functions, runtime_hints=self.runtime.prompt_hints())
+        description = self.prompt_builder(signatures, self.runtime.instructions)
         return {
             _CODE_MODE_TOOL_NAME: _CodeModeTool(
                 toolset=self,
@@ -259,6 +258,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         """Build tool kwargs from FunctionCall, handling positional args fallback."""
         tool_kwargs: dict[str, Any] = dict(call.kwargs)
         if call.args:
+            # TODO (DouweM): May not be needed since we force kwargs via `*` in the signature
             # Positional args are mapped using JSON schema property order, which may not match
             # the tool's actual parameter order. The prompt instructs models to use keyword
             # arguments only, but we handle positional args as a fallback for non-compliant models.

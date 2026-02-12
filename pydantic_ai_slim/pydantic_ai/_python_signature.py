@@ -69,10 +69,6 @@ class Signature:
         """Render with `...` body."""
         return self._render('...')
 
-    def with_ellipsis(self) -> str:
-        """Render with `...` body (for LLM display)."""
-        return self._render('...')
-
     def with_typeddicts(self, body: str = '...') -> str:
         """Render with TypedDict definitions prepended."""
         sig = self._render(body)
@@ -84,7 +80,7 @@ class Signature:
         """Render the signature with a specific body."""
         prefix = 'async def' if self.is_async else 'def'
         params_str = ', '.join(self.params)
-        sig_line = f'{prefix} {self.name}({params_str}) -> {self.return_type}'
+        sig_line = f'{prefix} {self.name}(*, {params_str}) -> {self.return_type}'
 
         if self.docstring:
             docstring_str = _format_docstring(self.docstring)

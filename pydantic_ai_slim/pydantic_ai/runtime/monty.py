@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from pydantic_ai._python_signature import Signature
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.messages import tool_return_ta
 from pydantic_ai.runtime.abstract import (
@@ -36,7 +37,7 @@ except ImportError:
     raise ImportError("MontyRuntime requires 'monty'. Install with: pip install 'pydantic-ai-slim[monty]'")
 
 
-def _build_type_check_prefix(signatures: list[str]) -> str:
+def _build_type_check_prefix(signatures: list[Signature]) -> str:
     """Build the prefix code used for Monty type checking.
 
     Combines standard typing imports with tool signatures to create the
@@ -52,15 +53,10 @@ def _build_type_check_prefix(signatures: list[str]) -> str:
     Returns:
         Complete prefix code string with imports and signatures.
     """
-    imports = 'from typing import Any, TypedDict, NotRequired, Literal\n\n'
-    # Convert `...` body to `raise NotImplementedError()` for ty/Monty compatibility.
-    # The body `...` is always the last line of the function, so we replace only the
-    # last occurrence to avoid corrupting `...` inside docstrings.
-    converted = [
-        '\n    raise NotImplementedError()'.join(sig.rsplit('\n    ...', 1)) if sig.endswith('\n    ...') else sig
-        for sig in signatures
-    ]
-    return imports + '\n\n'.join(converted)
+    parts = ['from typing import Any, TypedDict, NotRequired, Literal']  # TODO (Douwe): Move to better place
+    parts.extend(sig.with_typeddicts('raise NotImplementedError()') for sig in signatures)
+
+    return '\n\n'.join(parts)
 
 
 class MontyRuntime(CodeRuntime):
@@ -83,7 +79,7 @@ class MontyRuntime(CodeRuntime):
         functions: list[str],
         call_tool: ToolCallback,
         *,
-        signatures: list[str],
+        signatures: list[Signature],
         checkpoint: bytes | None = None,
     ) -> Any:
         """Execute code in the Monty sandbox, or resume from a checkpoint.
@@ -201,7 +197,8 @@ class MontyRuntime(CodeRuntime):
 
         return monty_state.output
 
-    def prompt_hints(self) -> str:
+    @property
+    def instructions(self) -> str | None:
         return (
             'Syntax note: the runtime uses a restricted Python subset.\n'
             '- Imports are not available — use the provided functions and builtins (len, sum, str, etc.) or define your own helpers.'
@@ -218,7 +215,7 @@ class MontyRuntime(CodeRuntime):
         if self.execution_timeout is not None and 'time limit exceeded' in e.display():
             raise CodeExecutionTimeout(f'Code execution timed out after {self.execution_timeout} seconds') from e
 
-    def _type_check(self, monty: Monty, code: str, signatures: list[str], external_functions: list[str]) -> None:
+    def _type_check(self, monty: Monty, code: str, signatures: list[Signature], external_functions: list[str]) -> None:
         prefix_code = _build_type_check_prefix(signatures)
         monty.type_check(prefix_code=prefix_code)
 

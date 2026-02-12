@@ -65,7 +65,7 @@ class DockerRuntime(DriverBasedRuntime):
 
     async def _start_driver(self, init_msg: dict[str, Any]) -> DriverTransport:
         if self.container_id is None:
-            # TODO (DouweM): start a new container with a basic Python image?
+            # TODO (DouweM): start a new container with a basic Python image. See `_docker_container` fixture for an example. Runtime may need an async lifecycle?
             raise ValueError('Container ID is required')
 
         proc = await asyncio.create_subprocess_exec(

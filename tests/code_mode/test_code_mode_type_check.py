@@ -25,7 +25,7 @@ from .conftest import build_code_mode_toolset, run_code_with_tools
 pytestmark = pytest.mark.anyio
 
 
-def add(x: int, y: int) -> int:
+def add(*, x: int, y: int) -> int:
     """Add two integers."""
     return x + y
 
@@ -33,12 +33,12 @@ def add(x: int, y: int) -> int:
 async def test_type_error_raises_model_retry():
     """Type errors in generated code raise ModelRetry so the LLM can fix them."""
     with pytest.raises(ModelRetry) as exc_info:
-        await run_code_with_tools('add("hello", "world")', MontyRuntime(), (add, False))
+        await run_code_with_tools('add(x="hello", y="world")', MontyRuntime(), (add, False))
 
     assert str(exc_info.value) == snapshot("""\
 Type error in generated code:
 main.py:1:5: error[invalid-argument-type] Argument to function `add` is incorrect: Expected `int`, found `Literal["hello"]`
-main.py:1:14: error[invalid-argument-type] Argument to function `add` is incorrect: Expected `int`, found `Literal["world"]`
+main.py:1:16: error[invalid-argument-type] Argument to function `add` is incorrect: Expected `int`, found `Literal["world"]`
 """)
 
 
@@ -54,12 +54,12 @@ async def test_generated_signatures_are_valid_python():
     assert prefix == snapshot('''\
 from typing import Any, TypedDict, NotRequired, Literal
 
-async def add(x: int, y: int) -> int:
+async def add(*, x: int, y: int) -> int:
     """Add two integers."""
     raise NotImplementedError()\
 ''')
     # Verify Monty can parse and type check code using this prefix
-    m = Monty('add(1, 2)', external_functions=['add'])
+    m = Monty('add(x=1, y=2)', external_functions=['add'])
     m.type_check(prefix_code=prefix)  # Should not raise
 
 
@@ -72,23 +72,12 @@ async def test_signatures_use_ellipsis_monty_converts_for_type_check():
     assert '...' in description
     assert 'raise NotImplementedError()' not in description
 
-    # Cached signatures should also have '...' (not NotImplementedError)
     assert code_mode._cached_signatures is not None  # pyright: ignore[reportPrivateUsage]
-    assert all('...' in sig for sig in code_mode._cached_signatures)  # pyright: ignore[reportPrivateUsage]
-    assert not any('raise NotImplementedError()' in sig for sig in code_mode._cached_signatures)  # pyright: ignore[reportPrivateUsage]
 
     # But when Monty builds the type-check prefix, it converts to 'raise NotImplementedError()'
     prefix = _build_type_check_prefix(code_mode._cached_signatures)  # pyright: ignore[reportPrivateUsage]
     assert 'raise NotImplementedError()' in prefix
     assert '    ...' not in prefix
-
-
-def test_build_type_check_prefix_preserves_docstring_ellipsis():
-    """Docstrings containing '...' should not be corrupted by the body replacement."""
-    sig = 'async def foo() -> int:\n    """Returns ... something."""\n    ...'
-    result = _build_type_check_prefix([sig])
-    assert '"""Returns ... something."""' in result
-    assert result.endswith('raise NotImplementedError()')
 
 
 def test_dedup_typeddicts_substring_names():

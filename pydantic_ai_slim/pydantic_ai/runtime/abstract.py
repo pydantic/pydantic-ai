@@ -16,6 +16,7 @@ from typing import Any, TypeAlias
 
 import pydantic
 
+from pydantic_ai._python_signature import Signature
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.messages import ToolReturnContent, tool_return_ta
 
@@ -131,7 +132,7 @@ class CodeRuntime(ABC):
         functions: list[str],
         call_tool: ToolCallback,
         *,
-        signatures: list[str],
+        signatures: list[Signature],
         checkpoint: bytes | None = None,
     ) -> Any:
         """Execute code, or resume from checkpoint if provided.
@@ -159,14 +160,15 @@ class CodeRuntime(ABC):
         """
         ...
 
-    def prompt_hints(self) -> str:
+    @property
+    def instructions(self) -> str | None:
         """Return runtime-specific text to include in the LLM prompt.
 
         If non-empty, the returned string is inserted verbatim into the code
         mode prompt between the execution model section and the coding
         guidelines. Return an empty string (the default) to add nothing.
         """
-        return ''
+        return None
 
 
 def serialize_checkpoint_results(
