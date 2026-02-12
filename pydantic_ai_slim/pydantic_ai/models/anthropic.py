@@ -1148,10 +1148,15 @@ class AnthropicModel(Model):
                             source=BetaFileImageSourceParam(file_id=item.file_id, type='file'),
                             type='image',
                         )
-                    else:
+                    elif item.media_type.startswith(('text/', 'application/')):
                         yield BetaRequestDocumentBlockParam(
                             source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
                             type='document',
+                        )
+                    else:
+                        raise UserError(
+                            f'Unsupported media type {item.media_type!r} for Anthropic file upload. '
+                            'Only image and document (text/application) types are supported.'
                         )
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover

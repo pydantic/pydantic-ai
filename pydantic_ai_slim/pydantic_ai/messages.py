@@ -742,6 +742,7 @@ class UploadedFile:
 
         Note: Automatic inference only works if `file_id` is a URL or path with a recognizable file extension.
         For opaque file IDs (e.g., `'file-abc123'`), the media type will default to `'application/octet-stream'`.
+        Inference relies on Python's `mimetypes` module, whose results may vary across platforms.
 
         Required by some providers (e.g., Bedrock) for certain file types.
         """

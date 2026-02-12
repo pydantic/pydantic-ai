@@ -118,7 +118,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         except ValueError:
                             # Check provider_metadata for UploadedFile data
                             provider_meta = load_provider_metadata(part.provider_metadata)
-                            uploaded_file_id = provider_meta.get('uploaded_file_id')
+                            uploaded_file_id = provider_meta.get('file_id')
                             uploaded_file_provider = provider_meta.get('provider_name')
                             if uploaded_file_id and uploaded_file_provider:
                                 file = UploadedFile(
@@ -550,13 +550,10 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
             elif isinstance(item, ImageUrl | AudioUrl | VideoUrl | DocumentUrl):
                 ui_parts.append(FileUIPart(url=item.url, media_type=item.media_type))
             elif isinstance(item, UploadedFile):
-                media_type = item.media_type
                 # Store uploaded file info in provider_metadata for round-trip support
-                provider_metadata = dump_provider_metadata(
-                    uploaded_file_id=item.file_id, provider_name=item.provider_name
-                )
+                provider_metadata = dump_provider_metadata(file_id=item.file_id, provider_name=item.provider_name)
                 ui_parts.append(
-                    FileUIPart(url=item.file_id, media_type=media_type, provider_metadata=provider_metadata)
+                    FileUIPart(url=item.file_id, media_type=item.media_type, provider_metadata=provider_metadata)
                 )
             elif isinstance(item, CachePoint):
                 # CachePoint is metadata for prompt caching, skip for UI conversion

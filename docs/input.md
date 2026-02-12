@@ -159,7 +159,7 @@ When using [`UploadedFile`][pydantic_ai.messages.UploadedFile] you must set the 
 !!! tip "Getting the provider name"
     Use [`model.system`][pydantic_ai.models.Model.system] to get the correct provider name dynamically. This ensures your code works correctly even if the provider name changes. All examples below demonstrate this pattern.
 
-If you want to introduce portability into your agent logic to allow the same prompt history to work with different provider backends, you can use a [history processor][pydantic_ai.agent.Agent.history_processors] to remove or rewrite `UploadedFile` parts from messages before sending them to a provider that does not support them. Be aware that stripping out `UploadedFile` instances might confuse the model, especially if references to those files remain in the text.
+If you want to introduce portability into your agent logic to allow the same prompt history to work with different provider backends, you can use a [history processor](message-history.md#processing-message-history) to remove or rewrite `UploadedFile` parts from messages before sending them to a provider that does not support them. Be aware that stripping out `UploadedFile` instances might confuse the model, especially if references to those files remain in the text.
 
 ### Media Type Inference
 

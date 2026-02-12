@@ -609,7 +609,7 @@ class MistralModel(Model):
                 elif isinstance(item, VideoUrl):
                     raise RuntimeError('VideoUrl is not supported in Mistral.')
                 elif isinstance(item, UploadedFile):
-                    raise NotImplementedError('UploadedFile is not supported by Mistral.')
+                    raise RuntimeError('UploadedFile is not supported by Mistral.')
                 else:  # pragma: no cover
                     raise RuntimeError(f'Unsupported content type: {type(item)}')
         return MistralUserMessage(content=content)

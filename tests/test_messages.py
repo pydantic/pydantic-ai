@@ -913,6 +913,35 @@ def test_uploaded_file_serialization_roundtrip():
     assert deserialized == messages
 
 
+def test_uploaded_file_custom_identifier_and_media_type_roundtrip():
+    """Verify that custom `identifier` and `media_type` survive serialization roundtrip."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        UploadedFile(
+                            file_id='file-abc123',
+                            provider_name='anthropic',
+                            media_type='image/png',
+                            identifier='my-id',
+                        ),
+                    ]
+                )
+            ]
+        )
+    ]
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+    part = deserialized[0].parts[0]
+    assert isinstance(part, UserPromptPart)
+    uploaded = part.content[0]
+    assert isinstance(uploaded, UploadedFile)
+    assert uploaded.identifier == 'my-id'
+    assert uploaded.media_type == 'image/png'
+    assert deserialized == messages
+
+
 def test_tool_return_content_with_url_field_not_coerced_to_image_url():
     """Test that dicts with 'url' keys are not incorrectly coerced to ImageUrl.
 
