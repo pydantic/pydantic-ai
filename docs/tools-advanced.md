@@ -167,7 +167,7 @@ def get_user(user_id: int) -> UserDetails:
     return UserDetails(id=user_id, name='Alice', email='alice@example.com')
 
 
-test_model = TestModel()
+test_model = TestModel()  # (1)!
 agent = Agent(test_model, toolsets=[toolset], include_tool_return_schema=True)
 result = agent.run_sync('Get user 1')
 tool_def = test_model.last_model_request_parameters.function_tools[0]
@@ -187,9 +187,11 @@ print(tool_def.return_schema)
 """
 ```
 
+1. We're using [`TestModel`][pydantic_ai.models.test.TestModel] here so we can inspect the tool definition via [`last_model_request_parameters`][pydantic_ai.models.test.TestModel.last_model_request_parameters].
+
 _(This example is complete, it can be run "as is")_
 
-The return schema is automatically generated from the function's return type annotation.
+The return schema is automatically generated from the function's return type annotation using Pydantic's JSON schema generation. The schema's `description` field comes from the return type's own docstring (e.g. `"""Details about a user."""` on `UserDetails` above), not from the function's `Returns:` docstring section.
 
 When a tool returns [`ToolReturn[T]`][pydantic_ai.messages.ToolReturn], the return schema is inferred from the inner type `T` rather than `ToolReturn` itself. For example, a tool annotated `-> ToolReturn[UserDetails]` will have its return schema derived from `UserDetails`.
 

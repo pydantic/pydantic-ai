@@ -2888,8 +2888,6 @@ def test_tool_return_schema():
     def tool_with_deferred_return() -> DeferredToolResult:  # pragma: no cover
         return ToolApproved()
 
-    # DeferredToolResult has an insane token footprint, unsure if it is wise to do this but I will read more.
-
     with pytest.warns(UserWarning, match=r"Tool 'tool_with_return_tool_return' has `include_return_schema` enabled"):
         result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)

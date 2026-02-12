@@ -234,8 +234,8 @@ def function_schema(  # noqa: C901
     elif return_annotation is not None and return_annotation is not type(None):
         schema_type = return_annotation
 
-    # Generate return schema if we have a type
-    if schema_type is not None:
+    # Generate return schema if we have a type and the tool hasn't explicitly opted out
+    if schema_type is not None and include_return_schema is not False:
         try:
             return_schema = TypeAdapter(schema_type).json_schema(
                 schema_generator=schema_generator, mode='serialization'

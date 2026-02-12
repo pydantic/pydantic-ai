@@ -687,11 +687,11 @@ else:
         MultiModalContent | Sequence['ToolReturnContent'] | Mapping[str, 'ToolReturnContent'] | Any,
     )
 
-T = TypeVar('T', default=ToolReturnContent)
+ToolReturnT = TypeVar('ToolReturnT', default=ToolReturnContent)
 
 
 @dataclass(repr=False)
-class ToolReturn(Generic[T]):
+class ToolReturn(Generic[ToolReturnT]):
     """A structured return value for tools that need to provide both a return value and custom content to the model.
 
     This class allows tools to return complex responses that include:
@@ -700,7 +700,7 @@ class ToolReturn(Generic[T]):
     - Optional metadata for application use
     """
 
-    return_value: T
+    return_value: ToolReturnT
     """The return value to be used in the tool response."""
 
     _: KW_ONLY

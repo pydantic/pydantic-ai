@@ -28,9 +28,8 @@ class ModelProfile:
     supports_tool_return_schema: bool = False
     """Whether the model natively supports tool return schemas.
 
-    When True, the model's API accepts a structured return schema alongside each tool definition
-    (e.g., Google's `response_json_schema` in `FunctionDeclarationDict`). The return_schema will be
-    passed through to the model serializer as-is.
+    When True, the model's API accepts a structured return schema alongside each tool definition.
+    The return schema will be passed through to the model's serializer as-is.
     When False, return schemas are injected as JSON text into tool descriptions as a fallback.
     """
     supports_json_schema_output: bool = False
