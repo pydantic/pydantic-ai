@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
-from .._python_signature import Signature, signature_from_schema
+from .._python_schema_types import schema_to_signature
+from .._python_signature import Signature
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition, ToolsPrepareFunc
 
@@ -73,11 +74,13 @@ class ToolsetTool(Generic[AgentDepsT]):
         Returns:
             A Signature object.
         """
-        return signature_from_schema(
+        return schema_to_signature(
             name=name_override or self.tool_def.name,
-            parameters_json_schema=self.tool_def.parameters_json_schema,
+            parameters_schema=self.tool_def.parameters_json_schema,
             description=self.tool_def.description,
-            return_json_schema=(self.tool_def.metadata or {}).get('output_schema'),
+            return_schema=(self.tool_def.metadata or {}).get(
+                'output_schema'
+            ),  # TODO (Douwe): Use tool_def.return_schema once https://github.com/pydantic/pydantic-ai/pull/3865 lands
             namespace_defs=True,
         )
 

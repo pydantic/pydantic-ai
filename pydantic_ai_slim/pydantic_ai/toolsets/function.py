@@ -7,7 +7,7 @@ from typing import Any, overload
 import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
-from .._python_signature import Signature, signature_from_function
+from .._python_signature import Signature, function_to_signature
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import ModelRetry, UserError
 from ..tools import (
@@ -26,6 +26,7 @@ class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
     """A tool definition for a function toolset tool that keeps track of the function to call."""
 
     call_func: Callable[[dict[str, Any], RunContext[AgentDepsT]], Awaitable[Any]]
+    original_func: Callable[..., Any]
     is_async: bool
     timeout: float | None = None
     """Timeout in seconds for tool execution.
@@ -41,21 +42,11 @@ class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
         `get_type_hints()` for richer type information (e.g. TypedDict fields, union types).
         Falls back to the schema-based approach if the original function isn't available.
         """
-        signature_name = name_override or self.tool_def.name
-        description = self.tool_def.description
-
-        if isinstance(self.toolset, FunctionToolset):
-            tool_name = self.tool_def.name
-            if tool_name in self.toolset.tools:
-                original_tool = self.toolset.tools[tool_name]
-                return signature_from_function(
-                    original_tool.function,
-                    name=signature_name,
-                    description=description,
-                    include_return_type=True,
-                )
-
-        return super().python_signature(name_override=name_override)
+        return function_to_signature(
+            self.original_func,
+            name=name_override or self.tool_def.name,
+            description=self.tool_def.description,
+        )
 
 
 class FunctionToolset(AbstractToolset[AgentDepsT]):
@@ -385,6 +376,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 max_retries=max_retries,
                 args_validator=tool.function_schema.validator,
                 call_func=tool.function_schema.call,
+                original_func=tool.function_schema.function,
                 is_async=tool.function_schema.is_async,
                 timeout=tool_def.timeout,
             )

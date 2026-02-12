@@ -95,69 +95,6 @@ class Signature:
 
 
 # =============================================================================
-# Public API functions
-# =============================================================================
-
-
-def signature_from_function(
-    func: Callable[..., Any],
-    name: str | None = None,
-    description: str | None = None,
-    *,
-    include_return_type: bool = True,
-) -> Signature:
-    """Generate a Signature from an actual function.
-
-    Uses inspect.signature() and typing.get_type_hints() to reconstruct
-    the function signature with type annotations.
-
-    Args:
-        func: The function to generate a signature for.
-        name: Override the function name. If None, uses func.__name__.
-        description: Optional description to include as a docstring.
-        include_return_type: Whether to include the return type annotation.
-
-    Returns:
-        A Signature object that can be rendered to string with str() or methods.
-    """
-    return _function_to_signature(func, name, description, include_return_type=include_return_type)
-
-
-def signature_from_schema(
-    name: str,
-    parameters_json_schema: dict[str, Any],
-    description: str | None = None,
-    return_type: str = 'Any',
-    return_json_schema: dict[str, Any] | None = None,
-    *,
-    namespace_defs: bool = False,
-) -> Signature:
-    """Convert a JSON schema to a Signature.
-
-    Args:
-        name: The function name.
-        parameters_json_schema: The JSON schema for the function's parameters.
-        description: Optional function description to include as docstring.
-        return_type: The return type annotation string. Defaults to 'Any'.
-        return_json_schema: Optional JSON schema for the return value.
-        namespace_defs: Whether to prefix $defs names to avoid param/return collisions.
-
-    Returns:
-        A Signature object that can be rendered to string with str() or methods.
-    """
-    from ._python_schema_types import schema_to_signature
-
-    return schema_to_signature(
-        name,
-        parameters_json_schema,
-        description,
-        return_type,
-        return_json_schema,
-        namespace_defs=namespace_defs,
-    )
-
-
-# =============================================================================
 # Formatting utilities
 # =============================================================================
 
@@ -282,12 +219,10 @@ def _build_function_params(
     return params
 
 
-def _function_to_signature(
+def function_to_signature(
     func: Callable[..., Any],
     name: str | None = None,
     description: str | None = None,
-    *,
-    include_return_type: bool = True,
 ) -> Signature:
     """Build Signature from a Python function using inspect."""
     name = name or func.__name__
@@ -305,10 +240,7 @@ def _function_to_signature(
     if return_annotation is not None:
         _collect_typeddicts_from_annotation(return_annotation, typeddicts, name, 'Return')
 
-    if include_return_type:
-        return_type_str = _format_annotation(return_annotation) if return_annotation else 'Any'
-    else:
-        return_type_str = 'Any'
+    return_type_str = _format_annotation(return_annotation) if return_annotation else 'Any'
 
     return Signature(
         name=name,
