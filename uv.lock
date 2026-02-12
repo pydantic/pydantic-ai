@@ -6219,6 +6219,9 @@ dbos = [
 examples = [
     { name = "pydantic-ai-examples" },
 ]
+modal = [
+    { name = "pydantic-ai-slim", extra = ["modal"] },
+]
 outlines-llamacpp = [
     { name = "pydantic-ai-slim", extra = ["outlines-llamacpp"] },
 ]
@@ -6296,6 +6299,7 @@ requires-dist = [
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
     { name = "pydantic-ai-slim", extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "temporal", "ui", "vertexai", "xai"], editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["dbos"], marker = "extra == 'dbos'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["modal"], marker = "extra == 'modal'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["outlines-llamacpp"], marker = "extra == 'outlines-llamacpp'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["outlines-mlxlm"], marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'outlines-mlxlm'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["outlines-sglang"], marker = "extra == 'outlines-sglang'", editable = "pydantic_ai_slim" },
@@ -6305,7 +6309,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["sentence-transformers"], marker = "extra == 'sentence-transformers'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["voyageai"], marker = "extra == 'voyageai'", editable = "pydantic_ai_slim" },
 ]
-provides-extras = ["a2a", "dbos", "examples", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "sentence-transformers", "voyageai"]
+provides-extras = ["a2a", "dbos", "examples", "modal", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "sentence-transformers", "voyageai"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -6463,6 +6467,9 @@ mcp = [
 mistral = [
     { name = "mistralai" },
 ]
+modal = [
+    { name = "modal" },
+]
 monty = [
     { name = "pydantic-monty" },
 ]
@@ -6554,6 +6561,7 @@ requires-dist = [
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.16.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.25.0,<2.0" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.9.11" },
+    { name = "modal", marker = "extra == 'modal'" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=2.11.0" },
     { name = "openai", marker = "extra == 'openrouter'", specifier = ">=2.8.0" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
@@ -6590,7 +6598,7 @@ requires-dist = [
     { name = "voyageai", marker = "extra == 'voyageai'", specifier = ">=0.3.2" },
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.5.0" },
 ]
-provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "monty", "openai", "openrouter", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "retries", "sentence-transformers", "tavily", "temporal", "ui", "vertexai", "voyageai", "web", "xai"]
+provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "modal", "monty", "openai", "openrouter", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "retries", "sentence-transformers", "tavily", "temporal", "ui", "vertexai", "voyageai", "web", "xai"]
 
 [[package]]
 name = "pydantic-core"

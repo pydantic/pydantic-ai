@@ -65,6 +65,8 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `a2a` - installs [A2A](a2a.md) dependency `fasta2a` [PyPI ↗](https://pypi.org/project/fasta2a){:target="_blank"}
 * `ui` - installs [UI Event Streams](ui/overview.md) dependency `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
 * `ag-ui` - installs [AG-UI Event Stream Protocol](ui/ag-ui.md) dependencies `ag-ui-protocol` [PyPI ↗](https://pypi.org/project/ag-ui-protocol){:target="_blank"} and `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
+* `monty` - installs [Code Mode](code-mode.md) runtime dependency `pydantic-monty` [GitHub ↗](https://github.com/pydantic/monty){:target="_blank"}
+* `modal` - installs [Code Mode](code-mode.md) Modal runtime dependency `modal` [PyPI ↗](https://pypi.org/project/modal){:target="_blank"}
 * `dbos` - installs [DBOS Durable Execution](durable_execution/dbos.md) dependency `dbos` [PyPI ↗](https://pypi.org/project/dbos){:target="_blank"}
 * `prefect` - installs [Prefect Durable Execution](durable_execution/prefect.md) dependency `prefect` [PyPI ↗](https://pypi.org/project/prefect){:target="_blank"}
 
