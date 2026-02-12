@@ -84,7 +84,6 @@ How to write effective code:
 - Use keyword arguments (e.g., `get_user(id=123)` not `get_user(123)`)
 - Use for loops to handle multiple items
 - The last expression evaluated becomes the return value
-- When the task asks for a summary or analysis, extract and process the data rather than returning raw results. When the task asks for the data itself, returning it directly is fine.
 
 Available functions:
 
@@ -183,8 +182,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     # TODO: _cached_signatures and _name_map are populated in get_tools() and consumed in
     # call_tool(). The agent framework guarantees get_tools() runs first, but this implicit ordering
     # dependency could trip up future contributors modifying either method independently.
+    # If call_tool() is invoked before get_tools(), both will raise UserError
+    # (via the `self._cached_signatures is None` check on line ~306).
     _cached_signatures: list[str] | None = field(default=None, init=False, repr=False)
-    _name_map: dict[str, str] = field(default_factory=lambda: {}, init=False, repr=False)
+    _name_map: dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         wrapped_tools = await super().get_tools(ctx)
@@ -331,6 +332,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         except CodeRuntimeError as e:
             raise ModelRetry(f'Runtime error in generated code:\n{e.message}') from e
         except CodeInterruptedError:
-            raise ModelRetry(
-                'A tool required approval, which is not yet supported in code mode. Try a different approach.'
+            raise exceptions.UserError(
+                'Tool approval and deferral are not supported in code mode. '
+                'Ensure wrapped tools do not use approval or deferral when used with CodeModeToolset.'
             )

@@ -169,7 +169,6 @@ How to write effective code:
 - Use keyword arguments (e.g., `get_user(id=123)` not `get_user(123)`)
 - Use for loops to handle multiple items
 - The last expression evaluated becomes the return value
-- When the task asks for a summary or analysis, extract and process the data rather than returning raw results. When the task asks for the data itself, returning it directly is fine.
 
 Available functions:
 

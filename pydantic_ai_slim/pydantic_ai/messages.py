@@ -687,7 +687,7 @@ class ToolReturn:
     - Optional metadata for application use
     """
 
-    return_value: Any
+    return_value: ToolReturnContent
     """The return value to be used in the tool response."""
 
     _: KW_ONLY
