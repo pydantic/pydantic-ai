@@ -2337,6 +2337,7 @@ def test_deferred_tool_results_serializable():
                 'tool-denied': {'message': 'The tool call was denied.', 'kind': 'tool-denied'},
             },
             'metadata': {},
+            'context': {},
         }
     )
     deserialized = results_ta.validate_python(serialized)
