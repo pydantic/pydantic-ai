@@ -10075,6 +10075,7 @@ async def test_background_mode_vcr(allow_model_requests: None, openai_api_key: s
                 provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
                 provider_response_id='resp_06a562f31ab7703300698b9df109c481979ebf760b2ff5fc75',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -10126,6 +10127,7 @@ async def test_background_mode_with_tool_vcr(allow_model_requests: None, openai_
                 provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
                 provider_response_id='resp_01b4d93abce33afe00698b9df44be4819bb99fff16d77a0236',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -10155,6 +10157,7 @@ async def test_background_mode_with_tool_vcr(allow_model_requests: None, openai_
                 provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
                 provider_response_id='resp_0e6b15873828668f00698b9df63cb08196a7f29ecc4788d6b6',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )

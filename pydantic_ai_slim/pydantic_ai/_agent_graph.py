@@ -588,13 +588,20 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     """
 
     _events_iterator: AsyncIterator[_messages.HandleResponseEvent] | None = field(default=None, init=False, repr=False)
-    _next_node: ModelRequestNode[DepsT, NodeRunEndT] | ContinuationNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]] | None = field(
-        default=None, init=False, repr=False
-    )
+    _next_node: (
+        ModelRequestNode[DepsT, NodeRunEndT]
+        | ContinuationNode[DepsT, NodeRunEndT]
+        | End[result.FinalResult[NodeRunEndT]]
+        | None
+    ) = field(default=None, init=False, repr=False)
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> ModelRequestNode[DepsT, NodeRunEndT] | ContinuationNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
+    ) -> (
+        ModelRequestNode[DepsT, NodeRunEndT]
+        | ContinuationNode[DepsT, NodeRunEndT]
+        | End[result.FinalResult[NodeRunEndT]]
+    ):
         async with self.stream(ctx):
             pass
         assert self._next_node is not None, 'the stream should set `self._next_node` before it ends'
@@ -945,9 +952,7 @@ class ContinuationNode(AgentNode[DepsT, NodeRunEndT]):
         self._result = CallToolsNode(merged_response)
 
     @staticmethod
-    def _merge_response(
-        existing: _messages.ModelResponse, new: _messages.ModelResponse
-    ) -> _messages.ModelResponse:
+    def _merge_response(existing: _messages.ModelResponse, new: _messages.ModelResponse) -> _messages.ModelResponse:
         """Merge a new response into an existing one.
 
         If same `provider_response_id`, replace entirely with the new response.
