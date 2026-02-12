@@ -1220,7 +1220,7 @@ def _populate_deferred_calls(
     for k in sorted(deferred_calls_by_index):
         call = tool_calls[k]
         output_deferred_calls[deferred_calls_by_index[k]].append(call)
-        metadata = deferred_metadata_by_index.get(k)
+        metadata = deferred_metadata_by_index[k]
         context = deferred_context_by_index.get(k)
 
         if metadata is not None:

@@ -15,10 +15,10 @@ import types
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from inspect import Parameter, Signature as InspectSignature, signature
-from typing import Any, Union, cast, get_origin, get_type_hints
+from typing import Any, Union, cast, get_origin
 
 from pydantic import BaseModel, TypeAdapter
-from typing_extensions import is_typeddict
+from typing_extensions import get_type_hints, is_typeddict
 
 from ..._function_schema import _is_call_ctx  # pyright: ignore[reportPrivateUsage]
 
