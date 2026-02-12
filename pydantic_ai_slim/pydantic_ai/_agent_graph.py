@@ -1351,7 +1351,18 @@ async def _call_tool(
 ) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]:
     try:
         if tool_call_result is None:
-            tool_result = await tool_manager.handle_call(tool_call, deferred_tool_results=nested_deferred_results)
+            if nested_deferred_results is not None:
+                metadata = tool_call_metadata.get(tool_call.tool_call_id) if tool_call_metadata else None
+                context = tool_call_context.get(tool_call.tool_call_id) if tool_call_context else None
+                tool_result = await tool_manager.handle_call(
+                    tool_call,
+                    approved=True,
+                    metadata=metadata,
+                    context=context,
+                    deferred_tool_results=nested_deferred_results,
+                )
+            else:
+                tool_result = await tool_manager.handle_call(tool_call)
         elif isinstance(tool_call_result, ToolApproved):
             if tool_call_result.override_args is not None:
                 tool_call = dataclasses.replace(tool_call, args=tool_call_result.override_args)

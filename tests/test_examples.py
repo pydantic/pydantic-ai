@@ -558,6 +558,16 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         args={'name': 'test', 'value': 42},
         tool_call_id='pyd_ai_tool_call_id',
     ),
+    'Clean up old databases': ToolCallPart(
+        tool_name='run_subagent',
+        args={'task': 'Clean up old databases'},
+        tool_call_id='run_subagent_call_id',
+    ),
+    'Clean up databases': ToolCallPart(
+        tool_name='run_subagent',
+        args={'task': 'Clean up databases'},
+        tool_call_id='run_subagent_call_id',
+    ),
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -944,6 +954,8 @@ async def model_logic(  # noqa: C901
                 )
             ],
         )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'run_subagent':
+        return ModelResponse(parts=[TextPart(cast(str, m.content))])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'calculate_answer':
         return ModelResponse(
             parts=[TextPart('The answer to the ultimate question of life, the universe, and everything is 42.')]

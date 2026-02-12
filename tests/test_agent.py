@@ -7761,6 +7761,9 @@ def test_nested_deferred_tool_calls():
     @agent.tool
     def orchestrate(ctx: RunContext[None], plan: str) -> str:
         if ctx.deferred_tool_results is not None:
+            assert ctx.tool_call_approved is True
+            assert ctx.tool_call_metadata == {'parent_info': 'orchestrator'}
+            assert ctx.tool_call_context == {'parent_state': 'in_progress'}
             ext = ctx.deferred_tool_results.calls.get('ext_call')
             a1 = ctx.deferred_tool_results.approvals.get('approve_1')
             a2 = ctx.deferred_tool_results.approvals.get('approve_2')
@@ -7819,8 +7822,14 @@ def test_nested_deferred_tool_calls():
                 'parent::approve_1': ToolApproved(),
                 'parent::approve_2': ToolDenied('Not allowed'),
             },
-            metadata={'parent::approve_1': {'user_note': 'ok'}},
-            context={'parent::ext_call': {'queue_position': 5}},
+            metadata={
+                'parent': {'parent_info': 'orchestrator'},
+                'parent::approve_1': {'user_note': 'ok'},
+            },
+            context={
+                'parent': {'parent_state': 'in_progress'},
+                'parent::ext_call': {'queue_position': 5},
+            },
         ),
     )
     assert result.output == snapshot('All done!')
