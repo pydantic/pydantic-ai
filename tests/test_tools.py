@@ -3085,7 +3085,7 @@ def test_tool_return_schema():
                 'return_schema': {
                     'description': 'Binary content, e.g. an audio or image file.',
                     'properties': {
-                        'data': {'format': 'binary', 'type': 'string'},
+                        'data': {'format': 'base64url', 'type': 'string'},
                         'media_type': {
                             'anyOf': [
                                 {
@@ -3174,8 +3174,9 @@ def test_tool_return_schema():
                 'metadata': None,
                 'timeout': None,
                 'return_schema': {
+                    'description': "Binary content that's guaranteed to be an image.",
                     'properties': {
-                        'data': {'format': 'binary', 'type': 'string'},
+                        'data': {'format': 'base64url', 'type': 'string'},
                         'media_type': {
                             'anyOf': [
                                 {
@@ -3233,7 +3234,10 @@ def test_tool_return_schema():
                     'description': 'The URL of the document.',
                     'properties': {
                         'url': {'type': 'string'},
-                        'force_download': {'default': False, 'type': 'boolean'},
+                        'force_download': {
+                            'anyOf': [{'type': 'boolean'}, {'const': 'allow-local', 'type': 'string'}],
+                            'default': False,
+                        },
                         'vendor_metadata': {
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
@@ -3261,7 +3265,10 @@ def test_tool_return_schema():
                     'description': 'A URL to a video.',
                     'properties': {
                         'url': {'type': 'string'},
-                        'force_download': {'default': False, 'type': 'boolean'},
+                        'force_download': {
+                            'anyOf': [{'type': 'boolean'}, {'const': 'allow-local', 'type': 'string'}],
+                            'default': False,
+                        },
                         'vendor_metadata': {
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
@@ -3289,7 +3296,10 @@ def test_tool_return_schema():
                     'description': 'A URL to an audio file.',
                     'properties': {
                         'url': {'type': 'string'},
-                        'force_download': {'default': False, 'type': 'boolean'},
+                        'force_download': {
+                            'anyOf': [{'type': 'boolean'}, {'const': 'allow-local', 'type': 'string'}],
+                            'default': False,
+                        },
                         'vendor_metadata': {
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
@@ -3317,7 +3327,10 @@ def test_tool_return_schema():
                     'description': 'A URL to an image.',
                     'properties': {
                         'url': {'type': 'string'},
-                        'force_download': {'default': False, 'type': 'boolean'},
+                        'force_download': {
+                            'anyOf': [{'type': 'boolean'}, {'const': 'allow-local', 'type': 'string'}],
+                            'default': False,
+                        },
                         'vendor_metadata': {
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
