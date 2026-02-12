@@ -1,13 +1,13 @@
-"""CodeMode Demo: Team Expense Analysis.
+"""CodeMode Example: Team Expense Analysis.
 
-This demo shows how code mode reduces token consumption when analyzing data.
+This example shows how code mode reduces token consumption when analyzing data.
 With traditional tool calling, all expense data flows through the LLM context.
 With code mode, aggregation happens in code and only summaries are returned.
 
 Inspired by Anthropic's Programmatic Tool Calling example.
 
 Run:
-    uv run -m pydantic_ai_examples.code_mode.expense_analysis_demo
+    uv run -m pydantic_ai_examples.code_mode.expense_analysis
 """
 
 from __future__ import annotations

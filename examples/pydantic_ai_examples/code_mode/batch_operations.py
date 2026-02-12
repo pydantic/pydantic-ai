@@ -1,11 +1,11 @@
-"""CodeMode Demo: Batch Calendar Event Creation.
+"""CodeMode Example: Batch Calendar Event Creation.
 
-This demo shows how code mode reduces LLM roundtrips when creating multiple
+This example shows how code mode reduces LLM roundtrips when creating multiple
 calendar events. With traditional tool calling, each event requires a separate
 roundtrip. With code mode, the LLM writes a loop that creates all events in one go.
 
 Run:
-    uv run -m pydantic_ai_examples.code_mode.batch_operations_demo
+    uv run -m pydantic_ai_examples.code_mode.batch_operations
 """
 
 from __future__ import annotations

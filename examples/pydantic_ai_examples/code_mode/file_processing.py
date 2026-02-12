@@ -1,11 +1,11 @@
-"""CodeMode Demo: File Processing with Loops.
+"""CodeMode Example: File Processing with Loops.
 
-This demo shows how code mode handles unknown iteration counts. The LLM doesn't
+This example shows how code mode handles unknown iteration counts. The LLM doesn't
 know upfront how many files exist, but code mode can write a loop that processes
 whatever it finds. Traditional tool calling requires multiple roundtrips.
 
 Run:
-    uv run -m pydantic_ai_examples.code_mode.file_processing_demo
+    uv run -m pydantic_ai_examples.code_mode.file_processing
 """
 
 from __future__ import annotations
