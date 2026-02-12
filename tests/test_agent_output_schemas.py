@@ -389,6 +389,11 @@ async def test_deferred_output_json_schema():
                     'properties': {
                         'calls': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Calls', 'type': 'array'},
                         'approvals': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Approvals', 'type': 'array'},
+                        'context': {
+                            'additionalProperties': {'additionalProperties': True, 'type': 'object'},
+                            'title': 'Context',
+                            'type': 'object',
+                        },
                         'metadata': {
                             'additionalProperties': {'additionalProperties': True, 'type': 'object'},
                             'title': 'Metadata',
@@ -514,6 +519,11 @@ distinguish multiple files.\
                     'properties': {
                         'calls': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Calls', 'type': 'array'},
                         'approvals': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Approvals', 'type': 'array'},
+                        'context': {
+                            'additionalProperties': {'additionalProperties': True, 'type': 'object'},
+                            'title': 'Context',
+                            'type': 'object',
+                        },
                         'metadata': {
                             'additionalProperties': {'additionalProperties': True, 'type': 'object'},
                             'title': 'Metadata',

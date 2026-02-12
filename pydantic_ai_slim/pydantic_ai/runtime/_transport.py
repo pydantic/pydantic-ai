@@ -222,12 +222,8 @@ class DriverBasedRuntime(CodeRuntime):
                     await process.kill()
                     checkpoint = serialize_checkpoint_results(completed_results, interrupted_calls)
                     raise CodeInterruptedError(interrupted_calls=interrupted_calls, checkpoint=checkpoint)
-
-        except (CodeInterruptedError, CodeSyntaxError, CodeRuntimeError):
-            raise
-        except Exception as e:
+        finally:
             await _cancel_all(tool_tasks, stdout_task, process)
-            raise CodeRuntimeError(f'Execution loop error: {e}') from e
 
     @staticmethod
     async def _handle_stdout(

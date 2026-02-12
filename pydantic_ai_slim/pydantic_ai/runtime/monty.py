@@ -212,76 +212,76 @@ class MontyRuntime(CodeRuntime):
         # ApprovalRequired/CallDeferred during the MontyFutureSnapshot branch.
         tool_call_id_to_call: dict[int, FunctionCall] = dict(initial_calls) if initial_calls else {}
 
-        while not isinstance(monty_state, MontyComplete):
-            if isinstance(monty_state, MontySnapshot):
-                call = FunctionCall(
-                    call_id=str(monty_state.call_id),
-                    function_name=monty_state.function_name,
-                    args=monty_state.args,
-                    kwargs=monty_state.kwargs,
-                )
-                tasks[monty_state.call_id] = asyncio.ensure_future(call_tool(call))
-                tool_call_id_to_call[monty_state.call_id] = call
-
-                monty_state = monty_state.resume(future=...)
-            elif isinstance(monty_state, MontyFutureSnapshot):
-                pending_ids = monty_state.pending_call_ids or []
-                missing = [cid for cid in pending_ids if cid not in tasks]
-                if missing:
-                    raise CodeRuntimeError(f'Monty expects results for call IDs {missing} but no tasks exist')
-                pending = [tasks[cid] for cid in pending_ids]
-                if not pending:
-                    # No pending tasks - this can happen if all results are already available
-                    # Just provide empty results and let Monty continue
-                    monty_state = monty_state.resume(results={})
-                    continue
-                done, _ = await asyncio.wait(pending, return_when=asyncio.ALL_COMPLETED)
-                task_to_cid = {id(t): cid for cid, t in tasks.items()}
-                results: dict[int, Any] = {}
-                interrupted_calls: list[InterruptedToolCall] = []
-                for task in done:
-                    cid = task_to_cid[id(task)]
-                    try:
-                        raw = task.result()
-                        # Normalize to JSON-compatible form (dicts, lists, strings, numbers)
-                        # so that Monty's restricted interpreter can handle the value and
-                        # behavior is consistent with checkpoint resume (which also
-                        # round-trips through JSON) and with driver-based runtimes
-                        # (which serialize results over the JSON protocol).
-                        results[cid] = {'return_value': tool_return_ta.dump_python(raw, mode='json')}
-                    except (CallDeferred, ApprovalRequired) as e:
-                        interrupted_calls.append(InterruptedToolCall(reason=e, call=tool_call_id_to_call[cid]))
-                    except Exception as e:
-                        # Intentional broad catch: this is a defensive boundary between
-                        # the runtime and the tool execution layer. Tool implementation
-                        # bugs get wrapped as CodeRuntimeError (→ ModelRetry) rather than
-                        # crashing the runtime protocol. The original exception message
-                        # is preserved so the LLM sees what went wrong.
-                        for remaining in tasks.values():
-                            remaining.cancel()
-                        raise CodeRuntimeError(f'Tool execution error: {e}') from e
-                    del tasks[cid]
-
-                # Save checkpoint BEFORE advancing if there are interrupted calls.
-                # The checkpoint captures the state where Monty is waiting for these results.
-                # Completed results are bundled into the checkpoint so they can be replayed
-                # on resume without re-executing those calls (avoiding double execution / side effects).
-                if interrupted_calls:
-                    for remaining in tasks.values():
-                        remaining.cancel()
-                    monty_dump = monty_state.dump()
-                    unwrapped = {k: v['return_value'] for k, v in results.items()}
-                    checkpoint = serialize_checkpoint_results(
-                        unwrapped, interrupted_calls, interpreter_state=monty_dump
+        try:
+            while not isinstance(monty_state, MontyComplete):
+                if isinstance(monty_state, MontySnapshot):
+                    call = FunctionCall(
+                        call_id=str(monty_state.call_id),
+                        function_name=monty_state.function_name,
+                        args=monty_state.args,
+                        kwargs=monty_state.kwargs,
                     )
-                    raise CodeInterruptedError(
-                        interrupted_calls=interrupted_calls,
-                        checkpoint=checkpoint,
-                    )
+                    tasks[monty_state.call_id] = asyncio.ensure_future(call_tool(call))
+                    tool_call_id_to_call[monty_state.call_id] = call
 
-                monty_state = monty_state.resume(results=results)
+                    monty_state = monty_state.resume(future=...)
+                elif isinstance(monty_state, MontyFutureSnapshot):
+                    pending_ids = monty_state.pending_call_ids or []
+                    missing = [cid for cid in pending_ids if cid not in tasks]
+                    if missing:
+                        raise CodeRuntimeError(f'Monty expects results for call IDs {missing} but no tasks exist')
+                    pending = [tasks[cid] for cid in pending_ids]
+                    if not pending:
+                        # No pending tasks - this can happen if all results are already available
+                        # Just provide empty results and let Monty continue
+                        monty_state = monty_state.resume(results={})
+                        continue
+                    done, _ = await asyncio.wait(pending, return_when=asyncio.ALL_COMPLETED)
+                    task_to_cid = {id(t): cid for cid, t in tasks.items()}
+                    results: dict[int, Any] = {}
+                    interrupted_calls: list[InterruptedToolCall] = []
+                    for task in done:
+                        cid = task_to_cid[id(task)]
+                        try:
+                            raw = task.result()
+                            # Normalize to JSON-compatible form (dicts, lists, strings, numbers)
+                            # so that Monty's restricted interpreter can handle the value and
+                            # behavior is consistent with checkpoint resume (which also
+                            # round-trips through JSON) and with driver-based runtimes
+                            # (which serialize results over the JSON protocol).
+                            results[cid] = {'return_value': tool_return_ta.dump_python(raw, mode='json')}
+                        except (CallDeferred, ApprovalRequired) as e:
+                            interrupted_calls.append(InterruptedToolCall(reason=e, call=tool_call_id_to_call[cid]))
+                        except Exception as e:
+                            # Intentional broad catch: this is a defensive boundary between
+                            # the runtime and the tool execution layer. Tool implementation
+                            # bugs get wrapped as CodeRuntimeError (→ ModelRetry) rather than
+                            # crashing the runtime protocol. The original exception message
+                            # is preserved so the LLM sees what went wrong.
+                            raise CodeRuntimeError(f'Tool execution error: {e}') from e
+                        del tasks[cid]
 
-                if isinstance(monty_state, MontyComplete):
-                    break
+                    # Save checkpoint BEFORE advancing if there are interrupted calls.
+                    # The checkpoint captures the state where Monty is waiting for these results.
+                    # Completed results are bundled into the checkpoint so they can be replayed
+                    # on resume without re-executing those calls (avoiding double execution / side effects).
+                    if interrupted_calls:
+                        monty_dump = monty_state.dump()
+                        unwrapped = {k: v['return_value'] for k, v in results.items()}
+                        checkpoint = serialize_checkpoint_results(
+                            unwrapped, interrupted_calls, interpreter_state=monty_dump
+                        )
+                        raise CodeInterruptedError(
+                            interrupted_calls=interrupted_calls,
+                            checkpoint=checkpoint,
+                        )
+
+                    monty_state = monty_state.resume(results=results)
+
+                    if isinstance(monty_state, MontyComplete):
+                        break
+        finally:
+            for t in tasks.values():
+                t.cancel()
 
         return monty_state
