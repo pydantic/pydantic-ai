@@ -67,25 +67,31 @@ class Signature:
 
     def __str__(self) -> str:
         """Render with `...` body."""
-        return self._render('...')
+        return self.render('...')
 
-    def with_typeddicts(self, body: str = '...') -> str:
-        """Render with TypedDict definitions prepended."""
-        sig = self._render(body)
-        if not self.typeddicts:
-            return sig
-        return '\n\n'.join(self.typeddicts + [sig])
-
-    def _render(self, body: str) -> str:
+    def render(self, body: str) -> str:
         """Render the signature with a specific body."""
         prefix = 'async def' if self.is_async else 'def'
         params_str = ', '.join(self.params)
-        sig_line = f'{prefix} {self.name}(*, {params_str}) -> {self.return_type}'
+
+        parts = [f'{prefix} {self.name}(*, {params_str}) -> {self.return_type}:']
+
+        body_parts: list[str] = []
 
         if self.docstring:
-            docstring_str = _format_docstring(self.docstring)
-            return f'{sig_line}:\n{docstring_str}\n    {body}'
-        return f'{sig_line}:\n    {body}'
+            lines = self.docstring.strip().split('\n')
+            if len(lines) == 1:
+                body_parts.append(f'"""{lines[0]}"""')
+            else:
+                body_parts.append('"""')
+                for line in lines:
+                    body_parts.append(line if line.strip() else '')
+                body_parts.append('"""')
+
+        body_parts.append(body)
+        parts.extend('    ' + part for part in body_parts)
+
+        return '\n'.join(parts)
 
 
 # =============================================================================
@@ -154,19 +160,6 @@ def signature_from_schema(
 # =============================================================================
 # Formatting utilities
 # =============================================================================
-
-
-def _format_docstring(description: str, indent: str = '    ') -> str:
-    """Format a description as a docstring."""
-    lines = description.strip().split('\n')
-    if len(lines) == 1:
-        return f'{indent}"""{lines[0]}"""'
-    else:
-        result = [f'{indent}"""']
-        for line in lines:
-            result.append(f'{indent}{line}' if line.strip() else '')
-        result.append(f'{indent}"""')
-        return '\n'.join(result)
 
 
 def _format_annotation(annotation: Any) -> str:

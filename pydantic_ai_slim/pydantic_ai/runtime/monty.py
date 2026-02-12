@@ -54,7 +54,10 @@ def _build_type_check_prefix(signatures: list[Signature]) -> str:
         Complete prefix code string with imports and signatures.
     """
     parts = ['from typing import Any, TypedDict, NotRequired, Literal']  # TODO (Douwe): Move to better place
-    parts.extend(sig.with_typeddicts('raise NotImplementedError()') for sig in signatures)
+    for sig in signatures:
+        if sig.typeddicts:
+            parts.extend(sig.typeddicts)
+    parts.extend(sig.render('raise NotImplementedError()') for sig in signatures)
 
     return '\n\n'.join(parts)
 

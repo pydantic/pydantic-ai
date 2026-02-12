@@ -129,9 +129,22 @@ def build_code_mode_prompt(signatures: list[Signature], runtime_instructions: st
     if runtime_instructions:
         parts.append(runtime_instructions)
 
+    parts.append('```python')
+
+    typeddicts: list[str] = []
+    for sig in signatures:
+        if sig.typeddicts:
+            typeddicts.extend(sig.typeddicts)
+
+    if typeddicts:
+        parts.append('Available types:')
+        parts.append('\n\n'.join(typeddicts))
+
     parts.append('Available functions:')
-    joined_signatures = '\n\n'.join(sig.with_typeddicts() for sig in signatures)
-    parts.append(f'```python\n{joined_signatures}\n```')
+    parts.extend(str(sig) for sig in signatures)
+
+    parts.append('```')
+
     return '\n\n'.join(parts)
 
 
@@ -155,7 +168,7 @@ def _get_tool_signature(
             Used to show sanitized names (valid Python identifiers) to the LLM.
 
     Returns:
-        A Signature object. Use str(sig) for type checking, sig.with_typeddicts('...') for LLM.
+        A Signature object.
     """
     return tool.python_signature(name_override=name_override)
 

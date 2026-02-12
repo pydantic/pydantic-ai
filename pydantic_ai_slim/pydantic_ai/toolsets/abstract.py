@@ -71,7 +71,7 @@ class ToolsetTool(Generic[AgentDepsT]):
                 Used by code mode to show sanitized names (valid Python identifiers).
 
         Returns:
-            A Signature object. Use `str(sig)` for type checking, `sig.with_typeddicts()` for LLM display.
+            A Signature object.
         """
         return signature_from_schema(
             name=name_override or self.tool_def.name,
