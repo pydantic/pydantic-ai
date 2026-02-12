@@ -5,6 +5,7 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import partial
@@ -82,6 +83,7 @@ def function_schema(  # noqa: C901
     takes_ctx: bool | None = None,
     docstring_format: DocstringFormat = 'auto',
     require_parameter_descriptions: bool = False,
+    include_return_schema: bool | None = None,
 ) -> FunctionSchema:
     """Build a Pydantic validator and JSON schema from a tool function.
 
@@ -91,6 +93,7 @@ def function_schema(  # noqa: C901
         docstring_format: The docstring format to use.
         require_parameter_descriptions: Whether to require descriptions for all tool function parameters.
         schema_generator: The JSON schema generator class to use.
+        include_return_schema: Whether the tool explicitly opts in to return schema generation.
 
     Returns:
         A `FunctionSchema` instance.
@@ -237,8 +240,13 @@ def function_schema(  # noqa: C901
             return_schema = TypeAdapter(schema_type).json_schema(
                 schema_generator=schema_generator, mode='serialization'
             )
-        except (PydanticSchemaGenerationError, PydanticUserError):
-            pass
+        except (PydanticSchemaGenerationError, PydanticUserError) as e:
+            if include_return_schema:
+                warnings.warn(
+                    f'Failed to generate return schema for {function.__qualname__!r}: {e}',
+                    UserWarning,
+                    stacklevel=2,
+                )
 
     return FunctionSchema(
         description=description,

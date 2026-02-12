@@ -4081,3 +4081,23 @@ def test_include_return_schema_warning_when_no_return_schema():
 
     with pytest.warns(UserWarning, match=r"Tool 'my_tool' has `include_return_schema` enabled but no return schema"):
         agent.run_sync('Hello')
+
+
+def test_include_return_schema_warning_on_schema_generation_error():
+    """Warning with error details is emitted when include_return_schema=True on a Tool but schema generation fails."""
+
+    class CustomObj:
+        """A type that Pydantic cannot generate a schema for."""
+
+        x: int
+
+    def my_tool(x: int) -> CustomObj:
+        """Get a value.
+
+        Args:
+            x: An integer value.
+        """
+        return CustomObj()  # pragma: no cover
+
+    with pytest.warns(UserWarning, match=r"Failed to generate return schema for '.*my_tool'"):
+        Tool(my_tool, include_return_schema=True)

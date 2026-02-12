@@ -374,6 +374,7 @@ class Tool(Generic[ToolAgentDepsT]):
             takes_ctx=takes_ctx,
             docstring_format=docstring_format,
             require_parameter_descriptions=require_parameter_descriptions,
+            include_return_schema=include_return_schema,
         )
         self.takes_ctx = self.function_schema.takes_ctx
         self.max_retries = max_retries
