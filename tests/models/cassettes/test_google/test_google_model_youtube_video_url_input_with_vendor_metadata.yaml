@@ -1,20 +1,32 @@
 interactions:
 - request:
     headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '356'
       content-type:
       - application/json
-    method: post
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
     parsed_body:
       contents:
       - parts:
-        - text: Explain me this video
+        - text: Explain me this video in a few sentences
         - fileData:
             fileUri: https://youtu.be/lCdaVNyHtjU
             mimeType: video/mp4
           videoMetadata:
             fps: 0.2
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       systemInstruction:
         parts:
         - text: You are a helpful chatbot.
@@ -25,11 +37,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '2759'
+      - '1079'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=11467
+      - gfet4t7; dur=9289
       transfer-encoding:
       - chunked
       vary:
@@ -38,35 +50,31 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.4793745385795377
+      - avgLogprobs: -0.40959492296275524
         content:
           parts:
           - text: |-
-              Okay, based on the image, here's what I can infer:
+              Sure, here is a summary of the video in a few sentences.
 
-              *   **A camera monitor is mounted on top of a camera.**
-              *   **The monitor's screen is on, displaying a view of the rocky mountains.**
-              *   **This setting suggests a professional video shoot.**
-
-              If you'd like a more detailed explanation, please provide additional information about the video.
+              The video is an AI analyzing recent 404 HTTP responses using Logfire. It identifies several patterns such as the most common endpoints with 404 errors, request patterns, timeline-related issues, organization/project access issues, and configuration/authentication issues. Based on the analysis, it provides several recommendations, including verifying the platform-config endpoint is properly configured, checking organization and project permissions, and investigating timeline requests.
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: ldpraPqBM6HshMIPgsi60QI
+      responseId: rQ-BaeiaO-PCqtsPobz7iAQ
       usageMetadata:
-        candidatesTokenCount: 459
+        candidatesTokenCount: 101
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 459
-        promptTokenCount: 4605
+          tokenCount: 101
+        promptTokenCount: 4610
         promptTokensDetails:
-        - modality: TEXT
-          tokenCount: 10
-        - modality: AUDIO
-          tokenCount: 1475
         - modality: VIDEO
-          tokenCount: 3120
-        totalTokenCount: 5064
+          tokenCount: 3096
+        - modality: TEXT
+          tokenCount: 14
+        - modality: AUDIO
+          tokenCount: 1500
+        totalTokenCount: 4711
     status:
       code: 200
       message: OK

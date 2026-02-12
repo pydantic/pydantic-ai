@@ -120,7 +120,7 @@ async def turn_on_strict_if_openai(
         return [replace(tool_def, strict=True) for tool_def in tool_defs]
     return tool_defs
 
-agent = Agent('openai:gpt-4o', prepare_tools=turn_on_strict_if_openai)
+agent = Agent('openai:gpt-5.2', prepare_tools=turn_on_strict_if_openai)
 ```
 
 Usage `ToolsPrepareFunc[AgentDepsT]`.

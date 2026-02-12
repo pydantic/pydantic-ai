@@ -8,6 +8,7 @@ from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
@@ -21,6 +22,7 @@ from .. import (
     _output,
     _system_prompt,
     _utils,
+    concurrency as _concurrency,
     exceptions,
     messages as _messages,
     models,
@@ -114,7 +116,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ```python
     from pydantic_ai import Agent
 
-    agent = Agent('openai:gpt-4o')
+    agent = Agent('openai:gpt-5.2')
     result = agent.run_sync('What is the capital of France?')
     print(result.output)
     #> The capital of France is Paris.
@@ -168,6 +170,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     _event_stream_handler: EventStreamHandler[AgentDepsT] | None = dataclasses.field(repr=False)
 
+    _concurrency_limiter: _concurrency.AbstractConcurrencyLimiter | None = dataclasses.field(repr=False)
+
     _enter_lock: Lock = dataclasses.field(repr=False)
     _entered_count: int = dataclasses.field(repr=False)
     _exit_stack: AsyncExitStack | None = dataclasses.field(repr=False)
@@ -199,6 +203,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         include_tool_return_schema: bool = False,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
     ) -> None: ...
 
     @overload
@@ -229,6 +234,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         include_tool_return_schema: bool = False,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
     ) -> None: ...
 
     def __init__(
@@ -257,6 +263,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         include_tool_return_schema: bool = False,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         **_deprecated_kwargs: Any,
     ):
         """Create an agent.
@@ -326,6 +333,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 Individual tools can override this with their own timeout. Defaults to None (no timeout).
             include_tool_return_schema: Whether to send tool return schemas to the model. Sets the default for all tools;
                 individual tools can override this via their own `include_return_schema` flag. Defaults to False.
+            max_concurrency: Optional limit on concurrent agent runs. Can be an integer for simple limiting,
+                a [`ConcurrencyLimit`][pydantic_ai.ConcurrencyLimit] for advanced configuration with backpressure,
+                a [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for sharing limits across
+                multiple agents, or None (default) for no limiting. When the limit is reached, additional calls
+                to `run()` or `iter()` will wait until a slot becomes available.
         """
         if model is None or defer_model_check:
             self._model = model
@@ -390,6 +402,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.history_processors = history_processors or []
 
         self._event_stream_handler = event_stream_handler
+
+        self._concurrency_limiter = _concurrency.normalize_to_limiter(max_concurrency)
 
         self._override_name: ContextVar[_utils.Option[str]] = ContextVar('_override_name', default=None)
         self._override_deps: ContextVar[_utils.Option[AgentDepsT]] = ContextVar('_override_deps', default=None)
@@ -536,7 +550,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         ```python
         from pydantic_ai import Agent
 
-        agent = Agent('openai:gpt-4o')
+        agent = Agent('openai:gpt-5.2')
 
         async def main():
             nodes = []
@@ -569,7 +583,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     model_response=ModelResponse(
                         parts=[TextPart(content='The capital of France is Paris.')],
                         usage=RequestUsage(input_tokens=56, output_tokens=7),
-                        model_name='gpt-4o',
+                        model_name='gpt-5.2',
                         timestamp=datetime.datetime(...),
                         run_id='...',
                     )
@@ -714,13 +728,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         run_metadata: dict[str, Any] | None = None
         try:
-            async with graph.iter(
-                inputs=user_prompt_node,
-                state=state,
-                deps=graph_deps,
-                span=use_span(run_span) if run_span.is_recording() else None,
-                infer_name=False,
-            ) as graph_run:
+            async with (
+                _concurrency.get_concurrency_context(self._concurrency_limiter, f'agent:{agent_name}'),
+                graph.iter(
+                    inputs=user_prompt_node,
+                    state=state,
+                    deps=graph_deps,
+                    span=use_span(run_span) if run_span.is_recording() else None,
+                    infer_name=False,
+                ) as graph_run,
+            ):
                 async with toolset:
                     agent_run = AgentRun(graph_run)
                     run_metadata = self._resolve_and_store_metadata(agent_run.ctx, metadata)
@@ -1667,12 +1684,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         instructions: str | None = None,
+        html_source: str | Path | None = None,
     ) -> Starlette:
         """Create a Starlette app that serves a web chat UI for this agent.
 
         This method returns a pre-configured Starlette application that provides a web-based
-        chat interface for interacting with the agent. The UI is downloaded and cached on
-        first use, and includes support for model selection and builtin tool configuration.
+        chat interface for interacting with the agent. By default, the UI is fetched from a
+        CDN and cached on first use.
 
         The returned Starlette application can be mounted into a FastAPI app or run directly
         with any ASGI server (uvicorn, hypercorn, etc.).
@@ -1693,6 +1711,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps: Optional dependencies to use for all requests.
             model_settings: Optional settings to use for all model requests.
             instructions: Optional extra instructions to pass to each agent run.
+            html_source: Path or URL for the chat UI HTML. Can be:
+                - None (default): Fetches from CDN and caches locally
+                - A Path instance: Reads from the local file
+                - A URL string (http:// or https://): Fetches from the URL
+                - A file path string: Reads from the local file
 
         Returns:
             A configured Starlette application ready to be served (e.g., with uvicorn)
@@ -1722,6 +1745,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps=deps,
             model_settings=model_settings,
             instructions=instructions,
+            html_source=html_source,
         )
 
     @asynccontextmanager
