@@ -5715,8 +5715,89 @@ async def test_google_vertex_logprobs(allow_model_requests: None, vertex_provide
 
     assert result.output is not None
     assert response.provider_details is not None
-    assert 'logprobs' in response.provider_details
-    assert 'avg_logprobs' in response.provider_details
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'STOP',
+            'timestamp': IsDatetime(),
+            'logprobs': {
+                'chosenCandidates': [
+                    {'logProbability': -0.008062408, 'token': '2', 'tokenId': 236778},
+                    {'logProbability': -0.0012096671, 'token': ' +', 'tokenId': 900},
+                    {'logProbability': -3.5760596e-07, 'token': ' ', 'tokenId': 236743},
+                    {'logProbability': -2.3844768e-07, 'token': '2', 'tokenId': 236778},
+                    {'logProbability': -0.027278269, 'token': ' =', 'tokenId': 578},
+                    {'logProbability': -0.04317358, 'token': ' ', 'tokenId': 236743},
+                    {'logProbability': -7.033236e-06, 'token': '4', 'tokenId': 236812},
+                ],
+                'topCandidates': [
+                    {
+                        'candidates': [
+                            {'logProbability': -0.008062408, 'token': '2', 'tokenId': 236778},
+                            {'logProbability': -5.3879967, 'token': '$', 'tokenId': 236795},
+                            {'logProbability': -6.6082287, 'token': '4', 'tokenId': 236812},
+                            {'logProbability': -6.7202606, 'token': '**', 'tokenId': 1018},
+                            {'logProbability': -8.214209, 'token': 'Four', 'tokenId': 26391},
+                        ]
+                    },
+                    {
+                        'candidates': [
+                            {'logProbability': -0.0012096671, 'token': ' +', 'tokenId': 900},
+                            {'logProbability': -6.7808175, 'token': '+', 'tokenId': 236862},
+                            {'logProbability': -9.9965725, 'token': ' plus', 'tokenId': 2915},
+                            {'logProbability': -13.456431, 'token': ' add', 'tokenId': 1138},
+                            {'logProbability': -13.573894, 'token': ' increased', 'tokenId': 4869},
+                        ]
+                    },
+                    {
+                        'candidates': [
+                            {'logProbability': -3.5760596e-07, 'token': ' ', 'tokenId': 236743},
+                            {'logProbability': -18.37967, 'token': '2', 'tokenId': 236778},
+                            {'logProbability': -18.449629, 'token': ' an', 'tokenId': 614},
+                            {'logProbability': -18.78197, 'token': ' Whatever', 'tokenId': 38030},
+                            {'logProbability': -19.014194, 'token': ' N', 'tokenId': 646},
+                        ]
+                    },
+                    {
+                        'candidates': [
+                            {'logProbability': -2.3844768e-07, 'token': '2', 'tokenId': 236778},
+                            {'logProbability': -16.12799, 'token': '3', 'tokenId': 236800},
+                            {'logProbability': -16.326914, 'token': '4', 'tokenId': 236812},
+                            {'logProbability': -18.08215, 'token': '1', 'tokenId': 236770},
+                            {'logProbability': -18.479084, 'token': '\n', 'tokenId': 107},
+                        ]
+                    },
+                    {
+                        'candidates': [
+                            {'logProbability': -0.027278269, 'token': ' =', 'tokenId': 578},
+                            {'logProbability': -3.7759068, 'token': ' equals', 'tokenId': 14339},
+                            {'logProbability': -5.556007, 'token': ' is', 'tokenId': 563},
+                            {'logProbability': -10.599532, 'token': ' makes', 'tokenId': 3590},
+                            {'logProbability': -10.9819, 'token': ' equal', 'tokenId': 4745},
+                        ]
+                    },
+                    {
+                        'candidates': [
+                            {'logProbability': -0.04317358, 'token': ' ', 'tokenId': 236743},
+                            {'logProbability': -3.164893, 'token': ' **', 'tokenId': 5213},
+                            {'logProbability': -11.579365, 'token': '**', 'tokenId': 1018},
+                            {'logProbability': -14.259011, 'token': '\n', 'tokenId': 107},
+                            {'logProbability': -14.3110895, 'token': ' darling', 'tokenId': 96018},
+                        ]
+                    },
+                    {
+                        'candidates': [
+                            {'logProbability': -7.033236e-06, 'token': '4', 'tokenId': 236812},
+                            {'logProbability': -12.370753, 'token': '**', 'tokenId': 1018},
+                            {'logProbability': -13.431686, 'token': '\n', 'tokenId': 107},
+                            {'logProbability': -17.275393, 'token': 'けます', 'tokenId': 141784},
+                            {'logProbability': -17.747509, 'token': ' отве', 'tokenId': 48506},
+                        ]
+                    },
+                ],
+                'avg_logprobs': -0.9990835871015277,
+            },
+        }
+    )
 
 
 async def test_google_vertex_logprobs_without_top_logprobs(allow_model_requests: None, vertex_provider: GoogleProvider):
@@ -5731,27 +5812,25 @@ async def test_google_vertex_logprobs_without_top_logprobs(allow_model_requests:
 
     assert result.output is not None
     assert response.provider_details is not None
-    assert 'logprobs' in response.provider_details
-    assert 'avg_logprobs' in response.provider_details
-
-
-async def test_google_gla_logprobs_raises_error(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
-    agent = Agent(model=model)
-
-    settings = GoogleModelSettings(google_logprobs=True)
-    with pytest.raises(UserError, match='Logprobs are only supported on Vertex AI'):
-        await agent.run('What is 2+2?', model_settings=settings)
-
-
-async def test_google_logprobs_streaming_raises_error(allow_model_requests: None, vertex_provider: GoogleProvider):
-    model = GoogleModel('gemini-2.5-flash', provider=vertex_provider)
-    agent = Agent(model=model)
-
-    settings = GoogleModelSettings(google_logprobs=True)
-    with pytest.raises(UserError, match='Logprobs are not supported for streaming requests'):
-        async with agent.run_stream('What is 2+2?', model_settings=settings):
-            pass
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'STOP',
+            'timestamp': IsDatetime(),
+            'logprobs': {
+                'chosenCandidates': [
+                    {'logProbability': -0.013796607, 'token': '2', 'tokenId': 236778},
+                    {'logProbability': -0.00737431, 'token': ' +', 'tokenId': 900},
+                    {'logProbability': -2.3844768e-07, 'token': ' ', 'tokenId': 236743},
+                    {'logProbability': -2.3844768e-07, 'token': '2', 'tokenId': 236778},
+                    {'logProbability': -0.015103274, 'token': ' =', 'tokenId': 578},
+                    {'logProbability': -0.080776855, 'token': ' ', 'tokenId': 236743},
+                    {'logProbability': -6.5561944e-06, 'token': '4', 'tokenId': 236812},
+                ],
+                'topCandidates': None,
+                'avg_logprobs': -1.054394245147705,
+            },
+        }
+    )
 
 
 async def test_google_vertex_logprobs_structure(
@@ -5784,7 +5863,7 @@ async def test_google_vertex_logprobs_structure(
                         ]
                     }
                 ],
+                'avg_logprobs': -15.658978462219238,
             },
-            'avg_logprobs': -15.658978462219238,
         }
     )
