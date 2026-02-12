@@ -1567,7 +1567,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     td.include_return_schema if td.include_return_schema is not None else agent_include_return_schema
                 )
                 if not include and td.return_schema is not None:
-                    td = dataclasses.replace(td, return_schema=None, include_return_schema=False)
+                    td = dataclasses.replace(td, return_schema=None)
                 elif td.include_return_schema is None and agent_include_return_schema:
                     td = dataclasses.replace(td, include_return_schema=True)
                 if include and td.return_schema is None:

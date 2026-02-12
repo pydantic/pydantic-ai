@@ -3106,7 +3106,10 @@ distinguish multiple files.\
                     'description': 'The URL of the document.',
                     'properties': {
                         'url': {'type': 'string'},
-                        'force_download': {'default': False, 'type': 'boolean'},
+                        'force_download': {
+                            'anyOf': [{'type': 'boolean'}, {'const': 'allow-local', 'type': 'string'}],
+                            'default': False,
+                        },
                         'vendor_metadata': {
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
@@ -3155,7 +3158,10 @@ distinguish multiple files.\
                     'description': 'A URL to a video.',
                     'properties': {
                         'url': {'type': 'string'},
-                        'force_download': {'default': False, 'type': 'boolean'},
+                        'force_download': {
+                            'anyOf': [{'type': 'boolean'}, {'const': 'allow-local', 'type': 'string'}],
+                            'default': False,
+                        },
                         'vendor_metadata': {
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
@@ -3204,7 +3210,10 @@ distinguish multiple files.\
                     'description': 'A URL to an audio file.',
                     'properties': {
                         'url': {'type': 'string'},
-                        'force_download': {'default': False, 'type': 'boolean'},
+                        'force_download': {
+                            'anyOf': [{'type': 'boolean'}, {'const': 'allow-local', 'type': 'string'}],
+                            'default': False,
+                        },
                         'vendor_metadata': {
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
@@ -3253,7 +3262,10 @@ distinguish multiple files.\
                     'description': 'A URL to an image.',
                     'properties': {
                         'url': {'type': 'string'},
-                        'force_download': {'default': False, 'type': 'boolean'},
+                        'force_download': {
+                            'anyOf': [{'type': 'boolean'}, {'const': 'allow-local', 'type': 'string'}],
+                            'default': False,
+                        },
                         'vendor_metadata': {
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
@@ -3317,7 +3329,10 @@ distinguish multiple files.\
                             'description': 'A URL to an audio file.',
                             'properties': {
                                 'url': {'type': 'string'},
-                                'force_download': {'default': False, 'type': 'boolean'},
+                                'force_download': {
+                                    'anyOf': [{'type': 'boolean'}, {'const': 'allow-local', 'type': 'string'}],
+                                    'default': False,
+                                },
                                 'vendor_metadata': {
                                     'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                                     'default': None,
@@ -3427,7 +3442,10 @@ distinguish multiple files.\
                             'description': 'The URL of the document.',
                             'properties': {
                                 'url': {'type': 'string'},
-                                'force_download': {'default': False, 'type': 'boolean'},
+                                'force_download': {
+                                    'anyOf': [{'type': 'boolean'}, {'const': 'allow-local', 'type': 'string'}],
+                                    'default': False,
+                                },
                                 'vendor_metadata': {
                                     'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                                     'default': None,
@@ -3477,7 +3495,10 @@ distinguish multiple files.\
                             'description': 'A URL to an image.',
                             'properties': {
                                 'url': {'type': 'string'},
-                                'force_download': {'default': False, 'type': 'boolean'},
+                                'force_download': {
+                                    'anyOf': [{'type': 'boolean'}, {'const': 'allow-local', 'type': 'string'}],
+                                    'default': False,
+                                },
                                 'vendor_metadata': {
                                     'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                                     'default': None,
@@ -3579,11 +3600,25 @@ This class allows tools to return complex responses that include:
                                             'items': {
                                                 'anyOf': [
                                                     {'type': 'string'},
-                                                    {'$ref': '#/$defs/ImageUrl'},
-                                                    {'$ref': '#/$defs/AudioUrl'},
-                                                    {'$ref': '#/$defs/DocumentUrl'},
-                                                    {'$ref': '#/$defs/VideoUrl'},
-                                                    {'$ref': '#/$defs/BinaryContent'},
+                                                    {
+                                                        'discriminator': {
+                                                            'mapping': {
+                                                                'audio-url': '#/$defs/AudioUrl',
+                                                                'binary': '#/$defs/BinaryContent',
+                                                                'document-url': '#/$defs/DocumentUrl',
+                                                                'image-url': '#/$defs/ImageUrl',
+                                                                'video-url': '#/$defs/VideoUrl',
+                                                            },
+                                                            'propertyName': 'kind',
+                                                        },
+                                                        'oneOf': [
+                                                            {'$ref': '#/$defs/ImageUrl'},
+                                                            {'$ref': '#/$defs/AudioUrl'},
+                                                            {'$ref': '#/$defs/DocumentUrl'},
+                                                            {'$ref': '#/$defs/VideoUrl'},
+                                                            {'$ref': '#/$defs/BinaryContent'},
+                                                        ],
+                                                    },
                                                     {'$ref': '#/$defs/CachePoint'},
                                                 ]
                                             },
@@ -3602,11 +3637,25 @@ This class allows tools to return complex responses that include:
                         },
                         'ToolReturnContent': {
                             'anyOf': [
-                                {'$ref': '#/$defs/ImageUrl'},
-                                {'$ref': '#/$defs/AudioUrl'},
-                                {'$ref': '#/$defs/DocumentUrl'},
-                                {'$ref': '#/$defs/VideoUrl'},
-                                {'$ref': '#/$defs/BinaryContent'},
+                                {
+                                    'discriminator': {
+                                        'mapping': {
+                                            'audio-url': '#/$defs/AudioUrl',
+                                            'binary': '#/$defs/BinaryContent',
+                                            'document-url': '#/$defs/DocumentUrl',
+                                            'image-url': '#/$defs/ImageUrl',
+                                            'video-url': '#/$defs/VideoUrl',
+                                        },
+                                        'propertyName': 'kind',
+                                    },
+                                    'oneOf': [
+                                        {'$ref': '#/$defs/ImageUrl'},
+                                        {'$ref': '#/$defs/AudioUrl'},
+                                        {'$ref': '#/$defs/DocumentUrl'},
+                                        {'$ref': '#/$defs/VideoUrl'},
+                                        {'$ref': '#/$defs/BinaryContent'},
+                                    ],
+                                },
                                 {'items': {'$ref': '#/$defs/ToolReturnContent'}, 'type': 'array'},
                                 {'additionalProperties': {'$ref': '#/$defs/ToolReturnContent'}, 'type': 'object'},
                                 {},
@@ -3616,7 +3665,10 @@ This class allows tools to return complex responses that include:
                             'description': 'A URL to a video.',
                             'properties': {
                                 'url': {'type': 'string'},
-                                'force_download': {'default': False, 'type': 'boolean'},
+                                'force_download': {
+                                    'anyOf': [{'type': 'boolean'}, {'const': 'allow-local', 'type': 'string'}],
+                                    'default': False,
+                                },
                                 'vendor_metadata': {
                                     'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                                     'default': None,
