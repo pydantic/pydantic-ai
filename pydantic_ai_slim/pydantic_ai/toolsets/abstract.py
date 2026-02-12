@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
+from .._python_signature import Signature, signature_from_schema
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition, ToolsPrepareFunc
 
@@ -57,6 +58,28 @@ class ToolsetTool(Generic[AgentDepsT]):
 
     For example, a [`pydantic.TypeAdapter(...).validator`](https://docs.pydantic.dev/latest/concepts/type_adapter/) or [`pydantic_core.SchemaValidator`](https://docs.pydantic.dev/latest/api/pydantic_core/#pydantic_core.SchemaValidator).
     """
+
+    def python_signature(self, *, name_override: str | None = None) -> Signature:
+        """Generate a Python function signature for this tool.
+
+        The base implementation converts the tool's JSON schema to a signature.
+        Subclasses (e.g. `FunctionToolsetTool`) can override to use the original
+        function's type annotations for richer signatures.
+
+        Args:
+            name_override: Optional name to use instead of the tool's original name.
+                Used by code mode to show sanitized names (valid Python identifiers).
+
+        Returns:
+            A Signature object. Use `str(sig)` for type checking, `sig.with_typeddicts()` for LLM display.
+        """
+        return signature_from_schema(
+            name=name_override or self.tool_def.name,
+            parameters_json_schema=self.tool_def.parameters_json_schema,
+            description=self.tool_def.description,
+            return_json_schema=(self.tool_def.metadata or {}).get('output_schema'),
+            namespace_defs=True,
+        )
 
 
 class AbstractToolset(ABC, Generic[AgentDepsT]):

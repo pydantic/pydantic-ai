@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, cast
@@ -20,16 +21,15 @@ from pydantic_ai.runtime.abstract import (
 )
 
 from ... import exceptions
+from ..._python_signature import Signature
 from ..._run_context import AgentDepsT, RunContext
 from ..._tool_manager import ToolManager
 from ...exceptions import ModelRetry
 from ...messages import ToolCallPart
 from ...tools import ToolDefinition
 from ..abstract import SchemaValidatorProt, ToolsetTool
-from ..function import FunctionToolset, FunctionToolsetTool
 from ..wrapper import WrapperToolset
 from ._sanitization import sanitize_tool_name
-from ._signature import Signature, signature_from_function, signature_from_schema
 
 __all__ = (
     'CodeModeToolset',
@@ -43,6 +43,52 @@ class _CodeToolArguments(TypedDict):
 
 _CODE_ADAPTER = TypeAdapter(_CodeToolArguments)
 _CODE_MODE_TOOL_NAME = 'run_code'
+
+_TYPEDDICT_NAME_RE = re.compile(r'^class (\w+)\(TypedDict\):')
+
+
+def _dedup_typeddicts(signatures: list[Signature]) -> None:
+    """Deduplicate TypedDict definitions across multiple tool signatures in place.
+
+    When multiple tools share the same TypedDict type (same name and definition),
+    the definition is kept on the first signature and removed from subsequent ones.
+    When different TypedDict types share the same name (conflict), the later one is
+    renamed by prefixing the tool name to disambiguate.
+    """
+    # Collect all (name, definition) pairs, tracking which signature owns each
+    seen: dict[str, str] = {}  # {name: definition}
+
+    for sig in signatures:
+        deduped: list[str] = []
+        for td_str in sig.typeddicts:
+            m = _TYPEDDICT_NAME_RE.match(td_str)
+            if not m:
+                deduped.append(td_str)
+                continue
+
+            td_name = m.group(1)
+            if td_name not in seen:
+                # First occurrence — keep it
+                seen[td_name] = td_str
+                deduped.append(td_str)
+            elif seen[td_name] == td_str:
+                # Same name, same definition — deduplicate (skip)
+                pass
+            else:
+                # Same name, different definition — rename to avoid conflict
+                new_name = f'{sig.name}_{td_name}'
+                renamed_td = td_str.replace(f'class {td_name}(TypedDict):', f'class {new_name}(TypedDict):')
+                # Also update references to this type in the signature's params and return type
+                sig.params = [p.replace(td_name, new_name) for p in sig.params]
+                if sig.return_type == td_name:
+                    sig.return_type = new_name
+                # Update references in other TypedDicts already in this signature's deduped list
+                deduped = [
+                    d.replace(f': {td_name}', f': {new_name}').replace(f'[{td_name}]', f'[{new_name}]') for d in deduped
+                ]
+                seen[new_name] = renamed_td
+                deduped.append(renamed_td)
+        sig.typeddicts = deduped
 
 
 def build_code_mode_prompt(*, signatures: list[str], runtime_hints: str) -> str:
@@ -125,8 +171,8 @@ def _get_tool_signature(
 ) -> Signature:
     """Get a Signature object for a tool.
 
-    For native function tools, uses the original function's signature (including return type).
-    For external tools (MCP, etc.), converts the JSON schema to a signature.
+    Delegates to `tool.python_signature()`, which uses inspect-based signatures
+    for function tools and JSON-schema-based signatures for external tools (MCP, etc.).
 
     Args:
         tool: The tool to generate a signature for.
@@ -135,32 +181,8 @@ def _get_tool_signature(
 
     Returns:
         A Signature object. Use str(sig) for type checking, sig.with_typeddicts('...') for LLM.
-
-    Note: Code mode always includes return types because the model needs to know
-    what structure each function returns to write correct code.
     """
-    signature_name = name_override or tool.tool_def.name
-    description = tool.tool_def.description
-
-    if isinstance(tool, FunctionToolsetTool) and isinstance(tool.toolset, FunctionToolset):
-        tool_name = tool.tool_def.name
-        if tool_name in tool.toolset.tools:
-            original_tool = tool.toolset.tools[tool_name]
-            return signature_from_function(
-                original_tool.function,
-                name=signature_name,
-                description=description,
-                include_return_type=True,  # Always show return types in code mode
-            )
-
-    # For external tools (MCP, etc.), convert JSON schema to signature
-    return signature_from_schema(
-        name=signature_name,
-        parameters_json_schema=tool.tool_def.parameters_json_schema,
-        description=description,
-        return_json_schema=(tool.tool_def.metadata or {}).get('output_schema'),
-        namespace_defs=True,
-    )
+    return tool.python_signature(name_override=name_override)
 
 
 @dataclass(kw_only=True)
@@ -209,18 +231,16 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         self._name_map = name_map
 
         sanitized_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
-        available_functions: list[str] = []
+        signatures: list[Signature] = []
 
         for sanitized_name, original_name in name_map.items():
             tool = wrapped_tools[original_name]
             sanitized_tools[sanitized_name] = tool
-            sig = _get_tool_signature(
-                tool,
-                name_override=sanitized_name,
-            )
-            # Use `...` body for LLM display; runtimes handle any conversion needed for type checking
-            available_functions.append(sig.with_typeddicts())
+            signatures.append(_get_tool_signature(tool, name_override=sanitized_name))
 
+        _dedup_typeddicts(signatures)
+
+        available_functions = [sig.with_typeddicts() for sig in signatures]
         self._cached_signatures = available_functions
 
         description = self.prompt_builder(signatures=available_functions, runtime_hints=self.runtime.prompt_hints())
@@ -281,8 +301,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # Route through full ToolManager flow:
             # handle_call → _call_function_tool (tracing + usage) → _call_tool (validate + enrich + call)
             # wrap_validation_errors=False: let raw errors propagate to the runtime.
-            # If UnexpectedModelBehavior is raised (e.g. max_retries=0 tool), it propagates
-            # naturally through the runtime as CodeRuntimeError → outer ModelRetry.
+            # Tool exceptions bubble up to user code (same behavior as regular tools).
             return await code_mode_tool_manager.handle_call(
                 tool_call_part,
                 wrap_validation_errors=False,

@@ -1,7 +1,7 @@
 """JSON schema to Python type conversion utilities.
 
 This module converts JSON schemas into Python type strings and TypedDict definitions,
-used by `_signature.py` to generate function signatures from tool definitions.
+used by `_python_signature.py` to generate function signatures from tool definitions.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import re
 from collections.abc import Callable
 from typing import Any, cast
 
-from ._signature import Signature
+from ._python_signature import Signature
 
 # =============================================================================
 # Path-based naming for unique TypedDict names
@@ -63,7 +63,7 @@ def _json_type_to_python(json_type: str) -> str:
 # =============================================================================
 
 
-def _schema_to_signature(
+def schema_to_signature(
     name: str,
     parameters_schema: dict[str, Any],
     description: str | None = None,
@@ -95,13 +95,13 @@ def _schema_to_signature(
 
     def to_type(schema: dict[str, Any], path: str) -> str:
         """Convert schema to type string. Closure captures defs, typeddicts."""
-        return _schema_type_to_str(schema, defs, typeddicts, name, path)
+        return schema_type_to_str(schema, defs, typeddicts, name, path)
 
     # Pre-process $defs to generate TypedDicts
     for def_name, def_schema in defs.items():
         if def_schema.get('type') == 'object' and 'properties' in def_schema:
             if def_name not in typeddicts:
-                typeddicts[def_name] = _generate_typeddict_str(def_name, def_schema, to_type, def_name)
+                typeddicts[def_name] = generate_typeddict_str(def_name, def_schema, to_type, def_name)
 
     # Build parameters
     params = _build_params_from_schema(parameters_schema, to_type)
@@ -168,7 +168,7 @@ def _schema_allows_null(schema: dict[str, Any]) -> bool:
     return False
 
 
-def _schema_type_to_str(
+def schema_type_to_str(
     schema: dict[str, Any],
     defs: dict[str, dict[str, Any]],
     typeddicts: dict[str, str],
@@ -184,8 +184,8 @@ def _schema_type_to_str(
         if ref_name in defs and ref_name not in typeddicts:
             ref_schema = defs[ref_name]
             if ref_schema.get('type') == 'object' and 'properties' in ref_schema:
-                typeddicts[ref_name] = _generate_typeddict_str(
-                    ref_name, ref_schema, lambda s, p: _schema_type_to_str(s, defs, typeddicts, tool_name, p), path
+                typeddicts[ref_name] = generate_typeddict_str(
+                    ref_name, ref_schema, lambda s, p: schema_type_to_str(s, defs, typeddicts, tool_name, p), path
                 )
         return ref_name
 
@@ -198,7 +198,7 @@ def _schema_type_to_str(
     # Handle allOf
     if 'allOf' in schema:
         if len(schema['allOf']) == 1:
-            return _schema_type_to_str(schema['allOf'][0], defs, typeddicts, tool_name, path)
+            return schema_type_to_str(schema['allOf'][0], defs, typeddicts, tool_name, path)
         return 'Any'
 
     # Handle const
@@ -236,11 +236,11 @@ def _type_to_str(
             if isinstance(items, list):
                 items_list = cast(list[dict[str, Any]], items)
                 item_types = [
-                    _schema_type_to_str(item, defs, typeddicts, tool_name, f'{path}.{i}')
+                    schema_type_to_str(item, defs, typeddicts, tool_name, f'{path}.{i}')
                     for i, item in enumerate(items_list)
                 ]
                 return f'tuple[{", ".join(item_types)}]'
-            item_type = _schema_type_to_str(cast(dict[str, Any], items), defs, typeddicts, tool_name, f'{path}Item')
+            item_type = schema_type_to_str(cast(dict[str, Any], items), defs, typeddicts, tool_name, f'{path}Item')
             return f'list[{item_type}]'
         return 'list[Any]'
 
@@ -250,8 +250,8 @@ def _type_to_str(
             # Generate TypedDict with path-based unique name
             td_name = _path_to_typename(tool_name, path)
             if td_name not in typeddicts:
-                typeddicts[td_name] = _generate_typeddict_str(
-                    td_name, schema, lambda s, p: _schema_type_to_str(s, defs, typeddicts, tool_name, p), path
+                typeddicts[td_name] = generate_typeddict_str(
+                    td_name, schema, lambda s, p: schema_type_to_str(s, defs, typeddicts, tool_name, p), path
                 )
             return td_name
         if 'additionalProperties' in schema:
@@ -260,7 +260,7 @@ def _type_to_str(
                 return 'dict[str, Any]'
             if isinstance(additional, dict):
                 additional_schema = cast(dict[str, Any], additional)
-                value_type = _schema_type_to_str(additional_schema, defs, typeddicts, tool_name, f'{path}Value')
+                value_type = schema_type_to_str(additional_schema, defs, typeddicts, tool_name, f'{path}Value')
                 return f'dict[str, {value_type}]'
         return 'dict[str, Any]'
 
@@ -298,7 +298,7 @@ def _handle_union_schema(
         if s.get('type') == 'null':
             has_null = True
         else:
-            types.append(_schema_type_to_str(s, defs, typeddicts, tool_name, path))
+            types.append(schema_type_to_str(s, defs, typeddicts, tool_name, path))
 
     # Deduplicate while preserving order
     seen: set[str] = set()
@@ -318,7 +318,7 @@ def _handle_union_schema(
         return ' | '.join(unique_types)
 
 
-def _generate_typeddict_str(
+def generate_typeddict_str(
     name: str,
     schema: dict[str, Any],
     to_type: Callable[[dict[str, Any], str], str],

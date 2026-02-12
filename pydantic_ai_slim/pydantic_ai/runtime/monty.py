@@ -271,13 +271,6 @@ class MontyRuntime(CodeRuntime):
                             results[cid] = {'return_value': tool_return_ta.dump_python(raw, mode='json')}
                         except (CallDeferred, ApprovalRequired) as e:
                             interrupted_calls.append(InterruptedToolCall(reason=e, call=tool_call_id_to_call[cid]))
-                        except Exception as e:
-                            # Intentional broad catch: this is a defensive boundary between
-                            # the runtime and the tool execution layer. Tool implementation
-                            # bugs get wrapped as CodeRuntimeError (→ ModelRetry) rather than
-                            # crashing the runtime protocol. The original exception message
-                            # is preserved so the LLM sees what went wrong.
-                            raise CodeRuntimeError(f'Tool execution error: {e}') from e
                         del tasks[cid]
 
                     # Save checkpoint BEFORE advancing if there are interrupted calls.

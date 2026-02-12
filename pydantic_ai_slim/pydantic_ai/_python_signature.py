@@ -1,8 +1,8 @@
-"""Convert JSON schemas to Python function signatures.
+"""Generate Python function signatures from functions and JSON schemas.
 
-This module provides utilities to convert JSON schemas (like those used in tool definitions)
-into human-readable Python function signature strings, which LLMs can understand more easily
-than raw JSON schemas.
+This module provides utilities to represent tool definitions as human-readable
+Python function signatures, which LLMs can understand more easily than raw
+JSON schemas. Used by code mode to present tools as callable Python functions.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from typing import Any, Union, get_origin
 from pydantic import BaseModel, TypeAdapter
 from typing_extensions import get_type_hints, is_typeddict
 
-from ..._run_context import RunContext
+from ._run_context import RunContext
 
 
 def _is_named_type(t: Any) -> bool:
@@ -143,9 +143,9 @@ def signature_from_schema(
     Returns:
         A Signature object that can be rendered to string with str() or methods.
     """
-    from ._schema_types import _schema_to_signature
+    from ._python_schema_types import schema_to_signature
 
-    return _schema_to_signature(
+    return schema_to_signature(
         name,
         parameters_json_schema,
         description,
@@ -221,7 +221,7 @@ def _collect_typeddicts_from_annotation(
     path: str = '',
 ) -> None:
     """Recursively collect TypedDict definitions from type annotations."""
-    from ._schema_types import _generate_typeddict_str, _schema_type_to_str
+    from ._python_schema_types import generate_typeddict_str, schema_type_to_str
 
     if annotation is None or annotation is type(None):
         return
@@ -233,16 +233,16 @@ def _collect_typeddicts_from_annotation(
             schema_defs = schema.get('$defs', {})
 
             def to_type(s: dict[str, Any], p: str) -> str:
-                return _schema_type_to_str(s, schema_defs, typeddicts, tool_name, p)
+                return schema_type_to_str(s, schema_defs, typeddicts, tool_name, p)
 
             # Process any $defs first
             for def_name, def_schema in schema_defs.items():
                 if def_name not in typeddicts and def_schema.get('type') == 'object' and 'properties' in def_schema:
-                    typeddicts[def_name] = _generate_typeddict_str(def_name, def_schema, to_type, path)
+                    typeddicts[def_name] = generate_typeddict_str(def_name, def_schema, to_type, path)
 
             # Then process the main schema
             if schema.get('type') == 'object' and 'properties' in schema:
-                typeddicts[type_name] = _generate_typeddict_str(type_name, schema, to_type, path)
+                typeddicts[type_name] = generate_typeddict_str(type_name, schema, to_type, path)
             elif '$ref' in schema:
                 ref_name = (
                     schema['$ref'][8:] if schema['$ref'].startswith('#/$defs/') else schema['$ref'].split('/')[-1]
@@ -250,7 +250,7 @@ def _collect_typeddicts_from_annotation(
                 if ref_name in schema_defs and ref_name not in typeddicts:
                     ref_schema = schema_defs[ref_name]
                     if ref_schema.get('type') == 'object' and 'properties' in ref_schema:
-                        typeddicts[ref_name] = _generate_typeddict_str(ref_name, ref_schema, to_type, path)
+                        typeddicts[ref_name] = generate_typeddict_str(ref_name, ref_schema, to_type, path)
         return
 
     origin = get_origin(annotation)

@@ -7,6 +7,7 @@ from typing import Any, overload
 import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
+from .._python_signature import Signature, signature_from_function
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import ModelRetry, UserError
 from ..tools import (
@@ -32,6 +33,29 @@ class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
     If the tool takes longer than this, a retry prompt is returned to the model.
     Defaults to None (no timeout).
     """
+
+    def python_signature(self, *, name_override: str | None = None) -> Signature:
+        """Generate a Python function signature from the original function's type annotations.
+
+        Overrides the base schema-based implementation to use `inspect.signature()` and
+        `get_type_hints()` for richer type information (e.g. TypedDict fields, union types).
+        Falls back to the schema-based approach if the original function isn't available.
+        """
+        signature_name = name_override or self.tool_def.name
+        description = self.tool_def.description
+
+        if isinstance(self.toolset, FunctionToolset):
+            tool_name = self.tool_def.name
+            if tool_name in self.toolset.tools:
+                original_tool = self.toolset.tools[tool_name]
+                return signature_from_function(
+                    original_tool.function,
+                    name=signature_name,
+                    description=description,
+                    include_return_type=True,
+                )
+
+        return super().python_signature(name_override=name_override)
 
 
 class FunctionToolset(AbstractToolset[AgentDepsT]):
