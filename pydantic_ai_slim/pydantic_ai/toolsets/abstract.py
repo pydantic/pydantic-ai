@@ -189,4 +189,3 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         from .approval_required import ApprovalRequiredToolset
 
         return ApprovalRequiredToolset(self, approval_required_func)
-
