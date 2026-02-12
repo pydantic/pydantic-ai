@@ -111,7 +111,7 @@ from .profiles import (
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings
-from .tools import DeferredToolRequests, DeferredToolResults, RunContext, Tool, ToolApproved, ToolDenied
+from .tools import DeferredToolRequests, DeferredToolResults, RunContext, Tool, ToolApproved, ToolDefinition, ToolDenied
 from .toolsets import (
     AbstractToolset,
     ApprovalRequiredToolset,
@@ -223,6 +223,7 @@ __all__ = (
     'JsonSchemaTransformer',
     # tools
     'Tool',
+    'ToolDefinition',
     'RunContext',
     'DeferredToolRequests',
     'DeferredToolResults',
