@@ -336,6 +336,10 @@ class TemporalModel(WrapperModel):
         """
         current = self._current_model()
         if isinstance(current, str):
+            # Unlike Model.profile, this returns the raw provider profile without intersecting
+            # supported_builtin_tools with the model class's supported_builtin_tools(). This is
+            # acceptable because TemporalModel delegates to the wrapped model for actual requests,
+            # and this profile is only used for capability checks, not request preparation.
             return infer_model_profile(current)
         return current.profile
 

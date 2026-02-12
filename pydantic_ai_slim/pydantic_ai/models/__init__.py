@@ -1132,6 +1132,9 @@ def infer_model_profile(model: str) -> ModelProfile:
     if provider is None:
         return DEFAULT_PROFILE
 
+    if provider == 'vertexai':  # pragma: no cover
+        provider = 'google-vertex'
+
     if provider.startswith('gateway/'):
         from ..providers.gateway import normalize_gateway_provider
 

@@ -3493,8 +3493,8 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
     """Test that BinaryContent and DocumentUrl survive Temporal serialization.
 
     This tests both:
-    1. Passing BinaryContent and DocumentUrl as input to agent.run (workflow->activity)
-    2. Returning BinaryContent and DocumentUrl from a tool (activity->workflow)
+    1. Passing BinaryContent and DocumentUrl as input to agent.run (workflow→activity)
+    2. Returning BinaryContent and DocumentUrl from a tool (activity→workflow)
 
     BinaryContent is serialized with base64 encoding. DocumentUrl requires explicit
     media_type since it cannot be inferred from the URL.
