@@ -311,8 +311,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 'Tool call results were provided, but the message history does not contain any unprocessed tool calls.'
             )
 
-        tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None = None
-        tool_call_results = {}
+        tool_call_results: dict[str, DeferredToolResult | Any | Literal['skip']] = {}
         for tool_call_id, approval in deferred_tool_results.approvals.items():
             if approval is True:
                 approval = ToolApproved()
@@ -320,12 +319,8 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 approval = ToolDenied()
             tool_call_results[tool_call_id] = approval
 
-        if calls := deferred_tool_results.calls:
-            call_result_types = get_union_args(DeferredToolCallResult)
-            for tool_call_id, result in calls.items():
-                if not isinstance(result, call_result_types):
-                    result = _messages.ToolReturn(result)
-                tool_call_results[tool_call_id] = result
+        for tool_call_id, call_result in deferred_tool_results.calls.items():
+            tool_call_results[tool_call_id] = call_result
 
         if last_model_request:
             for part in last_model_request.parts:
@@ -572,7 +567,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that processes a model response, and decides whether to end the run or make a new request."""
 
     model_response: _messages.ModelResponse
-    tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None = None
+    tool_call_results: dict[str, DeferredToolResult | Any | Literal['skip']] | None = None
     tool_call_metadata: dict[str, dict[str, Any]] | None = None
     """Metadata for deferred tool calls, keyed by `tool_call_id`."""
     tool_call_context: dict[str, Mapping[str, Any]] | None = None
@@ -882,7 +877,7 @@ def build_validation_context(
 async def process_tool_calls(  # noqa: C901
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
-    tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None,
+    tool_call_results: dict[str, DeferredToolResult | Any | Literal['skip']] | None,
     tool_call_metadata: dict[str, dict[str, Any]] | None,
     tool_call_context: dict[str, Mapping[str, Any]] | None,
     final_result: result.FinalResult[NodeRunEndT] | None,
@@ -1012,8 +1007,17 @@ async def process_tool_calls(  # noqa: C901
                 f'Expected: {tool_call_ids_to_run}, got: {result_tool_call_ids}'
             )
 
-        # Filter out calls that were already executed before and should now be skipped
-        calls_to_run_results = {call_id: result for call_id, result in flat_results.items() if result != 'skip'}
+        # Filter out calls that were already executed before and should now be skipped,
+        # and wrap raw values in ToolReturn (only for flat results, not nested ones
+        # which are passed back as-is to the parent tool's DeferredToolResults.calls)
+        call_result_types = get_union_args(DeferredToolCallResult)
+        approval_types = (ToolApproved, ToolDenied)
+        calls_to_run_results: dict[str, DeferredToolResult] = {}
+        for call_id, call_result in flat_results.items():
+            if call_result != 'skip':
+                if not isinstance(call_result, (*call_result_types, *approval_types)):
+                    call_result = _messages.ToolReturn(call_result)
+                calls_to_run_results[call_id] = call_result
         # Parent tools with nested results need to be re-executed too
         calls_to_run = [
             call
@@ -1307,12 +1311,12 @@ def _unwrap_nested_deferred(
 
 
 def _reconstruct_nested_deferred_results(
-    tool_call_results: dict[str, DeferredToolResult | Literal['skip']],
+    tool_call_results: dict[str, DeferredToolResult | Any | Literal['skip']],
     tool_call_metadata: dict[str, dict[str, Any]] | None,
     tool_call_context: dict[str, Mapping[str, Any]] | None = None,
 ) -> tuple[
     dict[str, DeferredToolResults],
-    dict[str, DeferredToolResult | Literal['skip']],
+    dict[str, DeferredToolResult | Any | Literal['skip']],
 ]:
     """Split composite IDs and reconstruct per-parent `DeferredToolResults`.
 
@@ -1322,7 +1326,7 @@ def _reconstruct_nested_deferred_results(
         `remaining_flat_results` contains results that are not nested (no `::` separator).
     """
     nested: dict[str, DeferredToolResults] = {}
-    flat: dict[str, DeferredToolResult | Literal['skip']] = {}
+    flat: dict[str, DeferredToolResult | Any | Literal['skip']] = {}
 
     for composite_id, call_result in tool_call_results.items():
         if _NESTED_DEFERRED_SEPARATOR in composite_id:

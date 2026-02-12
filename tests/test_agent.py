@@ -7758,6 +7758,9 @@ def test_nested_deferred_tool_calls():
     def regular_tool(x: int) -> int:
         return x * 2
 
+    # Capture values received by the parent tool for verification
+    received_values: dict[str, Any] = {}
+
     @agent.tool
     def orchestrate(ctx: RunContext[None], plan: str) -> str:
         if ctx.deferred_tool_results is not None:
@@ -7769,6 +7772,13 @@ def test_nested_deferred_tool_calls():
             a2 = ctx.deferred_tool_results.approvals.get('approve_2')
             # Verify grandchild results are reconstructed correctly (child::grandchild split)
             grandchild_ext = ctx.deferred_tool_results.calls.get('child_1::gc_call')
+            # Capture for assertion outside the tool
+            received_values['ext'] = ext
+            received_values['a1'] = a1
+            received_values['a2'] = a2
+            received_values['grandchild_ext'] = grandchild_ext
+            received_values['metadata'] = dict(ctx.deferred_tool_results.metadata)
+            received_values['context'] = dict(ctx.deferred_tool_results.context)
             return f'ext={ext}, a1_approved={isinstance(a1, ToolApproved)}, a2_denied={isinstance(a2, ToolDenied)}, gc={grandchild_ext}'
 
         nested = DeferredToolRequests(
@@ -7846,3 +7856,13 @@ def test_nested_deferred_tool_calls():
         ),
     )
     assert result.output == snapshot('All done!')
+
+    # Verify the parent tool received raw values, not ToolReturn-wrapped ones
+    assert received_values['ext'] == 'task_result_42'
+    assert received_values['grandchild_ext'] == 'deep_result'
+    assert isinstance(received_values['a1'], ToolApproved)
+    assert isinstance(received_values['a2'], ToolDenied)
+    # Verify metadata and context were propagated to child DeferredToolResults
+    # Only metadata/context provided in the second run with 'parent::' prefix gets split to children
+    assert received_values['metadata'] == {'approve_1': {'user_note': 'ok'}}
+    assert received_values['context'] == {'ext_call': {'queue_position': 5}}
