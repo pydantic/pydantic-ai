@@ -1250,6 +1250,11 @@ def _populate_deferred_calls(
     """Populate deferred calls, metadata, and context from indexed mappings."""
     for k in sorted(deferred_calls_by_index):
         call = tool_calls[k]
+        if _NESTED_DEFERRED_SEPARATOR in call.tool_call_id:
+            raise exceptions.UserError(
+                f'Tool call ID {call.tool_call_id!r} contains the reserved nested separator '
+                f'{_NESTED_DEFERRED_SEPARATOR!r}. Provider-generated tool call IDs must not contain this sequence.'
+            )
         output_deferred_calls[deferred_calls_by_index[k]].append(call)
         metadata = deferred_metadata_by_index[k]
         if metadata is not None:
@@ -1278,22 +1283,23 @@ def _unwrap_nested_deferred(
     so the user interacts with a single flat `DeferredToolRequests`.
     """
     parent_id = parent_call.tool_call_id
-    for child_call in nested_requests.calls:
-        composite_id = f'{parent_id}{_NESTED_DEFERRED_SEPARATOR}{child_call.tool_call_id}'
-        composite_call = dataclasses.replace(child_call, tool_call_id=composite_id)
-        output_deferred_calls['external'].append(composite_call)
-        if child_call.tool_call_id in nested_requests.metadata:
-            output_deferred_metadata[composite_id] = nested_requests.metadata[child_call.tool_call_id]
-        if child_call.tool_call_id in nested_requests.context:
-            output_deferred_context[composite_id] = nested_requests.context[child_call.tool_call_id]
-    for child_call in nested_requests.approvals:
-        composite_id = f'{parent_id}{_NESTED_DEFERRED_SEPARATOR}{child_call.tool_call_id}'
-        composite_call = dataclasses.replace(child_call, tool_call_id=composite_id)
-        output_deferred_calls['unapproved'].append(composite_call)
-        if child_call.tool_call_id in nested_requests.metadata:
-            output_deferred_metadata[composite_id] = nested_requests.metadata[child_call.tool_call_id]
-        if child_call.tool_call_id in nested_requests.context:
-            output_deferred_context[composite_id] = nested_requests.context[child_call.tool_call_id]
+
+    def add_child_calls(
+        child_calls: list[_messages.ToolCallPart],
+        kind: Literal['external', 'unapproved'],
+    ) -> None:
+        for child_call in child_calls:
+            composite_id = f'{parent_id}{_NESTED_DEFERRED_SEPARATOR}{child_call.tool_call_id}'
+            composite_call = dataclasses.replace(child_call, tool_call_id=composite_id)
+            output_deferred_calls[kind].append(composite_call)
+            if child_call.tool_call_id in nested_requests.metadata:
+                output_deferred_metadata[composite_id] = nested_requests.metadata[child_call.tool_call_id]
+            if child_call.tool_call_id in nested_requests.context:
+                output_deferred_context[composite_id] = nested_requests.context[child_call.tool_call_id]
+
+    add_child_calls(nested_requests.calls, 'external')
+    add_child_calls(nested_requests.approvals, 'unapproved')
+
     if parent_metadata is not None:
         output_deferred_metadata[parent_id] = parent_metadata
     if parent_context is not None:
@@ -1352,6 +1358,9 @@ async def _call_tool(
     try:
         if tool_call_result is None:
             if nested_deferred_results is not None:
+                # The parent tool already ran and raised CallDeferred; re-invoking with approved=True
+                # is intentional — the approval semantics apply to the nested child calls, not the
+                # parent itself. We pass the reconstructed nested results so the parent can process them.
                 metadata = tool_call_metadata.get(tool_call.tool_call_id) if tool_call_metadata else None
                 context = tool_call_context.get(tool_call.tool_call_id) if tool_call_context else None
                 tool_result = await tool_manager.handle_call(

@@ -405,45 +405,44 @@ agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
 
 
 @agent.tool
-def run_subagent(ctx: RunContext, task: str) -> str:
+async def run_subagent(ctx: RunContext, task: str) -> str:
     if ctx.deferred_tool_results is not None:  # (1)!
         for child_id, approval in ctx.deferred_tool_results.approvals.items():
             if isinstance(approval, ToolDenied):
                 return f'Action {child_id} was denied: {approval.message}'
         return f'Subagent completed: {task}'
 
-    # Simulate a subagent that needs approval for a dangerous action
-    nested = DeferredToolRequests(
-        approvals=[
-            ToolCallPart('delete_database', {'name': 'prod'}, tool_call_id='delete_db'),
-        ],
-        metadata={'delete_db': {'reason': 'destructive operation'}},
-    )
-    raise CallDeferred(deferred_tool_requests=nested)  # (2)!
+    # Run a subagent that produces deferred tool requests
+    sub_agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
+    sub_result = await sub_agent.run(task)
+
+    if isinstance(sub_result.output, DeferredToolRequests):
+        # Surface the subagent's deferred requests to the parent
+        raise CallDeferred(deferred_tool_requests=sub_result.output)  # (2)!
+
+    return sub_result.output
 
 
 result = agent.run_sync('Clean up old databases')
 messages = result.all_messages()
 
-assert isinstance(result.output, DeferredToolRequests)
-requests = result.output
-print(requests.approvals[0].tool_call_id)
-#> run_subagent_call_id::delete_db
-print(requests.metadata)
-#> {'run_subagent_call_id::delete_db': {'reason': 'destructive operation'}}
+if isinstance(result.output, DeferredToolRequests):
+    requests = result.output
+    # Nested calls are surfaced with composite IDs (parent_id::child_id)
+    # Approve or deny the nested calls using these composite IDs
+    results = DeferredToolResults()
+    for call in requests.calls:
+        results.calls[call.tool_call_id] = 'external_result'  # (3)!
+    for call in requests.approvals:
+        results.approvals[call.tool_call_id] = ToolApproved()
 
-# Approve or deny the nested calls using composite IDs
-results = DeferredToolResults()
-for call in requests.approvals:
-    results.approvals[call.tool_call_id] = ToolApproved()  # (3)!
-
-result = agent.run_sync(message_history=messages, deferred_tool_results=results)
-print(result.output)
-#> Subagent completed: Clean up old databases
+    result = agent.run_sync(message_history=messages, deferred_tool_results=results)
+    print(result.output)
+    #> Subagent completed: Clean up old databases
 ```
 
 1. On resume, `ctx.deferred_tool_results` contains the nested results reconstructed from the composite IDs, allowing the parent tool to process them.
-2. The `deferred_tool_requests` parameter surfaces the nested deferred calls to the parent agent's output with composite IDs (`parent_id::child_id`).
+2. The subagent's `DeferredToolRequests` output is passed directly to `CallDeferred`, which surfaces the nested calls to the parent agent's output with composite IDs (`parent_id::child_id`).
 3. The user interacts with composite IDs directly — no need to understand the nesting structure.
 
 ### Preserving State with Context
@@ -467,7 +466,7 @@ agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
 
 
 @agent.tool
-def run_subagent(ctx: RunContext, task: str) -> str:
+async def run_subagent(ctx: RunContext, task: str) -> str:
     if ctx.deferred_tool_results is not None:
         # Resume with preserved context (e.g. message history)
         saved = ctx.tool_call_context  # (1)!

@@ -99,6 +99,9 @@ class CallDeferred(Exception):
     ):
         self.metadata = metadata
         self.deferred_tool_requests = deferred_tool_requests
+        # TODO: Mapping[str, Any] may be too restrictive for truly opaque round-trip state
+        # (e.g. message histories). Keeping it for now to match the metadata pattern,
+        # but consider relaxing to `Any` if real-world use cases need it.
         self.context = context
         super().__init__()
 

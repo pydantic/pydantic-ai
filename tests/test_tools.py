@@ -3028,7 +3028,12 @@ def test_context_on_approval_required():
 
 
 def test_context_on_call_deferred():
-    """Context flows correctly through CallDeferred exceptions (non-nested)."""
+    """Context flows correctly through CallDeferred exceptions (non-nested).
+
+    Note: For CallDeferred (external tools), the tool is not re-invoked on resumption —
+    the result is injected directly. Context round-tripping through the tool itself is
+    exercised in test_context_on_approval_required above.
+    """
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -3046,6 +3051,7 @@ def test_context_on_call_deferred():
         )
 
     result = agent.run_sync('Process data')
+    assert isinstance(result.output, DeferredToolRequests)
     assert result.output == snapshot(
         DeferredToolRequests(
             calls=[ToolCallPart(tool_name='slow_task', args={'input': 'data'}, tool_call_id='call_1')],
@@ -3053,6 +3059,8 @@ def test_context_on_call_deferred():
             context={'call_1': {'progress': 0, 'queue_position': 5}},
         )
     )
+    # Verify context is correctly propagated in the output
+    assert result.output.context == {'call_1': {'progress': 0, 'queue_position': 5}}
 
     messages = result.all_messages()
     result = agent.run_sync(

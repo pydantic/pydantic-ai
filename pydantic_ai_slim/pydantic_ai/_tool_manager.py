@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
@@ -16,7 +16,7 @@ from ._instrumentation import InstrumentationNames
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from .messages import ToolCallPart
-from .tools import ToolDefinition
+from .tools import DeferredToolResults, ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 from .usage import RunUsage
 
@@ -126,9 +126,9 @@ class ToolManager(Generic[AgentDepsT]):
         wrap_validation_errors: bool = True,
         *,
         approved: bool = False,
-        metadata: Any = None,
-        context: Any = None,
-        deferred_tool_results: Any = None,
+        metadata: dict[str, Any] | None = None,
+        context: Mapping[str, Any] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
     ) -> Any:
         """Handle a tool call by validating the arguments, calling the tool, and handling retries.
 
@@ -177,9 +177,9 @@ class ToolManager(Generic[AgentDepsT]):
         allow_partial: bool,
         wrap_validation_errors: bool,
         approved: bool,
-        metadata: Any = None,
-        context: Any = None,
-        deferred_tool_results: Any = None,
+        metadata: dict[str, Any] | None = None,
+        context: Mapping[str, Any] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
     ) -> Any:
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
@@ -260,9 +260,9 @@ class ToolManager(Generic[AgentDepsT]):
         allow_partial: bool,
         wrap_validation_errors: bool,
         approved: bool,
-        metadata: Any = None,
-        context: Any = None,
-        deferred_tool_results: Any = None,
+        metadata: dict[str, Any] | None = None,
+        context: Mapping[str, Any] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
         tracer: Tracer,
         include_content: bool,
         instrumentation_version: int,

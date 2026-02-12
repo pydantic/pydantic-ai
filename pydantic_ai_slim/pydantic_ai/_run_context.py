@@ -76,7 +76,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     tool_call_context: Any = None
     """Context from `DeferredToolResults.context[tool_call_id]`, available when `tool_call_approved=True`."""
     deferred_tool_results: DeferredToolResults | None = None
-    """Nested deferred tool results, available when this tool previously raised `CallDeferred(deferred_tool_requests=...)`."""
+    """Nested deferred tool results, available when this tool previously raised `CallDeferred(deferred_tool_requests=...)` or when an approved tool call (`ToolApproved`) also has nested deferred results."""
     partial_output: bool = False
     """Whether the output passed to an output validator is partial."""
     run_id: str | None = None

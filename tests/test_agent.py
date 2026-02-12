@@ -7767,10 +7767,17 @@ def test_nested_deferred_tool_calls():
             ext = ctx.deferred_tool_results.calls.get('ext_call')
             a1 = ctx.deferred_tool_results.approvals.get('approve_1')
             a2 = ctx.deferred_tool_results.approvals.get('approve_2')
-            return f'ext={ext}, a1_approved={isinstance(a1, ToolApproved)}, a2_denied={isinstance(a2, ToolDenied)}'
+            # Verify grandchild results are reconstructed correctly (child::grandchild split)
+            grandchild_ext = ctx.deferred_tool_results.calls.get('child_1::gc_call')
+            return f'ext={ext}, a1_approved={isinstance(a1, ToolApproved)}, a2_denied={isinstance(a2, ToolDenied)}, gc={grandchild_ext}'
 
         nested = DeferredToolRequests(
-            calls=[ToolCallPart('background_task', {'input': 'data'}, tool_call_id='ext_call')],
+            calls=[
+                ToolCallPart('background_task', {'input': 'data'}, tool_call_id='ext_call'),
+                # Grandchild: simulates a child that itself had nested deferred calls,
+                # resulting in a composite child_id containing '::' (i.e. 3 levels deep)
+                ToolCallPart('deep_task', {'level': 3}, tool_call_id='child_1::gc_call'),
+            ],
             approvals=[
                 ToolCallPart('dangerous_action', {'target': 'db'}, tool_call_id='approve_1'),
                 ToolCallPart('delete_file', {'path': '/tmp/x'}, tool_call_id='approve_2'),
@@ -7794,7 +7801,10 @@ def test_nested_deferred_tool_calls():
     result = agent.run_sync('Go')
     assert result.output == snapshot(
         DeferredToolRequests(
-            calls=[ToolCallPart(tool_name='background_task', args={'input': 'data'}, tool_call_id='parent::ext_call')],
+            calls=[
+                ToolCallPart(tool_name='background_task', args={'input': 'data'}, tool_call_id='parent::ext_call'),
+                ToolCallPart(tool_name='deep_task', args={'level': 3}, tool_call_id='parent::child_1::gc_call'),
+            ],
             approvals=[
                 ToolCallPart(tool_name='dangerous_action', args={'target': 'db'}, tool_call_id='parent::approve_1'),
                 ToolCallPart(tool_name='delete_file', args={'path': '/tmp/x'}, tool_call_id='parent::approve_2'),
@@ -7812,12 +7822,15 @@ def test_nested_deferred_tool_calls():
         )
     )
 
-    # Second run: approve one, deny the other, provide external call result
+    # Second run: approve one, deny the other, provide external call results (including grandchild)
     messages = result.all_messages()
     result = agent.run_sync(
         message_history=messages,
         deferred_tool_results=DeferredToolResults(
-            calls={'parent::ext_call': 'task_result_42'},
+            calls={
+                'parent::ext_call': 'task_result_42',
+                'parent::child_1::gc_call': 'deep_result',
+            },
             approvals={
                 'parent::approve_1': ToolApproved(),
                 'parent::approve_2': ToolDenied('Not allowed'),
