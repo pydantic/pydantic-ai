@@ -135,6 +135,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
             openai_chat_send_back_thinking_parts='field',
             openai_chat_thinking_field='reasoning',
             openai_chat_supports_file_urls=True,
+            openai_chat_supports_web_search=True,
         ).update(profile)
 
     @overload
