@@ -347,3 +347,21 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 - The cache point created by `anthropic_cache_messages` is **always preserved** (as it's the newest message cache point)
 - Additional `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
 - This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching
+
+## Fast mode
+
+Fast mode provides higher output tokens per second for supported models. It is a research preview. Set [`anthropic_speed`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_speed] to `'fast'` to enable it:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent(
+    'anthropic:claude-opus-4-6',
+    model_settings=AnthropicModelSettings(anthropic_speed='fast'),
+)
+result = agent.run_sync('Summarize this document')
+print(result.output)
+```
+
+Pydantic AI automatically adds the required `fast-mode-2026-02-01` beta when `anthropic_speed='fast'`. For pricing, rate limits, and supported models, see the [Anthropic fast mode docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode).

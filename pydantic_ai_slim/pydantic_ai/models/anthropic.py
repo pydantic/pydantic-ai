@@ -236,11 +236,11 @@ class AnthropicModelSettings(ModelSettings, total=False):
     extra_headers['anthropic-beta']. See the Anthropic docs for available beta features.
     """
 
-    anthropic_speed: Literal['standard', 'fast'] | None
+    anthropic_speed: Literal['standard', 'fast']
     """The inference speed mode for this request.
 
     `'fast'` enables high output-tokens-per-second inference for supported models.
-    See [the Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode) for details.
+    Fast mode is a research preview; see [the Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode) for details.
     """
 
 
