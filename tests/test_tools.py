@@ -2888,6 +2888,10 @@ def test_tool_return_schema():
     def tool_with_deferred_return() -> DeferredToolResult:  # pragma: no cover
         return ToolApproved()
 
+    @agent.tool_plain(include_return_schema=False)
+    def tool_with_return_schema_opted_out() -> int:  # pragma: no cover
+        return 42
+
     with pytest.warns(UserWarning, match=r"Tool 'tool_with_return_tool_return' has `include_return_schema` enabled"):
         result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
@@ -3729,6 +3733,19 @@ distinguish multiple files.\
                 },
                 'include_return_schema': True,
             },
+            {
+                'name': 'tool_with_return_schema_opted_out',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': None,
+                'include_return_schema': False,
+            },
         ]
     )
 
@@ -3807,14 +3824,25 @@ def test_return_schema_e2e():
         """Get a value."""
         return 42  # pragma: no cover
 
-    result = non_native_agent.run_sync('Hello')
-    tool_def = json.loads(result.output)
+    @non_native_agent.tool_plain
+    def get_value_no_docstring() -> int:
+        return 42  # pragma: no cover
 
+    result = non_native_agent.run_sync('Hello')
+    tool_defs = json.loads(result.output)
+
+    tool_def = next(t for t in tool_defs if t['name'] == 'get_value')
     # return_schema is still present on the ToolDefinition
     assert tool_def['return_schema'] == {'type': 'integer'}
     # description has return schema injected as fallback text
     assert 'Return schema:' in tool_def['description']
     assert '"type": "integer"' in tool_def['description']
+    assert tool_def['description'].startswith('Get a value.')
+
+    # Tool with no docstring: description is just the return schema
+    tool_def_no_doc = next(t for t in tool_defs if t['name'] == 'get_value_no_docstring')
+    assert tool_def_no_doc['return_schema'] == {'type': 'integer'}
+    assert tool_def_no_doc['description'] == 'Return schema:\n\n{\n  "type": "integer"\n}'
 
     # --- Native model (e.g. Google): return_schema preserved, description untouched ---
     native_agent = Agent(
