@@ -626,6 +626,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 elif self.is_call_tools_node(node) and event_stream_handler is not None:
                     async with node.stream(agent_run.ctx) as stream:
                         await event_stream_handler(_agent_graph.build_run_context(agent_run.ctx), stream)
+                elif self.is_continuation_node(node) and event_stream_handler is not None:
+                    async with node.stream(agent_run.ctx) as stream:
+                        await event_stream_handler(_agent_graph.build_run_context(agent_run.ctx), stream)
 
                 next_node = await agent_run.next(node)
                 if isinstance(next_node, End) and agent_run.result is not None:
@@ -1212,6 +1215,16 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         This method preserves the generic parameters while narrowing the type, unlike a direct call to `isinstance`.
         """
         return isinstance(node, _agent_graph.CallToolsNode)
+
+    @staticmethod
+    def is_continuation_node(
+        node: _agent_graph.AgentNode[T, S] | End[result.FinalResult[S]],
+    ) -> TypeIs[_agent_graph.ContinuationNode[T, S]]:
+        """Check if the node is a `ContinuationNode`, narrowing the type if it is.
+
+        This method preserves the generic parameters while narrowing the type, unlike a direct call to `isinstance`.
+        """
+        return isinstance(node, _agent_graph.ContinuationNode)
 
     @staticmethod
     def is_user_prompt_node(

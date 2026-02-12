@@ -355,11 +355,6 @@ mid-turn if operations take a long time (e.g. performing many web searches in se
 [`pause_turn` stop reason](https://docs.anthropic.com/en/api/handling-stop-reasons#3-implement-retry-logic-for-pause-turn).
 
 Pydantic AI handles this automatically by continuing the conversation with a follow-up request. No user action
-is required. You may notice the following in your [message history](../message-history.md):
-
-- [`ModelResponse`][pydantic_ai.messages.ModelResponse] objects with [`finish_reason='incomplete'`][pydantic_ai.messages.ModelResponse.finish_reason] and [`expects_continuation=True`][pydantic_ai.messages.ModelResponse.expects_continuation] for paused responses
-- [`ModelRequest`][pydantic_ai.messages.ModelRequest] objects with empty `parts` for the automatic continuation requests
-
-Continuations are capped at 5 by default, cumulative across all pauses within a single `agent.run()` call, to prevent unbounded requests. You can configure this limit via the [`max_continuations`][pydantic_ai.settings.ModelSettings.max_continuations] model setting.
+is required. Continuations are capped internally at a high default to prevent unbounded requests.
 
 This also works correctly with [`FallbackModel`](../multi-model-agents.md#fallback-model) — when a model pauses mid-turn, continuation requests are pinned to the same model rather than restarting the fallback chain.

@@ -182,21 +182,6 @@ class ModelSettings(TypedDict, total=False):
     * Outlines (all providers)
     """
 
-    max_continuations: int
-    """Maximum number of continuation requests for incomplete responses.
-
-    This limits how many times the agent will automatically re-request when a model
-    response has `expects_continuation=True` (e.g. Anthropic `pause_turn`, OpenAI
-    Responses API with `openai_background` enabled).
-
-    Defaults to 5 if not specified.
-
-    Supported by:
-
-    * Anthropic
-    * OpenAI (Responses API with `openai_background` enabled)
-    """
-
 
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:
     """Merge two sets of model settings, preferring the overrides.

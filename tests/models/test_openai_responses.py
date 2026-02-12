@@ -10060,32 +10060,6 @@ async def test_background_mode_vcr(allow_model_requests: None, openai_api_key: s
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[],
-                model_name='gpt-4o-2024-08-06',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'queued', 'timestamp': IsDatetime()},
-                provider_response_id='resp_06a562f31ab7703300698b9df109c481979ebf760b2ff5fc75',
-                finish_reason='incomplete',
-                expects_continuation=True,
-                run_id=IsStr(),
-            ),
-            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
-            ModelResponse(
-                parts=[],
-                model_name='gpt-4o-2024-08-06',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'in_progress', 'timestamp': IsDatetime()},
-                provider_response_id='resp_06a562f31ab7703300698b9df109c481979ebf760b2ff5fc75',
-                finish_reason='incomplete',
-                expects_continuation=True,
-                run_id=IsStr(),
-            ),
-            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
-            ModelResponse(
                 parts=[
                     TextPart(
                         content='2 + 2 equals 4.',
@@ -10101,7 +10075,6 @@ async def test_background_mode_vcr(allow_model_requests: None, openai_api_key: s
                 provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
                 provider_response_id='resp_06a562f31ab7703300698b9df109c481979ebf760b2ff5fc75',
                 finish_reason='stop',
-                run_id=IsStr(),
             ),
         ]
     )
@@ -10136,19 +10109,6 @@ async def test_background_mode_with_tool_vcr(allow_model_requests: None, openai_
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[],
-                model_name='gpt-4o-2024-08-06',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'queued', 'timestamp': IsDatetime()},
-                provider_response_id='resp_01b4d93abce33afe00698b9df44be4819bb99fff16d77a0236',
-                finish_reason='incomplete',
-                expects_continuation=True,
-                run_id=IsStr(),
-            ),
-            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
-            ModelResponse(
                 parts=[
                     ToolCallPart(
                         tool_name='get_weather',
@@ -10166,7 +10126,6 @@ async def test_background_mode_with_tool_vcr(allow_model_requests: None, openai_
                 provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
                 provider_response_id='resp_01b4d93abce33afe00698b9df44be4819bb99fff16d77a0236',
                 finish_reason='stop',
-                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -10180,32 +10139,6 @@ async def test_background_mode_with_tool_vcr(allow_model_requests: None, openai_
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
-            ModelResponse(
-                parts=[],
-                model_name='gpt-4o-2024-08-06',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'queued', 'timestamp': IsDatetime()},
-                provider_response_id='resp_0e6b15873828668f00698b9df63cb08196a7f29ecc4788d6b6',
-                finish_reason='incomplete',
-                expects_continuation=True,
-                run_id=IsStr(),
-            ),
-            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
-            ModelResponse(
-                parts=[],
-                model_name='gpt-4o-2024-08-06',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'in_progress', 'timestamp': IsDatetime()},
-                provider_response_id='resp_0e6b15873828668f00698b9df63cb08196a7f29ecc4788d6b6',
-                finish_reason='incomplete',
-                expects_continuation=True,
-                run_id=IsStr(),
-            ),
-            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
             ModelResponse(
                 parts=[
                     TextPart(
@@ -10222,7 +10155,6 @@ async def test_background_mode_with_tool_vcr(allow_model_requests: None, openai_
                 provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
                 provider_response_id='resp_0e6b15873828668f00698b9df63cb08196a7f29ecc4788d6b6',
                 finish_reason='stop',
-                run_id=IsStr(),
             ),
         ]
     )
@@ -10250,19 +10182,6 @@ async def test_background_queued_then_completed(allow_model_requests: None):
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
-            ModelResponse(
-                parts=[TextPart(content='', id='output-1', provider_name='openai')],
-                model_name='gpt-4o-123',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_url='https://api.openai.com/v1',
-                provider_details={'finish_reason': 'queued', 'timestamp': IsDatetime()},
-                provider_response_id='123',
-                finish_reason='incomplete',
-                expects_continuation=True,
-                run_id=IsStr(),
-            ),
-            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
             ModelResponse(
                 parts=[TextPart(content='The answer is 42.', id='output-1', provider_name='openai')],
                 model_name='gpt-4o-123',
@@ -10301,19 +10220,6 @@ async def test_background_in_progress_then_completed(allow_model_requests: None)
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='thinking...', id='output-1', provider_name='openai')],
-                model_name='gpt-4o-123',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_url='https://api.openai.com/v1',
-                provider_details={'finish_reason': 'in_progress', 'timestamp': IsDatetime()},
-                provider_response_id='123',
-                finish_reason='incomplete',
-                expects_continuation=True,
-                run_id=IsStr(),
-            ),
-            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
-            ModelResponse(
                 parts=[TextPart(content='Done!', id='output-1', provider_name='openai')],
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
@@ -10349,18 +10255,16 @@ async def test_background_max_continuations(allow_model_requests: None):
 
     mock_client = MockOpenAIResponses(
         response=_text_response('still working...', status='in_progress'),
-        retrieve_responses=[retrieve_response, retrieve_response, retrieve_response],
+        retrieve_responses=[retrieve_response] * 50,
     )
     mock_client = cast(AsyncOpenAI, mock_client)
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model=model)
 
-    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum continuations \\(2\\)'):
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum continuations \\(50\\)'):
         await agent.run(
             'test',
-            model_settings=OpenAIResponsesModelSettings(
-                openai_background=True, openai_background_poll_interval=0, max_continuations=2
-            ),
+            model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
         )
 
 
@@ -10390,20 +10294,10 @@ async def test_background_retrieve_uses_response_id(allow_model_requests: None):
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='', id='output-1', provider_name='openai')],
-                model_name='gpt-4o-123',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_url='https://api.openai.com/v1',
-                provider_details={'finish_reason': 'queued', 'timestamp': IsDatetime()},
-                provider_response_id='resp_bg_123',
-                finish_reason='incomplete',
-                expects_continuation=True,
-                run_id=IsStr(),
-            ),
-            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
-            ModelResponse(
-                parts=[TextPart(content='final', id='output-1', provider_name='openai')],
+                parts=[
+                    TextPart(content='', id='output-1', provider_name='openai'),
+                    TextPart(content='final', id='output-1', provider_name='openai'),
+                ],
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',

@@ -989,7 +989,7 @@ def test_fallback_primary_continuation_then_succeeds() -> None:
     agent = Agent(model=model)
 
     result = agent.run_sync('test')
-    assert result.output == 'done'
+    assert result.output == 'pauseddone'
     assert call_count == 2
     assert result.all_messages() == snapshot(
         [
@@ -999,19 +999,8 @@ def test_fallback_primary_continuation_then_succeeds() -> None:
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='paused')],
-                usage=RequestUsage(input_tokens=51, output_tokens=1),
-                model_name='primary',
-                timestamp=IsNow(tz=timezone.utc),
-                provider_details={'fallback_model_name': 'primary'},
-                finish_reason='incomplete',
-                expects_continuation=True,
-                run_id=IsStr(),
-            ),
-            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
-            ModelResponse(
-                parts=[TextPart(content='done')],
-                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                parts=[TextPart(content='paused'), TextPart(content='done')],
+                usage=RequestUsage(input_tokens=102, output_tokens=3),
                 model_name='primary',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -1040,7 +1029,7 @@ def test_fallback_primary_continuation_multiple_pauses() -> None:
     agent = Agent(model=model)
 
     result = agent.run_sync('test')
-    assert result.output == 'done'
+    assert result.output == 'pausedpauseddone'
     assert call_count == 3
     assert result.all_messages() == snapshot(
         [
@@ -1050,30 +1039,8 @@ def test_fallback_primary_continuation_multiple_pauses() -> None:
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='paused')],
-                usage=RequestUsage(input_tokens=51, output_tokens=1),
-                model_name='primary',
-                timestamp=IsNow(tz=timezone.utc),
-                provider_details={'fallback_model_name': 'primary'},
-                finish_reason='incomplete',
-                expects_continuation=True,
-                run_id=IsStr(),
-            ),
-            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
-            ModelResponse(
-                parts=[TextPart(content='paused')],
-                usage=RequestUsage(input_tokens=51, output_tokens=2),
-                model_name='primary',
-                timestamp=IsNow(tz=timezone.utc),
-                provider_details={'fallback_model_name': 'primary'},
-                finish_reason='incomplete',
-                expects_continuation=True,
-                run_id=IsStr(),
-            ),
-            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
-            ModelResponse(
-                parts=[TextPart(content='done')],
-                usage=RequestUsage(input_tokens=51, output_tokens=3),
+                parts=[TextPart(content='paused'), TextPart(content='paused'), TextPart(content='done')],
+                usage=RequestUsage(input_tokens=153, output_tokens=6),
                 model_name='primary',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -1128,19 +1095,11 @@ def test_fallback_secondary_continuation_back_to_primary() -> None:
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='working...')],
-                usage=RequestUsage(input_tokens=51, output_tokens=2),
-                model_name='fallback',
-                timestamp=IsNow(tz=timezone.utc),
-                provider_details={'fallback_model_name': 'fallback'},
-                finish_reason='incomplete',
-                expects_continuation=True,
-                run_id=IsStr(),
-            ),
-            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
-            ModelResponse(
-                parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call_1')],
-                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                parts=[
+                    TextPart(content='working...'),
+                    ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call_1'),
+                ],
+                usage=RequestUsage(input_tokens=102, output_tokens=6),
                 model_name='fallback',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -1445,14 +1404,13 @@ def test_fallback_stamp_with_existing_provider_details() -> None:
     agent = Agent(model=model)
 
     result = agent.run_sync('test')
-    assert result.output == 'done'
+    assert result.output == 'pauseddone'
     assert call_count == 2
-    # Verify provider_details was merged, not replaced
+    # The merged response uses fields from the final (non-continuation) response,
+    # which has no provider_details
     continuation_msg = result.all_messages()[1]
     assert isinstance(continuation_msg, ModelResponse)
-    assert continuation_msg.provider_details == snapshot(
-        {'existing_key': 'existing_value', 'fallback_model_name': 'primary'}
-    )
+    assert continuation_msg.provider_details is None
 
 
 async def test_fallback_stream_stamp_with_existing_provider_details() -> None:

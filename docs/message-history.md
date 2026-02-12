@@ -336,16 +336,13 @@ print(result2.all_messages())
 
 ### Continuation Responses
 
-Some model responses may have [`expects_continuation=True`][pydantic_ai.messages.ModelResponse.expects_continuation]
-(with [`finish_reason='incomplete'`][pydantic_ai.messages.ModelResponse.finish_reason]),
-indicating that the model paused mid-turn and expects a follow-up request to continue generating.
+Some models may pause mid-turn and expect a follow-up request to continue generating.
 This can happen, for example, with Anthropic's `pause_turn` stop reason or OpenAI's background mode.
 
 The agent handles these automatically by sending continuation requests, so no user action is required.
-In the message history, you'll see paired entries: a [`ModelResponse`][pydantic_ai.messages.ModelResponse] with `expects_continuation=True`,
-followed by a [`ModelRequest`][pydantic_ai.messages.ModelRequest] with empty `parts` representing the automatic follow-up.
-The number of continuations is capped by the
-[`max_continuations`][pydantic_ai.settings.ModelSettings.max_continuations] model setting (default: 5).
+In the message history, continuations are merged transparently — you will see a single
+[`ModelResponse`][pydantic_ai.messages.ModelResponse] containing the combined parts from all
+continuation rounds, rather than separate entries for each pause and follow-up.
 
 ## Processing Message History
 

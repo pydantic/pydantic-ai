@@ -296,20 +296,6 @@ async def test_pause_turn_continues_run(allow_model_requests: None):
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='paused')],
-                usage=RequestUsage(input_tokens=10, output_tokens=5, details={'input_tokens': 10, 'output_tokens': 5}),
-                model_name='claude-3-5-haiku-123',
-                timestamp=IsDatetime(),
-                provider_name='anthropic',
-                provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'pause_turn'},
-                provider_response_id='123',
-                finish_reason='incomplete',
-                expects_continuation=True,
-                run_id=IsStr(),
-            ),
-            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr()),
-            ModelResponse(
                 parts=[TextPart(content='final')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5, details={'input_tokens': 10, 'output_tokens': 5}),
                 model_name='claude-3-5-haiku-123',
@@ -326,9 +312,9 @@ async def test_pause_turn_continues_run(allow_model_requests: None):
 
 
 async def test_pause_turn_exceeds_max_continuations(allow_model_requests: None):
-    """Test that exceeding the default max continuations (5) raises UnexpectedModelBehavior."""
+    """Test that exceeding the default max continuations (50) raises UnexpectedModelBehavior."""
     responses: list[BetaMessage | Exception] = []
-    for _ in range(6):
+    for _ in range(51):
         c = completion_message([BetaTextBlock(text='paused', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
         c.stop_reason = 'pause_turn'
         responses.append(c)
@@ -337,24 +323,8 @@ async def test_pause_turn_exceeds_max_continuations(allow_model_requests: None):
     model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(model)
 
-    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum continuations'):
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum continuations \\(50\\)'):
         await agent.run('test prompt')
-
-
-async def test_pause_turn_exceeds_custom_max_continuations(allow_model_requests: None):
-    """Test that a custom max_continuations setting is respected."""
-    responses: list[BetaMessage | Exception] = []
-    for _ in range(3):
-        c = completion_message([BetaTextBlock(text='paused', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
-        c.stop_reason = 'pause_turn'
-        responses.append(c)
-
-    mock_client = MockAnthropic.create_mock(responses)
-    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(model)
-
-    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum continuations \\(2\\)'):
-        await agent.run('test prompt', model_settings=ModelSettings(max_continuations=2))
 
 
 @pytest.mark.vcr()
@@ -387,13 +357,10 @@ async def test_pause_turn_web_search_vcr(allow_model_requests: None, anthropic_a
 
     result = await agent.run(prompt)
 
-    pause_responses = [
-        m
-        for m in result.all_messages()
-        if isinstance(m, ModelResponse) and (m.provider_details or {}).get('finish_reason') == 'pause_turn'
-    ]
-    assert pause_responses, 'Expected a pause_turn response to be recorded in this cassette.'
-    assert all(r.finish_reason == 'incomplete' for r in pause_responses)
+    # With ContinuationNode, pause_turn responses are merged into the final response
+    # and no longer appear as separate messages in the history.
+    # Verify the agent completed successfully (which exercises the continuation path).
+    assert result.output
 
 
 async def test_async_request_prompt_caching(allow_model_requests: None):

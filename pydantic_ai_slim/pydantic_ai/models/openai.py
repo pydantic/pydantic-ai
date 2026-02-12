@@ -162,8 +162,6 @@ _RESPONSES_FINISH_REASON_MAP: dict[Literal['max_output_tokens', 'content_filter'
     'completed': 'stop',
     'cancelled': 'error',
     'failed': 'error',
-    'in_progress': 'incomplete',
-    'queued': 'incomplete',
 }
 
 
