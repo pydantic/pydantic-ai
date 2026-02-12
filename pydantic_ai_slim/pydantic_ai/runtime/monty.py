@@ -6,6 +6,7 @@ from typing import Any
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.messages import tool_return_ta
 from pydantic_ai.runtime.abstract import (
+    CodeExecutionTimeout,
     CodeInterruptedError,
     CodeRuntime,
     CodeRuntimeError,
@@ -29,6 +30,7 @@ try:
         MontySnapshot,
         MontySyntaxError,
         MontyTypingError,
+        ResourceLimits,
     )
 except ImportError:
     raise ImportError("MontyRuntime requires 'monty'. Install with: pip install 'pydantic-ai-slim[monty]'")
@@ -117,10 +119,12 @@ class MontyRuntime(CodeRuntime):
         tasks: dict[int, asyncio.Task[Any]] = {}
 
         try:
-            monty_state = monty.start()
+            limits = self._build_resource_limits()
+            monty_state = monty.start(limits=limits)
             monty_state = await MontyRuntime._execution_loop(monty_state, tasks, call_tool)
 
         except MontyRuntimeError as e:
+            self._raise_if_timeout(e)
             raise CodeRuntimeError(e.display()) from e
 
         return monty_state.output
@@ -177,8 +181,12 @@ class MontyRuntime(CodeRuntime):
                 tasks[cid] = asyncio.ensure_future(call_tool(call))
                 initial_calls[cid] = call
 
+            # Note: Monty's resume() does not accept resource limits, so execution_timeout
+            # only applies to the initial start(). Infinite loops after resume are a known
+            # limitation of Monty's synchronous interpreter.
             monty_state = await MontyRuntime._execution_loop(monty_state, tasks, call_tool, initial_calls=initial_calls)
         except MontyRuntimeError as e:
+            self._raise_if_timeout(e)
             raise CodeRuntimeError(e.display()) from e
         except MontySyntaxError as e:
             raise CodeSyntaxError(e.display()) from e
@@ -194,6 +202,19 @@ class MontyRuntime(CodeRuntime):
             'CRITICAL Syntax restrictions (the runtime uses a restricted Python subset):\n'
             '- No imports - use only the provided functions and builtins (len, sum, str, etc.) or write your own functions.'
         )
+
+    def _build_resource_limits(self) -> ResourceLimits | None:
+        """Build Monty ResourceLimits from execution_timeout, or None if unset."""
+        if self.execution_timeout is not None:
+            return ResourceLimits(max_duration_secs=self.execution_timeout)
+        return None
+
+    def _raise_if_timeout(self, e: MontyRuntimeError) -> None:
+        """Raise CodeExecutionTimeout if the MontyRuntimeError is a time limit violation."""
+        if self.execution_timeout is not None and 'time limit exceeded' in e.display():
+            raise CodeExecutionTimeout(
+                f'Code execution timed out after {self.execution_timeout} seconds'
+            ) from e
 
     def _type_check(self, monty: Monty, code: str, signatures: list[str], external_functions: list[str]) -> None:
         prefix_code = _build_type_check_prefix(signatures)

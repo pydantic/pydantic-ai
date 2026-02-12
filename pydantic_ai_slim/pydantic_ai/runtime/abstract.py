@@ -75,6 +75,10 @@ class CodeRuntimeError(CodeExecutionError):
     """The generated code raised an exception at runtime."""
 
 
+class CodeExecutionTimeout(CodeRuntimeError):
+    """The code execution exceeded the configured timeout."""
+
+
 @dataclass
 class InterruptedToolCall:
     """A tool call that was interrupted during code execution.
@@ -117,6 +121,9 @@ ToolCallback: TypeAlias = Callable[[FunctionCall], Awaitable[Any]]
 class CodeRuntime(ABC):
     """Abstract base for code execution runtimes. Subclass per runtime provider."""
 
+    execution_timeout: float | None = None
+    """Optional timeout in seconds for code execution. None means no timeout."""
+
     @abstractmethod
     async def run(
         self,
@@ -146,6 +153,7 @@ class CodeRuntime(ABC):
             CodeSyntaxError: If the code can't be parsed.
             CodeTypingError: If the code has type errors.
             CodeRuntimeError: If execution fails.
+            CodeExecutionTimeout: If execution exceeds ``execution_timeout``.
             CodeInterruptedError: When execution is interrupted by tool calls
                 requiring approval or deferral.
         """

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from ._transport import DriverBasedRuntime, DriverTransport
 from .abstract import (
     CodeExecutionError,
+    CodeExecutionTimeout,
     CodeInterruptedError,
     CodeRuntime,
     CodeRuntimeError,
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
 
 __all__ = (
     'CodeExecutionError',
+    'CodeExecutionTimeout',
     'CodeInterruptedError',
     'CodeRuntime',
     'CodeRuntimeError',

@@ -20,6 +20,7 @@ from pydantic import ValidationError
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.messages import tool_return_ta
 from pydantic_ai.runtime.abstract import (
+    CodeExecutionTimeout,
     CodeInterruptedError,
     CodeRuntime,
     CodeRuntimeError,
@@ -121,11 +122,24 @@ class DriverBasedRuntime(CodeRuntime):
         }
         process = await self._start_driver(init_msg)
         try:
-            return await self._execution_loop(process, call_tool)
+            return await self._run_with_timeout(process, call_tool)
         except (CodeInterruptedError, CodeSyntaxError, CodeRuntimeError):
             raise
         except Exception as e:
             raise CodeRuntimeError(f'Driver communication error: {e}') from e
+
+    async def _run_with_timeout(self, process: DriverTransport, call_tool: ToolCallback) -> Any:
+        """Run the execution loop, applying ``execution_timeout`` if configured."""
+        coro = self._execution_loop(process, call_tool)
+        if self.execution_timeout is not None:
+            try:
+                return await asyncio.wait_for(coro, timeout=self.execution_timeout)
+            except asyncio.TimeoutError:
+                await process.kill()
+                raise CodeExecutionTimeout(
+                    f'Code execution timed out after {self.execution_timeout} seconds'
+                )
+        return await coro
 
     async def _resume_from_checkpoint(
         self,
@@ -153,7 +167,7 @@ class DriverBasedRuntime(CodeRuntime):
         }
         process = await self._start_driver(init_msg)
         try:
-            return await self._execution_loop(process, call_tool)
+            return await self._run_with_timeout(process, call_tool)
         except (CodeInterruptedError, CodeSyntaxError, CodeRuntimeError):
             raise
         except Exception as e:

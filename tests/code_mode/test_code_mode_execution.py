@@ -129,3 +129,10 @@ async def test_monty_normalizes_tool_results_to_json_compatible():
     # This guarantees consistent behavior between fresh runs and checkpoint resumes.
     assert result == 'dict'
     assert received_types == ['dict']
+
+
+async def test_execution_timeout_raises_model_retry(code_runtime: CodeRuntime):
+    """Execution timeout raises ModelRetry so the LLM is informed."""
+    code_runtime.execution_timeout = 1.0
+    with pytest.raises(ModelRetry, match='timed out'):
+        await run_code_with_tools('while True: pass', code_runtime)

@@ -26,7 +26,11 @@ _real_stdout = sys.stdout
 
 
 class _StderrRedirect:
-    """Wrapper that redirects all writes to stderr, protecting the protocol channel."""
+    """Wrapper that redirects all writes to stderr, protecting the protocol channel.
+
+    Implements common stream methods that libraries (progress bars, logging,
+    color detection) may call beyond basic write/flush.
+    """
 
     def write(self, s: str) -> int:
         return sys.stderr.write(s)
@@ -37,6 +41,15 @@ class _StderrRedirect:
     def fileno(self) -> int:
         return sys.stderr.fileno()
 
+    def isatty(self) -> bool:
+        return False
+
+    def writable(self) -> bool:
+        return True
+
+    def readable(self) -> bool:
+        return False
+
     @property
     def encoding(self) -> str:
         return sys.stderr.encoding
@@ -44,6 +57,10 @@ class _StderrRedirect:
     @property
     def errors(self) -> str | None:
         return sys.stderr.errors
+
+    @property
+    def closed(self) -> bool:
+        return False
 
 
 def _write_msg(msg: dict[str, Any]) -> None:

@@ -16,4 +16,5 @@
         - CodeSyntaxError
         - CodeTypingError
         - CodeRuntimeError
+        - CodeExecutionTimeout
         - ToolCallback
