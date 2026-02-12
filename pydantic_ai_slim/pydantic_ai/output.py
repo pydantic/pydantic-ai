@@ -323,6 +323,7 @@ def StructuredDict(
     #> {'name': 'John Doe', 'age': 30}
     ```
     """
+    json_schema = deepcopy(json_schema)
     json_schema = _utils.check_object_json_schema(json_schema)
 
     # Pydantic `TypeAdapter` fails when `object.__get_pydantic_json_schema__` has `$defs`, so we inline them
@@ -364,7 +365,7 @@ def StructuredDict(
         def __get_pydantic_json_schema__(
             cls, core_schema: core_schema.CoreSchema, handler: GetJsonSchemaHandler
         ) -> JsonSchemaValue:
-            return deepcopy(json_schema)
+            return json_schema
 
     return _StructuredDict
 

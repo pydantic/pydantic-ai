@@ -577,11 +577,11 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             # Bypassing TypeAdapter(...).json_schema() for types that provide their own schema
             # like StructuredDict, to avoid issues with recursive schemas.
             if getattr(output, '__pydantic_ai_structured_dict__', False):
-                json_schema = output.__get_pydantic_json_schema__(None, None)
+                json_schema = output.__get_pydantic_json_schema__(None, None)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportFunctionMemberAccess, reportUnknownVariableType]
             else:
                 json_schema = json_schema_type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
 
-            json_schema = _utils.check_object_json_schema(json_schema)
+            json_schema = _utils.check_object_json_schema(json_schema)  # pyright: ignore[reportUnknownArgumentType]
 
             if self.outer_typed_dict_key:
                 # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM

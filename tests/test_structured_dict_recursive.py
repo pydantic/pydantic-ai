@@ -147,7 +147,7 @@ def test_recursive_schema_collision_coverage():
         '$defs': {'Node': {'type': 'string'}},
     }
     sd = StructuredDict(schema)
-    json_schema = sd.__get_pydantic_json_schema__(None, None)
+    json_schema = sd.__get_pydantic_json_schema__(None, None)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
 
     # The transformer handling collision creates Node_root
     # Fix should unwrap it.
