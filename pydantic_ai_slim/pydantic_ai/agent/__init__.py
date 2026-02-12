@@ -1558,7 +1558,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         f'Tool {td.name!r} has `include_return_schema` enabled but no return schema was generated. '
                         f'Set `include_return_schema=False` on this tool to suppress this warning.',
                         UserWarning,
-                        stacklevel=2,
                     )
                 resolved.append(td)
             return resolved
