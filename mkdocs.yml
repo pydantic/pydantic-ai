@@ -107,6 +107,7 @@ nav:
 
   - Related Packages:
       - clai: cli.md
+      - Agent Skills: agent-skills.md
 
   - Examples:
       - Setup: examples/setup.md
