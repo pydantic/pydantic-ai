@@ -13,6 +13,7 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+
 try:
     from pydantic_ai.runtime.monty import MontyRuntime
 except ImportError:  # pragma: lax no cover
@@ -119,7 +120,9 @@ async def test_agent_code_error_triggers_retry():
             return ModelResponse(parts=[ToolCallPart(tool_name='pydantic_ai_code_mode', args={'code': '1 / 0'})])
         if call_count == 2:
             # Second attempt after retry: good code
-            return ModelResponse(parts=[ToolCallPart(tool_name='pydantic_ai_code_mode', args={'code': 'await add(x=1, y=2)'})])
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='pydantic_ai_code_mode', args={'code': 'await add(x=1, y=2)'})]
+            )
         # Final: return text
         return ModelResponse(parts=[TextPart('The answer is 3.')])
 

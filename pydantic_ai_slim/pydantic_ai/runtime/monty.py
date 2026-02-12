@@ -57,8 +57,7 @@ def _build_type_check_prefix(signatures: list[str]) -> str:
     # The body `...` is always the last line of the function, so we replace only the
     # last occurrence to avoid corrupting `...` inside docstrings.
     converted = [
-        '\n    raise NotImplementedError()'.join(sig.rsplit('\n    ...', 1)) if sig.endswith('\n    ...')
-        else sig
+        '\n    raise NotImplementedError()'.join(sig.rsplit('\n    ...', 1)) if sig.endswith('\n    ...') else sig
         for sig in signatures
     ]
     return imports + '\n\n'.join(converted)
