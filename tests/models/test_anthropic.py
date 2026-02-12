@@ -2076,6 +2076,25 @@ async def test_uploaded_file_wrong_provider(allow_model_requests: None) -> None:
         await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='openai')])
 
 
+async def test_uploaded_file_unsupported_media_type(allow_model_requests: None) -> None:
+    """Test that UploadedFile with unsupported media type (e.g. audio) raises an error."""
+    c = completion_message(
+        [BetaTextBlock(text='Should not reach here.', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=8),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(UserError, match='Unsupported media type.*audio/mpeg'):
+        await agent.run(
+            [
+                'Analyze this file',
+                UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='audio/mpeg'),
+            ]
+        )
+
+
 def test_init_with_provider():
     provider = AnthropicProvider(api_key='api-key')
     model = AnthropicModel('claude-3-opus-latest', provider=provider)
