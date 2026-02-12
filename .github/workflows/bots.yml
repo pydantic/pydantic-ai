@@ -118,8 +118,10 @@ jobs:
       - name: Determine category label with Claude Code
         if: steps.check-label.outputs.has_label == 'false'
         uses: anthropics/claude-code-action@v1
+        env:
+          ANTHROPIC_BASE_URL: ${{ secrets.CLAUDE_CODE_BASE_URL }}
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_api_key: ${{ secrets.CLAUDE_CODE_API_KEY || secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           allowed_non_write_users: '*'
           claude_args: |
@@ -212,7 +214,7 @@ jobs:
         env:
           ANTHROPIC_BASE_URL: ${{ secrets.CLAUDE_CODE_BASE_URL }}
         with:
-          anthropic_api_key: ${{ secrets.CLAUDE_CODE_API_KEY }}
+          anthropic_api_key: ${{ secrets.CLAUDE_CODE_API_KEY || secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           allowed_non_write_users: '*'
           additional_permissions: |
