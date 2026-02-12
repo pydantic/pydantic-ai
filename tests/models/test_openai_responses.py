@@ -10323,7 +10323,7 @@ async def test_background_request_stream_uses_retrieve_stream(allow_model_reques
         parts=[],
         model_name='gpt-4o',
         provider_response_id='resp_bg_123',
-        expects_continuation=True,
+        state='suspended',
     )
     queued_response = response_message([])
     queued_response.id = 'resp_bg_123'
@@ -10347,7 +10347,7 @@ async def test_background_request_stream_uses_retrieve_stream(allow_model_reques
         model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
         model_request_parameters=ModelRequestParameters(),
     ) as request_stream:
-        assert request_stream.expects_continuation is True
+        assert request_stream.state == 'suspended'
         assert [event async for event in request_stream] == []
 
     retrieve_kwargs = get_mock_retrieve_kwargs(mock_client)
@@ -10394,11 +10394,11 @@ async def test_request_stream_handles_model_response_from_responses_create(
     assert model_response.finish_reason == 'content_filter'
     assert model_response.provider_name == 'azure'
     assert model_response.provider_details == {'finish_reason': 'content_filter'}
-    assert model_response.expects_continuation is False
+    assert model_response.state == 'complete'
 
 
 @pytest.mark.parametrize('status', ['queued', 'in_progress'])
-async def test_stream_sets_expects_continuation_for_pending_statuses(
+async def test_stream_sets_suspended_state_for_pending_statuses(
     allow_model_requests: None,
     status: Literal['queued', 'in_progress'],
 ):
@@ -10416,11 +10416,11 @@ async def test_stream_sets_expects_continuation_for_pending_statuses(
         model_settings=OpenAIResponsesModelSettings(openai_background=True),
         model_request_parameters=ModelRequestParameters(),
     ) as request_stream:
-        assert request_stream.expects_continuation is True
+        assert request_stream.state == 'suspended'
         assert [event async for event in request_stream] == []
 
     model_response = request_stream.get()
-    assert model_response.expects_continuation is True
+    assert model_response.state == 'suspended'
     assert model_response.provider_response_id == f'resp_{status}'
 
 
@@ -10461,7 +10461,7 @@ async def test_request_stream_model_response_with_parts(allow_model_requests: No
 
 
 async def test_stream_handles_queued_event(allow_model_requests: None):
-    """ResponseQueuedEvent during streaming sets expects_continuation and accumulates usage."""
+    """ResponseQueuedEvent during streaming sets state to 'suspended' and accumulates usage."""
     queued_response = response_message([])
     queued_response.status = 'queued'
 
@@ -10481,4 +10481,4 @@ async def test_stream_handles_queued_event(allow_model_requests: None):
         events = [event async for event in request_stream]
 
     assert events == []
-    assert request_stream.expects_continuation is True
+    assert request_stream.state == 'suspended'

@@ -46,6 +46,7 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    ModelResponseState,
     ModelResponseStreamEvent,
     PartStartEvent,
     RetryPromptPart,
@@ -165,8 +166,8 @@ _RESPONSES_FINISH_REASON_MAP: dict[Literal['max_output_tokens', 'content_filter'
 }
 
 
-def _response_status_expects_continuation(status: ResponseStatus | None) -> bool:
-    return status in ('queued', 'in_progress')
+def _response_status_to_state(status: ResponseStatus | None) -> ModelResponseState:
+    return 'suspended' if status in ('queued', 'in_progress') else 'complete'
 
 
 _OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x1536', '1536x1024']] = {
@@ -475,7 +476,7 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
 
     When enabled, passes `background=True` to the Responses API. If the response
     status is `'queued'` or `'in_progress'`, it maps to `finish_reason='incomplete'`
-    and sets `expects_continuation=True`, triggering the agent's continuation loop
+    and sets `state='suspended'`, triggering the agent's continuation loop
     which polls via `retrieve()`.
     """
 
@@ -1545,7 +1546,7 @@ class OpenAIResponsesModel(Model):
             provider_details['timestamp'] = number_to_datetime(response.created_at)
 
         # Background mode: queued/in_progress responses expect a continuation via retrieve()
-        expects_continuation = _response_status_expects_continuation(response.status)
+        state = _response_status_to_state(response.status)
 
         return ModelResponse(
             parts=items,
@@ -1556,7 +1557,7 @@ class OpenAIResponsesModel(Model):
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
             finish_reason=finish_reason,
-            expects_continuation=expects_continuation,
+            state=state,
             provider_details=provider_details or None,
         )
 
@@ -1584,7 +1585,7 @@ class OpenAIResponsesModel(Model):
             if first_chunk.response.created_at
             else None,
         )
-        streamed_response.expects_continuation = _response_status_expects_continuation(first_chunk.response.status)
+        streamed_response.state = _response_status_to_state(first_chunk.response.status)
         return streamed_response
 
     @overload
@@ -1725,7 +1726,7 @@ class OpenAIResponsesModel(Model):
             return None
         for message in reversed(messages):
             if isinstance(message, ModelResponse):
-                if message.expects_continuation and message.provider_response_id:
+                if message.state == 'suspended' and message.provider_response_id:
                     return message.provider_response_id
                 return None
         return None
@@ -2469,7 +2470,7 @@ class _ModelResponseStreamedResponse(StreamedResponse):
         self.provider_response_id = self._model_response.provider_response_id
         self.provider_details = self._model_response.provider_details
         self.finish_reason = self._model_response.finish_reason
-        self.expects_continuation = self._model_response.expects_continuation
+        self.state = self._model_response.state
         for index, part in enumerate(self._model_response.parts):
             self._parts_manager.handle_part(vendor_part_id=index, part=part)
 
@@ -2508,8 +2509,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
 
-    def _set_expects_continuation(self, status: ResponseStatus | None) -> None:
-        self.expects_continuation = _response_status_expects_continuation(status)
+    def _set_state(self, status: ResponseStatus | None) -> None:
+        self.state = _response_status_to_state(status)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         # Track annotations by item_id and content_index
@@ -2522,7 +2523,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
             if isinstance(chunk, responses.ResponseCompletedEvent):
                 self._usage += self._map_usage(chunk.response)
-                self._set_expects_continuation(chunk.response.status)
+                self._set_state(chunk.response.status)
 
                 raw_finish_reason = (
                     details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
@@ -2539,13 +2540,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseCreatedEvent):
-                self._set_expects_continuation(chunk.response.status)
+                self._set_state(chunk.response.status)
                 if chunk.response.id:  # pragma: no branch
                     self.provider_response_id = chunk.response.id
 
             elif isinstance(chunk, responses.ResponseFailedEvent):  # pragma: no cover
                 self._usage += self._map_usage(chunk.response)
-                self._set_expects_continuation(chunk.response.status)
+                self._set_state(chunk.response.status)
 
             elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
                 maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -2560,15 +2561,15 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             elif isinstance(chunk, responses.ResponseIncompleteEvent):  # pragma: no cover
                 self._usage += self._map_usage(chunk.response)
-                self._set_expects_continuation(chunk.response.status)
+                self._set_state(chunk.response.status)
 
             elif isinstance(chunk, responses.ResponseInProgressEvent):
                 self._usage += self._map_usage(chunk.response)
-                self._set_expects_continuation(chunk.response.status)
+                self._set_state(chunk.response.status)
 
             elif isinstance(chunk, responses.ResponseQueuedEvent):
                 self._usage += self._map_usage(chunk.response)
-                self._set_expects_continuation(chunk.response.status)
+                self._set_state(chunk.response.status)
 
             elif isinstance(chunk, responses.ResponseOutputItemAddedEvent):
                 if isinstance(chunk.item, responses.ResponseFunctionToolCall):

@@ -628,7 +628,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             output_schema = ctx.deps.output_schema
 
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
-                if self.model_response.expects_continuation:
+                if self.model_response.state == 'suspended':
                     # Some providers (e.g. Anthropic pause_turn, OpenAI background mode) pause mid-turn
                     # and expect us to continue.
                     # Yield events for any builtin tool calls/results already in the response,
@@ -939,7 +939,7 @@ class ContinuationNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.state.message_history[-1] = merged_response
 
             # If the new response no longer expects continuation, we're done
-            if not new_response.expects_continuation:
+            if new_response.state != 'suspended':
                 break
 
             # Yield builtin tool events for intermediate responses
@@ -956,7 +956,8 @@ class ContinuationNode(AgentNode[DepsT, NodeRunEndT]):
         """Merge a new response into an existing one.
 
         If same `provider_response_id`, replace entirely with the new response.
-        If different or None, accumulate parts, sum usage, and use other fields from the new response.
+        If the model changed between responses, replace entirely (incompatible responses should not be merged).
+        Otherwise, accumulate parts, sum usage, and use other fields from the new response.
         """
         if (
             existing.provider_response_id is not None
@@ -965,7 +966,11 @@ class ContinuationNode(AgentNode[DepsT, NodeRunEndT]):
         ):
             return new
 
-        # Accumulate parts and sum usage
+        # Different model → replace (accumulating parts from different models is always wrong)
+        if existing.model_name and new.model_name and existing.model_name != new.model_name:
+            return new
+
+        # Same model, different response → accumulate parts and sum usage
         merged_usage = existing.usage + new.usage
         return replace(
             new,

@@ -29,6 +29,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import FallbackExceptionGroup
+from pydantic_ai.messages import ModelResponseState
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -970,14 +971,14 @@ Don't include any text or Markdown fencing before or after.
 
 
 def test_fallback_primary_continuation_then_succeeds() -> None:
-    """Primary returns expects_continuation=True, gets pinned, then returns normally. Fallback never called."""
+    """Primary returns state='suspended', gets pinned, then returns normally. Fallback never called."""
     call_count = 0
 
     def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            return ModelResponse(parts=[TextPart('paused')], expects_continuation=True, finish_reason='incomplete')
+            return ModelResponse(parts=[TextPart('paused')], state='suspended', finish_reason='incomplete')
         return ModelResponse(parts=[TextPart('done')])
 
     def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1010,14 +1011,14 @@ def test_fallback_primary_continuation_then_succeeds() -> None:
 
 
 def test_fallback_primary_continuation_multiple_pauses() -> None:
-    """Primary returns expects_continuation=True twice (stays pinned), then finishes. Fallback never called."""
+    """Primary returns state='suspended' twice (stays pinned), then finishes. Fallback never called."""
     call_count = 0
 
     def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal call_count
         call_count += 1
         if call_count <= 2:
-            return ModelResponse(parts=[TextPart('paused')], expects_continuation=True, finish_reason='incomplete')
+            return ModelResponse(parts=[TextPart('paused')], state='suspended', finish_reason='incomplete')
         return ModelResponse(parts=[TextPart('done')])
 
     def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1050,7 +1051,7 @@ def test_fallback_primary_continuation_multiple_pauses() -> None:
 
 
 def test_fallback_secondary_continuation_back_to_primary() -> None:
-    """Primary fails, fallback returns expects_continuation, gets pinned, finishes with tool call,
+    """Primary fails, fallback returns state, gets pinned, finishes with tool call,
     then tool executes. On new request: primary succeeds (pin cleared)."""
     primary_calls = 0
     fallback_calls = 0
@@ -1066,7 +1067,7 @@ def test_fallback_secondary_continuation_back_to_primary() -> None:
         nonlocal fallback_calls
         fallback_calls += 1
         if fallback_calls == 1:
-            return ModelResponse(parts=[TextPart('working...')], expects_continuation=True, finish_reason='incomplete')
+            return ModelResponse(parts=[TextPart('working...')], state='suspended', finish_reason='incomplete')
         return ModelResponse(
             parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call_1')],
         )
@@ -1082,7 +1083,7 @@ def test_fallback_secondary_continuation_back_to_primary() -> None:
         return 'tool result'
 
     result = agent.run_sync('test')
-    # After fallback finishes continuation (no more expects_continuation), pin is cleared.
+    # After fallback finishes continuation (no more state), pin is cleared.
     # Next request (after tool execution) goes through normal fallback chain → primary succeeds.
     assert result.output == 'final answer'
     assert primary_calls == 2  # first call failed, second succeeded
@@ -1128,39 +1129,46 @@ def test_fallback_secondary_continuation_back_to_primary() -> None:
 
 
 def test_fallback_primary_continuation_fails() -> None:
-    """Primary returns expects_continuation, gets pinned, then primary raises error.
-    Error propagates — fallback NOT tried."""
-    call_count = 0
-
-    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            return ModelResponse(parts=[TextPart('paused')], expects_continuation=True, finish_reason='incomplete')
-        raise ModelHTTPError(status_code=500, model_name='primary', body='continuation failed')
-
-    def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        raise AssertionError('Fallback should not be called during pinned continuation')  # pragma: no cover
-
-    primary_model = FunctionModel(primary, model_name='primary')
-    fallback_model_instance = FunctionModel(fallback, model_name='fallback')
-    model = FallbackModel(primary_model, fallback_model_instance)
-    agent = Agent(model=model)
-
-    with pytest.raises(ModelHTTPError, match='500'):
-        agent.run_sync('test')
-    assert call_count == 2
-
-
-def test_fallback_secondary_continuation_fails() -> None:
-    """Primary fails, fallback returns expects_continuation, gets pinned, then fallback raises error.
-    Error propagates — primary NOT retried."""
+    """Primary returns state='suspended', gets pinned, then primary raises a fallback-eligible error.
+    Messages are rewound and the fallback chain is tried — fallback succeeds."""
     primary_calls = 0
 
     def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal primary_calls
         primary_calls += 1
-        raise ModelHTTPError(status_code=500, model_name='primary', body='error')
+        if primary_calls == 1:
+            return ModelResponse(parts=[TextPart('paused')], state='suspended', finish_reason='incomplete')
+        raise ModelHTTPError(status_code=500, model_name='primary', body='continuation failed')
+
+    fallback_calls = 0
+
+    def fallback_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        return ModelResponse(parts=[TextPart('fallback success')])
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    fallback_model_instance = FunctionModel(fallback_fn, model_name='fallback')
+    model = FallbackModel(primary_model, fallback_model_instance)
+    agent = Agent(model=model)
+
+    result = agent.run_sync('test')
+    assert result.output == 'fallback success'
+    assert primary_calls == 3  # 1st: suspended, 2nd: continuation fails, 3rd: retried in chain (fails again)
+    assert fallback_calls == 1  # called once via fallback chain after rewind
+
+
+def test_fallback_secondary_continuation_fails() -> None:
+    """Primary fails, fallback returns state='suspended', gets pinned, then fallback raises error.
+    Messages are rewound and the normal chain is retried — primary succeeds."""
+    primary_calls = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal primary_calls
+        primary_calls += 1
+        if primary_calls == 1:
+            raise ModelHTTPError(status_code=500, model_name='primary', body='error')
+        return ModelResponse(parts=[TextPart('primary recovered')])
 
     fallback_calls = 0
 
@@ -1168,7 +1176,7 @@ def test_fallback_secondary_continuation_fails() -> None:
         nonlocal fallback_calls
         fallback_calls += 1
         if fallback_calls == 1:
-            return ModelResponse(parts=[TextPart('working...')], expects_continuation=True, finish_reason='incomplete')
+            return ModelResponse(parts=[TextPart('working...')], state='suspended', finish_reason='incomplete')
         raise ModelHTTPError(status_code=500, model_name='fallback', body='continuation failed')
 
     primary_model = FunctionModel(primary, model_name='primary')
@@ -1176,10 +1184,65 @@ def test_fallback_secondary_continuation_fails() -> None:
     model = FallbackModel(primary_model, fallback_model_instance)
     agent = Agent(model=model)
 
-    with pytest.raises(ModelHTTPError, match='500'):
+    result = agent.run_sync('test')
+    assert result.output == 'primary recovered'
+    assert primary_calls == 2  # 1st: failed, 2nd: succeeded after rewind
+    assert fallback_calls == 2  # 1st: suspended, 2nd: continuation failed
+
+
+def test_fallback_continuation_non_fallback_error_propagates() -> None:
+    """Primary returns state='suspended', then raises a non-fallback-eligible error.
+    Error propagates directly without trying the fallback chain."""
+    call_count = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[TextPart('paused')], state='suspended', finish_reason='incomplete')
+        raise PotatoException('not a fallback error')
+
+    def fallback_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise AssertionError('Fallback should not be called')  # pragma: no cover
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    fallback_model_instance = FunctionModel(fallback_fn, model_name='fallback')
+    model = FallbackModel(primary_model, fallback_model_instance)
+    agent = Agent(model=model)
+
+    with pytest.raises(PotatoException, match='not a fallback error'):
         agent.run_sync('test')
-    assert primary_calls == 1  # failed once, never retried
-    assert fallback_calls == 2  # first returned continuation, second failed
+    assert call_count == 2
+
+
+def test_fallback_continuation_recovery_replaces_response_parts() -> None:
+    """When primary suspends then fails and fallback recovers, the final merged response
+    contains only the fallback model's parts — not accumulated parts from the suspended primary."""
+    primary_calls = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal primary_calls
+        primary_calls += 1
+        if primary_calls == 1:
+            return ModelResponse(parts=[TextPart('primary partial')], state='suspended', finish_reason='incomplete')
+        raise ModelHTTPError(status_code=500, model_name='primary', body='fail')
+
+    def fallback_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('fallback complete')])
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    fallback_model_instance = FunctionModel(fallback_fn, model_name='fallback')
+    model = FallbackModel(primary_model, fallback_model_instance)
+    agent = Agent(model=model)
+
+    result = agent.run_sync('test')
+    assert result.output == 'fallback complete'
+    # The response should contain only fallback's parts, not accumulated 'primary partial' + 'fallback complete'
+    response_msg = result.all_messages()[1]
+    assert isinstance(response_msg, ModelResponse)
+    assert len(response_msg.parts) == 1
+    assert response_msg.parts[0].content == 'fallback complete'  # type: ignore[union-attr]
+    assert response_msg.model_name == 'fallback'
 
 
 # --- Streaming continuation pinning tests ---
@@ -1187,10 +1250,10 @@ def test_fallback_secondary_continuation_fails() -> None:
 
 @dataclass
 class _ContinuationModel(Model):
-    """Test model that wraps FunctionModel and supports expects_continuation in streaming."""
+    """Test model that wraps FunctionModel and supports state in streaming."""
 
     _inner: FunctionModel
-    _stream_expects_continuation: list[bool] = field(default_factory=list[bool])
+    _stream_state: list[ModelResponseState] = field(default_factory=list[ModelResponseState])
     _stream_call_index: int = field(default=0)
 
     async def request(  # pragma: no cover
@@ -1212,8 +1275,8 @@ class _ContinuationModel(Model):
         async with self._inner.request_stream(
             messages, model_settings, model_request_parameters, run_context
         ) as streamed_response:
-            if self._stream_call_index < len(self._stream_expects_continuation):  # pragma: no branch
-                streamed_response.expects_continuation = self._stream_expects_continuation[self._stream_call_index]
+            if self._stream_call_index < len(self._stream_state):  # pragma: no branch
+                streamed_response.state = self._stream_state[self._stream_call_index]
             self._stream_call_index += 1
             yield streamed_response
 
@@ -1227,7 +1290,7 @@ class _ContinuationModel(Model):
 
 
 async def test_fallback_streaming_continuation_pinning() -> None:
-    """Primary fails in streaming, fallback streams with expects_continuation=True (pinned),
+    """Primary fails in streaming, fallback streams with state='suspended' (pinned),
     then second call to fallback goes through pinned continuation path and finishes."""
 
     async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
@@ -1244,19 +1307,19 @@ async def test_fallback_streaming_continuation_pinning() -> None:
     primary_inner = FunctionModel(stream_function=primary_stream, model_name='primary')
     primary_model = _ContinuationModel(_inner=primary_inner)
     fallback_inner = FunctionModel(stream_function=fallback_stream, model_name='fallback')
-    # First stream call: expects_continuation=True (pin); second: False (clear pin)
-    fallback_model = _ContinuationModel(_inner=fallback_inner, _stream_expects_continuation=[True, False])
+    # First stream call: state='suspended' (pin); second: False (clear pin)
+    fallback_model = _ContinuationModel(_inner=fallback_inner, _stream_state=['suspended', 'complete'])
     model = FallbackModel(primary_model, fallback_model)
 
     run_id = 'test-run-1'
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')], run_id=run_id)]
     params = ModelRequestParameters()
 
-    # First call: primary fails, fallback streams with expects_continuation=True → pinned
+    # First call: primary fails, fallback streams with state='suspended' → pinned
     async with model.request_stream(messages, None, params) as streamed_response:
         async for _ in streamed_response:
             pass
-    assert streamed_response.expects_continuation is True
+    assert streamed_response.state == 'suspended'
     assert fallback_calls == 1
 
     resp1 = streamed_response.get()
@@ -1267,7 +1330,7 @@ async def test_fallback_streaming_continuation_pinning() -> None:
     async with model.request_stream(messages, None, params) as streamed_response:
         async for _ in streamed_response:
             pass
-    assert streamed_response.expects_continuation is False
+    assert streamed_response.state == 'complete'
     assert fallback_calls == 2
 
     resp2 = streamed_response.get()
@@ -1275,7 +1338,7 @@ async def test_fallback_streaming_continuation_pinning() -> None:
 
 
 async def test_fallback_streaming_pinned_continuation_still_continuing() -> None:
-    """Streaming: pinned model returns expects_continuation=True again — pin stays (87->89 branch)."""
+    """Streaming: pinned model returns state='suspended' again — pin stays (87->89 branch)."""
     call_count = 0
 
     async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
@@ -1284,8 +1347,8 @@ async def test_fallback_streaming_pinned_continuation_still_continuing() -> None
         yield f'response {call_count}'
 
     primary_inner = FunctionModel(stream_function=primary_stream, model_name='primary')
-    # First two calls return expects_continuation=True, third returns False
-    primary_model = _ContinuationModel(_inner=primary_inner, _stream_expects_continuation=[True, True, False])
+    # First two calls return state='suspended', third returns False
+    primary_model = _ContinuationModel(_inner=primary_inner, _stream_state=['suspended', 'suspended', 'complete'])
 
     async def fallback_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         raise AssertionError('Fallback should not be called')  # pragma: no cover
@@ -1299,38 +1362,91 @@ async def test_fallback_streaming_pinned_continuation_still_continuing() -> None
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')], run_id=run_id)]
     params = ModelRequestParameters()
 
-    # First call: primary streams with expects_continuation=True → pinned
+    # First call: primary streams with state='suspended' → pinned
     async with model.request_stream(messages, None, params) as streamed_response:
         async for _ in streamed_response:
             pass
-    assert streamed_response.expects_continuation is True
+    assert streamed_response.state == 'suspended'
     assert call_count == 1
 
     resp1 = streamed_response.get()
     messages.append(resp1)
     messages.append(ModelRequest(parts=[], run_id=run_id))
 
-    # Second call: pinned, still expects_continuation=True → pin stays (87->89 branch)
+    # Second call: pinned, still state='suspended' → pin stays (87->89 branch)
     async with model.request_stream(messages, None, params) as streamed_response:
         async for _ in streamed_response:
             pass
-    assert streamed_response.expects_continuation is True
+    assert streamed_response.state == 'suspended'
     assert call_count == 2
 
     resp2 = streamed_response.get()
     messages.append(resp2)
     messages.append(ModelRequest(parts=[], run_id=run_id))
 
-    # Third call: pinned, expects_continuation=False → pin cleared
+    # Third call: pinned, state=False → pin cleared
     async with model.request_stream(messages, None, params) as streamed_response:
         async for _ in streamed_response:
             pass
-    assert streamed_response.expects_continuation is False
+    assert streamed_response.state == 'complete'
     assert call_count == 3
 
 
+async def test_fallback_streaming_pinned_continuation_fails_falls_back() -> None:
+    """Streaming: pinned model fails to open stream → messages are rewound,
+    fallback chain is tried, and the fallback model succeeds."""
+    primary_call_count = 0
+
+    async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal primary_call_count
+        primary_call_count += 1
+        if primary_call_count == 1:
+            yield 'partial'
+        else:
+            raise ModelHTTPError(status_code=500, model_name='primary', body='continuation error')
+            yield ''  # pragma: no cover
+
+    fallback_calls = 0
+
+    async def fallback_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        yield f'fallback response {fallback_calls}'
+
+    primary_inner = FunctionModel(stream_function=primary_stream, model_name='primary')
+    primary_model = _ContinuationModel(_inner=primary_inner, _stream_state=['suspended'])
+    fallback_inner = FunctionModel(stream_function=fallback_stream, model_name='fallback')
+    fallback_model = _ContinuationModel(_inner=fallback_inner)
+    model = FallbackModel(primary_model, fallback_model)
+
+    run_id = 'test-stream-fail'
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')], run_id=run_id)]
+    params = ModelRequestParameters()
+
+    # First call: primary succeeds with state='suspended' → pinned
+    async with model.request_stream(messages, None, params) as streamed_response:
+        async for _ in streamed_response:
+            pass
+    assert streamed_response.state == 'suspended'
+    assert primary_call_count == 1
+
+    resp1 = streamed_response.get()
+    messages.append(resp1)
+    messages.append(ModelRequest(parts=[], run_id=run_id))
+
+    # Second call: pinned primary fails to open stream → rewind → fallback chain
+    # (primary retried in chain and fails again, then fallback succeeds)
+    async with model.request_stream(messages, None, params) as streamed_response:
+        async for _ in streamed_response:
+            pass
+    assert primary_call_count == 3  # 1st: suspended, 2nd: pinned fail, 3rd: retried in chain (fails)
+    assert fallback_calls == 1  # fallback succeeded
+    resp2 = streamed_response.get()
+    assert resp2.parts[0].content == 'fallback response 1'  # type: ignore[union-attr]
+
+
 async def test_fallback_continuation_without_stamp_falls_through() -> None:
-    """When expects_continuation=True but provider_details lacks fallback_model_name,
+    """When state='suspended' but provider_details lacks fallback_model_name,
     normal fallback chain is used (no pinning)."""
     call_count = 0
 
@@ -1342,10 +1458,10 @@ async def test_fallback_continuation_without_stamp_falls_through() -> None:
     primary_model = FunctionModel(primary, model_name='primary')
     model = FallbackModel(primary_model)
 
-    # Manually construct messages with expects_continuation but no fallback_model_name stamp
+    # Manually construct messages with state but no fallback_model_name stamp
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='test')]),
-        ModelResponse(parts=[TextPart('incomplete')], expects_continuation=True),
+        ModelResponse(parts=[TextPart('incomplete')], state='suspended'),
         ModelRequest(parts=[]),
     ]
 
@@ -1372,7 +1488,7 @@ async def test_fallback_continuation_with_unknown_model_falls_through() -> None:
         ModelRequest(parts=[UserPromptPart(content='test')]),
         ModelResponse(
             parts=[TextPart('incomplete')],
-            expects_continuation=True,
+            state='suspended',
             provider_details={'fallback_model_name': 'nonexistent-model'},
         ),
         ModelRequest(parts=[]),
@@ -1393,7 +1509,7 @@ def test_fallback_stamp_with_existing_provider_details() -> None:
         if call_count == 1:
             return ModelResponse(
                 parts=[TextPart('paused')],
-                expects_continuation=True,
+                state='suspended',
                 finish_reason='incomplete',
                 provider_details={'existing_key': 'existing_value'},
             )
@@ -1420,8 +1536,8 @@ async def test_fallback_stream_stamp_with_existing_provider_details() -> None:
         yield 'hello'
 
     primary_inner = FunctionModel(stream_function=primary_stream, model_name='primary')
-    # Single call: expects_continuation=True
-    primary_model = _ContinuationModel(_inner=primary_inner, _stream_expects_continuation=[True])
+    # Single call: state='suspended'
+    primary_model = _ContinuationModel(_inner=primary_inner, _stream_state=['suspended'])
     model = FallbackModel(primary_model)
 
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')])]
@@ -1433,7 +1549,7 @@ async def test_fallback_stream_stamp_with_existing_provider_details() -> None:
         async for _ in streamed_response:
             pass
 
-    assert streamed_response.expects_continuation is True
+    assert streamed_response.state == 'suspended'
     assert streamed_response.provider_details == snapshot(
         {'existing_key': 'existing_value', 'fallback_model_name': 'primary'}
     )

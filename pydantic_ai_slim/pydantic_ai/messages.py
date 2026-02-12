@@ -114,7 +114,17 @@ FinishReason: TypeAlias = Literal[
 
 Mostly normalized to OpenTelemetry semantic convention values. `incomplete` is a Pydantic AI-specific value
 indicating the response content is not final. Whether the agent should automatically continue
-is determined by `ModelResponse.expects_continuation`, not by this field.
+is determined by `ModelResponse.state`, not by this field.
+"""
+
+ModelResponseState: TypeAlias = Literal['complete', 'suspended', 'interrupted', 'incomplete']
+"""The state of a model response, indicating whether the response is final or requires further action.
+
+- `'complete'` — The response is done. This is the default state.
+- `'suspended'` — The model paused mid-turn and expects a continuation request.
+  Used by Anthropic `pause_turn` and OpenAI background mode.
+- `'interrupted'` — Reserved for future use: user-initiated cancellation.
+- `'incomplete'` — Reserved for future use: model-side truncation.
 """
 
 ForceDownloadMode: TypeAlias = bool | Literal['allow-local']
@@ -1347,12 +1357,16 @@ class ModelResponse:
     finish_reason: FinishReason | None = None
     """Reason the model finished generating the response, normalized to OpenTelemetry values."""
 
-    expects_continuation: bool = False
-    """Whether the model expects a follow-up request to continue generating.
+    state: ModelResponseState = 'complete'
+    """The state of this response, indicating whether it is final or requires further action.
 
-    When True, the agent graph will automatically send a continuation request.
-    This is set by providers that pause mid-turn (e.g. Anthropic `pause_turn`)
-    or return background/async responses (e.g. OpenAI background mode).
+    - `'complete'` — The response is done. This is the default.
+    - `'suspended'` — The model paused mid-turn and expects a continuation request.
+      The agent graph will automatically send a continuation request.
+      Set by providers that pause mid-turn (e.g. Anthropic `pause_turn`)
+      or return background/async responses (e.g. OpenAI background mode).
+    - `'interrupted'` — Reserved for future use: user-initiated cancellation.
+    - `'incomplete'` — Reserved for future use: model-side truncation.
 
     Note: `finish_reason='incomplete'` is informational only — it indicates the
     response content is not final, but does NOT by itself trigger continuation.

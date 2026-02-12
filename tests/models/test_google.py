@@ -1103,7 +1103,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 },
                 'provider_response_id': IsStr(),
                 'finish_reason': 'content_filter',
-                'expects_continuation': False,
+                'state': 'complete',
                 'run_id': IsStr(),
                 'metadata': None,
             }

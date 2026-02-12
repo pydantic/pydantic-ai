@@ -596,7 +596,7 @@ class AnthropicModel(Model):
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
             finish_reason=finish_reason,
-            expects_continuation=response.stop_reason == 'pause_turn',
+            state='suspended' if response.stop_reason == 'pause_turn' else 'complete',
             provider_details=provider_details,
         )
 
@@ -1343,7 +1343,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                     self.provider_details = self.provider_details or {}
                     self.provider_details['finish_reason'] = raw_finish_reason
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
-                    self.expects_continuation = raw_finish_reason == 'pause_turn'
+                    self.state = 'suspended' if raw_finish_reason == 'pause_turn' else 'complete'
 
             elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
                 if isinstance(current_block, BetaMCPToolUseBlock):
