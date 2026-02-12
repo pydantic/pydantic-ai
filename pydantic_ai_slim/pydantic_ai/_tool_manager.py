@@ -127,6 +127,8 @@ class ToolManager(Generic[AgentDepsT]):
         *,
         approved: bool = False,
         metadata: Any = None,
+        context: Any = None,
+        deferred_tool_results: Any = None,
     ) -> Any:
         """Handle a tool call by validating the arguments, calling the tool, and handling retries.
 
@@ -136,6 +138,8 @@ class ToolManager(Generic[AgentDepsT]):
             wrap_validation_errors: Whether to wrap validation errors in a retry prompt part.
             approved: Whether the tool call has been approved.
             metadata: Additional metadata from DeferredToolResults.metadata.
+            context: Opaque context from DeferredToolResults.context, passed back to the tool via RunContext.tool_call_context.
+            deferred_tool_results: Nested deferred tool results for tools that previously raised `CallDeferred(deferred_tool_requests=...)`.
         """
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
@@ -148,6 +152,8 @@ class ToolManager(Generic[AgentDepsT]):
                 wrap_validation_errors=wrap_validation_errors,
                 approved=approved,
                 metadata=metadata,
+                context=context,
+                deferred_tool_results=deferred_tool_results,
             )
         else:
             return await self._call_function_tool(
@@ -156,6 +162,8 @@ class ToolManager(Generic[AgentDepsT]):
                 wrap_validation_errors=wrap_validation_errors,
                 approved=approved,
                 metadata=metadata,
+                context=context,
+                deferred_tool_results=deferred_tool_results,
                 tracer=self.ctx.tracer,
                 include_content=self.ctx.trace_include_content,
                 instrumentation_version=self.ctx.instrumentation_version,
@@ -170,6 +178,8 @@ class ToolManager(Generic[AgentDepsT]):
         wrap_validation_errors: bool,
         approved: bool,
         metadata: Any = None,
+        context: Any = None,
+        deferred_tool_results: Any = None,
     ) -> Any:
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
@@ -195,6 +205,8 @@ class ToolManager(Generic[AgentDepsT]):
                 max_retries=tool.max_retries,
                 tool_call_approved=approved,
                 tool_call_metadata=metadata,
+                tool_call_context=context,
+                deferred_tool_results=deferred_tool_results,
                 partial_output=allow_partial,
             )
 
@@ -249,6 +261,8 @@ class ToolManager(Generic[AgentDepsT]):
         wrap_validation_errors: bool,
         approved: bool,
         metadata: Any = None,
+        context: Any = None,
+        deferred_tool_results: Any = None,
         tracer: Tracer,
         include_content: bool,
         instrumentation_version: int,
@@ -293,6 +307,8 @@ class ToolManager(Generic[AgentDepsT]):
                     wrap_validation_errors=wrap_validation_errors,
                     approved=approved,
                     metadata=metadata,
+                    context=context,
+                    deferred_tool_results=deferred_tool_results,
                 )
                 usage.tool_calls += 1
 
