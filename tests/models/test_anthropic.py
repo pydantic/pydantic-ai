@@ -1444,12 +1444,15 @@ async def test_anthropic_speed_fast_ignored_on_unsupported_model(allow_model_req
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    await agent.run('hello', model_settings=AnthropicModelSettings(anthropic_speed='fast'))
+    await agent.run(
+        'hello',
+        model_settings=AnthropicModelSettings(anthropic_speed='fast', anthropic_betas=['custom-beta']),
+    )
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     # Haiku does not support fast; profile.supports_fast_speed is False, so we omit speed and the beta
     betas = kwargs.get('betas')
-    if isinstance(betas, (list, tuple)):
-        assert 'fast-mode-2026-02-01' not in betas
+    assert isinstance(betas, (list, tuple))
+    assert 'fast-mode-2026-02-01' not in betas
 
 
 async def test_stream_structured(allow_model_requests: None):
