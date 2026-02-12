@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cast
 
@@ -160,11 +160,6 @@ class DeferredToolRequests:
     """Tool calls that require external execution."""
     approvals: list[ToolCallPart] = field(default_factory=list[ToolCallPart])
     """Tool calls that require human-in-the-loop approval."""
-    context: dict[str, Mapping[str, Any]] = field(default_factory=dict)
-    """Opaque context data provided by toolsets for use during resumption, keyed by `tool_call_id`.
-
-    Pass this back unchanged in [`DeferredToolResults.context`][pydantic_ai.tools.DeferredToolResults.context].
-    """
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     """Metadata for deferred tool calls, keyed by `tool_call_id`."""
 
@@ -235,14 +230,6 @@ class DeferredToolResults:
     """Map of tool call IDs to results for tool calls that required human-in-the-loop approval."""
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     """Metadata for deferred tool calls, keyed by `tool_call_id`. Each value will be available in the tool's RunContext as `tool_call_metadata`."""
-    context: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
-    """Context to pass back for deferred tool calls, keyed by `tool_call_id`.
-
-    Contains opaque context data from the corresponding
-    [`DeferredToolRequests.context`][pydantic_ai.tools.DeferredToolRequests.context],
-    passed back to the toolset during resumption. See the specific toolset's
-    documentation for the expected structure and any additional fields required.
-    """
 
 
 A = TypeVar('A')

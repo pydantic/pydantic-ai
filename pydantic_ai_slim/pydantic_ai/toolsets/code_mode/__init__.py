@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from pydantic import TypeAdapter
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai.runtime.abstract import (
     CodeInterruptedError,
@@ -22,84 +22,17 @@ from pydantic_ai.runtime.abstract import (
 from ... import exceptions
 from ..._run_context import AgentDepsT, RunContext
 from ..._tool_manager import ToolManager
-from ...exceptions import ApprovalRequired, ModelRetry
+from ...exceptions import ModelRetry
 from ...messages import ToolCallPart
-from ...tools import ToolApproved, ToolDefinition, ToolDenied
+from ...tools import ToolDefinition
 from ..abstract import SchemaValidatorProt, ToolsetTool
 from ..function import FunctionToolset, FunctionToolsetTool
 from ..wrapper import WrapperToolset
 from ._sanitization import sanitize_tool_name
 from ._signature import Signature, signature_from_function, signature_from_schema
 
-
-class InterruptedCall(TypedDict):
-    """Details of a nested tool call that was interrupted during code execution.
-
-    Attributes:
-        call_id: Unique identifier for this interrupted call.
-        tool_name: The name of the tool that was called.
-        args: Positional arguments passed to the tool.
-        kwargs: Keyword arguments passed to the tool.
-        kind: Whether this call needs 'approval' or 'external' execution.
-    """
-
-    call_id: str
-    tool_name: str
-    args: tuple[Any, ...]
-    kwargs: dict[str, Any]
-    kind: Literal['approval', 'external']
-
-
-class CodeModeContext(TypedDict):
-    """Context for code mode tool calls (run_code).
-
-    This TypedDict defines the structure of context passed between code mode interruption
-    and resumption. Use this type for compile-time checking of required fields.
-
-    When code execution is interrupted (ApprovalRequired/CallDeferred), this context
-    is returned in `DeferredToolRequests.context[tool_call_id]`.
-
-    When resuming, pass this context back in `DeferredToolResults.context[tool_call_id]`
-    with the added `results` field.
-
-    Attributes:
-        checkpoint: Opaque runtime checkpoint for resuming execution.
-            Contains everything the runtime needs to resume, including any
-            completed results from calls that succeeded before the interruption.
-        interrupted_calls: List of nested tool calls that were interrupted.
-        code: The LLM-generated code that was being executed (needed for resume).
-        functions: List of function names the code may call (needed for resume).
-        signatures: Function signatures for type checking (needed for resume).
-        results: Map of call_id to result for each interrupted call. Required when resuming.
-            Values can be: ToolApproved(), ToolDenied(message=...), or any external result.
-
-    Example:
-        ```python
-        # Receiving context from DeferredToolRequests
-        ctx: CodeModeContext = result.output.context[tool_call_id]
-        checkpoint = ctx['checkpoint']  # bytes
-        interrupted = ctx['interrupted_calls']  # list[InterruptedCall]
-
-        # Building resume context with results
-        resume_ctx: CodeModeContext = {
-            **ctx,
-            'results': {ic['call_id']: ToolApproved() for ic in interrupted},
-        }
-        ```
-    """
-
-    checkpoint: bytes
-    interrupted_calls: list[InterruptedCall]
-    code: str
-    functions: list[str]
-    signatures: list[str]
-    results: NotRequired[dict[str, Any]]
-
-
 __all__ = (
     'CodeModeToolset',
-    'CodeModeContext',
-    'InterruptedCall',
     'build_code_mode_prompt',
 )
 
@@ -328,7 +261,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         tool: _CodeModeTool[AgentDepsT],
         code_mode_tool_manager: ToolManager[AgentDepsT],
         sanitized_to_original: dict[str, str],
-        results_map: dict[str, Any] | None = None,
     ) -> ToolCallback:
         """Create a callback for the runtime to invoke when code calls external functions.
 
@@ -336,34 +268,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             tool: The code mode tool with original tools mapping.
             code_mode_tool_manager: ToolManager for executing nested tool calls.
             sanitized_to_original: Mapping from sanitized names to original tool names.
-            results_map: Optional mapping of call_id to pre-resolved results (for resume path).
-                Values can be ToolApproved (execute with approval), ToolDenied (raise error),
-                or any other value (return directly as external result).
         """
 
         async def callback(call: FunctionCall) -> Any:
             sanitized_name = call.function_name
             original_name = sanitized_to_original.get(sanitized_name, sanitized_name)
 
-            # Check for pre-resolved result (resume path)
-            if results_map is not None and call.call_id in results_map:
-                result = results_map[call.call_id]
-
-                if isinstance(result, ToolApproved):
-                    # Approved - execute with approval flag
-                    tool_kwargs = self._build_tool_kwargs(call, tool, sanitized_name)
-                    tool_call_part = ToolCallPart(tool_name=original_name, args=tool_kwargs)
-                    return await code_mode_tool_manager.handle_call(
-                        tool_call_part, wrap_validation_errors=False, approved=True
-                    )
-                elif isinstance(result, ToolDenied):
-                    # Denied - raise to tell LLM
-                    raise ModelRetry(result.message)
-                else:
-                    # External result - return directly
-                    return result
-
-            # Normal path - build and execute (may raise ApprovalRequired)
             tool_kwargs = self._build_tool_kwargs(call, tool, sanitized_name)
             tool_call_part = ToolCallPart(tool_name=original_name, args=tool_kwargs)
 
@@ -378,126 +288,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             )
 
         return callback
-
-    @staticmethod
-    def _build_interruption_context(
-        e: CodeInterruptedError,
-        code: str,
-        functions: list[str],
-        signatures: list[str],
-    ) -> CodeModeContext:
-        """Build a CodeModeContext from a CodeInterruptedError.
-
-        Used by both the initial execution path and the resume path to convert
-        a runtime interruption into the context needed for ApprovalRequired.
-        """
-        interrupted_calls: list[InterruptedCall] = [
-            {
-                'call_id': ic.call.call_id,
-                'tool_name': ic.call.function_name,
-                'args': ic.call.args,
-                'kwargs': ic.call.kwargs,
-                'kind': 'approval' if isinstance(ic.reason, ApprovalRequired) else 'external',
-            }
-            for ic in e.interrupted_calls
-        ]
-        return {
-            'checkpoint': e.checkpoint,
-            'interrupted_calls': interrupted_calls,
-            'code': code,
-            'functions': functions,
-            'signatures': signatures,
-        }
-
-    async def _handle_resume(
-        self,
-        ctx: RunContext[AgentDepsT],
-        tool: _CodeModeTool[AgentDepsT],
-        code_mode_tool_manager: ToolManager[AgentDepsT],
-        sanitized_to_original: dict[str, str],
-    ) -> Any:
-        """Handle resumption from a checkpoint after approval/external results are provided.
-
-        Args:
-            ctx: The run context with tool_call_context containing CodeModeContext with checkpoint and results.
-            tool: The code mode tool.
-            code_mode_tool_manager: ToolManager for executing nested tool calls.
-            sanitized_to_original: Mapping from sanitized names to original tool names.
-
-        Returns:
-            The result of the resumed code execution.
-
-        Raises:
-            UserError: If context is missing required data (checkpoint, results).
-            ModelRetry: If code execution fails after resume.
-            ApprovalRequired: If the resumed execution encounters new tool calls
-                that need approval or deferral (nested approvals).
-        """
-        raw_context = ctx.tool_call_context
-        if raw_context is None:
-            raise exceptions.UserError(
-                'Code mode resume requires context with checkpoint. '
-                'Pass back the original DeferredToolRequests.context[tool_call_id] '
-                'with an added "results" key mapping call_id to ToolApproved(), ToolDenied(), or external result.'
-            )
-
-        checkpoint = raw_context.get('checkpoint')
-        if checkpoint is None:
-            raise exceptions.UserError(
-                'Code mode resume requires checkpoint in context. '
-                'The checkpoint should be preserved from the original DeferredToolRequests.context.'
-            )
-
-        context = cast(CodeModeContext, raw_context)
-        interrupted_calls = context.get('interrupted_calls', [])
-        results_map = context.get('results')
-
-        if not results_map:
-            raise exceptions.UserError(
-                'Code mode resume requires context with results for nested calls. '
-                'Add a "results" key to the context mapping call_id to '
-                'ToolApproved(), ToolDenied(), or the external result.'
-            )
-
-        missing_results = [ic['call_id'] for ic in interrupted_calls if ic['call_id'] not in results_map]
-        if missing_results:
-            raise exceptions.UserError(
-                f'Missing results for interrupted calls: {missing_results}. '
-                'All interrupted calls must have a result (ToolApproved, ToolDenied, or value).'
-            )
-
-        # Extract code/functions/signatures needed to call run() with checkpoint
-        resume_code = context.get('code', '')
-        resume_functions = context.get('functions', [])
-        resume_signatures = context.get('signatures', [])
-
-        callback = self._make_tool_callback(tool, code_mode_tool_manager, sanitized_to_original, results_map)
-
-        try:
-            return await self.runtime.run(
-                resume_code,
-                resume_functions,
-                callback,
-                signatures=resume_signatures,
-                checkpoint=checkpoint,
-            )
-        except CodeTypingError as e:
-            raise ModelRetry(f'Type error in resumed code:\n{e.message}') from e
-        except CodeSyntaxError as e:
-            raise ModelRetry(f'Syntax error in resumed code:\n{e.message}') from e
-        except CodeRuntimeError as e:
-            raise ModelRetry(f'Runtime error in resumed code:\n{e.message}') from e
-        except CodeInterruptedError as e:
-            # Resumed execution discovered new tool calls that need approval/deferral.
-            # Propagate as a fresh ApprovalRequired so the user can handle the next round.
-            raise ApprovalRequired(
-                context=self._build_interruption_context(
-                    e,
-                    resume_code,
-                    resume_functions,
-                    resume_signatures,
-                )
-            )
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
@@ -529,15 +319,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             tools=original_name_tools,
         )
 
-        # When the agent replays a tool call from DeferredToolResults, it sets
-        # tool_call_approved=True. For code mode, this signals resume-from-checkpoint
-        # rather than fresh execution. The flag serves double duty: "user approved
-        # the run_code call" AND "resume with pre-resolved nested results in context".
-        if ctx.tool_call_approved:
-            return await self._handle_resume(ctx, tool, code_mode_tool_manager, sanitized_to_original)
-
-        # Normal execution path
-        callback = self._make_tool_callback(tool, code_mode_tool_manager, sanitized_to_original, results_map=None)
+        callback = self._make_tool_callback(tool, code_mode_tool_manager, sanitized_to_original)
         functions = list(tool.original_tools.keys())
 
         try:
@@ -548,12 +330,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             raise ModelRetry(f'Syntax error in generated code:\n{e.message}') from e
         except CodeRuntimeError as e:
             raise ModelRetry(f'Runtime error in generated code:\n{e.message}') from e
-        except CodeInterruptedError as e:
-            raise ApprovalRequired(
-                context=self._build_interruption_context(
-                    e,
-                    code,
-                    functions,
-                    self._cached_signatures,
-                )
+        except CodeInterruptedError:
+            raise ModelRetry(
+                'A tool required approval, which is not yet supported in code mode. Try a different approach.'
             )

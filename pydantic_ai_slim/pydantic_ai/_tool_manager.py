@@ -127,7 +127,6 @@ class ToolManager(Generic[AgentDepsT]):
         *,
         approved: bool = False,
         metadata: Any = None,
-        context: Any = None,
     ) -> Any:
         """Handle a tool call by validating the arguments, calling the tool, and handling retries.
 
@@ -137,7 +136,6 @@ class ToolManager(Generic[AgentDepsT]):
             wrap_validation_errors: Whether to wrap validation errors in a retry prompt part.
             approved: Whether the tool call has been approved.
             metadata: Additional metadata from DeferredToolResults.metadata.
-            context: Context data from DeferredToolResults.context.
         """
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
@@ -150,7 +148,6 @@ class ToolManager(Generic[AgentDepsT]):
                 wrap_validation_errors=wrap_validation_errors,
                 approved=approved,
                 metadata=metadata,
-                context=context,
             )
         else:
             return await self._call_function_tool(
@@ -159,7 +156,6 @@ class ToolManager(Generic[AgentDepsT]):
                 wrap_validation_errors=wrap_validation_errors,
                 approved=approved,
                 metadata=metadata,
-                context=context,
                 tracer=self.ctx.tracer,
                 include_content=self.ctx.trace_include_content,
                 instrumentation_version=self.ctx.instrumentation_version,
@@ -174,7 +170,6 @@ class ToolManager(Generic[AgentDepsT]):
         wrap_validation_errors: bool,
         approved: bool,
         metadata: Any = None,
-        context: Any = None,
     ) -> Any:
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
@@ -201,7 +196,6 @@ class ToolManager(Generic[AgentDepsT]):
                 tool_call_approved=approved,
                 tool_call_metadata=metadata,
                 partial_output=allow_partial,
-                tool_call_context=context,
             )
 
             pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
@@ -255,7 +249,6 @@ class ToolManager(Generic[AgentDepsT]):
         wrap_validation_errors: bool,
         approved: bool,
         metadata: Any = None,
-        context: Any = None,
         tracer: Tracer,
         include_content: bool,
         instrumentation_version: int,
@@ -300,7 +293,6 @@ class ToolManager(Generic[AgentDepsT]):
                     wrap_validation_errors=wrap_validation_errors,
                     approved=approved,
                     metadata=metadata,
-                    context=context,
                 )
                 usage.tool_calls += 1
 
