@@ -13,7 +13,10 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.runtime.monty import MontyRuntime
+try:
+    from pydantic_ai.runtime.monty import MontyRuntime
+except ImportError:  # pragma: lax no cover
+    pytest.skip('pydantic-monty is not installed', allow_module_level=True)
 from pydantic_ai.toolsets.code_mode import CodeModeToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 
