@@ -1125,6 +1125,7 @@ async def _call_tools(  # noqa: C901
             except exceptions.CallDeferred as e:
                 deferred_calls_by_index[index] = 'external'
                 deferred_metadata_by_index[index] = e.metadata
+                deferred_context_by_index[index] = e.context
             except exceptions.ApprovalRequired as e:
                 deferred_calls_by_index[index] = 'unapproved'
                 deferred_metadata_by_index[index] = e.metadata

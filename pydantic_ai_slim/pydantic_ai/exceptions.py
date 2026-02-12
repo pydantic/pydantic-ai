@@ -80,10 +80,13 @@ class CallDeferred(Exception):
     Args:
         metadata: Optional dictionary of metadata to attach to the deferred tool call.
             This metadata will be available in `DeferredToolRequests.metadata` keyed by `tool_call_id`.
+        context: Opaque data that will be included in `DeferredToolRequests.context` keyed by
+            `tool_call_id` and should be passed back unchanged during resumption.
     """
 
-    def __init__(self, metadata: dict[str, Any] | None = None):
+    def __init__(self, metadata: dict[str, Any] | None = None, *, context: Mapping[str, Any] | None = None):
         self.metadata = metadata
+        self.context = context
         super().__init__()
 
 
@@ -95,10 +98,8 @@ class ApprovalRequired(Exception):
     Args:
         metadata: Optional dictionary of metadata to attach to the deferred tool call.
             This metadata will be available in `DeferredToolRequests.metadata` keyed by `tool_call_id`.
-        context: Optional dictionary of context data required for resumption.
-            This context will be available in `DeferredToolRequests.context` keyed by `tool_call_id`.
-            Unlike metadata, context is intended for data that must be passed back for resumption
-            (e.g., checkpoints for code mode execution).
+        context: Opaque data that will be included in `DeferredToolRequests.context` keyed by
+            `tool_call_id` and should be passed back unchanged during resumption.
     """
 
     def __init__(self, metadata: dict[str, Any] | None = None, *, context: Mapping[str, Any] | None = None):
