@@ -59,7 +59,7 @@ class Signature:
     docstring: str | None = None
     """Optional docstring for the function."""
 
-    typeddicts: list[str] = field(default_factory=list)
+    typeddicts: list[str] = field(default_factory=list[str])
     """TypedDict class definitions needed by the signature."""
 
     is_async: bool = True

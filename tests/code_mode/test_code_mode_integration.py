@@ -50,7 +50,7 @@ async def test_agent_single_tool_call():
             return ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='pydantic_ai_code_mode',
+                        tool_name='run_code_with_tools',
                         args={'code': 'await get_weather(city="Paris")'},
                     )
                 ]
@@ -75,7 +75,7 @@ async def test_agent_multiple_tool_calls():
 w = await get_weather(city="London")
 total = await add(x=w["temp"], y=5)
 {"adjusted_temp": total, "city": w["city"]}"""
-            return ModelResponse(parts=[ToolCallPart(tool_name='pydantic_ai_code_mode', args={'code': code})])
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code_with_tools', args={'code': code})])
         return ModelResponse(parts=[TextPart('London is 25 degrees adjusted.')])
 
     agent = Agent(
@@ -97,7 +97,7 @@ f2 = get_weather(city="Tokyo")
 r1 = await f1
 r2 = await f2
 [r1["city"], r2["city"]]"""
-            return ModelResponse(parts=[ToolCallPart(tool_name='pydantic_ai_code_mode', args={'code': code})])
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code_with_tools', args={'code': code})])
         return ModelResponse(parts=[TextPart('Got weather for both cities.')])
 
     agent = Agent(
@@ -117,11 +117,11 @@ async def test_agent_code_error_triggers_retry():
         call_count += 1
         if call_count == 1:
             # First attempt: bad code
-            return ModelResponse(parts=[ToolCallPart(tool_name='pydantic_ai_code_mode', args={'code': '1 / 0'})])
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code_with_tools', args={'code': '1 / 0'})])
         if call_count == 2:
             # Second attempt after retry: good code
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='pydantic_ai_code_mode', args={'code': 'await add(x=1, y=2)'})]
+                parts=[ToolCallPart(tool_name='run_code_with_tools', args={'code': 'await add(x=1, y=2)'})]
             )
         # Final: return text
         return ModelResponse(parts=[TextPart('The answer is 3.')])

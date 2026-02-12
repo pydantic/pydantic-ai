@@ -42,7 +42,7 @@ class _CodeToolArguments(TypedDict):
 
 
 _CODE_ADAPTER = TypeAdapter(_CodeToolArguments)
-_CODE_MODE_TOOL_NAME = 'pydantic_ai_code_mode'
+_CODE_MODE_TOOL_NAME = 'run_code_with_tools'
 
 _TYPEDDICT_NAME_RE = re.compile(r'^class (\w+)\(TypedDict\):')
 
@@ -111,10 +111,10 @@ def build_code_mode_prompt(*, signatures: list[str], runtime_hints: str) -> str:
 
     # TODO: The first line of the prompt should be customizable by the user using Prompt Templates #3656
     return f"""\
-Use pydantic_ai_code_mode to write Python code that calls the available functions. You can make a single call or combine multiple steps in a script — use your judgment based on the task.
+Use run_code_with_tools to write Python code that calls the available functions. You can make a single call or combine multiple steps in a script — use your judgment based on the task.
 
 Execution model:
-- Each pydantic_ai_code_mode call runs in an isolated environment — variables don't persist between calls
+- Each run_code_with_tools call runs in an isolated environment — variables don't persist between calls
 - Functions are async — call with `await`, e.g. `result = await get_items()`
 - To run independent calls concurrently, fire them first, then await:
   ```python
@@ -180,7 +180,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     # runs on the same instance. The agent framework runs a single loop per toolset instance,
     # so this is fine in practice.
     _cached_signatures: list[str] | None = field(default=None, init=False, repr=False)
-    _name_map: dict[str, str] = field(default_factory=dict, init=False, repr=False)
+    _name_map: dict[str, str] = field(default_factory=dict[str, str], init=False, repr=False)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         wrapped_tools = await super().get_tools(ctx)
@@ -191,7 +191,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # identifiers (e.g. 'search-records', 'get.data'), so we sanitize them here.
         # We don't use RenamedToolset because the name map is computed dynamically at
         # get_tools() time and the renaming is internal (never exposed to the agent
-        # framework — all tools are collapsed into a single 'pydantic_ai_code_mode' tool).
+        # framework — all tools are collapsed into a single 'run_code_with_tools' tool).
         name_map: dict[str, str] = {}  # {sanitized: original}
         for original_name in wrapped_tools:
             sanitized = sanitize_tool_name(original_name)

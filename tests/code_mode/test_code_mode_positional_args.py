@@ -66,10 +66,10 @@ async def test_code_mode_positional_args_respects_signature_order():
 
     tools = await code_mode.get_tools(run_context)
     result = await code_mode.call_tool(
-        'pydantic_ai_code_mode',
+        'run_code_with_tools',
         {'code': 'swap_tool(1, 2)'},
         run_context,
-        tools['pydantic_ai_code_mode'],
+        tools['run_code_with_tools'],
     )
 
     assert result == {'a': 1, 'b': 2}

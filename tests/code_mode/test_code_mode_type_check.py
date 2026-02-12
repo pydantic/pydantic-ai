@@ -68,7 +68,7 @@ async def test_signatures_use_ellipsis_monty_converts_for_type_check():
     code_mode, tools = await build_code_mode_toolset(MontyRuntime(), (add, False))
 
     # LLM-facing description should have '...'
-    description = tools['pydantic_ai_code_mode'].tool_def.description or ''
+    description = tools['run_code_with_tools'].tool_def.description or ''
     assert '...' in description
     assert 'raise NotImplementedError()' not in description
 
