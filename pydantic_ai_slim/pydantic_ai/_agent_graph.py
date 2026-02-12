@@ -284,7 +284,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         return ModelRequestNode[DepsT, NodeRunEndT](request=next_message)
 
-    async def _handle_deferred_tool_results(  # noqa: C901
+    async def _handle_deferred_tool_results(
         self,
         deferred_tool_results: DeferredToolResults,
         messages: list[_messages.ModelMessage],
@@ -1287,6 +1287,11 @@ def _unwrap_nested_deferred(
     so the user interacts with a single flat `DeferredToolRequests`.
     """
     parent_id = parent_call.tool_call_id
+    if _NESTED_DEFERRED_SEPARATOR in parent_id:
+        raise exceptions.UserError(
+            f'Tool call ID {parent_id!r} contains the reserved nested separator '
+            f'{_NESTED_DEFERRED_SEPARATOR!r}. Provider-generated tool call IDs must not contain this sequence.'
+        )
 
     def add_child_calls(
         child_calls: list[_messages.ToolCallPart],

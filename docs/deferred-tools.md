@@ -392,6 +392,7 @@ On resume, the framework reconstructs per-parent [`DeferredToolResults`][pydanti
 ```python {title="nested_deferred_tools.py"}
 from pydantic_ai import (
     Agent,
+    ApprovalRequired,
     CallDeferred,
     DeferredToolRequests,
     DeferredToolResults,
@@ -399,6 +400,14 @@ from pydantic_ai import (
     ToolApproved,
     ToolDenied,
 )
+
+sub_agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
+
+
+@sub_agent.tool
+async def dangerous_action(ctx: RunContext, target: str) -> str:
+    raise ApprovalRequired()
+
 
 agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
 
@@ -412,7 +421,6 @@ async def run_subagent(ctx: RunContext, task: str) -> str:
         return f'Subagent completed: {task}'
 
     # Run a subagent that produces deferred tool requests
-    sub_agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
     sub_result = await sub_agent.run(task)
 
     if isinstance(sub_result.output, DeferredToolRequests):
@@ -431,9 +439,9 @@ if isinstance(result.output, DeferredToolRequests):
     # Approve or deny the nested calls using these composite IDs
     results = DeferredToolResults()
     for call in requests.calls:
-        results.calls[call.tool_call_id] = 'external_result'  # (3)!
+        results.calls[call.tool_call_id] = 'external_result'
     for call in requests.approvals:
-        results.approvals[call.tool_call_id] = ToolApproved()
+        results.approvals[call.tool_call_id] = ToolApproved()  # (3)!
 
     result = agent.run_sync(message_history=messages, deferred_tool_results=results)
     print(result.output)

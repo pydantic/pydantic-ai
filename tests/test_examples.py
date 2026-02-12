@@ -688,6 +688,17 @@ async def model_logic(  # noqa: C901
                 )
 
             return ModelResponse(parts=[part])
+        elif m.content == 'Clean up old databases' and any(t.name == 'dangerous_action' for t in info.function_tools):
+            # Sub-agent in nested_deferred_tools.py example
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='dangerous_action',
+                        args={'target': 'old_databases'},
+                        tool_call_id='dangerous_action_call_id',
+                    )
+                ]
+            )
         elif response := text_responses.get(m.content):
             if isinstance(response, str):
                 return ModelResponse(parts=[TextPart(response)])
