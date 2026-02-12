@@ -486,9 +486,10 @@ class AnthropicModel(Model):
         if has_strict_tools or model_request_parameters.output_mode == 'native':
             betas.add('structured-outputs-2025-11-13')
 
-        if model_settings.get('anthropic_speed') == 'fast' and AnthropicModelProfile.from_profile(
-            self.profile
-        ).supports_fast_speed:
+        if (
+            model_settings.get('anthropic_speed') == 'fast'
+            and AnthropicModelProfile.from_profile(self.profile).supports_fast_speed
+        ):
             betas.add('fast-mode-2026-02-01')
 
         if betas_from_setting := model_settings.get('anthropic_betas'):
