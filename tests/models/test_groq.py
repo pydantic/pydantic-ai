@@ -723,7 +723,7 @@ async def test_uploaded_file_input(allow_model_requests: None):
     m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(NotImplementedError, match='UploadedFile is not supported by Groq.'):
+    with pytest.raises(RuntimeError, match='UploadedFile is not supported by Groq.'):
         await agent.run(['hello', UploadedFile(file_id='file-123', provider_name='anthropic')])
 
 

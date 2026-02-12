@@ -2319,7 +2319,7 @@ async def test_uploaded_file_input(allow_model_requests: None):
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(NotImplementedError, match='UploadedFile is not supported by Mistral.'):
+    with pytest.raises(RuntimeError, match='UploadedFile is not supported by Mistral.'):
         await agent.run(['hello', UploadedFile(file_id='file-123', provider_name='anthropic')])
 
 
