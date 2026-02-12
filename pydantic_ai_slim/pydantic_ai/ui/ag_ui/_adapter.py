@@ -311,9 +311,13 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         )
                     )
                 elif isinstance(tool_result, RetryPromptPart):
+                    error_text = tool_result.model_response()
                     tool_messages.append(
                         ToolMessage(
-                            id=str(uuid.uuid4()), content=tool_result.model_response(), tool_call_id=part.tool_call_id
+                            id=str(uuid.uuid4()),
+                            content=error_text,
+                            tool_call_id=part.tool_call_id,
+                            error=error_text,
                         )
                     )
             else:
