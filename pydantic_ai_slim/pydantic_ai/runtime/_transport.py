@@ -9,7 +9,6 @@ implement a single method: ``_start_driver``.
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -28,7 +27,7 @@ from pydantic_ai.runtime.abstract import (
     FunctionCall,
     InterruptedToolCall,
     ToolCallback,
-    checkpoint_result_ta,
+    decode_checkpoint_results,
     deserialize_checkpoint,
     serialize_checkpoint_results,
 )
@@ -139,14 +138,10 @@ class DriverBasedRuntime(CodeRuntime):
         try:
             ckpt = deserialize_checkpoint(checkpoint)
 
-            # Build result cache: decode base64-encoded results for the driver.
-            # Normalize to JSON-compatible form so the init_msg can be serialized
-            # with json.dumps — validate_json may reconstruct Pydantic model instances
-            # that aren't JSON-serializable without an explicit dump step.
-            result_cache: dict[str, Any] = {}
-            for k, v in ckpt.completed_results.items():
-                reconstructed = checkpoint_result_ta.validate_json(base64.b64decode(v))
-                result_cache[k] = tool_return_ta.dump_python(reconstructed, mode='json')
+            # Build result cache from checkpoint. decode_checkpoint_results handles
+            # base64 → validate_json → dump_python(mode='json'), producing JSON-compatible
+            # values that can be serialized with json.dumps for the init_msg.
+            result_cache = decode_checkpoint_results(ckpt.completed_results)
         except (json.JSONDecodeError, KeyError, ValueError, ValidationError) as e:
             raise CodeRuntimeError(f'Invalid checkpoint data: {e}') from e
 

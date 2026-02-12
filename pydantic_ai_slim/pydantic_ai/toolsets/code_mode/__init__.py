@@ -132,15 +132,14 @@ def build_code_mode_prompt(*, signatures: list[str], runtime_hints: str) -> str:
 
     # TODO: The first line of the prompt should be customizable by the user using Prompt Templates #3656
     return f"""\
-ALWAYS use run_code to solve the ENTIRE task in a single code block. Do not call tools individually - write one comprehensive Python script that fetches all data, processes it, and returns the complete answer.
+Use run_code to write Python code that solves the task. Rather than calling tools individually, prefer writing a script that combines multiple steps.
 
-CRITICAL execution model:
-- Solve the COMPLETE problem in ONE run_code call - not partial solutions
-- Each run_code call is ISOLATED - variables do NOT persist between calls
-- Plan your entire solution before writing code, then implement it all at once
+Execution context:
+- Each run_code call is isolated — variables do not persist between calls
+- Plan your solution before writing code
 {restrictions_block}
 How to write effective code:
-- External functions return coroutines - use `await` to get results
+- External functions return coroutines — use `await` to get results
 - For sequential execution: `items = await get_items()`
 - For parallel execution of independent calls, fire first then await:
   ```python
@@ -149,10 +148,10 @@ How to write effective code:
   items = await future_items   # Both execute in parallel
   users = await future_users
   ```
-- ALWAYS use keyword arguments (e.g., `get_user(id=123)` not `get_user(123)`)
+- Use keyword arguments (e.g., `get_user(id=123)` not `get_user(123)`)
 - Use for loops to handle multiple items
-- NEVER return raw tool results - always extract/filter to only what you need
-- The last expression evaluated becomes the return value - make it a processed summary, not raw data
+- The last expression evaluated becomes the return value
+- When the task asks for a summary or analysis, extract and process the data rather than returning raw results. When the task asks for the data itself, returning it directly is fine.
 
 Available functions:
 
@@ -160,17 +159,17 @@ Available functions:
 {functions_block}
 ```
 
-Example - parallel fetching, then sequential processing:
+Example — parallel fetching, then sequential processing:
 ```python
-# PARALLEL: Fire independent calls first (no await yet)
+# Parallel: fire independent calls first (no await yet)
 future_items = get_items(category="electronics")
 future_users = get_users(status="active")
 
-# Await results - both calls execute in parallel
+# Await results — both calls execute in parallel
 items = await future_items
 users = await future_users
 
-# SEQUENTIAL: Process items (each depends on previous result)
+# Sequential: process items (each depends on previous result)
 results = []
 total = 0
 for item in items:
@@ -179,7 +178,6 @@ for item in items:
         total = total + details["price"]
         results.append({{"name": item["name"], "price": details["price"]}})
 
-# Return processed summary, NOT raw data
 {{"total": total, "count": len(results), "items": results, "user_count": len(users)}}
 ```"""
 
@@ -253,7 +251,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     # call_tool(). The agent framework guarantees get_tools() runs first, but this implicit ordering
     # dependency could trip up future contributors modifying either method independently.
     _cached_signatures: list[str] | None = field(default=None, init=False, repr=False)
-    _name_map: dict[str, str] = field(default_factory=dict, init=False, repr=False)
+    _name_map: dict[str, str] = field(default_factory=lambda: {}, init=False, repr=False)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         wrapped_tools = await super().get_tools(ctx)

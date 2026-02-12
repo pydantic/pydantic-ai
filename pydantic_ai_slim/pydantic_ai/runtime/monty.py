@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 from typing import Any
 
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
@@ -15,7 +14,7 @@ from pydantic_ai.runtime.abstract import (
     FunctionCall,
     InterruptedToolCall,
     ToolCallback,
-    checkpoint_result_ta,
+    decode_checkpoint_results,
     deserialize_checkpoint,
     serialize_checkpoint_results,
 )
@@ -146,14 +145,12 @@ class MontyRuntime(CodeRuntime):
             )
 
             # Feed completed results (calls that succeeded before the interruption).
-            # Values are deserialized through checkpoint_result_ta (ToolReturnContent)
-            # which reconstructs rich types (BinaryContent, etc.) via validate_json.
+            # decode_checkpoint_results handles base64 → validate_json → dump_python(mode='json').
             if ckpt.completed_results:
-                monty_results: dict[int, ExternalResult] = {}
-                for k, v in ckpt.completed_results.items():
-                    reconstructed = checkpoint_result_ta.validate_json(base64.b64decode(v))
-                    # Normalize to JSON-compatible form, matching the normal path
-                    monty_results[int(k)] = {'return_value': tool_return_ta.dump_python(reconstructed, mode='json')}
+                decoded = decode_checkpoint_results(ckpt.completed_results)
+                monty_results: dict[int, ExternalResult] = {
+                    int(k): {'return_value': v} for k, v in decoded.items()
+                }
                 monty_state = monty_state.resume(results=monty_results)
                 if isinstance(monty_state, MontyComplete):
                     return monty_state.output

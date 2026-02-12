@@ -201,6 +201,23 @@ def serialize_checkpoint_results(
     return json.dumps(payload).encode('utf-8')
 
 
+def decode_checkpoint_results(raw_results: dict[str, str]) -> dict[str, Any]:
+    """Decode base64-encoded checkpoint results back to JSON-compatible values.
+
+    Reverses the encoding done by ``serialize_checkpoint_results``: base64
+    decode, reconstruct rich types (``BinaryContent``, ``ImageUrl``, etc.)
+    via ``ToolReturnContent`` validation, then normalize to JSON-compatible
+    form.
+    """
+    return {
+        k: tool_return_ta.dump_python(
+            checkpoint_result_ta.validate_json(base64.b64decode(v)),
+            mode='json',
+        )
+        for k, v in raw_results.items()
+    }
+
+
 def deserialize_checkpoint(checkpoint: bytes) -> DeserializedCheckpoint:
     """Deserialize a checkpoint back into its components."""
     payload = json.loads(checkpoint)

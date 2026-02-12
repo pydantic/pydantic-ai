@@ -15,10 +15,9 @@ import types
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from inspect import Parameter, Signature as InspectSignature, signature
-from typing import Any, Union, cast, get_origin
+from typing import Any, Union, cast, get_origin, get_type_hints
 
 from pydantic import BaseModel, TypeAdapter
-from pydantic._internal import _typing_extra
 from typing_extensions import is_typeddict
 
 from ..._function_schema import _is_call_ctx  # pyright: ignore[reportPrivateUsage]
@@ -231,7 +230,7 @@ def _get_type_name(t: Any) -> str:
         return 'None'
     if hasattr(t, '__name__'):
         return t.__name__
-    s = str(t)
+    s = repr(t)
     return s.replace('typing.', '').replace('typing_extensions.', '')
 
 
@@ -329,7 +328,7 @@ def _function_to_signature(
     sig = signature(func)
 
     try:
-        type_hints = _typing_extra.get_function_type_hints(func)
+        type_hints = get_type_hints(func, include_extras=True)
     except Exception:
         type_hints = {}
 
