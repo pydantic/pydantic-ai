@@ -30,7 +30,8 @@ def anthropic_model_profile(model_name: str) -> ModelProfile:
     # https://docs.claude.com/en/docs/build-with-claude/structured-outputs#example-usage
 
     supports_json_schema_output = model_name.startswith(models_that_support_json_schema_output)
-    supports_fast_speed = model_name == 'claude-opus-4-6'
+    supports_fast_speed = model_name.startswith('claude-opus-4-6')
+
     return AnthropicModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
         supports_json_schema_output=supports_json_schema_output,
