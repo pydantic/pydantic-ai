@@ -31,8 +31,11 @@ try:
         MontyTypingError,
         ResourceLimits,
     )
-except ImportError:
-    raise ImportError("MontyRuntime requires 'monty'. Install with: pip install 'pydantic-ai-slim[monty]'")
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install `pydantic-monty` to use the Monty runtime, '
+        'you can use the `monty` optional group — `pip install "pydantic-ai-slim[monty]"`'
+    ) from _import_error
 
 
 def _build_type_check_prefix(signatures: list[FunctionSignature]) -> str:

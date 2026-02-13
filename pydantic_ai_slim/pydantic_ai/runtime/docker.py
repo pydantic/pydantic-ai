@@ -297,7 +297,12 @@ class DockerRuntime(DriverBasedRuntime):
         # Remove any existing driver file (e.g. placed by a prior docker cp)
         # so that tee can create a fresh file owned by the container user.
         rm_proc = await asyncio.create_subprocess_exec(
-            'docker', 'exec', self.container_id, 'rm', '-f', self.driver_path,
+            'docker',
+            'exec',
+            self.container_id,
+            'rm',
+            '-f',
+            self.driver_path,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )

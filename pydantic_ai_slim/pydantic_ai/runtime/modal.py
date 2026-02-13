@@ -14,11 +14,16 @@ import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
+try:
     import modal
     import modal.container_process
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install `modal` to use the Modal runtime, '
+        'you can use the `modal` optional group — `pip install "pydantic-ai-slim[modal]"`'
+    ) from _import_error
 
 from pydantic_ai.runtime._transport import DriverBasedRuntime, DriverTransport
 
@@ -69,11 +74,6 @@ class ModalRuntime(DriverBasedRuntime):
     timeout: int | None = None
 
     async def _start_driver(self, init_msg: dict[str, Any]) -> DriverTransport:
-        try:
-            import modal
-        except ImportError as _e:
-            raise ImportError('modal is not installed, run `pip install "pydantic-ai-slim[modal]"`') from _e
-
         app = await modal.App.lookup.aio(self.app_name, create_if_missing=True)
         image = self.image if self.image is not None else modal.Image.debian_slim()
 

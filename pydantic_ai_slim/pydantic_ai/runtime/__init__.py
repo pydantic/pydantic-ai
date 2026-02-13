@@ -16,9 +16,9 @@ from .abstract import (
     ToolCallback,
 )
 from .docker import DockerRuntime, DockerSecuritySettings
-from .modal import ModalRuntime
 
 if TYPE_CHECKING:
+    from .modal import ModalRuntime
     from .monty import MontyRuntime
 
 __all__ = (
@@ -46,6 +46,10 @@ def __getattr__(name: str) -> Any:
         from .monty import MontyRuntime
 
         return MontyRuntime
+    if name == 'ModalRuntime':
+        from .modal import ModalRuntime
+
+        return ModalRuntime
     raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
 
 
