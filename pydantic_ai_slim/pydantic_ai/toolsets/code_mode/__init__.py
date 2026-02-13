@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable
 from dataclasses import KW_ONLY, dataclass
 from typing import Any, cast
@@ -12,7 +13,6 @@ from typing_extensions import Self, TypedDict
 from pydantic_ai.messages import tool_return_ta
 from pydantic_ai.runtime import RuntimeName, get_runtime
 from pydantic_ai.runtime.abstract import (
-    CodeInterruptedError,
     CodeRuntime,
     CodeRuntimeError,
     CodeSyntaxError,
@@ -186,7 +186,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         dedup_referenced_types(signatures)
 
-        # TODO: (Aditya), Check if tools need approved? Seq / Approval / Warn the users
+        deferred_tools = [name for name, tool in wrapped_tools.items() if tool.tool_def.defer]
+        if deferred_tools:
+            warnings.warn(
+                f'Tools requiring approval or deferral are not yet supported in code mode '
+                f'and will raise an error if called: {", ".join(deferred_tools)}',
+                UserWarning,
+                stacklevel=2,
+            )
 
         # Pre-compute reverse mapping (original name → tool)
         original_name_tools: dict[str, ToolsetTool[AgentDepsT]] = {name_map[s]: t for s, t in sanitized_tools.items()}
@@ -257,9 +264,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     tool_call_part,
                     wrap_validation_errors=False,
                 )
-                return tool_return_ta.dump_python(result, mode='json')
             except (CallDeferred, ApprovalRequired):
-                raise
+                raise exceptions.UserError(
+                    'Tool approval and deferral are not yet supported in code mode. '
+                    'Ensure wrapped tools do not use approval or deferral when used with CodeModeToolset.'
+                )
+            return tool_return_ta.dump_python(result, mode='json')
 
         return callback
 
@@ -295,8 +305,3 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             raise ModelRetry(f'Syntax error in generated code:\n{e.message}') from e
         except CodeRuntimeError as e:
             raise ModelRetry(f'Runtime error in generated code:\n{e.message}') from e
-        except CodeInterruptedError:
-            raise exceptions.UserError(
-                'Tool approval and deferral are not yet supported in code mode. '
-                'Ensure wrapped tools do not use approval or deferral when used with CodeModeToolset.'
-            )

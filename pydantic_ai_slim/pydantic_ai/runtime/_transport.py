@@ -16,15 +16,12 @@ from enum import Enum, auto
 from typing import Any
 
 from pydantic_ai._python_signature import FunctionSignature
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.runtime.abstract import (
     CodeExecutionTimeout,
-    CodeInterruptedError,
     CodeRuntime,
     CodeRuntimeError,
     CodeSyntaxError,
     FunctionCall,
-    InterruptedToolCall,
     ToolCallback,
 )
 
@@ -65,8 +62,6 @@ class _StdoutSignal(Enum):
     """Typed signals from _handle_stdout indicating what happened."""
 
     CONTINUE = auto()
-    CALLS_READY = auto()
-    NEW_CALL = auto()
 
 
 @dataclass(frozen=True)
@@ -118,7 +113,7 @@ class DriverBasedRuntime(CodeRuntime):
         process = await self._start_driver(init_msg)
         try:
             return await self._run_with_timeout(process, call_tool)
-        except (CodeInterruptedError, CodeSyntaxError, CodeRuntimeError):
+        except (CodeSyntaxError, CodeRuntimeError):
             raise
         except _ToolError as e:
             if e.__cause__ is None:  # pragma: no cover
@@ -144,11 +139,8 @@ class DriverBasedRuntime(CodeRuntime):
         Simultaneously reads protocol messages from the driver and manages
         asyncio tasks for tool call execution.
         """
-        interrupted_calls: list[InterruptedToolCall] = []
         tool_tasks: dict[int, asyncio.Task[Any]] = {}
         task_id_to_cid: dict[int, int] = {}
-        call_id_to_fc: dict[int, FunctionCall] = {}
-        calls_ready_seen = False
 
         stdout_task: asyncio.Task[bytes] = asyncio.create_task(process.read_line())
 
@@ -160,14 +152,10 @@ class DriverBasedRuntime(CodeRuntime):
                 for task in done:
                     if task is stdout_task:
                         result = await self._handle_stdout(
-                            task, process, call_tool, tool_tasks, task_id_to_cid, call_id_to_fc
+                            task, process, call_tool, tool_tasks, task_id_to_cid
                         )
                         if isinstance(result, _FinalResult):
                             return result.value
-                        elif result is _StdoutSignal.CALLS_READY:
-                            calls_ready_seen = True
-                        elif result is _StdoutSignal.NEW_CALL:
-                            calls_ready_seen = False
                         stdout_task = asyncio.create_task(process.read_line())
                     else:
                         try:
@@ -176,20 +164,9 @@ class DriverBasedRuntime(CodeRuntime):
                                 process,
                                 tool_tasks,
                                 task_id_to_cid,
-                                call_id_to_fc,
-                                interrupted_calls,
                             )
                         except Exception as e:
                             raise _ToolError() from e
-
-                # Only interrupt once we've received the calls_ready fence
-                # from the driver, confirming all call messages for this batch
-                # have been sent. Without this, network-based runtimes (Modal,
-                # E2B, etc.) could lose in-transit call messages.
-                if interrupted_calls and not tool_tasks and calls_ready_seen:
-                    await _cancel_task(stdout_task)
-                    await process.kill()
-                    raise CodeInterruptedError(interrupted_calls=interrupted_calls)
         finally:
             await _cancel_all(tool_tasks, stdout_task, process)
 
@@ -200,7 +177,6 @@ class DriverBasedRuntime(CodeRuntime):
         call_tool: ToolCallback,
         tool_tasks: dict[int, asyncio.Task[Any]],
         task_id_to_cid: dict[int, int],
-        call_id_to_fc: dict[int, FunctionCall],
     ) -> _StdoutSignal | _FinalResult:
         """Handle a completed stdout read task. Returns a signal or the final result."""
         raw = task.result()
@@ -228,13 +204,12 @@ class DriverBasedRuntime(CodeRuntime):
                 args=tuple(msg.get('args', ())),
                 kwargs=msg.get('kwargs', {}),
             )
-            call_id_to_fc[cid] = fc
             t = asyncio.ensure_future(call_tool(fc))
             tool_tasks[cid] = t
             task_id_to_cid[id(t)] = cid
-            return _StdoutSignal.NEW_CALL
+            return _StdoutSignal.CONTINUE
         elif msg_type == 'calls_ready':
-            return _StdoutSignal.CALLS_READY
+            return _StdoutSignal.CONTINUE
         elif msg_type == 'complete':
             await process.kill()
             return _FinalResult(value=msg.get('result'))
@@ -254,10 +229,8 @@ class DriverBasedRuntime(CodeRuntime):
         process: DriverTransport,
         tool_tasks: dict[int, asyncio.Task[Any]],
         task_id_to_cid: dict[int, int],
-        call_id_to_fc: dict[int, FunctionCall],
-        interrupted_calls: list[InterruptedToolCall],
     ) -> None:
-        """Handle a completed tool task: send result or accumulate interrupt.
+        """Handle a completed tool task: send result back to the driver.
 
         Tool exceptions propagate naturally — cleanup is handled by ``_execution_loop``'s
         ``finally`` block.
@@ -265,13 +238,7 @@ class DriverBasedRuntime(CodeRuntime):
         cid = task_id_to_cid.pop(id(task))
         del tool_tasks[cid]
 
-        try:
-            result = task.result()
-        except (ApprovalRequired, CallDeferred) as e:
-            fc = call_id_to_fc.pop(cid)
-            interrupted_calls.append(InterruptedToolCall(reason=e, call=fc))
-            return
-
+        result = task.result()
         # The callback already serializes via tool_return_ta, so result is JSON-compatible.
         result_msg = json.dumps({'type': 'result', 'id': cid, 'result': result}) + '\n'
         await process.write_line(result_msg.encode())

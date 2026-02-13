@@ -4,16 +4,13 @@ import asyncio
 from typing import Any
 
 from pydantic_ai._python_signature import FunctionSignature, collect_unique_referenced_types
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.runtime.abstract import (
     CodeExecutionTimeout,
-    CodeInterruptedError,
     CodeRuntime,
     CodeRuntimeError,
     CodeSyntaxError,
     CodeTypingError,
     FunctionCall,
-    InterruptedToolCall,
     ToolCallback,
 )
 
@@ -145,8 +142,6 @@ class MontyRuntime(CodeRuntime):
         tasks: dict[int, asyncio.Task[Any]],
         call_tool: ToolCallback,
     ) -> MontyComplete:
-        tool_call_id_to_call: dict[int, FunctionCall] = {}
-
         try:
             while not isinstance(monty_state, MontyComplete):
                 if isinstance(monty_state, MontySnapshot):
@@ -157,7 +152,6 @@ class MontyRuntime(CodeRuntime):
                         kwargs=monty_state.kwargs,
                     )
                     tasks[monty_state.call_id] = asyncio.ensure_future(call_tool(call))
-                    tool_call_id_to_call[monty_state.call_id] = call
 
                     monty_state = monty_state.resume(future=...)
                 elif isinstance(monty_state, MontyFutureSnapshot):
@@ -174,22 +168,12 @@ class MontyRuntime(CodeRuntime):
                     done, _ = await asyncio.wait(pending, return_when=asyncio.ALL_COMPLETED)
                     task_to_cid = {id(t): cid for cid, t in tasks.items()}
                     results: dict[int, Any] = {}
-                    interrupted_calls: list[InterruptedToolCall] = []
                     for task in done:
                         cid = task_to_cid[id(task)]
-                        try:
-                            result = task.result()
-                            # The callback already serializes to JSON-compatible form,
-                            # so result is ready to use directly.
-                            results[cid] = {'return_value': result}
-                        except (CallDeferred, ApprovalRequired) as e:
-                            interrupted_calls.append(InterruptedToolCall(reason=e, call=tool_call_id_to_call[cid]))
+                        # The callback already serializes to JSON-compatible form,
+                        # so result is ready to use directly.
+                        results[cid] = {'return_value': task.result()}
                         del tasks[cid]
-
-                    if interrupted_calls:
-                        raise CodeInterruptedError(
-                            interrupted_calls=interrupted_calls,
-                        )
 
                     monty_state = monty_state.resume(results=results)
 

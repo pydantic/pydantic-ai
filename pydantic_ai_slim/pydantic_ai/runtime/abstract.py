@@ -15,7 +15,6 @@ from typing import Any, TypeAlias
 from typing_extensions import Self
 
 from pydantic_ai._python_signature import FunctionSignature
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 
 
 @dataclass(frozen=True)
@@ -50,38 +49,6 @@ class CodeRuntimeError(CodeExecutionError):
 
 class CodeExecutionTimeout(CodeRuntimeError):
     """The code execution exceeded the configured timeout."""
-
-
-# TODO(Aditya): Remove this
-
-
-@dataclass
-class InterruptedToolCall:
-    """A tool call that was interrupted during code execution.
-
-    Wraps a [`FunctionCall`][pydantic_ai.runtime.abstract.FunctionCall] together with the
-    reason the call did not complete — either because it requires human approval
-    ([`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired]) or because it was
-    deferred ([`CallDeferred`][pydantic_ai.exceptions.CallDeferred]).
-
-    Attributes:
-        reason: The exception that caused the interruption.
-        call: The function call that was interrupted.
-    """
-
-    reason: ApprovalRequired | CallDeferred
-    call: FunctionCall
-
-
-@dataclass
-class CodeInterruptedError(Exception):
-    """Raised when code execution is interrupted by one or more tool calls that require approval or were deferred.
-
-    Attributes:
-        interrupted_calls: The tool calls that caused the interruption.
-    """
-
-    interrupted_calls: list[InterruptedToolCall]
 
 
 ToolCallback: TypeAlias = Callable[[FunctionCall], Awaitable[Any]]
@@ -130,8 +97,6 @@ class CodeRuntime(ABC):
             CodeTypingError: If the code has type errors.
             CodeRuntimeError: If execution fails.
             CodeExecutionTimeout: If execution exceeds ``execution_timeout``.
-            CodeInterruptedError: When execution is interrupted by tool calls
-                requiring approval or deferral.
         """
         ...
 

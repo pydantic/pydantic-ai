@@ -10,8 +10,6 @@
         - DockerRuntime
         - ModalRuntime
         - FunctionCall
-        - InterruptedToolCall
-        - CodeInterruptedError
         - CodeExecutionError
         - CodeSyntaxError
         - CodeTypingError

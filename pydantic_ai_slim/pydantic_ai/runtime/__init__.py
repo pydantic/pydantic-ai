@@ -6,13 +6,11 @@ from ._transport import DriverBasedRuntime, DriverTransport
 from .abstract import (
     CodeExecutionError,
     CodeExecutionTimeout,
-    CodeInterruptedError,
     CodeRuntime,
     CodeRuntimeError,
     CodeSyntaxError,
     CodeTypingError,
     FunctionCall,
-    InterruptedToolCall,
     ToolCallback,
 )
 from .docker import DockerRuntime, DockerSecuritySettings
@@ -24,7 +22,6 @@ if TYPE_CHECKING:
 __all__ = (
     'CodeExecutionError',
     'CodeExecutionTimeout',
-    'CodeInterruptedError',
     'CodeRuntime',
     'CodeRuntimeError',
     'CodeSyntaxError',
@@ -34,7 +31,6 @@ __all__ = (
     'DriverBasedRuntime',
     'DriverTransport',
     'FunctionCall',
-    'InterruptedToolCall',
     'ModalRuntime',
     'MontyRuntime',
     'ToolCallback',
