@@ -1439,7 +1439,7 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
     for message in messages:
         if isinstance(message, _messages.ModelRequest):
             for part in message.parts:
-                if isinstance(part, _messages.ToolReturnPart) and part.tool_call_id:
+                if isinstance(part, (_messages.ToolReturnPart, _messages.RetryPromptPart)) and part.tool_call_id:
                     processed_tool_call_ids.add(part.tool_call_id)
         elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
             for part in message.parts:

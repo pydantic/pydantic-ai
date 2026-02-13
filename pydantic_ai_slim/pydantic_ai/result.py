@@ -240,6 +240,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     yield '\n\n', event.index
                     last_text_index = None
         except Exception:
+            # When cancelled, closing the underlying HTTP connection causes provider-specific
+            # exceptions (httpx, aiohttp, boto3, etc.) that we can't enumerate. Since the user
+            # explicitly requested cancellation, any exception here is expected and safe to suppress.
             if self._cancelled:
                 return
             raise
@@ -370,7 +373,7 @@ class StreamEventsResult(Generic[AgentDepsT, OutputDataT]):
     ```python
     from pydantic_ai import Agent
 
-    agent = Agent('openai:gpt-4o')
+    agent = Agent('openai:gpt-5.2')
 
     async def main():
         async with agent.run_stream_events('What is the capital of France?') as events:
@@ -383,7 +386,7 @@ class StreamEventsResult(Generic[AgentDepsT, OutputDataT]):
     ```python
     from pydantic_ai import Agent
 
-    agent = Agent('openai:gpt-4o')
+    agent = Agent('openai:gpt-5.2')
 
     async def main():
         async for event in agent.run_stream_events('What is the capital of France?'):
@@ -854,6 +857,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         - The underlying HTTP connection will be closed
         - response will return a ModelResponse with interrupted=True
         - The interrupted response will be added to all_messages()
+        - The on_complete callback (if any) will NOT be called, as it may
+          attempt to validate partial output which would fail for interrupted data
         """
         if self._stream_response is not None:
             await self._stream_response.cancel()

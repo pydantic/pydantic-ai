@@ -1003,6 +1003,7 @@ class BedrockStreamedResponse(StreamedResponse):
     async def cancel(self) -> None:
         """Cancel the streaming response and close the underlying HTTP connection."""
         await super().cancel()
+        # boto3's EventStream.close() is synchronous; boto3 does not provide async I/O.
         self._event_stream.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901

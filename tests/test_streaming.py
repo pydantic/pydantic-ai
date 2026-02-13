@@ -4090,6 +4090,44 @@ class TestCleanMessageHistoryFiltersIncomplete:
         assert isinstance(response.parts[2], BuiltinToolReturnPart)
         assert response.parts[2].tool_call_id == 'builtin_tc1'
 
+    def test_clean_message_history_preserves_tool_calls_with_retry_responses(self):
+        """_clean_message_history should preserve tool calls that have RetryPromptPart responses.
+
+        When a tool call triggers a validation error, the response is a RetryPromptPart
+        (not a ToolReturnPart). The tool call was still processed, so it should be preserved
+        in interrupted responses.
+        """
+        messages = [
+            ModelRequest(parts=[UserPromptPart(content='Hello')]),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Let me call a tool'),
+                    ToolCallPart(tool_name='my_tool', args='{"x": 1}', tool_call_id='tc1'),
+                ],
+                interrupted=True,
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Validation error: x must be positive',
+                        tool_name='my_tool',
+                        tool_call_id='tc1',
+                    ),
+                ]
+            ),
+        ]
+
+        cleaned = _clean_message_history(messages)
+
+        # tc1 should be preserved because it has a RetryPromptPart response
+        assert len(cleaned) == 3
+        response = cleaned[1]
+        assert isinstance(response, ModelResponse)
+        assert len(response.parts) == 2
+        assert isinstance(response.parts[0], TextPart)
+        assert isinstance(response.parts[1], ToolCallPart)
+        assert response.parts[1].tool_call_id == 'tc1'
+
 
 class TestIncompleteToolCallsNotSentToApi:
     """Integration tests verifying the complete pipeline filters unprocessed tool calls."""
@@ -4292,6 +4330,54 @@ class TestIncompleteToolCallsNotSentToApi:
         # dropped entirely — an empty assistant message is invalid for most provider APIs.
         model_responses = [msg for msg in second_call_messages if isinstance(msg, ModelResponse)]
         assert model_responses == [], 'Interrupted ModelResponse with incomplete tool call should be dropped'
+
+    async def test_continuation_preserves_tool_calls_with_retry_responses(self):
+        """Integration test: tool calls with RetryPromptPart responses survive message history cleaning.
+
+        Constructs a message history representing a cancelled stream where a tool call was
+        processed but got a RetryPromptPart (validation error) rather than a ToolReturnPart.
+        Passes this history to agent.run() and verifies the model receives the tool call
+        intact (not incorrectly stripped by _clean_message_history).
+        """
+        received_messages: list[list[ModelMessage]] = []
+
+        def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            received_messages.append(deepcopy(messages))
+            return ModelResponse(parts=[TextPart(content='Done')])
+
+        agent = Agent(model=FunctionModel(model_function))
+
+        # Construct history: interrupted response with tc1 (processed via retry) and tc2 (unprocessed)
+        message_history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(content='Do something')]),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Let me try'),
+                    ToolCallPart(tool_name='my_tool', args='{"x": 1}', tool_call_id='tc1'),
+                    ToolCallPart(tool_name='my_tool', args='{"x": 2}', tool_call_id='tc2'),
+                ],
+                interrupted=True,
+            ),
+            # tc1 was processed but failed validation → RetryPromptPart
+            # tc2 was never processed (stream was cancelled before it could be)
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(content='Validation failed', tool_name='my_tool', tool_call_id='tc1'),
+                ]
+            ),
+        ]
+
+        await agent.run('Continue', message_history=message_history)
+
+        # Verify what the model received
+        model_messages = received_messages[0]
+        interrupted_responses = [msg for msg in model_messages if isinstance(msg, ModelResponse) and msg.interrupted]
+        assert len(interrupted_responses) == 1
+
+        # tc1 should be preserved (has RetryPromptPart response), tc2 should be stripped
+        tool_calls = [p for p in interrupted_responses[0].parts if isinstance(p, ToolCallPart)]
+        assert len(tool_calls) == 1
+        assert tool_calls[0].tool_call_id == 'tc1'
 
 
 class TestRunStreamEventsCancellation:
