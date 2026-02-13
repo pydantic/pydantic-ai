@@ -4434,7 +4434,7 @@ async def test_openai_chat_refusal_streaming(allow_model_requests: None):
     stream = [
         chunk([ChoiceDelta(refusal="I'm sorry, ", role='assistant')]),
         chunk([ChoiceDelta(refusal="I can't help with that.")]),
-        chunk([], finish_reason='stop'),
+        chunk([ChoiceDelta()], finish_reason='stop'),
     ]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
