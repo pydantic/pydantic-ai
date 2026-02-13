@@ -145,34 +145,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         on_complete: OnCompleteFunc[BaseChunk] | None = None,
         **kwargs: Any,
     ) -> Response:
-        """Handle a Vercel AI HTTP request by running the agent and returning a streaming response.
+        """Extends [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] with the `sdk_version` parameter.
 
         Args:
-            request: The incoming Starlette/FastAPI request.
-            agent: The Pydantic AI agent to run.
             sdk_version: Vercel AI SDK version. Set to 6 to enable tool approval streaming.
-            message_history: History of the conversation so far.
-            deferred_tool_results: Optional results for deferred tool calls in the message history.
-            model: Optional model to use for this run, required if `model` was not set when creating the agent.
-            instructions: Optional additional instructions to use for this run.
-            deps: Optional dependencies to use for this run.
-            output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
-                output validators since output validators would expect an argument that matches the agent's output type.
-            model_settings: Optional settings to use for this model's request.
-            usage_limits: Optional limits on model request count or token usage.
-            usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
-            metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
-                [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-            toolsets: Optional additional toolsets for this run.
-            builtin_tools: Optional additional builtin tools to use for this run.
-            on_complete: Optional callback function called when the agent run completes successfully.
-                The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult]
-                and can optionally yield additional Vercel AI events.
-            **kwargs: Additional keyword arguments forwarded to the base class.
-
-        Returns:
-            A streaming Starlette response with Vercel AI events encoded per the request's `Accept` header value.
         """
         return await super().dispatch_request(
             request,
