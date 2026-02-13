@@ -19,7 +19,7 @@ except ImportError as _import_error:  # pragma: no cover
 
 
 class _LazyAsyncClient:
-    """Wrapper around AsyncClient that creates a fresh gRPC client per event loop.
+    """Wrapper that creates a fresh AsyncClient per event loop.
 
     gRPC async channels bind to the event loop at creation time. If the client
     is created outside an async context (e.g. at module level) and later used
@@ -33,7 +33,7 @@ class _LazyAsyncClient:
         self._client: AsyncClient | None = None
         self._event_loop: asyncio.AbstractEventLoop | None = None
 
-    def _get_client(self) -> AsyncClient:
+    def get_client(self) -> AsyncClient:
         running_loop: asyncio.AbstractEventLoop | None = None
         try:
             running_loop = asyncio.get_running_loop()
@@ -45,9 +45,6 @@ class _LazyAsyncClient:
             self._event_loop = running_loop
 
         return self._client
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._get_client(), name)
 
 
 class XaiProvider(Provider[AsyncClient]):
@@ -63,6 +60,8 @@ class XaiProvider(Provider[AsyncClient]):
 
     @property
     def client(self) -> AsyncClient:
+        if self._lazy_client is not None:
+            return self._lazy_client.get_client()
         return self._client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
@@ -90,6 +89,7 @@ class XaiProvider(Provider[AsyncClient]):
                 will be used if available.
             xai_client: An existing `xai_sdk.AsyncClient` to use.  This takes precedence over `api_key`.
         """
+        self._lazy_client: _LazyAsyncClient | None = None
         if xai_client is not None:
             self._client = xai_client
         else:
@@ -99,7 +99,4 @@ class XaiProvider(Provider[AsyncClient]):
                     'Set the `XAI_API_KEY` environment variable or pass it via `XaiProvider(api_key=...)`'
                     'to use the xAI provider.'
                 )
-            # _LazyAsyncClient duck-types as AsyncClient via __getattr__,
-            # but isn't a subclass since AsyncClient eagerly binds gRPC channels
-            # to the event loop in __init__ (the exact problem we're solving).
-            self._client: AsyncClient = _LazyAsyncClient(api_key=api_key)  # type: ignore[assignment]
+            self._lazy_client = _LazyAsyncClient(api_key=api_key)
