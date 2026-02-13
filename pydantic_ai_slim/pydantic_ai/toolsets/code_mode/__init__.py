@@ -9,6 +9,7 @@ from typing import Any, cast
 from pydantic import TypeAdapter
 from typing_extensions import Self, TypedDict
 
+from pydantic_ai.messages import tool_return_ta
 from pydantic_ai.runtime import RuntimeName, get_runtime
 from pydantic_ai.runtime.abstract import (
     CodeInterruptedError,
@@ -24,7 +25,7 @@ from ... import exceptions
 from ..._python_signature import FunctionSignature, collect_unique_referenced_types, dedup_referenced_types
 from ..._run_context import AgentDepsT, RunContext
 from ..._tool_manager import ToolManager
-from ...exceptions import ModelRetry
+from ...exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from ...messages import ToolCallPart
 from ...tools import ToolDefinition
 from ..abstract import AbstractToolset, SchemaValidatorProt, ToolsetTool
@@ -251,13 +252,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # wrap_validation_errors=False: let raw errors propagate to the runtime.
             # Tool exceptions bubble up to user code (same behavior as regular tools).
 
-            # (TODO: Aditya) Serialize here instead of monty
-            return await code_mode_tool_manager.handle_call(
-                tool_call_part,
-                wrap_validation_errors=False,
-            )
-
-            # Catch here instead of inside runtimes
+            try:
+                result = await code_mode_tool_manager.handle_call(
+                    tool_call_part,
+                    wrap_validation_errors=False,
+                )
+                return tool_return_ta.dump_python(result, mode='json')
+            except (CallDeferred, ApprovalRequired):
+                raise
 
         return callback
 

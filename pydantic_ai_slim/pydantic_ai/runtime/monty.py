@@ -5,7 +5,6 @@ from typing import Any
 
 from pydantic_ai._python_signature import FunctionSignature, collect_unique_referenced_types
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
-from pydantic_ai.messages import tool_return_ta
 from pydantic_ai.runtime.abstract import (
     CodeExecutionTimeout,
     CodeInterruptedError,
@@ -179,14 +178,10 @@ class MontyRuntime(CodeRuntime):
                     for task in done:
                         cid = task_to_cid[id(task)]
                         try:
-                            raw = task.result()
-                            # Normalize to JSON-compatible form (dicts, lists, strings, numbers)
-                            # so that Monty's restricted interpreter can handle the value and
-                            # behavior is consistent with driver-based runtimes
-                            # (which serialize results over the JSON protocol).
-
-                            # (TODO: Do not serialize here)
-                            results[cid] = {'return_value': tool_return_ta.dump_python(raw, mode='json')}
+                            result = task.result()
+                            # The callback already serializes to JSON-compatible form,
+                            # so result is ready to use directly.
+                            results[cid] = {'return_value': result}
                         except (CallDeferred, ApprovalRequired) as e:
                             interrupted_calls.append(InterruptedToolCall(reason=e, call=tool_call_id_to_call[cid]))
                         del tasks[cid]

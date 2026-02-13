@@ -17,7 +17,6 @@ from typing import Any
 
 from pydantic_ai._python_signature import FunctionSignature
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
-from pydantic_ai.messages import tool_return_ta
 from pydantic_ai.runtime.abstract import (
     CodeExecutionTimeout,
     CodeInterruptedError,
@@ -273,10 +272,8 @@ class DriverBasedRuntime(CodeRuntime):
             interrupted_calls.append(InterruptedToolCall(reason=e, call=fc))
             return
 
-        # Serialize via tool_return_ta to preserve type fidelity (bytes, Pydantic models, etc.)
-        # before embedding in the JSON protocol message.
-        json_result = tool_return_ta.dump_python(result, mode='json')
-        result_msg = json.dumps({'type': 'result', 'id': cid, 'result': json_result}) + '\n'
+        # The callback already serializes via tool_return_ta, so result is JSON-compatible.
+        result_msg = json.dumps({'type': 'result', 'id': cid, 'result': result}) + '\n'
         await process.write_line(result_msg.encode())
 
 
