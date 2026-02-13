@@ -58,6 +58,10 @@ class DriverTransport(ABC):
         ...
 
 
+class _ToolError(Exception):
+    """Wrapper to distinguish tool execution errors from transport/protocol errors."""
+
+
 class _StdoutSignal(Enum):
     """Typed signals from _handle_stdout indicating what happened."""
 
@@ -117,6 +121,9 @@ class DriverBasedRuntime(CodeRuntime):
             return await self._run_with_timeout(process, call_tool)
         except (CodeInterruptedError, CodeSyntaxError, CodeRuntimeError):
             raise
+        except _ToolError as e:
+            assert e.__cause__ is not None
+            raise e.__cause__
         except Exception as e:
             raise CodeRuntimeError(f'Driver communication error: {e}') from e
 
@@ -163,15 +170,17 @@ class DriverBasedRuntime(CodeRuntime):
                             calls_ready_seen = False
                         stdout_task = asyncio.create_task(process.read_line())
                     else:
-                        await self._handle_tool_done(
-                            task,
-                            process,
-                            tool_tasks,
-                            task_id_to_cid,
-                            call_id_to_fc,
-                            interrupted_calls,
-                            stdout_task,
-                        )
+                        try:
+                            await self._handle_tool_done(
+                                task,
+                                process,
+                                tool_tasks,
+                                task_id_to_cid,
+                                call_id_to_fc,
+                                interrupted_calls,
+                            )
+                        except Exception as e:
+                            raise _ToolError() from e
 
                 # Only interrupt once we've received the calls_ready fence
                 # from the driver, confirming all call messages for this batch
@@ -247,29 +256,27 @@ class DriverBasedRuntime(CodeRuntime):
         task_id_to_cid: dict[int, int],
         call_id_to_fc: dict[int, FunctionCall],
         interrupted_calls: list[InterruptedToolCall],
-        stdout_task: asyncio.Task[Any],
     ) -> None:
-        """Handle a completed tool task: send result, accumulate interrupt, or propagate error."""
+        """Handle a completed tool task: send result or accumulate interrupt.
+
+        Tool exceptions propagate naturally — cleanup is handled by ``_execution_loop``'s
+        ``finally`` block.
+        """
         cid = task_id_to_cid.pop(id(task))
         del tool_tasks[cid]
 
         try:
             result = task.result()
-            # Serialize via tool_return_ta to preserve type fidelity (bytes, Pydantic models, etc.)
-            # before embedding in the JSON protocol message.
-            json_result = tool_return_ta.dump_python(result, mode='json')
-            result_msg = json.dumps({'type': 'result', 'id': cid, 'result': json_result}) + '\n'
-            await process.write_line(result_msg.encode())
         except (ApprovalRequired, CallDeferred) as e:
             fc = call_id_to_fc.pop(cid)
             interrupted_calls.append(InterruptedToolCall(reason=e, call=fc))
-        except Exception as e:
-            # Intentional broad catch: this is a defensive boundary between the runtime
-            # protocol and the tool execution layer. Tool implementation bugs get wrapped
-            # as CodeRuntimeError (→ ModelRetry) rather than crashing the runtime protocol.
-            # The original exception message is preserved so the LLM sees what went wrong.
-            await _cancel_all(tool_tasks, stdout_task, process)
-            raise CodeRuntimeError(f'Tool execution error: {e}') from e
+            return
+
+        # Serialize via tool_return_ta to preserve type fidelity (bytes, Pydantic models, etc.)
+        # before embedding in the JSON protocol message.
+        json_result = tool_return_ta.dump_python(result, mode='json')
+        result_msg = json.dumps({'type': 'result', 'id': cid, 'result': json_result}) + '\n'
+        await process.write_line(result_msg.encode())
 
 
 async def _cancel_task(task: asyncio.Task[Any]) -> None:

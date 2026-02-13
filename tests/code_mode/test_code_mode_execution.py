@@ -121,6 +121,16 @@ async def test_monty_normalizes_tool_results_to_json_compatible():
     assert received_types == ['dict']
 
 
+async def test_tool_exception_propagates(code_runtime: CodeRuntime):
+    """Tool exceptions propagate and crash the run, consistent with normal tool execution."""
+
+    def failing_tool() -> str:
+        raise ValueError('tool bug')
+
+    with pytest.raises(ValueError, match='tool bug'):
+        await run_code_with_tools('await failing_tool()', code_runtime, (failing_tool, False))
+
+
 async def test_execution_timeout_raises_model_retry(code_runtime: CodeRuntime):
     """Execution timeout raises ModelRetry so the LLM is informed."""
     code_runtime.execution_timeout = 1.0
