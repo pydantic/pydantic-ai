@@ -36,7 +36,7 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('pydantic-monty is not installed', allow_module_level=True)
 
-from .conftest import run_code_with_tools
+from .conftest import build_run_context, run_code_with_tools
 
 pytestmark = pytest.mark.anyio
 
@@ -275,3 +275,40 @@ async def test_concurrent_agent_runs_on_shared_toolset():
             ),
         ]
     )
+
+
+async def test_mixed_tools_all_serialize_when_any_sequential(code_runtime: CodeRuntime):
+    """When one tool is sequential, all tools are serialized (matching agent graph behavior)."""
+    max_concurrent = 0
+    current_concurrent = 0
+
+    async def seq_op(name: str) -> str:
+        nonlocal max_concurrent, current_concurrent
+        current_concurrent += 1
+        max_concurrent = max(max_concurrent, current_concurrent)
+        await asyncio.sleep(0.1)
+        current_concurrent -= 1
+        return f'seq:{name}'
+
+    async def fast_op(name: str) -> str:
+        nonlocal max_concurrent, current_concurrent
+        current_concurrent += 1
+        max_concurrent = max(max_concurrent, current_concurrent)
+        await asyncio.sleep(0.1)
+        current_concurrent -= 1
+        return f'fast:{name}'
+
+    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset.add_function(seq_op, takes_ctx=False, sequential=True)
+    toolset.add_function(fast_op, takes_ctx=False)  # not sequential
+
+    code_mode = CodeModeToolset(toolset, runtime=code_runtime)
+    ctx = build_run_context()
+    tools = await code_mode.get_tools(ctx)
+    tool = tools['run_code_with_tools']
+
+    code = 'f1 = seq_op(name="a")\nf2 = fast_op(name="b")\nr1 = await f1\nr2 = await f2\n[r1, r2]'
+    result = await code_mode.call_tool('run_code_with_tools', {'code': code}, ctx, tool)
+
+    assert result == ['seq:a', 'fast:b']
+    assert max_concurrent == 1
