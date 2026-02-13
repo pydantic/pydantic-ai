@@ -7,13 +7,18 @@ and agent auto-lifecycle integration.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
 from typing import Any
 
 import pytest
 
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.runtime.docker import DockerRuntime
+from pydantic_ai.toolsets import CodeModeToolset, FunctionToolset
 
 from .conftest import _docker_is_available, run_code_with_tools  # pyright: ignore[reportPrivateUsage]
 
@@ -141,19 +146,23 @@ async def test_reference_counting():
 
 async def test_agent_auto_lifecycle():
     """Agent manages DockerRuntime lifecycle through CodeModeToolset."""
-    from pydantic_ai import Agent
-    from pydantic_ai.models.test import TestModel
-    from pydantic_ai.toolsets import CodeModeToolset, FunctionToolset
 
     def add(a: int, b: int) -> int:
         """Add two numbers."""
         return a + b
 
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if not any(isinstance(m, ModelResponse) for m in messages):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='run_code_with_tools', args={'code': 'await add(a=2, b=3)'})]
+            )
+        return ModelResponse(parts=[TextPart('5')])
+
     tools = FunctionToolset(tools=[add])
     runtime = DockerRuntime()
 
     agent = Agent(
-        TestModel(custom_output_text='await add(a=2, b=3)'),
+        FunctionModel(model_function),
         toolsets=[CodeModeToolset(tools, runtime=runtime)],
     )
 
@@ -161,7 +170,7 @@ async def test_agent_auto_lifecycle():
     assert runtime.container_id is None
 
     result = await agent.run('What is 2 + 3?')
-    assert result.output == 5
+    assert result.output == '5'
 
     # Runtime container is cleaned up after the run
     assert runtime.container_id is None
@@ -169,8 +178,6 @@ async def test_agent_auto_lifecycle():
 
 async def test_concurrent_enter_creates_one_container():
     """Concurrent __aenter__ calls only create a single container."""
-    import asyncio
-
     runtime = DockerRuntime()
 
     # Launch two enters concurrently — _enter_lock ensures only one creates a container

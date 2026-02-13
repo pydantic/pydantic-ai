@@ -30,11 +30,12 @@ async def test_network_isolation():
                 s.settimeout(2)
                 try:
                     s.connect(('8.8.8.8', 53))
-                    'FAIL: network should be blocked'
+                    result = 'FAIL: network should be blocked'
                 except OSError as e:
-                    f'PASS: {e}'
+                    result = f'PASS: {e}'
                 finally:
                     s.close()
+                result
             """),
             runtime,
         )
@@ -51,9 +52,10 @@ async def test_read_only_filesystem():
                 try:
                     with open('/etc/test_file', 'w') as f:
                         f.write('should fail')
-                    'FAIL: filesystem should be read-only'
+                    result = 'FAIL: filesystem should be read-only'
                 except OSError as e:
-                    f'PASS: {e}'
+                    result = f'PASS: {e}'
+                result
             """),
             runtime,
         )
@@ -69,7 +71,8 @@ async def test_tmpfs_writable():
                 with open('/tmp/test.txt', 'w') as f:
                     f.write('hello')
                 with open('/tmp/test.txt') as f:
-                    f.read()
+                    result = f.read()
+                result
             """),
             runtime,
         )
@@ -104,15 +107,16 @@ async def test_pids_limit_enforced():
                         if pid == 0:
                             os._exit(0)
                         pids.append(pid)
-                    f'FAIL: created {len(pids)} processes'
+                    result = f'FAIL: created {len(pids)} processes'
                 except OSError as e:
-                    f'PASS: fork limited at {len(pids)} processes: {e}'
+                    result = f'PASS: fork limited at {len(pids)} processes: {e}'
                 finally:
                     for pid in pids:
                         try:
                             os.waitpid(pid, 0)
                         except ChildProcessError:
                             pass
+                result
             """),
             runtime,
         )
@@ -140,9 +144,10 @@ async def test_custom_security_settings():
                 import socket
                 try:
                     socket.getaddrinfo('localhost', 80)
-                    'PASS: network works'
+                    result = 'PASS: network works'
                 except OSError:
-                    'FAIL: network should be enabled'
+                    result = 'FAIL: network should be enabled'
+                result
             """),
             runtime,
         )

@@ -284,12 +284,25 @@ class DockerRuntime(DriverBasedRuntime):
         ``docker cp`` writes to the container's root filesystem overlay,
         which fails when ``--read-only`` is set — even for paths under
         a writable tmpfs mount like ``/tmp``.
+
+        Removes any existing file first because ``docker cp`` creates files
+        owned by the host UID, which may not be writable by the container
+        user (a known Docker Desktop for Mac behavior).
         """
         if self.container_id is None:
             raise ValueError(
                 'DockerRuntime has no container. Use it as an async context manager: '
                 '`async with DockerRuntime() as runtime:`'
             )
+        # Remove any existing driver file (e.g. placed by a prior docker cp)
+        # so that tee can create a fresh file owned by the container user.
+        rm_proc = await asyncio.create_subprocess_exec(
+            'docker', 'exec', self.container_id, 'rm', '-f', self.driver_path,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await rm_proc.wait()
+
         driver_src = Path(__file__).parent / '_driver.py'
         driver_content = driver_src.read_bytes()
         proc = await asyncio.create_subprocess_exec(
