@@ -193,8 +193,10 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
     def has_deferred_tools(self) -> bool:
         """Returns True if this toolset has any tools with `defer_loading=True`.
 
-        This is a conservative estimate that doesn't require a RunContext. Toolsets should
-        override this method if they can determine the answer without calling `get_tools()`.
-        The default implementation returns False.
+        Custom toolsets that support deferred tools must override this method to return `True`
+        when appropriate. This is a synchronous heuristic that does not receive a `RunContext`,
+        so it may not reflect decisions that depend on runtime context.
+
+        The default implementation returns `False`.
         """
         return False

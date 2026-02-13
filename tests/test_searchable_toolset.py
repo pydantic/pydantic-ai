@@ -352,34 +352,6 @@ async def test_searchable_toolset_multiple_searches_accumulate():
     assert 'crypto_price' not in tool_names
 
 
-async def test_tool_search_config_max_results_propagates():
-    """Test that ToolSearchTool max_results config propagates to SearchableToolset."""
-    from pydantic_ai.builtin_tools import ToolSearchTool, WebSearchTool
-
-    # WebSearchTool first ensures we test the loop iteration branch in _get_tool_search_config
-    agent: Agent[None, str] = Agent('test', builtin_tools=[WebSearchTool(), ToolSearchTool(max_results=3)])
-
-    @agent.tool_plain(defer_loading=True)
-    def tool1() -> str:  # pragma: no cover
-        return 'tool1'
-
-    @agent.tool_plain(defer_loading=True)
-    def tool2() -> str:  # pragma: no cover
-        return 'tool2'
-
-    @agent.tool_plain(defer_loading=True)
-    def tool3() -> str:  # pragma: no cover
-        return 'tool3'
-
-    @agent.tool_plain(defer_loading=True)
-    def tool4() -> str:  # pragma: no cover
-        return 'tool4'
-
-    tool_search_config = agent._get_tool_search_config()  # pyright: ignore[reportPrivateUsage]
-    assert tool_search_config is not None
-    assert tool_search_config.max_results == 3
-
-
 async def test_function_toolset_all_deferred():
     """Test FunctionToolset with all tools having defer_loading=True."""
     toolset: FunctionToolset[None] = FunctionToolset()

@@ -39,7 +39,7 @@ from .._agent_graph import (
 )
 from .._output import OutputToolset
 from .._tool_manager import ParallelExecutionMode, ToolManager
-from ..builtin_tools import AbstractBuiltinTool, ToolSearchTool
+from ..builtin_tools import AbstractBuiltinTool
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec
 from ..run import AgentRun, AgentRunResult
@@ -1549,8 +1549,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolset = toolset.visit_and_replace(copy_dynamic_toolsets)
 
         if toolset.has_deferred_tools():
-            config = self._get_tool_search_config()
-            toolset = SearchableToolset(wrapped=toolset, max_results=config.max_results)
+            toolset = SearchableToolset(wrapped=toolset)
 
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)
@@ -1562,13 +1561,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolset = CombinedToolset([output_toolset, toolset])
 
         return toolset
-
-    def _get_tool_search_config(self) -> ToolSearchTool:
-        """Get the ToolSearchTool config from builtin tools, or return defaults."""
-        for tool in self._builtin_tools:
-            if isinstance(tool, ToolSearchTool):
-                return tool
-        return ToolSearchTool()
 
     @property
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:

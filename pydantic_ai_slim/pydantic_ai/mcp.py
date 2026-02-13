@@ -881,6 +881,7 @@ class MCPServerStdio(MCPServer):
     elicitation_callback: ElicitationFnT | None = None
     cache_tools: bool
     cache_resources: bool
+    defer_loading: bool | list[str]
 
     def __init__(
         self,
@@ -901,6 +902,7 @@ class MCPServerStdio(MCPServer):
         elicitation_callback: ElicitationFnT | None = None,
         cache_tools: bool = True,
         cache_resources: bool = True,
+        defer_loading: bool | list[str] = False,
         id: str | None = None,
         client_info: mcp_types.Implementation | None = None,
     ):
@@ -925,6 +927,8 @@ class MCPServerStdio(MCPServer):
                 See [`MCPServer.cache_tools`][pydantic_ai.mcp.MCPServer.cache_tools].
             cache_resources: Whether to cache the list of resources.
                 See [`MCPServer.cache_resources`][pydantic_ai.mcp.MCPServer.cache_resources].
+            defer_loading: Whether tools should be deferred for tool search.
+                See [`MCPServer.defer_loading`][pydantic_ai.mcp.MCPServer.defer_loading].
             id: An optional unique ID for the MCP server. An MCP server needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the server's activities within the workflow.
             client_info: Information describing the MCP client implementation.
         """
@@ -946,6 +950,7 @@ class MCPServerStdio(MCPServer):
             elicitation_callback,
             cache_tools,
             cache_resources,
+            defer_loading,
             id=id,
             client_info=client_info,
         )
@@ -1048,6 +1053,7 @@ class _MCPServerHTTP(MCPServer):
     elicitation_callback: ElicitationFnT | None = None
     cache_tools: bool
     cache_resources: bool
+    defer_loading: bool | list[str]
 
     def __init__(
         self,
@@ -1068,6 +1074,7 @@ class _MCPServerHTTP(MCPServer):
         elicitation_callback: ElicitationFnT | None = None,
         cache_tools: bool = True,
         cache_resources: bool = True,
+        defer_loading: bool | list[str] = False,
         client_info: mcp_types.Implementation | None = None,
         **_deprecated_kwargs: Any,
     ):
@@ -1092,6 +1099,8 @@ class _MCPServerHTTP(MCPServer):
                 See [`MCPServer.cache_tools`][pydantic_ai.mcp.MCPServer.cache_tools].
             cache_resources: Whether to cache the list of resources.
                 See [`MCPServer.cache_resources`][pydantic_ai.mcp.MCPServer.cache_resources].
+            defer_loading: Whether tools should be deferred for tool search.
+                See [`MCPServer.defer_loading`][pydantic_ai.mcp.MCPServer.defer_loading].
             client_info: Information describing the MCP client implementation.
         """
         if 'sse_read_timeout' in _deprecated_kwargs:
@@ -1125,6 +1134,7 @@ class _MCPServerHTTP(MCPServer):
             elicitation_callback=elicitation_callback,
             cache_tools=cache_tools,
             cache_resources=cache_resources,
+            defer_loading=defer_loading,
             id=id,
             client_info=client_info,
         )
