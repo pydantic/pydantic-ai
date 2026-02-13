@@ -7,7 +7,7 @@ from dataclasses import KW_ONLY, dataclass
 from typing import Any, cast
 
 from pydantic import TypeAdapter
-from typing_extensions import TypedDict
+from typing_extensions import Self, TypedDict
 
 from pydantic_ai.runtime import RuntimeName, get_runtime
 from pydantic_ai.runtime.abstract import (
@@ -104,7 +104,6 @@ class _CodeModeTool(ToolsetTool[AgentDepsT]):
     original_tools: dict[str, ToolsetTool[AgentDepsT]]
     cached_signatures: list[FunctionSignature]
     name_map: dict[str, str]
-    sanitized_to_original: dict[str, str]
     original_name_tools: dict[str, ToolsetTool[AgentDepsT]]
 
 
@@ -142,6 +141,16 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         self.max_retries = max_retries
         super().__init__(wrapped)
 
+    async def __aenter__(self) -> Self:
+        await self.runtime.__aenter__()
+        return await super().__aenter__()
+
+    async def __aexit__(self, *args: Any) -> bool | None:
+        try:
+            return await super().__aexit__(*args)
+        finally:
+            await self.runtime.__aexit__(*args)
+
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         wrapped_tools = await super().get_tools(ctx)
 
@@ -172,8 +181,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         dedup_referenced_types(signatures)
 
-        # Pre-compute reverse mappings (sanitized→original name, original→tool)
-        sanitized_to_original = {s: o for s, o in name_map.items()}
+        # Pre-compute reverse mapping (original name → tool)
         original_name_tools: dict[str, ToolsetTool[AgentDepsT]] = {name_map[s]: t for s, t in sanitized_tools.items()}
 
         description = self.prompt_builder(signatures, self.runtime.instructions)
@@ -183,7 +191,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 original_tools=sanitized_tools,
                 cached_signatures=signatures,
                 name_map=name_map,
-                sanitized_to_original=sanitized_to_original,
                 original_name_tools=original_name_tools,
                 tool_def=ToolDefinition(
                     name=_CODE_MODE_TOOL_NAME,
@@ -265,7 +272,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             tools=tool.original_name_tools,
         )
 
-        callback = self._make_tool_callback(tool, code_mode_tool_manager, tool.sanitized_to_original)
+        callback = self._make_tool_callback(tool, code_mode_tool_manager, tool.name_map)
         functions = list(tool.original_tools.keys())
 
         try:

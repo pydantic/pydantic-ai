@@ -5,7 +5,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +15,7 @@ from typing_extensions import TypedDict
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.runtime.abstract import CodeRuntime
+from pydantic_ai.runtime.docker import DockerRuntime
 from pydantic_ai.toolsets.code_mode import CodeModeToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage
@@ -124,6 +125,14 @@ def _docker_container() -> Iterator[str]:
     subprocess.run(['docker', 'rm', '-f', container_name], capture_output=True)
 
 
+@pytest.fixture
+async def managed_docker_runtime() -> AsyncIterator[DockerRuntime]:
+    """A managed DockerRuntime that creates and destroys its own container."""
+    runtime = DockerRuntime()
+    async with runtime:
+        yield runtime
+
+
 @pytest.fixture(params=['monty', 'docker'])
 def code_runtime(request: pytest.FixtureRequest) -> CodeRuntime:
     """Parameterized fixture providing each CodeRuntime implementation."""
@@ -137,8 +146,6 @@ def code_runtime(request: pytest.FixtureRequest) -> CodeRuntime:
 
     if not _docker_is_available():
         pytest.skip('Docker is not available')
-
-    from pydantic_ai.runtime.docker import DockerRuntime
 
     container_id: str = request.getfixturevalue('_docker_container')
     return DockerRuntime(

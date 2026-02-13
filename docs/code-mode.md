@@ -206,20 +206,54 @@ toolset = CodeModeToolset(
 
 #### Docker
 
-[`DockerRuntime`][pydantic_ai.runtime.DockerRuntime] runs code inside an existing Docker container. You manage the container lifecycle; the runtime handles communication.
+[`DockerRuntime`][pydantic_ai.runtime.DockerRuntime] runs code inside a Docker container with hardened security defaults. The runtime manages the full container lifecycle automatically:
 
 ```python {test="skip" lint="skip"}
+from pydantic_ai import Agent
 from pydantic_ai.runtime import DockerRuntime
 from pydantic_ai.toolsets import CodeModeToolset, FunctionToolset
 
-runtime = DockerRuntime(container_id='my-sandbox-container')
-await runtime.copy_driver_to_container()  # (1)!
-
 tools = FunctionToolset(tools=[...])
-toolset = CodeModeToolset(tools, runtime=runtime)
+agent = Agent(
+    'anthropic:claude-sonnet-4-5',
+    toolsets=[CodeModeToolset(tools, runtime=DockerRuntime())],  # (1)!
+)
+
+result = await agent.run('...')  # (2)!
 ```
 
-1. One-time setup: copies the driver script into the container. Must be called before the first run.
+1. No container ID needed — the runtime creates a security-hardened container automatically.
+2. The container is created when the agent starts and removed when it finishes. No manual cleanup required.
+
+By default, managed containers run with restrictive security settings:
+
+- `--network none` — no network access
+- `--cap-drop ALL` — all Linux capabilities dropped
+- `--read-only` — read-only root filesystem
+- `--security-opt no-new-privileges` — no privilege escalation
+- `--user nobody` — unprivileged user
+- `--memory 512m` — memory limit with swap disabled
+- `--pids-limit 256` — process count limit
+- `--cpus 1` — CPU limit
+- `--tmpfs /tmp:noexec,nosuid,size=64m` — writable scratch space
+
+Override specific settings with [`DockerSecuritySettings`][pydantic_ai.runtime.DockerSecuritySettings]:
+
+```python {test="skip" lint="skip"}
+from pydantic_ai.runtime import DockerRuntime, DockerSecuritySettings
+
+runtime = DockerRuntime(
+    security=DockerSecuritySettings(network=True),  # (1)!
+)
+```
+
+1. Allow network access while keeping all other security defaults.
+
+For pre-existing containers, pass a `container_id` to use the runtime without lifecycle management:
+
+```python {test="skip" lint="skip"}
+runtime = DockerRuntime(container_id='my-sandbox-container')
+```
 
 #### Building a Custom Runtime
 

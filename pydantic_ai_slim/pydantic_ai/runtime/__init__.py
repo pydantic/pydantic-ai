@@ -15,7 +15,7 @@ from .abstract import (
     InterruptedToolCall,
     ToolCallback,
 )
-from .docker import DockerRuntime
+from .docker import DockerRuntime, DockerSecuritySettings
 from .modal import ModalRuntime
 
 if TYPE_CHECKING:
@@ -30,6 +30,7 @@ __all__ = (
     'CodeSyntaxError',
     'CodeTypingError',
     'DockerRuntime',
+    'DockerSecuritySettings',
     'DriverBasedRuntime',
     'DriverTransport',
     'FunctionCall',

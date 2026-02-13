@@ -12,6 +12,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, TypeAlias
 
+from typing_extensions import Self
+
 from pydantic_ai._python_signature import FunctionSignature
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 
@@ -87,6 +89,17 @@ class CodeRuntime(ABC):
 
     execution_timeout: float | None = None
     """Optional timeout in seconds for code execution. None means no timeout."""
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
+        pass
 
     @abstractmethod
     async def run(
