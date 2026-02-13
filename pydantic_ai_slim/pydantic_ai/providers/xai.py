@@ -100,3 +100,4 @@ class XaiProvider(Provider[AsyncClient]):
                     'to use the xAI provider.'
                 )
             self._lazy_client = _LazyAsyncClient(api_key=api_key)
+            self._client = None  # type: ignore[assignment]
