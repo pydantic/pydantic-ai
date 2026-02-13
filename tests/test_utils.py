@@ -212,6 +212,39 @@ async def test_group_by_temporal_generator_exit_on_outer_close():
     # If we get here without error, the cleanup worked correctly
 
 
+async def test_group_by_temporal_generator_exit_via_gen_aclose():
+    """Test GeneratorExit handling by directly closing the underlying generator.
+
+    This simulates GC finalization by calling aclose() on the @asynccontextmanager's
+    underlying generator, bypassing __aexit__. This throws GeneratorExit at the
+    `yield inner_gen` suspension point, exercising the except GeneratorExit handler.
+    """
+
+    async def yield_slowly() -> AsyncIterator[int]:
+        yield 1
+        await asyncio.sleep(10)
+        yield 2  # pragma: no cover
+
+    ctx_manager = group_by_temporal(yield_slowly(), soft_max_interval=0.05)
+    groups_iter = await ctx_manager.__aenter__()
+    groups_aiter = cast(AsyncGenerator[list[int]], aiter(groups_iter))
+
+    # Consume one group to create an active task (fetching item 2, which sleeps 10s)
+    group = await anext(groups_aiter)
+    assert group == [1]
+
+    # Directly close the underlying generator to simulate GC finalization.
+    # This throws GeneratorExit at `yield inner_gen`, exercising the handler
+    # that sets closing=True and skips awaiting in the finally block.
+    await ctx_manager.gen.aclose()
+
+    # Let event loop process the cancelled task
+    await asyncio.sleep(0)
+
+    # Clean up the orphaned inner generator
+    await groups_aiter.aclose()
+
+
 def test_check_object_json_schema():
     object_schema = {'type': 'object', 'properties': {'a': {'type': 'string'}}}
     assert check_object_json_schema(object_schema) == object_schema
