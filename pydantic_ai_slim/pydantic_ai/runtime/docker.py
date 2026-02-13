@@ -278,25 +278,46 @@ class DockerRuntime(DriverBasedRuntime):
         self.container_id = stdout.decode().strip()[:12]
 
     async def _copy_driver(self) -> None:
-        """Copy the driver script into the container."""
+        """Copy the driver script into the container.
+
+        Uses ``docker exec`` with ``tee`` instead of ``docker cp`` because
+        ``docker cp`` writes to the container's root filesystem overlay,
+        which fails when ``--read-only`` is set — even for paths under
+        a writable tmpfs mount like ``/tmp``.
+        """
+        if self.container_id is None:
+            raise ValueError(
+                'DockerRuntime has no container. Use it as an async context manager: '
+                '`async with DockerRuntime() as runtime:`'
+            )
         driver_src = Path(__file__).parent / '_driver.py'
+        driver_content = driver_src.read_bytes()
         proc = await asyncio.create_subprocess_exec(
             'docker',
-            'cp',
-            str(driver_src),
-            f'{self.container_id}:{self.driver_path}',
+            'exec',
+            '-i',
+            self.container_id,
+            'tee',
+            self.driver_path,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL,
         )
-        await proc.wait()
+        await proc.communicate(input=driver_content)
         if proc.returncode != 0:
             raise RuntimeError(f'Failed to copy driver to container {self.container_id}')
 
     async def _remove_container(self) -> None:
         """Force-remove the managed container."""
+        if self.container_id is None:
+            raise ValueError(
+                'DockerRuntime has no container. Use it as an async context manager: '
+                '`async with DockerRuntime() as runtime:`'
+            )
         proc = await asyncio.create_subprocess_exec(
             'docker',
             'rm',
             '-f',
-            str(self.container_id),
+            self.container_id,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

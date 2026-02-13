@@ -223,19 +223,19 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         self,
         tool: _CodeModeTool[AgentDepsT],
         code_mode_tool_manager: ToolManager[AgentDepsT],
-        sanitized_to_original: dict[str, str],
+        name_map: dict[str, str],
     ) -> ToolCallback:
         """Create a callback for the runtime to invoke when code calls external functions.
 
         Args:
             tool: The code mode tool with original tools mapping.
             code_mode_tool_manager: ToolManager for executing nested tool calls.
-            sanitized_to_original: Mapping from sanitized names to original tool names.
+            name_map: Mapping from sanitized names to original tool names.
         """
 
         async def callback(call: FunctionCall) -> Any:
             sanitized_name = call.function_name
-            original_name = sanitized_to_original.get(sanitized_name, sanitized_name)
+            original_name = name_map.get(sanitized_name, sanitized_name)
 
             tool_kwargs = self._build_tool_kwargs(call)
             tool_call_part = ToolCallPart(tool_name=original_name, args=tool_kwargs)

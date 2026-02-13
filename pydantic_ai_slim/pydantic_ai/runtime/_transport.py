@@ -122,7 +122,8 @@ class DriverBasedRuntime(CodeRuntime):
         except (CodeInterruptedError, CodeSyntaxError, CodeRuntimeError):
             raise
         except _ToolError as e:
-            assert e.__cause__ is not None
+            if e.__cause__ is None:  # pragma: no cover
+                raise
             raise e.__cause__
         except Exception as e:
             raise CodeRuntimeError(f'Driver communication error: {e}') from e
