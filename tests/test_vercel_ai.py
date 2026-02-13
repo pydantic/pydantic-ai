@@ -1732,7 +1732,7 @@ async def test_run_stream_tool_return_with_files():
             {
                 'type': 'tool-output-available',
                 'toolCallId': 'img_1',
-                'output': ['Image description', {'files': ['[File: image/png]']}],
+                'output': 'Image description\n[File: image/png]',
             },
             {'type': 'finish-step'},
             {'type': 'start-step'},
@@ -1792,7 +1792,7 @@ async def test_run_stream_tool_return_files_only():
         {
             'type': 'tool-output-available',
             'toolCallId': 'file_1',
-            'output': {'files': ['[File: audio/wav]']},
+            'output': [{}, ['[File: audio/wav]']],
         }
     )
 
@@ -1842,7 +1842,7 @@ async def test_run_stream_tool_return_with_file_url():
         {
             'type': 'tool-output-available',
             'toolCallId': 'url_1',
-            'output': {'files': ['[File: https://example.com/image.png]']},
+            'output': [{}, ['[File: https://example.com/image.png]']],
         }
     )
 

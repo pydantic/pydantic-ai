@@ -40,7 +40,6 @@ from ..messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
-    tool_return_ta,
 )
 from ..models import (
     Model,
@@ -506,7 +505,7 @@ class XaiModel(Model):
         tool_content_parts: list[str] = []
         file_content: list[UserContent] = []
 
-        for item in part.content_items:
+        for item in part.content_items(mode='str'):
             if isinstance(item, (BinaryContent, ImageUrl, DocumentUrl)):
                 if isinstance(item, BinaryContent) and item.is_audio:
                     _raise_unsupported_media_type('AudioUrl/BinaryContent with audio')
@@ -519,11 +518,9 @@ class XaiModel(Model):
                 _raise_unsupported_media_type('AudioUrl')
             elif isinstance(item, VideoUrl):
                 _raise_unsupported_media_type('VideoUrl')
-            elif isinstance(item, str):
-                if item:
-                    tool_content_parts.append(item)
             else:
-                tool_content_parts.append(tool_return_ta.dump_json(item).decode())
+                assert isinstance(item, str)
+                tool_content_parts.append(item)
 
         return '\n'.join(tool_content_parts) if tool_content_parts else '', file_content
 

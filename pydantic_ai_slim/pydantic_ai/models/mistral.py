@@ -37,7 +37,6 @@ from ..messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
-    tool_return_ta,
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
@@ -535,7 +534,7 @@ class MistralModel(Model):
         tool_content_parts: list[str] = []
         file_content: list[UserContent] = []
 
-        for item in part.content_items:
+        for item in part.content_items(mode='str'):
             if isinstance(item, ImageUrl):
                 tool_content_parts.append(f'See file {item.identifier}.')
                 file_content.append(f'This is file {item.identifier}:')
@@ -564,11 +563,9 @@ class MistralModel(Model):
                     raise UserError('DocumentUrl other than PDF is not supported for Mistral tool returns.')
             elif isinstance(item, (AudioUrl, VideoUrl)):
                 raise UserError(f'{type(item).__name__} is not supported for Mistral tool returns.')
-            elif isinstance(item, str):
-                if item:
-                    tool_content_parts.append(item)
             else:
-                tool_content_parts.append(tool_return_ta.dump_json(item).decode())
+                assert isinstance(item, str)
+                tool_content_parts.append(item)
 
         return '\n'.join(tool_content_parts) if tool_content_parts else '', file_content
 

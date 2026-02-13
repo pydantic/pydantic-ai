@@ -41,7 +41,6 @@ from ..messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
-    tool_return_ta,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.groq import GroqModelProfile
@@ -483,7 +482,7 @@ class GroqModel(Model):
             elif isinstance(part, ToolReturnPart):
                 tool_content_parts: list[str] = []
 
-                for item in part.content_items:
+                for item in part.content_items(mode='str'):
                     if isinstance(item, (BinaryContent, ImageUrl)):
                         if isinstance(item, BinaryContent) and not item.is_image:
                             raise NotImplementedError('Only images are supported for binary content in Groq.')
@@ -496,15 +495,21 @@ class GroqModel(Model):
                             )
                         else:
                             file_content.append(item)
-                    elif isinstance(item, (AudioUrl, VideoUrl, DocumentUrl)):
+                    elif isinstance(item, AudioUrl):
                         raise NotImplementedError(
                             'Only images are supported for multimodal content in Groq tool returns.'
                         )
-                    elif isinstance(item, str):
-                        if item:
-                            tool_content_parts.append(item)
+                    elif isinstance(item, VideoUrl):
+                        raise NotImplementedError(
+                            'Only images are supported for multimodal content in Groq tool returns.'
+                        )
+                    elif isinstance(item, DocumentUrl):
+                        raise NotImplementedError(
+                            'Only images are supported for multimodal content in Groq tool returns.'
+                        )
                     else:
-                        tool_content_parts.append(tool_return_ta.dump_json(item).decode())
+                        assert isinstance(item, str)
+                        tool_content_parts.append(item)
 
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',

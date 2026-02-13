@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from . import ModelProfile
 
-GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES: tuple[str, ...] = (
+_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES: tuple[str, ...] = (
     'image/png',
     'image/jpeg',
     'image/webp',
@@ -43,7 +43,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         supports_json_object_output=is_3_or_newer or not is_image_model,
         supports_tools=not is_image_model,
         google_supports_native_output_with_builtin_tools=is_3_or_newer,
-        google_supported_mime_types_in_tool_returns=GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES if is_3_or_newer else (),
+        google_supported_mime_types_in_tool_returns=_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES if is_3_or_newer else (),
     )
 
 

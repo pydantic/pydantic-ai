@@ -3293,7 +3293,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                         if isinstance(content, (BinaryContent, DocumentUrl)):
                             media_types.append((type(content).__name__, content.media_type))
                 elif isinstance(part, ToolReturnPart):
-                    for content in part.content_items:
+                    for content in part.content_items():
                         if isinstance(content, (BinaryContent, DocumentUrl)):
                             media_types.append((type(content).__name__, content.media_type))
         # Should have 4 items: 2 from user input, 2 from tool return

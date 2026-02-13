@@ -2382,7 +2382,7 @@ async def test_tool_return_with_files():
                 'timestamp': IsInt(),
                 'messageId': IsStr(),
                 'toolCallId': 'call_1',
-                'content': '["Image analysis result"]\n[File: image/png]',
+                'content': 'Image analysis result\n[File: image/png]',
                 'role': 'tool',
             },
             {

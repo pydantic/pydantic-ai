@@ -257,21 +257,20 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
 
     def _tool_return_output(self, part: BaseToolReturnPart) -> Any:
         output = part.model_response_object()
-        result = output[RETURN_VALUE_KEY] if list(output.keys()) == [RETURN_VALUE_KEY] else output
+        result = output[RETURN_VALUE_KEY] if len(output) == 1 and RETURN_VALUE_KEY in output else output
 
         if not part.files:
             return result
 
         file_descriptions = [describe_file(f) for f in part.files]
 
-        if isinstance(result, str):
+        if not result and not isinstance(result, dict | list):
+            return '\n'.join(file_descriptions)
+        elif isinstance(result, str):
             return result + '\n' + '\n'.join(file_descriptions)
         elif isinstance(result, dict):
-            merged: dict[str, Any] = {**result, 'files': file_descriptions}
-            return merged
+            return [result, file_descriptions]
         elif isinstance(result, list):
-            return [*result, {'files': file_descriptions}]
-        elif not result:
-            return '\n'.join(file_descriptions)
+            return [*result, *file_descriptions]
         else:
             return str(result) + '\n' + '\n'.join(file_descriptions)

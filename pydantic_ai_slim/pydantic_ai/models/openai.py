@@ -61,7 +61,6 @@ from ..messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
-    tool_return_ta,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
@@ -1139,16 +1138,14 @@ class OpenAIChatModel(Model):
             elif isinstance(part, ToolReturnPart):
                 tool_content_parts: list[str] = []
 
-                for item in part.content_items:
+                for item in part.content_items(mode='str'):
                     if isinstance(item, (BinaryContent, ImageUrl, AudioUrl, DocumentUrl, VideoUrl)):
                         tool_content_parts.append(f'See file {item.identifier}.')
                         file_content.append(f'This is file {item.identifier}:')
                         file_content.append(item)
-                    elif isinstance(item, str):
-                        if item:
-                            tool_content_parts.append(item)
                     else:
-                        tool_content_parts.append(tool_return_ta.dump_json(item).decode())
+                        assert isinstance(item, str)
+                        tool_content_parts.append(item)
 
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
@@ -2207,7 +2204,7 @@ class OpenAIResponsesModel(Model):
         return responses.EasyInputMessageParam(role='user', content=content)
 
     @staticmethod
-    async def _map_tool_return_output(  # noqa: C901
+    async def _map_tool_return_output(
         part: ToolReturnPart,
     ) -> str | list[ResponseInputTextContentParam | ResponseInputImageContentParam | ResponseInputFileContentParam]:
         """Map a `ToolReturnPart` to OpenAI Responses API output format, supporting multimodal content.
@@ -2222,7 +2219,7 @@ class OpenAIResponsesModel(Model):
         ] = []
 
         # Iterate content directly to preserve order of mixed file/data content
-        for item in part.content_items:
+        for item in part.content_items(mode='str'):
             if isinstance(item, BinaryContent):
                 if item.is_image:
                     detail: Literal['auto', 'low', 'high'] = 'auto'
@@ -2267,14 +2264,8 @@ class OpenAIResponsesModel(Model):
             elif isinstance(item, VideoUrl):
                 raise NotImplementedError('VideoUrl is not supported for OpenAI.')
             else:
-                # Data content (str, dict, etc.) - serialize to text
-                if isinstance(item, str):
-                    if item:  # Skip empty strings
-                        output.append(ResponseInputTextContentParam(type='input_text', text=item))
-                else:
-                    output.append(
-                        ResponseInputTextContentParam(type='input_text', text=tool_return_ta.dump_json(item).decode())
-                    )
+                assert isinstance(item, str)
+                output.append(ResponseInputTextContentParam(type='input_text', text=item))
 
         return output
 

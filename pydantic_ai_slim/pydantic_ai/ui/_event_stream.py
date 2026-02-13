@@ -597,7 +597,11 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
 
 def describe_file(file: MultiModalContent) -> str:
-    """Return a human-readable description of a file."""
+    """Return a text placeholder for a file in tool results.
+
+    Used by event stream protocols (Vercel AI, AG-UI) that don't support
+    multimodal content in tool results natively.
+    """
     if isinstance(file, FileUrl):
         return f'[File: {file.url}]'
     elif isinstance(file, BinaryContent):

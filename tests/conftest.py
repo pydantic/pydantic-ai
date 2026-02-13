@@ -771,7 +771,7 @@ def iter_message_parts(
     part_type: type[_RequestPartT] | type[_ResponsePartT],
 ) -> Iterator[_RequestPartT | _ResponsePartT]:
     """Iterate over all parts of a given type in messages of a given type."""
-    for msg in messages:
+    for msg in messages:  # pragma: no branch
         if isinstance(msg, message_type):
             for part in msg.parts:
                 if isinstance(part, part_type):

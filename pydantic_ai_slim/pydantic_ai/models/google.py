@@ -698,26 +698,31 @@ class GoogleModel(Model):
         For Gemini 3+ models with supported MIME types, files are sent inside
         `function_response.parts` for efficiency. Unsupported types become separate
         parts after the function_response (fallback strategy).
-        See: https://ai.google.dev/gemini-api/docs/function-calling#multimodal-function-responses
+        See: https://ai.google.dev/gemini-api/docs/function-calling#multimodal
         """
         supported_mime_types = GoogleModelProfile.from_profile(self.profile).google_supported_mime_types_in_tool_returns
 
         function_response_parts: list[FunctionResponsePartDict] = []
         fallback_parts: list[PartDict] = []
+        fallback_refs: list[str] = []
 
-        for item in part.content_items:
-            if isinstance(item, (BinaryContent, FileUrl)):
-                if item.media_type in supported_mime_types:
-                    fr_part = await self._map_file_to_function_response_part(item)
-                    function_response_parts.append(fr_part)
-                else:
-                    fallback_parts.append({'text': f'This is file {item.identifier}:'})
-                    file_part = await self._map_file_to_part(item)
-                    fallback_parts.append(file_part)
+        for file in part.files:
+            if file.media_type in supported_mime_types:
+                fr_part = await self._map_file_to_function_response_part(file)
+                function_response_parts.append(fr_part)
+            else:
+                fallback_refs.append(f'See file {file.identifier}.')
+                fallback_parts.append({'text': f'This is file {file.identifier}:'})
+                file_part = await self._map_file_to_part(file)
+                fallback_parts.append(file_part)
+
+        response = part.model_response_object()
+        if fallback_refs:
+            response.setdefault('files', fallback_refs)
 
         function_response_dict: FunctionResponseDict = {
             'name': part.tool_name,
-            'response': part.model_response_object(),
+            'response': response,
             'id': part.tool_call_id,
         }
         if function_response_parts:

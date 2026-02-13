@@ -43,7 +43,6 @@ from pydantic_ai import (
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
-from pydantic_ai.messages import tool_return_ta
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
@@ -714,14 +713,17 @@ class BedrockConverseModel(Model):
                         tool_result_content: list[Any] = []
                         sibling_content: list[ContentBlockUnionTypeDef] = []
 
-                        for item in part.content_items:
+                        content_mode: Literal['str', 'json'] = (
+                            'str' if profile.bedrock_tool_result_format == 'text' else 'json'
+                        )
+                        for item in part.content_items(mode=content_mode):
                             if isinstance(item, (BinaryContent, ImageUrl, DocumentUrl, VideoUrl)):
                                 file_block = await self._map_file_to_content_block(item, document_count)
                                 if file_block is not None:
                                     kind = next(k for k in ('image', 'document', 'video') if k in file_block)
-                                    if kind in profile.bedrock_native_tool_return_content:
+                                    if kind in profile.bedrock_supported_types_in_tool_returns:
                                         tool_result_content.append(file_block)
-                                    elif 'image' in file_block:
+                                    elif 'image' in file_block:  # pragma: no cover
                                         tool_result_content.append({'text': f'See file {item.identifier}.'})
                                         sibling_content.append({'text': f'This is file {item.identifier}:'})
                                         sibling_content.append({'image': file_block['image']})
@@ -733,20 +735,19 @@ class BedrockConverseModel(Model):
                                         tool_result_content.append({'text': f'See file {item.identifier}.'})
                                         sibling_content.append({'text': f'This is file {item.identifier}:'})
                                         sibling_content.append({'video': file_block['video']})
+                                    else:
+                                        assert_never(file_block)
                                 elif isinstance(item, BinaryContent):
                                     raise NotImplementedError(
                                         f'Unsupported binary content type for Bedrock tool returns: {item.media_type}'
                                     )
                             elif isinstance(item, AudioUrl):
                                 raise NotImplementedError('AudioUrl is not supported for Bedrock tool returns')
+                            elif content_mode == 'str':
+                                assert isinstance(item, str)
+                                tool_result_content.append({'text': item})
                             else:
-                                if isinstance(item, str):
-                                    if item:
-                                        tool_result_content.append({'text': item})
-                                elif profile.bedrock_tool_result_format == 'text':
-                                    tool_result_content.append({'text': tool_return_ta.dump_json(item).decode()})
-                                else:
-                                    tool_result_content.append({'json': item})
+                                tool_result_content.append({'json': item})
 
                         if not tool_result_content:
                             if profile.bedrock_tool_result_format == 'text':
@@ -933,7 +934,7 @@ class BedrockConverseModel(Model):
         # Validate format
         format = file.format
         valid_formats = _BEDROCK_FORMATS[kind]
-        if format not in valid_formats:
+        if format not in valid_formats:  # pragma: no cover
             raise ValueError(f'Unsupported {kind} format for Bedrock: {format!r}. Supported: {valid_formats}')
 
         # Resolve source

@@ -673,7 +673,6 @@ MultiModalContent = Annotated[
 
 MULTI_MODAL_CONTENT_TYPES: tuple[type, ...] = get_args(get_args(MultiModalContent)[0])
 """Tuple of multi-modal content types for use with isinstance() checks, derived from `MultiModalContent`."""
-assert set(MULTI_MODAL_CONTENT_TYPES) == {ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent}
 
 
 def is_multi_modal_content(obj: Any) -> TypeGuard[MultiModalContent]:
@@ -852,11 +851,7 @@ class BaseToolReturnPart:
     """The timestamp, when the tool returned."""
 
     def _split_content(self) -> tuple[list[Any], list[MultiModalContent]]:
-        """Split content into non-file and file parts.
-
-        Returns a tuple of (`non_files`, `files`) to ensure both `files` and
-        `content_excluding_files` stay in sync when content structure changes.
-        """
+        """Split content into non-file and file parts."""
         if is_multi_modal_content(self.content):
             return [], [self.content]
         elif isinstance(self.content, list):
@@ -883,37 +878,50 @@ class BaseToolReturnPart:
         return self._split_content()[1]
 
     @property
-    def content_excluding_files(self) -> list[Any]:
-        """Non-file content items from `content`, preserving original structure.
-
-        Filters out `MultiModalContent` objects (images, audio, documents, videos) and
-        returns remaining items (strings, dicts, etc.) as a list. Used by `model_response_str()`
-        and `model_response_object()` to serialize the data portion separately from files.
-        """
+    def _content_excluding_files(self) -> list[Any]:
         return self._split_content()[0]
 
-    @property
-    def content_items(self) -> list[ToolReturnContent]:
-        """Return content as a flat list for iteration.
+    def content_items(self, *, mode: Literal['raw', 'str', 'json'] = 'raw') -> list[ToolReturnContent]:
+        """Return content as a flat list for iteration, with optional serialization.
 
-        If content is already a list, returns it directly. Otherwise wraps single values in a list.
-        This provides a consistent iteration interface regardless of whether `content` is a single
-        value or a list.
+        Args:
+            mode: Controls serialization of non-file items:
+                - `'raw'`: No serialization. Returns items as-is.
+                - `'str'`: Non-file items are serialized to strings via `tool_return_ta`.
+                  File items (`MultiModalContent`) pass through unchanged.
+                - `'json'`: Non-file items are serialized to JSON-compatible Python objects
+                  via `tool_return_ta`. File items pass through unchanged.
         """
+        items: list[ToolReturnContent]
         if isinstance(self.content, list):
-            return self.content  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-        return [self.content]
+            items = self.content  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+        else:
+            items = [self.content]
+
+        if mode == 'raw':
+            return items
+
+        result: list[ToolReturnContent] = []
+        for item in items:
+            if is_multi_modal_content(item):
+                result.append(item)
+            elif mode == 'str':
+                result.append(item if isinstance(item, str) else tool_return_ta.dump_json(item).decode())
+            else:
+                result.append(item if isinstance(item, str) else tool_return_ta.dump_python(item, mode='json'))
+        return result
 
     def model_response_str(self) -> str:
         """Return a string representation of the data content for the model.
 
         This excludes multimodal files - use `.files` to get those separately.
         """
-        data = self.content_excluding_files
+        data = self._content_excluding_files
         if not data:
             return ''
-        # Unwrap single-item list only if original content was not explicitly a list
-        if len(data) == 1 and not isinstance(self.content, list):
+        # Unwrap single-item list when content was scalar or when files were filtered out,
+        # since the list may have only existed to bundle data alongside files
+        if len(data) == 1 and (not isinstance(self.content, list) or self.files):
             value = data[0]
         else:
             value = data
@@ -927,12 +935,12 @@ class BaseToolReturnPart:
         This excludes multimodal files - use `files` to get those separately.
         Gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict.
         """
-        data = self.content_excluding_files
+        data = self._content_excluding_files
         if not data:
             return {}
-        # Unwrap single-item list only if original content was not explicitly a list
-        # This preserves semantic meaning when tools intentionally return single-item lists
-        if len(data) == 1 and not isinstance(self.content, list):
+        # Unwrap single-item list when content was scalar or when files were filtered out,
+        # since the list may have only existed to bundle data alongside files
+        if len(data) == 1 and (not isinstance(self.content, list) or self.files):
             value = data[0]
         else:
             value = data

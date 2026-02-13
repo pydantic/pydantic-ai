@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from vcr.cassette import Cassette
 
 
-def get_cassette_request_bodies(cassette: Cassette) -> list[str]:
+def _get_cassette_request_bodies(cassette: Cassette) -> list[str]:
     """Get all request bodies from a VCR cassette as strings."""
     bodies: list[str] = []
     for request in cassette.requests:  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
@@ -29,7 +29,7 @@ def get_cassette_request_bodies(cassette: Cassette) -> list[str]:
     return bodies
 
 
-def get_xai_cassette_request_bodies(cassette_path: Path) -> list[str]:  # pragma: no cover
+def _get_xai_cassette_request_bodies(cassette_path: Path) -> list[str]:  # pragma: no cover
     """Get all request and response bodies from an XAI cassette as strings."""
     from tests.models.xai_proto_cassettes import (
         SampleInteraction,
@@ -57,24 +57,24 @@ def get_xai_cassette_request_bodies(cassette_path: Path) -> list[str]:  # pragma
     return bodies
 
 
-def sanitize_cassette_filename(name: str, max_length: int = 240) -> str:
+def _sanitize_cassette_filename(name: str, max_length: int = 240) -> str:
     """Sanitize filename to be filesystem-safe."""
     sanitized = re.sub(r'[<>:"/\\|?*]', '_', name)
     return sanitized[:max_length]
 
 
-def get_xai_cassette_path(test_name: str, test_module: str) -> Path:
+def _get_xai_cassette_path(test_name: str, test_module: str) -> Path:
     """Construct XAI cassette path following the same pattern as conftest.py.
 
     Args:
         test_name: The test function name with parameters.
         test_module: The test module name (without .py extension).
     """
-    cassette_name = sanitize_cassette_filename(test_name, 240)
+    cassette_name = _sanitize_cassette_filename(test_name, 240)
     return Path(__file__).parent / 'cassettes' / test_module / f'{cassette_name}.xai.yaml'
 
 
-def pattern_in_bodies(pattern: str, bodies: list[str]) -> bool:
+def _pattern_in_bodies(pattern: str, bodies: list[str]) -> bool:
     """Check if pattern exists in any of the request bodies."""
     return any(pattern in body for body in bodies)
 
@@ -95,12 +95,12 @@ class CassetteContext:
     def _get_bodies(self) -> list[str]:
         """Get request/response bodies from the appropriate cassette format."""
         if self.provider == 'xai':
-            cassette_path = get_xai_cassette_path(self.test_name, self.test_module)
+            cassette_path = _get_xai_cassette_path(self.test_name, self.test_module)
             if cassette_path.exists():  # pragma: no cover
-                return get_xai_cassette_request_bodies(cassette_path)
+                return _get_xai_cassette_request_bodies(cassette_path)
             return []
         if self.vcr is not None:
-            return get_cassette_request_bodies(self.vcr)
+            return _get_cassette_request_bodies(self.vcr)
         return []  # pragma: no cover
 
     def verify_contains(self, *patterns: str | tuple[str, ...]) -> None:
@@ -120,11 +120,11 @@ class CassetteContext:
 
         for pattern in patterns:
             if isinstance(pattern, tuple):
-                assert any(pattern_in_bodies(p, bodies) for p in pattern), (
+                assert any(_pattern_in_bodies(p, bodies) for p in pattern), (
                     f'Expected one of {pattern} in cassette but none found'
                 )
             else:
-                assert pattern_in_bodies(pattern, bodies), f'Expected "{pattern}" in cassette but not found'
+                assert _pattern_in_bodies(pattern, bodies), f'Expected "{pattern}" in cassette but not found'
 
     def verify_ordering(self, *patterns: str | tuple[str, ...]) -> None:
         """Verify that patterns appear in cassette bodies in the given order.

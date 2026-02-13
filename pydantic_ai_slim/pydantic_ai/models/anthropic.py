@@ -45,7 +45,6 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
-    tool_return_ta,
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
@@ -744,7 +743,7 @@ class AnthropicModel(Model):
                     elif isinstance(request_part, ToolReturnPart):
                         tool_result_content: list[beta_tool_result_block_param.Content] = []
 
-                        for item in request_part.content_items:
+                        for item in request_part.content_items(mode='str'):
                             if isinstance(item, BinaryContent):
                                 if item.is_image or item.is_document:
                                     tool_result_content.append(self._map_binary_data(item.data, item.media_type))
@@ -761,14 +760,8 @@ class AnthropicModel(Model):
                             elif isinstance(item, VideoUrl):
                                 raise NotImplementedError('VideoUrl is not supported for Anthropic tool returns')
                             else:
-                                # Data content (str, dict, etc.) - serialize to text
-                                if isinstance(item, str):
-                                    if item:  # Skip empty strings
-                                        tool_result_content.append(BetaTextBlockParam(text=item, type='text'))
-                                else:
-                                    tool_result_content.append(
-                                        BetaTextBlockParam(text=tool_return_ta.dump_json(item).decode(), type='text')
-                                    )
+                                assert isinstance(item, str)
+                                tool_result_content.append(BetaTextBlockParam(text=item, type='text'))
 
                         tool_result_block_param = beta_tool_result_block_param.BetaToolResultBlockParam(
                             tool_use_id=_guard_tool_call_id(t=request_part),
