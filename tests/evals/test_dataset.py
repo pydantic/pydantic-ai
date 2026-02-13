@@ -247,6 +247,7 @@ async def test_evaluate_async(
                 }
             },
             'span_id': '0000000000000003',
+            'source_case_name': None,
             'task_duration': 1.0,
             'total_duration': 10.0,
             'trace_id': '00000000000000000000000000000001',
@@ -300,6 +301,7 @@ async def test_evaluate_sync(
                 }
             },
             'span_id': '0000000000000003',
+            'source_case_name': None,
             'task_duration': IsNumber(),  # the runtime behavior is not deterministic due to threading
             'total_duration': IsNumber(),  # the runtime behavior is not deterministic due to threading
             'trace_id': '00000000000000000000000000000001',
@@ -381,6 +383,7 @@ async def test_evaluate_with_retried_task_and_evaluator(
                 }
             },
             'span_id': '0000000000000003',
+            'source_case_name': None,
             'task_duration': 1.0,
             'total_duration': 19.0,
             'trace_id': '00000000000000000000000000000001',
@@ -434,6 +437,7 @@ async def test_evaluate_with_concurrency(
                 }
             },
             'span_id': '0000000000000003',
+            'source_case_name': None,
             'task_duration': 1.0,
             'total_duration': 5.0,
             'trace_id': '00000000000000000000000000000001',
@@ -1773,3 +1777,215 @@ async def test_evaluate_with_experiment_metadata(example_dataset: Dataset[TaskIn
 
     # Verify that the report contains the experiment metadata
     assert report.experiment_metadata == experiment_metadata
+
+
+# --- Report evaluator serialization/deserialization tests ---
+
+
+async def test_serialization_to_yaml_with_report_evaluators(tmp_path: Path):
+    """Round-trip through YAML with built-in report evaluators."""
+    from pydantic_evals.evaluators import ConfusionMatrixEvaluator
+
+    dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
+        name='with_report_evals',
+        cases=[
+            Case(
+                name='case1',
+                inputs=TaskInput(query='test'),
+                expected_output=TaskOutput(answer='result'),
+            ),
+        ],
+        report_evaluators=[ConfusionMatrixEvaluator()],
+    )
+
+    yaml_path = tmp_path / 'test_report_eval.yaml'
+    dataset.to_file(yaml_path)
+
+    loaded = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(yaml_path)
+    assert len(loaded.report_evaluators) == 1
+    assert isinstance(loaded.report_evaluators[0], ConfusionMatrixEvaluator)
+    assert loaded.name == 'with_report_evals'
+
+
+async def test_serialization_to_json_with_report_evaluators(tmp_path: Path):
+    """Round-trip through JSON with built-in report evaluators."""
+    from pydantic_evals.evaluators import ConfusionMatrixEvaluator, PrecisionRecallEvaluator
+
+    dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
+        name='json_report_evals',
+        cases=[
+            Case(
+                name='case1',
+                inputs=TaskInput(query='test'),
+                expected_output=TaskOutput(answer='result'),
+            ),
+        ],
+        report_evaluators=[
+            ConfusionMatrixEvaluator(),
+            PrecisionRecallEvaluator(score_key='confidence', positive_from='assertions', positive_key='is_correct'),
+        ],
+    )
+
+    json_path = tmp_path / 'test_report_eval.json'
+    dataset.to_file(json_path)
+
+    loaded = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(json_path)
+    assert len(loaded.report_evaluators) == 2
+    assert isinstance(loaded.report_evaluators[0], ConfusionMatrixEvaluator)
+    assert isinstance(loaded.report_evaluators[1], PrecisionRecallEvaluator)
+    assert loaded.report_evaluators[1].score_key == 'confidence'
+    assert loaded.report_evaluators[1].positive_key == 'is_correct'
+
+
+async def test_from_text_with_report_evaluators():
+    """Deserialize report_evaluators from YAML text."""
+    from pydantic_evals.evaluators import ConfusionMatrixEvaluator
+
+    yaml_text = """\
+cases:
+  - name: c1
+    inputs:
+      query: hello
+report_evaluators:
+  - ConfusionMatrixEvaluator
+"""
+    loaded = Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(yaml_text)
+    assert len(loaded.report_evaluators) == 1
+    assert isinstance(loaded.report_evaluators[0], ConfusionMatrixEvaluator)
+
+
+async def test_from_text_with_report_evaluators_and_args():
+    """Deserialize report_evaluators with arguments from YAML text."""
+    from pydantic_evals.evaluators import ConfusionMatrixEvaluator
+
+    yaml_text = """\
+cases:
+  - name: c1
+    inputs:
+      query: hello
+report_evaluators:
+  - ConfusionMatrixEvaluator:
+      predicted_from: labels
+      predicted_key: pred
+      title: Custom CM
+"""
+    loaded = Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(yaml_text)
+    assert len(loaded.report_evaluators) == 1
+    cm = loaded.report_evaluators[0]
+    assert isinstance(cm, ConfusionMatrixEvaluator)
+    assert cm.predicted_from == 'labels'
+    assert cm.predicted_key == 'pred'
+    assert cm.title == 'Custom CM'
+
+
+async def test_custom_report_evaluator_round_trip(tmp_path: Path):
+    """Custom @dataclass report evaluator round-trip via custom_report_evaluator_types."""
+    from pydantic_evals.evaluators import ReportEvaluator, ReportEvaluatorContext
+    from pydantic_evals.reporting.analyses import ScalarResult
+
+    @dataclass
+    class MyAccuracy(ReportEvaluator):
+        threshold: float = 0.5
+
+        def evaluate(self, ctx: ReportEvaluatorContext) -> ScalarResult:  # pragma: no cover
+            return ScalarResult(title='Accuracy', value=100.0)
+
+    dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
+        name='custom_re',
+        cases=[Case(name='c1', inputs=TaskInput(query='hi'))],
+        report_evaluators=[MyAccuracy(threshold=0.8)],
+    )
+
+    yaml_path = tmp_path / 'custom_re.yaml'
+    dataset.to_file(yaml_path, custom_report_evaluator_types=[MyAccuracy])
+
+    loaded = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(
+        yaml_path, custom_report_evaluator_types=[MyAccuracy]
+    )
+    assert len(loaded.report_evaluators) == 1
+    assert isinstance(loaded.report_evaluators[0], MyAccuracy)
+    assert loaded.report_evaluators[0].threshold == 0.8
+
+
+async def test_report_evaluator_json_schema():
+    """Verify model_json_schema_with_evaluators includes report_evaluators property."""
+    schema = Dataset[TaskInput, TaskOutput, TaskMetadata].model_json_schema_with_evaluators()
+    assert 'report_evaluators' in schema['properties']
+
+
+def test_invalid_report_evaluator_type():
+    """Error on non-ReportEvaluator subclass or non-@dataclass."""
+    from pydantic_evals.evaluators import ReportEvaluator
+
+    class NotAReportEvaluator:
+        pass
+
+    with pytest.raises(ValueError, match='must be subclasses of ReportEvaluator'):
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_dict(
+            {'cases': []},
+            custom_report_evaluator_types=(NotAReportEvaluator,),  # type: ignore
+        )
+
+    class NotADataclass(ReportEvaluator):
+        def evaluate(self, ctx: Any) -> Any:  # pragma: no cover
+            pass
+
+    with pytest.raises(ValueError, match='must be decorated with `@dataclass`'):
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_dict(
+            {'cases': []}, custom_report_evaluator_types=(NotADataclass,)
+        )
+
+
+async def test_from_text_with_unknown_report_evaluator():
+    """Loading a YAML with an unknown report evaluator name raises an error."""
+    yaml_text = """\
+cases:
+  - name: c1
+    inputs:
+      query: hello
+report_evaluators:
+  - NonExistentEvaluator
+"""
+    with pytest.raises(ExceptionGroup, match='error.*loading evaluators'):
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(yaml_text)
+
+
+async def test_from_text_with_invalid_report_evaluator_args():
+    """Loading a report evaluator with invalid constructor args raises an error."""
+    yaml_text = """\
+cases:
+  - name: c1
+    inputs:
+      query: hello
+report_evaluators:
+  - ConfusionMatrixEvaluator:
+      nonexistent_param: true
+"""
+    with pytest.raises(ExceptionGroup, match='error.*loading evaluators'):
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(yaml_text)
+
+
+async def test_duplicate_report_evaluator_class_name():
+    """Duplicate custom report evaluator class names raise an error."""
+    from pydantic_evals.evaluators import ReportEvaluator, ReportEvaluatorContext
+    from pydantic_evals.reporting.analyses import ScalarResult
+
+    @dataclass
+    class DupeEvaluator(ReportEvaluator):
+        def evaluate(self, ctx: ReportEvaluatorContext) -> ScalarResult:  # pragma: no cover
+            return ScalarResult(title='x', value=0)
+
+    @dataclass
+    class DupeEvaluator2(ReportEvaluator):
+        def evaluate(self, ctx: ReportEvaluatorContext) -> ScalarResult:  # pragma: no cover
+            return ScalarResult(title='x', value=0)
+
+        @classmethod
+        def get_serialization_name(cls) -> str:
+            return 'DupeEvaluator'
+
+    with pytest.raises(ValueError, match='Duplicate report evaluator class name'):
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_dict(
+            {'cases': []},
+            custom_report_evaluator_types=(DupeEvaluator, DupeEvaluator2),
+        )
