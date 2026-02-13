@@ -160,6 +160,7 @@ To use Flex PayGo, set the `google_service_tier` in your model settings:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
+from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 from pydantic_ai.providers.google import GoogleProvider
 
@@ -168,10 +169,17 @@ provider = GoogleProvider(vertexai=True, location='global')
 model = GoogleModel('gemini-3-flash-preview', provider=provider)
 
 agent = Agent(model)
-result = await agent.run(
+result = agent.run_sync(
     'Hello!',
     model_settings=GoogleModelSettings(google_service_tier='flex'),
 )
+
+# Verify Flex PayGo was used by checking traffic_type in provider_details
+for message in result.all_messages():
+    if isinstance(message, ModelResponse) and message.provider_details:
+        traffic_type = message.provider_details.get('traffic_type')
+        if traffic_type == 'ON_DEMAND_FLEX':
+            print('Flex PayGo was used!')
 ```
 
 **Requirements:**
@@ -185,18 +193,6 @@ result = await agent.run(
 - `'flex_only'`: Use only Flex PayGo without provisioned throughput fallback.
 
 If you don't specify a service tier, standard pricing (not flex) is used.
-
-You can verify Flex PayGo was used by checking `traffic_type` in `provider_details`:
-
-```python {test="skip"}
-from pydantic_ai.messages import ModelResponse
-
-for message in result.all_messages():
-    if isinstance(message, ModelResponse) and message.provider_details:
-        traffic_type = message.provider_details.get('traffic_type')
-        if traffic_type == 'ON_DEMAND_FLEX':
-            print('Flex PayGo was used!')
-```
 
 #### Model Garden
 
