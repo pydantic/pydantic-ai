@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import KW_ONLY, dataclass, field
+from dataclasses import KW_ONLY, dataclass
 from typing import Any, cast
 
 from pydantic import TypeAdapter
@@ -101,6 +101,8 @@ def build_code_mode_prompt(signatures: list[FunctionSignature], runtime_instruct
 @dataclass(kw_only=True)
 class _CodeModeTool(ToolsetTool[AgentDepsT]):
     original_tools: dict[str, ToolsetTool[AgentDepsT]]
+    cached_signatures: list[FunctionSignature]
+    name_map: dict[str, str]
 
 
 @dataclass(init=False)
@@ -121,13 +123,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     runtime: CodeRuntime
     prompt_builder: Callable[[list[FunctionSignature], str | None], str] = build_code_mode_prompt
     max_retries: int = 3
-
-    # Note: _cached_signatures and _name_map are mutable instance state populated in get_tools()
-    # and consumed in call_tool(). This class is not safe for concurrent use from multiple agent
-    # runs on the same instance. The agent framework runs a single loop per toolset instance,
-    # so this is fine in practice.
-    _cached_signatures: list[FunctionSignature] | None = field(default=None, init=False, repr=False)
-    _name_map: dict[str, str] = field(default_factory=dict[str, str], init=False, repr=False)
 
     def __init__(
         self,
@@ -163,7 +158,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 sanitized = f'{base}_{counter}'
                 counter += 1
             name_map[sanitized] = original_name
-        self._name_map = name_map
 
         sanitized_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         signatures: list[FunctionSignature] = []
@@ -175,13 +169,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         dedup_referenced_types(signatures)
 
-        self._cached_signatures = signatures
-
         description = self.prompt_builder(signatures, self.runtime.instructions)
         return {
             _CODE_MODE_TOOL_NAME: _CodeModeTool(
                 toolset=self,
                 original_tools=sanitized_tools,
+                cached_signatures=signatures,
+                name_map=name_map,
                 tool_def=ToolDefinition(
                     name=_CODE_MODE_TOOL_NAME,
                     parameters_json_schema=_CODE_ADAPTER.json_schema(),
@@ -258,13 +252,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             raise exceptions.UserError(
                 f'CodeModeToolset.call_tool expected code to be a string, got {type(code).__name__}'
             )
-        if self._cached_signatures is None:
-            raise exceptions.UserError('CodeModeToolset.call_tool called before get_tools — signatures not initialized')
 
         original_name_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         sanitized_to_original: dict[str, str] = {}
         for sanitized, t in tool.original_tools.items():
-            orig = self._name_map.get(sanitized, sanitized)
+            orig = tool.name_map.get(sanitized, sanitized)
             original_name_tools[orig] = t
             sanitized_to_original[sanitized] = orig
 
@@ -278,7 +270,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         functions = list(tool.original_tools.keys())
 
         try:
-            return await self.runtime.run(code, functions, callback, signatures=self._cached_signatures)
+            return await self.runtime.run(code, functions, callback, signatures=tool.cached_signatures)
         except CodeTypingError as e:
             raise ModelRetry(f'Type error in generated code:\n{e.message}') from e
         except CodeSyntaxError as e:

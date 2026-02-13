@@ -54,10 +54,10 @@ main.py:1:16: error[invalid-argument-type] Argument to function `add` is incorre
 
 async def test_generated_signatures_are_valid_python():
     """Generated signatures must be valid Python that Monty can parse and type check."""
-    code_mode, _tools = await build_code_mode_toolset(MontyRuntime(), (add, False))
+    _, tools = await build_code_mode_toolset(MontyRuntime(), (add, False))
 
-    assert code_mode._cached_signatures is not None  # pyright: ignore[reportPrivateUsage]
-    prefix = _build_type_check_prefix(code_mode._cached_signatures)  # pyright: ignore[reportPrivateUsage]
+    tool = tools['run_code_with_tools']
+    prefix = _build_type_check_prefix(tool.cached_signatures)
 
     # `...` and `pass` are not valid for Monty/ty type checking — ty is intentionally
     # stricter than pyright here. See https://github.com/astral-sh/ty/issues/1922
@@ -75,17 +75,17 @@ async def add(*, x: int, y: int) -> int:
 
 async def test_signatures_use_ellipsis_monty_converts_for_type_check():
     """Signatures use '...' body; Monty converts to 'raise NotImplementedError()' for type checking."""
-    code_mode, tools = await build_code_mode_toolset(MontyRuntime(), (add, False))
+    _code_mode, tools = await build_code_mode_toolset(MontyRuntime(), (add, False))
+
+    tool = tools['run_code_with_tools']
 
     # LLM-facing description should have '...'
-    description = tools['run_code_with_tools'].tool_def.description or ''
+    description = tool.tool_def.description or ''
     assert '...' in description
     assert 'raise NotImplementedError()' not in description
 
-    assert code_mode._cached_signatures is not None  # pyright: ignore[reportPrivateUsage]
-
     # But when Monty builds the type-check prefix, it converts to 'raise NotImplementedError()'
-    prefix = _build_type_check_prefix(code_mode._cached_signatures)  # pyright: ignore[reportPrivateUsage]
+    prefix = _build_type_check_prefix(tool.cached_signatures)
     assert 'raise NotImplementedError()' in prefix
     assert '    ...' not in prefix
 
