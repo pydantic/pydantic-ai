@@ -82,6 +82,7 @@ from ..parts_from_messages import part_types_from_messages
 with try_import() as imports_successful:
     from google.genai import errors
     from google.genai.types import (
+        BlockedReason,
         FinishReason as GoogleFinishReason,
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
@@ -5726,3 +5727,81 @@ async def test_google_prepends_empty_user_turn_when_first_content_is_model(googl
             },
         ]
     )
+
+
+async def test_google_prompt_feedback_non_streaming(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """Test that prompt_feedback with block_reason raises ContentFilterError when candidates are empty."""
+    model_name = 'gemini-2.5-flash'
+    model = GoogleModel(model_name, provider=google_provider)
+
+    safety_rating = mocker.Mock(category='HARM_CATEGORY_DANGEROUS_CONTENT', probability='HIGH', blocked=True)
+    safety_rating.model_dump.return_value = {
+        'category': 'HARM_CATEGORY_DANGEROUS_CONTENT',
+        'probability': 'HIGH',
+        'blocked': True,
+    }
+
+    prompt_feedback = mocker.Mock(
+        block_reason=BlockedReason.PROHIBITED_CONTENT,
+        block_reason_message='The prompt was blocked.',
+        safety_ratings=[safety_rating],
+    )
+
+    response = mocker.Mock(
+        candidates=[],
+        prompt_feedback=prompt_feedback,
+        response_id='resp_123',
+        model_version=model_name,
+        usage_metadata=None,
+        create_time=datetime.datetime.now(),
+    )
+
+    mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+
+    agent = Agent(model=model)
+
+    with pytest.raises(ContentFilterError, match="Content filter triggered. Finish reason: 'PROHIBITED_CONTENT'"):
+        await agent.run('prohibited content')
+
+
+async def test_google_prompt_feedback_streaming(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """Test that prompt_feedback with block_reason raises ContentFilterError in streaming mode."""
+    model_name = 'gemini-2.5-flash'
+    model = GoogleModel(model_name, provider=google_provider)
+
+    safety_rating = mocker.Mock(category='HARM_CATEGORY_DANGEROUS_CONTENT', probability='HIGH', blocked=True)
+    safety_rating.model_dump.return_value = {
+        'category': 'HARM_CATEGORY_DANGEROUS_CONTENT',
+        'probability': 'HIGH',
+        'blocked': True,
+    }
+
+    prompt_feedback = mocker.Mock(
+        block_reason=BlockedReason.PROHIBITED_CONTENT,
+        block_reason_message='The prompt was blocked.',
+        safety_ratings=[safety_rating],
+    )
+
+    chunk = mocker.Mock(
+        candidates=[],
+        model_version=model_name,
+        usage_metadata=None,
+        create_time=datetime.datetime.now(),
+        response_id='resp_123',
+        prompt_feedback=prompt_feedback,
+    )
+
+    async def stream_iterator():
+        yield chunk
+
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=stream_iterator())
+
+    agent = Agent(model=model)
+
+    with pytest.raises(ContentFilterError, match="Content filter triggered. Finish reason: 'PROHIBITED_CONTENT'"):
+        async with agent.run_stream('prohibited content'):
+            pass

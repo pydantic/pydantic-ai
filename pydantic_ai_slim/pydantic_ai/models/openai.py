@@ -783,6 +783,24 @@ class OpenAIChatModel(Model):
 
         choice = response.choices[0]
 
+        # Handle refusal responses (structured output safety filter)
+        if choice.message.refusal:
+            provider_details = self._process_provider_details(response) or {}
+            provider_details['refusal'] = choice.message.refusal
+            if response.created:  # pragma: no branch
+                provider_details['timestamp'] = number_to_datetime(response.created)
+            return ModelResponse(
+                parts=[],
+                usage=self._map_usage(response),
+                model_name=response.model,
+                timestamp=_now_utc(),
+                provider_details=provider_details or None,
+                provider_response_id=response.id,
+                provider_name=self._provider.name,
+                provider_url=self._provider.base_url,
+                finish_reason='content_filter',
+            )
+
         items: list[ModelResponsePart] = []
 
         if thinking_parts := self._process_thinking(choice.message):
@@ -1399,6 +1417,7 @@ class OpenAIResponsesModel(Model):
     ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         items: list[ModelResponsePart] = []
+        refusal_text: str | None = None
         for item in response.output:
             if isinstance(item, responses.ResponseReasoningItem):
                 signature = item.encrypted_content
@@ -1435,7 +1454,9 @@ class OpenAIResponsesModel(Model):
                     )
             elif isinstance(item, responses.ResponseOutputMessage):
                 for content in item.content:
-                    if isinstance(content, responses.ResponseOutputText):  # pragma: no branch
+                    if isinstance(content, responses.ResponseOutputRefusal):
+                        refusal_text = content.refusal
+                    elif isinstance(content, responses.ResponseOutputText):  # pragma: no branch
                         part_provider_details: dict[str, Any] | None = None
                         if content.logprobs:
                             part_provider_details = {'logprobs': _map_logprobs(content.logprobs)}
@@ -1507,6 +1528,11 @@ class OpenAIResponsesModel(Model):
             finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
         if response.created_at:  # pragma: no branch
             provider_details['timestamp'] = number_to_datetime(response.created_at)
+
+        if refusal_text is not None:
+            items = []
+            finish_reason = 'content_filter'
+            provider_details['refusal'] = refusal_text
 
         return ModelResponse(
             parts=items,
@@ -2192,6 +2218,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _model_settings: OpenAIChatModelSettings | None = None
+    _has_refusal: bool = field(default=False, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         if self._provider_timestamp is not None:  # pragma: no branch
@@ -2220,8 +2247,19 @@ class OpenAIStreamedResponse(StreamedResponse):
             if choice.delta is None:  # pyright: ignore[reportUnnecessaryComparison]
                 continue
 
+            # Handle refusal responses (structured output safety filter)
+            if choice.delta.refusal:
+                self._has_refusal = True
+                self.finish_reason = 'content_filter'
+                self.provider_details = {
+                    **(self.provider_details or {}),
+                    'refusal': (self.provider_details or {}).get('refusal', '') + choice.delta.refusal,
+                }
+                continue
+
             if raw_finish_reason := choice.finish_reason:
-                self.finish_reason = self._map_finish_reason(raw_finish_reason)
+                if not self._has_refusal:
+                    self.finish_reason = self._map_finish_reason(raw_finish_reason)
 
             if provider_details := self._map_provider_details(chunk):  # pragma: no branch
                 self.provider_details = {**(self.provider_details or {}), **provider_details}
@@ -2362,6 +2400,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
+    _has_refusal: bool = field(default=False, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         # Track annotations by item_id and content_index
@@ -2381,7 +2420,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
                 if raw_finish_reason:  # pragma: no branch
                     self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
-                    self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
+                    if not self._has_refusal:
+                        self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
 
             elif isinstance(chunk, responses.ResponseContentPartAddedEvent):
                 pass  # there's nothing we need to do here
@@ -2610,6 +2650,19 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         provider_details=provider_details,
                     ):
                         yield event
+
+            elif isinstance(chunk, responses.ResponseRefusalDeltaEvent):
+                self._has_refusal = True
+                self.finish_reason = 'content_filter'
+                self.provider_details = {
+                    **(self.provider_details or {}),
+                    'refusal': (self.provider_details or {}).get('refusal', '') + chunk.delta,
+                }
+
+            elif isinstance(chunk, responses.ResponseRefusalDoneEvent):
+                self._has_refusal = True
+                self.finish_reason = 'content_filter'
+                self.provider_details = {**(self.provider_details or {}), 'refusal': chunk.refusal}
 
             elif isinstance(chunk, responses.ResponseWebSearchCallInProgressEvent):
                 pass  # there's nothing we need to do here

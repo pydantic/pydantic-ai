@@ -572,6 +572,17 @@ class GoogleModel(Model):
             if candidate.safety_ratings:
                 vendor_details['safety_ratings'] = [r.model_dump(by_alias=True) for r in candidate.safety_ratings]
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+        elif candidate is None and response.prompt_feedback and response.prompt_feedback.block_reason:
+            block_reason = response.prompt_feedback.block_reason
+            vendor_details['finish_reason'] = block_reason.value
+            vendor_details['block_reason'] = block_reason.value
+            if response.prompt_feedback.block_reason_message:
+                vendor_details['block_reason_message'] = response.prompt_feedback.block_reason_message
+            if response.prompt_feedback.safety_ratings:
+                vendor_details['safety_ratings'] = [
+                    r.model_dump(by_alias=True) for r in response.prompt_feedback.safety_ratings
+                ]
+            finish_reason = 'content_filter'
 
         if response.create_time is not None:  # pragma: no branch
             vendor_details['timestamp'] = response.create_time
@@ -788,7 +799,21 @@ class GeminiStreamedResponse(StreamedResponse):
             self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url)
 
             if not chunk.candidates:
-                continue  # pragma: no cover
+                if chunk.prompt_feedback and chunk.prompt_feedback.block_reason:
+                    block_reason = chunk.prompt_feedback.block_reason
+                    self.provider_details = {
+                        **(self.provider_details or {}),
+                        'finish_reason': block_reason.value,
+                        'block_reason': block_reason.value,
+                    }
+                    if chunk.prompt_feedback.block_reason_message:
+                        self.provider_details['block_reason_message'] = chunk.prompt_feedback.block_reason_message
+                    if chunk.prompt_feedback.safety_ratings:
+                        self.provider_details['safety_ratings'] = [
+                            r.model_dump(by_alias=True) for r in chunk.prompt_feedback.safety_ratings
+                        ]
+                    self.finish_reason = 'content_filter'
+                continue
 
             candidate = chunk.candidates[0]
 
