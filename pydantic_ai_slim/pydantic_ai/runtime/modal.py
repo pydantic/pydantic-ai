@@ -82,23 +82,27 @@ class ModalRuntime(DriverBasedRuntime):
             sandbox_kwargs['timeout'] = self.timeout
         sandbox = await modal.Sandbox.create.aio(**sandbox_kwargs)  # pyright: ignore[reportUnknownMemberType]
 
-        # Upload the driver script into the sandbox
-        driver_src = Path(__file__).parent / '_driver.py'
-        driver_content = driver_src.read_text()
+        try:
+            # Upload the driver script into the sandbox
+            driver_src = Path(__file__).parent / '_driver.py'
+            driver_content = driver_src.read_text()
 
-        def _upload_driver() -> None:
-            with sandbox.open('/tmp/pydantic_ai_driver.py', 'w') as f:  # pyright: ignore[reportUnknownVariableType]
-                f.write(driver_content)
+            def _upload_driver() -> None:
+                with sandbox.open('/tmp/pydantic_ai_driver.py', 'w') as f:  # pyright: ignore[reportUnknownVariableType]
+                    f.write(driver_content)
 
-        await asyncio.to_thread(_upload_driver)
+            await asyncio.to_thread(_upload_driver)
 
-        # Start the driver process with line buffering.
-        # Pass execution_timeout as a native per-exec timeout so Modal kills
-        # the process server-side even if the local asyncio.wait_for doesn't fire.
-        exec_timeout = math.ceil(self.execution_timeout) if self.execution_timeout is not None else None
-        process = await sandbox.exec.aio('python', '-u', '/tmp/pydantic_ai_driver.py', bufsize=1, timeout=exec_timeout)
+            # Start the driver process with line buffering.
+            # Pass execution_timeout as a native per-exec timeout so Modal kills
+            # the process server-side even if the local asyncio.wait_for doesn't fire.
+            exec_timeout = math.ceil(self.execution_timeout) if self.execution_timeout is not None else None
+            process = await sandbox.exec.aio('python', '-u', '/tmp/pydantic_ai_driver.py', bufsize=1, timeout=exec_timeout)
 
-        driver = _ModalDriverTransport(process, sandbox)
-        init_line = json.dumps(init_msg).encode() + b'\n'
-        await driver.write_line(init_line)
-        return driver
+            driver = _ModalDriverTransport(process, sandbox)
+            init_line = json.dumps(init_msg).encode() + b'\n'
+            await driver.write_line(init_line)
+            return driver
+        except BaseException:
+            await sandbox.terminate.aio()
+            raise

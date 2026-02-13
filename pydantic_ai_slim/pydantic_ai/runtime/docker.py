@@ -166,9 +166,16 @@ class DockerRuntime(DriverBasedRuntime):
                 if self.container_id is None:
                     await self._create_container()
                     self._managed = True
-                if not self._driver_copied:
-                    await self._copy_driver()
-                    self._driver_copied = True
+                try:
+                    if not self._driver_copied:
+                        await self._copy_driver()
+                        self._driver_copied = True
+                except BaseException:
+                    if self._managed:
+                        await self._remove_container()
+                        self.container_id = None
+                        self._managed = False
+                    raise
             self._running_count += 1
         return self
 
@@ -340,3 +347,11 @@ class DockerRuntime(DriverBasedRuntime):
             stderr=asyncio.subprocess.PIPE,
         )
         await proc.wait()
+        if proc.returncode != 0:
+            stderr = await proc.stderr.read() if proc.stderr else b''
+            import warnings
+
+            warnings.warn(
+                f'Failed to remove Docker container {self.container_id}: {stderr.decode().strip()}',
+                stacklevel=2,
+            )
