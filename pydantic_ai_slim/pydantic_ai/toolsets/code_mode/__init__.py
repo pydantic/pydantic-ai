@@ -174,9 +174,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         # Pre-compute reverse mappings (sanitized→original name, original→tool)
         sanitized_to_original = {s: o for s, o in name_map.items()}
-        original_name_tools: dict[str, ToolsetTool[AgentDepsT]] = {
-            name_map[s]: t for s, t in sanitized_tools.items()
-        }
+        original_name_tools: dict[str, ToolsetTool[AgentDepsT]] = {name_map[s]: t for s, t in sanitized_tools.items()}
 
         description = self.prompt_builder(signatures, self.runtime.instructions)
         return {
