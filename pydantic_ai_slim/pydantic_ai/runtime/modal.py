@@ -89,7 +89,7 @@ class ModalRuntime(DriverBasedRuntime):
 
             def _upload_driver() -> None:
                 with sandbox.open('/tmp/pydantic_ai_driver.py', 'w') as f:  # pyright: ignore[reportUnknownVariableType]
-                    f.write(driver_content)
+                    f.write(driver_content)  # pyright: ignore[reportUnknownMemberType]
 
             await asyncio.to_thread(_upload_driver)
 

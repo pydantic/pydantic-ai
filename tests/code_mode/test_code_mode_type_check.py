@@ -8,10 +8,7 @@ from inline_snapshot import snapshot
 try:
     from pydantic_monty import Monty
 
-    from pydantic_ai.runtime.monty import (
-        MontyRuntime,
-        _build_type_check_prefix,  # pyright: ignore[reportPrivateUsage]
-    )
+    from pydantic_ai.runtime.monty import MontyRuntime
 except ImportError:  # pragma: lax no cover
     pytest.skip('pydantic-monty is not installed', allow_module_level=True)
 
@@ -54,10 +51,11 @@ main.py:1:16: error[invalid-argument-type] Argument to function `add` is incorre
 
 async def test_generated_signatures_are_valid_python():
     """Generated signatures must be valid Python that Monty can parse and type check."""
-    _, tools = await build_code_mode_toolset(MontyRuntime(), (add, False))
+    runtime = MontyRuntime()
+    _, tools = await build_code_mode_toolset(runtime, (add, False))
 
     tool = tools['run_code_with_tools']
-    prefix = _build_type_check_prefix(tool.cached_signatures)
+    prefix = runtime._build_type_check_prefix(tool.signatures, tool.referenced_types)  # pyright: ignore[reportPrivateUsage]
 
     # `...` and `pass` are not valid for Monty/ty type checking — ty is intentionally
     # stricter than pyright here. See https://github.com/astral-sh/ty/issues/1922
@@ -75,7 +73,8 @@ async def add(*, x: int, y: int) -> int:
 
 async def test_signatures_use_ellipsis_monty_converts_for_type_check():
     """Signatures use '...' body; Monty converts to 'raise NotImplementedError()' for type checking."""
-    _code_mode, tools = await build_code_mode_toolset(MontyRuntime(), (add, False))
+    runtime = MontyRuntime()
+    _code_mode, tools = await build_code_mode_toolset(runtime, (add, False))
 
     tool = tools['run_code_with_tools']
 
@@ -85,7 +84,7 @@ async def test_signatures_use_ellipsis_monty_converts_for_type_check():
     assert 'raise NotImplementedError()' not in description
 
     # But when Monty builds the type-check prefix, it converts to 'raise NotImplementedError()'
-    prefix = _build_type_check_prefix(tool.cached_signatures)
+    prefix = runtime._build_type_check_prefix(tool.signatures, tool.referenced_types)  # pyright: ignore[reportPrivateUsage]
     assert 'raise NotImplementedError()' in prefix
     assert '    ...' not in prefix
 
@@ -133,8 +132,8 @@ def test_dedup_referenced_types_substring_names():
     # UserMeta must be untouched
     assert user_meta.name == 'UserMeta'
     # Params render correctly
-    assert sig2.params['user'].render() == 'user: tool_b_User'
-    assert sig2.params['meta'].render() == 'meta: UserMeta'
+    assert str(sig2.params['user']) == 'user: tool_b_User'
+    assert str(sig2.params['meta']) == 'meta: UserMeta'
     assert render_type_expr(sig2.return_type) == 'UserMeta'
 
 
@@ -234,11 +233,11 @@ def test_dedup_mixed_identical_and_conflicting_from_schemas():
 
     # sig3's User was renamed to tool_c_User
     assert sig3.referenced_types[0].name == 'tool_c_User'
-    assert sig3.params['user'].render() == 'user: tool_c_User'
+    assert str(sig3.params['user']) == 'user: tool_c_User'
 
     # collect_unique_referenced_types returns exactly 2 unique types
     unique_types = collect_unique_referenced_types([sig1, sig2, sig3])
-    assert [t.render() for t in unique_types] == snapshot(
+    assert [str(t) for t in unique_types] == snapshot(
         [
             """\
 class User(TypedDict):
@@ -283,11 +282,11 @@ def test_dedup_composite_type_expr_rename_propagates():
     # user2 was renamed in place
     assert user2.name == 'tool_b_User'
     # The list[User] now renders as list[tool_b_User]
-    assert sig2.params['users'].render() == 'users: list[tool_b_User]'
+    assert str(sig2.params['users']) == 'users: list[tool_b_User]'
 
 
 def test_render_type_signature():
-    """TypeSignature.render() produces a valid TypedDict class definition."""
+    """TypeSignature renders a valid TypedDict class definition."""
     ts = TypeSignature(
         name='User',
         fields={
@@ -295,7 +294,7 @@ def test_render_type_signature():
             'age': TypeFieldSignature(name='age', type='int', required=False, description='The age'),
         },
     )
-    assert ts.render() == snapshot("""\
+    assert str(ts) == snapshot("""\
 class User(TypedDict):
     name: str
     age: NotRequired[int]
@@ -306,37 +305,37 @@ class User(TypedDict):
 def test_render_type_signature_empty():
     """Empty TypeSignature renders with pass."""
     ts = TypeSignature(name='Empty')
-    assert ts.render() == 'class Empty(TypedDict):\n    pass'
+    assert str(ts) == 'class Empty(TypedDict):\n    pass'
 
 
 def test_render_generic_type_expr():
     """GenericTypeExpr renders correctly."""
     user = TypeSignature(name='User')
     expr = GenericTypeExpr(base='list', args=[user])
-    assert expr.render() == 'list[User]'
+    assert str(expr) == 'list[User]'
 
     dict_expr = GenericTypeExpr(base='dict', args=['str', GenericTypeExpr(base='list', args=[user])])
-    assert dict_expr.render() == 'dict[str, list[User]]'
+    assert str(dict_expr) == 'dict[str, list[User]]'
 
 
 def test_render_union_type_expr():
     """UnionTypeExpr renders correctly."""
     user = TypeSignature(name='User')
     expr = UnionTypeExpr(members=[user, 'None'])
-    assert expr.render() == 'User | None'
+    assert str(expr) == 'User | None'
 
 
 def test_render_function_param():
-    """FunctionParam.render() produces correct parameter strings."""
+    """FunctionParam renders correct parameter strings."""
     p1 = FunctionParam(name='x', type='int', default=None)
-    assert p1.render() == 'x: int'
+    assert str(p1) == 'x: int'
 
     p2 = FunctionParam(name='y', type='str', default="'hello'")
-    assert p2.render() == "y: str = 'hello'"
+    assert str(p2) == "y: str = 'hello'"
 
     user = TypeSignature(name='User')
     p3 = FunctionParam(name='user', type=user, default=None)
-    assert p3.render() == 'user: User'
+    assert str(p3) == 'user: User'
 
 
 def test_structurally_equal():

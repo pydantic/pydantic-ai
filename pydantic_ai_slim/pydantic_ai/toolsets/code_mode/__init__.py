@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import warnings
+import keyword
+import re
 from collections.abc import Callable
 from dataclasses import KW_ONLY, dataclass
-from typing import Any, cast
+from typing import Any, TypeAlias, cast
 
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 from typing_extensions import Self, TypedDict
 
 from pydantic_ai.messages import tool_return_ta
@@ -22,7 +23,12 @@ from pydantic_ai.runtime.abstract import (
 )
 
 from ... import exceptions
-from ..._python_signature import FunctionSignature, collect_unique_referenced_types, dedup_referenced_types
+from ..._python_signature import (
+    FunctionSignature,
+    TypeSignature,
+    collect_unique_referenced_types,
+    dedup_referenced_types,
+)
 from ..._run_context import AgentDepsT, RunContext
 from ..._tool_manager import ToolManager
 from ...exceptions import ApprovalRequired, CallDeferred, ModelRetry
@@ -30,12 +36,14 @@ from ...messages import ToolCallPart
 from ...tools import ToolDefinition
 from ..abstract import AbstractToolset, SchemaValidatorProt, ToolsetTool
 from ..wrapper import WrapperToolset
-from ._sanitization import sanitize_tool_name
 
 __all__ = (
     'CodeModeToolset',
+    'DescriptionFunc',
     'FunctionSignature',
-    'build_code_mode_prompt',
+    'TypeSignature',
+    'build_default_code_mode_description',
+    'ToolCallback',
 )
 
 
@@ -44,53 +52,67 @@ class _CodeToolArguments(TypedDict):
 
 
 _CODE_ADAPTER = TypeAdapter(_CodeToolArguments)
+_CODE_VALIDATOR = _CODE_ADAPTER.validator
+_CODE_JSON_SCHEMA = _CODE_ADAPTER.json_schema()
 _CODE_MODE_TOOL_NAME = 'run_code_with_tools'
 
 # TODO: The first line of the prompt should be customizable by the user using Prompt Templates #3656
+# TODO (DouweM): Explain the use case of codemode to the model, e.g. filtering data to save context. See if we can find the prompt that Anthropic PTC uses.
 _CODE_MODE_PROMPT = """
-Use `run_code_with_tools` to write Python code that calls the available functions. You can make a single call or combine multiple steps in a script — use your judgment based on the task.
+Use this tool to run Python code that can call other tools as functions, also known as "code mode" or "programmatic tool calling".
+
+You can use it to:
+- filter tool return data to save context,
+- perform complex operations that would take many model calls using standard tool calling, or
+- pass the result of one tool to another without it entering your context window.
 
 Execution model:
-- Each `run_code_with_tools` call runs in an isolated environment — variables don't persist between calls
-- Functions are async — call with `await`, e.g. `result = await get_items()`
-- To run independent calls concurrently, fire them first, then await:
-  ```python
-  future_a = get_items()    # starts immediately
-  future_b = get_users()    # starts immediately
-  items = await future_a    # wait for results
-  users = await future_b
-  ```
-- The last expression evaluated is the return value
-- Return raw data when it answers the question directly; extract or transform when needed
+- Each call to this tool runs in an isolated environment — variables don't persist between calls
+- All functions are async. You can create new functions for convenience.
 """
 
 
-def build_code_mode_prompt(signatures: list[FunctionSignature], runtime_instructions: str | None) -> str:
-    """Build the default code mode prompt with the given tool signatures.
+DescriptionFunc: TypeAlias = Callable[[list[FunctionSignature], list[TypeSignature], str | None], str]
+"""Callback type for building the code mode tool description.
 
-    This is the default prompt builder used by CodeModeToolset. Users can provide
-    their own prompt_builder callback to customize the prompt entirely.
+Receives the function signatures, their referenced types, and optional
+runtime-specific instructions. Returns the complete tool description string.
+"""
+
+
+def build_default_code_mode_description(
+    signatures: list[FunctionSignature],
+    referenced_types: list[TypeSignature],
+    runtime_instructions: str | None,
+    *,
+    description: str = _CODE_MODE_PROMPT,
+) -> str:
+    """Build the default code mode tool description with the given tool signatures.
+
+    This is the default description builder used by CodeModeToolset. Users can provide
+    their own callback via the ``description`` parameter, or pass a string to customize
+    just the preamble text while keeping the default structure.
 
     Args:
         signatures: List of Python function signatures for available tools.
-        runtime_instructions: Runtime-specific text to include in the prompt (from
-            `CodeRuntime.instructions()`). Inserted verbatim if non-empty.
+        referenced_types: Unique type definitions referenced by the signatures.
+        runtime_instructions: Runtime-specific text to include in the description (from
+            `CodeRuntime.instructions`). Inserted verbatim if non-empty.
+        description: Custom preamble text to use instead of the built-in default.
 
     Returns:
-        The complete prompt describing code mode capabilities and available functions.
+        The complete description string with preamble, available types, and function signatures.
     """
-    parts = [_CODE_MODE_PROMPT]
+    parts = [description]
 
     if runtime_instructions:
         parts.append(runtime_instructions)
 
     parts.append('```python')
 
-    referenced_types = collect_unique_referenced_types(signatures)
-
     if referenced_types:
         parts.append('# Available types:')
-        parts.append('\n\n'.join(t.render() for t in referenced_types))
+        parts.append('\n\n'.join(str(t) for t in referenced_types))
 
     parts.append('# Available functions:')
     parts.extend(str(sig) for sig in signatures)
@@ -102,10 +124,10 @@ def build_code_mode_prompt(signatures: list[FunctionSignature], runtime_instruct
 
 @dataclass(kw_only=True)
 class _CodeModeTool(ToolsetTool[AgentDepsT]):
-    original_tools: dict[str, ToolsetTool[AgentDepsT]]
-    cached_signatures: list[FunctionSignature]
+    signatures: list[FunctionSignature]
+    referenced_types: list[TypeSignature]
     name_map: dict[str, str]
-    original_name_tools: dict[str, ToolsetTool[AgentDepsT]]
+    tools: dict[str, ToolsetTool[AgentDepsT]]
 
 
 @dataclass(init=False)
@@ -114,9 +136,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     Args:
         wrapped: The underlying toolset to wrap.
-        prompt_builder: Optional callback to build a custom prompt. If not provided,
-            uses `build_code_mode_prompt`. The callback receives `signatures` as a
-            keyword argument containing the list of Python function signatures.
+        description: Custom tool description. Can be a string (used as the preamble text
+            with the default structure) or a `DescriptionFunc` callback for full control.
+            Defaults to `build_default_code_mode_description`.
         max_retries: Maximum number of retries for code execution errors (type/syntax/runtime).
             Defaults to 3. Increase for complex code generation tasks or less capable models.
     """
@@ -124,7 +146,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     _: KW_ONLY
 
     runtime: CodeRuntime
-    prompt_builder: Callable[[list[FunctionSignature], str | None], str] = build_code_mode_prompt
+    description: str | DescriptionFunc
     max_retries: int = 3
 
     def __init__(
@@ -132,13 +154,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         wrapped: AbstractToolset[AgentDepsT],
         *,
         runtime: CodeRuntime | RuntimeName = 'monty',
-        prompt_builder: Callable[[list[FunctionSignature], str | None], str] = build_code_mode_prompt,
+        description: str | DescriptionFunc = build_default_code_mode_description,
         max_retries: int = 3,
     ) -> None:
         if isinstance(runtime, str):
             runtime = get_runtime(runtime)
         self.runtime = runtime
-        self.prompt_builder = prompt_builder
+
+        self.description = description
         self.max_retries = max_retries
         super().__init__(wrapped)
 
@@ -157,7 +180,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             await self.runtime.__aexit__(*args)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        wrapped_tools = await super().get_tools(ctx)
+        tools = await super().get_tools(ctx)
+
+        deferred_tools = [name for name, tool in tools.items() if tool.tool_def.defer]
+        if deferred_tools:
+            raise exceptions.UserError(
+                'Tool approval and deferral are not yet supported in code mode. '
+                'Ensure wrapped tools do not use approval or deferral when used with CodeModeToolset.'
+            )
 
         # Build sanitized name map: {sanitized_name: original_name}
         # Code mode presents tools as Python function signatures to the LLM, which writes
@@ -167,8 +197,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # get_tools() time and the renaming is internal (never exposed to the agent
         # framework — all tools are collapsed into a single 'run_code_with_tools' tool).
         name_map: dict[str, str] = {}  # {sanitized: original}
-        for original_name in wrapped_tools:
-            sanitized = sanitize_tool_name(original_name)
+        for original_name in tools:
+            sanitized = _sanitize_tool_name(original_name)
             base = sanitized
             counter = 2
             while sanitized in name_map:
@@ -176,132 +206,135 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 counter += 1
             name_map[sanitized] = original_name
 
-        sanitized_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
-        signatures: list[FunctionSignature] = []
-
-        for sanitized_name, original_name in name_map.items():
-            tool = wrapped_tools[original_name]
-            sanitized_tools[sanitized_name] = tool
-            signatures.append(tool.python_signature(name_override=sanitized_name))
+        signatures = [
+            # TODO (DouweM): See if we can cache the signature on the `ToolDefinition` somehow, expensive to generate
+            tools[original_name].python_signature(name_override=sanitized_name)
+            for sanitized_name, original_name in name_map.items()
+        ]
 
         dedup_referenced_types(signatures)
+        referenced_types = collect_unique_referenced_types(signatures)
 
-        deferred_tools = [name for name, tool in wrapped_tools.items() if tool.tool_def.defer]
-        if deferred_tools:
-            warnings.warn(
-                f'Tools requiring approval or deferral are not yet supported in code mode '
-                f'and will raise an error if called: {", ".join(deferred_tools)}',
-                UserWarning,
-                stacklevel=2,
+        if isinstance(self.description, str):
+            tool_description = build_default_code_mode_description(
+                signatures, referenced_types, self.runtime.instructions, description=self.description
             )
+        else:
+            tool_description = self.description(signatures, referenced_types, self.runtime.instructions)
 
-        # Pre-compute reverse mapping (original name → tool)
-        original_name_tools: dict[str, ToolsetTool[AgentDepsT]] = {name_map[s]: t for s, t in sanitized_tools.items()}
-
-        description = self.prompt_builder(signatures, self.runtime.instructions)
         return {
             _CODE_MODE_TOOL_NAME: _CodeModeTool(
                 toolset=self,
-                original_tools=sanitized_tools,
-                cached_signatures=signatures,
+                signatures=signatures,
+                referenced_types=referenced_types,
                 name_map=name_map,
-                original_name_tools=original_name_tools,
+                tools=tools,
                 tool_def=ToolDefinition(
                     name=_CODE_MODE_TOOL_NAME,
-                    parameters_json_schema=_CODE_ADAPTER.json_schema(),
-                    description=description,
+                    parameters_json_schema=_CODE_JSON_SCHEMA,
+                    description=tool_description,
                 ),
                 max_retries=self.max_retries,
-                args_validator=cast(SchemaValidatorProt, _CODE_ADAPTER.validator),
+                args_validator=cast(SchemaValidatorProt, _CODE_VALIDATOR),
             )
         }
 
-    @staticmethod
-    def _build_tool_kwargs(call: FunctionCall) -> dict[str, Any]:
-        """Build tool kwargs from a FunctionCall.
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
+    ) -> Any:
+        assert name == _CODE_MODE_TOOL_NAME
+        assert isinstance(tool, _CodeModeTool)
 
-        All tool signatures use keyword-only parameters (via `*`), so positional
-        args should never appear. If they do, the generated code is malformed.
-        """
-        # TODO (DouweM): May not be needed since we force kwargs via `*` in the signature
-        # ^ Confirmed not needed — now we just error if it happens anyway
-        if call.args:
-            raise ModelRetry(
-                f'Positional arguments are not supported in code mode tool calls '
-                f'(function {call.function_name!r} received {len(call.args)} positional arg(s)). '
-                f'All parameters are keyword-only.'
-            )
-        return dict(call.kwargs)
+        code = tool_args.get('code')
+        assert isinstance(code, str)
 
-    def _make_tool_callback(
-        self,
-        tool: _CodeModeTool[AgentDepsT],
-        code_mode_tool_manager: ToolManager[AgentDepsT],
-        name_map: dict[str, str],
-    ) -> ToolCallback:
-        """Create a callback for the runtime to invoke when code calls external functions.
+        tool_manager = ToolManager(
+            toolset=self.wrapped,
+            ctx=ctx,
+            tools=tool.tools,
+        )
 
-        Args:
-            tool: The code mode tool with original tools mapping.
-            code_mode_tool_manager: ToolManager for executing nested tool calls.
-            name_map: Mapping from sanitized names to original tool names.
-        """
-
-        async def callback(call: FunctionCall) -> Any:
+        async def call_tool_callback(call: FunctionCall) -> Any:
             sanitized_name = call.function_name
-            original_name = name_map.get(sanitized_name, sanitized_name)
-
-            tool_kwargs = self._build_tool_kwargs(call)
-            tool_call_part = ToolCallPart(tool_name=original_name, args=tool_kwargs)
-
-            # Route through full ToolManager flow:
-            # handle_call → _call_function_tool (tracing + usage) → _call_tool (validate + enrich + call)
-            # wrap_validation_errors=False: let raw errors propagate to the runtime.
-            # Tool exceptions bubble up to user code (same behavior as regular tools).
+            original_name = tool.name_map.get(sanitized_name, sanitized_name)
 
             try:
-                result = await code_mode_tool_manager.handle_call(
-                    tool_call_part,
-                    wrap_validation_errors=False,
-                )
+                if call.args:
+                    raise ModelRetry(
+                        'Positional arguments are not supported in code mode tool calls. All parameters are keyword-only.'
+                    )
+
+                tool_call = ToolCallPart(tool_name=original_name, args=call.kwargs, tool_call_id=call.call_id)
+                # Route through full ToolManager flow:
+                # handle_call → _call_function_tool (tracing + usage) → _call_tool_callback (validate + enrich + call)
+                # wrap_validation_errors=False: let raw errors propagate to the runtime.
+                result = await tool_manager.handle_call(tool_call, wrap_validation_errors=False)
+
+                return tool_return_ta.dump_python(result)
             except (CallDeferred, ApprovalRequired):
                 raise exceptions.UserError(
                     'Tool approval and deferral are not yet supported in code mode. '
                     'Ensure wrapped tools do not use approval or deferral when used with CodeModeToolset.'
                 )
-            return tool_return_ta.dump_python(result, mode='json')
-
-        return callback
-
-    async def call_tool(
-        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
-    ) -> Any:
-        code = tool_args['code']
-        if name != _CODE_MODE_TOOL_NAME:
-            raise exceptions.UserError(
-                f'CodeModeToolset.call_tool expected tool name {_CODE_MODE_TOOL_NAME!r}, got {name!r}'
-            )
-        if not isinstance(tool, _CodeModeTool):
-            raise exceptions.UserError(f'CodeModeToolset.call_tool expected _CodeModeTool, got {type(tool).__name__}')
-        if not isinstance(code, str):
-            raise exceptions.UserError(
-                f'CodeModeToolset.call_tool expected code to be a string, got {type(code).__name__}'
-            )
-
-        code_mode_tool_manager = ToolManager(
-            toolset=self.wrapped,
-            ctx=ctx,
-            tools=tool.original_name_tools,
-        )
-
-        callback = self._make_tool_callback(tool, code_mode_tool_manager, tool.name_map)
-        functions = list(tool.original_tools.keys())
+            except (ModelRetry, ValidationError) as e:
+                # Wrap retryable errors with context about which function call failed,
+                # so the model knows which specific call to fix. Other exceptions
+                # propagate directly to user code (same as regular tool execution).
+                raise CodeRuntimeError(f'Call to {sanitized_name!r} failed: {e}') from e
 
         try:
-            return await self.runtime.run(code, functions, callback, signatures=tool.cached_signatures)
+            return await self.runtime.run(
+                code,
+                call_tool_callback,
+                functions={sig.name: sig for sig in tool.signatures},
+                referenced_types=tool.referenced_types,
+            )
         except CodeTypingError as e:
             raise ModelRetry(f'Type error in generated code:\n{e.message}') from e
         except CodeSyntaxError as e:
             raise ModelRetry(f'Syntax error in generated code:\n{e.message}') from e
         except CodeRuntimeError as e:
             raise ModelRetry(f'Runtime error in generated code:\n{e.message}') from e
+
+
+def _sanitize_tool_name(name: str) -> str:
+    """Convert a tool name to a valid Python identifier.
+
+    Args:
+        name: The original tool name (may contain hyphens, dots, etc.)
+
+    Returns:
+        A valid Python identifier in snake_case.
+
+    Examples:
+        >>> _sanitize_tool_name('search-records')
+        'search_records'
+        >>> _sanitize_tool_name('get.user.data')
+        'get_user_data'
+        >>> _sanitize_tool_name('class')  # Python keyword
+        'class_'
+    """
+    # Replace common separators with underscores
+    sanitized = re.sub(r'[-.\s]+', '_', name)
+
+    # Remove any remaining invalid characters (keep alphanumeric and underscore)
+    sanitized = re.sub(r'[^a-zA-Z0-9_]', '', sanitized)
+
+    # Ensure it doesn't start with a digit
+    if sanitized and sanitized[0].isdigit():
+        sanitized = f'_{sanitized}'
+
+    # Handle empty result
+    if not sanitized:
+        sanitized = 'tool'
+
+    # Convert to snake_case if it's camelCase or PascalCase
+    # Insert underscore before uppercase letters that follow lowercase
+    sanitized = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', sanitized)
+    sanitized = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1_\2', sanitized).lower()
+
+    # Handle Python keywords by appending underscore
+    if keyword.iskeyword(sanitized):
+        sanitized = f'{sanitized}_'
+
+    return sanitized

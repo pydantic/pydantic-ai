@@ -14,7 +14,7 @@ from typing import Any, TypeAlias
 
 from typing_extensions import Self
 
-from pydantic_ai._python_signature import FunctionSignature
+from pydantic_ai._python_signature import FunctionSignature, TypeSignature
 
 
 @dataclass(frozen=True)
@@ -75,19 +75,20 @@ class CodeRuntime(ABC):
     async def run(
         self,
         code: str,
-        functions: list[str],
         call_tool: ToolCallback,
         *,
-        signatures: list[FunctionSignature],
+        functions: dict[str, FunctionSignature],
+        referenced_types: list[TypeSignature],
     ) -> Any:
         """Execute code in the runtime.
 
         Args:
             code: The LLM-generated Python code to execute.
-            functions: List of external function names the code may call.
             call_tool: Callback invoked each time the code calls an external
                 function. Receives a FunctionCall and returns the tool result.
-            signatures: Function signatures for type checking.
+            functions: Mapping of function name to signature, for type checking
+                and declaring external functions.
+            referenced_types: Unique type definitions referenced by the signatures.
 
         Returns:
             The final output of the code execution.

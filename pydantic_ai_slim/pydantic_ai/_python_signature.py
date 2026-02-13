@@ -7,7 +7,6 @@ JSON schemas. Used by code mode to present tools as callable Python functions.
 
 from __future__ import annotations
 
-import dataclasses
 import json
 import re
 import types
@@ -17,16 +16,10 @@ from inspect import Parameter, Signature as InspectSignature, signature
 from typing import Any, Literal, TypeAlias, Union, cast, get_origin
 
 from pydantic import BaseModel, TypeAdapter
-from typing_extensions import get_type_hints, is_typeddict
+from typing_extensions import get_type_hints
 
 from ._run_context import RunContext
-
-
-def _is_named_type(t: Any) -> bool:
-    """Check if a type is a `BaseModel`, dataclass, or `TypedDict` that needs a definition."""
-    if not isinstance(t, type):
-        return False
-    return issubclass(t, BaseModel) or dataclasses.is_dataclass(t) or is_typeddict(t)  # pyright: ignore[reportUnknownArgumentType]
+from ._utils import is_model_like
 
 
 def _get_schema_from_type(t: Any, *, mode: Literal['validation', 'serialization'] = 'validation') -> dict[str, Any]:
@@ -48,7 +41,7 @@ class GenericTypeExpr:
     base: str
     args: list[TypeExpr]
 
-    def render(self) -> str:
+    def __str__(self) -> str:
         return f'{self.base}[{", ".join(render_type_expr(a) for a in self.args)}]'
 
 
@@ -58,7 +51,7 @@ class UnionTypeExpr:
 
     members: list[TypeExpr]
 
-    def render(self) -> str:
+    def __str__(self) -> str:
         return ' | '.join(render_type_expr(m) for m in self.members)
 
 
@@ -86,7 +79,7 @@ class TypeFieldSignature:
     required: bool
     description: str | None
 
-    def render(self) -> str:
+    def __str__(self) -> str:
         """Render this field as a line in a TypedDict class body."""
         type_str = render_type_expr(self.type)
         if not self.required:
@@ -105,7 +98,7 @@ class TypeSignature:
 
     fields: dict[str, TypeFieldSignature] = field(default_factory=dict[str, TypeFieldSignature])
 
-    def render(self) -> str:
+    def __str__(self) -> str:
         """Render this type as a TypedDict class definition."""
         lines = [f'class {self.name}(TypedDict):']
         if self.docstring:
@@ -115,7 +108,7 @@ class TypeSignature:
                 lines.append('    pass')
         else:
             for f in self.fields.values():
-                lines.append(f.render())
+                lines.append(str(f))
         return '\n'.join(lines)
 
     def structurally_equal(self, other: TypeSignature) -> bool:
@@ -141,7 +134,7 @@ def render_type_expr(expr: TypeExpr) -> str:
         return expr.name
     if isinstance(expr, str):
         return expr
-    return expr.render()
+    return str(expr)
 
 
 @dataclass
@@ -150,7 +143,7 @@ class FunctionParam:
     type: TypeExpr
     default: str | None
 
-    def render(self) -> str:
+    def __str__(self) -> str:
         """Render this parameter as a function parameter string."""
         type_str = render_type_expr(self.type)
         if self.default is not None:
@@ -191,7 +184,7 @@ class FunctionSignature:
     def render(self, body: str) -> str:
         """Render the signature with a specific body."""
         prefix = 'async def' if self.is_async else 'def'
-        params_str = ', '.join(p.render() for p in self.params.values())
+        params_str = ', '.join(str(p) for p in self.params.values())
 
         return_str = render_type_expr(self.return_type)
         if params_str:
@@ -231,7 +224,7 @@ def _annotation_to_type_expr(
         return 'None'
 
     # Named types (BaseModel/TypedDict/dataclass) → look up in referenced_types
-    if _is_named_type(annotation):
+    if is_model_like(annotation):
         type_name = annotation.__name__
         if type_name in referenced_types:
             return referenced_types[type_name]
@@ -276,7 +269,7 @@ def _collect_referenced_types(
     if annotation is None or annotation is type(None):
         return
 
-    if _is_named_type(annotation):
+    if is_model_like(annotation):
         type_name = annotation.__name__
         if type_name not in referenced_types:
             schema = _get_schema_from_type(annotation, mode=mode)

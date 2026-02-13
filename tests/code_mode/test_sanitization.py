@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from pydantic_ai.toolsets.code_mode._sanitization import sanitize_tool_name
+from pydantic_ai.toolsets.code_mode import _sanitize_tool_name  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.parametrize(
@@ -40,13 +40,13 @@ from pydantic_ai.toolsets.code_mode._sanitization import sanitize_tool_name
     ids=lambda v: repr(v),
 )
 def test_sanitize_tool_name(input_name: str, expected: str) -> None:
-    assert sanitize_tool_name(input_name) == expected
+    assert _sanitize_tool_name(input_name) == expected
 
 
 def test_sanitize_collision_handling() -> None:
     """Two distinct names that sanitize to the same result are handled by the caller (CodeModeToolset).
 
-    sanitize_tool_name itself is stateless — it just normalizes a single name.
+    _sanitize_tool_name itself is stateless — it just normalizes a single name.
     This test documents that identical outputs are possible.
     """
-    assert sanitize_tool_name('get-data') == sanitize_tool_name('get.data') == 'get_data'
+    assert _sanitize_tool_name('get-data') == _sanitize_tool_name('get.data') == 'get_data'
