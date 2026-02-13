@@ -1,3 +1,4 @@
+import asyncio
 import re
 
 import pytest
@@ -9,7 +10,10 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     from xai_sdk import AsyncClient
 
-    from pydantic_ai.providers.xai import XaiProvider
+    from pydantic_ai.providers.xai import (
+        XaiProvider,
+        _LazyAsyncClient,  # pyright: ignore[reportPrivateUsage]
+    )
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='xai_sdk not installed')
 
@@ -18,7 +22,7 @@ def test_xai_provider():
     provider = XaiProvider(api_key='api-key')
     assert provider.name == 'xai'
     assert provider.base_url == 'https://api.x.ai/v1'
-    assert isinstance(provider.client, AsyncClient)
+    assert isinstance(provider.client, _LazyAsyncClient)
 
 
 def test_xai_provider_need_api_key(env: TestEnv) -> None:
@@ -46,3 +50,39 @@ def test_xai_model_profile():
     profile = provider.model_profile('grok-4-1-fast-non-reasoning')
     assert isinstance(profile, GrokModelProfile)
     assert profile.grok_supports_builtin_tools is True
+
+
+def test_lazy_async_client_recreates_on_new_loop():
+    """Test that _LazyAsyncClient creates a fresh client when the event loop changes."""
+    lazy = _LazyAsyncClient(api_key='api-key')
+
+    clients: list[AsyncClient] = []
+
+    async def get_underlying_client():
+        return lazy._get_client()  # pyright: ignore[reportPrivateUsage]
+
+    # Run in two separate event loops — the client should be recreated.
+    clients.append(asyncio.run(get_underlying_client()))
+    clients.append(asyncio.run(get_underlying_client()))
+
+    assert clients[0] is not clients[1]
+
+
+def test_lazy_async_client_reuses_on_same_loop():
+    """Test that _LazyAsyncClient reuses the client within the same event loop."""
+    lazy = _LazyAsyncClient(api_key='api-key')
+
+    async def get_clients_same_loop():
+        c1 = lazy._get_client()  # pyright: ignore[reportPrivateUsage]
+        c2 = lazy._get_client()  # pyright: ignore[reportPrivateUsage]
+        return c1, c2
+
+    c1, c2 = asyncio.run(get_clients_same_loop())
+    assert c1 is c2
+
+
+def test_lazy_async_client_delegates_attributes():
+    """Test that _LazyAsyncClient delegates attribute access to the underlying client."""
+    lazy = _LazyAsyncClient(api_key='api-key')
+    # AsyncClient should have a `chat` attribute; verify delegation works.
+    assert hasattr(lazy, 'chat')
