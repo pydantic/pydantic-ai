@@ -197,6 +197,14 @@ def test_model_profile_gemini_3():
     profile = google_model_profile('gemini-3.0-pro')
     assert profile is not None
     assert profile.google_supports_native_output_with_builtin_tools is True  # type: ignore
+    assert profile.google_default_native_output is True  # type: ignore
+
+
+def test_model_profile_gemini_2_no_default_native_output():
+    """Gemini 2.x models should not default to native output."""
+    profile = google_model_profile('gemini-2.0-flash')
+    assert profile is not None
+    assert profile.google_default_native_output is False  # type: ignore
 
 
 def test_model_profile_image_model():
@@ -206,3 +214,4 @@ def test_model_profile_image_model():
     assert profile.supports_image_output is True
     assert profile.supports_json_schema_output is False
     assert profile.supports_tools is False
+    assert profile.google_default_native_output is False  # type: ignore

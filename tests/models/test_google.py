@@ -74,6 +74,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
@@ -5726,3 +5727,79 @@ async def test_google_prepends_empty_user_turn_when_first_content_is_model(googl
             },
         ]
     )
+
+
+def test_google_auto_resolves_to_native_gemini_3(google_provider: GoogleProvider):
+    """Gemini 3+ should resolve auto to native when no function tools are present."""
+    m = GoogleModel('gemini-3-flash-preview', provider=google_provider)
+    output_tool = ToolDefinition(name='final_result')
+    params = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[],
+        output_mode='auto',
+        output_tools=[output_tool],
+        output_object=None,
+    )
+    _, resolved = m.prepare_request(None, params)
+    assert resolved.output_mode == 'native'
+
+
+def test_google_auto_stays_tool_with_function_tools_gemini_3(google_provider: GoogleProvider):
+    """Gemini 3+ should keep tool mode when function tools are present."""
+    m = GoogleModel('gemini-3-flash-preview', provider=google_provider)
+    output_tool = ToolDefinition(name='final_result')
+    function_tool = ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}})
+    params = ModelRequestParameters(
+        function_tools=[function_tool],
+        builtin_tools=[],
+        output_mode='auto',
+        output_tools=[output_tool],
+        output_object=None,
+    )
+    _, resolved = m.prepare_request(None, params)
+    assert resolved.output_mode == 'tool'
+
+
+def test_google_auto_stays_tool_gemini_2(google_provider: GoogleProvider):
+    """Gemini 2.x should keep tool mode (google_default_native_output is False)."""
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    output_tool = ToolDefinition(name='final_result')
+    params = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[],
+        output_mode='auto',
+        output_tools=[output_tool],
+        output_object=None,
+    )
+    _, resolved = m.prepare_request(None, params)
+    assert resolved.output_mode == 'tool'
+
+
+def test_google_explicit_tool_output_respected_gemini_3(google_provider: GoogleProvider):
+    """Explicit ToolOutput on Gemini 3+ should not be overridden to native."""
+    m = GoogleModel('gemini-3-flash-preview', provider=google_provider)
+    output_tool = ToolDefinition(name='final_result')
+    params = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[],
+        output_mode='tool',
+        output_tools=[output_tool],
+        output_object=None,
+    )
+    _, resolved = m.prepare_request(None, params)
+    assert resolved.output_mode == 'tool'
+
+
+def test_google_auto_without_output_tools_not_native(google_provider: GoogleProvider):
+    """Auto mode without output tools should not resolve to native even on Gemini 3+."""
+    m = GoogleModel('gemini-3-flash-preview', provider=google_provider)
+    params = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[],
+        output_mode='auto',
+        output_tools=[],
+        output_object=None,
+    )
+    _, resolved = m.prepare_request(None, params)
+    # Base class resolves auto to default_structured_output_mode ('tool'), not native
+    assert resolved.output_mode == 'tool'
