@@ -173,7 +173,7 @@ class TemporalModel(WrapperModel):
         serialized_run_context = self.run_context_type.serialize_run_context(run_context)
         deps = run_context.deps
 
-        model_name = model_id or f'{self.system}:{self.model_name}'
+        model_name = model_id or self.model_id
         activity_config: ActivityConfig = {'summary': f'request model: {model_name}', **self.activity_config}
         return await workflow.execute_activity(
             activity=self.request_activity,
@@ -218,7 +218,7 @@ class TemporalModel(WrapperModel):
 
         model_id = self._current_model_id()
         serialized_run_context = self.run_context_type.serialize_run_context(run_context)
-        model_name = model_id or f'{self.system}:{self.model_name}'
+        model_name = model_id or self.model_id
         activity_config: ActivityConfig = {'summary': f'request model: {model_name} (stream)', **self.activity_config}
         response = await workflow.execute_activity(
             activity=self.request_stream_activity,

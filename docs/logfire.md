@@ -69,7 +69,7 @@ from pydantic_ai import Agent
 logfire.configure()  # (1)!
 logfire.instrument_pydantic_ai()  # (2)!
 
-agent = Agent('openai:gpt-5', instructions='Be concise, reply with one sentence.')
+agent = Agent('openai:gpt-5.2', instructions='Be concise, reply with one sentence.')
 result = agent.run_sync('Where does "hello world" come from?')  # (3)!
 print(result.output)
 """
@@ -121,7 +121,7 @@ logfire.configure()
 logfire.instrument_pydantic_ai()
 logfire.instrument_httpx(capture_all=True)  # (1)!
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> The capital of France is Paris.
@@ -165,7 +165,7 @@ logfire.configure(send_to_logfire=False)  # (2)!
 logfire.instrument_pydantic_ai()
 logfire.instrument_httpx(capture_all=True)
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> Paris
@@ -218,7 +218,7 @@ tracer_provider.add_span_processor(span_processor)
 set_tracer_provider(tracer_provider)
 
 Agent.instrument_all()
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> Paris
@@ -249,6 +249,22 @@ The following providers have dedicated documentation on Pydantic AI:
 
 ## Advanced usage
 
+### Aggregated usage attribute names
+
+By default, both model/request spans and agent run spans use the standard `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` attributes. Some observability backends (e.g., Datadog, New Relic, LangSmith, Opik) aggregate these attributes across all spans, which can cause double-counting since agent run spans report the sum of their child spans' usage.
+
+To avoid this, you can enable `use_aggregated_usage_attribute_names` so that agent run spans use distinct attribute names (e.g., `gen_ai.aggregated_usage.input_tokens`, `gen_ai.aggregated_usage.output_tokens`, and `gen_ai.aggregated_usage.details.*`):
+
+!!! note "Custom namespace"
+    The `gen_ai.aggregated_usage.*` namespace is a custom extension not part of the [OpenTelemetry Semantic Conventions for GenAI](https://opentelemetry.io/docs/specs/semconv/gen-ai/). It was introduced to work around double-counting in observability backends. If OpenTelemetry introduces an official convention for aggregated usage in the future, this namespace may be updated or deprecated.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.instrumented import InstrumentationSettings
+
+Agent.instrument_all(InstrumentationSettings(use_aggregated_usage_attribute_names=True))
+```
+
 ### Configuring data format
 
 Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/). Specifically, it follows version 1.37.0 of the conventions by default, with a few exceptions. Certain span and attribute names are not spec compliant by default for compatibility reasons, but can be made compliant by passing [`InstrumentationSettings(version=3)`][pydantic_ai.models.instrumented.InstrumentationSettings] (the default is currently `version=2`). This will change the following:
@@ -267,7 +283,7 @@ from pydantic_ai import Agent
 
 logfire.configure()
 logfire.instrument_pydantic_ai(version=1, event_mode='logs')
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> The capital of France is Paris.
@@ -292,7 +308,7 @@ instrumentation_settings = InstrumentationSettings(
     logger_provider=LoggerProvider(),
 )
 
-agent = Agent('openai:gpt-5', instrument=instrumentation_settings)
+agent = Agent('openai:gpt-5.2', instrument=instrumentation_settings)
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
@@ -304,7 +320,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 
 settings = InstrumentationSettings()
-model = InstrumentedModel('openai:gpt-5', settings)
+model = InstrumentedModel('openai:gpt-5.2', settings)
 agent = Agent(model)
 ```
 
@@ -315,7 +331,7 @@ from pydantic_ai import Agent, InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(include_binary_content=False)
 
-agent = Agent('openai:gpt-5', instrument=instrumentation_settings)
+agent = Agent('openai:gpt-5.2', instrument=instrumentation_settings)
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
@@ -332,7 +348,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(include_content=False)
 
-agent = Agent('openai:gpt-5', instrument=instrumentation_settings)
+agent = Agent('openai:gpt-5.2', instrument=instrumentation_settings)
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
@@ -343,4 +359,4 @@ This setting is particularly useful in production environments where compliance 
 
 Use the agent's `metadata` parameter to attach additional data to the agent's span.
 When instrumentation is enabled, the computed metadata is recorded on the agent span under the `metadata` attribute.
-See the [usage and metadata example in the agents guide](agents.md#run-metadata) for details and usage.
+See the [usage and metadata example in the agents guide](agent.md#run-metadata) for details and usage.

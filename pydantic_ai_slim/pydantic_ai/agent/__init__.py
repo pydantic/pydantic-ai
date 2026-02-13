@@ -22,6 +22,7 @@ from .. import (
     _output,
     _system_prompt,
     _utils,
+    concurrency as _concurrency,
     exceptions,
     messages as _messages,
     models,
@@ -115,7 +116,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ```python
     from pydantic_ai import Agent
 
-    agent = Agent('openai:gpt-4o')
+    agent = Agent('openai:gpt-5.2')
     result = agent.run_sync('What is the capital of France?')
     print(result.output)
     #> The capital of France is Paris.
@@ -168,6 +169,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     _event_stream_handler: EventStreamHandler[AgentDepsT] | None = dataclasses.field(repr=False)
 
+    _concurrency_limiter: _concurrency.AbstractConcurrencyLimiter | None = dataclasses.field(repr=False)
+
     _enter_lock: Lock = dataclasses.field(repr=False)
     _entered_count: int = dataclasses.field(repr=False)
     _exit_stack: AsyncExitStack | None = dataclasses.field(repr=False)
@@ -198,6 +201,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
     ) -> None: ...
 
     @overload
@@ -227,6 +231,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
     ) -> None: ...
 
     def __init__(
@@ -254,6 +259,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         **_deprecated_kwargs: Any,
     ):
         """Create an agent.
@@ -321,6 +327,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tool_timeout: Default timeout in seconds for tool execution. If a tool takes longer than this,
                 the tool is considered to have failed and a retry prompt is returned to the model (counting towards the retry limit).
                 Individual tools can override this with their own timeout. Defaults to None (no timeout).
+            max_concurrency: Optional limit on concurrent agent runs. Can be an integer for simple limiting,
+                a [`ConcurrencyLimit`][pydantic_ai.ConcurrencyLimit] for advanced configuration with backpressure,
+                a [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for sharing limits across
+                multiple agents, or None (default) for no limiting. When the limit is reached, additional calls
+                to `run()` or `iter()` will wait until a slot becomes available.
         """
         if model is None or defer_model_check:
             self._model = model
@@ -384,6 +395,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.history_processors = history_processors or []
 
         self._event_stream_handler = event_stream_handler
+
+        self._concurrency_limiter = _concurrency.normalize_to_limiter(max_concurrency)
 
         self._override_name: ContextVar[_utils.Option[str]] = ContextVar('_override_name', default=None)
         self._override_deps: ContextVar[_utils.Option[AgentDepsT]] = ContextVar('_override_deps', default=None)
@@ -530,7 +543,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         ```python
         from pydantic_ai import Agent
 
-        agent = Agent('openai:gpt-4o')
+        agent = Agent('openai:gpt-5.2')
 
         async def main():
             nodes = []
@@ -563,7 +576,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     model_response=ModelResponse(
                         parts=[TextPart(content='The capital of France is Paris.')],
                         usage=RequestUsage(input_tokens=56, output_tokens=7),
-                        model_name='gpt-4o',
+                        model_name='gpt-5.2',
                         timestamp=datetime.datetime(...),
                         run_id='...',
                     )
@@ -705,13 +718,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         run_metadata: dict[str, Any] | None = None
         try:
-            async with graph.iter(
-                inputs=user_prompt_node,
-                state=state,
-                deps=graph_deps,
-                span=use_span(run_span) if run_span.is_recording() else None,
-                infer_name=False,
-            ) as graph_run:
+            async with (
+                _concurrency.get_concurrency_context(self._concurrency_limiter, f'agent:{agent_name}'),
+                graph.iter(
+                    inputs=user_prompt_node,
+                    state=state,
+                    deps=graph_deps,
+                    span=use_span(run_span) if run_span.is_recording() else None,
+                    infer_name=False,
+                ) as graph_run,
+            ):
                 async with toolset:
                     agent_run = AgentRun(graph_run)
                     run_metadata = self._resolve_and_store_metadata(agent_run.ctx, metadata)
@@ -797,7 +813,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: list[_messages.ModelMessage],
         new_message_index: int,
         metadata: dict[str, Any] | None = None,
-    ):
+    ) -> dict[str, str | int | float | bool]:
         if settings.version == 1:
             attrs = {
                 'all_messages_events': json.dumps(
@@ -833,8 +849,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if metadata is not None:
             attrs['metadata'] = json.dumps(InstrumentedModel.serialize_any(metadata))
 
+        usage_attrs = (
+            {
+                k.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): v
+                for k, v in usage.opentelemetry_attributes().items()
+            }
+            if settings.use_aggregated_usage_attribute_names
+            else usage.opentelemetry_attributes()
+        )
+
         return {
-            **usage.opentelemetry_attributes(),
+            **usage_attrs,
             **attrs,
             'logfire.json_schema': json.dumps(
                 {
