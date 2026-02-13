@@ -111,7 +111,16 @@ from .profiles import (
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings
-from .tools import DeferredToolRequests, DeferredToolResults, RunContext, Tool, ToolApproved, ToolDefinition, ToolDenied
+from .tools import (
+    DeferredToolHandler,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    Tool,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+)
 from .toolsets import (
     AbstractToolset,
     ApprovalRequiredToolset,
@@ -227,6 +236,7 @@ __all__ = (
     'RunContext',
     'DeferredToolRequests',
     'DeferredToolResults',
+    'DeferredToolHandler',
     'ToolApproved',
     'ToolDenied',
     # toolsets

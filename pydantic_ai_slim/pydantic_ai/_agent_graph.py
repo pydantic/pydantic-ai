@@ -33,6 +33,7 @@ from .settings import ModelSettings
 from .tools import (
     BuiltinToolFunc,
     DeferredToolCallResult,
+    DeferredToolHandler,
     DeferredToolResult,
     DeferredToolResults,
     RunContext,
@@ -151,6 +152,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     tracer: Tracer
     instrumentation_settings: InstrumentationSettings | None
+    deferred_tool_handler: DeferredToolHandler[DepsT] | None = None
 
 
 class AgentNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
@@ -284,7 +286,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         return ModelRequestNode[DepsT, NodeRunEndT](request=next_message)
 
-    async def _handle_deferred_tool_results(  # noqa: C901
+    async def _handle_deferred_tool_results(
         self,
         deferred_tool_results: DeferredToolResults,
         messages: list[_messages.ModelMessage],
@@ -311,21 +313,10 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 'Tool call results were provided, but the message history does not contain any unprocessed tool calls.'
             )
 
-        tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None = None
-        tool_call_results = {}
-        for tool_call_id, approval in deferred_tool_results.approvals.items():
-            if approval is True:
-                approval = ToolApproved()
-            elif approval is False:
-                approval = ToolDenied()
-            tool_call_results[tool_call_id] = approval
-
-        if calls := deferred_tool_results.calls:
-            call_result_types = get_union_args(DeferredToolCallResult)
-            for tool_call_id, result in calls.items():
-                if not isinstance(result, call_result_types):
-                    result = _messages.ToolReturn(result)
-                tool_call_results[tool_call_id] = result
+        tool_call_results: dict[str, DeferredToolResult | Literal['skip']] = {}
+        tool_call_results.update(
+            _normalize_deferred_tool_results(deferred_tool_results.approvals, deferred_tool_results.calls)
+        )
 
         if last_model_request:
             for part in last_model_request.parts:
@@ -875,6 +866,28 @@ def build_validation_context(
         return validation_ctx
 
 
+def _normalize_deferred_tool_results(
+    approvals: dict[str, bool | ToolApproved | ToolDenied],
+    calls: dict[str, DeferredToolCallResult | Any],
+) -> dict[str, DeferredToolResult]:
+    """Normalize deferred tool approvals and external call results."""
+    normalized_results: dict[str, DeferredToolResult] = {}
+    for tool_call_id, approval in approvals.items():
+        if approval is True:
+            approval = ToolApproved()
+        elif approval is False:
+            approval = ToolDenied()
+        normalized_results[tool_call_id] = approval
+
+    call_result_types = get_union_args(DeferredToolCallResult)
+    for tool_call_id, call_result in calls.items():
+        if not isinstance(call_result, call_result_types):
+            call_result = _messages.ToolReturn(call_result)
+        normalized_results[tool_call_id] = call_result
+
+    return normalized_results
+
+
 async def process_tool_calls(  # noqa: C901
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
@@ -1025,6 +1038,8 @@ async def process_tool_calls(  # noqa: C901
     # Finally, we handle deferred tool calls (unless they were already included in the run because results were provided)
     if tool_call_results is None:
         calls = [*tool_calls_by_kind['external'], *tool_calls_by_kind['unapproved']]
+        deferred_tool_handler = ctx.deps.deferred_tool_handler
+
         if final_result:
             # If the run was already determined to end on deferred tool calls,
             # we shouldn't insert return parts as the deferred tools will still get a real result.
@@ -1037,14 +1052,74 @@ async def process_tool_calls(  # noqa: C901
                             tool_call_id=call.tool_call_id,
                         )
                     )
-        elif calls:
-            deferred_calls['external'].extend(tool_calls_by_kind['external'])
-            deferred_calls['unapproved'].extend(tool_calls_by_kind['unapproved'])
+        else:
+            if calls:
+                deferred_calls['external'].extend(tool_calls_by_kind['external'])
+                deferred_calls['unapproved'].extend(tool_calls_by_kind['unapproved'])
 
-            for call in calls:
-                yield _messages.FunctionToolCallEvent(call)
+                if deferred_tool_handler is None:
+                    for call in calls:
+                        yield _messages.FunctionToolCallEvent(call)
 
-    if not final_result and deferred_calls:
+            if deferred_calls:
+                if deferred_tool_handler is not None:
+                    run_context = build_run_context(ctx)
+                    deferred_tool_requests = _output.DeferredToolRequests(
+                        calls=deferred_calls['external'],
+                        approvals=deferred_calls['unapproved'],
+                        metadata=deferred_metadata,
+                    )
+                    handler_results: DeferredToolResults | Awaitable[DeferredToolResults]
+                    if is_async_callable(deferred_tool_handler):
+                        handler_results = deferred_tool_handler(run_context, deferred_tool_requests)
+                    else:
+                        handler_results = await run_in_executor(
+                            deferred_tool_handler, run_context, deferred_tool_requests
+                        )
+                    while inspect.isawaitable(handler_results):  # pragma: no branch
+                        handler_results = await handler_results
+
+                    handler_tool_call_results = _normalize_deferred_tool_results(
+                        handler_results.approvals, handler_results.calls
+                    )
+
+                    expected_tool_call_ids = {
+                        *[call.tool_call_id for call in deferred_calls['external']],
+                        *[call.tool_call_id for call in deferred_calls['unapproved']],
+                    }
+                    if expected_tool_call_ids != set(handler_tool_call_results.keys()):
+                        raise exceptions.UserError(
+                            'Tool call results need to be provided for all deferred tool calls. '
+                            f'Expected: {expected_tool_call_ids}, got: {set(handler_tool_call_results.keys())}'
+                        )
+
+                    handler_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]] = (
+                        defaultdict(list)
+                    )
+                    handler_deferred_metadata: dict[str, dict[str, Any]] = {}
+
+                    deferred_calls_to_run = [
+                        *deferred_calls['external'],
+                        *deferred_calls['unapproved'],
+                    ]
+                    async for event in _call_tools(
+                        tool_manager=tool_manager,
+                        tool_calls=deferred_calls_to_run,
+                        tool_call_results=handler_tool_call_results,
+                        tool_call_metadata=handler_results.metadata or None,
+                        tracer=ctx.deps.tracer,
+                        usage=ctx.state.usage,
+                        usage_limits=ctx.deps.usage_limits,
+                        output_parts=output_parts,
+                        output_deferred_calls=handler_deferred_calls,
+                        output_deferred_metadata=handler_deferred_metadata,
+                    ):
+                        yield event
+
+                    deferred_calls = handler_deferred_calls
+                    deferred_metadata = handler_deferred_metadata
+
+    if deferred_calls and not final_result:
         if not ctx.deps.output_schema.allows_deferred_tools:
             raise exceptions.UserError(
                 'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
@@ -1054,8 +1129,7 @@ async def process_tool_calls(  # noqa: C901
             approvals=deferred_calls['unapproved'],
             metadata=deferred_metadata,
         )
-
-        final_result = result.FinalResult(cast(NodeRunEndT, deferred_tool_requests), None, None)
+        final_result = result.FinalResult(cast(NodeRunEndT, deferred_tool_requests))
 
     if final_result:
         output_final_result.append(final_result)
