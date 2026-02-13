@@ -5793,6 +5793,9 @@ def test_google_traffic_type_in_provider_details(google_provider: GoogleProvider
     model = GoogleModel('gemini-2.5-flash', provider=google_provider)
 
     # Create a response with traffic_type in usage_metadata
+    # Note: The actual Flex PayGo API returns 'ON_DEMAND_FLEX' but the SDK's TrafficType enum
+    # doesn't include this value yet, so we use 'ON_DEMAND' for testing.
+    # See: https://github.com/googleapis/python-genai/issues/2058
     response = GenerateContentResponse.model_validate(
         {
             'response_id': 'resp-flex',
@@ -5800,7 +5803,7 @@ def test_google_traffic_type_in_provider_details(google_provider: GoogleProvider
             'usage_metadata': {
                 'prompt_token_count': 10,
                 'candidates_token_count': 20,
-                'traffic_type': 'ON_DEMAND_FLEX',
+                'traffic_type': 'ON_DEMAND',
             },
             'candidates': [
                 {
@@ -5814,7 +5817,7 @@ def test_google_traffic_type_in_provider_details(google_provider: GoogleProvider
     result = model._process_response(response)  # pyright: ignore[reportPrivateUsage]
 
     assert result.provider_details is not None
-    assert result.provider_details.get('traffic_type') == 'ON_DEMAND_FLEX'
+    assert result.provider_details.get('traffic_type') == 'ON_DEMAND'
     assert result.provider_details.get('finish_reason') == 'STOP'
 
 
