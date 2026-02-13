@@ -947,7 +947,9 @@ async def test_image_url_input(allow_model_requests: None):
     )
 
 
-async def test_image_url_input_force_download(allow_model_requests: None, openai_api_key: str):
+async def test_image_url_input_force_download(
+    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+):
     provider = OpenAIProvider(api_key=openai_api_key)
     m = OpenAIChatModel('gpt-4.1-nano', provider=provider)
     agent = Agent(m)
@@ -964,7 +966,9 @@ async def test_image_url_input_force_download(allow_model_requests: None, openai
     assert result.output == snapshot('This vegetable is a potato.')
 
 
-async def test_image_url_input_force_download_response_api(allow_model_requests: None, openai_api_key: str):
+async def test_image_url_input_force_download_response_api(
+    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+):
     provider = OpenAIProvider(api_key=openai_api_key)
     m = OpenAIResponsesModel('gpt-4.1-nano', provider=provider)
     agent = Agent(m)
@@ -981,7 +985,9 @@ async def test_image_url_input_force_download_response_api(allow_model_requests:
     assert result.output == snapshot('This is a potato.')
 
 
-async def test_openai_audio_url_input(allow_model_requests: None, openai_api_key: str):
+async def test_openai_audio_url_input(
+    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+):
     m = OpenAIChatModel('gpt-4o-audio-preview', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
 
@@ -1006,7 +1012,9 @@ async def test_openai_audio_url_input(allow_model_requests: None, openai_api_key
     )
 
 
-async def test_document_url_input(allow_model_requests: None, openai_api_key: str):
+async def test_document_url_input(
+    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
 
@@ -1028,7 +1036,9 @@ async def test_document_url_input_response_api(allow_model_requests: None, opena
     assert 'Dummy PDF' in result.output
 
 
-async def test_document_url_input_force_download_response_api(allow_model_requests: None, openai_api_key: str):
+async def test_document_url_input_force_download_response_api(
+    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+):
     """Test DocumentUrl with force_download=True downloads and sends as file_data."""
     provider = OpenAIProvider(api_key=openai_api_key)
     m = OpenAIResponsesModel('gpt-4.1-nano', provider=provider)
@@ -1419,7 +1429,9 @@ async def test_document_as_binary_content_input(
     assert result.output == snapshot('The main content of the document is "Dummy PDF file."')
 
 
-async def test_text_document_url_input(allow_model_requests: None, openai_api_key: str):
+async def test_text_document_url_input(
+    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
 
@@ -1607,6 +1619,36 @@ async def test_extra_headers(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m, model_settings=OpenAIChatModelSettings(extra_headers={'Extra-Header-Key': 'Extra-Header-Value'}))
     await agent.run('hello')
+
+
+async def test_openai_store_false(allow_model_requests: None):
+    """Test that openai_store=False is correctly passed to the OpenAI API."""
+    c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, model_settings=OpenAIChatModelSettings(openai_store=False))
+
+    result = await agent.run('test')
+    assert result.output == 'hello'
+
+    # Verify the store parameter was passed to the mock
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs.get('store') is False
+
+
+async def test_openai_store_true(allow_model_requests: None):
+    """Test that openai_store=True is correctly passed to the OpenAI API."""
+    c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, model_settings=OpenAIChatModelSettings(openai_store=True))
+
+    result = await agent.run('test')
+    assert result.output == 'hello'
+
+    # Verify the store parameter was passed to the mock
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs.get('store') is True
 
 
 async def test_user_id(allow_model_requests: None, openai_api_key: str):
@@ -3771,6 +3813,201 @@ response\
 """,
         }
     )
+
+
+async def test_openai_auto_mode_reasoning_field_sends_back_in_field(allow_model_requests: None):
+    """Test that auto mode detects reasoning from field and sends back in field."""
+    c = completion_message(
+        ChatCompletionMessage.model_construct(content='response', reasoning_content='reasoning', role='assistant')
+    )
+    m = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts='auto',  # Auto mode
+        ),
+    )
+    settings = ModelSettings()
+    params = ModelRequestParameters()
+    resp = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
+    # Auto mode should detect thinking came from 'reasoning_content' field and send back in same field
+    assert m._map_model_response(resp) == snapshot(  # type: ignore[reportPrivateUsage]
+        {'role': 'assistant', 'reasoning_content': 'reasoning', 'content': 'response'}
+    )
+
+
+async def test_openai_auto_mode_reasoning_field_different_provider_uses_tags(allow_model_requests: None):
+    """Test that auto mode falls back to tags when provider_name doesn't match."""
+    # This test verifies behavior by checking that when thinking comes from a different provider, auto mode falls back to tags.
+    c1 = completion_message(ChatCompletionMessage.model_construct(content='response2', role='assistant'))
+    m = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c1)),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts='auto',
+        ),
+    )
+
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='question')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(
+                    content='reasoning from different provider',
+                    id='reasoning_content',
+                    provider_name='different-provider',
+                ),
+            ]
+        ),
+    ]
+
+    settings = ModelSettings()
+    params = ModelRequestParameters()
+    await m.request(messages=messages, model_settings=settings, model_request_parameters=params)
+
+    mapped = m._map_model_response(messages[1])  # type: ignore[reportPrivateUsage]
+    assert mapped == snapshot(
+        {
+            'role': 'assistant',
+            'content': """<think>
+reasoning from different provider
+</think>""",
+        }
+    )
+
+
+async def test_openai_auto_mode_tags_sends_back_in_tags(allow_model_requests: None):
+    """Test that auto mode detects reasoning from tags and sends back in tags."""
+    c = completion_message(
+        ChatCompletionMessage.model_construct(content='<think>reasoning</think>response', role='assistant')
+    )
+    m = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)),
+        profile=OpenAIModelProfile(openai_chat_send_back_thinking_parts='auto'),
+    )
+    settings = ModelSettings()
+    params = ModelRequestParameters()
+    resp = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
+    assert m._map_model_response(resp) == snapshot(  # type: ignore[reportPrivateUsage]
+        {
+            'role': 'assistant',
+            'content': """\
+<think>
+reasoning
+</think>
+
+response\
+""",
+        }
+    )
+
+
+async def test_openai_auto_mode_no_thinking_field_uses_default_fields(allow_model_requests: None):
+    """Test that auto mode with no thinking_field set checks default reasoning and reasoning_content fields."""
+    c1 = completion_message(
+        ChatCompletionMessage.model_construct(content='response', reasoning='thought', role='assistant')
+    )
+    m1 = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c1)),
+        profile=OpenAIModelProfile(
+            openai_chat_send_back_thinking_parts='auto',
+        ),
+    )
+    settings = ModelSettings()
+    params = ModelRequestParameters()
+    resp1 = await m1.request(messages=[], model_settings=settings, model_request_parameters=params)
+
+    thinking_parts = [p for p in resp1.parts if isinstance(p, ThinkingPart)]
+    assert len(thinking_parts) == 1
+    assert thinking_parts[0].id == 'reasoning'
+    mapped1 = m1._map_model_response(resp1)  # type: ignore[reportPrivateUsage]
+    assert mapped1 == snapshot({'role': 'assistant', 'reasoning': 'thought', 'content': 'response'})
+
+    c2 = completion_message(
+        ChatCompletionMessage.model_construct(content='response', reasoning_content='thought', role='assistant')
+    )
+    m2 = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c2)),
+        profile=OpenAIModelProfile(
+            openai_chat_send_back_thinking_parts='auto',
+        ),
+    )
+    resp2 = await m2.request(messages=[], model_settings=settings, model_request_parameters=params)
+
+    thinking_parts = [p for p in resp2.parts if isinstance(p, ThinkingPart)]
+    assert len(thinking_parts) == 1
+    assert thinking_parts[0].id == 'reasoning_content'
+    mapped2 = m2._map_model_response(resp2)  # type: ignore[reportPrivateUsage]
+    assert mapped2 == snapshot({'role': 'assistant', 'reasoning_content': 'thought', 'content': 'response'})
+
+
+async def test_openai_auto_mode_mismatched_field_uses_tags(allow_model_requests: None):
+    """Test that auto mode falls back to tags when configured field doesn't match where reasoning comes from."""
+    # Configure thinking_field as 'reasoning_content', but reasoning comes in 'reasoning'
+    c = completion_message(
+        ChatCompletionMessage.model_construct(content='response', reasoning='thought', role='assistant')
+    )
+    m = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts='auto',
+        ),
+    )
+    settings = ModelSettings()
+    params = ModelRequestParameters()
+    resp = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
+
+    thinking_parts = [p for p in resp.parts if isinstance(p, ThinkingPart)]
+    assert len(thinking_parts) == 1
+    assert thinking_parts[0].id == 'reasoning'
+
+    # But when sending back, since id='reasoning' doesn't match configured 'reasoning_content', it should fall back to tags
+    mapped = m._map_model_response(resp)  # type: ignore[reportPrivateUsage]
+    assert mapped == snapshot(
+        {
+            'role': 'assistant',
+            'content': """<think>
+thought
+</think>
+
+response""",
+        }
+    )
+
+
+async def test_openai_auto_mode_multiple_thinking_parts_same_field(allow_model_requests: None):
+    """Test that auto mode correctly groups multiple thinking parts from the same field."""
+    c1 = completion_message(
+        ChatCompletionMessage.model_construct(content='response', reasoning='first thought', role='assistant')
+    )
+
+    m = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c1)),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field='reasoning',
+            openai_chat_send_back_thinking_parts='auto',
+        ),
+    )
+
+    settings = ModelSettings()
+    params = ModelRequestParameters()
+    resp1 = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
+
+    thinking_parts = [p for p in resp1.parts if isinstance(p, ThinkingPart)]
+    assert len(thinking_parts) == 1
+    assert thinking_parts[0].id == 'reasoning'
+    assert thinking_parts[0].provider_name == 'openai'
+
+    mapped = m._map_model_response(resp1)  # type: ignore[reportPrivateUsage]
+    assert mapped == snapshot({'role': 'assistant', 'reasoning': 'first thought', 'content': 'response'})
 
 
 def test_azure_prompt_filter_error(allow_model_requests: None) -> None:

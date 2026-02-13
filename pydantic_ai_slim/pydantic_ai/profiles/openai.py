@@ -45,16 +45,21 @@ class OpenAIModelProfile(ModelProfile):
 
     If `openai_chat_send_back_thinking_parts` is set to `'field'`, this field must be set to a non-None value."""
 
-    openai_chat_send_back_thinking_parts: Literal['tags', 'field', False] = 'tags'
+    openai_chat_send_back_thinking_parts: Literal['auto', 'tags', 'field', False] = 'auto'
     """Whether the model includes thinking content in requests.
 
     This can be:
-    * `'tags'` (default): The thinking content is included in the main `content` field, enclosed within thinking tags as
+    * `'auto'` (default): Automatically detects how to send thinking content. If thinking was received in a custom field
+    (tracked via `ThinkingPart.id` and `ThinkingPart.provider_name`), it's sent back in that same field. Otherwise,
+    it's sent using tags. Only the `reasoning` and `reasoning_content` fields are checked by
+    default when receiving responses. If your provider uses a different field name, you must explicitly set
+    `openai_chat_thinking_field` to that field name.
+    * `'tags'`: The thinking content is included in the main `content` field, enclosed within thinking tags as
     specified in `thinking_tags` profile option.
     * `'field'`: The thinking content is included in a separate field specified by `openai_chat_thinking_field`.
     * `False`: No thinking content is sent in the request.
 
-    Defaults to `'thinking_tags'` for backward compatibility reasons."""
+    Defaults to `'auto'` to ensure thinking is sent back in the format expected by the model/provider."""
 
     openai_supports_strict_tool_definition: bool = True
     """This can be set by a provider or user if the OpenAI-"compatible" API doesn't support strict tool definitions."""
@@ -125,6 +130,7 @@ class OpenAIModelProfile(ModelProfile):
                 'If `openai_chat_send_back_thinking_parts` is "field", '
                 '`openai_chat_thinking_field` must be set to a non-None value.'
             )
+        # Note: 'auto' mode doesn't require openai_chat_thinking_field since it detects dynamically
 
 
 def openai_model_profile(model_name: str) -> ModelProfile:
@@ -149,7 +155,9 @@ def openai_model_profile(model_name: str) -> ModelProfile:
 
     # Check if the model supports web search (only specific search-preview models)
     supports_web_search = '-search-preview' in model_name
-    supports_image_output = is_gpt_5 or 'o3' in model_name or '4.1' in model_name or '4o' in model_name
+    supports_image_output = (
+        is_gpt_5 or is_gpt_5_1_plus or 'o3' in model_name or '4.1' in model_name or '4o' in model_name
+    )
 
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18,
     # and gpt-4o-2024-08-06 model snapshots and later. We leave it in here for all models because the

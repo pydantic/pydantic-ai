@@ -131,7 +131,7 @@ def cli_exit(prog_name: str = 'clai'):  # pragma: no cover
 def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'clai', default_model: str = 'openai:gpt-5') -> int:
     """Run the CLI and return the exit code for the process."""
     # we don't want to autocomplete or list models that don't include the provider,
-    # e.g. we want to show `openai:gpt-4o` but not `gpt-4o`
+    # e.g. we want to show `openai:gpt-5.2` but not `gpt-5.2`
     qualified_model_names = [n for n in get_literal_values(KnownModelName.__value__) if ':' in n]
     args_list = list(args_list) if args_list is not None else sys.argv[1:]
 
@@ -287,7 +287,7 @@ def _run_chat_command(
             console.print(f'Error initializing [magenta]{args.model}[/magenta]:\n[red]{e}[/red]')
             return 1
 
-    model_name = agent.model if isinstance(agent.model, str) else f'{agent.model.system}:{agent.model.model_name}'
+    model_name = agent.model if isinstance(agent.model, str) else agent.model.model_id
     if args.agent and model_arg_set:
         console.print(
             f'{name_version} using custom agent [magenta]{args.agent}[/magenta] with [magenta]{model_name}[/magenta]',

@@ -132,7 +132,7 @@ LLMJudge(
 # Premium option for nuanced evaluation
 LLMJudge(
     rubric='Response demonstrates deep understanding of quantum mechanics',
-    model='anthropic:claude-opus-4-20250514',
+    model='anthropic:claude-opus-4-5',
 )
 ```
 
@@ -646,7 +646,7 @@ def my_task(inputs: str) -> str:
 
 
 judges = [
-    LLMJudge(rubric='Response is clear', model='openai:gpt-5'),
+    LLMJudge(rubric='Response is clear', model='openai:gpt-5.2'),
     LLMJudge(rubric='Response is clear', model='anthropic:claude-sonnet-4-5'),
     LLMJudge(rubric='Response is clear', model='openai:gpt-5-mini'),
 ]
