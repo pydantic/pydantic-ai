@@ -265,21 +265,21 @@ async def group_by_temporal(  # noqa: C901
     except GeneratorExit:
         # This handles edge cases like GC finalization where the generator is closed
         # without going through the normal async context manager exit path.
-        closing = True  # pragma: no cover
-        raise  # pragma: no cover
+        closing = True
+        raise
     finally:
         # Close the inner generator explicitly
         # Without this, the GC may try to finalize the orphaned generator at script exit,
         # leading to "RuntimeError: generator didn't stop after athrow()" because the generator
         # is suspended at a yield inside a try/finally block.
-        if inner_gen is not None and not closing:  # pragma: no branch
+        if inner_gen is not None and not closing:
             with suppress(GeneratorExit, RuntimeError):
                 await inner_gen.aclose()
         # After iteration if a task still exists, cancel it, this will only happen if an error occurred
         if task:
             task.cancel('Cancelling due to error in iterator')
             # Don't await if we're being closed - can't await in a closing async generator
-            if not closing:  # pragma: no branch
+            if not closing:
                 with suppress(asyncio.CancelledError, StopAsyncIteration):
                     await task
 
