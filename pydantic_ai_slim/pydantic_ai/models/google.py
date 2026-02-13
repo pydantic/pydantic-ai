@@ -562,6 +562,8 @@ class GoogleModel(Model):
                 # Use only Flex PayGo
                 headers['X-Vertex-AI-LLM-Request-Type'] = 'shared'
                 headers['X-Vertex-AI-LLM-Shared-Request-Type'] = 'flex'
+            else:
+                assert_never(service_tier)  # pragma: no cover
 
         http_options: HttpOptionsDict = {'headers': headers}
         if timeout := model_settings.get('timeout'):
