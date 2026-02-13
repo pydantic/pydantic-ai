@@ -7,7 +7,7 @@ from typing import Any, overload
 import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
-from .._python_signature import Signature, function_to_signature
+from .._python_signature import FunctionSignature, function_to_signature
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import ModelRetry, UserError
 from ..tools import (
@@ -35,7 +35,7 @@ class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
     Defaults to None (no timeout).
     """
 
-    def python_signature(self, *, name_override: str | None = None) -> Signature:
+    def python_signature(self, *, name_override: str | None = None) -> FunctionSignature:
         """Generate a Python function signature from the original function's type annotations.
 
         Overrides the base schema-based implementation to use `inspect.signature()` and

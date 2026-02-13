@@ -17,7 +17,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from pydantic_ai._python_signature import Signature
+from pydantic_ai._python_signature import FunctionSignature
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.messages import tool_return_ta
 from pydantic_ai.runtime.abstract import (
@@ -110,7 +110,7 @@ class DriverBasedRuntime(CodeRuntime):
         functions: list[str],
         call_tool: ToolCallback,
         *,
-        signatures: list[Signature],
+        signatures: list[FunctionSignature],
         checkpoint: bytes | None = None,
     ) -> Any:
         if checkpoint is not None:

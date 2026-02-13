@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from pydantic_ai._python_signature import Signature
+from pydantic_ai._python_signature import FunctionSignature, collect_unique_referenced_types
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.messages import tool_return_ta
 from pydantic_ai.runtime.abstract import (
@@ -37,7 +37,7 @@ except ImportError:
     raise ImportError("MontyRuntime requires 'monty'. Install with: pip install 'pydantic-ai-slim[monty]'")
 
 
-def _build_type_check_prefix(signatures: list[Signature]) -> str:
+def _build_type_check_prefix(signatures: list[FunctionSignature]) -> str:
     """Build the prefix code used for Monty type checking.
 
     Combines standard typing imports with tool signatures to create the
@@ -54,9 +54,7 @@ def _build_type_check_prefix(signatures: list[Signature]) -> str:
         Complete prefix code string with imports and signatures.
     """
     parts = ['from typing import Any, TypedDict, NotRequired, Literal']  # TODO (Douwe): Move to better place
-    for sig in signatures:
-        if sig.typeddicts:
-            parts.extend(sig.typeddicts)
+    parts.extend(t.render() for t in collect_unique_referenced_types(signatures))
     parts.extend(sig.render('raise NotImplementedError()') for sig in signatures)
 
     return '\n\n'.join(parts)
@@ -82,7 +80,7 @@ class MontyRuntime(CodeRuntime):
         functions: list[str],
         call_tool: ToolCallback,
         *,
-        signatures: list[Signature],
+        signatures: list[FunctionSignature],
         checkpoint: bytes | None = None,
     ) -> Any:
         """Execute code in the Monty sandbox, or resume from a checkpoint.
@@ -218,7 +216,9 @@ class MontyRuntime(CodeRuntime):
         if self.execution_timeout is not None and 'time limit exceeded' in e.display():
             raise CodeExecutionTimeout(f'Code execution timed out after {self.execution_timeout} seconds') from e
 
-    def _type_check(self, monty: Monty, code: str, signatures: list[Signature], external_functions: list[str]) -> None:
+    def _type_check(
+        self, monty: Monty, code: str, signatures: list[FunctionSignature], external_functions: list[str]
+    ) -> None:
         prefix_code = _build_type_check_prefix(signatures)
         monty.type_check(prefix_code=prefix_code)
 

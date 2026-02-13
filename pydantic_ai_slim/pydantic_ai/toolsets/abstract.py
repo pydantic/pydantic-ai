@@ -8,8 +8,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
-from .._python_schema_types import schema_to_signature
-from .._python_signature import Signature
+from .._python_signature import FunctionSignature, schema_to_signature
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition, ToolsPrepareFunc
 
@@ -60,7 +59,7 @@ class ToolsetTool(Generic[AgentDepsT]):
     For example, a [`pydantic.TypeAdapter(...).validator`](https://docs.pydantic.dev/latest/concepts/type_adapter/) or [`pydantic_core.SchemaValidator`](https://docs.pydantic.dev/latest/api/pydantic_core/#pydantic_core.SchemaValidator).
     """
 
-    def python_signature(self, *, name_override: str | None = None) -> Signature:
+    def python_signature(self, *, name_override: str | None = None) -> FunctionSignature:
         """Generate a Python function signature for this tool.
 
         The base implementation converts the tool's JSON schema to a signature.
@@ -81,7 +80,6 @@ class ToolsetTool(Generic[AgentDepsT]):
             return_schema=(self.tool_def.metadata or {}).get(
                 'output_schema'
             ),  # TODO (Douwe): Use tool_def.return_schema once https://github.com/pydantic/pydantic-ai/pull/3865 lands
-            namespace_defs=True,
         )
 
 

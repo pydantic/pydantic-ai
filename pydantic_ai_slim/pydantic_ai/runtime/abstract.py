@@ -16,7 +16,7 @@ from typing import Any, TypeAlias
 
 import pydantic
 
-from pydantic_ai._python_signature import Signature
+from pydantic_ai._python_signature import FunctionSignature
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.messages import ToolReturnContent, tool_return_ta
 
@@ -132,7 +132,7 @@ class CodeRuntime(ABC):
         functions: list[str],
         call_tool: ToolCallback,
         *,
-        signatures: list[Signature],
+        signatures: list[FunctionSignature],
         checkpoint: bytes | None = None,
     ) -> Any:
         """Execute code, or resume from checkpoint if provided.

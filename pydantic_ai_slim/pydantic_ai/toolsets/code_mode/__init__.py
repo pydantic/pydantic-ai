@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, cast
@@ -22,7 +21,7 @@ from pydantic_ai.runtime.abstract import (
 )
 
 from ... import exceptions
-from ..._python_signature import Signature
+from ..._python_signature import FunctionSignature, collect_unique_referenced_types, dedup_referenced_types
 from ..._run_context import AgentDepsT, RunContext
 from ..._tool_manager import ToolManager
 from ...exceptions import ModelRetry
@@ -45,8 +44,6 @@ class _CodeToolArguments(TypedDict):
 _CODE_ADAPTER = TypeAdapter(_CodeToolArguments)
 _CODE_MODE_TOOL_NAME = 'run_code_with_tools'
 
-_TYPEDDICT_NAME_RE = re.compile(r'^class (\w+)\(TypedDict\):')
-
 # TODO: The first line of the prompt should be customizable by the user using Prompt Templates #3656
 _CODE_MODE_PROMPT = """
 Use `run_code_with_tools` to write Python code that calls the available functions. You can make a single call or combine multiple steps in a script — use your judgment based on the task.
@@ -66,51 +63,7 @@ Execution model:
 """
 
 
-def _dedup_typeddicts(signatures: list[Signature]) -> None:
-    """Deduplicate TypedDict definitions across multiple tool signatures in place.
-
-    When multiple tools share the same TypedDict type (same name and definition),
-    the definition is kept on the first signature and removed from subsequent ones.
-    When different TypedDict types share the same name (conflict), the later one is
-    renamed by prefixing the tool name to disambiguate.
-    """
-    # Collect all (name, definition) pairs, tracking which signature owns each
-    seen: dict[str, str] = {}  # {name: definition}
-
-    for sig in signatures:
-        deduped: list[str] = []
-        for td_str in sig.typeddicts:
-            m = _TYPEDDICT_NAME_RE.match(td_str)
-            if not m:
-                deduped.append(td_str)
-                continue
-
-            td_name = m.group(1)
-            if td_name not in seen:
-                # First occurrence — keep it
-                seen[td_name] = td_str
-                deduped.append(td_str)
-            elif seen[td_name] == td_str:
-                # Same name, same definition — deduplicate (skip)
-                pass
-            else:
-                # Same name, different definition — rename to avoid conflict
-                new_name = f'{sig.name}_{td_name}'
-                renamed_td = td_str.replace(f'class {td_name}(TypedDict):', f'class {new_name}(TypedDict):')
-                # Update references using word boundaries to avoid corrupting names
-                # that contain td_name as a substring (e.g. renaming "User" must not
-                # affect "UserMeta").
-                td_pattern = re.compile(r'\b' + re.escape(td_name) + r'\b')
-                sig.params = [td_pattern.sub(new_name, p) for p in sig.params]
-                sig.return_type = td_pattern.sub(new_name, sig.return_type)
-                # Update references in other TypedDicts already in this signature's deduped list
-                deduped = [td_pattern.sub(new_name, d) for d in deduped]
-                seen[new_name] = renamed_td
-                deduped.append(renamed_td)
-        sig.typeddicts = deduped
-
-
-def build_code_mode_prompt(signatures: list[Signature], runtime_instructions: str | None) -> str:
+def build_code_mode_prompt(signatures: list[FunctionSignature], runtime_instructions: str | None) -> str:
     """Build the default code mode prompt with the given tool signatures.
 
     This is the default prompt builder used by CodeModeToolset. Users can provide
@@ -131,16 +84,13 @@ def build_code_mode_prompt(signatures: list[Signature], runtime_instructions: st
 
     parts.append('```python')
 
-    typeddicts: list[str] = []
-    for sig in signatures:
-        if sig.typeddicts:
-            typeddicts.extend(sig.typeddicts)
+    referenced_types = collect_unique_referenced_types(signatures)
 
-    if typeddicts:
-        parts.append('Available types:')
-        parts.append('\n\n'.join(typeddicts))
+    if referenced_types:
+        parts.append('# Available types:')
+        parts.append('\n\n'.join(t.render() for t in referenced_types))
 
-    parts.append('Available functions:')
+    parts.append('# Available functions:')
     parts.extend(str(sig) for sig in signatures)
 
     parts.append('```')
@@ -151,26 +101,6 @@ def build_code_mode_prompt(signatures: list[Signature], runtime_instructions: st
 @dataclass(kw_only=True)
 class _CodeModeTool(ToolsetTool[AgentDepsT]):
     original_tools: dict[str, ToolsetTool[AgentDepsT]]
-
-
-def _get_tool_signature(
-    tool: ToolsetTool[Any],
-    name_override: str | None = None,
-) -> Signature:
-    """Get a Signature object for a tool.
-
-    Delegates to `tool.python_signature()`, which uses inspect-based signatures
-    for function tools and JSON-schema-based signatures for external tools (MCP, etc.).
-
-    Args:
-        tool: The tool to generate a signature for.
-        name_override: Optional name to use instead of the tool's original name.
-            Used to show sanitized names (valid Python identifiers) to the LLM.
-
-    Returns:
-        A Signature object.
-    """
-    return tool.python_signature(name_override=name_override)
 
 
 @dataclass(init=False)
@@ -189,14 +119,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     _: KW_ONLY
 
     runtime: CodeRuntime
-    prompt_builder: Callable[[list[Signature], str | None], str] = build_code_mode_prompt
+    prompt_builder: Callable[[list[FunctionSignature], str | None], str] = build_code_mode_prompt
     max_retries: int = 3
 
     # Note: _cached_signatures and _name_map are mutable instance state populated in get_tools()
     # and consumed in call_tool(). This class is not safe for concurrent use from multiple agent
     # runs on the same instance. The agent framework runs a single loop per toolset instance,
     # so this is fine in practice.
-    _cached_signatures: list[Signature] | None = field(default=None, init=False, repr=False)
+    _cached_signatures: list[FunctionSignature] | None = field(default=None, init=False, repr=False)
     _name_map: dict[str, str] = field(default_factory=dict[str, str], init=False, repr=False)
 
     def __init__(
@@ -204,7 +134,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         wrapped: AbstractToolset[AgentDepsT],
         *,
         runtime: CodeRuntime | RuntimeName = 'monty',
-        prompt_builder: Callable[[list[Signature], str | None], str] = build_code_mode_prompt,
+        prompt_builder: Callable[[list[FunctionSignature], str | None], str] = build_code_mode_prompt,
         max_retries: int = 3,
     ) -> None:
         if isinstance(runtime, str):
@@ -236,14 +166,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         self._name_map = name_map
 
         sanitized_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
-        signatures: list[Signature] = []
+        signatures: list[FunctionSignature] = []
 
         for sanitized_name, original_name in name_map.items():
             tool = wrapped_tools[original_name]
             sanitized_tools[sanitized_name] = tool
-            signatures.append(_get_tool_signature(tool, name_override=sanitized_name))
+            signatures.append(tool.python_signature(name_override=sanitized_name))
 
-        _dedup_typeddicts(signatures)
+        dedup_referenced_types(signatures)
 
         self._cached_signatures = signatures
 
