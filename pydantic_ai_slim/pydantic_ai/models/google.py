@@ -613,6 +613,10 @@ class GoogleModel(Model):
         if response.create_time is not None:  # pragma: no branch
             vendor_details['timestamp'] = response.create_time
 
+        # Add traffic_type to provider_details for Flex PayGo verification
+        if response.usage_metadata and response.usage_metadata.traffic_type:
+            vendor_details['traffic_type'] = response.usage_metadata.traffic_type.value
+
         if candidate is None or candidate.content is None or candidate.content.parts is None:
             parts = []
         else:
@@ -834,7 +838,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
             raw_finish_reason = candidate.finish_reason
             if raw_finish_reason:
-                self.provider_details = {'finish_reason': raw_finish_reason.value}
+                self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason.value}
 
                 if candidate.safety_ratings:
                     self.provider_details['safety_ratings'] = [
@@ -842,6 +846,13 @@ class GeminiStreamedResponse(StreamedResponse):
                     ]
 
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
+            # Add traffic_type for Flex PayGo verification
+            if chunk.usage_metadata and chunk.usage_metadata.traffic_type:
+                self.provider_details = {
+                    **(self.provider_details or {}),
+                    'traffic_type': chunk.usage_metadata.traffic_type.value,
+                }
 
             # Google streams the grounding metadata (including the web search queries and results)
             # _after_ the text that was generated using it, so it would show up out of order in the stream,

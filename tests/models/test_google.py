@@ -5786,3 +5786,62 @@ async def test_google_service_tier_not_set_no_headers(allow_model_requests: None
 
     assert 'X-Vertex-AI-LLM-Request-Type' not in headers
     assert 'X-Vertex-AI-LLM-Shared-Request-Type' not in headers
+
+
+def test_google_traffic_type_in_provider_details(google_provider: GoogleProvider):
+    """Test that traffic_type from usage_metadata is exposed in provider_details."""
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    # Create a response with traffic_type in usage_metadata
+    response = GenerateContentResponse.model_validate(
+        {
+            'response_id': 'resp-flex',
+            'model_version': 'gemini-2.5-flash',
+            'usage_metadata': {
+                'prompt_token_count': 10,
+                'candidates_token_count': 20,
+                'traffic_type': 'ON_DEMAND_FLEX',
+            },
+            'candidates': [
+                {
+                    'content': {'parts': [{'text': 'Hello from Flex!'}], 'role': 'model'},
+                    'finish_reason': 'STOP',
+                }
+            ],
+        }
+    )
+
+    result = model._process_response(response)  # pyright: ignore[reportPrivateUsage]
+
+    assert result.provider_details is not None
+    assert result.provider_details.get('traffic_type') == 'ON_DEMAND_FLEX'
+    assert result.provider_details.get('finish_reason') == 'STOP'
+
+
+def test_google_traffic_type_not_in_provider_details_when_absent(google_provider: GoogleProvider):
+    """Test that traffic_type is not in provider_details when not in response."""
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    # Create a response without traffic_type
+    response = GenerateContentResponse.model_validate(
+        {
+            'response_id': 'resp-standard',
+            'model_version': 'gemini-2.5-flash',
+            'usage_metadata': {
+                'prompt_token_count': 10,
+                'candidates_token_count': 20,
+            },
+            'candidates': [
+                {
+                    'content': {'parts': [{'text': 'Hello!'}], 'role': 'model'},
+                    'finish_reason': 'STOP',
+                }
+            ],
+        }
+    )
+
+    result = model._process_response(response)  # pyright: ignore[reportPrivateUsage]
+
+    assert result.provider_details is not None
+    assert 'traffic_type' not in result.provider_details
+    assert result.provider_details.get('finish_reason') == 'STOP'
