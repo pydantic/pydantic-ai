@@ -287,6 +287,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             raise ModelRetry(f'Runtime error in generated code:\n{e.message}') from e
         except CodeInterruptedError:
             raise exceptions.UserError(
-                'Tool approval and deferral are not supported in code mode. '
+                'Tool approval and deferral are not yet supported in code mode. '
                 'Ensure wrapped tools do not use approval or deferral when used with CodeModeToolset.'
             )
