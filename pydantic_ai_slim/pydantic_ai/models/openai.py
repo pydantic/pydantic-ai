@@ -2221,6 +2221,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_now_utc)
     _model_settings: OpenAIChatModelSettings | None = None
     _has_refusal: bool = field(default=False, init=False)
+    _refusal_text: str = field(default='', init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         if self._provider_timestamp is not None:  # pragma: no branch
@@ -2253,10 +2254,7 @@ class OpenAIStreamedResponse(StreamedResponse):
             if choice.delta.refusal:
                 self._has_refusal = True
                 self.finish_reason = 'content_filter'
-                self.provider_details = {
-                    **(self.provider_details or {}),
-                    'refusal': (self.provider_details or {}).get('refusal', '') + choice.delta.refusal,
-                }
+                self._refusal_text += choice.delta.refusal
                 continue
 
             if raw_finish_reason := choice.finish_reason:
@@ -2270,6 +2268,9 @@ class OpenAIStreamedResponse(StreamedResponse):
 
             for event in self._map_part_delta(choice):
                 yield event
+
+        if self._refusal_text:
+            self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
 
     def _validate_response(self) -> AsyncIterable[ChatCompletionChunk]:
         """Hook that validates incoming chunks.
@@ -2405,6 +2406,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _has_refusal: bool = field(default=False, init=False)
+    _refusal_text: str = field(default='', init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         # Track annotations by item_id and content_index
@@ -2658,15 +2660,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseRefusalDeltaEvent):
                 self._has_refusal = True
                 self.finish_reason = 'content_filter'
-                self.provider_details = {
-                    **(self.provider_details or {}),
-                    'refusal': (self.provider_details or {}).get('refusal', '') + chunk.delta,
-                }
+                self._refusal_text += chunk.delta
 
             elif isinstance(chunk, responses.ResponseRefusalDoneEvent):
                 self._has_refusal = True
                 self.finish_reason = 'content_filter'
-                self.provider_details = {**(self.provider_details or {}), 'refusal': chunk.refusal}
+                self._refusal_text = chunk.refusal
 
             elif isinstance(chunk, responses.ResponseWebSearchCallInProgressEvent):
                 pass  # there's nothing we need to do here
@@ -2776,6 +2775,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     f'Handling of this event type is not yet implemented. Please report on our GitHub: {chunk}',
                     UserWarning,
                 )
+
+        if self._refusal_text:
+            self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
 
     def _map_usage(self, response: responses.Response) -> usage.RequestUsage:
         return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
