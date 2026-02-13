@@ -151,9 +151,7 @@ class DriverBasedRuntime(CodeRuntime):
 
                 for task in done:
                     if task is stdout_task:
-                        result = await self._handle_stdout(
-                            task, process, call_tool, tool_tasks, task_id_to_cid
-                        )
+                        result = await self._handle_stdout(task, process, call_tool, tool_tasks, task_id_to_cid)
                         if isinstance(result, _FinalResult):
                             return result.value
                         stdout_task = asyncio.create_task(process.read_line())

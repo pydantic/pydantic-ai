@@ -97,7 +97,9 @@ class ModalRuntime(DriverBasedRuntime):
             # Pass execution_timeout as a native per-exec timeout so Modal kills
             # the process server-side even if the local asyncio.wait_for doesn't fire.
             exec_timeout = math.ceil(self.execution_timeout) if self.execution_timeout is not None else None
-            process = await sandbox.exec.aio('python', '-u', '/tmp/pydantic_ai_driver.py', bufsize=1, timeout=exec_timeout)
+            process = await sandbox.exec.aio(
+                'python', '-u', '/tmp/pydantic_ai_driver.py', bufsize=1, timeout=exec_timeout
+            )
 
             driver = _ModalDriverTransport(process, sandbox)
             init_line = json.dumps(init_msg).encode() + b'\n'
