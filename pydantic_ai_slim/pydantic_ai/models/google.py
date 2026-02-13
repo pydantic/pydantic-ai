@@ -574,7 +574,6 @@ class GoogleModel(Model):
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
         elif candidate is None and response.prompt_feedback and response.prompt_feedback.block_reason:
             block_reason = response.prompt_feedback.block_reason
-            vendor_details['finish_reason'] = block_reason.value
             vendor_details['block_reason'] = block_reason.value
             if response.prompt_feedback.block_reason_message:
                 vendor_details['block_reason_message'] = response.prompt_feedback.block_reason_message
@@ -803,7 +802,6 @@ class GeminiStreamedResponse(StreamedResponse):
                     block_reason = chunk.prompt_feedback.block_reason
                     self.provider_details = {
                         **(self.provider_details or {}),
-                        'finish_reason': block_reason.value,
                         'block_reason': block_reason.value,
                     }
                     if chunk.prompt_feedback.block_reason_message:

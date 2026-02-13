@@ -786,6 +786,7 @@ class OpenAIChatModel(Model):
         # Handle refusal responses (structured output safety filter)
         if choice.message.refusal:
             provider_details = self._process_provider_details(response) or {}
+            provider_details.pop('finish_reason', None)
             provider_details['refusal'] = choice.message.refusal
             if response.created:  # pragma: no branch
                 provider_details['timestamp'] = number_to_datetime(response.created)
@@ -1532,6 +1533,7 @@ class OpenAIResponsesModel(Model):
         if refusal_text is not None:
             items = []
             finish_reason = 'content_filter'
+            provider_details.pop('finish_reason', None)
             provider_details['refusal'] = refusal_text
 
         return ModelResponse(
@@ -2263,6 +2265,8 @@ class OpenAIStreamedResponse(StreamedResponse):
 
             if provider_details := self._map_provider_details(chunk):  # pragma: no branch
                 self.provider_details = {**(self.provider_details or {}), **provider_details}
+            if self._has_refusal and self.provider_details:
+                self.provider_details.pop('finish_reason', None)
 
             for event in self._map_part_delta(choice):
                 yield event
@@ -2419,8 +2423,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 )
 
                 if raw_finish_reason:  # pragma: no branch
-                    self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
                     if not self._has_refusal:
+                        self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
                         self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
 
             elif isinstance(chunk, responses.ResponseContentPartAddedEvent):

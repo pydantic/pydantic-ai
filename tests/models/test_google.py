@@ -5762,7 +5762,7 @@ async def test_google_prompt_feedback_non_streaming(
 
     agent = Agent(model=model)
 
-    with pytest.raises(ContentFilterError, match="Content filter triggered. Finish reason: 'PROHIBITED_CONTENT'"):
+    with pytest.raises(ContentFilterError, match="Content filter triggered. Finish reason: 'content_filter'"):
         await agent.run('prohibited content')
 
 
@@ -5802,6 +5802,6 @@ async def test_google_prompt_feedback_streaming(
 
     agent = Agent(model=model)
 
-    with pytest.raises(ContentFilterError, match="Content filter triggered. Finish reason: 'PROHIBITED_CONTENT'"):
+    with pytest.raises(ContentFilterError, match="Content filter triggered. Finish reason: 'content_filter'"):
         async with agent.run_stream('prohibited content'):
             pass
