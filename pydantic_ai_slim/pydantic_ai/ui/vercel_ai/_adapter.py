@@ -12,9 +12,6 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
-from ...agent import AbstractAgent
-from ...agent.abstract import AgentMetadata, Instructions
-from ...builtin_tools import AbstractBuiltinTool
 from ...messages import (
     AudioUrl,
     BinaryContent,
@@ -37,15 +34,9 @@ from ...messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ...models import KnownModelName, Model
-from ...output import OutputDataT, OutputSpec
-from ...settings import ModelSettings
-from ...tools import AgentDepsT, DeferredToolApprovalResult, DeferredToolResults, ToolDenied
-from ...toolsets import AbstractToolset
-from ...usage import RunUsage, UsageLimits
-from .. import MessagesBuilder, UIAdapter, UIEventStream
-from .._adapter import DispatchDepsT, DispatchOutputDataT
-from .._event_stream import OnCompleteFunc
+from ...output import OutputDataT
+from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
+from .. import MessagesBuilder, UIAdapter
 from ._event_stream import VercelAIEventStream
 from ._utils import dump_provider_metadata, load_provider_metadata
 from .request_types import (
@@ -75,6 +66,19 @@ from .response_types import BaseChunk
 if TYPE_CHECKING:
     from starlette.requests import Request
     from starlette.responses import Response
+
+    from ...agent import AbstractAgent
+    from ...agent.abstract import AgentMetadata, Instructions
+    from ...builtin_tools import AbstractBuiltinTool
+    from ...models import KnownModelName, Model
+    from ...output import OutputSpec
+    from ...settings import ModelSettings
+    from ...tools import DeferredToolApprovalResult
+    from ...toolsets import AbstractToolset
+    from ...usage import RunUsage, UsageLimits
+    from .. import UIEventStream
+    from .._adapter import DispatchDepsT, DispatchOutputDataT
+    from .._event_stream import OnCompleteFunc
 
 __all__ = ['VercelAIAdapter']
 
