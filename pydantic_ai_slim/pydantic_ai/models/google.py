@@ -4,7 +4,7 @@ import base64
 import re
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, cast, overload
 from uuid import uuid4
@@ -264,7 +264,7 @@ class GoogleModel(Model):
         if model_request_parameters.builtin_tools and model_request_parameters.output_tools:
             if model_request_parameters.output_mode == 'auto':
                 output_mode = 'native' if supports_native_output_with_builtin_tools else 'prompted'
-                model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
+                model_request_parameters = model_request_parameters.resolve_auto_output_mode(output_mode)
             else:
                 output_mode = 'NativeOutput' if supports_native_output_with_builtin_tools else 'PromptedOutput'
                 raise UserError(

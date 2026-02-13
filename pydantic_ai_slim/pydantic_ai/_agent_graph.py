@@ -707,8 +707,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         return
                     elif output_schema.toolset:
                         alternatives.append('include your response in a tool call')
-                    else:
-                        alternatives.append('call a tool')
 
                     if output_schema.allows_image:
                         if image := next((file for file in files if isinstance(file, _messages.BinaryImage)), None):
