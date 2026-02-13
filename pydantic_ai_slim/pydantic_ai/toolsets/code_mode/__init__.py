@@ -33,6 +33,7 @@ from ._sanitization import sanitize_tool_name
 
 __all__ = (
     'CodeModeToolset',
+    'FunctionSignature',
     'build_code_mode_prompt',
 )
 
@@ -103,6 +104,8 @@ class _CodeModeTool(ToolsetTool[AgentDepsT]):
     original_tools: dict[str, ToolsetTool[AgentDepsT]]
     cached_signatures: list[FunctionSignature]
     name_map: dict[str, str]
+    sanitized_to_original: dict[str, str]
+    original_name_tools: dict[str, ToolsetTool[AgentDepsT]]
 
 
 @dataclass(init=False)
@@ -169,6 +172,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         dedup_referenced_types(signatures)
 
+        # Pre-compute reverse mappings (sanitized→original name, original→tool)
+        sanitized_to_original = {s: o for s, o in name_map.items()}
+        original_name_tools: dict[str, ToolsetTool[AgentDepsT]] = {
+            name_map[s]: t for s, t in sanitized_tools.items()
+        }
+
         description = self.prompt_builder(signatures, self.runtime.instructions)
         return {
             _CODE_MODE_TOOL_NAME: _CodeModeTool(
@@ -176,6 +185,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 original_tools=sanitized_tools,
                 cached_signatures=signatures,
                 name_map=name_map,
+                sanitized_to_original=sanitized_to_original,
+                original_name_tools=original_name_tools,
                 tool_def=ToolDefinition(
                     name=_CODE_MODE_TOOL_NAME,
                     parameters_json_schema=_CODE_ADAPTER.json_schema(),
@@ -186,25 +197,22 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             )
         }
 
-    def _build_tool_kwargs(
-        self,
-        call: FunctionCall,
-        tool: _CodeModeTool[AgentDepsT],
-        sanitized_name: str,
-    ) -> dict[str, Any]:
-        """Build tool kwargs from FunctionCall, handling positional args fallback."""
-        tool_kwargs: dict[str, Any] = dict(call.kwargs)
+    @staticmethod
+    def _build_tool_kwargs(call: FunctionCall) -> dict[str, Any]:
+        """Build tool kwargs from a FunctionCall.
+
+        All tool signatures use keyword-only parameters (via `*`), so positional
+        args should never appear. If they do, the generated code is malformed.
+        """
+        # TODO (DouweM): May not be needed since we force kwargs via `*` in the signature
+        # ^ Confirmed not needed — now we just error if it happens anyway
         if call.args:
-            # TODO (DouweM): May not be needed since we force kwargs via `*` in the signature
-            # Positional args are mapped using JSON schema property order, which may not match
-            # the tool's actual parameter order. The prompt instructs models to use keyword
-            # arguments only, but we handle positional args as a fallback for non-compliant models.
-            original_tool = tool.original_tools[sanitized_name]
-            param_names = list(original_tool.tool_def.parameters_json_schema.get('properties', {}).keys())
-            for i, arg in enumerate(call.args):
-                if i < len(param_names):
-                    tool_kwargs[param_names[i]] = arg
-        return tool_kwargs
+            raise ModelRetry(
+                f'Positional arguments are not supported in code mode tool calls '
+                f'(function {call.function_name!r} received {len(call.args)} positional arg(s)). '
+                f'All parameters are keyword-only.'
+            )
+        return dict(call.kwargs)
 
     def _make_tool_callback(
         self,
@@ -224,7 +232,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             sanitized_name = call.function_name
             original_name = sanitized_to_original.get(sanitized_name, sanitized_name)
 
-            tool_kwargs = self._build_tool_kwargs(call, tool, sanitized_name)
+            tool_kwargs = self._build_tool_kwargs(call)
             tool_call_part = ToolCallPart(tool_name=original_name, args=tool_kwargs)
 
             # Route through full ToolManager flow:
@@ -253,20 +261,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 f'CodeModeToolset.call_tool expected code to be a string, got {type(code).__name__}'
             )
 
-        original_name_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
-        sanitized_to_original: dict[str, str] = {}
-        for sanitized, t in tool.original_tools.items():
-            orig = tool.name_map.get(sanitized, sanitized)
-            original_name_tools[orig] = t
-            sanitized_to_original[sanitized] = orig
-
         code_mode_tool_manager = ToolManager(
             toolset=self.wrapped,
             ctx=ctx,
-            tools=original_name_tools,
+            tools=tool.original_name_tools,
         )
 
-        callback = self._make_tool_callback(tool, code_mode_tool_manager, sanitized_to_original)
+        callback = self._make_tool_callback(tool, code_mode_tool_manager, tool.sanitized_to_original)
         functions = list(tool.original_tools.keys())
 
         try:

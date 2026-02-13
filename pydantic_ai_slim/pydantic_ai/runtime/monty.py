@@ -18,6 +18,8 @@ from pydantic_ai.runtime.abstract import (
     ToolCallback,
 )
 
+_TYPING_IMPORTS = 'from typing import Any, TypedDict, NotRequired, Literal'
+
 try:
     from pydantic_monty import (
         Monty,
@@ -49,7 +51,8 @@ def _build_type_check_prefix(signatures: list[FunctionSignature]) -> str:
     Returns:
         Complete prefix code string with imports and signatures.
     """
-    parts = ['from typing import Any, TypedDict, NotRequired, Literal']  # TODO (Douwe): Move to better place
+    # TODO (Douwe): Move to better place — moved to _TYPING_IMPORTS module constant for now
+    parts = [_TYPING_IMPORTS]
     parts.extend(t.render() for t in collect_unique_referenced_types(signatures))
     parts.extend(sig.render('raise NotImplementedError()') for sig in signatures)
 
@@ -128,6 +131,9 @@ class MontyRuntime(CodeRuntime):
 
     def _raise_if_timeout(self, e: MontyRuntimeError) -> None:
         """Raise CodeExecutionTimeout if the MontyRuntimeError is a time limit violation."""
+        # Coupling: Monty surfaces time limit violations as RuntimeErrors containing
+        # 'time limit exceeded' in the display string. There is no structured error type
+        # for this yet — if Monty changes the wording, this detection will break.
         if self.execution_timeout is not None and 'time limit exceeded' in e.display():
             raise CodeExecutionTimeout(f'Code execution timed out after {self.execution_timeout} seconds') from e
 

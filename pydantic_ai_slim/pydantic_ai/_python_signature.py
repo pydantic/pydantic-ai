@@ -299,9 +299,7 @@ def _collect_referenced_types(
                     type_name, schema, schema_defs, referenced_types, tool_name, path
                 )
             elif '$ref' in schema:
-                ref_name = (
-                    schema['$ref'][8:] if schema['$ref'].startswith('#/$defs/') else schema['$ref'].split('/')[-1]
-                )
+                ref_name = schema['$ref'].split('/')[-1]
                 if ref_name in schema_defs and ref_name not in referenced_types:
                     ref_schema = schema_defs[ref_name]
                     if ref_schema.get('type') == 'object' and 'properties' in ref_schema:
@@ -334,7 +332,7 @@ def _build_function_params(
         if annotation is not None:
             _collect_referenced_types(annotation, referenced_types, tool_name, param_name)
 
-        if annotation:
+        if annotation is not None:
             type_expr = _annotation_to_type_expr(annotation, referenced_types)
         else:
             type_expr = 'Any'
@@ -428,20 +426,14 @@ def _process_schema_defs(
     defs: dict[str, dict[str, Any]],
     referenced_types: dict[str, TypeSignature],
     tool_name: str,
-) -> Callable[[dict[str, Any], str], TypeExpr]:
-    """Set up $defs processing for a schema and return a to_type converter."""
-
-    def to_type(schema: dict[str, Any], path: str) -> TypeExpr:
-        return schema_to_type_expr(schema, defs, referenced_types, tool_name, path)
-
+) -> None:
+    """Process $defs from a JSON schema, populating referenced_types with TypeSignatures."""
     for def_name, def_schema in defs.items():
         if def_schema.get('type') == 'object' and 'properties' in def_schema:
             if def_name not in referenced_types:
                 referenced_types[def_name] = _build_type_signature(
                     def_name, def_schema, defs, referenced_types, tool_name, def_name
                 )
-
-    return to_type
 
 
 def schema_to_signature(
@@ -461,16 +453,16 @@ def schema_to_signature(
     # Process parameter schema with its own $defs
     param_defs = parameters_schema.get('$defs', {})
     param_referenced: dict[str, TypeSignature] = {}
-    param_to_type = _process_schema_defs(param_defs, param_referenced, name)
-    params = _build_params_from_schema(parameters_schema, param_to_type)
+    _process_schema_defs(param_defs, param_referenced, name)
+    params = _build_params_from_schema(parameters_schema, param_defs, param_referenced, name)
 
     # Process return schema independently (its own $defs)
     resolved_return_type: TypeExpr = return_type
     return_referenced: dict[str, TypeSignature] = {}
     if return_schema is not None and return_type == 'Any':
         return_defs = return_schema.get('$defs', {})
-        return_to_type = _process_schema_defs(return_defs, return_referenced, name)
-        resolved_return_type = return_to_type(return_schema, 'Return')
+        _process_schema_defs(return_defs, return_referenced, name)
+        resolved_return_type = schema_to_type_expr(return_schema, return_defs, return_referenced, name, 'Return')
 
     # Handle case where return type couldn't be resolved
     final_description = description
@@ -499,7 +491,9 @@ def schema_to_signature(
 
 def _build_params_from_schema(
     schema: dict[str, Any],
-    to_type: Callable[[dict[str, Any], str], TypeExpr],
+    defs: dict[str, dict[str, Any]],
+    referenced_types: dict[str, TypeSignature],
+    tool_name: str,
 ) -> dict[str, FunctionParam]:
     """Convert a JSON schema to a dict of FunctionParam objects."""
     properties = schema.get('properties', {})
@@ -509,7 +503,7 @@ def _build_params_from_schema(
     optional_params: dict[str, FunctionParam] = {}
 
     for prop_name, prop_schema in properties.items():
-        type_expr = to_type(prop_schema, prop_name)
+        type_expr = schema_to_type_expr(prop_schema, defs, referenced_types, tool_name, prop_name)
 
         if 'default' in prop_schema:
             default_str = repr(prop_schema['default'])
@@ -549,7 +543,7 @@ def schema_to_type_expr(
     # Handle $ref
     if '$ref' in schema:
         ref = schema['$ref']
-        ref_name = ref[8:] if ref.startswith('#/$defs/') else ref.split('/')[-1]
+        ref_name = ref.split('/')[-1]
         # Ensure referenced def generates TypeSignature if needed
         if ref_name in defs and ref_name not in referenced_types:
             ref_schema = defs[ref_name]
