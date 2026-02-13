@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable
 from dataclasses import KW_ONLY, dataclass
 from typing import Any, cast
@@ -186,6 +185,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         dedup_referenced_types(signatures)
 
+        # TODO: (Aditya), Check if tools need approved? Seq / Approval / Warn the users
+
         # Pre-compute reverse mapping (original name → tool)
         original_name_tools: dict[str, ToolsetTool[AgentDepsT]] = {name_map[s]: t for s, t in sanitized_tools.items()}
 
@@ -229,7 +230,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         tool: _CodeModeTool[AgentDepsT],
         code_mode_tool_manager: ToolManager[AgentDepsT],
         name_map: dict[str, str],
-        sequential_lock: asyncio.Lock | None = None,
     ) -> ToolCallback:
         """Create a callback for the runtime to invoke when code calls external functions.
 
@@ -237,7 +237,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             tool: The code mode tool with original tools mapping.
             code_mode_tool_manager: ToolManager for executing nested tool calls.
             name_map: Mapping from sanitized names to original tool names.
-            sequential_lock: If set, acquired before each tool call to serialize execution.
         """
 
         async def callback(call: FunctionCall) -> Any:
@@ -251,16 +250,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # handle_call → _call_function_tool (tracing + usage) → _call_tool (validate + enrich + call)
             # wrap_validation_errors=False: let raw errors propagate to the runtime.
             # Tool exceptions bubble up to user code (same behavior as regular tools).
-            if sequential_lock is not None:
-                async with sequential_lock:
-                    return await code_mode_tool_manager.handle_call(
-                        tool_call_part,
-                        wrap_validation_errors=False,
-                    )
+
+            # (TODO: Aditya) Serialize here instead of monty
             return await code_mode_tool_manager.handle_call(
                 tool_call_part,
                 wrap_validation_errors=False,
             )
+
+            # Catch here instead of inside runtimes
 
         return callback
 
@@ -285,9 +282,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             tools=tool.original_name_tools,
         )
 
-        any_sequential = any(t.tool_def.sequential for t in tool.original_name_tools.values())
-        sequential_lock = asyncio.Lock() if any_sequential else None
-        callback = self._make_tool_callback(tool, code_mode_tool_manager, tool.name_map, sequential_lock)
+        callback = self._make_tool_callback(tool, code_mode_tool_manager, tool.name_map)
         functions = list(tool.original_tools.keys())
 
         try:

@@ -14,7 +14,6 @@ The container IS the security boundary. The driver gives LLM code full
 stdlib modules. Docker container isolation is the defense layer.
 
 Known limitations:
-
 1. **Shared kernel**: Containers share the host kernel. Kernel exploits
    (CVE-2019-5736, CVE-2024-21626) can escape any container. Keep
    Docker/runc updated. For stronger isolation use ModalRuntime (gVisor).

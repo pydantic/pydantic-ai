@@ -184,6 +184,8 @@ class MontyRuntime(CodeRuntime):
                             # so that Monty's restricted interpreter can handle the value and
                             # behavior is consistent with driver-based runtimes
                             # (which serialize results over the JSON protocol).
+
+                            # (TODO: Do not serialize here)
                             results[cid] = {'return_value': tool_return_ta.dump_python(raw, mode='json')}
                         except (CallDeferred, ApprovalRequired) as e:
                             interrupted_calls.append(InterruptedToolCall(reason=e, call=tool_call_id_to_call[cid]))

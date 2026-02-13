@@ -52,6 +52,9 @@ class CodeExecutionTimeout(CodeRuntimeError):
     """The code execution exceeded the configured timeout."""
 
 
+# TODO(Aditya): Remove this
+
+
 @dataclass
 class InterruptedToolCall:
     """A tool call that was interrupted during code execution.
