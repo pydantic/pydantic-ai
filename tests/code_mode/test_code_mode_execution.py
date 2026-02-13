@@ -83,9 +83,9 @@ async def test_monty_normalizes_tool_results_to_json_compatible():
     """Tool results fed to Monty should be JSON-compatible (dicts, not BaseModels).
 
     Without normalization, Monty receives the raw Python object (e.g. a Pydantic
-    BaseModel) on a fresh run, but would receive a plain dict on a checkpoint
-    resume (after JSON round-trip). This means code that works on a fresh run
-    could break on resume, or vice versa.
+    BaseModel), but driver-based runtimes serialize results over JSON and would
+    receive a plain dict. This inconsistency means code that works on one
+    runtime could break on another.
 
     The fix: normalize all results to JSON-compatible form (via
     tool_return_ta.dump_python(mode='json')) before feeding them to Monty,
@@ -116,7 +116,7 @@ async def test_monty_normalizes_tool_results_to_json_compatible():
     )
 
     # After normalization, the second tool should receive a dict, not a UserModel.
-    # This guarantees consistent behavior between fresh runs and checkpoint resumes.
+    # This guarantees consistent behavior across runtimes.
     assert result == 'dict'
     assert received_types == ['dict']
 

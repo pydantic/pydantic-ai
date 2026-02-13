@@ -1,9 +1,9 @@
 """Host-side ABC for driver-based code runtimes.
 
 Provides ``DriverBasedRuntime``, an intermediate abstract base class that
-handles the NDJSON protocol, tool dispatch, interrupt/checkpoint logic, and
-resume-via-re-execution. Concrete subclasses (Docker, E2B, Modal, etc.)
-implement a single method: ``_start_driver``.
+handles the NDJSON protocol, tool dispatch, and interrupt logic. Concrete
+subclasses (Docker, E2B, Modal, etc.) implement a single method:
+``_start_driver``.
 """
 
 from __future__ import annotations
@@ -14,8 +14,6 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any
-
-from pydantic import ValidationError
 
 from pydantic_ai._python_signature import FunctionSignature
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
@@ -29,9 +27,6 @@ from pydantic_ai.runtime.abstract import (
     FunctionCall,
     InterruptedToolCall,
     ToolCallback,
-    decode_checkpoint_results,
-    deserialize_checkpoint,
-    serialize_checkpoint_results,
 )
 
 
@@ -84,7 +79,7 @@ class DriverBasedRuntime(CodeRuntime):
 
     Subclasses implement ``_start_driver`` to launch the driver script inside
     their specific sandbox environment. Everything else — protocol handling,
-    tool dispatch, interrupt/checkpoint, and resume — is handled here.
+    tool dispatch, and interrupt handling — is handled here.
     """
 
     @abstractmethod
@@ -111,11 +106,7 @@ class DriverBasedRuntime(CodeRuntime):
         call_tool: ToolCallback,
         *,
         signatures: list[FunctionSignature],
-        checkpoint: bytes | None = None,
     ) -> Any:
-        if checkpoint is not None:
-            return await self._resume_from_checkpoint(checkpoint, code, functions, call_tool)
-
         init_msg: dict[str, Any] = {
             'type': 'init',
             'code': code,
@@ -140,46 +131,12 @@ class DriverBasedRuntime(CodeRuntime):
                 raise CodeExecutionTimeout(f'Code execution timed out after {self.execution_timeout} seconds')
         return await coro
 
-    async def _resume_from_checkpoint(
-        self,
-        checkpoint: bytes,
-        code: str,
-        functions: list[str],
-        call_tool: ToolCallback,
-    ) -> Any:
-        """Resume execution from a serialized checkpoint via re-execution with a result cache."""
-        try:
-            ckpt = deserialize_checkpoint(checkpoint)
-
-            # Build result cache from checkpoint. decode_checkpoint_results handles
-            # base64 → validate_json → dump_python(mode='json'), producing JSON-compatible
-            # values that can be serialized with json.dumps for the init_msg.
-            result_cache = decode_checkpoint_results(ckpt.completed_results)
-        except (json.JSONDecodeError, KeyError, ValueError, ValidationError) as e:
-            raise CodeRuntimeError(f'Invalid checkpoint data: {e}') from e
-
-        init_msg: dict[str, Any] = {
-            'type': 'init',
-            'code': code,
-            'functions': functions,
-            'result_cache': result_cache,
-        }
-        process = await self._start_driver(init_msg)
-        try:
-            return await self._run_with_timeout(process, call_tool)
-        except (CodeInterruptedError, CodeSyntaxError, CodeRuntimeError):
-            raise
-        except Exception as e:
-            raise CodeRuntimeError(f'Driver communication error: {e}') from e
-
     async def _execution_loop(self, process: DriverTransport, call_tool: ToolCallback) -> Any:
         """Run the dual-wait event loop: read driver stdout + dispatch tool tasks.
 
         Simultaneously reads protocol messages from the driver and manages
-        asyncio tasks for tool call execution. Handles interrupts (ApprovalRequired,
-        CallDeferred) by building a checkpoint when all pending tasks are settled.
+        asyncio tasks for tool call execution.
         """
-        completed_results: dict[int, Any] = {}
         interrupted_calls: list[InterruptedToolCall] = []
         tool_tasks: dict[int, asyncio.Task[Any]] = {}
         task_id_to_cid: dict[int, int] = {}
@@ -212,7 +169,6 @@ class DriverBasedRuntime(CodeRuntime):
                             tool_tasks,
                             task_id_to_cid,
                             call_id_to_fc,
-                            completed_results,
                             interrupted_calls,
                             stdout_task,
                         )
@@ -221,20 +177,10 @@ class DriverBasedRuntime(CodeRuntime):
                 # from the driver, confirming all call messages for this batch
                 # have been sent. Without this, network-based runtimes (Modal,
                 # E2B, etc.) could lose in-transit call messages.
-                #
-                # Known limitation: if a successful tool result sent back to the
-                # driver causes the code to fire new calls (a subsequent "wave"),
-                # those calls may not yet be on stdout when this condition is
-                # checked, resulting in a premature interrupt. This is not a
-                # correctness bug — re-execution with the result cache on resume
-                # will replay the missed calls — but it adds an extra
-                # interrupt+resume round-trip. The Monty runtime does not have
-                # this issue because its snapshot captures full interpreter state.
                 if interrupted_calls and not tool_tasks and calls_ready_seen:
                     await _cancel_task(stdout_task)
                     await process.kill()
-                    checkpoint = serialize_checkpoint_results(completed_results, interrupted_calls)
-                    raise CodeInterruptedError(interrupted_calls=interrupted_calls, checkpoint=checkpoint)
+                    raise CodeInterruptedError(interrupted_calls=interrupted_calls)
         finally:
             await _cancel_all(tool_tasks, stdout_task, process)
 
@@ -300,7 +246,6 @@ class DriverBasedRuntime(CodeRuntime):
         tool_tasks: dict[int, asyncio.Task[Any]],
         task_id_to_cid: dict[int, int],
         call_id_to_fc: dict[int, FunctionCall],
-        completed_results: dict[int, Any],
         interrupted_calls: list[InterruptedToolCall],
         stdout_task: asyncio.Task[Any],
     ) -> None:
@@ -310,7 +255,6 @@ class DriverBasedRuntime(CodeRuntime):
 
         try:
             result = task.result()
-            completed_results[cid] = result
             # Serialize via tool_return_ta to preserve type fidelity (bytes, Pydantic models, etc.)
             # before embedding in the JSON protocol message.
             json_result = tool_return_ta.dump_python(result, mode='json')
