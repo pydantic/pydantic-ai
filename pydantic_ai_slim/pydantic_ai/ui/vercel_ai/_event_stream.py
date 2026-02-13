@@ -32,7 +32,7 @@ from .. import UIEventStream
 from ._utils import dump_provider_metadata
 from .request_types import (
     RequestData,
-    iter_tool_approval_responses,
+    _iter_tool_approval_responses,
 )
 from .response_types import (
     BaseChunk,
@@ -95,7 +95,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         """Get the set of tool_call_ids that were denied by the user."""
         return {
             tool_call_id
-            for tool_call_id, approval in iter_tool_approval_responses(self.run_input.messages)
+            for tool_call_id, approval in _iter_tool_approval_responses(self.run_input.messages)
             if not approval.approved
         }
 

@@ -312,7 +312,7 @@ RequestData = Annotated[SubmitMessage | RegenerateMessage, Discriminator('trigge
 """Union of all request data types."""
 
 
-TOOL_PART_TYPES = (
+_TOOL_PART_TYPES = (
     ToolInputStreamingPart,
     ToolInputAvailablePart,
     ToolOutputAvailablePart,
@@ -324,12 +324,12 @@ TOOL_PART_TYPES = (
 )
 
 
-def iter_tool_approval_responses(
+def _iter_tool_approval_responses(
     messages: list[UIMessage],
 ) -> Iterator[tuple[str, ToolApprovalResponded]]:
     """Yield `(tool_call_id, approval)` for each responded tool approval in assistant messages."""
     for msg in messages:
         if msg.role == 'assistant':
             for part in msg.parts:
-                if isinstance(part, TOOL_PART_TYPES) and isinstance(part.approval, ToolApprovalResponded):
+                if isinstance(part, _TOOL_PART_TYPES) and isinstance(part.approval, ToolApprovalResponded):
                     yield part.tool_call_id, part.approval

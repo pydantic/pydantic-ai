@@ -59,7 +59,7 @@ from .request_types import (
     ToolUIPart,
     UIMessage,
     UIMessagePart,
-    iter_tool_approval_responses,
+    _iter_tool_approval_responses,
 )
 from .response_types import BaseChunk
 
@@ -185,7 +185,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         if self.sdk_version < 6:
             return None
         approvals: dict[str, bool | DeferredToolApprovalResult] = {}
-        for tool_call_id, approval in iter_tool_approval_responses(self.run_input.messages):
+        for tool_call_id, approval in _iter_tool_approval_responses(self.run_input.messages):
             if approval.approved:
                 approvals[tool_call_id] = True
             elif approval.reason:
