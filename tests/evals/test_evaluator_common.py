@@ -1,10 +1,12 @@
 from __future__ import annotations as _annotations
 
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 from pydantic_core import to_jsonable_python
 from pytest_mock import MockerFixture
 
@@ -101,20 +103,77 @@ async def test_contains_dict():
 
     # Test dictionary key missing
     assert evaluator.evaluate(MockContext(output={'different': 'value'})) == snapshot(
-        EvaluationReason(value=False, reason="Output dictionary does not contain expected key 'key'")
+        EvaluationReason(value=False, reason="Output does not contain expected key 'key'")
     )
 
     # Test dictionary value mismatch
     assert evaluator.evaluate(MockContext(output={'key': 'different'})) == snapshot(
         EvaluationReason(
             value=False,
-            reason="Output dictionary has different value for key 'key': 'different' != 'value'",
+            reason="Output has different value for key 'key': 'different' != 'value'",
         )
     )
 
     # Test non-dict value in dict
     evaluator_single = Contains(value='key')
     assert evaluator_single.evaluate(MockContext(output={'key': 'value'})) == snapshot(EvaluationReason(value=True))
+
+
+async def test_contains_basemodel():
+    """Test Contains evaluator with Pydantic BaseModel."""
+
+    class MockModel(BaseModel):
+        key: str | None = None
+        extra: str | None = None
+
+    evaluator = Contains(value={'key': 'value'})
+
+    # Test model containment
+    assert evaluator.evaluate(MockContext(output=MockModel(key='value', extra='data'))) == snapshot(
+        EvaluationReason(value=True)
+    )
+
+    # Test model key missing
+    assert evaluator.evaluate(MockContext(output=MockModel(extra='data'))) == snapshot(
+        EvaluationReason(value=False, reason="Output has different value for key 'key': None != 'value'")
+    )
+
+    # Test model value mismatch
+    assert evaluator.evaluate(MockContext(output=MockModel(key='different'))) == snapshot(
+        EvaluationReason(
+            value=False,
+            reason="Output has different value for key 'key': 'different' != 'value'",
+        )
+    )
+
+
+async def test_contains_dataclass():
+    """Test Contains evaluator with dataclasses."""
+
+    @dataclass
+    class MockDataClass:
+        key: str | None = None
+        extra: str | None = None
+
+    evaluator = Contains(value={'key': 'value'})
+
+    # Test dataclass containment
+    assert evaluator.evaluate(MockContext(output=MockDataClass(key='value', extra='data'))) == snapshot(
+        EvaluationReason(value=True)
+    )
+
+    # Test dataclass key missing
+    assert evaluator.evaluate(MockContext(output=MockDataClass(extra='data'))) == snapshot(
+        EvaluationReason(value=False, reason="Output has different value for key 'key': None != 'value'")
+    )
+
+    # Test dataclass value mismatch
+    assert evaluator.evaluate(MockContext(output=MockDataClass(key='different'))) == snapshot(
+        EvaluationReason(
+            value=False,
+            reason="Output has different value for key 'key': 'different' != 'value'",
+        )
+    )
 
 
 async def test_contains_list():
