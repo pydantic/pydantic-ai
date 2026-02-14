@@ -347,3 +347,14 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 - The cache point created by `anthropic_cache_messages` is **always preserved** (as it's the newest message cache point)
 - Additional `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
 - This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching
+
+## Pause Turn Handling
+
+When using server-side tools like [`WebSearchTool`](../builtin-tools.md#web-search-tool) or skills, Anthropic may pause
+mid-turn if operations take a long time (e.g. performing many web searches in sequence). This is indicated by the
+[`pause_turn` stop reason](https://docs.anthropic.com/en/api/handling-stop-reasons#3-implement-retry-logic-for-pause-turn).
+
+Pydantic AI handles this automatically by continuing the conversation with a follow-up request. No user action
+is required. Continuations are capped internally at a high default to prevent unbounded requests.
+
+This also works correctly with [`FallbackModel`](../multi-model-agents.md#fallback-model) — when a model pauses mid-turn, continuation requests are pinned to the same model rather than restarting the fallback chain.
