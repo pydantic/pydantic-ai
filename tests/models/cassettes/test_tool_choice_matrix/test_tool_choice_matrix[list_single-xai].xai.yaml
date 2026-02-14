@@ -1,0 +1,78 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: What's the weather in Paris?
+        role: ROLE_USER
+      model: grok-3-fast
+      tools:
+      - function:
+          name: get_weather
+          description: Get weather for a city
+          parameters: '{"type": "object", "properties": {"city": {"type": "string"}},
+            "required": ["city"]}'
+      - function:
+          name: get_time
+          description: Get time in a timezone
+          parameters: '{"type": "object", "properties": {"timezone": {"type": "string"}},
+            "required": ["timezone"]}'
+      tool_choice:
+        function_name: get_weather
+    raw: !!binary |
+      CiIKHgocV2hhdCdzIHRoZSB3ZWF0aGVyIGluIFBhcmlzPxABEgtncm9rLTMtZmFzdIoBfQp7Cgtn
+      ZXRfd2VhdGhlchIWR2V0IHdlYXRoZXIgZm9yIGEgY2l0eSJUeyJ0eXBlIjogIm9iamVjdCIsICJw
+      cm9wZXJ0aWVzIjogeyJjaXR5IjogeyJ0eXBlIjogInN0cmluZyJ9fSwgInJlcXVpcmVkIjogWyJj
+      aXR5Il19igGDAQqAAQoIZ2V0X3RpbWUSFkdldCB0aW1lIGluIGEgdGltZXpvbmUiXHsidHlwZSI6
+      ICJvYmplY3QiLCAicHJvcGVydGllcyI6IHsidGltZXpvbmUiOiB7InR5cGUiOiAic3RyaW5nIn19
+      LCAicmVxdWlyZWQiOiBbInRpbWV6b25lIl19kgENEgtnZXRfd2VhdGhlcg==
+  response_sample:
+    json:
+      id: 86880ff2-469a-99c5-bca4-118df31c19cb
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_78360954
+            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: get_weather
+              arguments: '{"city":"Paris"}'
+      created: '2026-01-29T21:33:22.748435004Z'
+      model: grok-3
+      system_fingerprint: fp_a50f881eb7
+      usage:
+        completion_tokens: 26
+        prompt_tokens: 136
+        total_tokens: 162
+        prompt_text_tokens: 136
+        cached_prompt_text_tokens: 135
+      settings:
+        parallel_tool_calls: true
+        temperature: 0.7
+        tool_choice:
+          function_name: get_weather
+        tools:
+        - function:
+            name: get_weather
+            description: Get weather for a city
+            parameters: '{"type": "object", "properties": {"city": {"type": "string"}},
+              "required": ["city"]}'
+        - function:
+            name: get_time
+            description: Get time in a timezone
+            parameters: '{"type": "object", "properties": {"timezone": {"type": "string"}},
+              "required": ["timezone"]}'
+        top_p: 0.95
+    raw: !!binary |
+      CiQ4Njg4MGZmMi00NjlhLTk5YzUtYmNhNC0xMThkZjMxYzE5Y2ISPAgEGjgQAho0Cg1jYWxsXzc4
+      MzYwOTU0EAEYAVIfCgtnZXRfd2VhdGhlchIQeyJjaXR5IjoiUGFyaXMifSoMCKKk78sGELzs8OQC
+      MgZncm9rLTM6DWZwX2E1MGY4ODFlYjdKEwgaEIgBGKIBIIgBOIcBWKTVrQJaoAIQAS0zMzM/Og0S
+      C2dldF93ZWF0aGVyQn0KewoLZ2V0X3dlYXRoZXISFkdldCB3ZWF0aGVyIGZvciBhIGNpdHkiVHsi
+      dHlwZSI6ICJvYmplY3QiLCAicHJvcGVydGllcyI6IHsiY2l0eSI6IHsidHlwZSI6ICJzdHJpbmci
+      fX0sICJyZXF1aXJlZCI6IFsiY2l0eSJdfUKDAQqAAQoIZ2V0X3RpbWUSFkdldCB0aW1lIGluIGEg
+      dGltZXpvbmUiXHsidHlwZSI6ICJvYmplY3QiLCAicHJvcGVydGllcyI6IHsidGltZXpvbmUiOiB7
+      InR5cGUiOiAic3RyaW5nIn19LCAicmVxdWlyZWQiOiBbInRpbWV6b25lIl19TTMzcz8=

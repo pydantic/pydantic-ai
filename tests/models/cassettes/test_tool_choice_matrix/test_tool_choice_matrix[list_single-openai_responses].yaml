@@ -1,0 +1,163 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '698'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What's the weather in Paris?
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice:
+        name: get_weather
+        type: function
+      tools:
+      - description: Get weather for a city
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get time in a timezone
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            timezone:
+              type: string
+          required:
+          - timezone
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3276'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '2285'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1769721322
+      created_at: 1769721320
+      error: null
+      frequency_penalty: 0.0
+      id: resp_074517f3a5279b5800697bcde862ec819cba5f5699df803b21
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpe83qACF5ss8iTgjK3XP87CmbV79sJeCORk_h0T04iqIii2MEptlxTMiz0Cs4jUOY04yhiDIL0_ZuEDv1ZZzqAwml89IL2EGKIZi6QIEkCQOIMQZvnbXF-2HHrPvK6nl9hvqgAxAPdIn9wJ4xzaR5dy4MO-5RmrxpUOVayx-S6PYTnkk8mG8w8ZyzL3YjE8nD4fx-R-fFPhnikGk_BMHfGaDMVQZ-WK2_twPaTETx2wyzPBPZR7fKPH9_xIIgJUthVsMsvhNQ7jqEwy6aTzMFU1fJA3RonnpW3CRsHaaIOFCTPYTeg9-DKR8zUS5y4rJJScxexKyGzYQAIfAlEuY-lKgIcKA6CiAXpx4lbATriEXoDWEjobSWGi9xZ5kAnDUViWo21Pzd8k8XHY-w_h-Oxdv7nTYVxtYGt0bovT6E-yQvPPQQPYmqJV8yDi3DDeSRmcHjkYT2KHOrj-eRnlVG5H5gyZfTNt2Pr9szE5opOQqom01s_VOwRwASQr5unttU_5RCdanRqguN2nf443woUVx8A1XZSNO6mg4R8OixYXU2jdN1eCRYAykTq7-cI3Phc3HrWBquRElg7lBq6rFz0gxjdFoq_GN_U4JZhQreLdZ4IupurJE6ru9J8LGn3EVfoDkoE1-f22DjFISkPh_ekwqRX7k1ajfAKGQWO-49LcUTsg5wZhScYMAmugZOixAW4cMeHCl_qDG7lbD_QTp63SNH580NF3ixbicqlSC2BTYuH3QjlYGVAqfvb_5XxojoO9skYEj9t0N3CqKn6RoqHy9dJH_rEsROwwcwQtUYJFlnmDwzUX1bUV36Si5h2nD0aJpd8xfDziSIKw-z7B4t20B427rlYlrKfq5H3hPh-uMydm5FfnLvu3rAc9Z5d51LIo_wCvD3eU_GWXHbGYRk_iGnqWAiz-nXUAIoplSmMbaQyFuH3xMSMM6hrzE7ciL9grLQcsC1KKkC_hogwDf5UO6pUaMuPDYMrFC3KZ2z8-h33pZuRSKi7yO40C8R3NNEqxD8SzqLBibq8F_DibdbfqiQz7TYlQnDW14IcBUov5soH5GJu-DAtVQynbvhnwnpvtrR-KhLOH_vDbT3e1MlrB-58wB0gvcFrUzDCNrA8-afEUP-lYqUhE-TdwmsQT5D04dKTWq236f9JRizbqc_oEA0mirxYeVuJLxgQTyncvm_fYHhEWfNaXCcMhDeuMWC6S3RjDDN4wYqfyAgFI2op7Prlzv73IVMSCbmyBbyNv640PIYULGthbva_R5PTGIvvIeCuLkZ8sWWlgpqk2er4dRsK_Z0Cgv6MyV2pfUiMPkgnK1LdfCzR_uCYopiI4XMn6D_OPQyvLPFr3vKldV8YtKldA==
+        id: rs_074517f3a5279b5800697bcde91a50819c82f9b5885c32cbe6
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Paris"}'
+        call_id: call_VfwnLMHhNSM9WQ5l8wXDFKHF
+        id: fc_074517f3a5279b5800697bcdea4cd0819caabe792fa74ce462
+        name: get_weather
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice:
+        name: get_weather
+        type: function
+      tools:
+      - description: Get weather for a city
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get time in a timezone
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            timezone:
+              type: string
+          required:
+          - timezone
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 68
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 95
+        output_tokens_details:
+          reasoning_tokens: 64
+        total_tokens: 163
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

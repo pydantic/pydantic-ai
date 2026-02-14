@@ -48,7 +48,7 @@ from ..messages import (
 from ..profiles import ModelProfileSpec
 from ..profiles.google import GoogleModelProfile
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ToolChoiceScalar
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -58,6 +58,7 @@ from . import (
     download_item,
     get_user_agent,
 )
+from ._tool_choice import resolve_tool_choice
 
 try:
     from google.genai import Client, errors
@@ -403,16 +404,16 @@ class GoogleModel(Model):
 
         return image_config
 
-    def _get_tools(
+    def _get_builtin_tools(
         self, model_request_parameters: ModelRequestParameters
-    ) -> tuple[list[ToolDict] | None, ImageConfigDict | None]:
-        tools: list[ToolDict] = [
-            ToolDict(function_declarations=[_function_declaration_from_tool(t)])
-            for t in model_request_parameters.tool_defs.values()
-        ]
+    ) -> tuple[list[ToolDict], ImageConfigDict | None]:
+        """Get Google-specific builtin tools (web search, code execution, etc.).
 
+        Returns:
+            A tuple of (builtin_tools, image_config).
+        """
+        tools: list[ToolDict] = []
         image_config: ImageConfigDict | None = None
-
         if model_request_parameters.builtin_tools:
             if model_request_parameters.function_tools:
                 raise UserError('Google does not support function tools and built-in tools at the same time.')
@@ -437,20 +438,57 @@ class GoogleModel(Model):
                     raise UserError(
                         f'`{tool.__class__.__name__}` is not supported by `GoogleModel`. If it should be, please file an issue.'
                     )
-        return tools or None, image_config
+        return tools, image_config
 
     def _get_tool_config(
-        self, model_request_parameters: ModelRequestParameters, tools: list[ToolDict] | None
-    ) -> ToolConfigDict | None:
-        if not model_request_parameters.allow_text_output and tools:
-            names: list[str] = []
-            for tool in tools:
-                for function_declaration in tool.get('function_declarations') or []:
-                    if name := function_declaration.get('name'):  # pragma: no branch
-                        names.append(name)
-            return _tool_config(names)
+        self,
+        model_request_parameters: ModelRequestParameters,
+        model_settings: GoogleModelSettings,
+    ) -> tuple[list[ToolDict] | None, ToolConfigDict | None, ImageConfigDict | None]:
+        """Determine which tools to send and the API tool config.
+
+        Returns:
+            A tuple of (filtered_tools, tool_config, image_config).
+        """
+        builtin_tools, image_config = self._get_builtin_tools(model_request_parameters)
+
+        tool_defs = model_request_parameters.tool_defs
+
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+
+        function_calling_config_modes: dict[ToolChoiceScalar, FunctionCallingConfigMode] = {
+            'auto': FunctionCallingConfigMode.AUTO,
+            'none': FunctionCallingConfigMode.NONE,
+            'required': FunctionCallingConfigMode.ANY,
+        }
+
+        allowed_function_names: list[str] = []
+        if isinstance(resolved_tool_choice, tuple):
+            tool_choice_mode, tool_names = resolved_tool_choice
+            if tool_choice_mode == 'auto':
+                # Breaks caching, but Google doesn't support AUTO mode with allowed_function_names
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+            else:
+                # Use ANY mode with allowed_function_names to force one of the specified tools
+                allowed_function_names = list(tool_names)
         else:
-            return None
+            tool_choice_mode = resolved_tool_choice
+
+        function_calling_config: FunctionCallingConfigDict = {'mode': function_calling_config_modes[tool_choice_mode]}
+        if allowed_function_names:
+            function_calling_config['allowed_function_names'] = allowed_function_names
+        tool_config = ToolConfigDict(function_calling_config=function_calling_config)
+
+        tools: list[ToolDict] = [
+            ToolDict(function_declarations=[_function_declaration_from_tool(t)]) for t in tool_defs.values()
+        ]
+
+        tools.extend(builtin_tools)
+
+        if not tools:
+            return None, None, image_config
+
+        return tools, tool_config, image_config
 
     @overload
     async def _generate_content(
@@ -496,7 +534,7 @@ class GoogleModel(Model):
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[list[ContentUnionDict], GenerateContentConfigDict]:
-        tools, image_config = self._get_tools(model_request_parameters)
+        tools, tool_config, image_config = self._get_tool_config(model_request_parameters, model_settings)
         if model_request_parameters.function_tools and not self.profile.supports_tools:
             raise UserError('Tools are not supported by this model.')
 
@@ -515,13 +553,13 @@ class GoogleModel(Model):
             if not self.profile.supports_json_object_output:
                 raise UserError('JSON output is not supported by this model.')
             response_mime_type = 'application/json'
-
-        tool_config = self._get_tool_config(model_request_parameters, tools)
         system_instruction, contents = await self._map_messages(messages, model_request_parameters)
 
-        modalities = [Modality.TEXT.value]
+        modalities: list[str] = [Modality.TEXT.value]
         if self.profile.supports_image_output:
             modalities.append(Modality.IMAGE.value)
+            if not model_request_parameters.allow_text_output:
+                modalities.remove(Modality.TEXT.value)
 
         headers: dict[str, str] = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         if extra_headers := model_settings.get('extra_headers'):
@@ -1173,12 +1211,6 @@ def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclaration
         parameters_json_schema=json_schema,
     )
     return f
-
-
-def _tool_config(function_names: list[str]) -> ToolConfigDict:
-    mode = FunctionCallingConfigMode.ANY
-    function_calling_config = FunctionCallingConfigDict(mode=mode, allowed_function_names=function_names)
-    return ToolConfigDict(function_calling_config=function_calling_config)
 
 
 def _metadata_as_usage(response: GenerateContentResponse, provider: str, provider_url: str) -> usage.RequestUsage:

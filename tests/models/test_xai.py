@@ -94,6 +94,7 @@ from .mock_xai import (
 
 with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
+    from xai_sdk.chat import required_tool
     from xai_sdk.proto import chat_pb2, usage_pb2
 
     from pydantic_ai.models.xai import XaiModel, XaiModelSettings
@@ -788,6 +789,110 @@ async def test_tool_choice_fallback(allow_model_requests: None) -> None:
                 'use_encrypted_content': False,
                 'include': [],
             }
+        ]
+    )
+
+
+async def test_tool_choice_none(allow_model_requests: None) -> None:
+    """Test that tool_choice='none' is passed to the API."""
+    response = create_response(content='ok', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='tool_a'), ToolDefinition(name='tool_b')],
+        allow_text_output=True,
+    )
+    settings: XaiModelSettings = {'tool_choice': 'none'}
+
+    await model._create_chat(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        model_settings=settings,
+        model_request_parameters=params,
+    )
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert kwargs[0]['tool_choice'] == 'none'
+    assert kwargs[0]['tools'] == snapshot(
+        [
+            {'function': {'name': 'tool_a', 'parameters': '{"type": "object", "properties": {}}'}},
+            {'function': {'name': 'tool_b', 'parameters': '{"type": "object", "properties": {}}'}},
+        ]
+    )
+
+
+async def test_tool_choice_required(allow_model_requests: None) -> None:
+    """Test that tool_choice='required' is passed to the API."""
+    response = create_response(content='ok', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='tool_a'), ToolDefinition(name='tool_b')],
+        allow_text_output=True,
+    )
+    settings: XaiModelSettings = {'tool_choice': 'required'}
+
+    await model._create_chat(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        model_settings=settings,
+        model_request_parameters=params,
+    )
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert kwargs[0]['tool_choice'] == 'required'
+
+
+async def test_tool_choice_specific_tool(allow_model_requests: None) -> None:
+    """Test that tool_choice with a single tool forces that specific tool."""
+    response = create_response(content='ok', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='tool_a'), ToolDefinition(name='tool_b')],
+        allow_text_output=True,
+    )
+    settings: XaiModelSettings = {'tool_choice': ['tool_a']}
+
+    await model._create_chat(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        model_settings=settings,
+        model_request_parameters=params,
+    )
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert kwargs[0]['tool_choice'] == required_tool('tool_a')
+
+
+async def test_tool_choice_multiple_tools_filters(allow_model_requests: None) -> None:
+    """Test that tool_choice with multiple tools filters the tool definitions."""
+    response = create_response(content='ok', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='tool_a'),
+            ToolDefinition(name='tool_b'),
+            ToolDefinition(name='tool_c'),
+        ],
+        allow_text_output=True,
+    )
+    settings: XaiModelSettings = {'tool_choice': ['tool_a', 'tool_c']}
+
+    await model._create_chat(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        model_settings=settings,
+        model_request_parameters=params,
+    )
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert kwargs[0]['tool_choice'] == 'required'
+    assert kwargs[0]['tools'] == snapshot(
+        [
+            {'function': {'name': 'tool_a', 'parameters': '{"type": "object", "properties": {}}'}},
+            {'function': {'name': 'tool_c', 'parameters': '{"type": "object", "properties": {}}'}},
         ]
     )
 
