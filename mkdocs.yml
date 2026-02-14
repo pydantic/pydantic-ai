@@ -130,6 +130,7 @@ nav:
           - examples/slack-lead-qualifier.md
       - UI Examples:
           - examples/ag-ui.md
+      - Community Examples: examples/community.md
 
   - API Reference:
       - pydantic_ai:

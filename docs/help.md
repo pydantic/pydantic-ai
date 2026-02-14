@@ -12,6 +12,10 @@ If you're on a [Logfire][logfire] Pro plan, you can also get a dedicated private
 
 The [Pydantic AI GitHub Issues][github-issues] are a great place to ask questions and give us feedback.
 
+## :material-bookshelf: Community Resources
+
+- [Awesome Pydantic AI](https://github.com/vstorm-co/awesome-pydantic-ai) by [Vstorm](https://vstorm.co/) — a community-curated list of Pydantic AI frameworks, libraries, templates, examples, and resources.
+
 [slack]: https://logfire.pydantic.dev/docs/join-slack/
 [github-issues]: https://github.com/pydantic/pydantic-ai/issues
 [logfire]: https://pydantic.dev/logfire

@@ -329,15 +329,23 @@ Deep agents are autonomous agents that combine multiple architectural patterns a
 
 - **Planning and progress tracking** — agents break down complex tasks into steps and track their progress, giving users visibility into what the agent is working on. See [Task Management toolsets](toolsets.md#task-management).
 - **File system operations** — reading, writing, and editing files with proper abstraction layers that work across in-memory storage, real file systems, and sandboxed containers. See [File Operations toolsets](toolsets.md#file-operations).
-- **Task delegation** — spawning specialized sub-agents for specific tasks, with isolated context to prevent recursive delegation issues. See [Agent Delegation](#agent-delegation) above.
+- **Task delegation** — spawning specialized sub-agents for specific tasks, with isolated context to prevent recursive delegation issues. See [Agent Delegation](#agent-delegation) above and [Agent Delegation toolsets](toolsets.md#agent-delegation).
 - **Sandboxed code execution** — running AI-generated code in isolated environments (typically Docker containers) to prevent accidents. See [Code Execution toolsets](toolsets.md#code-execution).
-- **Context management** — automatic conversation summarization to handle long sessions that would otherwise exceed token limits. See [Processing Message History](message-history.md#processing-message-history).
+- **Context management** — automatic conversation summarization to handle long sessions that would otherwise exceed token limits. See [Processing Message History](message-history.md#processing-message-history) and [Context Management toolsets](toolsets.md#context-management).
 - **Human-in-the-loop** — approval workflows for dangerous operations like code execution or file deletion. See [Requiring Tool Approval](toolsets.md#requiring-tool-approval).
 - **Durable execution** — preserving agent state across transient API failures and application errors or restarts. See [Durable Execution](durable_execution/overview.md).
 
 In addition, the community maintains packages that bring these concepts together in a more opinionated way:
 
 - [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) by [Vstorm](https://vstorm.co/)
+
+Or that implement individual capabilities:
+
+- [`subagents-pydantic-ai`](https://github.com/vstorm-co/subagents-pydantic-ai) by [Vstorm](https://vstorm.co/) — multi-agent orchestration with dual-mode execution
+- [`summarization-pydantic-ai`](https://github.com/vstorm-co/summarization-pydantic-ai) by [Vstorm](https://vstorm.co/) — conversation summarization and context management
+- [`pydantic-ai-backend`](https://github.com/vstorm-co/pydantic-ai-backend) by [Vstorm](https://vstorm.co/) — file operations and sandboxed code execution backends
+- [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) by [Vstorm](https://vstorm.co/) — task planning and progress tracking
+
 
 ## Observing Multi-Agent Systems
 
