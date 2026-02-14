@@ -24,26 +24,6 @@ except ImportError as _import_error:  # pragma: no cover
 
 from . import Provider
 
-# Special provider base URLs that don't follow the standard pattern
-PROVIDER_BASE_URLS: dict[str, str] = {
-    'cohere': 'https://router.huggingface.co/cohere/compatibility/v1',
-}
-
-
-def _resolve_provider_base_url(provider_name: str) -> str | None:
-    """Resolve provider name to base URL, skipping SDK's provider mapping API call.
-
-    The SDK makes a synchronous HTTP call to fetch provider mappings when using
-    provider names. By resolving to base URLs directly, we avoid this call and
-    improve compatibility with async test frameworks like VCR.
-    """
-    if provider_name in PROVIDER_BASE_URLS:
-        return PROVIDER_BASE_URLS[provider_name]
-    if provider_name == 'hf-inference':
-        return None  # Let SDK handle model-specific routing
-    # Standard pattern for most providers: https://router.huggingface.co/{provider}/v1
-    return f'https://router.huggingface.co/{provider_name}/v1'
-
 
 class HuggingFaceProvider(Provider[AsyncInferenceClient]):
     """Provider for Hugging Face."""
@@ -54,7 +34,13 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
 
     @property
     def base_url(self) -> str:
-        return self.client.model  # type: ignore
+        if self._client.model is not None:
+            return self._client.model
+        if self._client.provider is not None:
+            from huggingface_hub.constants import INFERENCE_PROXY_TEMPLATE
+
+            return INFERENCE_PROXY_TEMPLATE.format(provider=self._client.provider)
+        return ''
 
     @property
     def client(self) -> AsyncInferenceClient:
@@ -130,19 +116,6 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
             raise ValueError('Cannot provide both `base_url` and `provider_name`.')
 
         if hf_client is None:
-            resolved_base_url = base_url
-            resolved_provider = provider_name
-
-            # Resolve provider_name to base_url to skip SDK's provider mapping API call
-            if provider_name is not None and base_url is None:
-                resolved_base_url = _resolve_provider_base_url(provider_name)
-                if resolved_base_url is not None:
-                    resolved_provider = None  # Don't pass provider when using base_url
-
-            self._client = AsyncInferenceClient(
-                api_key=api_key,
-                provider=resolved_provider,  # pyright: ignore[reportArgumentType]
-                base_url=resolved_base_url,
-            )
+            self._client = AsyncInferenceClient(api_key=api_key, provider=provider_name, base_url=base_url)  # type: ignore
         else:
             self._client = hf_client

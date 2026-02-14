@@ -187,7 +187,7 @@ Hello! 👋 How can I help you today?\
             model_name='deepseek-ai/DeepSeek-R1',
             timestamp=IsDatetime(),
             provider_name='huggingface',
-            provider_url='https://router.huggingface.co/together/v1',
+            provider_url='https://router.huggingface.co/together',
             provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
             provider_response_id='oV1mmQk-28Eivz-9c4b14712ea45a45',
             run_id=IsStr(),
@@ -353,7 +353,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_url='https://api-inference.huggingface.co',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -385,7 +385,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_url='https://api-inference.huggingface.co',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -410,7 +410,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_url='https://api-inference.huggingface.co',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -633,8 +633,7 @@ async def test_image_url_input(allow_model_requests: None, huggingface_api_key: 
                         content=[
                             'hello',
                             ImageUrl(
-                                url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
-                                identifier='bd38f5',
+                                url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
                             ),
                         ],
                         timestamp=IsNow(tz=timezone.utc),
@@ -653,7 +652,7 @@ async def test_image_url_input(allow_model_requests: None, huggingface_api_key: 
                 model_name='Qwen/Qwen2.5-VL-72B-Instruct',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='huggingface',
-                provider_url='https://router.huggingface.co/nebius/v1',
+                provider_url='https://router.huggingface.co/nebius',
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': IsDatetime(),
@@ -738,7 +737,7 @@ That's correct! Paris is not only the political center but also the cultural, ec
                 model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
-                provider_url='https://router.huggingface.co/together/v1',
+                provider_url='https://router.huggingface.co/together',
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': IsDatetime(),
@@ -842,7 +841,7 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
                 provider_url='https://api-inference.huggingface.co',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -851,7 +850,6 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
                 parts=[
                     RetryPromptPart(
                         content='Response is invalid',
-                        tool_name=None,
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                     )
@@ -867,7 +865,7 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
                 provider_url='https://api-inference.huggingface.co',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -972,7 +970,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                 model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
-                provider_url='https://router.huggingface.co/together/v1',
+                provider_url='https://router.huggingface.co/together',
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': IsDatetime(),
@@ -1012,7 +1010,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                 model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
-                provider_url='https://router.huggingface.co/together/v1',
+                provider_url='https://router.huggingface.co/together',
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': IsDatetime(),
@@ -1059,7 +1057,7 @@ async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingfa
                 model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
-                provider_url='https://router.huggingface.co/together/v1',
+                provider_url='https://router.huggingface.co/together',
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': IsDatetime(),

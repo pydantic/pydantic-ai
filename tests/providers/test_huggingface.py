@@ -126,27 +126,8 @@ def test_huggingface_provider_init_without_hf_client(MockAsyncInferenceClient: M
 
 @patch('pydantic_ai.providers.huggingface.AsyncInferenceClient')
 def test_huggingface_provider_init_with_provider_name(MockAsyncInferenceClient: MagicMock):
-    # provider_name is resolved to base_url to skip SDK's provider mapping API call
-    HuggingFaceProvider(api_key='key', provider_name='test-provider')
-    MockAsyncInferenceClient.assert_called_once_with(
-        api_key='key', provider=None, base_url='https://router.huggingface.co/test-provider/v1'
-    )
-
-
-@patch('pydantic_ai.providers.huggingface.AsyncInferenceClient')
-def test_huggingface_provider_init_with_provider_name_cohere(MockAsyncInferenceClient: MagicMock):
-    # cohere has a special URL pattern
-    HuggingFaceProvider(api_key='key', provider_name='cohere')
-    MockAsyncInferenceClient.assert_called_once_with(
-        api_key='key', provider=None, base_url='https://router.huggingface.co/cohere/compatibility/v1'
-    )
-
-
-@patch('pydantic_ai.providers.huggingface.AsyncInferenceClient')
-def test_huggingface_provider_init_with_provider_name_hf_inference(MockAsyncInferenceClient: MagicMock):
-    # hf-inference is passed through to SDK (uses model-specific routing)
-    HuggingFaceProvider(api_key='key', provider_name='hf-inference')
-    MockAsyncInferenceClient.assert_called_once_with(api_key='key', provider='hf-inference', base_url=None)
+    HuggingFaceProvider(api_key='key', provider_name='together')
+    MockAsyncInferenceClient.assert_called_once_with(api_key='key', provider='together', base_url=None)
 
 
 @patch('pydantic_ai.providers.huggingface.AsyncInferenceClient')
@@ -166,6 +147,14 @@ def test_huggingface_provider_base_url():
     mock_client.model = 'test-model'
     provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
     assert provider.base_url == 'test-model'
+
+
+def test_huggingface_provider_base_url_from_provider_name():
+    mock_client = Mock(spec=AsyncInferenceClient)
+    mock_client.model = None
+    mock_client.provider = 'together'
+    provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
+    assert provider.base_url == 'https://router.huggingface.co/together'
 
 
 def test_huggingface_provider_model_profile(mocker: MockerFixture):

@@ -458,6 +458,32 @@ def huggingface_api_key() -> str:
     return os.getenv('HF_TOKEN', 'hf_token')
 
 
+@pytest.fixture(autouse=True, scope='session')
+def _patch_hf_provider_mappings():
+    """Populate the SDK's hardcoded model mappings to avoid sync HTTP calls during VCR tests.
+
+    The HuggingFace SDK makes a synchronous HTTP call to resolve provider mappings at request time,
+    which is incompatible with VCR's async test infrastructure.
+    """
+    from huggingface_hub.hf_api import InferenceProviderMapping
+    from huggingface_hub.inference._providers._common import HARDCODED_MODEL_INFERENCE_MAPPING
+
+    models: list[tuple[str, str, str]] = [
+        ('together', 'deepseek-ai/DeepSeek-R1', 'conversational'),
+        ('nebius', 'Qwen/Qwen2.5-VL-72B-Instruct', 'conversational'),
+        ('nebius', 'Qwen/Qwen2.5-72B-Instruct', 'conversational'),
+    ]
+
+    for provider, model_id, task in models:
+        HARDCODED_MODEL_INFERENCE_MAPPING[provider][model_id] = InferenceProviderMapping(
+            provider=provider,
+            hf_model_id=model_id,
+            providerId=model_id,
+            status='live',
+            task=task,
+        )
+
+
 @pytest.fixture(scope='session')
 def heroku_inference_key() -> str:
     return os.getenv('HEROKU_INFERENCE_KEY', 'mock-api-key')
