@@ -223,6 +223,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             return await self._handle_deferred_tool_results(self.deferred_tool_results, messages, ctx)
 
         next_message: _messages.ModelRequest | None = None
+        is_resuming_without_prompt = False
 
         run_context: RunContext[DepsT] | None = None
         instructions: str | None = None
@@ -232,6 +233,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 # Drop last message from history and reuse its parts
                 messages.pop()
                 next_message = _messages.ModelRequest(parts=last_message.parts)
+                is_resuming_without_prompt = True
 
                 # Extract `UserPromptPart` content from the popped message and add to `ctx.deps.prompt`
                 user_prompt_parts = [part for part in last_message.parts if isinstance(part, _messages.UserPromptPart)]
@@ -282,7 +284,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         if not messages and not next_message.parts and not next_message.instructions:
             raise exceptions.UserError('No message history, user prompt, or instructions provided')
 
-        return ModelRequestNode[DepsT, NodeRunEndT](request=next_message)
+        return ModelRequestNode[DepsT, NodeRunEndT](
+            request=next_message, is_resuming_without_prompt=is_resuming_without_prompt
+        )
 
     async def _handle_deferred_tool_results(  # noqa: C901
         self,
@@ -438,6 +442,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that makes a request to the model using the last message in state.message_history."""
 
     request: _messages.ModelRequest
+    is_resuming_without_prompt: bool = False
 
     _result: CallToolsNode[DepsT, NodeRunEndT] | None = field(repr=False, init=False, default=None)
     _did_stream: bool = field(repr=False, init=False, default=False)
@@ -517,19 +522,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
-        original_history = ctx.state.message_history[:]
-        # In no-prompt resume runs, `UserPromptNode` pops the last historical `ModelRequest`
-        # and this node appends it back, so we should keep `new_message_index` at the end.
-        is_resuming_without_prompt = ctx.deps.new_message_index == len(original_history)
-        message_history = await _process_message_history(original_history, ctx.deps.history_processors, run_context)
-        if message_history[-1].run_id is None:
+        message_history = await _process_message_history(
+            ctx.state.message_history[:], ctx.deps.history_processors, run_context
+        )
+        if message_history and message_history[-1].run_id is None:
             message_history[-1].run_id = ctx.state.run_id
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
         ctx.state.message_history[:] = message_history
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index = (
             len(message_history)
-            if is_resuming_without_prompt
+            if self.is_resuming_without_prompt
             else _first_run_id_index(message_history, ctx.state.run_id)
         )
 

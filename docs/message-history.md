@@ -347,24 +347,20 @@ the message history before each model request.
     History processors replace the message history in the state with the processed messages, including the new user prompt part.
     This means that if you want to keep the original message history, you need to make a copy of it.
 
-!!! warning "History processors can change `new_messages()` boundaries"
-    [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] does **not** use a simple length-based
-    "messages added this run" count. After `history_processors` run, it finds the first message from the current run
-    (based on `run_id`) and returns everything from that point onward.
+!!! warning "History processors can affect `new_messages()` results"
+    [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] determines which messages belong to the
+    current run after all history processors have been applied. If your processor reorders, inserts, or
+    removes messages, the set of messages returned by `new_messages()` may differ from what you expect.
 
-    In practice:
+    To avoid surprises:
 
-    - If a processor removes or overwrites `run_id`, messages may be treated as old or new unexpectedly.
-    - If a processor inserts a message **before** current-run messages without setting `run_id`, that message is
-      treated as old and won't appear in [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages].
-    - If a processor moves older messages **after** the first current-run message, those moved messages will appear
-      in [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages].
-
-    To keep behavior predictable:
-
-    - Preserve existing `run_id` values when possible.
-    - For processor-created messages that should belong to the current run, set `run_id=ctx.run_id` in a
-      context-aware processor.
+    - Preserve `run_id` on existing messages.
+    - When creating new messages in a processor that should be part of the current run, use a
+      [context-aware processor](#runcontext-parameter) and set `run_id` to the current run's ID
+      via the `RunContext` parameter.
+    - Reordering or removing messages may shift the boundary between "old" and "new" messages, test
+      with [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] to verify the behavior
+      matches your expectations.
 
 ### Usage
 

@@ -894,11 +894,9 @@ async def test_callable_class_history_processor_with_ctx_no_op(
 
 async def test_new_messages_index_during_iter_with_pruning():
     """
-    Test flow:
-    1. Start with [UserPrompt('start')] (Length 1)
-    2. Model calls tool -> History: [UserPrompt('start'), ModelResponse(ToolCall), ModelRequest(ToolReturn)] (Length 3)
-    3. Pruning (keep_last_2) removes UserPrompt('start') -> History: [ModelResponse(ToolCall), ModelRequest(ToolReturn)]
-    4. Model returns 'done' -> Final: [ModelResponse(ToolCall), ModelRequest(ToolReturn), ModelResponse('done')]
+    When a pruning history processor removes the initial user prompt during
+    a multi-step tool calling run, new_messages() should still return all
+    messages generated in this run.
     """
 
     def keep_last_2(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -965,12 +963,10 @@ async def test_new_messages_index_during_iter_with_pruning():
 
 async def test_new_messages_index_during_iter_with_pruning_and_history():
     """
-    Test flow with history:
-    1. Start with [OldMsg1, OldResp1, UserPrompt('start')] (Length 3)
-    2. Pruning (keep_last_2) removes OldMsg1 -> History: [OldResp1, UserPrompt('start')]
-    3. Model calls tool -> History: [OldResp1, UserPrompt('start'), ModelResponse(ToolCall), ModelRequest(ToolReturn)] (Length 4)
-    4. Pruning removes OldResp1 and UserPrompt('start') -> History: [ModelResponse(ToolCall), ModelRequest(ToolReturn)]
-    5. Model returns 'done' -> Final: [ModelResponse(ToolCall), ModelRequest(ToolReturn), ModelResponse('done')]
+    When running with prior message_history and a pruning history processor
+    that progressively removes older messages during a multi-step tool calling
+    run, new_messages() should return only the messages from the current run,
+    excluding the pruned history.
     """
 
     def keep_last_2(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1042,12 +1038,9 @@ async def test_new_messages_index_during_iter_with_pruning_and_history():
 
 async def test_history_processor_reorder_old_new(function_model: FunctionModel, received_messages: list[ModelMessage]):
     """
-    Test flow:
-    1. Start with history: [ModelRequest('Old question')]
-    2. User adds: 'New question' -> Internal history: [ModelRequest('Old'), ModelRequest('New')]
-    3. Processor `swap_last_two` swaps them -> Internal history: [ModelRequest('New'), ModelRequest('Old')]
-    4. Model generates response -> Final history: [ModelRequest('New'), ModelRequest('Old'), ModelResponse('Provider response')]
-    5. `new_messages()` should only return messages from this run: [ModelRequest('New'), ModelRequest('Old'), ModelResponse('Provider response')]
+    When a history processor reorders old and new messages, the old history
+    message receives the current run_id, so new_messages() treats it as
+    part of the current run and includes it in the result.
     """
 
     def swap_last_two(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1108,12 +1101,9 @@ async def test_history_processor_injects_into_new_stream(
     function_model: FunctionModel, received_messages: list[ModelMessage]
 ):
     """
-    Test flow:
-    1. Start with history: [ModelRequest('Old')]
-    2. User adds: 'New question' -> Internal history: [ModelRequest('Old'), ModelRequest('New')]
-    3. Processor `inject_middle` inserts 'Inserted' before the last message(which is the first message of current run) -> Internal history: [ModelRequest('Old'), ModelRequest('Inserted'), ModelRequest('New')]
-    4. Model generates response -> Final history: [ModelRequest('Old'), ModelRequest('Inserted'), ModelRequest('New'), ModelResponse('Provider response')]
-    5. `new_messages()` should return messages from this run. [ModelRequest('Inserted'), ModelRequest('New'), ModelResponse('Provider response')]
+    When a history processor injects a new message tagged with the current
+    run_id into the message list, new_messages() should include the injected
+    message alongside the other messages from this run.
     """
 
     def inject_middle(ctx: RunContext[Any], messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1182,12 +1172,9 @@ async def test_history_processor_injects_without_run_id_before_current_run(
     function_model: FunctionModel, received_messages: list[ModelMessage]
 ):
     """
-    Test flow:
-    1. Start with history: [ModelRequest('Old')]
-    2. User adds: 'New question' -> Internal history: [ModelRequest('Old'), ModelRequest('New')]
-    3. Processor inserts 'Inserted' before the current-run message without a run_id
-    4. Model generates response
-    5. `new_messages()` should exclude the injected message and include only current-run messages
+    When a history processor injects a message without a run_id before the
+    current run, new_messages() should exclude the injected message and only
+    return messages that belong to the current run.
     """
 
     def inject_middle_without_run_id(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1247,8 +1234,9 @@ async def test_history_processor_injects_without_run_id_before_current_run(
 
 async def test_history_processor_overrides_run_id_uses_response_as_new_messages(function_model: FunctionModel):
     """
-    If a history processor overwrites all run_id values, `_first_run_id_index` should fall back to `len(messages)`,
-    meaning `new_messages()` only includes messages appended after processing (the model response).
+    When a history processor overwrites the run_id on all messages,
+    new_messages() should fall back to returning only the model response
+    appended after processing.
     """
 
     def override_run_id(ctx: RunContext[Any], messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1265,10 +1253,30 @@ async def test_history_processor_overrides_run_id_uses_response_as_new_messages(
         result = await agent.run('New question', message_history=message_history)
 
     assert captured_messages == result.all_messages()
-
-    response_run_id = result.all_messages()[-1].run_id
-    assert response_run_id is not None
-    assert all(message.run_id != response_run_id for message in result.all_messages()[:-1])
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Old', timestamp=IsDatetime()),
+                ],
+                run_id=IsStr(regex='.+-override'),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='New question', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(regex='.+-override'),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Provider response')],
+                usage=RequestUsage(input_tokens=53, output_tokens=2),
+                model_name='function:capture_model_function:capture_model_stream_function',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
     assert result.new_messages() == result.all_messages()[-1:]
 
@@ -1277,12 +1285,9 @@ async def test_history_processor_resuming_without_prompt(
     function_model: FunctionModel, received_messages: list[ModelMessage]
 ):
     """
-    Exercise the `is_resuming_without_prompt` path:
-    - run with `user_prompt=None`
-    - history ends with `ModelRequest`
-    - `UserPromptNode.run()` pops and reuses the last request
-    - history processor inserts an additional request before the reused one
-    - `_prepare_request()` should still set `new_message_index` to `len(message_history)`, so `new_messages()` excludes reused history
+    When running without a user prompt (resuming from history), new_messages()
+    should only include messages generated by the model, not the reused
+    history even when a history processor modifies the message list.
     """
 
     def prepend_summary(messages: list[ModelMessage]) -> list[ModelMessage]:
