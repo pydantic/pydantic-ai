@@ -62,6 +62,8 @@ See https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.p
 KnownModelName = TypeAliasType(
     'KnownModelName',
     Literal[
+        'alibaba:qwen3-235b-a22b-thinking-2507',
+        'alibaba:qwen3-max-2026-01-23',
         'anthropic:claude-3-5-haiku-20241022',
         'anthropic:claude-3-5-haiku-latest',
         'anthropic:claude-3-7-sonnet-20250219',
@@ -455,6 +457,7 @@ KnownModelName = TypeAliasType(
         'mistral:mistral-moderation-latest',
         'mistral:mistral-small-latest',
         'moonshotai:kimi-k2-0711-preview',
+        'moonshotai:kimi-k2.5-preview',
         'moonshotai:kimi-latest',
         'moonshotai:kimi-thinking-preview',
         'moonshotai:moonshot-v1-128k-vision-preview',
