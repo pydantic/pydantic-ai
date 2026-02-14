@@ -2,6 +2,7 @@ import datetime
 import json
 from collections.abc import Sequence
 from typing import Literal, cast
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from inline_snapshot import snapshot
@@ -330,8 +331,6 @@ async def test_openrouter_binary_content_video_mapping() -> None:
 
 
 async def test_openrouter_video_url_force_download() -> None:
-    from unittest.mock import AsyncMock, patch
-
     provider = OpenRouterProvider(api_key='test-key')
     model = OpenRouterModel('google/gemini-3-flash-preview', provider=provider)
 
@@ -371,8 +370,6 @@ async def test_openrouter_video_url_force_download() -> None:
 
 async def test_openrouter_video_url_no_force_download() -> None:
     """Test that `force_download=False` does not call `download_item` for `VideoUrl`."""
-    from unittest.mock import AsyncMock, patch
-
     provider = OpenRouterProvider(api_key='test-key')
     model = OpenRouterModel('google/gemini-3-flash-preview', provider=provider)
 

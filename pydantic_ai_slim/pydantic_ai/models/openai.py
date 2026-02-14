@@ -1153,10 +1153,9 @@ class OpenAIChatModel(Model):
             image_url['url'] = image_content['data']
         return ChatCompletionContentPartImageParam(image_url=image_url, type='image_url')
 
-    async def _map_binary_content_item(
-        self, item: BinaryContent, profile: OpenAIModelProfile
-    ) -> ChatCompletionContentPartParam:
+    async def _map_binary_content_item(self, item: BinaryContent) -> ChatCompletionContentPartParam:
         """Map a BinaryContent item to a chat completion content part."""
+        profile = OpenAIModelProfile.from_profile(self.profile)
         if self._is_text_like_media_type(item.media_type):
             # Inline text-like binary content as a text block
             return self._inline_text_file_part(
@@ -1187,10 +1186,9 @@ class OpenAIChatModel(Model):
         else:  # pragma: no cover
             raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
 
-    async def _map_audio_url_item(
-        self, item: AudioUrl, profile: OpenAIModelProfile
-    ) -> ChatCompletionContentPartInputAudioParam:
+    async def _map_audio_url_item(self, item: AudioUrl) -> ChatCompletionContentPartInputAudioParam:
         """Map an AudioUrl to a chat completion audio content part."""
+        profile = OpenAIModelProfile.from_profile(self.profile)
         data_format = 'base64_uri' if profile.openai_chat_audio_input_encoding == 'uri' else 'base64'
         downloaded_item = await download_item(item, data_format=data_format, type_format='extension')
         assert downloaded_item['data_type'] in (
@@ -1200,10 +1198,9 @@ class OpenAIChatModel(Model):
         audio = InputAudio(data=downloaded_item['data'], format=downloaded_item['data_type'])
         return ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio')
 
-    async def _map_document_url_item(
-        self, item: DocumentUrl, profile: OpenAIModelProfile
-    ) -> ChatCompletionContentPartParam:
+    async def _map_document_url_item(self, item: DocumentUrl) -> ChatCompletionContentPartParam:
         """Map a DocumentUrl to a chat completion content part."""
+        profile = OpenAIModelProfile.from_profile(self.profile)
         # OpenAI Chat API's FileFile only supports base64-encoded data, not URLs.
         # Some providers (e.g., OpenRouter) support URLs via the profile flag.
         if not item.force_download and profile.openai_chat_supports_file_urls:
@@ -1239,17 +1236,16 @@ class OpenAIChatModel(Model):
         self, item: str | ImageUrl | BinaryContent | AudioUrl | DocumentUrl | VideoUrl | CachePoint
     ) -> ChatCompletionContentPartParam | None:
         """Map a single content item to a chat completion content part, or None to filter it out."""
-        profile = OpenAIModelProfile.from_profile(self.profile)
         if isinstance(item, str):
             return ChatCompletionContentPartTextParam(text=item, type='text')
         elif isinstance(item, ImageUrl):
             return await self._map_image_url_item(item)
         elif isinstance(item, BinaryContent):
-            return await self._map_binary_content_item(item, profile)
+            return await self._map_binary_content_item(item)
         elif isinstance(item, AudioUrl):
-            return await self._map_audio_url_item(item, profile)
+            return await self._map_audio_url_item(item)
         elif isinstance(item, DocumentUrl):
-            return await self._map_document_url_item(item, profile)
+            return await self._map_document_url_item(item)
         elif isinstance(item, VideoUrl):
             return await self._map_video_url_item(item)
         elif isinstance(item, CachePoint):

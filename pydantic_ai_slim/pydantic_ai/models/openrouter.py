@@ -10,7 +10,6 @@ from typing_extensions import TypedDict, assert_never, override
 from ..exceptions import ModelHTTPError
 from ..messages import BinaryContent, FinishReason, ModelResponseStreamEvent, ThinkingPart, VideoUrl
 from ..profiles import ModelProfileSpec
-from ..profiles.openai import OpenAIModelProfile
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterProvider
 from ..settings import ModelSettings
@@ -49,7 +48,7 @@ class _VideoURL(TypedDict):
     url: str
 
 
-class ChatCompletionContentPartVideoUrlParam(TypedDict):
+class _ChatCompletionContentPartVideoUrlParam(TypedDict):
     """Video URL content part parameter for OpenRouter.
 
     OpenRouter supports video_url content parts, which the OpenAI client doesn't support.
@@ -616,17 +615,17 @@ class OpenRouterModel(OpenAIChatModel):
 
     @override
     async def _map_binary_content_item(
-        self, item: BinaryContent, profile: OpenAIModelProfile
+        self, item: BinaryContent
     ) -> ChatCompletionContentPartParam:
         """Map a BinaryContent item to a chat completion content part for OpenRouter."""
         if item.is_video:
             video_url: _VideoURL = {'url': item.data_uri}
             return cast(
                 ChatCompletionContentPartParam,
-                ChatCompletionContentPartVideoUrlParam(video_url=video_url, type='video_url'),
+                _ChatCompletionContentPartVideoUrlParam(video_url=video_url, type='video_url'),
             )
 
-        return await super()._map_binary_content_item(item, profile)
+        return await super()._map_binary_content_item(item)
 
     @override
     async def _map_video_url_item(self, item: VideoUrl) -> ChatCompletionContentPartParam:
@@ -639,7 +638,7 @@ class OpenRouterModel(OpenAIChatModel):
         # At runtime, the OpenAI client accepts dicts that match the expected structure.
         return cast(
             ChatCompletionContentPartParam,
-            ChatCompletionContentPartVideoUrlParam(video_url=video_url, type='video_url'),
+            _ChatCompletionContentPartVideoUrlParam(video_url=video_url, type='video_url'),
         )
 
     @override
