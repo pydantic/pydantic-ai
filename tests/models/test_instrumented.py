@@ -146,6 +146,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
     model = InstrumentedModel(MyModel(), InstrumentationSettings(version=1, event_mode='logs'))
     assert model.system == 'openai'
     assert model.model_name == 'gpt-4o'
+    assert model.model_id == 'openai:gpt-4o'
 
     messages = [
         ModelRequest(

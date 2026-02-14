@@ -216,6 +216,7 @@ class ModelSettings(TypedDict, total=False):
 
     * OpenAI
     * Anthropic
+    * Gemini
     * Groq
     * xAI
     """
