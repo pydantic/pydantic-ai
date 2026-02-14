@@ -159,7 +159,7 @@ _(This example is complete, it can be run "as is")_
 
 ## X Search Tool
 
-The [`XSearchTool`][pydantic_ai.builtin_tools.XSearchTool] allows your agent to search X/Twitter for real-time posts and content. This tool is exclusive to xAI models.
+The [`XSearchTool`][pydantic_ai.builtin_tools.XSearchTool] allows your agent to search X/Twitter for real-time posts and content. This tool is exclusive to xAI models. See the [xAI X Search documentation](https://docs.x.ai/docs/guides/tools/search-tools#x-search) for more details.
 
 ### Provider Support
 
@@ -195,11 +195,11 @@ agent = Agent(
     'xai:grok-4-1-fast',
     builtin_tools=[
         XSearchTool(
-            allowed_x_handles=['OpenAI', 'AnthropicAI', 'xaboratory'],  # Only search posts from these handles (max 10)
-            from_date=datetime(2024, 1, 1),  # Filter posts from this date
-            to_date=datetime(2024, 12, 31),  # Filter posts until this date
-            enable_image_understanding=True,  # Enable image analysis
-            enable_video_understanding=True,  # Enable video analysis
+            allowed_x_handles=['OpenAI', 'AnthropicAI', 'xaboratory'],
+            from_date=datetime(2024, 1, 1),
+            to_date=datetime(2024, 12, 31),
+            enable_image_understanding=True,
+            enable_video_understanding=True,
         )
     ],
 )

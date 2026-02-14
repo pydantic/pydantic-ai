@@ -179,11 +179,10 @@ class WebSearchUserLocation(TypedDict, total=False):
 
 @dataclass(kw_only=True)
 class XSearchTool(AbstractBuiltinTool):
-    """A builtin tool that allows your agent to search X/Twitter for information.
+    """A builtin tool that allows your agent to search X/Twitter for posts and content.
 
-    This tool provides real-time access to X/Twitter posts, user profiles, and threads.
-
-    This tool is exclusive to xAI models.
+    This tool is exclusive to xAI models. See the
+    [xAI X Search documentation](https://docs.x.ai/docs/guides/tools/search-tools#x-search) for more details.
 
     Supported by:
 
