@@ -5,20 +5,24 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import partial
 from inspect import Parameter, signature
-from typing import TYPE_CHECKING, Any, Concatenate, cast, get_origin
+from typing import TYPE_CHECKING, Any, Concatenate, cast, get_args, get_origin
 
-from pydantic import ConfigDict
+from pydantic import ConfigDict, TypeAdapter
 from pydantic._internal import _decorators, _generate_schema, _typing_extra
 from pydantic._internal._config import ConfigWrapper
+from pydantic.errors import PydanticSchemaGenerationError, PydanticUserError
 from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import ParamSpec, TypeIs, TypeVar, get_type_hints
+
+from pydantic_ai.messages import ToolReturn
 
 from ._griffe import doc_descriptions
 from ._run_context import RunContext
@@ -45,6 +49,7 @@ class FunctionSchema:
     single_arg_name: str | None = None
     positional_fields: list[str] = field(default_factory=list[str])
     var_positional_field: str | None = None
+    return_schema: ObjectJsonSchema | None = None
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
@@ -78,6 +83,7 @@ def function_schema(  # noqa: C901
     takes_ctx: bool | None = None,
     docstring_format: DocstringFormat = 'auto',
     require_parameter_descriptions: bool = False,
+    include_return_schema: bool | None = None,
 ) -> FunctionSchema:
     """Build a Pydantic validator and JSON schema from a tool function.
 
@@ -87,6 +93,7 @@ def function_schema(  # noqa: C901
         docstring_format: The docstring format to use.
         require_parameter_descriptions: Whether to require descriptions for all tool function parameters.
         schema_generator: The JSON schema generator class to use.
+        include_return_schema: Whether the tool explicitly opts in to return schema generation.
 
     Returns:
         A `FunctionSchema` instance.
@@ -211,6 +218,36 @@ def function_schema(  # noqa: C901
         # and set it on the tool
         description = json_schema.pop('description', None)
 
+    # Which type to generate return schema for
+    return_annotation = type_hints.get('return')
+    return_schema = None
+    schema_type: Any = None
+
+    if return_annotation is ToolReturn:
+        # Bare ToolReturn without type parameter — no schema to generate
+        pass
+    elif get_origin(return_annotation) is ToolReturn:
+        type_args = get_args(return_annotation)
+        inner_type = type_args[0] if type_args else Any
+        if inner_type is not Any:
+            schema_type = inner_type
+    elif return_annotation is not None and return_annotation is not type(None):
+        schema_type = return_annotation
+
+    # Generate return schema if we have a type and the tool hasn't explicitly opted out
+    if schema_type is not None and include_return_schema is not False:
+        try:
+            return_schema = TypeAdapter(schema_type).json_schema(
+                schema_generator=schema_generator, mode='serialization'
+            )
+        except (PydanticSchemaGenerationError, PydanticUserError) as e:
+            if include_return_schema:
+                warnings.warn(
+                    f'Failed to generate return schema for {function.__qualname__!r}: {e}',
+                    UserWarning,
+                    stacklevel=2,
+                )
+
     return FunctionSchema(
         description=description,
         validator=schema_validator,
@@ -221,6 +258,7 @@ def function_schema(  # noqa: C901
         takes_ctx=bool(takes_ctx),
         is_async=is_async_callable(function),
         function=function,
+        return_schema=return_schema,
     )
 
 
