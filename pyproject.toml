@@ -249,6 +249,9 @@ filterwarnings = [
     # random resource warnings; I suspect these are coming from vendor SDKs when running examples..
     "ignore:unclosed <socket:ResourceWarning",
     "ignore:unclosed event loop:ResourceWarning",
+    # prefect has a Pydantic v2 compatibility issue in RRuleSchedule
+    # happens only for python < 3.12 because of vllms pins
+    "ignore:The 'default' attribute with value 'UTC' was provided.*:UserWarning",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run

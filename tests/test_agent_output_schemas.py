@@ -388,7 +388,11 @@ async def test_deferred_output_json_schema():
                 {
                     'properties': {
                         'calls': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Calls', 'type': 'array'},
-                        'approvals': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Approvals', 'type': 'array'},
+                        'approvals': {
+                            'items': {'$ref': '#/$defs/ToolCallPart'},
+                            'title': 'Approvals',
+                            'type': 'array',
+                        },
                         'metadata': {
                             'additionalProperties': {'additionalProperties': True, 'type': 'object'},
                             'title': 'Metadata',
@@ -401,7 +405,6 @@ async def test_deferred_output_json_schema():
             ],
             '$defs': {
                 'ToolCallPart': {
-                    'description': 'A tool call from a model.',
                     'properties': {
                         'tool_name': {'title': 'Tool Name', 'type': 'string'},
                         'args': {
@@ -513,7 +516,11 @@ distinguish multiple files.\
                 {
                     'properties': {
                         'calls': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Calls', 'type': 'array'},
-                        'approvals': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Approvals', 'type': 'array'},
+                        'approvals': {
+                            'items': {'$ref': '#/$defs/ToolCallPart'},
+                            'title': 'Approvals',
+                            'type': 'array',
+                        },
                         'metadata': {
                             'additionalProperties': {'additionalProperties': True, 'type': 'object'},
                             'title': 'Metadata',
@@ -526,7 +533,6 @@ distinguish multiple files.\
             ],
             '$defs': {
                 'ToolCallPart': {
-                    'description': 'A tool call from a model.',
                     'properties': {
                         'tool_name': {'title': 'Tool Name', 'type': 'string'},
                         'args': {
