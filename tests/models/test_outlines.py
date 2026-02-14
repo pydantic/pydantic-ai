@@ -33,6 +33,7 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
 from pydantic_ai.output import ToolOutput
@@ -638,6 +639,23 @@ def test_input_format(transformers_multimodal_model: OutlinesModel, binary_image
         UserError, match='Each element of the content sequence must be a string, an `ImageUrl` or a `BinaryImage`.'
     ):
         agent.run_sync('How are you doing?', message_history=multi_modal_message_history)
+
+    # unsupported: uploaded files
+    uploaded_file_message_history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Hello there!',
+                        UploadedFile(file_id='file-123', provider_name='anthropic'),
+                    ]
+                )
+            ],
+            timestamp=IsDatetime(),
+        )
+    ]
+    with pytest.raises(NotImplementedError, match='UploadedFile is not supported by Outlines.'):
+        agent.run_sync('How are you doing?', message_history=uploaded_file_message_history)
 
     # unsupported: tool calls
     tool_call_message_history: list[ModelMessage] = [
