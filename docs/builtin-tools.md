@@ -237,6 +237,50 @@ assert isinstance(result.output, BinaryImage)
 
 _(This example is complete, it can be run "as is")_
 
+### File Uploads (Anthropic)
+
+With Anthropic, you can upload files via their Files API and make them available to the code execution container. This allows the agent to process data files, analyze CSVs, work with images, and more.
+
+```py {title="code_execution_with_files.py" test="skip"}
+import asyncio
+
+import anthropic
+
+from pydantic_ai import Agent, CodeExecutionTool
+
+
+async def main():
+    # Upload a file via the Anthropic Files API
+    client = anthropic.AsyncAnthropic()
+    with open('data.csv', 'rb') as f:
+        file = await client.beta.files.upload(file=('data.csv', f.read(), 'text/csv'))
+
+    # Create an agent with CodeExecutionTool that has access to the uploaded file
+    agent = Agent(
+        'anthropic:claude-sonnet-4-5',
+        builtin_tools=[CodeExecutionTool(file_ids=[file.id])],
+    )
+
+    result = await agent.run('Analyze the data.csv file and summarize the key statistics.')
+    print(result.output)
+    #> The CSV file contains 1000 rows with columns: name, age, salary...
+
+
+asyncio.run(main())
+```
+
+Files uploaded via the Files API are:
+
+- Available in the container's `/mnt/user/uploads/` directory
+- Persisted for 30 days
+- Workspace-scoped (accessible across sessions)
+
+#### Provider Support
+
+| Parameter | Anthropic | OpenAI | Google | xAI |
+|-----------|-----------|--------|--------|-----|
+| `file_ids` | ✅ | ❌ | ❌ | ❌ |
+
 ## Image Generation Tool
 
 The [`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool] enables your agent to generate images.
