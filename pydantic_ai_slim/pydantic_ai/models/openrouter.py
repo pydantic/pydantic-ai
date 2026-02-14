@@ -614,9 +614,7 @@ class OpenRouterModel(OpenAIChatModel):
         return OpenRouterStreamedResponse
 
     @override
-    async def _map_binary_content_item(
-        self, item: BinaryContent
-    ) -> ChatCompletionContentPartParam:
+    async def _map_binary_content_item(self, item: BinaryContent) -> ChatCompletionContentPartParam:
         """Map a BinaryContent item to a chat completion content part for OpenRouter."""
         if item.is_video:
             video_url: _VideoURL = {'url': item.data_uri}
