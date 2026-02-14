@@ -49,6 +49,8 @@ while true; do
               isOutdated
               comments(first: 50) {
                 nodes {
+                  id
+                  databaseId
                   author { login }
                   authorAssociation
                   body
@@ -105,9 +107,10 @@ fi
 # Format review threads with compaction
 > "$CTX/review-comments.txt"
 jq -r --arg last_review "$LAST_REVIEW_TS" '
+  def truncate: gsub("[\\r\\n]+"; "  ") | if length > 200 then .[:200] + "..." else . end;
+
   [ .[] |
     {
-      id: .id,
       resolved: .isResolved,
       outdated: .isOutdated,
       state: (
@@ -116,7 +119,7 @@ jq -r --arg last_review "$LAST_REVIEW_TS" '
       ),
       first: .comments.nodes[0],
       lastCommentAt: (.comments.nodes | last | .createdAt),
-      replies: [ .comments.nodes[1:][] | { author: .author.login, body: .body, createdAt: .createdAt } ]
+      replies: [ .comments.nodes[1:][] | { author: .author.login, databaseId: .databaseId, body: .body, createdAt: .createdAt } ]
     }
   ] as $arr |
   range($arr | length) as $i |
@@ -130,16 +133,17 @@ jq -r --arg last_review "$LAST_REVIEW_TS" '
   ) as $compact |
 
   if $compact then
-    "- [\($t.state)] \($first.author.login) at \($first.createdAt) on \($first.path)\(if $first.line then ":\($first.line)" else "" end) (thread \($t.id)) — \($first.body | gsub("\n"; "  ") | if length > 200 then .[:200] + "..." else . end)"
+    "- [\($t.state)] \($first.author.login) at \($first.createdAt) on \($first.path)\(if $first.line then ":\($first.line)" else "" end) (comment \($first.databaseId)) — \($first.body | truncate)" +
+    ([ $t.replies[] | "\n  > \(.author) at \(.createdAt) (comment \(.databaseId)): \(.body | truncate)" ] | join(""))
   else
     (
       ($first.path + ":" + ($first.diffHunk | split("\n")[0])) as $hunkKey |
       (if $i > 0 then ($arr[$i - 1].first.path + ":" + ($arr[$i - 1].first.diffHunk | split("\n")[0])) else "" end) as $prevKey |
       (if $hunkKey != $prevKey then true else false end) as $showHunk |
-      "### \($first.author.login) (\($first.authorAssociation)) at \($first.createdAt) on \($first.path)\(if $first.line then ":\($first.line)" else "" end) [\($t.state)] (thread \($t.id))" +
+      "### [\($t.state)] \($first.author.login) (\($first.authorAssociation)) at \($first.createdAt) on \($first.path)\(if $first.line then ":\($first.line)" else "" end) (comment \($first.databaseId))" +
       (if $showHunk then "\n```diff\n\($first.diffHunk)\n```" else "" end) +
       "\n\($first.body)\n" +
-      ([ $t.replies[] | "  > **\(.author)** at \(.createdAt) (reply): \(.body)\n" ] | join(""))
+      ([ $t.replies[] | "  > **\(.author)** at \(.createdAt) (comment \(.databaseId)): \(.body)\n" ] | join(""))
     )
   end
 ' "$THREADS_JSON" >> "$CTX/review-comments.txt"
@@ -158,19 +162,152 @@ PR_BODY=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq '.body')
 done > "$CTX/related-issues.txt"
 [ -s "$CTX/related-issues.txt" ] || echo "(No issues referenced in PR description)" > "$CTX/related-issues.txt"
 
-# List of ALL changed files with change counts (including generated, for awareness)
+# Fetch base branch for function-context diffs
+# Always fetch from the target repo URL, not origin — for fork PRs, origin points to
+# the fork (which may have an outdated base branch), causing incorrect merge bases
+# and diffs that include unrelated changes from the base repo.
+echo "  - Fetching base branch for function-context diffs"
+BASE_REF=$(jq -r '.baseRefName' "$CTX/pr-details.json")
+MERGE_BASE=""
+if [ -n "$BASE_REF" ]; then
+  if git fetch "https://github.com/${REPO}.git" "$BASE_REF" --quiet 2>/dev/null; then
+    MERGE_BASE=$(git merge-base HEAD FETCH_HEAD 2>/dev/null || echo "")
+  fi
+fi
+if [ -n "$MERGE_BASE" ]; then
+  echo "    Merge base: ${MERGE_BASE:0:12} (using function-context diffs)"
+else
+  echo "    Could not determine merge base (falling back to API diff)"
+fi
+
+# Per-file diffs with function context (excluding generated files)
+echo "  - Per-file diffs (excluding generated files)"
+mkdir -p "$CTX/diff"
+if [ -n "$MERGE_BASE" ]; then
+  # -W (--function-context) shows the full function body around each change,
+  # so the reviewer can see the function signature and surrounding logic without
+  # needing to read the full source file separately.
+  git diff -W --no-color "$MERGE_BASE" HEAD
+else
+  gh pr diff "$PR_NUMBER" --repo "$REPO"
+fi | awk -v dir="$CTX/diff" '
+  /^diff --git/ {
+    # Close previous file to avoid running out of file descriptors
+    if (outfile) close(outfile)
+    outfile = ""
+
+    # Extract new (b/) filename from "diff --git a/path b/path"
+    # Uses b/ side so renamed files match the GitHub API .filename field
+    fname = $0
+    sub(/^.* b\//, "", fname)
+
+    skip = (fname ~ /uv\.lock/ || fname ~ /\/cassettes\//)
+    if (!skip) {
+      # Sanitize path: replace / with __, strip leading dots to avoid hidden files
+      safe = fname
+      gsub(/\//, "__", safe)
+      sub(/^\.+/, "", safe)
+      outfile = dir "/" safe ".diff"
+    }
+  }
+  !skip && outfile { print > outfile }
+'
+
+# Annotate commentable diff lines with source line numbers (NL:/OL: prefixes)
+# so the review bot can target inline comments without computing line numbers.
+echo "  - Annotating diffs with source line numbers"
+for diff_file in "$CTX/diff/"*.diff; do
+  [ -f "$diff_file" ] || continue
+  awk '
+    BEGIN { NEAR = 3 }
+
+    # Diff metadata: flush any buffered hunk, pass through
+    /^diff --git/ || /^index / || /^---/ || /^\+\+\+/ ||
+    /^new file/ || /^deleted file/ || /^old mode/ || /^new mode/ ||
+    /^rename / || /^similarity / || /^dissimilarity / || /^Binary / {
+        flush_hunk()
+        print
+        next
+    }
+
+    # Hunk header: flush previous hunk, parse line numbers
+    /^@@ / {
+        flush_hunk()
+        split($2, _o, ","); old_num = substr(_o[1], 2) + 0
+        split($3, _n, ","); new_num = substr(_n[1], 2) + 0
+        hunk_hdr = $0
+        n = 0
+        next
+    }
+
+    # "\ No newline at end of file"
+    /^\\/ {
+        n++; lines[n] = $0; types[n] = "\\"; is_chg[n] = 0
+        next
+    }
+
+    # Hunk body lines
+    {
+        n++; lines[n] = $0
+        c = substr($0, 1, 1)
+        if (c == "+") {
+            types[n] = "+"; lnums[n] = new_num++; is_chg[n] = 1
+        } else if (c == "-") {
+            types[n] = "-"; lnums[n] = old_num++; is_chg[n] = 1
+        } else {
+            types[n] = " "; lnums[n] = new_num++; old_num++; is_chg[n] = 0
+        }
+    }
+
+    function flush_hunk(    i, dist, min_d) {
+        if (n == 0) return
+
+        # Forward pass: context-line distance from nearest preceding change
+        dist = NEAR + 1
+        for (i = 1; i <= n; i++) {
+            if (is_chg[i]) dist = 0
+            else if (types[i] != "\\") { dist++; fwd[i] = dist }
+        }
+        # Backward pass: context-line distance from nearest following change
+        dist = NEAR + 1
+        for (i = n; i >= 1; i--) {
+            if (is_chg[i]) dist = 0
+            else if (types[i] != "\\") { dist++; bwd[i] = dist }
+        }
+
+        print hunk_hdr
+        for (i = 1; i <= n; i++) {
+            if (types[i] == "\\") { print lines[i] }
+            else if (is_chg[i]) {
+                if (types[i] == "+") printf "NL:%d %s\n", lnums[i], lines[i]
+                else                printf "OL:%d %s\n", lnums[i], lines[i]
+            } else {
+                min_d = fwd[i]; if (bwd[i] < min_d) min_d = bwd[i]
+                if (min_d <= NEAR) printf "NL:%d %s\n", lnums[i], lines[i]
+                else print lines[i]
+            }
+        }
+
+        delete lines; delete types; delete lnums
+        delete is_chg; delete fwd; delete bwd
+        n = 0
+    }
+
+    END { flush_hunk() }
+  ' "$diff_file" > "${diff_file}.tmp" && mv "${diff_file}.tmp" "$diff_file"
+done
+
+# List of ALL changed files with change counts + diff file paths
 echo "  - Changed files"
 gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate \
-  --jq '.[] | "\(.filename)\t+\(.additions) -\(.deletions)"' > "$CTX/changed-files.txt"
-
-# Diff of non-generated files only
-echo "  - Diff (excluding generated files)"
-gh pr diff "$PR_NUMBER" --repo "$REPO" | awk '
-  /^diff --git/ {
-    skip = ($0 ~ /uv\.lock/ || $0 ~ /\/cassettes\//)
-  }
-  !skip { print }
-' > "$CTX/diff.txt"
+  --jq '.[] | "\(.filename)\t+\(.additions) -\(.deletions)\t\(.filename | gsub("/"; "__") | gsub("^\\.+"; "")).diff"' \
+  | while IFS=$'\t' read -r fname counts diffname; do
+    if echo "$fname" | grep -qE 'uv\.lock|/cassettes/'; then
+      printf '%s\t%s\n' "$fname" "$counts"
+    else
+      printf '%s\t%s\tdiff/%s\n' "$fname" "$counts" "$diffname"
+    fi
+  done > "$CTX/changed-files.txt"
 
 # Gather directory-specific AGENTS.md files for changed directories
 echo "  - Directory AGENTS.md files"
@@ -188,3 +325,5 @@ done >> "$CTX/agents-md.txt"
 echo ""
 echo "Context gathered in ${CTX}/:"
 ls -lh "$CTX/"
+DIFF_COUNT=$(find "$CTX/diff" -name '*.diff' 2>/dev/null | wc -l)
+echo "  Per-file diffs: ${DIFF_COUNT} files in ${CTX}/diff/"

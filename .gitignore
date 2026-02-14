@@ -20,7 +20,8 @@ node_modules/
 .coverage*
 /test_tmp/
 .mcp.json
-.claude/
+.claude/*
+!.claude/skills/
 .github/.review-context/
 /.cursor/
 /.devcontainer/
