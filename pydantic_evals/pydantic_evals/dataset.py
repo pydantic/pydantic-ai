@@ -356,11 +356,11 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 source_case_name: str | None,
             ):
                 async with limiter:
-                    ctx_mgr = case_context_manager(case) if case_context_manager else nullcontext()
-                    async with ctx_mgr:
-                        result = await _run_task_and_evaluators(
-                            task, case, report_case_name, self.evaluators, retry_task, retry_evaluators, source_case_name=source_case_name,
-                        )
+                    result = await _run_task_and_evaluators(
+                        task, case, report_case_name, self.evaluators, retry_task, retry_evaluators,
+                        source_case_name=source_case_name,
+                        case_context_manager=case_context_manager,
+                    )
                     if progress_bar and task_id is not None:  # pragma: no branch
                         progress_bar.update(task_id, advance=1)
                     return result
@@ -1133,6 +1133,8 @@ async def _run_task_and_evaluators(
     retry_evaluators: RetryConfig | None,
     *,
     source_case_name: str | None = None,
+    case_context_manager: Callable[[Case[InputsT, OutputT, MetadataT]], AbstractAsyncContextManager[Any]]
+    | None = None,
 ) -> ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT]:
     """Run a task on a case and evaluate the results.
 
@@ -1144,6 +1146,8 @@ async def _run_task_and_evaluators(
         retry_task: The retry config to use for running the task.
         retry_evaluators: The retry config to use for running the evaluators.
         source_case_name: The original case name before run-indexing (for multi-run experiments).
+        case_context_manager: Optional callback that returns an async context manager for this case.
+            The context manager is entered inside the case span and wraps both task and evaluator execution.
 
     Returns:
         A ReportCase containing the evaluation results.
@@ -1167,32 +1171,34 @@ async def _run_task_and_evaluators(
             if source_case_name is not None:
                 case_span.set_attribute('logfire.experiment.source_case_name', source_case_name)
 
-            t0 = time.time()
-            scoring_context = await _run_task(task, case, retry_task)
+            ctx_mgr = case_context_manager(case) if case_context_manager else nullcontext()
+            async with ctx_mgr:
+                t0 = time.time()
+                scoring_context = await _run_task(task, case, retry_task)
 
-            case_span.set_attribute('output', scoring_context.output)
-            case_span.set_attribute('task_duration', scoring_context.duration)
-            case_span.set_attribute('metrics', scoring_context.metrics)
-            case_span.set_attribute('attributes', scoring_context.attributes)
+                case_span.set_attribute('output', scoring_context.output)
+                case_span.set_attribute('task_duration', scoring_context.duration)
+                case_span.set_attribute('metrics', scoring_context.metrics)
+                case_span.set_attribute('attributes', scoring_context.attributes)
 
-            evaluators = case.evaluators + dataset_evaluators
-            evaluator_outputs: list[EvaluationResult] = []
-            evaluator_failures: list[EvaluatorFailure] = []
-            if evaluators:
-                evaluator_outputs_by_task = await task_group_gather(
-                    [lambda ev=ev: run_evaluator(ev, scoring_context, retry_evaluators) for ev in evaluators]
-                )
-                for outputs in evaluator_outputs_by_task:
-                    if isinstance(outputs, EvaluatorFailure):
-                        evaluator_failures.append(outputs)
-                    else:
-                        evaluator_outputs.extend(outputs)
+                evaluators = case.evaluators + dataset_evaluators
+                evaluator_outputs: list[EvaluationResult] = []
+                evaluator_failures: list[EvaluatorFailure] = []
+                if evaluators:
+                    evaluator_outputs_by_task = await task_group_gather(
+                        [lambda ev=ev: run_evaluator(ev, scoring_context, retry_evaluators) for ev in evaluators]
+                    )
+                    for outputs in evaluator_outputs_by_task:
+                        if isinstance(outputs, EvaluatorFailure):
+                            evaluator_failures.append(outputs)
+                        else:
+                            evaluator_outputs.extend(outputs)
 
-            assertions, scores, labels = _group_evaluator_outputs_by_type(evaluator_outputs)
-            case_span.set_attribute('assertions', _evaluation_results_adapter.dump_python(assertions))
-            case_span.set_attribute('scores', _evaluation_results_adapter.dump_python(scores))
-            case_span.set_attribute('labels', _evaluation_results_adapter.dump_python(labels))
-        fallback_duration = time.time() - t0
+                assertions, scores, labels = _group_evaluator_outputs_by_type(evaluator_outputs)
+                case_span.set_attribute('assertions', _evaluation_results_adapter.dump_python(assertions))
+                case_span.set_attribute('scores', _evaluation_results_adapter.dump_python(scores))
+                case_span.set_attribute('labels', _evaluation_results_adapter.dump_python(labels))
+            fallback_duration = time.time() - t0
 
         return ReportCase[InputsT, OutputT, MetadataT](
             name=report_case_name,
