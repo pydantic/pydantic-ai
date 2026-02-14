@@ -1,5 +1,11 @@
 """RAG example with pydantic-ai — using vector search to augment a chat agent.
 
+This example demonstrates:
+- Using pydantic-ai's Embedder for generating embeddings
+- Chunking documents with chonkie before embedding
+- Storing embeddings in pgvector for similarity search
+- Building a RAG agent that retrieves relevant context
+
 Run pgvector with:
 
     mkdir postgres-data
@@ -20,9 +26,7 @@ Ask the agent a question with:
 from __future__ import annotations as _annotations
 
 import asyncio
-import re
 import sys
-import unicodedata
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
@@ -31,21 +35,25 @@ import httpx
 import logfire
 import pydantic_core
 from anyio import create_task_group
-from openai import AsyncOpenAI
-from pydantic import TypeAdapter
+from chonkie import RecursiveChunker
 from typing_extensions import AsyncGenerator
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, Embedder, RunContext
+
+from ._rag_common import DOCS_JSON, DocsSection, sections_ta
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_asyncpg()
 logfire.instrument_pydantic_ai()
 
+embedder = Embedder('openai:text-embedding-3-small')
+chunker = RecursiveChunker(chunk_size=512)
+
 
 @dataclass
 class Deps:
-    openai: AsyncOpenAI
+    embedder: Embedder
     pool: asyncpg.Pool
 
 
@@ -63,16 +71,9 @@ async def retrieve(context: RunContext[Deps], search_query: str) -> str:
     with logfire.span(
         'create embedding for {search_query=}', search_query=search_query
     ):
-        embedding = await context.deps.openai.embeddings.create(
-            input=search_query,
-            model='text-embedding-3-small',
-        )
+        result = await context.deps.embedder.embed_query(search_query)
 
-    assert len(embedding.data) == 1, (
-        f'Expected 1 embedding, got {len(embedding.data)}, doc query: {search_query!r}'
-    )
-    embedding = embedding.data[0].embedding
-    embedding_json = pydantic_core.to_json(embedding).decode()
+    embedding_json = pydantic_core.to_json(result.embeddings[0]).decode()
     rows = await context.deps.pool.fetch(
         'SELECT url, title, content FROM doc_sections ORDER BY embedding <-> $1 LIMIT 8',
         embedding_json,
@@ -85,29 +86,18 @@ async def retrieve(context: RunContext[Deps], search_query: str) -> str:
 
 async def run_agent(question: str):
     """Entry point to run the agent and perform RAG based question answering."""
-    openai = AsyncOpenAI()
-    logfire.instrument_openai(openai)
-
     logfire.info('Asking "{question}"', question=question)
 
     async with database_connect(False) as pool:
-        deps = Deps(openai=openai, pool=pool)
+        deps = Deps(embedder=embedder, pool=pool)
         answer = await agent.run(question, deps=deps)
     print(answer.output)
 
 
 #######################################################
 # The rest of this file is dedicated to preparing the #
-# search database, and some utilities.                #
+# search database.                                    #
 #######################################################
-
-# JSON document from
-# https://gist.github.com/samuelcolvin/4b5bb9bb163b1122ff17e29e48c10992
-DOCS_JSON = (
-    'https://gist.githubusercontent.com/'
-    'samuelcolvin/4b5bb9bb163b1122ff17e29e48c10992/raw/'
-    '80c5925c42f1442c24963aaf5eb1a324d47afe95/logfire_docs.json'
-)
 
 
 async def build_search_db():
@@ -116,9 +106,6 @@ async def build_search_db():
         response = await client.get(DOCS_JSON)
         response.raise_for_status()
     sections = sections_ta.validate_json(response.content)
-
-    openai = AsyncOpenAI()
-    logfire.instrument_openai(openai)
 
     async with database_connect(True) as pool:
         with logfire.span('create schema'):
@@ -129,12 +116,11 @@ async def build_search_db():
         sem = asyncio.Semaphore(10)
         async with create_task_group() as tg:
             for section in sections:
-                tg.start_soon(insert_doc_section, sem, openai, pool, section)
+                tg.start_soon(insert_doc_section, sem, pool, section)
 
 
 async def insert_doc_section(
     sem: asyncio.Semaphore,
-    openai: AsyncOpenAI,
     pool: asyncpg.Pool,
     section: DocsSection,
 ) -> None:
@@ -145,45 +131,22 @@ async def insert_doc_section(
             logfire.info('Skipping {url=}', url=url)
             return
 
+        content = section.embedding_content()
+        chunks = chunker.chunk(content)
+        chunk_texts = [c.text for c in chunks] if chunks else [content]
+
         with logfire.span('create embedding for {url=}', url=url):
-            embedding = await openai.embeddings.create(
-                input=section.embedding_content(),
-                model='text-embedding-3-small',
+            result = await embedder.embed_documents(chunk_texts)
+
+        for chunk_text, embedding in zip(chunk_texts, result.embeddings, strict=False):
+            embedding_json = pydantic_core.to_json(embedding).decode()
+            await pool.execute(
+                'INSERT INTO doc_sections (url, title, content, embedding) VALUES ($1, $2, $3, $4)',
+                url,
+                section.title,
+                chunk_text,
+                embedding_json,
             )
-        assert len(embedding.data) == 1, (
-            f'Expected 1 embedding, got {len(embedding.data)}, doc section: {section}'
-        )
-        embedding = embedding.data[0].embedding
-        embedding_json = pydantic_core.to_json(embedding).decode()
-        await pool.execute(
-            'INSERT INTO doc_sections (url, title, content, embedding) VALUES ($1, $2, $3, $4)',
-            url,
-            section.title,
-            section.content,
-            embedding_json,
-        )
-
-
-@dataclass
-class DocsSection:
-    id: int
-    parent: int | None
-    path: str
-    level: int
-    title: str
-    content: str
-
-    def url(self) -> str:
-        url_path = re.sub(r'\.md$', '', self.path)
-        return (
-            f'https://logfire.pydantic.dev/docs/{url_path}/#{slugify(self.title, "-")}'
-        )
-
-    def embedding_content(self) -> str:
-        return '\n\n'.join((f'path: {self.path}', f'title: {self.title}', self.content))
-
-
-sections_ta = TypeAdapter(list[DocsSection])
 
 
 # pyright: reportUnknownMemberType=false
@@ -220,7 +183,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS doc_sections (
     id serial PRIMARY KEY,
-    url text NOT NULL UNIQUE,
+    url text NOT NULL,
     title text NOT NULL,
     content text NOT NULL,
     -- text-embedding-3-small returns a vector of 1536 floats
@@ -228,17 +191,6 @@ CREATE TABLE IF NOT EXISTS doc_sections (
 );
 CREATE INDEX IF NOT EXISTS idx_doc_sections_embedding ON doc_sections USING hnsw (embedding vector_l2_ops);
 """
-
-
-def slugify(value: str, separator: str, unicode: bool = False) -> str:
-    """Slugify a string, to make it URL friendly."""
-    # Taken unchanged from https://github.com/Python-Markdown/markdown/blob/3.7/markdown/extensions/toc.py#L38
-    if not unicode:
-        # Replace Extended Latin characters with ASCII, i.e. `žlutý` => `zluty`
-        value = unicodedata.normalize('NFKD', value)
-        value = value.encode('ascii', 'ignore').decode('ascii')
-    value = re.sub(r'[^\w\s-]', '', value).strip().lower()
-    return re.sub(rf'[{separator}\s]+', separator, value)
 
 
 if __name__ == '__main__':

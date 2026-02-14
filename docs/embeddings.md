@@ -77,6 +77,96 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
+## Chunking Strategies
+
+Before embedding documents for RAG or semantic search, you need to split them into **chunks** — smaller pieces that each get their own embedding vector.
+
+### Why Chunking Matters
+
+- **Chunks too large**: The embedding becomes a noisy average — subtopics get muddled and retrieval loses precision.
+- **Chunks too small**: Context is lost. Questions that need relationships between concepts can't be answered.
+
+!!! tip "The Core Trade-off"
+    Include too much in a chunk and the vector loses the ability to be specific to anything it discusses. Include too little and you lose the context of the data.
+
+### Recommended Starting Point
+
+For most use cases, **recursive character splitting** at 400-512 tokens works well:
+
+```python {title="chunking_quickstart.py" test="skip"}
+from chonkie import RecursiveChunker
+
+chunker = RecursiveChunker(chunk_size=512)
+chunks = chunker.chunk('Your document text here...')
+```
+
+This handles 80% of RAG applications. Only reach for more complex strategies if you see poor retrieval quality.
+
+### Strategy Overview
+
+| Strategy | How it works | Best for | chonkie class |
+|----------|-------------|----------|---------------|
+| **Fixed-size** | Split at fixed token intervals with overlap | Simple, predictable workloads | `TokenChunker` |
+| **Recursive** | Hierarchical split by `\n\n` → `\n` → sentence → word | **General-purpose (recommended)** | `RecursiveChunker` |
+| **Sentence** | NLP sentence detection, then group to size | Narrative, conversational text | `SentenceChunker` |
+| **Semantic** | Embed sentences, split where similarity drops | High-budget, topic-diverse docs | `SemanticChunker` |
+| **Code** | Syntax-aware (tree-sitter), respects functions/classes | Code repositories | `CodeChunker` |
+| **Agentic** | LLM decides chunk boundaries | One-time high-value processing | `SlumberChunker` |
+
+!!! warning "Semantic and agentic chunking are expensive"
+    Semantic chunking embeds every sentence before indexing — a 10,000-word document needs 200-300 embedding calls just for chunking. Agentic chunking adds LLM calls on top. Evaluate whether the improvement justifies the cost.
+
+### Key Parameters
+
+**Chunk size** — depends on your query type:
+
+| Query Type | Optimal Size | Notes |
+|------------|-------------|-------|
+| Factoid/Lookup | 256-512 tokens | Precise, focused answers |
+| Analytical/Reasoning | 1024+ tokens | Needs broader context |
+| General purpose | 400-512 tokens | Good starting point |
+
+**Overlap** — 10-20% of chunk size (e.g., 50-100 tokens for 512-token chunks). Preserves context at boundaries.
+
+**Model token limits** — chunks exceeding the embedding model's max input will be truncated or error. Use [`embedder.max_input_tokens()`][pydantic_ai.embeddings.Embedder.max_input_tokens] to check programmatically.
+
+### Using chonkie
+
+We recommend [chonkie](https://github.com/chonkie-inc/chonkie) for chunking — lightweight, fast, and covers all strategies above.
+
+```bash
+pip install chonkie
+```
+
+All chunkers share the same interface:
+
+```python {title="chonkie_overview.py" test="skip" lint="skip"}
+from chonkie import RecursiveChunker, SentenceChunker, TokenChunker
+
+# Fixed-size
+chunker = TokenChunker(chunk_size=512, chunk_overlap=50)
+
+# Recursive (recommended)
+chunker = RecursiveChunker(chunk_size=512)
+
+# Sentence-based
+chunker = SentenceChunker(chunk_size=512, chunk_overlap=50)
+
+chunks = chunker.chunk(document)
+for chunk in chunks:
+    print(f'{chunk.token_count} tokens: {chunk.text[:60]}...')
+```
+
+See the [RAG examples](examples/rag.md) for complete working code with chunking, embedding, and vector search.
+
+### Advanced Techniques
+
+These techniques can improve retrieval quality when basic chunking isn't enough:
+
+- **Late chunking** — Embed the full document first, then chunk the token embeddings. Each chunk retains awareness of surrounding context. Requires a long-context embedding model (e.g., Jina v3). See [Jina AI's paper](https://arxiv.org/abs/2409.04701) and chonkie's `LateChunker`.
+- **Contextual retrieval** — Use an LLM to prepend a context snippet to each chunk before embedding (e.g., "This chunk is from the Q3 earnings report, revenue section"). [Anthropic's research](https://www.anthropic.com/news/contextual-retrieval) shows a 35-67% reduction in retrieval failure when combined with BM25 and reranking.
+- **Hybrid retrieval** — Combine dense embeddings (semantic similarity) with sparse retrieval (BM25 keyword matching) using reciprocal rank fusion. Catches both semantic matches and exact keyword matches that embeddings alone might miss.
+
 ## Providers
 
 ### OpenAI
