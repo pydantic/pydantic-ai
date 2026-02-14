@@ -54,6 +54,7 @@ examples = ["pydantic-ai-examples=={{ version }}"]
 a2a = ["fasta2a>=0.4.1"]
 dbos = ["pydantic-ai-slim[dbos]=={{ version }}"]
 prefect = ["pydantic-ai-slim[prefect]=={{ version }}"]
+restate = ["pydantic-ai-slim[restate]=={{ version }}"]
 outlines-transformers = ["pydantic-ai-slim[outlines-transformers]=={{ version }}"]
 outlines-llamacpp = ["pydantic-ai-slim[outlines-llamacpp]=={{ version }}"]
 outlines-mlxlm = ["pydantic-ai-slim[outlines-mlxlm]=={{ version }}; platform_system == 'Darwin' and platform_machine == 'arm64'"]
@@ -248,6 +249,7 @@ filterwarnings = [
     "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
     # random resource warnings; I suspect these are coming from vendor SDKs when running examples..
     "ignore:unclosed <socket:ResourceWarning",
+    "ignore:unclosed <ssl\\.SSLSocket:ResourceWarning",
     "ignore:unclosed event loop:ResourceWarning",
 ]
 
