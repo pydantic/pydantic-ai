@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
@@ -38,7 +38,7 @@ from ...output import OutputDataT
 from ...tools import AgentDepsT
 from .. import MessagesBuilder, UIAdapter, UIEventStream
 from ._event_stream import VercelAIEventStream
-from ._utils import dump_provider_metadata, load_provider_metadata
+from ._utils import dump_provider_metadata, iter_metadata_chunks, load_provider_metadata
 from .request_types import (
     DataUIPart,
     DynamicToolInputAvailablePart,
@@ -60,7 +60,7 @@ from .request_types import (
     UIMessage,
     UIMessagePart,
 )
-from .response_types import BaseChunk
+from .response_types import BaseChunk, DataChunk, FileChunk, SourceDocumentChunk, SourceUrlChunk
 
 if TYPE_CHECKING:
     pass
@@ -75,6 +75,10 @@ request_data_ta: TypeAdapter[RequestData] = TypeAdapter(RequestData)
 class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, OutputDataT]):
     """UI adapter for the Vercel AI protocol."""
 
+    _: KW_ONLY
+    sdk_version: Literal[5, 6] = 5
+    """Vercel AI SDK version to target. Default is 5 for backwards compatibility."""
+
     @classmethod
     def build_run_input(cls, body: bytes) -> RequestData:
         """Build a Vercel AI run input object from the request body."""
@@ -82,7 +86,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
     def build_event_stream(self) -> UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
         """Build a Vercel AI event stream transformer."""
-        return VercelAIEventStream(self.run_input, accept=self.accept)
+        return VercelAIEventStream(self.run_input, accept=self.accept, sdk_version=self.sdk_version)
 
     @cached_property
     def messages(self) -> list[ModelMessage]:
@@ -445,6 +449,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             call_provider_metadata=call_provider_metadata,
                         )
                     )
+                    # Check for Vercel AI chunks returned by tool calls via metadata.
+                    ui_parts.extend(_extract_metadata_ui_parts(tool_result))
                 elif isinstance(tool_result, RetryPromptPart):
                     error_text = tool_result.model_response()
                     ui_parts.append(
@@ -539,3 +545,42 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
                 assert_never(item)
 
     return ui_parts
+
+
+def _extract_metadata_ui_parts(tool_result: ToolReturnPart) -> list[UIMessagePart]:
+    """Convert data-carrying chunks from tool metadata into UIMessageParts.
+
+    Both this dump path and the streaming path use ``iter_metadata_chunks``,
+    but the streaming path yields raw chunk objects (preserving ``transient``
+    and other chunk-specific fields) while this path converts to persisted
+    ``UIMessagePart`` equivalents — matching Vercel AI SDK semantics where
+    transient data is streamed but not persisted.
+    """
+    parts: list[UIMessagePart] = []
+    for chunk in iter_metadata_chunks(tool_result):
+        if isinstance(chunk, DataChunk):
+            parts.append(DataUIPart(type=chunk.type, id=chunk.id, data=chunk.data))
+        elif isinstance(chunk, SourceUrlChunk):
+            parts.append(
+                SourceUrlUIPart(
+                    source_id=chunk.source_id,
+                    url=chunk.url,
+                    title=chunk.title,
+                    provider_metadata=chunk.provider_metadata,
+                )
+            )
+        elif isinstance(chunk, SourceDocumentChunk):
+            parts.append(
+                SourceDocumentUIPart(
+                    source_id=chunk.source_id,
+                    media_type=chunk.media_type,
+                    title=chunk.title,
+                    filename=chunk.filename,
+                    provider_metadata=chunk.provider_metadata,
+                )
+            )
+        elif isinstance(chunk, FileChunk):
+            parts.append(FileUIPart(url=chunk.url, media_type=chunk.media_type))
+        else:
+            assert_never(chunk)
+    return parts

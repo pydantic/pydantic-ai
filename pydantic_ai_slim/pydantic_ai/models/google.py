@@ -523,9 +523,10 @@ class GoogleModel(Model):
         if self.profile.supports_image_output:
             modalities.append(Modality.IMAGE.value)
 
-        http_options: HttpOptionsDict = {
-            'headers': {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
-        }
+        headers: dict[str, str] = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
+        if extra_headers := model_settings.get('extra_headers'):
+            headers.update(extra_headers)
+        http_options: HttpOptionsDict = {'headers': headers}
         if timeout := model_settings.get('timeout'):
             if isinstance(timeout, int | float):
                 http_options['timeout'] = int(1000 * timeout)
@@ -662,7 +663,7 @@ class GoogleModel(Model):
                 # We build `message_parts` first, then split into multiple content objects whenever we transition
                 # between function_response and non-function_response parts.
                 #
-                # TODO: Remove workaround when https://github.com/pydantic/pydantic-ai/issues/3763 is resolved
+                # TODO: Remove workaround when https://github.com/pydantic/pydantic-ai/issues/4210 is resolved
                 if message_parts:
                     content_parts: list[PartDict] = []
 

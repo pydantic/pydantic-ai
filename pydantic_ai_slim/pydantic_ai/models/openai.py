@@ -320,6 +320,12 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     openai_top_logprobs: int
     """Include log probabilities of the top n tokens in the response."""
 
+    openai_store: bool | None
+    """Whether or not to store the output of this request in OpenAI's systems.
+
+    If `False`, OpenAI will not store the request for its own internal review or training.
+    See [OpenAI API reference](https://platform.openai.com/docs/api-reference/chat/create#chat-create-store)."""
+
     openai_user: str
     """A unique identifier representing the end-user, which can help OpenAI monitor and detect abuse.
 
@@ -722,6 +728,7 @@ class OpenAIChatModel(Model):
                 logit_bias=model_settings.get('logit_bias', OMIT),
                 logprobs=model_settings.get('openai_logprobs', OMIT),
                 top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
+                store=model_settings.get('openai_store', OMIT),
                 prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
                 prompt_cache_retention=prompt_cache_retention,
                 extra_headers=extra_headers,
@@ -924,7 +931,7 @@ class OpenAIChatModel(Model):
         _model: OpenAIChatModel
 
         texts: list[str] = field(default_factory=list[str])
-        thinkings: list[str] = field(default_factory=list[str])
+        thinkings: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
         tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = field(
             default_factory=list[ChatCompletionMessageFunctionToolCallParam]
         )
@@ -954,14 +961,12 @@ class OpenAIChatModel(Model):
             Returns:
                 An OpenAI `ChatCompletionAssistantMessageParam` object representing the assistant's response.
             """
-            profile = OpenAIModelProfile.from_profile(self._model.profile)
             message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
             # Note: model responses from this model should only have one text item, so the following
             # shouldn't merge multiple texts into one unless you switch models between runs:
-            if profile.openai_chat_send_back_thinking_parts == 'field' and self.thinkings:
-                field = profile.openai_chat_thinking_field
-                if field:  # pragma: no branch (handled by profile validation)
-                    message_param[field] = '\n\n'.join(self.thinkings)
+            if self.thinkings:
+                for field_name, contents in self.thinkings.items():
+                    message_param[field_name] = '\n\n'.join(contents)
             if self.texts:
                 message_param['content'] = '\n\n'.join(self.texts)
             else:
@@ -986,11 +991,33 @@ class OpenAIChatModel(Model):
             """
             profile = OpenAIModelProfile.from_profile(self._model.profile)
             include_method = profile.openai_chat_send_back_thinking_parts
-            if include_method == 'tags':
+
+            # Auto-detect: if thinking came from a custom field and from the same provider, use field mode
+            # id='content' means it came from tags in content, not a custom field
+            if include_method == 'auto':
+                # Check if thinking came from a custom field from the same provider
+                custom_field = profile.openai_chat_thinking_field
+                matches_custom_field = (not custom_field) or (item.id == custom_field)
+
+                if (
+                    item.id
+                    and item.id != 'content'
+                    and item.provider_name == self._model.system
+                    and matches_custom_field
+                ):
+                    # Store both content and field name for later use in _into_message_param
+                    self.thinkings.setdefault(item.id, []).append(item.content)
+                else:
+                    # Fall back to tags mode
+                    start_tag, end_tag = self._model.profile.thinking_tags
+                    self.texts.append('\n'.join([start_tag, item.content, end_tag]))
+            elif include_method == 'tags':
                 start_tag, end_tag = self._model.profile.thinking_tags
                 self.texts.append('\n'.join([start_tag, item.content, end_tag]))
             elif include_method == 'field':
-                self.thinkings.append(item.content)
+                field = profile.openai_chat_thinking_field
+                if field:  # pragma: no branch
+                    self.thinkings.setdefault(field, []).append(item.content)
 
         def _map_response_tool_call_part(self, item: ToolCallPart) -> None:
             """Maps a `ToolCallPart` to the response context.
@@ -1636,6 +1663,7 @@ class OpenAIResponsesModel(Model):
                 service_tier=model_settings.get('openai_service_tier', OMIT),
                 previous_response_id=previous_response_id or OMIT,
                 top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
+                store=model_settings.get('openai_store', OMIT),
                 reasoning=reasoning,
                 user=model_settings.get('openai_user', OMIT),
                 text=text or OMIT,
@@ -2775,7 +2803,7 @@ def _map_usage(
         api_flavor = 'responses'
 
         if getattr(response_usage, 'output_tokens_details', None) is not None:
-            details['reasoning_tokens'] = response_usage.output_tokens_details.reasoning_tokens
+            details['reasoning_tokens'] = getattr(response_usage.output_tokens_details, 'reasoning_tokens', 0)
         else:
             details['reasoning_tokens'] = 0
     else:
