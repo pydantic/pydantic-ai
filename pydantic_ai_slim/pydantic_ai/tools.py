@@ -17,6 +17,7 @@ from .messages import RetryPromptPart, ToolCallPart, ToolReturn
 
 __all__ = (
     'AgentDepsT',
+    'ArgsValidatorFunc',
     'DocstringFormat',
     'RunContext',
     'SystemPromptFunc',
@@ -70,6 +71,19 @@ This is just a union of [`ToolFuncContext`][pydantic_ai.tools.ToolFuncContext] a
 [`ToolFuncPlain`][pydantic_ai.tools.ToolFuncPlain].
 
 Usage `ToolFuncEither[AgentDepsT, ToolParams]`.
+"""
+ArgsValidatorFunc: TypeAlias = (
+    Callable[Concatenate[RunContext[AgentDepsT], ToolParams], Awaitable[None]]
+    | Callable[Concatenate[RunContext[AgentDepsT], ToolParams], None]
+)
+"""A function that validates tool arguments before execution.
+
+The validator receives the same typed parameters as the tool function,
+with [`RunContext`][pydantic_ai.tools.RunContext] as the first argument for dependency access.
+
+Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure, return `None` on success.
+
+Usage `ArgsValidatorFunc[AgentDepsT, ToolParams]`.
 """
 ToolPrepareFunc: TypeAlias = Callable[[RunContext[AgentDepsT], 'ToolDefinition'], Awaitable['ToolDefinition | None']]
 """Definition of a function that can prepare a tool definition at call time.
@@ -273,6 +287,7 @@ class Tool(Generic[ToolAgentDepsT]):
     name: str
     description: str | None
     prepare: ToolPrepareFunc[ToolAgentDepsT] | None
+    args_validator: ArgsValidatorFunc[ToolAgentDepsT, ...] | None
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     strict: bool | None
@@ -296,6 +311,7 @@ class Tool(Generic[ToolAgentDepsT]):
         name: str | None = None,
         description: str | None = None,
         prepare: ToolPrepareFunc[ToolAgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[ToolAgentDepsT, ...] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
@@ -350,6 +366,12 @@ class Tool(Generic[ToolAgentDepsT]):
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
+            args_validator: custom method to validate tool arguments after schema validation has passed,
+                before execution. The validator receives the already-validated and type-converted parameters,
+                with `RunContext` as the first argument.
+                Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
+                return `None` on success.
+                See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
@@ -377,6 +399,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.name = name or function.__name__
         self.description = description or self.function_schema.description
         self.prepare = prepare
+        self.args_validator = args_validator
         self.docstring_format = docstring_format
         self.require_parameter_descriptions = require_parameter_descriptions
         self.strict = strict
@@ -394,13 +417,15 @@ class Tool(Generic[ToolAgentDepsT]):
         json_schema: JsonSchemaValue,
         takes_ctx: bool = False,
         sequential: bool = False,
+        args_validator: ArgsValidatorFunc[Any, ...] | None = None,
     ) -> Self:
         """Creates a Pydantic tool from a function and a JSON schema.
 
         Args:
             function: The function to call.
-                This will be called with keywords only, and no validation of
-                the arguments will be performed.
+                This will be called with keywords only. Schema validation of
+                the arguments is skipped, but a custom `args_validator` will
+                still run if provided.
             name: The unique name of the tool that clearly communicates its purpose
             description: Used to tell the model how/when/why to use the tool.
                 You can provide few-shot examples as a part of the description.
@@ -408,6 +433,12 @@ class Tool(Generic[ToolAgentDepsT]):
             takes_ctx: An optional boolean parameter indicating whether the function
                 accepts the context object as an argument.
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            args_validator: custom method to validate tool arguments after schema validation has passed,
+                before execution. The validator receives the already-validated and type-converted parameters,
+                with `RunContext` as the first argument.
+                Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
+                return `None` on success.
+                See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
 
         Returns:
             A Pydantic tool that calls the function
@@ -428,6 +459,7 @@ class Tool(Generic[ToolAgentDepsT]):
             description=description,
             function_schema=function_schema,
             sequential=sequential,
+            args_validator=args_validator,
         )
 
     @property
