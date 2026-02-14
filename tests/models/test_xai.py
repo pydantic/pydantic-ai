@@ -2149,6 +2149,57 @@ def test_x_search_tool_validation():
     assert tool.to_date == datetime(2024, 12, 31)
 
 
+async def test_xai_builtin_x_search_tool_stream(allow_model_requests: None):
+    """Test xAI's built-in x_search tool with streaming."""
+    server_tool_call = create_server_tool_call(
+        tool_name='x_search',
+        arguments={'query': 'pydantic updates'},
+        tool_call_id='x_search_stream_001',
+        tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_X_SEARCH_TOOL,
+    )
+
+    tool_output_json = json.dumps({'results': [{'text': 'PydanticAI v2 released!', 'author': '@pydantic'}]})
+
+    stream: list[tuple[chat_types.Response, chat_types.Chunk]] = [
+        (
+            create_response(content='', tool_calls=[server_tool_call], finish_reason='stop'),
+            create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, tool_calls=[server_tool_call]),
+        ),
+        (
+            create_response(content=tool_output_json, tool_calls=[server_tool_call], finish_reason='stop'),
+            create_stream_chunk(
+                role=chat_pb2.MessageRole.ROLE_TOOL, tool_calls=[server_tool_call], content=tool_output_json
+            ),
+        ),
+        (
+            create_response(content='Found posts about PydanticAI.', finish_reason='stop'),
+            create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, content='Found posts about PydanticAI.'),
+        ),
+    ]
+
+    mock_client = MockXai.create_mock_stream([stream])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, builtin_tools=[XSearchTool()])
+
+    async with agent.run_stream('Search for pydantic updates on X') as result:
+        final_response: ModelResponse | None = None
+        async for response, is_last in result.stream_responses(debounce_by=None):
+            if is_last:
+                final_response = response
+
+    assert final_response is not None
+    builtin_calls = [p for p in final_response.parts if isinstance(p, BuiltinToolCallPart)]
+    builtin_returns = [p for p in final_response.parts if isinstance(p, BuiltinToolReturnPart)]
+    assert len(builtin_calls) == 1
+    assert builtin_calls[0].tool_name == 'x_search'
+    assert builtin_calls[0].args == {'query': 'pydantic updates'}
+    assert builtin_calls[0].tool_call_id == 'x_search_stream_001'
+    assert len(builtin_returns) == 1
+    assert builtin_returns[0].tool_name == 'x_search'
+    assert builtin_returns[0].content == {'results': [{'text': 'PydanticAI v2 released!', 'author': '@pydantic'}]}
+    assert builtin_returns[0].tool_call_id == 'x_search_stream_001'
+
+
 async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_provider: XaiProvider):
     """Test xAI's built-in code_execution tool (non-streaming, recorded via proto cassette)."""
     m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)

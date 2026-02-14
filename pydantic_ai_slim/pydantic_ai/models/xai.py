@@ -983,13 +983,11 @@ def _get_builtin_tools(model_request_parameters: ModelRequestParameters) -> list
                 )
             )
         elif isinstance(builtin_tool, XSearchTool):
-            # from_date/to_date are normalized to datetime in XSearchTool.__post_init__
-            from_date = builtin_tool.from_date if isinstance(builtin_tool.from_date, datetime) else None
-            to_date = builtin_tool.to_date if isinstance(builtin_tool.to_date, datetime) else None
+            # from_date/to_date are normalized from date to datetime in XSearchTool.__post_init__
             tools.append(
                 x_search(
-                    from_date=from_date,
-                    to_date=to_date,
+                    from_date=cast(datetime | None, builtin_tool.from_date),
+                    to_date=cast(datetime | None, builtin_tool.to_date),
                     allowed_x_handles=builtin_tool.allowed_x_handles,
                     excluded_x_handles=builtin_tool.excluded_x_handles,
                     enable_image_understanding=builtin_tool.enable_image_understanding,
