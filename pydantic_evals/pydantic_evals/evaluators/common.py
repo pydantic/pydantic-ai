@@ -4,9 +4,11 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, Literal, cast
 
+from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_ai import models
+from pydantic_ai._utils import is_model_like
 from pydantic_ai.settings import ModelSettings
 
 from ..otel.span_tree import SpanQuery
@@ -66,6 +68,7 @@ class Contains(Evaluator[object, object, object]):
     For strings, checks if expected_output is a substring of output.
     For lists/tuples, checks if expected_output is in output.
     For dicts, checks if all key-value pairs in expected_output are in output.
+    For model-like types (BaseModel, dataclasses), converts to a dict and checks key-value pairs.
 
     Note: case_sensitive only applies when both the value and output are strings.
     """
@@ -99,25 +102,35 @@ class Contains(Evaluator[object, object, object]):
 
         try:
             # Handle different collection types
-            if isinstance(ctx.output, dict):
-                if isinstance(self.value, dict):
+            output_type = type(ctx.output)
+            output_is_model_like = is_model_like(output_type)
+            if isinstance(ctx.output, dict) or output_is_model_like:
+                if output_is_model_like:
+                    adapter: TypeAdapter[Any] = TypeAdapter(output_type)
+                    output_dict = adapter.dump_python(ctx.output)  # pyright: ignore[reportUnknownMemberType]
+                else:
                     # Cast to Any to avoid type checking issues
                     output_dict = cast(dict[Any, Any], ctx.output)  # pyright: ignore[reportUnknownMemberType]
+
+                if isinstance(self.value, dict):
+                    # Cast to Any to avoid type checking issues
                     expected_dict = cast(dict[Any, Any], self.value)  # pyright: ignore[reportUnknownMemberType]
                     for k in expected_dict:
                         if k not in output_dict:
                             k_trunc = _truncated_repr(k, max_length=30)
-                            failure_reason = f'Output dictionary does not contain expected key {k_trunc}'
+                            failure_reason = f'Output does not contain expected key {k_trunc}'
                             break
                         elif output_dict[k] != expected_dict[k]:
                             k_trunc = _truncated_repr(k, max_length=30)
                             output_v_trunc = _truncated_repr(output_dict[k], max_length=100)
                             expected_v_trunc = _truncated_repr(expected_dict[k], max_length=100)
-                            failure_reason = f'Output dictionary has different value for key {k_trunc}: {output_v_trunc} != {expected_v_trunc}'
+                            failure_reason = (
+                                f'Output has different value for key {k_trunc}: {output_v_trunc} != {expected_v_trunc}'
+                            )
                             break
                 else:
-                    if self.value not in ctx.output:  # pyright: ignore[reportUnknownMemberType]
-                        output_trunc = _truncated_repr(ctx.output, max_length=200)  # pyright: ignore[reportUnknownMemberType]
+                    if self.value not in output_dict:
+                        output_trunc = _truncated_repr(output_dict, max_length=200)
                         failure_reason = f'Output {output_trunc} does not contain provided value as a key'
             elif self.value not in ctx.output:  # pyright: ignore[reportOperatorIssue]  # will be handled by except block
                 output_trunc = _truncated_repr(ctx.output, max_length=200)
@@ -245,7 +258,7 @@ class LLMJudge(Evaluator[object, object, object]):
         result = super().build_serialization_arguments()
         # always serialize the model as a string when present; use its name if it's a KnownModelName
         if (model := result.get('model')) and isinstance(model, models.Model):  # pragma: no branch
-            result['model'] = f'{model.system}:{model.model_name}'
+            result['model'] = model.model_id
 
         # Note: this may lead to confusion if you try to serialize-then-deserialize with a custom model.
         # I expect that is rare enough to be worth not solving yet, but common enough that we probably will want to
