@@ -47,6 +47,7 @@ nav:
           - common-tools.md
           - third-party-tools.md
       - Advanced Features:
+          - Code Mode: code-mode.md
           - input.md
           - thinking.md
           - retries.md
@@ -174,6 +175,7 @@ nav:
           - api/settings.md
           - api/tools.md
           - api/toolsets.md
+          - api/runtime.md
           - api/ui/ag_ui.md
           - api/ui/base.md
           - api/ui/vercel_ai.md
