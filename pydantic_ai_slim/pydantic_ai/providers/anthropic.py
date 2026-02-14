@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+import warnings
 from dataclasses import dataclass
 from typing import TypeAlias, overload
 
@@ -138,6 +139,24 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
             return transform_schema(schema)
         else:
             return schema
+
+    def _handle_object(self, schema: JsonSchema) -> JsonSchema:
+        schema = super()._handle_object(schema)
+        if self.strict is True:
+            additional_properties = schema.get('additionalProperties')
+            if isinstance(additional_properties, dict):
+                warnings.warn(
+                    '`dict` fields are not supported by Anthropic in strict mode '
+                    '(including Native Output mode, which is used with extended thinking). '
+                    "Anthropic's schema transformation will set `additionalProperties` to `false`, "
+                    'effectively forcing empty dicts. '
+                    'Consider using a `list` of `TypedDict` or `dataclass` with explicit '
+                    '`key` and `value` fields instead, '
+                    'or use `output_type=PromptedOutput(...)` as an alternative.',
+                    UserWarning,
+                    stacklevel=2,
+                )
+        return schema
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         schema.pop('title', None)
