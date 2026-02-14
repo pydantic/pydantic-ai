@@ -5729,6 +5729,28 @@ async def test_google_prepends_empty_user_turn_when_first_content_is_model(googl
     )
 
 
+async def test_google_auto_native_structured_stream_gemini_3(
+    allow_model_requests: None, google_provider: GoogleProvider
+):
+    """Gemini 3+ with auto mode should stream structured output via native mode."""
+    m = GoogleModel('gemini-3-flash-preview', provider=google_provider)
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=CityLocation)
+
+    async with agent.run_stream('What is the largest city in Mexico?') as result:
+        output = await result.get_output()
+    assert output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert any(isinstance(p, TextPart) for p in response.parts)
+    assert not any(isinstance(p, ToolCallPart) for p in response.parts)
+
+
 def test_google_auto_resolves_to_native_gemini_3(google_provider: GoogleProvider):
     """Gemini 3+ should resolve auto to native when no function tools are present."""
     m = GoogleModel('gemini-3-flash-preview', provider=google_provider)
