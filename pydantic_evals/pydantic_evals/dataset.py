@@ -1202,7 +1202,7 @@ async def _run_task_and_evaluators(
                 case_span.set_attribute('assertions', _evaluation_results_adapter.dump_python(assertions))
                 case_span.set_attribute('scores', _evaluation_results_adapter.dump_python(scores))
                 case_span.set_attribute('labels', _evaluation_results_adapter.dump_python(labels))
-            fallback_duration = time.time() - t0
+                fallback_duration = time.time() - t0
 
         return ReportCase[InputsT, OutputT, MetadataT](
             name=report_case_name,
