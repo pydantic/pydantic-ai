@@ -188,6 +188,17 @@ class CodeExecutionTool(AbstractBuiltinTool):
     * xAI
     """
 
+    file_ids: list[str] | None = None
+    """Optional list of file IDs to make available in the code execution container.
+
+    Files must be uploaded via the provider's Files API before use.
+    The files will be available in the container's working directory.
+
+    Supported by:
+
+    * Anthropic (requires files uploaded via Files API beta)
+    """
+
     kind: str = 'code_execution'
     """The kind of tool."""
 
