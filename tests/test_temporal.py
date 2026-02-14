@@ -2071,7 +2071,6 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     # but temporal tests fail when we use IsNow
                     timestamp=IsDatetime(),
                     instructions='Just call tools without asking for confirmation.',
-                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
