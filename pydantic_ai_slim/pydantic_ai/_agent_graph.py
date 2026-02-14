@@ -707,7 +707,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         return
                     elif output_schema.toolset:
                         alternatives.append('include your response in a tool call')
-                    else:
+                    elif ctx.deps.tool_manager.tools is None or ctx.deps.tool_manager.tools:
+                        # tools is None when the tool manager is unprepared (e.g. UserPromptNode
+                        # skips to CallToolsNode, bypassing for_run_step); in that case we
+                        # default to suggesting tools to be safe
                         alternatives.append('call a tool')
 
                     if output_schema.allows_image:
