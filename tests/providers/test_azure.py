@@ -41,6 +41,35 @@ def test_azure_provider():
     assert isinstance(provider.client, AsyncAzureOpenAI)
 
 
+def test_azure_provider_with_max_retries():
+    provider = AzureProvider(
+        azure_endpoint='https://project-id.openai.azure.com/',
+        api_version='2023-03-15-preview',
+        api_key='1234567890',
+        max_retries=5,
+    )
+    assert provider.client.max_retries == 5
+
+
+def test_azure_provider_with_max_retries_zero():
+    provider = AzureProvider(
+        azure_endpoint='https://project-id.openai.azure.com/',
+        api_version='2023-03-15-preview',
+        api_key='1234567890',
+        max_retries=0,
+    )
+    assert provider.client.max_retries == 0
+
+
+def test_azure_provider_max_retries_default():
+    provider = AzureProvider(
+        azure_endpoint='https://project-id.openai.azure.com/',
+        api_version='2023-03-15-preview',
+        api_key='1234567890',
+    )
+    assert provider.client.max_retries == 2  # OpenAI SDK default
+
+
 def test_azure_provider_with_openai_model():
     model = OpenAIChatModel(
         model_name='gpt-4o',

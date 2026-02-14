@@ -83,6 +83,7 @@ class AzureProvider(Provider[AsyncOpenAI]):
         api_version: str | None = None,
         api_key: str | None = None,
         http_client: httpx.AsyncClient | None = None,
+        max_retries: int = ...,
     ) -> None: ...
 
     def __init__(
@@ -93,6 +94,7 @@ class AzureProvider(Provider[AsyncOpenAI]):
         api_key: str | None = None,
         openai_client: AsyncAzureOpenAI | None = None,
         http_client: httpx.AsyncClient | None = None,
+        max_retries: int = 2,
     ) -> None:
         """Create a new Azure provider.
 
@@ -105,8 +107,10 @@ class AzureProvider(Provider[AsyncOpenAI]):
                 will be used if available.
             openai_client: An existing
                 [`AsyncAzureOpenAI`](https://github.com/openai/openai-python#microsoft-azure-openai)
-                client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
+                client to use. If provided, `base_url`, `api_key`, `http_client`, and `max_retries` must be `None`.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            max_retries: Maximum number of retries for API requests. Set to `0` to disable retries.
+                Defaults to `2`, matching the OpenAI SDK default.
         """
         if openai_client is not None:
             assert azure_endpoint is None, 'Cannot provide both `openai_client` and `azure_endpoint`'
@@ -137,5 +141,6 @@ class AzureProvider(Provider[AsyncOpenAI]):
                 api_key=api_key,
                 api_version=api_version,
                 http_client=http_client,
+                max_retries=max_retries,
             )
             self._base_url = str(self._client.base_url)
