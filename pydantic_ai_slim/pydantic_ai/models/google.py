@@ -258,9 +258,9 @@ class GoogleModel(Model):
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        supports_native_output_with_builtin_tools = GoogleModelProfile.from_profile(
-            self.profile
-        ).google_supports_native_output_with_builtin_tools
+        google_profile = GoogleModelProfile.from_profile(self.profile)
+        supports_native_output_with_builtin_tools = google_profile.google_supports_native_output_with_builtin_tools
+        default_native_output = google_profile.google_default_native_output
         if model_request_parameters.builtin_tools and model_request_parameters.output_tools:
             if model_request_parameters.output_mode == 'auto':
                 output_mode = 'native' if supports_native_output_with_builtin_tools else 'prompted'
@@ -270,6 +270,14 @@ class GoogleModel(Model):
                 raise UserError(
                     f'Google does not support output tools and built-in tools at the same time. Use `output_type={output_mode}(...)` instead.'
                 )
+        elif (
+            model_request_parameters.output_mode == 'auto'
+            and model_request_parameters.output_tools
+            and not model_request_parameters.function_tools
+            and default_native_output
+        ):
+            # Gemini 3+ prefers native output for incremental structured streaming
+            model_request_parameters = replace(model_request_parameters, output_mode='native')
         return super().prepare_request(model_settings, model_request_parameters)
 
     async def request(

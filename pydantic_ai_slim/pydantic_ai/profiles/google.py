@@ -17,6 +17,13 @@ class GoogleModelProfile(ModelProfile):
     """Whether the model supports native output with builtin tools.
     See https://ai.google.dev/gemini-api/docs/structured-output?example=recipe#structured_outputs_with_tools"""
 
+    google_default_native_output: bool = False
+    """Whether the model should default to `native` output mode when resolving `auto`.
+
+    When `True` and no function tools are present, `auto` mode will resolve to `'native'`
+    instead of `'tool'`, enabling incremental streaming of structured output.
+    """
+
 
 def google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model."""
@@ -29,6 +36,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         supports_json_object_output=is_3_or_newer or not is_image_model,
         supports_tools=not is_image_model,
         google_supports_native_output_with_builtin_tools=is_3_or_newer,
+        google_default_native_output=is_3_or_newer,
     )
 
 

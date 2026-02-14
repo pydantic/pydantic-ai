@@ -1,0 +1,66 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '361'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the largest city in Mexico?
+        role: user
+      generationConfig:
+        responseJsonSchema:
+          properties:
+            city:
+              type: string
+            country:
+              type: string
+          required:
+          - city
+          - country
+          title: CityLocation
+          type: object
+        responseMimeType: application/json
+        responseModalities:
+        - TEXT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:streamGenerateContent?alt=sse
+  response:
+    body:
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"{\\\"city\\\":\\\"Mexico City\\\",\\\"country\\\":\\\"Mexico\\\"}\"}],\"role\":
+        \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 9,\"candidatesTokenCount\": 10,\"totalTokenCount\":
+        280,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 9}],\"thoughtsTokenCount\": 261},\"modelVersion\":
+        \"gemini-3-flash-preview\",\"responseId\": \"HrGQaZONJZjHvdIPrvyJuAk\"}\r\n\r\ndata: {\"candidates\": [{\"content\":
+        {\"parts\": [{\"text\": \"\",\"thoughtSignature\": \"EusICugIAb4+9vvTPy2UGWrfju4m+PQEDmRiiuYz7chczSCrZerO+LSwJJ94VjOzxR7sufQZ+GkqAL9k07A6bs67JSP4Xyk+qEldTjcfa/pBF/8sVPG6Xnvf2BcO1mkBRH6kS97cKwmoZhewUNOsAZBhvS2hedVdIK3FiNCx3iwB2fMXam+rY0eF7s1n1mA+pl9K/doimV/xwODm4N5nctvwIMtQLPmOPnstV170TUFJKfpZfLn7tcjoesL6pIkj76ZAe3Ua0jiwKPBfncKlaKI+ITFmLYKJzn4xL198fDx8Lp63vKpBWnnUFGI2p5Ytzq2aV/DT+0rVo9vaQweGXeoEPMd7PVGIZ8DSDfMEas9mNbz65PIHcRcNgXcmzywSMDr0cn97C9X5RwaVTRGkE/8m0STvSQvjqA9NqQD6stQNSMJ+YcBsZ4Itvm/vTb5Vfm/LC6Jc/3sdFCVDgtBGSLz/0FLrCNJJAOHVu4+WhuB12FONvDMZZmQXfzLm/E2dDQYvkgd3ZEA4M3tkqdySpITz0rFsjQGfB1wRsQojvnEZkMmimh2kwJBsctPIqldoThycfSpZ+O/X7dqitcwI4RIggHP1iS/Es/VurviFpSB3CVHv9pPon6S/B8b7lgcH26XJsdYl1G7yVobCPe0EEiPV1GD86CGQBLv0z9wGVASjpVZG/lL0RkIVjyelTAkcvn9/k7kJiHWdBdFxXKzuY8vMcFkQ6/osKGcGhf6YePto4s3KrXhJYmHxszNMoBRaDtreAeKpuCQTZ4cYXIM0YSXbR3b6b2mniAnjjNETRHoGTZu35mM7KA/vQiApH66yZyb4ETfkf29Xgg37InI6FQ3W7cJZs+2QwM3ZEjZy0IMJugVwTh62gpKSnWc7UQTxfJ5nLsLA+7DBzV5RSd5RKKuXxMmdgQEkJ5PhRWc1XotelZp+Bdy2kqSepW//3L5s5g5FbLXt7FXDOH+/F/T4fOg5p8UnKMP9DA4Q+d/ccbS11/F7u7Kt6kimib86mCag1f7Wqwbfy5ZmvyvVB9E1HFW5NU29uhXiaDEpYcf31s8gnLFeVCzoZ8DHTkKK5A5GcHROy5xc3uCH1Ayrer1I0EEA4zIiwbDe3nPMaTu9phq6LGXYO/lUO1nL1p3b6u0hPs7RtQjuwuckw3tIi+rDQ/gLmBa81yV/XTYpejdiy1U1OFCFgvVKpAvWUeVaT96PnT+SeA3aaVPoSLQbKAYlRxVwGp40TDuISGMVcDhMrlP5R4Am3x1oOoMSgHBSRRL+OqHD75Oe5mmWPVvwxGusOI9MSz5FQtH+7AhTVxE084MLXb3DptoWmdcL50tXVFF5bemyoQSK++Rzoip53xTO9OIMFcCDhJxvpret947mKkdKlebhFbFo9bRB6gelcEhiADtfxgdZOmNAUT9TKddghfYvow1AWc0hklZYmiRc9F1sUbffwvZZW8PzMIygHcQ/r2TWOPfv94lfZVxncB0FJ365tO0ohM5spWTSfHEs\"}],\"role\":
+        \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 9,\"candidatesTokenCount\":
+        10,\"totalTokenCount\": 280,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 9}],\"thoughtsTokenCount\":
+        261},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\": \"HrGQaZONJZjHvdIPrvyJuAk\"}\r\n\r\n"
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-disposition:
+      - attachment
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=18755
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    status:
+      code: 200
+      message: OK
+version: 1
