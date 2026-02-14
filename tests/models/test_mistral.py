@@ -2684,3 +2684,53 @@ def test_map_content_handles_reference_chunk() -> None:
 
     assert text == 'Hello world'
     assert thinking == []
+
+
+async def test_mistral_streamed_response_cancel():
+    """Test that MistralStreamedResponse.cancel() closes the underlying stream via __aexit__."""
+    from mistralai.models import CompletionEvent
+
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.mistral import MistralStreamedResponse
+
+    from .mock_async_stream import MockAsyncStream
+
+    mock_stream: MockAsyncStream[CompletionEvent] = MockAsyncStream(iter([]))
+
+    response = MistralStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='mistral-large-latest',
+        _response=mock_stream,
+        _provider_name='mistral',
+        _provider_url='https://api.mistral.ai',
+        _stream_to_close=mock_stream,  # pyright: ignore[reportArgumentType]
+    )
+
+    assert mock_stream._closed is False  # pyright: ignore[reportPrivateUsage]
+    await response.cancel()
+    assert mock_stream._closed is True  # pyright: ignore[reportPrivateUsage]
+    assert response.is_cancelled is True
+
+
+async def test_mistral_streamed_response_cancel_without_stream():
+    """Test that MistralStreamedResponse.cancel() works when _stream_to_close is None."""
+    from mistralai.models import CompletionEvent
+
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.mistral import MistralStreamedResponse
+
+    from .mock_async_stream import MockAsyncStream
+
+    mock_stream: MockAsyncStream[CompletionEvent] = MockAsyncStream(iter([]))
+
+    response = MistralStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='mistral-large-latest',
+        _response=mock_stream,
+        _provider_name='mistral',
+        _provider_url='https://api.mistral.ai',
+        # _stream_to_close is None by default
+    )
+
+    await response.cancel()
+    assert response.is_cancelled is True

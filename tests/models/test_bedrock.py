@@ -3244,3 +3244,28 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
             ),
         ]
     )
+
+
+async def test_bedrock_streamed_response_cancel():
+    """Test that BedrockStreamedResponse.cancel() closes the underlying event stream."""
+    from mypy_boto3_bedrock_runtime.type_defs import ConverseStreamOutputTypeDef
+
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.bedrock import BedrockStreamedResponse
+
+    from .mock_async_stream import MockEventStream
+
+    mock_event_stream: MockEventStream[ConverseStreamOutputTypeDef] = MockEventStream(iter([]))
+
+    response = BedrockStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
+        _event_stream=mock_event_stream,  # type: ignore[arg-type]
+        _provider_name='bedrock',
+        _provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+    )
+
+    assert mock_event_stream._closed is False  # pyright: ignore[reportPrivateUsage]
+    await response.cancel()
+    assert mock_event_stream._closed is True  # pyright: ignore[reportPrivateUsage]
+    assert response.is_cancelled is True

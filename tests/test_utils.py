@@ -4,8 +4,9 @@ import asyncio
 import contextvars
 import functools
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from importlib.metadata import distributions
+from typing import cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -50,6 +51,198 @@ async def test_group_by_temporal(interval: float | None, expected: list[list[int
     async with group_by_temporal(yield_groups(), soft_max_interval=interval) as groups_iter:
         groups: list[list[int]] = [g async for g in groups_iter]
         assert groups == expected
+
+
+async def test_group_by_temporal_break_cancels_pending_task():
+    """Test that breaking out of iteration cancels a pending task in the inner finally block."""
+
+    async def yield_slowly() -> AsyncIterator[int]:
+        yield 1
+        await asyncio.sleep(10)  # Long delay to ensure task is pending when we break
+        yield 2  # pragma: no cover
+
+    async with group_by_temporal(yield_slowly(), soft_max_interval=0.01) as groups_iter:
+        async for group in groups_iter:  # pragma: no branch
+            assert group == [1]
+            break  # Triggers inner finally block which cancels the pending task
+
+
+async def test_group_by_temporal_aclose_triggers_generator_exit():
+    """Test that explicitly closing the generator triggers GeneratorExit handling."""
+
+    async def yield_slowly() -> AsyncIterator[int]:
+        yield 1
+        await asyncio.sleep(10)
+        yield 2  # pragma: no cover
+
+    async with group_by_temporal(yield_slowly(), soft_max_interval=0.01) as groups_iter:
+        groups_aiter = cast(AsyncGenerator[list[int]], aiter(groups_iter))
+        group = await anext(groups_aiter)
+        assert group == [1]
+        # Explicitly close the inner generator to trigger GeneratorExit
+        await groups_aiter.aclose()
+
+
+async def test_group_by_temporal_inner_generator_closed_on_context_exit():
+    """Test that breaking early from iteration cleans up properly.
+
+    This tests the fix for "RuntimeError: generator didn't stop after athrow()"
+    which occurred when the inner generator wasn't explicitly closed.
+    The test verifies that the context manager exits cleanly after a break.
+    """
+    items_yielded: list[int] = []
+
+    async def yield_items() -> AsyncIterator[int]:
+        items_yielded.append(1)
+        yield 1
+        await asyncio.sleep(0.01)
+        items_yielded.append(2)
+        yield 2
+        await asyncio.sleep(0.01)
+        items_yielded.append(3)
+        yield 3
+
+    # Break early without consuming all items
+    async with group_by_temporal(yield_items(), soft_max_interval=0.05) as groups_iter:
+        async for group in groups_iter:  # pragma: no branch
+            assert 1 in group
+            break
+
+    # We only consumed the first item
+    # The important thing is that the context manager exits cleanly without errors
+    assert 1 in items_yielded
+
+
+async def test_group_by_temporal_inner_generator_closed_on_exception():
+    """Test that exception during iteration is handled cleanly."""
+    items_yielded: list[int] = []
+
+    async def yield_items() -> AsyncIterator[int]:
+        items_yielded.append(1)
+        yield 1
+        await asyncio.sleep(0.01)
+        items_yielded.append(2)
+        yield 2
+
+    with pytest.raises(ValueError, match='test error'):
+        async with group_by_temporal(yield_items(), soft_max_interval=0.05) as groups_iter:
+            async for group in groups_iter:  # pragma: no branch
+                if 1 in group:  # pragma: no branch
+                    raise ValueError('test error')
+
+    # We only consumed the first item
+    # The important thing is that cleanup happens without additional errors
+    assert 1 in items_yielded
+
+
+async def test_group_by_temporal_noop_path_break_early():
+    """Test that the None interval (noop) path also handles break cleanly."""
+    items_yielded: list[int] = []
+
+    async def yield_items() -> AsyncIterator[int]:
+        items_yielded.append(1)
+        yield 1
+        items_yielded.append(2)  # pragma: no cover
+        yield 2  # pragma: no cover
+        items_yielded.append(3)  # pragma: no cover
+        yield 3  # pragma: no cover
+
+    # Break early with soft_max_interval=None (noop path)
+    async with group_by_temporal(yield_items(), soft_max_interval=None) as groups_iter:
+        async for group in groups_iter:  # pragma: no branch
+            assert group == [1]
+            break
+
+    # We only consumed the first item
+    # Context manager should exit cleanly
+    assert items_yielded == [1]
+
+
+async def test_group_by_temporal_fully_consumed_no_error():
+    """Test that fully consuming the iterator doesn't cause errors."""
+    items_yielded: list[int] = []
+
+    async def yield_items() -> AsyncIterator[int]:
+        for i in range(3):
+            items_yielded.append(i)
+            yield i
+            await asyncio.sleep(0.01)
+
+    async with group_by_temporal(yield_items(), soft_max_interval=0.05) as groups_iter:
+        all_groups: list[list[int]] = []
+        async for group in groups_iter:
+            all_groups.append(group)
+
+    # All items should have been yielded
+    assert items_yielded == [0, 1, 2]
+    # All items should appear in some group
+    all_items = [item for group in all_groups for item in group]
+    assert sorted(all_items) == [0, 1, 2]
+
+
+async def test_group_by_temporal_generator_exit_on_outer_close():
+    """Test that closing the context manager's underlying generator handles GeneratorExit.
+
+    This tests the defensive GeneratorExit handling by directly accessing
+    the generator from the async context manager.
+    """
+
+    async def yield_items() -> AsyncIterator[int]:
+        yield 1
+        await asyncio.sleep(10)
+        yield 2  # pragma: no cover
+
+    # Get the async context manager
+    ctx_manager = group_by_temporal(yield_items(), soft_max_interval=0.05)
+
+    # Enter the context to get the generator - this advances to the yield
+    groups_iter = await ctx_manager.__aenter__()
+
+    # Consume one item to ensure we're in the middle of iteration
+    groups_aiter = cast(AsyncGenerator[list[int]], aiter(groups_iter))
+    group = await anext(groups_aiter)
+    assert 1 in group
+
+    # Now close the inner generator first (to ensure it's handled)
+    await groups_aiter.aclose()
+
+    # Then exit the context manager normally (which calls __aexit__)
+    await ctx_manager.__aexit__(None, None, None)
+
+    # If we get here without error, the cleanup worked correctly
+
+
+async def test_group_by_temporal_generator_exit_via_gen_aclose():
+    """Test GeneratorExit handling by directly closing the underlying generator.
+
+    This simulates GC finalization by calling aclose() on the @asynccontextmanager's
+    underlying generator, bypassing __aexit__. This throws GeneratorExit at the
+    `yield inner_gen` suspension point, exercising the except GeneratorExit handler.
+    """
+
+    async def yield_slowly() -> AsyncIterator[int]:
+        yield 1
+        await asyncio.sleep(10)
+        yield 2  # pragma: no cover
+
+    ctx_manager = group_by_temporal(yield_slowly(), soft_max_interval=0.05)
+    groups_iter = await ctx_manager.__aenter__()
+    groups_aiter = cast(AsyncGenerator[list[int]], aiter(groups_iter))
+
+    # Consume one group to create an active task (fetching item 2, which sleeps 10s)
+    group = await anext(groups_aiter)
+    assert group == [1]
+
+    # Directly close the underlying generator to simulate GC finalization.
+    # This throws GeneratorExit at `yield inner_gen`, exercising the handler
+    # that sets closing=True and skips awaiting in the finally block.
+    await ctx_manager.gen.aclose()
+
+    # Let event loop process the cancelled task
+    await asyncio.sleep(0)
+
+    # Clean up the orphaned inner generator
+    await groups_aiter.aclose()
 
 
 def test_check_object_json_schema():

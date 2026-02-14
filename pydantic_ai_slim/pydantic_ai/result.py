@@ -1,13 +1,17 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
+import asyncio
+import contextlib
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Generic, cast, overload
 
+import anyio
+from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from pydantic import ValidationError
-from typing_extensions import TypeVar, deprecated
+from typing_extensions import Self, TypeVar, deprecated
 
 from . import _utils, exceptions, messages as _messages, models
 from ._output import (
@@ -28,7 +32,13 @@ from .output import (
 from .usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
-    from .run import AgentRunResult
+    from .agent.abstract import AbstractAgent, AgentMetadata, Instructions
+    from .builtin_tools import AbstractBuiltinTool
+    from .output import OutputSpec
+    from .run import AgentRunResult, AgentRunResultEvent
+    from .settings import ModelSettings
+    from .tools import BuiltinToolFunc, DeferredToolResults
+    from .toolsets import AbstractToolset
 
 __all__ = (
     'OutputDataT',
@@ -57,6 +67,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _agent_stream_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
     _cached_output: OutputDataT | None = field(default=None, init=False)
+    _cancelled: bool = field(default=False, init=False)
 
     def __post_init__(self):
         self._initial_run_ctx_usage = deepcopy(self._run_ctx.usage)
@@ -172,6 +183,70 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         """Get the timestamp of the response."""
         return self._raw_stream_response.timestamp
 
+    async def cancel(self) -> None:
+        """Cancel the streaming response.
+
+        After calling this method:
+        - Iteration will stop immediately
+        - The underlying HTTP connection will be closed
+        - response will return a ModelResponse with interrupted=True
+        """
+        self._cancelled = True
+        await self._raw_stream_response.cancel()
+
+    @property
+    def is_cancelled(self) -> bool:
+        """Returns True if the stream was cancelled."""
+        return self._cancelled
+
+    async def _stream_text_deltas_ungrouped(self) -> AsyncIterator[tuple[str, int]]:
+        """Yield text deltas with their part indices from the stream.
+
+        This is a helper for _stream_response_text that yields tuples of (text_content, part_index).
+        We don't currently make use of the part_index, but retain it for possible future refactors.
+        """
+        msg = self.response
+        for i, part in enumerate(msg.parts):
+            if self._cancelled:
+                return
+            if isinstance(part, _messages.TextPart) and part.content:
+                yield part.content, i
+
+        last_text_index: int | None = None
+        try:
+            async for event in self._raw_stream_response:
+                if self._cancelled:
+                    return
+                if (
+                    isinstance(event, _messages.PartStartEvent)
+                    and isinstance(event.part, _messages.TextPart)
+                    and event.part.content
+                ):
+                    last_text_index = event.index
+                    yield event.part.content, event.index
+                elif (
+                    isinstance(event, _messages.PartDeltaEvent)
+                    and isinstance(event.delta, _messages.TextPartDelta)
+                    and event.delta.content_delta
+                ):
+                    last_text_index = event.index
+                    yield event.delta.content_delta, event.index
+                elif (
+                    isinstance(event, _messages.PartStartEvent)
+                    and isinstance(event.part, _messages.BuiltinToolCallPart)
+                    and last_text_index is not None
+                ):
+                    # Text parts that are interrupted by a built-in tool call should not be joined together directly
+                    yield '\n\n', event.index
+                    last_text_index = None
+        except Exception:
+            # When cancelled, closing the underlying HTTP connection causes provider-specific
+            # exceptions (httpx, aiohttp, boto3, etc.) that we can't enumerate. Since the user
+            # explicitly requested cancellation, any exception here is expected and safe to suppress.
+            if self._cancelled:
+                return
+            raise
+
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate the output and return it."""
         if self._cached_output is not None:
@@ -246,45 +321,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     ) -> AsyncIterator[str]:
         """Stream the response as an async iterable of text."""
 
-        # Define a "merged" version of the iterator that will yield items that have already been retrieved
-        # and items that we receive while streaming. We define a dedicated async iterator for this so we can
-        # pass the combined stream to the group_by_temporal function within `_stream_text_deltas` below.
-        async def _stream_text_deltas_ungrouped() -> AsyncIterator[tuple[str, int]]:
-            # yields tuples of (text_content, part_index)
-            # we don't currently make use of the part_index, but in principle this may be useful
-            # so we retain it here for now to make possible future refactors simpler
-            msg = self.response
-            for i, part in enumerate(msg.parts):
-                if isinstance(part, _messages.TextPart) and part.content:
-                    yield part.content, i
-
-            last_text_index: int | None = None
-            async for event in self._raw_stream_response:
-                if (
-                    isinstance(event, _messages.PartStartEvent)
-                    and isinstance(event.part, _messages.TextPart)
-                    and event.part.content
-                ):
-                    last_text_index = event.index
-                    yield event.part.content, event.index
-                elif (
-                    isinstance(event, _messages.PartDeltaEvent)
-                    and isinstance(event.delta, _messages.TextPartDelta)
-                    and event.delta.content_delta
-                ):
-                    last_text_index = event.index
-                    yield event.delta.content_delta, event.index
-                elif (
-                    isinstance(event, _messages.PartStartEvent)
-                    and isinstance(event.part, _messages.BuiltinToolCallPart)
-                    and last_text_index is not None
-                ):
-                    # Text parts that are interrupted by a built-in tool call should not be joined together directly
-                    yield '\n\n', event.index
-                    last_text_index = None
-
         async def _stream_text_deltas() -> AsyncIterator[str]:
-            async with _utils.group_by_temporal(_stream_text_deltas_ungrouped(), debounce_by) as group_iter:
+            async with _utils.group_by_temporal(self._stream_text_deltas_ungrouped(), debounce_by) as group_iter:
                 async for items in group_iter:
                     # Note: we are currently just dropping the part index on the group here
                     yield ''.join([content for content, _ in items])
@@ -303,11 +341,202 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Stream [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""
         if self._agent_stream_iterator is None:
-            self._agent_stream_iterator = _get_usage_checking_stream_response(
+            base_iterator = _get_usage_checking_stream_response(
                 self._raw_stream_response, self._usage_limits, self.usage
             )
 
+            async def _cancellation_aware_iterator() -> AsyncIterator[ModelResponseStreamEvent]:
+                try:
+                    async for event in base_iterator:
+                        if self._cancelled:
+                            break
+                        yield event
+                except Exception:
+                    # Closing the stream mid-read can raise exceptions. Reraise if not cancelled.
+                    if self._cancelled:
+                        return
+                    raise
+
+            self._agent_stream_iterator = _cancellation_aware_iterator()
+
         return self._agent_stream_iterator
+
+
+@dataclass(repr=False)
+class StreamEventsResult(Generic[AgentDepsT, OutputDataT]):
+    """Wrapper for streaming events from an agent run.
+
+    Supports two usage patterns:
+
+    **Context manager (recommended)** — cleanup is guaranteed by the context manager:
+
+    ```python
+    from pydantic_ai import Agent
+
+    agent = Agent('openai:gpt-5.2')
+
+    async def main():
+        async with agent.run_stream_events('What is the capital of France?') as events:
+            async for event in events:
+                ...
+    ```
+
+    **Direct iteration (deprecated)** — cleanup via `break` is not guaranteed in all scenarios:
+
+    ```python
+    from pydantic_ai import Agent
+
+    agent = Agent('openai:gpt-5.2')
+
+    async def main():
+        async for event in agent.run_stream_events('What is the capital of France?'):
+            ...
+    ```
+    """
+
+    _agent: AbstractAgent[AgentDepsT, OutputDataT]
+    _user_prompt: str | Sequence[_messages.UserContent] | None
+    _output_type: OutputSpec[Any] | None
+    _message_history: Sequence[_messages.ModelMessage] | None
+    _deferred_tool_results: DeferredToolResults | None
+    _model: models.Model | models.KnownModelName | str | None
+    _instructions: Instructions[AgentDepsT]
+    _deps: AgentDepsT
+    _model_settings: ModelSettings | None
+    _usage_limits: UsageLimits | None
+    _usage: RunUsage | None
+    _metadata: AgentMetadata[AgentDepsT] | None
+    _toolsets: Sequence[AbstractToolset[AgentDepsT]] | None
+    _builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None
+
+    _active_iter: AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]] | None = field(
+        default=None, init=False
+    )
+    _task: asyncio.Task[AgentRunResult[Any]] = field(init=False)
+    _send_stream: MemoryObjectSendStream[_messages.AgentStreamEvent | AgentRunResultEvent[Any]] = field(init=False)
+    _receive_stream: MemoryObjectReceiveStream[_messages.AgentStreamEvent | AgentRunResultEvent[Any]] = field(
+        init=False
+    )
+    _managed: bool = field(default=False, init=False)
+    _cleaned_up: bool = field(default=False, init=False)
+
+    def __repr__(self) -> str:
+        return f'StreamEventsResult(is_closed={self._cleaned_up})'
+
+    async def _event_stream_handler(
+        self,
+        _: RunContext[AgentDepsT],
+        events: AsyncIterable[_messages.AgentStreamEvent],
+    ) -> None:
+        try:
+            async for event in events:
+                await self._send_stream.send(event)
+        except anyio.BrokenResourceError:
+            # Receiver/consumer closed, so we cancel the stream.
+            if isinstance(events, AgentStream):  # pragma: no cover
+                await events.cancel()
+        except asyncio.CancelledError:
+            if isinstance(events, AgentStream):  # pragma: no branch
+                await events.cancel()
+            raise
+
+    async def _setup(self) -> None:
+        from .run import AgentRunResultEvent as _AgentRunResultEvent
+
+        self._send_stream, self._receive_stream = anyio.create_memory_object_stream[
+            _messages.AgentStreamEvent | _AgentRunResultEvent[Any]
+        ]()
+
+        async def run_agent() -> AgentRunResult[Any]:
+            async with self._send_stream:
+                return await self._agent.run(
+                    user_prompt=self._user_prompt,
+                    output_type=self._output_type,
+                    message_history=self._message_history,
+                    deferred_tool_results=self._deferred_tool_results,
+                    model=self._model,
+                    instructions=self._instructions,
+                    deps=self._deps,
+                    model_settings=self._model_settings,
+                    usage_limits=self._usage_limits,
+                    usage=self._usage,
+                    metadata=self._metadata,
+                    toolsets=self._toolsets,
+                    builtin_tools=self._builtin_tools,
+                    infer_name=False,
+                    event_stream_handler=self._event_stream_handler,
+                )
+
+        self._task = asyncio.create_task(run_agent())
+
+    async def _cleanup(self) -> None:
+        if self._cleaned_up:
+            return
+        await self._receive_stream.aclose()
+        if not self._task.done():
+            self._task.cancel()
+        # Always await the task to retrieve its result/exception and prevent
+        # "Task exception was never retrieved" warnings
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await self._task
+        self._cleaned_up = True
+
+    def _ensure_iter(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+        if self._cleaned_up:
+            raise RuntimeError('StreamEventsResult has been closed and cannot be reused')
+        if self._active_iter is None:
+            if self._managed:
+                self._active_iter = self._cm_iterate()
+            else:
+                self._active_iter = self._standalone_iterate()
+        return self._active_iter
+
+    @property
+    def is_closed(self) -> bool:
+        """Whether this result has been closed and can no longer be iterated."""
+        return self._cleaned_up
+
+    async def __aenter__(self) -> Self:
+        self._managed = True
+        await self._setup()
+        return self
+
+    async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
+        await self._cleanup()
+
+    def __aiter__(self) -> Self:
+        return self
+
+    async def __anext__(self) -> _messages.AgentStreamEvent | AgentRunResultEvent[Any]:
+        """Added for compatibility with previous `AsyncIterator` return types of `run_stream_events()`."""
+        return await anext(self._ensure_iter())
+
+    async def _cm_iterate(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+        """Yields events. Context manager handles cleanup."""
+        from .run import AgentRunResultEvent as _AgentRunResultEvent
+
+        async for event in self._receive_stream:
+            yield event
+        result = await self._task
+        yield _AgentRunResultEvent(result)
+
+    async def _standalone_iterate(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+        """Legacy: manages full lifecycle in the generator itself."""
+        from .run import AgentRunResultEvent as _AgentRunResultEvent
+
+        await self._setup()
+        try:
+            async for event in self._receive_stream:
+                yield event
+            result = await self._task
+            yield _AgentRunResultEvent(result)
+        except asyncio.CancelledError as e:
+            self._task.cancel(msg=e.args[0] if e.args else None)
+            raise
+        finally:
+            # Best-effort cleanup, but not guaranteed on break
+            # (same limitation as current async generator)
+            await self._cleanup()
 
 
 @dataclass(init=False)
@@ -607,7 +836,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
-    async def _marked_completed(self, message: _messages.ModelResponse | None = None) -> None:
+    async def _marked_completed(
+        self, message: _messages.ModelResponse | None = None, *, on_complete: bool = True
+    ) -> None:
         if self.is_complete:
             return
         self.is_complete = True
@@ -615,8 +846,31 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             if self._stream_response:  # pragma: no branch
                 message.run_id = self._stream_response.run_id
             self._all_messages.append(message)
-        if self._on_complete is not None:
+        if on_complete and self._on_complete is not None:
             await self._on_complete()
+
+    async def cancel(self) -> None:
+        """Cancel the streaming response.
+
+        After calling this method:
+        - Iteration will stop immediately
+        - The underlying HTTP connection will be closed
+        - response will return a ModelResponse with interrupted=True
+        - The interrupted response will be added to all_messages()
+        - The on_complete callback (if any) will NOT be called, as it may
+          attempt to validate partial output which would fail for interrupted data
+        """
+        if self._stream_response is not None:
+            await self._stream_response.cancel()
+            # Skip on_complete callback — it may validate partial output, which fails for interrupted data.
+            await self._marked_completed(self.response, on_complete=False)
+
+    @property
+    def is_cancelled(self) -> bool:
+        """Returns True if the stream was cancelled."""
+        if self._stream_response is not None:
+            return self._stream_response.is_cancelled
+        return False
 
 
 @dataclass(init=False)

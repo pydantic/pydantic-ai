@@ -67,7 +67,7 @@ from ..toolsets._dynamic import (
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
-from .abstract import AbstractAgent, AgentMetadata, EventStreamHandler, Instructions, RunOutputDataT
+from .abstract import AbstractAgent, AgentMetadata, EventStreamHandler, Instructions, RunOutputDataT, StreamEventsResult
 from .wrapper import WrapperAgent
 
 if TYPE_CHECKING:
@@ -93,6 +93,7 @@ __all__ = (
     'WrapperAgent',
     'AbstractAgent',
     'EventStreamHandler',
+    'StreamEventsResult',
 )
 
 

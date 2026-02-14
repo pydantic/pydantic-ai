@@ -403,6 +403,7 @@ class MistralModel(Model):
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
             _provider_timestamp=number_to_datetime(first_chunk.data.created) if first_chunk.data.created else None,
+            _stream_to_close=response,
         )
 
     @staticmethod
@@ -625,8 +626,19 @@ class MistralStreamedResponse(StreamedResponse):
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
+    _stream_to_close: MistralEventStreamAsync[MistralCompletionEvent] | None = field(default=None)
 
     _delta_content: str = field(default='', init=False)
+
+    async def cancel(self) -> None:
+        """Cancel the streaming response and close the underlying HTTP connection."""
+        await super().cancel()
+        if self._stream_to_close is not None:
+            # mistralai.EventStreamAsync (see mistralai/utils/eventstreaming.py, verified against
+            # mistralai>=1.9.11) has no aclose() or close() method. It's designed only as an async
+            # context manager. Its __aexit__ calls self.response.aclose() on the underlying
+            # httpx.Response, which is the only cleanup needed.
+            await self._stream_to_close.__aexit__(None, None, None)  # type: ignore[arg-type]
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         if self._provider_timestamp is not None:  # pragma: no branch

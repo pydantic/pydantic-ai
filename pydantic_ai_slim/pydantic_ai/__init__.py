@@ -6,6 +6,7 @@ from .agent import (
     EndStrategy,
     InstrumentationSettings,
     ModelRequestNode,
+    StreamEventsResult,
     UserPromptNode,
     capture_run_messages,
 )
@@ -138,6 +139,7 @@ __all__ = (
     'UserPromptNode',
     'capture_run_messages',
     'InstrumentationSettings',
+    'StreamEventsResult',
     # embeddings
     'Embedder',
     'EmbeddingModel',

@@ -830,6 +830,52 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
+### Cancelling Streams
+
+You can cancel a streaming response early to stop token generation and close the underlying HTTP connection. This is useful for:
+
+- User-initiated interruptions (e.g., a "Stop" button)
+- Timeout handling
+- Cost control when you've received enough content
+
+```python {title="cancel_stream.py"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+
+async def main():
+    async with agent.run_stream('Write a long story about a cat') as result:
+        chunks = []
+        async for text in result.stream_text(delta=True):
+            chunks.append(text)
+            if len(''.join(chunks)) > 100:  # Stop after 100 characters
+                await result.cancel()
+                break
+
+        # The response is marked as interrupted
+        print(result.response.interrupted)
+        #> True
+        print(result.is_cancelled)
+        #> True
+```
+
+!!! info "Usage tracking for cancelled streams"
+    Usage information may be incomplete for cancelled streams. The [`usage()`][pydantic_ai.result.StreamedRunResult.usage] method returns whatever usage data arrived before the stream was cancelled.
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+When a stream is cancelled:
+
+- Iteration stops immediately
+- The underlying HTTP connection is closed (stopping token generation)
+- The response is marked with `interrupted=True`
+- The interrupted response is added to [`all_messages()`][pydantic_ai.result.StreamedRunResult.all_messages] for conversation continuity
+- Usage data received before cancellation is preserved via [`usage()`][pydantic_ai.result.StreamedRunResult.usage]
+
+!!! note
+    Calling [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] multiple times is safe (idempotent). The cancellation is immediate — no further events will be yielded after calling `cancel()`.
+
 ## Examples
 
 The following examples demonstrate how to use streamed responses in Pydantic AI:
