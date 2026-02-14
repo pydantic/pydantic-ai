@@ -1,4 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
+from functools import partial, update_wrapper
+from inspect import signature
 from typing import Literal
 
 from pydantic import TypeAdapter
@@ -15,6 +17,9 @@ except ImportError as _import_error:
     ) from _import_error
 
 __all__ = ('tavily_search_tool',)
+
+_UNSET: Any = object()
+"""Sentinel to distinguish "not provided" from None in factory kwargs."""
 
 
 class TavilySearchResult(TypedDict):
@@ -44,12 +49,19 @@ class TavilySearchTool:
     client: AsyncTavilyClient
     """The Tavily search client."""
 
+    _: KW_ONLY
+
+    max_results: int | None = None
+    """The maximum number of results. If None, the Tavily default is used."""
+
     async def __call__(
         self,
         query: str,
-        search_deep: Literal['basic', 'advanced'] = 'basic',
-        topic: Literal['general', 'news'] = 'general',
-        time_range: Literal['day', 'week', 'month', 'year', 'd', 'w', 'm', 'y'] | None = None,
+        search_deep: Literal['basic', 'advanced', 'fast', 'ultra-fast'] = 'basic',
+        topic: Literal['general', 'news', 'finance'] = 'general',
+        time_range: Literal['day', 'week', 'month', 'year'] | None = None,
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
     ) -> list[TavilySearchResult]:
         """Searches Tavily for the given query and returns the results.
 
@@ -58,24 +70,81 @@ class TavilySearchTool:
             search_deep: The depth of the search.
             topic: The category of the search.
             time_range: The time range back from the current date to filter results.
+            include_domains: List of domains to specifically include in the search results.
+            exclude_domains: List of domains to specifically exclude from the search results.
 
         Returns:
             A list of search results from Tavily.
         """
-        results = await self.client.search(query, search_depth=search_deep, topic=topic, time_range=time_range)  # type: ignore[reportUnknownMemberType]
+        results: dict[str, Any] = await self.client.search(  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+            query,
+            search_depth=search_deep,
+            topic=topic,
+            time_range=time_range,  # pyright: ignore[reportArgumentType]
+            max_results=self.max_results,  # pyright: ignore[reportArgumentType]
+            include_domains=include_domains,  # pyright: ignore[reportArgumentType]
+            exclude_domains=exclude_domains,  # pyright: ignore[reportArgumentType]
+        )
         return tavily_search_ta.validate_python(results['results'])
 
 
-def tavily_search_tool(api_key: str):
+def tavily_search_tool(
+    api_key: str,
+    *,
+    max_results: int | None = None,
+    search_deep: Literal['basic', 'advanced', 'fast', 'ultra-fast'] = _UNSET,
+    topic: Literal['general', 'news', 'finance'] = _UNSET,
+    time_range: Literal['day', 'week', 'month', 'year'] | None = _UNSET,
+    include_domains: list[str] | None = _UNSET,
+    exclude_domains: list[str] | None = _UNSET,
+) -> Tool[Any]:
     """Creates a Tavily search tool.
+
+    `max_results` is always developer-controlled and does not appear in the LLM tool schema.
+    Other parameters, when provided, are fixed for all searches and hidden from the LLM's
+    tool schema. Parameters left unset remain available for the LLM to set per-call.
 
     Args:
         api_key: The Tavily API key.
 
             You can get one by signing up at [https://app.tavily.com/home](https://app.tavily.com/home).
+        max_results: The maximum number of results. If None, the Tavily default is used.
+        search_deep: The depth of the search.
+        topic: The category of the search.
+        time_range: The time range back from the current date to filter results.
+        include_domains: List of domains to specifically include in the search results.
+        exclude_domains: List of domains to specifically exclude from the search results.
     """
+    func = TavilySearchTool(client=AsyncTavilyClient(api_key), max_results=max_results).__call__
+
+    kwargs: dict[str, Any] = {}
+    if search_deep is not _UNSET:
+        kwargs['search_deep'] = search_deep
+    if topic is not _UNSET:
+        kwargs['topic'] = topic
+    if time_range is not _UNSET:
+        kwargs['time_range'] = time_range
+    if include_domains is not _UNSET:
+        kwargs['include_domains'] = include_domains
+    if exclude_domains is not _UNSET:
+        kwargs['exclude_domains'] = exclude_domains
+
+    if kwargs:
+        original = func
+        func = partial(func, **kwargs)
+        update_wrapper(func, original)
+        # update_wrapper sets __wrapped__, which makes inspect.signature()
+        # see the original full signature instead of the partial's reduced one.
+        del func.__wrapped__  # type: ignore[attr-defined]
+        # partial with keyword args only updates defaults, not removes params.
+        # Set __signature__ explicitly to exclude bound params from the tool schema.
+        orig_sig = signature(original)
+        func.__signature__ = orig_sig.replace(  # type: ignore[attr-defined]
+            parameters=[p for name, p in orig_sig.parameters.items() if name not in kwargs]
+        )
+
     return Tool[Any](
-        TavilySearchTool(client=AsyncTavilyClient(api_key)).__call__,
+        func,
         name='tavily_search',
         description='Searches Tavily for the given query and returns the results.',
     )
