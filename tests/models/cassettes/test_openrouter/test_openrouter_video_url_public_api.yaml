@@ -1,0 +1,93 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '264'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content:
+        - text: What is in this video?
+          type: text
+        - type: video_url
+          video_url:
+            url: https://upload.wikimedia.org/wikipedia/commons/8/8f/Panda_at_Smithsonian_zoo.webm
+        role: user
+      model: google/gemini-2.5-flash
+      stream: false
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      connection:
+      - keep-alive
+      content-length:
+      - '2090'
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: |-
+            This video features a giant panda in an enclosure designed to resemble its natural habitat. The enclosure includes:
+            - **Rocks and terrain:** Various sized rocks create a textured landscape.
+            - **Bamboo:** Fresh bamboo shoots are scattered around, which the panda is seen eating.
+            - **Background mural:** A painted mural on the back wall depicts a mountainous, green landscape, enhancing the immersive feel of the habitat.
+            - **Window:** A clear window is visible in the upper part of the background, likely part of the viewing area for visitors.
+            - **Enrichment toy:** A large, round, light brown object (possibly a ball or feeder) is seen on the rocks, likely an enrichment toy for the panda.
+            - **Panda:** The main subject is a black and white giant panda, which is actively eating bamboo at the bottom right of the frame, occasionally looking up.
+          reasoning: null
+          refusal: null
+          role: assistant
+        native_finish_reason: STOP
+      created: 1770461669
+      id: gen-1770461669-Ud9aX0ps0z7Vv4pX8Txi
+      model: google/gemini-2.5-flash
+      object: chat.completion
+      provider: Google AI Studio
+      usage:
+        completion_tokens: 180
+        completion_tokens_details:
+          image_tokens: 0
+          reasoning_tokens: 0
+        cost: 0.00045
+        cost_details:
+          upstream_inference_completions_cost: 0.00045
+          upstream_inference_cost: 0.00045
+          upstream_inference_prompt_cost: 0
+        is_byok: false
+        prompt_tokens: 0
+        prompt_tokens_details:
+          audio_tokens: 0
+          cache_write_tokens: 0
+          cached_tokens: 0
+          video_tokens: 0
+        total_tokens: 180
+    status:
+      code: 200
+      message: OK
+version: 1

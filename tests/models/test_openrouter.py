@@ -2,6 +2,7 @@ import datetime
 import json
 from collections.abc import Sequence
 from typing import Literal, cast
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from inline_snapshot import snapshot
@@ -24,6 +25,8 @@ from pydantic_ai import (
     ToolCallPart,
     ToolDefinition,
     UnexpectedModelBehavior,
+    UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
@@ -267,6 +270,182 @@ async def test_openrouter_preserve_reasoning_block(allow_model_requests: None, o
     assert 'data' in reasoning_encrypted
     assert reasoning_encrypted['type'] == 'reasoning.encrypted'
     assert reasoning_encrypted['format'] == 'openai-responses-v1'
+
+
+async def test_openrouter_video_url_mapping() -> None:
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('google/gemini-3-flash-preview', provider=provider)
+
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Count the students.',
+                        VideoUrl(url='https://example.com/video.mp4'),
+                    ]
+                )
+            ]
+        )
+    ]
+
+    mapped_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    content = mapped_messages[0].get('content')
+    assert content is not None
+    assert isinstance(content, list)
+
+    assert content[0] == {'type': 'text', 'text': 'Count the students.'}
+    assert content[1] == {'type': 'video_url', 'video_url': {'url': 'https://example.com/video.mp4'}}
+
+
+async def test_openrouter_binary_content_video_mapping() -> None:
+    """Test that `BinaryContent` with a video media type maps to a `video_url` part."""
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('google/gemini-3-flash-preview', provider=provider)
+
+    binary_video = BinaryContent(data=b'video-bytes', media_type='video/mp4')
+
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Count the students.',
+                        binary_video,
+                    ]
+                )
+            ]
+        )
+    ]
+
+    mapped_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    content = mapped_messages[0].get('content')
+    assert content is not None
+    assert isinstance(content, list)
+
+    assert content[0] == {'type': 'text', 'text': 'Count the students.'}
+    assert content[1] == {
+        'type': 'video_url',
+        'video_url': {'url': binary_video.data_uri},
+    }
+
+
+async def test_openrouter_video_url_force_download() -> None:
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('google/gemini-3-flash-preview', provider=provider)
+
+    with patch('pydantic_ai.models.openrouter.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {
+            'data': 'data:video/mp4;base64,AAAA',
+            'data_type': 'mp4',
+        }
+
+        messages = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Count the students.',
+                            VideoUrl(url='https://example.com/video.mp4', force_download=True),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        mapped_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+            messages, ModelRequestParameters()
+        )
+        content = mapped_messages[0].get('content')
+        assert content is not None
+        assert isinstance(content, list)
+
+        assert content[1] == {'type': 'video_url', 'video_url': {'url': 'data:video/mp4;base64,AAAA'}}
+        mock_download.assert_called_once()
+        call_args = mock_download.call_args
+        assert call_args[0][0].url == 'https://example.com/video.mp4'
+        assert call_args[1]['data_format'] == 'base64_uri'
+        assert call_args[1]['type_format'] == 'extension'
+
+
+async def test_openrouter_video_url_no_force_download() -> None:
+    """Test that `force_download=False` does not call `download_item` for `VideoUrl`."""
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('google/gemini-3-flash-preview', provider=provider)
+
+    with patch('pydantic_ai.models.openrouter.download_item', new_callable=AsyncMock) as mock_download:
+        messages = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Count the students.',
+                            VideoUrl(url='https://example.com/video.mp4', force_download=False),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        mapped_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+            messages, ModelRequestParameters()
+        )
+        content = mapped_messages[0].get('content')
+        assert content is not None
+        assert isinstance(content, list)
+
+        assert content[1] == {'type': 'video_url', 'video_url': {'url': 'https://example.com/video.mp4'}}
+        mock_download.assert_not_called()
+
+
+async def test_openrouter_video_url_public_api(
+    allow_model_requests: None, openrouter_api_key: str
+) -> None:  # pragma: lax no cover
+    """Test `VideoUrl` support through the public `Agent.run` API."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('google/gemini-2.5-flash', provider=provider)
+    agent = Agent(model)
+
+    result = await agent.run(
+        [
+            'What is in this video?',
+            VideoUrl(url='https://upload.wikimedia.org/wikipedia/commons/8/8f/Panda_at_Smithsonian_zoo.webm'),
+        ]
+    )
+
+    assert isinstance(result.output, str)
+    assert result.output == snapshot("""\
+This video features a giant panda in an enclosure designed to resemble its natural habitat. The enclosure includes:
+- **Rocks and terrain:** Various sized rocks create a textured landscape.
+- **Bamboo:** Fresh bamboo shoots are scattered around, which the panda is seen eating.
+- **Background mural:** A painted mural on the back wall depicts a mountainous, green landscape, enhancing the immersive feel of the habitat.
+- **Window:** A clear window is visible in the upper part of the background, likely part of the viewing area for visitors.
+- **Enrichment toy:** A large, round, light brown object (possibly a ball or feeder) is seen on the rocks, likely an enrichment toy for the panda.
+- **Panda:** The main subject is a black and white giant panda, which is actively eating bamboo at the bottom right of the frame, occasionally looking up.\
+""")
+
+
+async def test_openrouter_binary_content_video_public_api(
+    allow_model_requests: None, openrouter_api_key: str, video_content: BinaryContent, vcr: Cassette
+) -> None:  # pragma: lax no cover
+    """Test `BinaryContent` video support through the public `Agent.run` API."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('google/gemini-2.5-flash', provider=provider)
+    agent = Agent(model)
+
+    result = await agent.run(['What is in this video? Answer in one short sentence.', video_content])
+    assert isinstance(result.output, str)
+    assert result.output == snapshot(
+        "The video shows a camera on a tripod recording a scenic mountain landscape, with a preview of the shot visible on the camera's screen."
+    )
+
+    assert vcr is not None
+    assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+
+    video_content_part = request_body['messages'][0]['content'][1]
+    assert video_content_part['type'] == 'video_url'
+    assert video_content_part['video_url']['url'].startswith('data:video/mp4;base64,')
 
 
 async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_api_key: str) -> None:
