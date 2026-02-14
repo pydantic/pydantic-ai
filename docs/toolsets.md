@@ -363,6 +363,7 @@ DeferredToolRequests(
         ),
     ],
     metadata={},
+    context={},
 )
 """
 

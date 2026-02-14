@@ -599,6 +599,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                     tool_calls=stream.response.tool_calls,
                                     tool_call_results=None,
                                     tool_call_metadata=None,
+                                    tool_call_context=None,
                                     final_result=final_result,
                                     ctx=graph_ctx,
                                     output_parts=parts,

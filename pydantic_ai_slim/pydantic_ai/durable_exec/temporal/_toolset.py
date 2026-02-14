@@ -13,7 +13,7 @@ from typing_extensions import Self, assert_never
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from pydantic_ai.messages import ToolReturnContent
-from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._run_context import TemporalRunContext
@@ -37,12 +37,15 @@ class CallToolParams:
 @dataclass
 class _ApprovalRequired:
     metadata: dict[str, Any] | None = None
+    context: dict[str, Any] | None = None
     kind: Literal['approval_required'] = 'approval_required'
 
 
 @dataclass
 class _CallDeferred:
     metadata: dict[str, Any] | None = None
+    context: dict[str, Any] | None = None
+    deferred_tool_requests: DeferredToolRequests | None = None
     kind: Literal['call_deferred'] = 'call_deferred'
 
 
@@ -97,9 +100,13 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
             result = await coro
             return _ToolReturn(result=result)
         except ApprovalRequired as e:
-            return _ApprovalRequired(metadata=e.metadata)
+            return _ApprovalRequired(metadata=e.metadata, context=dict(e.context) if e.context else None)
         except CallDeferred as e:
-            return _CallDeferred(metadata=e.metadata)
+            return _CallDeferred(
+                metadata=e.metadata,
+                context=dict(e.context) if e.context else None,
+                deferred_tool_requests=e.deferred_tool_requests,
+            )
         except ModelRetry as e:
             return _ModelRetry(message=e.message)
 
@@ -107,9 +114,13 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         if isinstance(result, _ToolReturn):
             return result.result
         elif isinstance(result, _ApprovalRequired):
-            raise ApprovalRequired(metadata=result.metadata)
+            raise ApprovalRequired(metadata=result.metadata, context=result.context)
         elif isinstance(result, _CallDeferred):
-            raise CallDeferred(metadata=result.metadata)
+            raise CallDeferred(
+                metadata=result.metadata,
+                context=result.context,
+                deferred_tool_requests=result.deferred_tool_requests,
+            )
         elif isinstance(result, _ModelRetry):
             raise ModelRetry(result.message)
         else:

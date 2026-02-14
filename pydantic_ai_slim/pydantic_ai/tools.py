@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cast
 
@@ -162,6 +162,8 @@ class DeferredToolRequests:
     """Tool calls that require human-in-the-loop approval."""
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     """Metadata for deferred tool calls, keyed by `tool_call_id`."""
+    context: dict[str, Mapping[str, Any]] = field(default_factory=dict[str, Mapping[str, Any]])
+    """Opaque context for deferred tool calls, keyed by `tool_call_id`. Must be passed back unchanged during resumption."""
 
 
 @dataclass(kw_only=True)
@@ -230,6 +232,8 @@ class DeferredToolResults:
     """Map of tool call IDs to results for tool calls that required human-in-the-loop approval."""
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     """Metadata for deferred tool calls, keyed by `tool_call_id`. Each value will be available in the tool's RunContext as `tool_call_metadata`."""
+    context: dict[str, Mapping[str, Any]] = field(default_factory=dict[str, Mapping[str, Any]])
+    """Opaque context for deferred tool calls, keyed by `tool_call_id`. Should be passed back unchanged from `DeferredToolRequests.context`."""
 
 
 A = TypeVar('A')

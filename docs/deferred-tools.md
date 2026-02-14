@@ -78,6 +78,7 @@ DeferredToolRequests(
         ),
     ],
     metadata={'update_file_dotenv': {'reason': 'protected'}},
+    context={},
 )
 """
 
@@ -298,6 +299,7 @@ async def main():
         ],
         approvals=[],
         metadata={'pyd_ai_tool_call_id': {'task_id': 'task_0'}},
+        context={},
     )
     """
 
@@ -378,6 +380,141 @@ async def main():
 3. In reality, this would typically happen in a separate process that polls for the task status or is notified when all pending tasks are complete.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+## Nested Deferred Tool Calls
+
+When a tool delegates work to a subagent or inner execution that itself contains deferred tools (tools requiring approval or external execution), those nested deferred calls can be surfaced to the user as part of the parent agent's `DeferredToolRequests`.
+
+To do this, the parent tool raises [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] with a `deferred_tool_requests` parameter containing the nested [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests]. The framework flattens them using composite IDs of the form `parent_id::child_id`, so the user always interacts with a single flat set of requests regardless of nesting depth.
+
+On resume, the framework reconstructs per-parent [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] from the composite IDs and makes them available via [`RunContext.deferred_tool_results`][pydantic_ai.tools.RunContext.deferred_tool_results], allowing the parent tool to process the nested results.
+
+```python {title="nested_deferred_tools.py"}
+from pydantic_ai import (
+    Agent,
+    ApprovalRequired,
+    CallDeferred,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    ToolApproved,
+    ToolDenied,
+)
+
+sub_agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
+
+
+@sub_agent.tool
+async def dangerous_action(ctx: RunContext, target: str) -> str:
+    raise ApprovalRequired()
+
+
+agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
+
+
+@agent.tool
+async def run_subagent(ctx: RunContext, task: str) -> str:
+    if ctx.deferred_tool_results is not None:  # (1)!
+        for child_id, approval in ctx.deferred_tool_results.approvals.items():
+            if isinstance(approval, ToolDenied):
+                return f'Action {child_id} was denied: {approval.message}'
+        return f'Subagent completed: {task}'
+
+    # Run a subagent that produces deferred tool requests
+    sub_result = await sub_agent.run(task)
+
+    if isinstance(sub_result.output, DeferredToolRequests):
+        # Surface the subagent's deferred requests to the parent
+        raise CallDeferred(deferred_tool_requests=sub_result.output)  # (2)!
+
+    return sub_result.output
+
+
+result = agent.run_sync('Clean up old databases')
+messages = result.all_messages()
+
+if isinstance(result.output, DeferredToolRequests):
+    requests = result.output
+    # Nested calls are surfaced with composite IDs (parent_id::child_id)
+    # Approve or deny the nested calls using these composite IDs
+    results = DeferredToolResults()
+    for call in requests.calls:
+        results.calls[call.tool_call_id] = 'external_result'
+    for call in requests.approvals:
+        results.approvals[call.tool_call_id] = ToolApproved()  # (3)!
+
+    result = agent.run_sync(message_history=messages, deferred_tool_results=results)
+    print(result.output)
+    #> Subagent completed: Clean up old databases
+```
+
+1. On resume, `ctx.deferred_tool_results` contains the nested results reconstructed from the composite IDs, allowing the parent tool to process them.
+2. The subagent's `DeferredToolRequests` output is passed directly to `CallDeferred`, which surfaces the nested calls to the parent agent's output with composite IDs (`parent_id::child_id`).
+3. The user interacts with composite IDs directly — no need to understand the nesting structure.
+
+### Preserving State with Context
+
+When a parent tool delegates to a subagent, it often needs to preserve state (such as the subagent's message history) across the deferral boundary so it can resume the subagent where it left off. The `context` parameter on [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] and [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] provides an opaque round-trip state mechanism for this purpose.
+
+Unlike `metadata` (which carries user-facing information for decision-making), `context` is opaque state that the user passes back verbatim without inspecting. It appears in [`DeferredToolRequests.context`][pydantic_ai.output.DeferredToolRequests.context] keyed by `tool_call_id` and should be included unchanged in [`DeferredToolResults.context`][pydantic_ai.tools.DeferredToolResults.context] during resumption. The tool then receives its context via [`RunContext.tool_call_context`][pydantic_ai.tools.RunContext.tool_call_context].
+
+```python {title="nested_deferred_with_context.py"}
+from pydantic_ai import (
+    Agent,
+    CallDeferred,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    ToolApproved,
+)
+from pydantic_ai.messages import ToolCallPart
+
+agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
+
+
+@agent.tool
+async def run_subagent(ctx: RunContext, task: str) -> str:
+    if ctx.deferred_tool_results is not None:
+        # Resume with preserved context (e.g. message history)
+        saved = ctx.tool_call_context  # (1)!
+        return f'Resumed subagent with {len(saved["messages"])} messages'
+
+    # Simulate a subagent run that produces deferred calls
+    subagent_messages = [{'role': 'user', 'content': task}]
+    nested = DeferredToolRequests(
+        approvals=[
+            ToolCallPart('dangerous_action', {'target': 'db'}, tool_call_id='action_1'),
+        ],
+    )
+    raise CallDeferred(
+        context={'messages': subagent_messages},  # (2)!
+        deferred_tool_requests=nested,
+    )
+
+
+result = agent.run_sync('Clean up databases')
+messages = result.all_messages()
+
+assert isinstance(result.output, DeferredToolRequests)
+requests = result.output
+
+# Pass context back unchanged during resumption
+results = DeferredToolResults()
+for call in requests.approvals:
+    results.approvals[call.tool_call_id] = ToolApproved()
+# Copy context from requests to results
+results.context = dict(requests.context)  # (3)!
+
+result = agent.run_sync(message_history=messages, deferred_tool_results=results)
+print(result.output)
+#> Resumed subagent with 1 messages
+```
+
+1. On resume, `ctx.tool_call_context` contains the opaque context that was passed back from `DeferredToolResults.context` for this tool call's parent ID.
+2. The `context` parameter preserves state (here, the subagent's message history) across the deferral boundary.
+3. The user copies context from `DeferredToolRequests` to `DeferredToolResults` without inspecting it.
+
+_(This example is complete, it can be run "as is")_
 
 ## See Also
 
