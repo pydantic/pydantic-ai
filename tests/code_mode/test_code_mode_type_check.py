@@ -27,7 +27,7 @@ from pydantic_ai._python_signature import (
 )
 from pydantic_ai.exceptions import ModelRetry
 
-from .conftest import build_code_mode_toolset, run_code_with_tools
+from .conftest import WeatherResult, build_code_mode_toolset, get_weather, run_code_with_tools
 
 pytestmark = pytest.mark.anyio
 
@@ -35,6 +35,11 @@ pytestmark = pytest.mark.anyio
 def add(*, x: int, y: int) -> int:
     """Add two integers."""
     return x + y
+
+
+def get_weather_alias(city: str) -> WeatherResult:
+    """Get weather (alias)."""
+    return get_weather(city)
 
 
 async def test_type_error_raises_model_retry():
@@ -368,3 +373,93 @@ def test_structurally_equal():
 def test_to_pascal_case_digit_prefix():
     """PascalCase of a name starting with digits gets a leading underscore."""
     assert _to_pascal_case('123_tool') == '_123Tool'
+
+
+# =============================================================================
+# Caching tests
+# =============================================================================
+
+
+async def test_cached_signature_reused_across_get_tools_calls():
+    """Calling get_tools() twice reuses the same cached FunctionSignature objects."""
+    runtime = MontyRuntime()
+    code_mode, tools1 = await build_code_mode_toolset(runtime, (add, False))
+    from .conftest import build_run_context
+
+    ctx = build_run_context()
+    tools2 = await code_mode.get_tools(ctx)
+
+    tool1 = tools1['run_code_with_tools']
+    tool2 = tools2['run_code_with_tools']
+
+    # The code mode tool descriptions should match
+    assert tool1.tool_def.description == tool2.tool_def.description
+
+
+async def test_dedup_correctness_after_cache_backed_deepcopy():
+    """Multiple tools with shared types produce correct dedup after cache-backed deepcopy."""
+    runtime = MontyRuntime()
+    _code_mode, tools = await build_code_mode_toolset(runtime, (get_weather, False), (get_weather_alias, False))
+    tool = tools['run_code_with_tools']
+
+    # Both tools reference the same WeatherResult type — dedup should unify them
+    unique_types = collect_unique_referenced_types(tool.signatures)
+    weather_types = [t for t in unique_types if t.name == 'WeatherResult']
+    assert len(weather_types) == 1
+
+
+def test_function_tool_definition_produces_same_signature_as_function_based():
+    """FunctionToolDefinition.python_signature matches the old FunctionToolsetTool approach."""
+    from pydantic_ai._python_signature import function_to_signature
+    from pydantic_ai.tools import FunctionToolDefinition, Tool
+
+    def my_tool(x: int, y: str = 'hello') -> bool:
+        """A test tool."""
+        return True
+
+    tool = Tool(my_tool)
+    tool_def = tool.tool_def
+    assert isinstance(tool_def, FunctionToolDefinition)
+
+    # The cached signature should match a freshly generated one
+    cached_sig = tool_def.python_signature
+    fresh_sig = function_to_signature(my_tool, name='my_tool', description=tool.description)
+
+    assert str(cached_sig) == str(fresh_sig)
+
+
+def test_tool_definition_cached_property_reset_on_replace():
+    """dataclasses.replace() on a ToolDefinition resets the cached python_signature."""
+    from dataclasses import replace
+
+    from pydantic_ai.tools import ToolDefinition
+
+    td = ToolDefinition(
+        name='test_tool',
+        parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
+        description='Original description',
+    )
+    sig1 = td.python_signature
+    assert sig1.docstring == 'Original description'
+
+    td2 = replace(td, description='New description')
+    sig2 = td2.python_signature
+    assert sig2.docstring == 'New description'
+    # Different instances
+    assert sig1 is not sig2
+
+
+def test_function_tool_definition_fallback_without_original_func():
+    """FunctionToolDefinition falls back to schema-based signature when original_func is None."""
+    from pydantic_ai.tools import FunctionToolDefinition
+
+    td = FunctionToolDefinition(
+        name='schema_tool',
+        parameters_json_schema={'type': 'object', 'properties': {'q': {'type': 'string'}}, 'required': ['q']},
+        description='A schema-based tool',
+        original_func=None,
+    )
+    sig = td.python_signature
+    assert sig.name == 'schema_tool'
+    assert 'q' in sig.params
+    assert sig.params['q'].type == 'str'

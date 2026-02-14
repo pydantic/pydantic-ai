@@ -412,6 +412,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         self._running_count = 0
         self._exit_stack = None
         self._cached_tools = None
+        self._cached_tool_defs: dict[str, ToolDefinition] | None = None
         self._cached_resources = None
 
     @abstractmethod
@@ -570,9 +571,13 @@ class MCPServer(AbstractToolset[Any], ABC):
             return await self.direct_call_tool(name, tool_args)
 
     async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
-        return {
-            name: self.tool_for_tool_def(
-                ToolDefinition(
+        mcp_tools = await self.list_tools()
+
+        if self._cached_tool_defs is None:
+            self._cached_tool_defs = {}
+            for mcp_tool in mcp_tools:
+                name = f'{self.tool_prefix}_{mcp_tool.name}' if self.tool_prefix else mcp_tool.name
+                self._cached_tool_defs[name] = ToolDefinition(
                     name=name,
                     description=mcp_tool.description,
                     parameters_json_schema=mcp_tool.inputSchema,
@@ -581,11 +586,9 @@ class MCPServer(AbstractToolset[Any], ABC):
                         'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
                         'output_schema': mcp_tool.outputSchema or None,
                     },
-                ),
-            )
-            for mcp_tool in await self.list_tools()
-            if (name := f'{self.tool_prefix}_{mcp_tool.name}' if self.tool_prefix else mcp_tool.name)
-        }
+                )
+
+        return {name: self.tool_for_tool_def(td) for name, td in self._cached_tool_defs.items()}
 
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[Any]:
         return ToolsetTool(
@@ -721,6 +724,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                 await self._exit_stack.aclose()
                 self._exit_stack = None
                 self._cached_tools = None
+                self._cached_tool_defs = None
                 self._cached_resources = None
 
     @property
@@ -761,6 +765,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         if isinstance(message, mcp_types.ServerNotification):  # pragma: no branch
             if isinstance(message.root, mcp_types.ToolListChangedNotification):
                 self._cached_tools = None
+                self._cached_tool_defs = None
             elif isinstance(message.root, mcp_types.ResourceListChangedNotification):
                 self._cached_resources = None
 

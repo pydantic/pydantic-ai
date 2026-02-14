@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import keyword
 import re
 from collections.abc import Callable
@@ -206,11 +207,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 counter += 1
             name_map[sanitized] = original_name
 
-        signatures = [
-            # TODO (DouweM): See if we can cache the signature on the `ToolDefinition` somehow, expensive to generate
-            tools[original_name].python_signature(name_override=sanitized_name)
-            for sanitized_name, original_name in name_map.items()
-        ]
+        signatures: list[FunctionSignature] = []
+        for sanitized_name, original_name in name_map.items():
+            sig = copy.deepcopy(tools[original_name].python_signature)
+            sig.name = sanitized_name
+            signatures.append(sig)
 
         dedup_referenced_types(signatures)
         referenced_types = collect_unique_referenced_types(signatures)

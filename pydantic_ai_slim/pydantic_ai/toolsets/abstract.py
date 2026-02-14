@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
-from .._python_signature import FunctionSignature, schema_to_signature
+from .._python_signature import FunctionSignature
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition, ToolsPrepareFunc
 
@@ -59,28 +59,14 @@ class ToolsetTool(Generic[AgentDepsT]):
     For example, a [`pydantic.TypeAdapter(...).validator`](https://docs.pydantic.dev/latest/concepts/type_adapter/) or [`pydantic_core.SchemaValidator`](https://docs.pydantic.dev/latest/api/pydantic_core/#pydantic_core.SchemaValidator).
     """
 
-    def python_signature(self, *, name_override: str | None = None) -> FunctionSignature:
+    @property
+    def python_signature(self) -> FunctionSignature:
         """Generate a Python function signature for this tool.
 
-        The base implementation converts the tool's JSON schema to a signature.
-        Subclasses (e.g. `FunctionToolsetTool`) can override to use the original
-        function's type annotations for richer signatures.
-
-        Args:
-            name_override: Optional name to use instead of the tool's original name.
-                Used by code mode to show sanitized names (valid Python identifiers).
-
-        Returns:
-            A Signature object.
+        Delegates to the cached `python_signature` on the underlying `ToolDefinition`,
+        so that repeated access (e.g. on every agent step) reuses the same result.
         """
-        return schema_to_signature(
-            name=name_override or self.tool_def.name,
-            parameters_schema=self.tool_def.parameters_json_schema,
-            description=self.tool_def.description,
-            return_schema=(self.tool_def.metadata or {}).get(
-                'output_schema'
-            ),  # TODO (Douwe): Use tool_def.return_schema once https://github.com/pydantic/pydantic-ai/pull/3865 lands
-        )
+        return self.tool_def.python_signature
 
 
 class AbstractToolset(ABC, Generic[AgentDepsT]):
