@@ -600,6 +600,9 @@ class XaiModel(Model):
         parts: list[ModelResponsePart] = []
         outputs = response.proto.outputs
 
+        # Extract citations once if available
+        citations_data = _map_xai_web_search_citations(response)
+
         for output in outputs:
             message = output.message
 
@@ -624,6 +627,15 @@ class XaiModel(Model):
             # Process tool calls in this output
             for tool_call in message.tool_calls:
                 tool_result_content = _get_tool_result_content(message.content)
+
+                # Add citations to web search tool results
+                builtin_tool_name = _get_builtin_tool_name(tool_call)
+                if builtin_tool_name == WebSearchTool.kind and citations_data:
+                    if isinstance(tool_result_content, dict):
+                        tool_result_content.update(citations_data)
+                    else:
+                        tool_result_content = citations_data
+
                 _, part = _create_tool_call_part(
                     tool_call,
                     tool_result_content,
@@ -761,6 +773,7 @@ class XaiStreamedResponse(StreamedResponse):
         seen_tool_call_ids: set[str],
         seen_tool_return_ids: set[str],
         last_tool_return_content: dict[str, dict[str, Any] | str | None],
+        response: chat_types.Response,
     ) -> Iterator[ModelResponseStreamEvent]:
         """Handle a single server-side tool call delta, yielding stream events."""
         builtin_tool_name = _get_builtin_tool_name(tool_call)
@@ -785,6 +798,16 @@ class XaiStreamedResponse(StreamedResponse):
             # Emit the return part once per tool_call_id.
             return_vendor_id = f'{tool_call.id}_return'
             tool_result_content = _get_tool_result_content(delta.content)
+
+            # Add citations for web search tools
+            if builtin_tool_name == WebSearchTool.kind:
+                citations_data = _map_xai_web_search_citations(response)
+                if citations_data:
+                    if isinstance(tool_result_content, dict):
+                        tool_result_content.update(citations_data)
+                    else:
+                        tool_result_content = citations_data
+
             if return_vendor_id in seen_tool_return_ids and tool_result_content == last_tool_return_content.get(
                 return_vendor_id
             ):
@@ -849,6 +872,7 @@ class XaiStreamedResponse(StreamedResponse):
                             seen_tool_call_ids=seen_tool_call_ids,
                             seen_tool_return_ids=seen_tool_return_ids,
                             last_tool_return_content=last_tool_return_content,
+                            response=response,
                         ):
                             yield event
                     else:
@@ -1134,6 +1158,44 @@ def _build_mcp_tool_call_args(tool_call: chat_pb2.ToolCall) -> dict[str, Any]:
         'tool_name': actual_tool_name,
         'tool_args': _parse_tool_args(tool_call.function.arguments),
     }
+
+
+def _map_xai_web_search_citations(response: chat_types.Response) -> dict[str, Any]:
+    """Extract web search citations from xAI Response and convert to sources format.
+
+    Follows the same pattern as OpenAI by placing citations in a 'sources' key within the content dict.
+
+    Args:
+        response: The xAI SDK Response object.
+
+    Returns:
+        Dict with 'sources' key if citations are present, otherwise empty dict.
+    """
+    sources: list[dict[str, Any]] = []
+
+    # Prefer inline_citations if available (richer data with metadata)
+    if response.inline_citations:
+        for citation in response.inline_citations:
+            if citation.HasField('web_citation'):
+                sources.append(
+                    {
+                        'url': citation.web_citation.url,
+                        'id': citation.id,
+                    }
+                )
+            # Future: handle x_citation, collections_citation when needed
+
+    # Fallback to basic citations list (simple URL strings)
+    elif response.citations:
+        for idx, url in enumerate(response.citations, 1):
+            sources.append(
+                {
+                    'url': url,
+                    'id': str(idx),
+                }
+            )
+
+    return {'sources': sources} if sources else {}
 
 
 def _create_tool_call_part(

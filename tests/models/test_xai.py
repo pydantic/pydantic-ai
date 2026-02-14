@@ -1696,7 +1696,23 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content=None,
+                        content={
+                            'sources': [
+                                {'url': 'https://www.almanac.com/calendar/date/2026-01-01', 'id': '1'},
+                                {'url': 'https://time.is/calendar', 'id': '2'},
+                                {'url': 'https://calendar.online/calendar-weeks/2026/1', 'id': '3'},
+                                {'url': 'https://grabcalendar.com/printable-january-calendar.html', 'id': '4'},
+                                {'url': 'https://www.wiki-calendar.com/january-calendars.html', 'id': '5'},
+                                {
+                                    'url': 'https://www.timeanddate.com/calendar/monthly.html?country=1&month=1&year=2026',
+                                    'id': '6',
+                                },
+                                {'url': 'https://weeknumber.com/2026/new-year%E2%80%99s-day', 'id': '7'},
+                                {'url': 'http://www.whatweekisit.org/', 'id': '8'},
+                                {'url': 'https://www.epochconverter.com/weeks/2026', 'id': '9'},
+                                {'url': 'https://www.calendar-365.com/calendar/2026/January.html', 'id': '10'},
+                            ]
+                        },
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='xai',
@@ -2243,7 +2259,20 @@ Return just the final number with no other text.\
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content=None,
+                        content={
+                            'sources': [
+                                {'url': 'https://en.wikipedia.org/wiki/History_of_Python', 'id': '1'},
+                                {'url': 'https://docs.python.org/3/whatsnew/3.0.html', 'id': '2'},
+                                {'url': 'https://www.python.org/downloads/release/python-301', 'id': '3'},
+                                {'url': 'https://www.python.org/downloads/release/python-300', 'id': '4'},
+                                {'url': 'https://www.python.org/doc/versions', 'id': '5'},
+                                {'url': 'https://en.wikipedia.org/wiki/Python_(programming_language)', 'id': '6'},
+                                {'url': 'https://alexgaynor.net/2013/dec/30/about-python-3', 'id': '7'},
+                                {'url': 'https://www.python.org/download/releases/3.0', 'id': '8'},
+                                {'url': 'https://en.wikibooks.org/wiki/Python_Programming/Version_history', 'id': '9'},
+                                {'url': 'https://www.tutorialsteacher.com/python/python-version-history', 'id': '10'},
+                            ]
+                        },
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='xai',
@@ -2389,7 +2418,21 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content=None,
+                        content={
+                            'sources': [
+                                {'url': 'https://loopchicago.com/explore/things-to-do/landmarks', 'id': '1'},
+                                {'url': 'https://en.wikipedia.org/wiki/List_of_Chicago_Landmarks', 'id': '2'},
+                                {'url': 'https://webapps1.chicago.gov/landmarksweb/web/listings.htm', 'id': '3'},
+                                {
+                                    'url': 'https://www.tripadvisor.com/Attractions-g35805-Activities-c47-Chicago_Illinois.html',
+                                    'id': '4',
+                                },
+                                {
+                                    'url': 'https://www.reddit.com/r/AskChicago/comments/1kdrnlt/what_would_be_your_chicago_landmarks',
+                                    'id': '5',
+                                },
+                            ]
+                        },
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='xai',
@@ -3421,7 +3464,12 @@ async def test_xai_web_search_default_output(allow_model_requests: None) -> None
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content={},
+                        content={
+                            'sources': [
+                                {'url': 'https://example.com/article1', 'id': '1'},
+                                {'url': 'https://wikipedia.org/wiki/Topic', 'id': '2'},
+                            ]
+                        },
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='xai',
@@ -3439,6 +3487,69 @@ async def test_xai_web_search_default_output(allow_model_requests: None) -> None
             ),
         ]
     )
+
+
+async def test_xai_web_search_with_citations(allow_model_requests: None) -> None:
+    """Test web search with citations from response.citations."""
+    response = create_web_search_response(
+        query='latest news',
+        assistant_text='Here are the latest updates.',
+        citations=['https://example.com/news1', 'https://news.org/article2'],
+    )
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, builtin_tools=[WebSearchTool()])
+
+    result = await agent.run('What is the latest news?')
+    messages = result.all_messages()
+
+    # Find the web search return part
+    web_search_return = next(
+        (
+            p
+            for msg in messages
+            for p in msg.parts
+            if isinstance(p, BuiltinToolReturnPart) and p.tool_name == 'web_search'
+        ),
+        None,
+    )
+
+    assert web_search_return is not None
+    assert isinstance(web_search_return.content, dict)
+    assert 'sources' in web_search_return.content  # type: ignore[union-attr]
+    assert len(web_search_return.content['sources']) == 2  # type: ignore[arg-type]
+    assert web_search_return.content['sources'][0] == {'url': 'https://example.com/news1', 'id': '1'}  # type: ignore[index]
+    assert web_search_return.content['sources'][1] == {'url': 'https://news.org/article2', 'id': '2'}  # type: ignore[index]
+
+
+async def test_xai_web_search_without_citations(allow_model_requests: None) -> None:
+    """Test web search without citations doesn't error."""
+    response = create_web_search_response(
+        query='test query',
+        assistant_text='Search completed.',
+        citations=None,
+    )
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, builtin_tools=[WebSearchTool()])
+
+    result = await agent.run('Search for test')
+    messages = result.all_messages()
+
+    # Find the web search return part
+    web_search_return = next(
+        (
+            p
+            for msg in messages
+            for p in msg.parts
+            if isinstance(p, BuiltinToolReturnPart) and p.tool_name == 'web_search'
+        ),
+        None,
+    )
+
+    assert web_search_return is not None
+    assert isinstance(web_search_return.content, dict)
+    assert 'sources' in web_search_return.content  # type: ignore[union-attr]
 
 
 async def test_xai_mcp_server_default_output(allow_model_requests: None) -> None:
