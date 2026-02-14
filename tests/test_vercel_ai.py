@@ -3314,6 +3314,7 @@ async def test_adapter_dump_messages_with_tool_metadata_single_chunk():
                         'output': 'Data sent',
                         'call_provider_metadata': None,
                         'preliminary': None,
+                        'approval': None,
                     },
                     {
                         'type': 'data-custom',
@@ -3386,6 +3387,7 @@ async def test_adapter_dump_messages_with_tool_metadata_multiple_chunks():
                         'output': 'Events sent',
                         'call_provider_metadata': None,
                         'preliminary': None,
+                        'approval': None,
                     },
                     {
                         'type': 'data-event1',
@@ -3474,6 +3476,7 @@ async def test_adapter_dump_messages_with_tool_metadata_data_chunks():
                         'output': 'Data sent',
                         'call_provider_metadata': None,
                         'preliminary': None,
+                        'approval': None,
                     },
                     {
                         'type': 'source-url',
