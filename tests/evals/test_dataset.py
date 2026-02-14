@@ -1820,6 +1820,8 @@ async def test_case_context_manager():
 
     assert all(c.assertions['CheckLifecycle'].value for c in report.cases)
     assert lifecycle_events == ['enter:test1', 'exit:test1', 'enter:test2', 'exit:test2']
+
+
 # --- Report evaluator serialization/deserialization tests ---
 
 

@@ -357,7 +357,12 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             ):
                 async with limiter:
                     result = await _run_task_and_evaluators(
-                        task, case, report_case_name, self.evaluators, retry_task, retry_evaluators,
+                        task,
+                        case,
+                        report_case_name,
+                        self.evaluators,
+                        retry_task,
+                        retry_evaluators,
                         source_case_name=source_case_name,
                         case_context_manager=case_context_manager,
                     )
@@ -1133,8 +1138,7 @@ async def _run_task_and_evaluators(
     retry_evaluators: RetryConfig | None,
     *,
     source_case_name: str | None = None,
-    case_context_manager: Callable[[Case[InputsT, OutputT, MetadataT]], AbstractAsyncContextManager[Any]]
-    | None = None,
+    case_context_manager: Callable[[Case[InputsT, OutputT, MetadataT]], AbstractAsyncContextManager[Any]] | None = None,
 ) -> ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT]:
     """Run a task on a case and evaluate the results.
 
