@@ -36,7 +36,8 @@ class HerokuProvider(Provider[AsyncOpenAI]):
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @classmethod
+    def model_profile(cls, model_name: str) -> ModelProfile | None:
         # As the Heroku API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer.
         return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
 

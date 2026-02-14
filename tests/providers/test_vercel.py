@@ -128,11 +128,9 @@ def test_vercel_with_http_client():
     assert str(provider.client.base_url) == 'https://ai-gateway.vercel.sh/v1/'
 
 
-def test_vercel_provider_invalid_model_name():
-    provider = VercelProvider(api_key='api-key')
-
-    with pytest.raises(UserError, match="Model name must be in 'provider/model' format"):
-        provider.model_profile('invalid-model-name')
+def test_vercel_provider_model_name_without_slash():
+    profile = VercelProvider.model_profile('invalid-model-name')
+    assert profile is not None
 
 
 def test_vercel_provider_unknown_provider():

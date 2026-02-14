@@ -47,7 +47,8 @@ class SambaNovaProvider(Provider[AsyncOpenAI]):
         """Return the AsyncOpenAI client."""
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @classmethod
+    def model_profile(cls, model_name: str) -> ModelProfile | None:
         """Get model profile for SambaNova models.
 
         SambaNova serves models from multiple families including Meta Llama,

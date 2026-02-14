@@ -42,7 +42,8 @@ class NebiusProvider(Provider[AsyncOpenAI]):
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @classmethod
+    def model_profile(cls, model_name: str) -> ModelProfile | None:
         provider_to_profile = {
             'meta-llama': meta_model_profile,
             'deepseek-ai': deepseek_model_profile,
@@ -55,11 +56,11 @@ class NebiusProvider(Provider[AsyncOpenAI]):
 
         profile = None
 
-        try:
-            model_name = model_name.lower()
-            provider, model_name = model_name.split('/', 1)
-        except ValueError:
-            raise UserError(f"Model name must be in 'provider/model' format, got: {model_name!r}")
+        model_name = model_name.lower()
+        if '/' not in model_name:
+            return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
+
+        provider, model_name = model_name.split('/', 1)
         if provider in provider_to_profile:
             profile = provider_to_profile[provider](model_name)
 

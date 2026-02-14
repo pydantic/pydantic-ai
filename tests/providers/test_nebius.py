@@ -124,8 +124,6 @@ def test_nebius_provider_model_profile(mocker: MockerFixture):
     assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
 
-def test_nebius_provider_invalid_model_name():
-    provider = NebiusProvider(api_key='api-key')
-
-    with pytest.raises(UserError, match="Model name must be in 'provider/model' format"):
-        provider.model_profile('invalid-model-name')
+def test_nebius_provider_model_name_without_slash():
+    profile = NebiusProvider.model_profile('invalid-model-name')
+    assert profile is not None
