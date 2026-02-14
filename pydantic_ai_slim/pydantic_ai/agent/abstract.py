@@ -55,6 +55,8 @@ if TYPE_CHECKING:
 
     from pydantic_ai.ui.ag_ui.app import AGUIApp
 
+    from .._acp import FastACP
+
 
 T = TypeVar('T')
 S = TypeVar('S')
@@ -1406,6 +1408,21 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             exception_handlers=exception_handlers,
             lifespan=lifespan,
         )
+
+    def to_acp(
+        self,
+        *,
+        name: str | None = None,
+        debug: bool = False,
+    ) -> FastACP:
+        """Convert the agent to a FastACP application.
+
+        This enables the agent to serve the Agent Client Protocol (ACP),
+        allowing integration with IDEs like Zed.
+        """
+        from .._acp import agent_to_acp
+
+        return agent_to_acp(self, name=name, debug=debug)
 
     async def to_cli(
         self: Self,

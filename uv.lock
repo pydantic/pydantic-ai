@@ -5487,6 +5487,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pjrpc"
+version = "2.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/9b/df/d6174de74b1681ac448992a595e4ae0fbfe774de04510794f0868000a391/pjrpc-2.1.2.tar.gz", hash = "sha256:75d28dd843cc7553d461ceddd08eb82417578742089b7e76be635eb6d094d9ff", size = 52212, upload-time = "2025-11-15T08:59:43.595Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6b/8e/f866415943896ff0823f8fe119035528bad19c21cb49a34c84e8697b0bf6/pjrpc-2.1.2-py3-none-any.whl", hash = "sha256:cc8a52995955537c38a65ec13ce34691203f155d55ac04e4df502e4deabc8ccd", size = 74275, upload-time = "2025-11-15T08:59:42.091Z" },
+]
+
+[[package]]
 name = "platformdirs"
 version = "4.5.1"
 source = { registry = "https://pypi.org/simple" }
@@ -6411,6 +6420,10 @@ dependencies = [
 a2a = [
     { name = "fasta2a" },
 ]
+acp = [
+    { name = "pjrpc" },
+    { name = "starlette" },
+]
 ag-ui = [
     { name = "ag-ui-protocol" },
     { name = "starlette" },
@@ -6561,6 +6574,7 @@ requires-dist = [
     { name = "outlines", extras = ["transformers"], marker = "(platform_machine != 'x86_64' and extra == 'outlines-transformers') or (sys_platform != 'darwin' and extra == 'outlines-transformers')", specifier = ">=1.0.0,<1.3.0" },
     { name = "pillow", marker = "extra == 'outlines-sglang'", specifier = ">=11.0.0" },
     { name = "pillow", marker = "extra == 'outlines-transformers'", specifier = ">=11.0.0" },
+    { name = "pjrpc", marker = "extra == 'acp'", specifier = ">=0.5.0" },
     { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.4.21" },
     { name = "prompt-toolkit", marker = "extra == 'cli'", specifier = ">=3" },
     { name = "pydantic", specifier = ">=2.10" },
@@ -6570,6 +6584,7 @@ requires-dist = [
     { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.2" },
     { name = "rich", marker = "extra == 'cli'", specifier = ">=13" },
     { name = "sentence-transformers", marker = "extra == 'sentence-transformers'", specifier = ">=5.2.0" },
+    { name = "starlette", marker = "extra == 'acp'", specifier = ">=0.45.3" },
     { name = "starlette", marker = "extra == 'ag-ui'", specifier = ">=0.45.3" },
     { name = "starlette", marker = "extra == 'ui'", specifier = ">=0.45.3" },
     { name = "starlette", marker = "extra == 'web'", specifier = ">=0.45.3" },
@@ -6586,7 +6601,7 @@ requires-dist = [
     { name = "voyageai", marker = "extra == 'voyageai'", specifier = ">=0.3.2" },
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.5.0" },
 ]
-provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "retries", "sentence-transformers", "tavily", "temporal", "ui", "vertexai", "voyageai", "web", "xai"]
+provides-extras = ["a2a", "acp", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "retries", "sentence-transformers", "tavily", "temporal", "ui", "vertexai", "voyageai", "web", "xai"]
 
 [[package]]
 name = "pydantic-core"

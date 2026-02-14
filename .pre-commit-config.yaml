@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.3.0
+    rev: v6.0.0
     hooks:
       - id: no-commit-to-branch # prevent direct commits to the `main` branch
       - id: check-yaml
@@ -20,7 +20,7 @@ repos:
           )$
 
   - repo: https://github.com/sirosen/texthooks
-    rev: 0.6.8
+    rev: 0.7.1
     hooks:
       - id: fix-smartquotes
         exclude: "cassettes/"
@@ -31,7 +31,7 @@ repos:
 
   - repo: https://github.com/codespell-project/codespell
     # Configuration for codespell is in pyproject.toml
-    rev: v2.3.0
+    rev: v2.4.1
     hooks:
       - id: codespell
         args: ["--skip", "tests/models/cassettes/*"]
