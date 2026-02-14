@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from copy import deepcopy
 from typing import Any
 
 import pytest
@@ -1338,7 +1339,6 @@ async def test_history_processor_resuming_without_prompt(
                     )
                 ],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -1349,4 +1349,118 @@ async def test_history_processor_resuming_without_prompt(
             ),
         ]
     )
+    assert result.new_messages() == result.all_messages()[-1:]
+
+
+async def test_resuming_without_prompt_with_tool_calls_excludes_resumed_request():
+    """
+    When resuming without a user prompt and the model enters a tool-call loop,
+    new_messages() should exclude the resumed history request.
+    """
+
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='tool_call_1')],
+            )
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(model=FunctionModel(model_function, model_name='test'))
+
+    @agent.tool
+    async def my_tool(_ctx: RunContext[None]) -> str:
+        return 'tool executed'
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run(message_history=[ModelRequest(parts=[UserPromptPart(content='Original prompt')])])
+
+    assert captured_messages == result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Original prompt', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='tool_call_1')],
+                usage=RequestUsage(input_tokens=52, output_tokens=2),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool',
+                        content='tool executed',
+                        tool_call_id='tool_call_1',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=54, output_tokens=3),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    assert result.new_messages() == result.all_messages()[-3:]
+
+
+@pytest.mark.xfail(
+    reason='Deep-copying history messages breaks resumed-request identity, so `new_messages()` includes that request.'
+)
+async def test_history_processor_deepcopy_resuming_without_prompt(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
+    """
+    When a history processor deep-copies messages (breaking object identity),
+    new_messages() should still exclude the resumed request and include only
+    messages generated during this run.
+    """
+
+    def deepcopy_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return deepcopy(messages)
+
+    agent = Agent(function_model, history_processors=[deepcopy_processor])
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Original prompt')]),
+    ]
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run(message_history=message_history)
+
+    assert captured_messages == result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Original prompt',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Provider response')],
+                usage=RequestUsage(input_tokens=52, output_tokens=2),
+                model_name='function:capture_model_function:capture_model_stream_function',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
     assert result.new_messages() == result.all_messages()[-1:]

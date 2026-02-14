@@ -132,6 +132,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     prompt: str | Sequence[_messages.UserContent] | None
     new_message_index: int
+    resumed_request: _messages.ModelRequest | None
 
     model: models.Model
     model_settings: ModelSettings | None
@@ -232,7 +233,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
                 # Drop last message from history and reuse its parts
                 messages.pop()
-                next_message = _messages.ModelRequest(parts=last_message.parts)
+                next_message = _messages.ModelRequest(parts=last_message.parts, run_id=last_message.run_id)
                 is_resuming_without_prompt = True
 
                 # Extract `UserPromptPart` content from the popped message and add to `ctx.deps.prompt`
@@ -512,7 +513,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> tuple[ModelSettings | None, models.ModelRequestParameters, list[_messages.ModelMessage], RunContext[DepsT]]:
         self.request.timestamp = now_utc()
-        self.request.run_id = self.request.run_id or ctx.state.run_id
+        if not self.is_resuming_without_prompt:
+            self.request.run_id = self.request.run_id or ctx.state.run_id
         ctx.state.message_history.append(self.request)
 
         ctx.state.run_step += 1
@@ -526,14 +528,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.state.message_history[:], ctx.deps.history_processors, run_context
         )
         if message_history and message_history[-1].run_id is None:
-            message_history[-1].run_id = ctx.state.run_id
+            is_resumed_tail = self.is_resuming_without_prompt and message_history[-1] is self.request
+            if not is_resumed_tail:
+                message_history[-1].run_id = ctx.state.run_id
+
+        if self.is_resuming_without_prompt:
+            ctx.deps.resumed_request = self.request
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
         ctx.state.message_history[:] = message_history
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
-        ctx.deps.new_message_index = (
-            len(message_history)
-            if self.is_resuming_without_prompt
-            else _first_run_id_index(message_history, ctx.state.run_id)
+        ctx.deps.new_message_index = _first_new_message_index(
+            message_history, ctx.state.run_id, resumed_request=ctx.deps.resumed_request
         )
 
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
@@ -1420,6 +1425,20 @@ def _first_run_id_index(messages: list[_messages.ModelMessage], run_id: str) -> 
         if message.run_id == run_id:
             return index
     return len(messages)
+
+
+def _first_new_message_index(
+    messages: list[_messages.ModelMessage],
+    run_id: str,
+    *,
+    resumed_request: _messages.ModelRequest | None,
+) -> int:
+    """Return the first index that should be included in `new_messages()`."""
+    if resumed_request is not None:
+        for index, message in enumerate(messages):
+            if message is resumed_request:
+                return index + 1
+    return _first_run_id_index(messages, run_id)
 
 
 def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
