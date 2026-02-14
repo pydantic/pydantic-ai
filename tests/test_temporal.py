@@ -104,6 +104,12 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('fastmcp not installed', allow_module_level=True)
 
 try:
+    from pydantic_ai.runtime import monty  # pyright: ignore[reportUnusedImport] # noqa: F401
+except ImportError:  # pragma: lax no cover
+    pytest.skip('pydantic-monty is not installed', allow_module_level=True)
+from pydantic_ai.toolsets.code_mode import CodeModeToolset
+
+try:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 except ImportError:  # pragma: lax no cover
@@ -3301,3 +3307,55 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
             ('BinaryContent', 'image/png'),
             ('DocumentUrl', 'application/pdf'),
         ]
+
+
+def code_mode_mcp_model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if not any(isinstance(m, ModelResponse) for m in messages):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='run_code_with_tools',
+                    args={'code': 'await celsius_to_fahrenheit(celsius=100.0)'},
+                )
+            ]
+        )
+    return ModelResponse(parts=[TextPart('100 degrees Celsius is 212.0 degrees Fahrenheit.')])
+
+
+code_mode_mcp_agent = Agent(
+    FunctionModel(code_mode_mcp_model_function),
+    toolsets=[
+        CodeModeToolset(MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp')),
+    ],
+    name='code_mode_mcp_agent',
+)
+
+code_mode_mcp_temporal_agent = TemporalAgent(
+    code_mode_mcp_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+    model_activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=90)),
+)
+
+
+@workflow.defn
+class CodeModeMCPAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await code_mode_mcp_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_code_mode_mcp_agent_run_in_workflow(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CodeModeMCPAgentWorkflow],
+        plugins=[AgentPlugin(code_mode_mcp_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            CodeModeMCPAgentWorkflow.run,
+            args=['What is 100 degrees Celsius in Fahrenheit?'],
+            id=CodeModeMCPAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('100 degrees Celsius is 212.0 degrees Fahrenheit.')
