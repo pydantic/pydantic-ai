@@ -1451,11 +1451,11 @@ class OpenAIResponsesModel(Model):
                 extra_body=settings.get('extra_body'),
                 timeout=timeout,
             )
-        except APIStatusError as e:  # pragma: no cover
+        except APIStatusError as e:  # pragma: lax no cover
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise
-        except APIConnectionError as e:  # pragma: no cover
+        except APIConnectionError as e:  # pragma: lax no cover
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
         return usage.RequestUsage(
@@ -1672,7 +1672,9 @@ class OpenAIResponsesModel(Model):
             output_object = model_request_parameters.output_object
             assert output_object is not None
             text = {'format': self._map_json_schema(output_object)}
-        elif model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output:
+        elif (
+            model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
+        ):  # pragma: no branch
             text = {'format': {'type': 'json_object'}}
 
             # Without this trick, we'd hit this error:
