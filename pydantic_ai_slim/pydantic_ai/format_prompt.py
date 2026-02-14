@@ -136,11 +136,13 @@ class _ToXml:
         """Set element.text for scalar types. Return True if handled, False otherwise."""
         if value is None:
             element.text = self.none_str
+        elif isinstance(value, Enum):
+            element.text = str(value.value)
         elif isinstance(value, str):
             element.text = value
         elif isinstance(value, bytes | bytearray):
             element.text = value.decode(errors='ignore')
-        elif isinstance(value, bool | int | float | Enum):
+        elif isinstance(value, bool | int | float):
             element.text = str(value)
         elif isinstance(value, date | time):
             element.text = value.isoformat()

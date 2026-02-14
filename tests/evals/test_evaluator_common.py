@@ -210,7 +210,7 @@ async def test_contains_invalid_type():
 
     result = evaluator.evaluate(MockContext(output=Unhashable()))
     assert result.value is False
-    assert result.reason == "Containment check failed: argument of type 'Unhashable' is not iterable"
+    assert result.reason and result.reason.startswith("Containment check failed: argument of type 'Unhashable'")
 
 
 async def test_is_instance():

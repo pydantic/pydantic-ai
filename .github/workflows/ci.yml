@@ -90,11 +90,12 @@ jobs:
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # anything past 12 minutes is hanging
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         install:
           - name: pydantic-ai-slim
             command: "--package pydantic-ai-slim"
@@ -140,11 +141,11 @@ jobs:
   test-lowest-versions:
     name: test on ${{ matrix.python-version }} (lowest-versions)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     env:
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
@@ -189,7 +190,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     env:
       CI: true
     steps:
