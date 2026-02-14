@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from pydantic.errors import PydanticUserError
 
+from pydantic_ai import ToolDefinition
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
@@ -30,6 +31,16 @@ class RestateContextRunResult:
 
 
 CONTEXT_RUN_SERDE = PydanticTypeAdapter(RestateContextRunResult)
+
+
+@dataclass
+class RestateGetToolsContextRunResult:
+    """Serializable wrapper for tool definitions returned from durable get-tools steps."""
+
+    output: dict[str, ToolDefinition]
+
+
+GET_TOOLS_SERDE = PydanticTypeAdapter(RestateGetToolsContextRunResult)
 
 
 def unwrap_context_run_result(res: RestateContextRunResult) -> Any:
@@ -60,6 +71,30 @@ async def wrap_tool_call_result(action: Callable[[], Awaitable[Any]]) -> Restate
         raise TerminalError(str(e)) from e
 
 
+async def run_get_tools_step(
+    context: Context,
+    step_name: str,
+    action: Callable[[], Awaitable[dict[str, ToolDefinition]]],
+) -> dict[str, ToolDefinition]:
+    async def get_tools_in_context() -> RestateGetToolsContextRunResult:
+        return RestateGetToolsContextRunResult(output=await action())
+
+    options = RunOptions[RestateGetToolsContextRunResult](serde=GET_TOOLS_SERDE)
+    return (await context.run_typed(step_name, get_tools_in_context, options)).output
+
+
+async def run_tool_call_step(
+    context: Context,
+    step_name: str,
+    action: Callable[[], Awaitable[Any]],
+    options: RunOptions[RestateContextRunResult],
+) -> Any:
+    async def action_in_context() -> RestateContextRunResult:
+        return await wrap_tool_call_result(action)
+
+    return unwrap_context_run_result(await context.run_typed(step_name, action_in_context, options))
+
+
 class RestateContextRunToolset(WrapperToolset[AgentDepsT]):
     """A toolset that automatically wraps tool calls with restate's `ctx.run_typed()`."""
 
@@ -74,11 +109,7 @@ class RestateContextRunToolset(WrapperToolset[AgentDepsT]):
         async def action() -> Any:
             return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
-        async def action_in_context() -> RestateContextRunResult:
-            return await wrap_tool_call_result(action)
-
-        res = await self._context.run_typed(f'Calling {name}', action_in_context, self._options)
-        return unwrap_context_run_result(res)
+        return await run_tool_call_step(self._context, f'Calling {name}', action, self._options)
 
     def visit_and_replace(
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]

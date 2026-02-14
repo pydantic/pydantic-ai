@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from typing_extensions import Self
@@ -12,24 +11,18 @@ from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
 from ._restate_types import Context, RunOptions
-from ._serde import PydanticTypeAdapter
-from ._toolset import CONTEXT_RUN_SERDE, RestateContextRunResult, unwrap_context_run_result, wrap_tool_call_result
+from ._toolset import (
+    CONTEXT_RUN_SERDE,
+    RestateContextRunResult,
+    run_get_tools_step,
+    run_tool_call_step,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai.mcp import MCPServer, ToolResult
 else:
     MCPServer = Any
     ToolResult = Any
-
-
-@dataclass
-class RestateMCPGetToolsContextRunResult:
-    """A simple wrapper for tool results to be used with Restate's `ctx.run_typed()`."""
-
-    output: dict[str, ToolDefinition]
-
-
-MCP_GET_TOOLS_SERDE = PydanticTypeAdapter(RestateMCPGetToolsContextRunResult)
 
 
 class RestateMCPServer(WrapperToolset[Any]):
@@ -62,18 +55,17 @@ class RestateMCPServer(WrapperToolset[Any]):
         return self
 
     async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
-        async def get_tools_in_context() -> RestateMCPGetToolsContextRunResult:
+        async def get_tools_action() -> dict[str, ToolDefinition]:
             async with self._mcp_server:
                 res = await self._mcp_server.get_tools(ctx)
-            # ToolsetTool is not serializable as it holds a SchemaValidator
-            # (which is also the same for every MCP tool so unnecessary to pass along the wire every time),
-            # so we just return the ToolDefinitions and wrap them in ToolsetTool outside of ctx.run_typed().
-            return RestateMCPGetToolsContextRunResult(output={name: tool.tool_def for name, tool in res.items()})
+                # ToolsetTool is not serializable as it holds a SchemaValidator
+                # (which is also the same for every MCP tool so unnecessary to pass along the wire every time),
+                # so we return ToolDefinitions and wrap them in ToolsetTool outside durable steps.
+                return {name: tool.tool_def for name, tool in res.items()}
 
-        options = RunOptions[RestateMCPGetToolsContextRunResult](serde=MCP_GET_TOOLS_SERDE)
-        tool_defs = await self._context.run_typed('get mcp tools', get_tools_in_context, options)
+        tool_defs = await run_get_tools_step(self._context, 'get mcp tools', get_tools_action)
 
-        return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.output.items()}
+        return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.items()}
 
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[Any]:
         # Wrap the underlying tool so `tool.toolset` points at the Restate wrapper.
@@ -96,8 +88,4 @@ class RestateMCPServer(WrapperToolset[Any]):
             async with self._mcp_server:
                 return await self._mcp_server.call_tool(name, tool_args, ctx, tool)
 
-        async def call_tool_in_context() -> RestateContextRunResult:
-            return await wrap_tool_call_result(call_tool_action)
-
-        res = await self._context.run_typed(f'Calling mcp tool {name}', call_tool_in_context, self._call_options)
-        return unwrap_context_run_result(res)
+        return await run_tool_call_step(self._context, f'Calling mcp tool {name}', call_tool_action, self._call_options)

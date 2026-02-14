@@ -21,6 +21,8 @@ This includes:
 - FastMCP toolsets ([`FastMCPToolset`][pydantic_ai.toolsets.fastmcp.FastMCPToolset])
 - Dynamic toolsets (e.g. from `@agent.toolset(...)`, including those that resolve to MCP/FastMCP toolsets)
 
+Other custom toolset types are used as-is. If a custom toolset performs I/O, make sure its side effects are safe under Restate retries.
+
 ### Installation
 
 Install Restate support with the `restate` optional group:
@@ -133,6 +135,7 @@ app = restate.app(services=[svc])
 !!! note
 
     The `event_stream_handler` may run more than once if the durable step is retried.
+    By default, each handler call receives a single-event stream (not the full model stream).
     Keep handler side effects idempotent (e.g. write to an idempotent sink, or include a dedup key in your messages).
 
 ## Serialization requirements
@@ -141,6 +144,8 @@ Restate persists the outputs of durable steps. This means anything returned from
 
 In practice, keep tool outputs to JSON-serializable values and/or Pydantic models.
 
+Values are deserialized as plain JSON-compatible Python types. For example, if a tool returns a Pydantic model, Restate replays it as a `dict`.
+
 ## Disabling automatic tool wrapping
 
 By default, function tools are executed inside `ctx.run_typed(...)`. If you want to use the Restate context directly in your tool code (e.g. to call `ctx.run(...)` yourself), initialize the agent with `disable_auto_wrapping_tools=True`.
@@ -148,3 +153,5 @@ By default, function tools are executed inside `ctx.run_typed(...)`. If you want
 Restate does not allow nested context operations inside `ctx.run_typed(...)`, so calling `ctx.run(...)`/`ctx.run_typed(...)` inside an automatically-wrapped tool will fail — disable wrapping for those tools.
 
 In that mode, model calls (and MCP/FastMCP tool calls, if used) are still wrapped, but function tools (including those coming from dynamic toolsets like `@agent.toolset(...)`) are not.
+For dynamic function tools, toolset resolution and arg validation also run outside `ctx.run_typed(...)`.
+When `disable_auto_wrapping_tools=True`, the original `event_stream_handler` runs inside the durable model step and may be replayed on retries.

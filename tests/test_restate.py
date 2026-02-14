@@ -322,10 +322,8 @@ async def test_restate_agent_restrictions():
     with pytest.raises(TerminalError, match='cannot be set at agent run time'):
         await restate_agent.run('x', model=TestModel())
 
-    async def handler(_: RunContext[Any], __: AsyncIterable[Any]) -> None:
+    async def handler(_: RunContext[Any], __: AsyncIterable[Any]) -> None:  # pragma: no cover
         return None
-
-    await handler(_run_ctx(), cast(AsyncIterable[Any], []))
 
     with pytest.raises(TerminalError, match='Event stream handler cannot be set'):
         await restate_agent.run('x', event_stream_handler=handler)
@@ -333,10 +331,8 @@ async def test_restate_agent_restrictions():
     extra_toolset = FunctionToolset(id='extra')
 
     @extra_toolset.tool
-    async def extra() -> str:
+    async def extra() -> str:  # pragma: no cover
         return 'ok'
-
-    assert await cast(Any, extra)() == 'ok'
 
     with pytest.raises(TerminalError, match='Toolsets cannot be set at agent run time'):
         await restate_agent.run('x', toolsets=[extra_toolset])
@@ -631,8 +627,7 @@ async def test_restate_dynamic_toolset_function_origin_unwraps_wrapper_toolsets(
     ctx = _run_ctx()
     tools = await durable_dynamic.get_tools(ctx)
 
-    assert tools['p_plus_one'].tool_def.metadata is not None
-    assert tools['p_plus_one'].tool_def.metadata.get('__pydantic_ai_restate_dynamic_origin') == 'function'
+    assert '__pydantic_ai_restate_dynamic_origin' not in (tools['p_plus_one'].tool_def.metadata or {})
     assert await durable_dynamic.call_tool('p_plus_one', {'x': 1}, ctx, tools['p_plus_one']) == 2
 
 
@@ -855,15 +850,12 @@ async def test_restate_agent_disable_auto_wrapping_tools_does_not_wrap_dynamic_f
 
 
 @pytest.mark.anyio
-async def test_restate_agent_misc_properties_and_wrapped_event_handler_noop_and_iter_model_guard():
+async def test_restate_agent_properties_and_wrapped_event_handler_noop():
     from pydantic_ai.messages import AgentStreamEvent
 
-    class EmptyAgentStream:
-        def __aiter__(self) -> EmptyAgentStream:
-            return self
-
-        async def __anext__(self) -> AgentStreamEvent:
-            raise StopAsyncIteration
+    async def empty_stream() -> AsyncIterable[AgentStreamEvent]:
+        if False:  # pragma: no cover
+            yield
 
     fake_ctx = FakeRestateContext()
     agent = Agent(TestModel(call_tools=[]))
@@ -873,13 +865,15 @@ async def test_restate_agent_misc_properties_and_wrapped_event_handler_noop_and_
     assert restate_agent.restate_context is fake_ctx
     _ = restate_agent.toolsets
 
-    stream = EmptyAgentStream()
-    assert stream.__aiter__() is stream
-    with pytest.raises(StopAsyncIteration):
-        await stream.__anext__()
-
     assert restate_agent.event_stream_handler is None
-    await cast(Any, restate_agent)._wrapped_event_stream_handler(_run_ctx(), stream)
+    await cast(Any, restate_agent)._wrapped_event_stream_handler(_run_ctx(), empty_stream())
+
+
+@pytest.mark.anyio
+async def test_restate_agent_iter_rejects_model_override():
+    fake_ctx = FakeRestateContext()
+    agent = Agent(TestModel(call_tools=[]))
+    restate_agent = RestateAgent(agent, fake_ctx)
 
     with pytest.raises(TerminalError, match='cannot be set at agent run time'):
         async with restate_agent.iter('go', model=TestModel(call_tools=[])):

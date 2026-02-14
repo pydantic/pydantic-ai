@@ -270,67 +270,7 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 **_deprecated_kwargs,
             )
 
-    @overload
-    def run_sync(
-        self,
-        user_prompt: str | Sequence[UserContent] | None = None,
-        *,
-        output_type: None = None,
-        message_history: Sequence[ModelMessage] | None = None,
-        deferred_tool_results: DeferredToolResults | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
-        deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
-        usage_limits: UsageLimits | None = None,
-        usage: RunUsage | None = None,
-        metadata: AgentMetadata[AgentDepsT] | None = None,
-        infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> AgentRunResult[OutputDataT]: ...
-
-    @overload
-    def run_sync(
-        self,
-        user_prompt: str | Sequence[UserContent] | None = None,
-        *,
-        output_type: OutputSpec[RunOutputDataT],
-        message_history: Sequence[ModelMessage] | None = None,
-        deferred_tool_results: DeferredToolResults | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
-        deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
-        usage_limits: UsageLimits | None = None,
-        usage: RunUsage | None = None,
-        metadata: AgentMetadata[AgentDepsT] | None = None,
-        infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> AgentRunResult[RunOutputDataT]: ...
-
-    def run_sync(
-        self,
-        user_prompt: str | Sequence[UserContent] | None = None,
-        *,
-        output_type: OutputSpec[RunOutputDataT] | None = None,
-        message_history: Sequence[ModelMessage] | None = None,
-        deferred_tool_results: DeferredToolResults | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
-        deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
-        usage_limits: UsageLimits | None = None,
-        usage: RunUsage | None = None,
-        metadata: AgentMetadata[AgentDepsT] | None = None,
-        infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> AgentRunResult[Any]:
+    def run_sync(self, *args: Any, **kwargs: Any) -> AgentRunResult[Any]:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
@@ -340,87 +280,10 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 '`agent.run_sync()` cannot be used inside a restate handler. Use `await agent.run()` instead.'
             )
 
-        return super().run_sync(
-            user_prompt=user_prompt,
-            output_type=output_type,
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-            model=model,
-            instructions=instructions,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            usage=usage,
-            metadata=metadata,
-            infer_name=infer_name,
-            toolsets=toolsets,
-            builtin_tools=builtin_tools,
-            event_stream_handler=event_stream_handler,
-        )
-
-    @overload
-    def run_stream(
-        self,
-        user_prompt: str | Sequence[UserContent] | None = None,
-        *,
-        output_type: None = None,
-        message_history: Sequence[ModelMessage] | None = None,
-        deferred_tool_results: DeferredToolResults | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
-        deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
-        usage_limits: UsageLimits | None = None,
-        usage: RunUsage | None = None,
-        metadata: AgentMetadata[AgentDepsT] | None = None,
-        infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, OutputDataT]]: ...
-
-    @overload
-    def run_stream(
-        self,
-        user_prompt: str | Sequence[UserContent] | None = None,
-        *,
-        output_type: OutputSpec[RunOutputDataT],
-        message_history: Sequence[ModelMessage] | None = None,
-        deferred_tool_results: DeferredToolResults | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
-        deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
-        usage_limits: UsageLimits | None = None,
-        usage: RunUsage | None = None,
-        metadata: AgentMetadata[AgentDepsT] | None = None,
-        infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
+        return super().run_sync(*args, **kwargs)
 
     @asynccontextmanager
-    async def run_stream(
-        self,
-        user_prompt: str | Sequence[UserContent] | None = None,
-        *,
-        output_type: OutputSpec[RunOutputDataT] | None = None,
-        message_history: Sequence[ModelMessage] | None = None,
-        deferred_tool_results: DeferredToolResults | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
-        deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
-        usage_limits: UsageLimits | None = None,
-        usage: RunUsage | None = None,
-        metadata: AgentMetadata[AgentDepsT] | None = None,
-        infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-        **_deprecated_kwargs: Never,
-    ) -> AsyncIterator[StreamedRunResult[AgentDepsT, Any]]:
+    async def run_stream(self, *args: Any, **kwargs: Any) -> AsyncIterator[StreamedRunResult[AgentDepsT, Any]]:
         """Not supported in Restate handlers. Use `event_stream_handler` and `run()` instead."""
         raise TerminalError(
             '`agent.run_stream()` cannot be used inside a restate handler. '
@@ -545,70 +408,14 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         with super().override(
             name=name,
             deps=deps,
-            model=model,
-            toolsets=toolsets,
-            tools=tools,
             instructions=instructions,
         ):
             yield
 
-    @overload
     def run_stream_events(
         self,
-        user_prompt: str | Sequence[UserContent] | None = None,
-        *,
-        output_type: None = None,
-        message_history: Sequence[ModelMessage] | None = None,
-        deferred_tool_results: DeferredToolResults | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
-        deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
-        usage_limits: UsageLimits | None = None,
-        usage: RunUsage | None = None,
-        metadata: AgentMetadata[AgentDepsT] | None = None,
-        infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-    ) -> AsyncIterator[AgentStreamEvent | AgentRunResultEvent[OutputDataT]]: ...
-
-    @overload
-    def run_stream_events(
-        self,
-        user_prompt: str | Sequence[UserContent] | None = None,
-        *,
-        output_type: OutputSpec[RunOutputDataT],
-        message_history: Sequence[ModelMessage] | None = None,
-        deferred_tool_results: DeferredToolResults | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
-        deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
-        usage_limits: UsageLimits | None = None,
-        usage: RunUsage | None = None,
-        metadata: AgentMetadata[AgentDepsT] | None = None,
-        infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-    ) -> AsyncIterator[AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]: ...
-
-    def run_stream_events(
-        self,
-        user_prompt: str | Sequence[UserContent] | None = None,
-        *,
-        output_type: OutputSpec[RunOutputDataT] | None = None,
-        message_history: Sequence[ModelMessage] | None = None,
-        deferred_tool_results: DeferredToolResults | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
-        deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
-        usage_limits: UsageLimits | None = None,
-        usage: RunUsage | None = None,
-        metadata: AgentMetadata[AgentDepsT] | None = None,
-        infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        *args: Any,
+        **kwargs: Any,
     ) -> AsyncIterator[AgentStreamEvent | AgentRunResultEvent[Any]]:
         # Match the base agent's overload-friendly pattern: return an async generator.
         async def _event_stream() -> AsyncIterator[AgentStreamEvent | AgentRunResultEvent[Any]]:

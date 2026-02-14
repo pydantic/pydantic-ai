@@ -12,7 +12,10 @@ __all__ = ['Context', 'RunOptions', 'TerminalError']
 if TYPE_CHECKING:
 
     class TerminalError(Exception):
-        """Type-checking fallback for `restate.TerminalError`."""
+        """Type-checking fallback for `restate.TerminalError`.
+
+        Inheriting from `Exception` gives us a compatible constructor signature.
+        """
 
     @dataclass
     class RunOptions(Generic[T]):
@@ -22,7 +25,10 @@ if TYPE_CHECKING:
         max_attempts: int | None = None
 
     class Context(Protocol):
-        """Type-checking fallback for `restate.Context`."""
+        """Type-checking fallback for `restate.Context`.
+
+        The Restate integration only relies on `run_typed(...)`.
+        """
 
         async def run_typed(
             self,

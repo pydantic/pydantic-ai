@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, replace
-from typing import Any, cast
+from dataclasses import dataclass
+from typing import Any, Literal, cast
 
 from pydantic import ValidationError
 from typing_extensions import Self
@@ -17,9 +17,7 @@ from pydantic_ai.toolsets.wrapper import WrapperToolset
 
 from ._restate_types import Context, RunOptions, TerminalError
 from ._serde import PydanticTypeAdapter
-from ._toolset import CONTEXT_RUN_SERDE, RestateContextRunResult, unwrap_context_run_result, wrap_tool_call_result
-
-_RESTATE_DYNAMIC_ORIGIN_KEY = '__pydantic_ai_restate_dynamic_origin'
+from ._toolset import CONTEXT_RUN_SERDE, RestateContextRunResult, run_tool_call_step
 
 
 @dataclass
@@ -28,6 +26,12 @@ class _ToolInfo:
 
     tool_def: ToolDefinition
     max_retries: int
+    origin: Literal['function', 'io']
+
+
+@dataclass(kw_only=True)
+class _RestateDynamicToolsetTool(ToolsetTool[AgentDepsT]):
+    origin: Literal['function', 'io']
 
 
 @dataclass
@@ -84,8 +88,9 @@ class RestateDynamicToolset(WrapperToolset[AgentDepsT]):
                 return RestateDynamicGetToolsContextRunResult(
                     output={
                         name: _ToolInfo(
-                            tool_def=self._with_dynamic_origin(tool.tool_def, tool.toolset),
+                            tool_def=tool.tool_def,
                             max_retries=tool.max_retries,
+                            origin=self._toolset_origin(tool.toolset),
                         )
                         for name, tool in tools.items()
                     }
@@ -102,25 +107,6 @@ class RestateDynamicToolset(WrapperToolset[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
     ) -> Any:
-        # If automatic tool wrapping is disabled, dynamic toolset *function tools* should be executed outside
-        # ctx.run_typed so tool implementations can use the Restate context directly.
-        if self._disable_auto_wrapping_tools and self._is_function_tool(tool):
-            async with self._dynamic_toolset:
-                tools = await self._dynamic_toolset.get_tools(ctx)
-                real_tool = tools.get(name)
-                if real_tool is None:  # pragma: no cover
-                    raise TerminalError(
-                        f'Tool {name!r} not found in dynamic toolset {self._dynamic_toolset.label}. '
-                        'The dynamic toolset function may have returned a different toolset than expected.'
-                    )
-
-                try:
-                    args_dict = real_tool.args_validator.validate_python(tool_args, context=ctx.validation_context)
-                except ValidationError as e:
-                    raise ModelRetry(str(e)) from e
-
-                return await self._dynamic_toolset.call_tool(name, args_dict, ctx, real_tool)
-
         async def call_tool_action() -> Any:
             # Re-instantiate the dynamic toolset inside the durable step so any underlying I/O happens
             # within `ctx.run_typed(...)`, and ensure resources are cleaned up afterwards.
@@ -141,38 +127,34 @@ class RestateDynamicToolset(WrapperToolset[AgentDepsT]):
 
                 return await self._dynamic_toolset.call_tool(name, args_dict, ctx, real_tool)
 
-        async def call_tool_in_context() -> RestateContextRunResult:
-            return await wrap_tool_call_result(call_tool_action)
+        # If automatic tool wrapping is disabled, dynamic toolset *function tools* should be executed outside
+        # `ctx.run_typed(...)` so tool implementations can use the Restate context directly.
+        # In this mode, dynamic toolset resolution/validation also happens outside the durable step.
+        if self._disable_auto_wrapping_tools and self._is_function_tool(tool):
+            return await call_tool_action()
 
-        res = await self._context.run_typed(f'Calling dynamic tool {name}', call_tool_in_context, self._call_options)
-        return unwrap_context_run_result(res)
+        return await run_tool_call_step(
+            self._context, f'Calling dynamic tool {name}', call_tool_action, self._call_options
+        )
 
     def _tool_for_tool_info(self, tool_info: _ToolInfo) -> ToolsetTool[AgentDepsT]:
-        """Create a `ToolsetTool` from a `_ToolInfo` for use outside durable steps.
+        """Create a tool from `_ToolInfo` for use outside durable steps.
 
         Use a permissive schema validator; actual args validation happens inside `call_tool_in_context`.
         """
-        return ToolsetTool(
+        return _RestateDynamicToolsetTool(
             toolset=self,
             tool_def=tool_info.tool_def,
             max_retries=tool_info.max_retries,
             args_validator=TOOL_SCHEMA_VALIDATOR,
+            origin=tool_info.origin,
         )
 
-    def _with_dynamic_origin(self, tool_def: ToolDefinition, source_toolset: AbstractToolset[Any]) -> ToolDefinition:
-        """Attach an internal marker describing where this tool came from.
-
-        This is used to decide whether tool execution should be wrapped when
-        `disable_auto_wrapping_tools=True`.
-        """
-        origin = 'function' if self._toolset_is_functionlike(source_toolset) else 'io'
-        metadata = dict(tool_def.metadata or {})
-        metadata[_RESTATE_DYNAMIC_ORIGIN_KEY] = origin
-        return replace(tool_def, metadata=metadata)
-
     def _is_function_tool(self, tool: ToolsetTool[AgentDepsT]) -> bool:
-        metadata = tool.tool_def.metadata or {}
-        return metadata.get(_RESTATE_DYNAMIC_ORIGIN_KEY) == 'function'
+        return isinstance(tool, _RestateDynamicToolsetTool) and tool.origin == 'function'
+
+    def _toolset_origin(self, toolset: AbstractToolset[Any]) -> Literal['function', 'io']:
+        return 'function' if self._toolset_is_functionlike(toolset) else 'io'
 
     def _toolset_is_functionlike(self, toolset: AbstractToolset[Any]) -> bool:
         """Return True if the leaf toolset is a FunctionToolset (possibly wrapped)."""
