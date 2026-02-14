@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from base64 import b64decode
 from collections.abc import Mapping, Sequence
 from functools import cached_property
@@ -11,17 +12,26 @@ from typing import (
     cast,
 )
 
+from typing_extensions import assert_never
+
 from ... import ExternalToolset, ToolDefinition
 from ...messages import (
     AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
+    FilePart,
     ImageUrl,
     ModelMessage,
+    ModelRequest,
+    ModelRequestPart,
+    ModelResponse,
+    RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -38,17 +48,19 @@ try:
         BaseEvent,
         BinaryInputContent,
         DeveloperMessage,
+        FunctionCall,
         Message,
         RunAgentInput,
         SystemMessage,
         TextInputContent,
         Tool as AGUITool,
+        ToolCall,
         ToolMessage,
         UserMessage,
     )
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
-    from ._event_stream import BUILTIN_TOOL_CALL_ID_PREFIX, AGUIEventStream
+    from ._event_stream import BUILTIN_TOOL_CALL_ID_PREFIX, AGUIEventStream, make_builtin_tool_call_id
 except ImportError as e:  # pragma: no cover
     raise ImportError(
         'Please install the `ag-ui-protocol` package to use AG-UI integration, '
@@ -232,3 +244,130 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     pass
 
         return builder.messages
+
+    @classmethod
+    def dump_messages(cls, messages: Sequence[ModelMessage]) -> list[Message]:
+        """Transform Pydantic AI messages into AG-UI messages."""
+        tool_results: dict[str, ToolReturnPart | RetryPromptPart] = {}
+
+        for msg in messages:
+            if isinstance(msg, ModelRequest):
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        tool_results[part.tool_call_id] = part
+                    elif isinstance(part, RetryPromptPart) and part.tool_name:
+                        tool_results[part.tool_call_id] = part
+
+        result: list[Message] = []
+
+        for msg in messages:
+            if isinstance(msg, ModelRequest):
+                result.extend(cls._dump_model_request(msg.parts))
+            elif isinstance(msg, ModelResponse):
+                result.extend(cls._dump_model_response(msg, tool_results))
+            else:
+                assert_never(msg)
+
+        return result
+
+    @classmethod
+    def _dump_model_response(
+        cls, msg: ModelResponse, tool_results: dict[str, ToolReturnPart | RetryPromptPart]
+    ) -> list[Message]:
+        """Convert a `ModelResponse` into AG-UI `AssistantMessage` and `ToolMessage` objects."""
+        text_chunks: list[str] = []
+        tool_calls: list[ToolCall] = []
+        tool_messages: list[Message] = []
+
+        local_builtin_returns: dict[str, BuiltinToolReturnPart] = {
+            part.tool_call_id: part for part in msg.parts if isinstance(part, BuiltinToolReturnPart)
+        }
+
+        for part in msg.parts:
+            if isinstance(part, (BuiltinToolReturnPart, ThinkingPart, FilePart)):
+                continue
+            elif isinstance(part, TextPart):
+                text_chunks.append(part.content)
+            elif isinstance(part, BuiltinToolCallPart):
+                builtin_id = make_builtin_tool_call_id(part.provider_name, part.tool_call_id)
+                function = FunctionCall(name=part.tool_name, arguments=part.args_as_json_str())
+                tool_calls.append(ToolCall(id=builtin_id, type='function', function=function))
+                if builtin_return := local_builtin_returns.get(part.tool_call_id):
+                    tool_messages.append(
+                        ToolMessage(
+                            id=str(uuid.uuid4()), content=builtin_return.model_response_str(), tool_call_id=builtin_id
+                        )
+                    )
+            elif isinstance(part, ToolCallPart):
+                function = FunctionCall(name=part.tool_name, arguments=part.args_as_json_str())
+                tool_calls.append(ToolCall(id=part.tool_call_id, type='function', function=function))
+                tool_result = tool_results.get(part.tool_call_id)
+                if isinstance(tool_result, ToolReturnPart):
+                    tool_messages.append(
+                        ToolMessage(
+                            id=str(uuid.uuid4()),
+                            content=tool_result.model_response_str(),
+                            tool_call_id=part.tool_call_id,
+                        )
+                    )
+                elif isinstance(tool_result, RetryPromptPart):
+                    error_text = tool_result.model_response()
+                    tool_messages.append(
+                        ToolMessage(
+                            id=str(uuid.uuid4()),
+                            content=error_text,
+                            tool_call_id=part.tool_call_id,
+                            error=error_text,
+                        )
+                    )
+            else:
+                assert_never(part)
+
+        result: list[Message] = []
+        if text_chunks or tool_calls:
+            result.append(
+                AssistantMessage(
+                    id=str(uuid.uuid4()),
+                    content=''.join(text_chunks) if text_chunks else None,
+                    tool_calls=tool_calls if tool_calls else None,
+                )
+            )
+        result.extend(tool_messages)
+        return result
+
+    @staticmethod
+    def _dump_model_request(parts: Sequence[ModelRequestPart]) -> list[Message]:
+        """Convert ModelRequest parts into AG-UI `Message` objects."""
+        result: list[Message] = []
+        for part in parts:
+            if isinstance(part, SystemPromptPart):
+                result.append(SystemMessage(id=str(uuid.uuid4()), content=part.content))
+            elif isinstance(part, UserPromptPart):
+                if isinstance(part.content, str):
+                    result.append(UserMessage(id=str(uuid.uuid4()), content=part.content))
+                else:
+                    content: list[TextInputContent | BinaryInputContent] = []
+                    for item in part.content:
+                        if isinstance(item, str):
+                            content.append(TextInputContent(text=item))
+                        elif isinstance(item, BinaryContent):
+                            content.append(BinaryInputContent(url=item.data_uri, mime_type=item.media_type))
+                        elif isinstance(item, (ImageUrl, AudioUrl, VideoUrl, DocumentUrl)):
+                            content.append(BinaryInputContent(url=item.url, mime_type=item.media_type))
+                        elif isinstance(item, CachePoint):
+                            pass
+                        else:
+                            assert_never(item)
+
+                    if content:
+                        result.append(UserMessage(id=str(uuid.uuid4()), content=content))
+            elif isinstance(part, ToolReturnPart):
+                # Handled when processing the corresponding ToolCallPart in _dump_model_response.
+                pass
+            elif isinstance(part, RetryPromptPart):
+                # Tool-related retries are handled when processing ToolCallPart in _dump_model_response.
+                if not part.tool_name:
+                    result.append(UserMessage(id=str(uuid.uuid4()), content=part.model_response()))
+            else:
+                assert_never(part)
+        return result

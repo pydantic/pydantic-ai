@@ -68,6 +68,10 @@ __all__ = [
 BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
 
 
+def make_builtin_tool_call_id(provider_name: str | None, tool_call_id: str) -> str:
+    return '|'.join([BUILTIN_TOOL_CALL_ID_PREFIX, provider_name or '', tool_call_id])
+
+
 @dataclass
 class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]):
     """UI event stream transformer for the Agent-User Interaction (AG-UI) protocol."""
@@ -178,7 +182,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
     def handle_builtin_tool_call_start(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
         tool_call_id = part.tool_call_id
-        builtin_tool_call_id = '|'.join([BUILTIN_TOOL_CALL_ID_PREFIX, part.provider_name or '', tool_call_id])
+        builtin_tool_call_id = make_builtin_tool_call_id(part.provider_name, tool_call_id)
         self._builtin_tool_call_ids[tool_call_id] = builtin_tool_call_id
         tool_call_id = builtin_tool_call_id
 
