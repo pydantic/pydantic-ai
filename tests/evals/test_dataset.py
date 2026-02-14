@@ -1779,6 +1779,49 @@ async def test_evaluate_with_experiment_metadata(example_dataset: Dataset[TaskIn
     assert report.experiment_metadata == experiment_metadata
 
 
+async def test_case_context_manager():
+    """Test that case_context_manager wraps both task and evaluators."""
+    from contextlib import asynccontextmanager
+
+    lifecycle_events: list[str] = []
+
+    @asynccontextmanager
+    async def track_lifecycle(case: Case[dict[str, int], dict[str, int], None]):
+        lifecycle_events.append(f'enter:{case.name}')
+        try:
+            yield
+        finally:
+            lifecycle_events.append(f'exit:{case.name}')
+
+    @dataclass
+    class CheckLifecycle(Evaluator[dict[str, int], dict[str, int], None]):
+        def evaluate(self, ctx: EvaluatorContext[dict[str, int], dict[str, int], None]) -> bool:
+            # Verify we're still inside the context (enter happened, exit hasn't)
+            assert f'enter:{ctx.name}' in lifecycle_events
+            assert f'exit:{ctx.name}' not in lifecycle_events
+            return True
+
+    dataset: Dataset[dict[str, int], dict[str, int], None] = Dataset(
+        cases=[
+            Case(name='test1', inputs={'x': 1}, evaluators=(CheckLifecycle(),)),
+            Case(name='test2', inputs={'x': 2}, evaluators=(CheckLifecycle(),)),
+        ]
+    )
+
+    async def task(inputs: dict[str, int]) -> dict[str, int]:
+        return inputs
+
+    report = await dataset.evaluate(
+        task,
+        case_context_manager=track_lifecycle,
+        max_concurrency=1,
+        progress=False,
+    )
+
+    assert all(c.assertions['CheckLifecycle'].value for c in report.cases)
+    assert lifecycle_events == ['enter:test1', 'exit:test1', 'enter:test2', 'exit:test2']
+
+
 # --- Report evaluator serialization/deserialization tests ---
 
 
