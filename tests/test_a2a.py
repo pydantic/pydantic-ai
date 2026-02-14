@@ -591,7 +591,6 @@ async def test_a2a_multiple_tasks_same_context():
                     ModelRequest(
                         parts=[UserPromptPart(content='First message', timestamp=IsDatetime())],
                         timestamp=IsNow(tz=timezone.utc),
-                        run_id=IsStr(),
                     )
                 ]
             )
@@ -631,7 +630,6 @@ async def test_a2a_multiple_tasks_same_context():
                     ModelRequest(
                         parts=[UserPromptPart(content='First message', timestamp=IsDatetime())],
                         timestamp=IsNow(tz=timezone.utc),
-                        run_id=IsStr(),
                     ),
                     ModelResponse(
                         parts=[
@@ -655,7 +653,6 @@ async def test_a2a_multiple_tasks_same_context():
                             UserPromptPart(content='Second message', timestamp=IsDatetime()),
                         ],
                         timestamp=IsNow(tz=timezone.utc),
-                        run_id=IsStr(),
                     ),
                 ]
             )

@@ -528,7 +528,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.state.message_history[:], ctx.deps.history_processors, run_context
         )
         if message_history and message_history[-1].run_id is None:
-            is_resumed_tail = self.is_resuming_without_prompt and message_history[-1] is self.request
+            is_resumed_tail = self.is_resuming_without_prompt and _is_same_request(message_history[-1], self.request)
             if not is_resumed_tail:
                 message_history[-1].run_id = ctx.state.run_id
 
@@ -1438,7 +1438,24 @@ def _first_new_message_index(
         for index, message in enumerate(messages):
             if message is resumed_request:
                 return index + 1
+
+        for index in range(len(messages) - 1, -1, -1):
+            if _is_same_request(messages[index], resumed_request):
+                return index + 1
     return _first_run_id_index(messages, run_id)
+
+
+def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRequest) -> bool:
+    if not isinstance(message, _messages.ModelRequest):
+        return False
+    if message is request:
+        return True
+    return (
+        message.parts == request.parts
+        and message.timestamp == request.timestamp
+        and message.instructions == request.instructions
+        and message.metadata == request.metadata
+    )
 
 
 def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:

@@ -1417,9 +1417,6 @@ async def test_resuming_without_prompt_with_tool_calls_excludes_resumed_request(
     assert result.new_messages() == result.all_messages()[-3:]
 
 
-@pytest.mark.xfail(
-    reason='Deep-copying history messages breaks resumed-request identity, so `new_messages()` includes that request.'
-)
 async def test_history_processor_deepcopy_resuming_without_prompt(
     function_model: FunctionModel, received_messages: list[ModelMessage]
 ):
@@ -1464,3 +1461,153 @@ async def test_history_processor_deepcopy_resuming_without_prompt(
     )
 
     assert result.new_messages() == result.all_messages()[-1:]
+
+
+async def test_history_processor_rebuild_resuming_without_prompt(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
+    """
+    When a history processor rebuilds `ModelRequest` instances with equivalent
+    values, new_messages() should still exclude the resumed request.
+    """
+
+    def rebuild_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
+        rebuilt_messages: list[ModelMessage] = []
+        for message in messages:
+            if isinstance(message, ModelRequest):
+                rebuilt_messages.append(
+                    ModelRequest(
+                        parts=list(message.parts),
+                        timestamp=message.timestamp,
+                        instructions=message.instructions,
+                        run_id=message.run_id,
+                        metadata=message.metadata.copy() if message.metadata is not None else None,
+                    )
+                )
+            else:
+                rebuilt_messages.append(message)
+        return rebuilt_messages
+
+    agent = Agent(function_model, history_processors=[rebuild_processor])
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Old question')]),
+        ModelResponse(parts=[TextPart(content='Old answer')]),
+        ModelRequest(parts=[UserPromptPart(content='Original prompt')]),
+    ]
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run(message_history=message_history)
+
+    assert captured_messages == result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Old question',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Old answer')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Original prompt',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Provider response')],
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='function:capture_model_function:capture_model_stream_function',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    assert result.new_messages() == result.all_messages()[-1:]
+
+
+async def test_history_processor_replace_resumed_request_falls_through(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
+    """
+    When a history processor replaces the resumed request with completely
+    different content (breaking both identity and content equality),
+    _first_new_message_index's reverse scan finds no match and falls
+    through to _first_run_id_index. This also covers _is_same_request
+    returning False for non-ModelRequest messages (ModelResponse).
+    """
+
+    def replace_all_requests(messages: list[ModelMessage]) -> list[ModelMessage]:
+        rebuilt: list[ModelMessage] = []
+        for msg in messages:
+            if isinstance(msg, ModelRequest):
+                rebuilt.append(
+                    ModelRequest(
+                        parts=[UserPromptPart(content='Replaced content')],
+                        timestamp=msg.timestamp,
+                        run_id=msg.run_id,
+                    )
+                )
+            else:
+                rebuilt.append(msg)
+        return rebuilt
+
+    agent = Agent(function_model, history_processors=[replace_all_requests])
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Old question')]),
+        ModelResponse(parts=[TextPart(content='Old answer')]),
+        ModelRequest(parts=[UserPromptPart(content='Original prompt')]),
+    ]
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run(message_history=message_history)
+
+    assert captured_messages == result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Replaced content',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Old answer')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Replaced content',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Provider response')],
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='function:capture_model_function:capture_model_stream_function',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    # Falls back to run_id-based detection: the replaced request got run_id from
+    # the framework, so new_messages includes both it and the model response
+    assert result.new_messages() == result.all_messages()[-2:]
