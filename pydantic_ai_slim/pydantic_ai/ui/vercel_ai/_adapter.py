@@ -38,7 +38,7 @@ from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter
 from ._event_stream import VercelAIEventStream
-from ._utils import dump_provider_metadata, iter_metadata_chunks, load_provider_metadata
+from ._utils import dump_provider_metadata, iter_metadata_chunks, iter_tool_approval_responses, load_provider_metadata
 from .request_types import (
     DataUIPart,
     DynamicToolInputAvailablePart,
@@ -59,7 +59,6 @@ from .request_types import (
     ToolUIPart,
     UIMessage,
     UIMessagePart,
-    _iter_tool_approval_responses,
 )
 from .response_types import BaseChunk, DataChunk, FileChunk, SourceDocumentChunk, SourceUrlChunk
 
@@ -181,7 +180,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         if self.sdk_version < 6:
             return None
         approvals: dict[str, bool | DeferredToolApprovalResult] = {}
-        for tool_call_id, approval in _iter_tool_approval_responses(self.run_input.messages):
+        for tool_call_id, approval in iter_tool_approval_responses(self.run_input.messages):
             if approval.approved:
                 approvals[tool_call_id] = True
             elif approval.reason:
