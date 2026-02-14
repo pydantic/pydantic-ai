@@ -2525,7 +2525,7 @@ async def test_google_url_input(
                 timestamp=IsDatetime(),
                 provider_name='google-vertex',
                 provider_url='https://aiplatform.googleapis.com/',
-                provider_details={'finish_reason': 'STOP', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'STOP', 'timestamp': IsDatetime(), 'traffic_type': 'ON_DEMAND'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2569,7 +2569,7 @@ async def test_google_url_input_force_download(
                 timestamp=IsDatetime(),
                 provider_name='google-vertex',
                 provider_url='https://aiplatform.googleapis.com/',
-                provider_details={'finish_reason': 'STOP', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'STOP', 'timestamp': IsDatetime(), 'traffic_type': 'ON_DEMAND'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -5726,3 +5726,125 @@ async def test_google_prepends_empty_user_turn_when_first_content_is_model(googl
             },
         ]
     )
+
+
+@pytest.mark.parametrize(
+    'service_tier,expected_headers',
+    [
+        pytest.param(
+            'flex',
+            {'X-Vertex-AI-LLM-Shared-Request-Type': 'flex'},
+            id='flex',
+        ),
+        pytest.param(
+            'flex_only',
+            {
+                'X-Vertex-AI-LLM-Request-Type': 'shared',
+                'X-Vertex-AI-LLM-Shared-Request-Type': 'flex',
+            },
+            id='flex_only',
+        ),
+    ],
+)
+async def test_google_service_tier_flex_paygo(
+    allow_model_requests: None,
+    service_tier: str,
+    expected_headers: dict[str, str],
+):
+    """Test that Flex PayGo service tier headers are set correctly."""
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model_settings = GoogleModelSettings(google_service_tier=service_tier)  # type: ignore[typeddict-item]
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    headers = config_dict['http_options']['headers']
+
+    for header_name, header_value in expected_headers.items():
+        assert headers.get(header_name) == header_value, (
+            f'Expected header {header_name}={header_value}, got {headers.get(header_name)}'
+        )
+
+
+async def test_google_service_tier_not_set_no_headers(allow_model_requests: None):
+    """Test that no Flex PayGo headers are set when service_tier is not specified."""
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model_settings = GoogleModelSettings()
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    headers = config_dict['http_options']['headers']
+
+    assert 'X-Vertex-AI-LLM-Request-Type' not in headers
+    assert 'X-Vertex-AI-LLM-Shared-Request-Type' not in headers
+
+
+def test_google_traffic_type_in_provider_details(google_provider: GoogleProvider):
+    """Test that traffic_type from usage_metadata is exposed in provider_details."""
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    # Create a response with traffic_type in usage_metadata
+    # Note: The actual Flex PayGo API returns 'ON_DEMAND_FLEX' but the SDK's TrafficType enum
+    # doesn't include this value yet, so we use 'ON_DEMAND' for testing.
+    # See: https://github.com/googleapis/python-genai/issues/2058
+    response = GenerateContentResponse.model_validate(
+        {
+            'response_id': 'resp-flex',
+            'model_version': 'gemini-2.5-flash',
+            'usage_metadata': {
+                'prompt_token_count': 10,
+                'candidates_token_count': 20,
+                'traffic_type': 'ON_DEMAND',
+            },
+            'candidates': [
+                {
+                    'content': {'parts': [{'text': 'Hello from Flex!'}], 'role': 'model'},
+                    'finish_reason': 'STOP',
+                }
+            ],
+        }
+    )
+
+    result = model._process_response(response)  # pyright: ignore[reportPrivateUsage]
+
+    assert result.provider_details is not None
+    assert result.provider_details.get('traffic_type') == 'ON_DEMAND'
+    assert result.provider_details.get('finish_reason') == 'STOP'
+
+
+def test_google_traffic_type_not_in_provider_details_when_absent(google_provider: GoogleProvider):
+    """Test that traffic_type is not in provider_details when not in response."""
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    # Create a response without traffic_type
+    response = GenerateContentResponse.model_validate(
+        {
+            'response_id': 'resp-standard',
+            'model_version': 'gemini-2.5-flash',
+            'usage_metadata': {
+                'prompt_token_count': 10,
+                'candidates_token_count': 20,
+            },
+            'candidates': [
+                {
+                    'content': {'parts': [{'text': 'Hello!'}], 'role': 'model'},
+                    'finish_reason': 'STOP',
+                }
+            ],
+        }
+    )
+
+    result = model._process_response(response)  # pyright: ignore[reportPrivateUsage]
+
+    assert result.provider_details is not None
+    assert 'traffic_type' not in result.provider_details
+    assert result.provider_details.get('finish_reason') == 'STOP'
