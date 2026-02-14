@@ -47,6 +47,7 @@ from ..settings import ModelSettings, merge_model_settings
 from ..tools import (
     AgentDepsT,
     BuiltinToolFunc,
+    DeferredToolHandler,
     DeferredToolResults,
     DocstringFormat,
     GenerateToolJsonSchema,
@@ -167,6 +168,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = dataclasses.field(repr=False)
 
     _event_stream_handler: EventStreamHandler[AgentDepsT] | None = dataclasses.field(repr=False)
+    _deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None = dataclasses.field(repr=False)
 
     _concurrency_limiter: _concurrency.AbstractConcurrencyLimiter | None = dataclasses.field(repr=False)
 
@@ -199,6 +201,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
     ) -> None: ...
@@ -229,6 +232,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
     ) -> None: ...
@@ -257,6 +261,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         **_deprecated_kwargs: Any,
@@ -323,6 +328,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 Each processor takes a list of messages and returns a modified list of messages.
                 Processors can be sync or async and are applied in sequence.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools.
+            deferred_tool_handler: Optional handler to resolve deferred tool calls inline.
             tool_timeout: Default timeout in seconds for tool execution. If a tool takes longer than this,
                 the tool is considered to have failed and a retry prompt is returned to the model (counting towards the retry limit).
                 Individual tools can override this with their own timeout. Defaults to None (no timeout).
@@ -394,6 +400,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.history_processors = history_processors or []
 
         self._event_stream_handler = event_stream_handler
+        self._deferred_tool_handler = deferred_tool_handler
 
         self._concurrency_limiter = _concurrency.normalize_to_limiter(max_concurrency)
 
@@ -475,6 +482,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -495,6 +503,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: OutputSpec[RunOutputDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -515,6 +524,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: OutputSpec[Any] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -593,6 +603,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
+            deferred_tool_handler: Optional handler to resolve deferred tool calls inline.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -670,6 +681,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings = None
             tracer = NoOpTracer()
 
+        if _utils.is_set(deferred_tool_handler):
+            resolved_deferred_tool_handler = deferred_tool_handler
+        else:
+            resolved_deferred_tool_handler = self._deferred_tool_handler
+
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
             prompt=user_prompt,
@@ -688,6 +704,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tracer=tracer,
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
+            deferred_tool_handler=resolved_deferred_tool_handler,
         )
 
         user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
@@ -1758,8 +1775,4 @@ class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
         return 'the agent'
 
     def add_tool(self, tool: Tool[AgentDepsT]) -> None:
-        if tool.requires_approval and not self.output_schema.allows_deferred_tools:
-            raise exceptions.UserError(
-                'To use tools that require approval, add `DeferredToolRequests` to the list of output types for this agent.'
-            )
         super().add_tool(tool)

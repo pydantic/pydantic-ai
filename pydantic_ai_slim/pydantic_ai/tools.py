@@ -32,6 +32,7 @@ __all__ = (
     'ToolDefinition',
     'DeferredToolRequests',
     'DeferredToolResults',
+    'DeferredToolHandler',
     'ToolApproved',
     'ToolDenied',
 )
@@ -230,6 +231,24 @@ class DeferredToolResults:
     """Map of tool call IDs to results for tool calls that required human-in-the-loop approval."""
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     """Metadata for deferred tool calls, keyed by `tool_call_id`. Each value will be available in the tool's RunContext as `tool_call_metadata`."""
+
+
+DeferredToolHandler: TypeAlias = Callable[
+    [RunContext[AgentDepsT], DeferredToolRequests],
+    DeferredToolResults | Awaitable[DeferredToolResults],
+]
+"""Handler for deferred tool calls to resolve approvals and external calls inline.
+
+The handler receives all deferred tool calls from a single model response as a batch,
+enabling batch decisions and parallel execution of approved tools. Can be sync or async.
+
+The handler **must** return results for **all** deferred tool calls in the response.
+Missing results raise [`UserError`][pydantic_ai.exceptions.UserError].
+
+See [Inline Handler](../deferred-tools.md#inline-handler) for usage examples.
+
+Usage: `DeferredToolHandler[AgentDepsT]`.
+"""
 
 
 A = TypeVar('A')

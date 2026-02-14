@@ -1241,6 +1241,62 @@ class TestMultipleToolCalls:
             ]
         )
 
+    async def test_run_stream_skips_deferred_handler_after_final_output(self):
+        handler_calls: list[int] = []
+        tool_called: list[str] = []
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {1: DeltaToolCall('final_result', '{"value": "final"}')}
+            yield {2: DeltaToolCall('deferred_tool', '{"x": 1}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=OutputType, end_strategy='early')
+
+        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+            return replace(tool_def, kind='external')
+
+        @agent.tool_plain(prepare=defer)
+        def deferred_tool(x: int) -> int:  # pragma: no cover
+            tool_called.append('deferred_tool')
+            return x
+
+        def handler(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:  # pragma: no cover
+            handler_calls.append(len(requests.calls))
+            return DeferredToolResults()
+
+        async with agent.run_stream('test deferred handler skipping', deferred_tool_handler=handler) as result:
+            response = await result.get_output()
+            assert response.value == snapshot('final')
+
+        assert handler_calls == []
+        assert tool_called == []
+
+    def test_run_stream_sync_skips_deferred_handler_after_final_output(self):
+        handler_calls: list[int] = []
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {1: DeltaToolCall('final_result', '{"value": "final"}')}
+            yield {2: DeltaToolCall('deferred_tool', '{"x": 1}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=OutputType, end_strategy='early')
+
+        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+            return replace(tool_def, kind='external')
+
+        @agent.tool_plain(prepare=defer)
+        def deferred_tool(x: int) -> int:  # pragma: no cover
+            return x
+
+        def handler(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:  # pragma: no cover
+            handler_calls.append(len(requests.calls))
+            return DeferredToolResults()
+
+        result = agent.run_stream_sync('test deferred handler skipping', deferred_tool_handler=handler)
+        output = result.get_output()
+        assert output.value == snapshot('final')
+        assert handler_calls == []
+
     async def test_early_strategy_does_not_call_additional_output_tools(self):
         """Test that 'early' strategy does not execute additional output tool functions."""
         output_tools_called: list[str] = []
