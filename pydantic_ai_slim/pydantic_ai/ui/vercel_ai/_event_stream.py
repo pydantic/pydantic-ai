@@ -260,8 +260,3 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if isinstance(part, ToolReturnPart):
             for chunk in iter_metadata_chunks(part):
                 yield chunk
-
-    def _tool_return_output(self, part: BaseToolReturnPart) -> Any:
-        output = part.model_response_object()
-        # Unwrap the return value from the output dictionary if it exists
-        return output.get('return_value', output)

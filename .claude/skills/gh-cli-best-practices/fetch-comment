@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# fetch-comment - Fetch GitHub PR/issue comments with clean output
+
+set -euo pipefail
+
+if [[ $# -ne 2 ]]; then
+  echo "Usage: fetch-comment <owner/repo> <comment_ref>"
+  echo "  comment_ref: discussion_r{id}, issuecomment-{id}, or commitcomment-{id}"
+  exit 1
+fi
+
+REPO="$1"
+REF="$2"
+
+# PR review comments have _links (with self, html, pull_request), issue/commit comments only have html_url
+if [[ "$REF" =~ ^discussion_r([0-9]+)$ ]]; then
+  ID="${BASH_REMATCH[1]}"
+  ENDPOINT="repos/$REPO/pulls/comments/$ID"
+  JQ_FILTER='{user: .user.login, author_association, body, path, line, diff_hunk, pull_request_review_id, created_at, updated_at, _links}'
+elif [[ "$REF" =~ ^issuecomment-([0-9]+)$ ]]; then
+  ID="${BASH_REMATCH[1]}"
+  ENDPOINT="repos/$REPO/issues/comments/$ID"
+  JQ_FILTER='{user: .user.login, author_association, body, created_at, updated_at, html_url}'
+elif [[ "$REF" =~ ^commitcomment-([0-9]+)$ ]]; then
+  ID="${BASH_REMATCH[1]}"
+  ENDPOINT="repos/$REPO/comments/$ID"
+  JQ_FILTER='{user: .user.login, author_association, body, path, line, created_at, updated_at, html_url}'
+else
+  echo "Error: Invalid comment_ref format: $REF"
+  echo "Expected: discussion_r{id}, issuecomment-{id}, or commitcomment-{id}"
+  exit 1
+fi
+
+gh api "$ENDPOINT" --jq "$JQ_FILTER"

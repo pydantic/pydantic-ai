@@ -2672,11 +2672,11 @@ async def test_adapter_dump_messages_with_tool_metadata_single_chunk():
                 'metadata': None,
                 'parts': [
                     {
-                        'type': 'dynamic-tool',
-                        'tool_name': 'send_data',
+                        'type': 'tool-send_data',
                         'tool_call_id': 'call_1',
                         'state': 'output-available',
-                        'input': '{}',
+                        'input': {},
+                        'provider_executed': False,
                         'output': 'Data sent',
                         'call_provider_metadata': None,
                         'preliminary': None,
@@ -2744,11 +2744,11 @@ async def test_adapter_dump_messages_with_tool_metadata_multiple_chunks():
                 'metadata': None,
                 'parts': [
                     {
-                        'type': 'dynamic-tool',
-                        'tool_name': 'send_events',
+                        'type': 'tool-send_events',
                         'tool_call_id': 'call_1',
                         'state': 'output-available',
-                        'input': '{}',
+                        'input': {},
+                        'provider_executed': False,
                         'output': 'Events sent',
                         'call_provider_metadata': None,
                         'preliminary': None,
@@ -2832,11 +2832,11 @@ async def test_adapter_dump_messages_with_tool_metadata_data_chunks():
                 'metadata': None,
                 'parts': [
                     {
-                        'type': 'dynamic-tool',
-                        'tool_name': 'send_data',
+                        'type': 'tool-send_data',
                         'tool_call_id': 'call_1',
                         'state': 'output-available',
-                        'input': '{}',
+                        'input': {},
+                        'provider_executed': False,
                         'output': 'Data sent',
                         'call_provider_metadata': None,
                         'preliminary': None,
