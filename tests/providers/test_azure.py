@@ -4,7 +4,7 @@ import pytest
 from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
 
-from pydantic_ai import BinaryContent
+from pydantic_ai import BinaryContent, DocumentUrl
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UserError
@@ -162,3 +162,19 @@ async def test_azure_document_input_not_supported(allow_model_requests: None):
                 BinaryContent(data=b'%PDF-1.4 test', media_type='application/pdf'),
             ]
         )
+
+
+async def test_azure_document_url_input_not_supported(allow_model_requests: None):
+    provider = AzureProvider(
+        azure_endpoint='https://project-id.openai.azure.com/',
+        api_version='2023-03-15-preview',
+        api_key='1234567890',
+    )
+    model = OpenAIChatModel(model_name='gpt-4o', provider=provider)
+    agent = Agent(model)
+
+    with pytest.raises(
+        UserError,
+        match="Azure's Chat Completions API does not support document input.*OpenAIResponsesModel",
+    ):
+        await agent.run(['Summarize this document', DocumentUrl(url='https://example.com/test.pdf')])

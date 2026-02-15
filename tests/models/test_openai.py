@@ -1524,6 +1524,21 @@ async def test_video_url_not_supported(allow_model_requests: None):
         await agent.run(['Describe this video', VideoUrl(url='https://example.com/video.mp4')])
 
 
+async def test_document_url_input_not_supported(allow_model_requests: None):
+    m = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(api_key='test'),
+        profile=OpenAIModelProfile(openai_chat_supports_document_input=False),
+    )
+    agent = Agent(m)
+
+    with pytest.raises(
+        UserError,
+        match="'openai' provider does not support document input via the Chat Completions API",
+    ):
+        await agent.run(['Summarize this document', DocumentUrl(url='https://example.com/test.pdf')])
+
+
 async def test_document_as_binary_content_input_with_tool(
     allow_model_requests: None, document_content: BinaryContent, openai_api_key: str
 ):
