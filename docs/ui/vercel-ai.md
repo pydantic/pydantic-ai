@@ -84,3 +84,42 @@ async def chat(request: Request) -> Response:
     sse_event_stream = adapter.encode_stream(event_stream)
     return StreamingResponse(sse_event_stream, media_type=accept)
 ```
+
+### Data Chunks
+
+Pydantic AI tools can send [Vercel AI data stream chunks](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol) by returning a
+[`ToolReturn`](../tools-advanced.md#advanced-tool-returns) object with a data-carrying chunk
+(or a list of chunks) as `metadata`.
+The supported chunk types are [`DataChunk`][pydantic_ai.ui.vercel_ai.response_types.DataChunk],
+[`SourceUrlChunk`][pydantic_ai.ui.vercel_ai.response_types.SourceUrlChunk],
+[`SourceDocumentChunk`][pydantic_ai.ui.vercel_ai.response_types.SourceDocumentChunk],
+and [`FileChunk`][pydantic_ai.ui.vercel_ai.response_types.FileChunk].
+This is useful for attaching structured data to the frontend alongside the tool result, such as source URLs or custom data payloads.
+
+```python {title="vercel_ai_tool_chunks.py"}
+from pydantic_ai import Agent, ToolReturn
+from pydantic_ai.ui.vercel_ai.response_types import DataChunk, SourceUrlChunk
+
+agent = Agent('openai:gpt-5.2')
+
+
+@agent.tool_plain
+async def search_docs(query: str) -> ToolReturn:
+    return ToolReturn(
+        return_value=f'Found 2 results for "{query}"',
+        metadata=[
+            SourceUrlChunk(
+                source_id='doc-1',
+                url='https://example.com/docs/intro',
+                title='Introduction',
+            ),
+            DataChunk(
+                type='data-search-results',
+                data={'query': query, 'count': 2},
+            ),
+        ],
+    )
+```
+
+!!! note
+    Protocol-control chunks such as `StartChunk`, `FinishChunk`, `StartStepChunk`, or `FinishStepChunk` are automatically filtered out — only the four data-carrying chunk types listed above are forwarded to the stream and preserved in `dump_messages`.

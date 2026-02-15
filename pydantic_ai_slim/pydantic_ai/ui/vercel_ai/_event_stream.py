@@ -22,12 +22,13 @@ from ...messages import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolReturnPart,
 )
 from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT
 from .. import UIEventStream
-from ._utils import dump_provider_metadata
+from ._utils import dump_provider_metadata, iter_metadata_chunks
 from .request_types import RequestData
 from .response_types import (
     BaseChunk,
@@ -251,7 +252,15 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         else:
             yield ToolOutputAvailableChunk(tool_call_id=part.tool_call_id, output=self._tool_return_output(part))
 
-        # ToolCallResultEvent.content may hold user parts (e.g. text, images) that Vercel AI does not currently have events for
+        # ToolOutputAvailableChunk/ToolOutputErrorChunk.output may hold user parts
+        # (e.g. text, images) that Vercel AI does not currently have chunk types for.
+
+        # Check for data-carrying Vercel AI chunks returned by tool calls via metadata.
+        # Only data-carrying chunks (DataChunk, SourceUrlChunk, etc.) are yielded;
+        # protocol-control chunks are filtered out by iter_metadata_chunks.
+        if isinstance(part, ToolReturnPart):
+            for chunk in iter_metadata_chunks(part):
+                yield chunk
 
     def _tool_return_output(self, part: BaseToolReturnPart) -> Any:
         output = part.model_response_object()

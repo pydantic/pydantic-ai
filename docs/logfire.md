@@ -249,6 +249,22 @@ The following providers have dedicated documentation on Pydantic AI:
 
 ## Advanced usage
 
+### Aggregated usage attribute names
+
+By default, both model/request spans and agent run spans use the standard `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` attributes. Some observability backends (e.g., Datadog, New Relic, LangSmith, Opik) aggregate these attributes across all spans, which can cause double-counting since agent run spans report the sum of their child spans' usage.
+
+To avoid this, you can enable `use_aggregated_usage_attribute_names` so that agent run spans use distinct attribute names (e.g., `gen_ai.aggregated_usage.input_tokens`, `gen_ai.aggregated_usage.output_tokens`, and `gen_ai.aggregated_usage.details.*`):
+
+!!! note "Custom namespace"
+    The `gen_ai.aggregated_usage.*` namespace is a custom extension not part of the [OpenTelemetry Semantic Conventions for GenAI](https://opentelemetry.io/docs/specs/semconv/gen-ai/). It was introduced to work around double-counting in observability backends. If OpenTelemetry introduces an official convention for aggregated usage in the future, this namespace may be updated or deprecated.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.instrumented import InstrumentationSettings
+
+Agent.instrument_all(InstrumentationSettings(use_aggregated_usage_attribute_names=True))
+```
+
 ### Configuring data format
 
 Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/). Specifically, it follows version 1.37.0 of the conventions by default, with a few exceptions. Certain span and attribute names are not spec compliant by default for compatibility reasons, but can be made compliant by passing [`InstrumentationSettings(version=3)`][pydantic_ai.models.instrumented.InstrumentationSettings] (the default is currently `version=2`). This will change the following:

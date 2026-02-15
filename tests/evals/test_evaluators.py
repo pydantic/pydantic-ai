@@ -134,6 +134,9 @@ async def test_llm_judge_serialization():
         def system(self) -> str:
             return 'my-system'
 
+    model = MyModel()
+    assert model.model_id == 'my-system:my-model'
+
     adapter = TypeAdapter(Evaluator)
 
     assert adapter.dump_python(LLMJudge(rubric='my rubric', model=MyModel())) == {
@@ -486,7 +489,7 @@ async def test_contains_evaluator():
     assert evaluator.evaluate(dict_context) == snapshot(
         EvaluationReason(
             value=False,
-            reason="Output dictionary has different value for key 'key1': 'value1' != 'wrong_value'",
+            reason="Output has different value for key 'key1': 'value1' != 'wrong_value'",
         )
     )
 
@@ -504,7 +507,7 @@ async def test_contains_evaluator():
     assert evaluator.evaluate(dict_context) == snapshot(
         EvaluationReason(
             value=False,
-            reason="Output dictionary does not contain expected key 'key1key1key1ke...y1key1key1key1'",
+            reason="Output does not contain expected key 'key1key1key1ke...y1key1key1key1'",
         )
     )
 
@@ -512,7 +515,7 @@ async def test_contains_evaluator():
     assert evaluator.evaluate(dict_context) == snapshot(
         EvaluationReason(
             value=False,
-            reason="Output dictionary has different value for key 'key1': 'value1' != 'wrong_value_wrong_value_wrong_value_wrong_value_w..._wrong_value_wrong_value_wrong_value_wrong_value_'",
+            reason="Output has different value for key 'key1': 'value1' != 'wrong_value_wrong_value_wrong_value_wrong_value_w..._wrong_value_wrong_value_wrong_value_wrong_value_'",
         )
     )
 
