@@ -527,9 +527,10 @@ class GoogleModel(Model):
         if self.profile.supports_image_output:
             modalities.append(Modality.IMAGE.value)
 
-        http_options: HttpOptionsDict = {
-            'headers': {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
-        }
+        headers: dict[str, str] = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
+        if extra_headers := model_settings.get('extra_headers'):
+            headers.update(extra_headers)
+        http_options: HttpOptionsDict = {'headers': headers}
         if timeout := model_settings.get('timeout'):
             if isinstance(timeout, int | float):
                 http_options['timeout'] = int(1000 * timeout)
