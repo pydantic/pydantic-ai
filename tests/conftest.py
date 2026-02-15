@@ -465,8 +465,11 @@ def _patch_hf_provider_mappings():
     The HuggingFace SDK makes a synchronous HTTP call to resolve provider mappings at request time,
     which is incompatible with VCR's async test infrastructure.
     """
-    from huggingface_hub.hf_api import InferenceProviderMapping
-    from huggingface_hub.inference._providers._common import HARDCODED_MODEL_INFERENCE_MAPPING
+    try:
+        from huggingface_hub.hf_api import InferenceProviderMapping
+        from huggingface_hub.inference._providers._common import HARDCODED_MODEL_INFERENCE_MAPPING
+    except ImportError:
+        return
 
     models: list[tuple[str, str, str]] = [
         ('together', 'deepseek-ai/DeepSeek-R1', 'conversational'),
