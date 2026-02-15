@@ -99,9 +99,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 yield msg
                 break
 
-        async with _utils.group_by_temporal(self, debounce_by) as group_iter:
-            async for _items in group_iter:
-                yield self.response  # current state of the response
+        async for _items in _utils.group_by_temporal(self, debounce_by):
+            yield self.response  # current state of the response
 
     async def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
         """Stream the text result as an async iterable.
@@ -284,10 +283,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     last_text_index = None
 
         async def _stream_text_deltas() -> AsyncIterator[str]:
-            async with _utils.group_by_temporal(_stream_text_deltas_ungrouped(), debounce_by) as group_iter:
-                async for items in group_iter:
-                    # Note: we are currently just dropping the part index on the group here
-                    yield ''.join([content for content, _ in items])
+            async for items in _utils.group_by_temporal(_stream_text_deltas_ungrouped(), debounce_by):
+                # Note: we are currently just dropping the part index on the group here
+                yield ''.join([content for content, _ in items])
 
         if delta:
             async for text in _stream_text_deltas():

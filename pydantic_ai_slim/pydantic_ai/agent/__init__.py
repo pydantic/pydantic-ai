@@ -4,13 +4,13 @@ import dataclasses
 import inspect
 import json
 import warnings
-from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, overload
 
+import anyio
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeVar, deprecated
@@ -170,7 +170,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     _concurrency_limiter: _concurrency.AbstractConcurrencyLimiter | None = dataclasses.field(repr=False)
 
-    _enter_lock: Lock = dataclasses.field(repr=False)
+    _enter_lock: anyio.Lock = dataclasses.field(repr=False)
     _entered_count: int = dataclasses.field(repr=False)
     _exit_stack: AsyncExitStack | None = dataclasses.field(repr=False)
 
@@ -413,7 +413,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             '_override_metadata', default=None
         )
 
-        self._enter_lock = Lock()
+        self._enter_lock = anyio.Lock()
         self._entered_count = 0
         self._exit_stack = None
 

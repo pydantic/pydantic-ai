@@ -1,15 +1,14 @@
 from __future__ import annotations as _annotations
 
 import argparse
-import asyncio
 import sys
-from asyncio import CancelledError
 from collections.abc import Sequence
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import anyio
 from pydantic import ImportString, TypeAdapter, ValidationError
 from typing_inspection.introspection import get_literal_values
 
@@ -308,13 +307,13 @@ def _run_chat_command(
 
     if args.prompt:
         try:
-            asyncio.run(ask_agent(agent, args.prompt, stream, console, code_theme))
+            anyio.run(ask_agent, agent, args.prompt, stream, console, code_theme)
         except KeyboardInterrupt:
             pass
         return 0
 
     try:
-        return asyncio.run(run_chat(stream, agent, console, code_theme, prog_name))
+        return anyio.run(run_chat, stream, agent, console, code_theme, prog_name)
     except KeyboardInterrupt:  # pragma: no cover
         return 0
 
@@ -359,7 +358,7 @@ async def run_chat(
                 messages = await ask_agent(
                     agent, text, stream, console, code_theme, deps, messages, model_settings, usage_limits
                 )
-            except CancelledError:  # pragma: no cover
+            except anyio.get_cancelled_exc_class():  # pragma: no cover
                 console.print('[dim]Interrupted[/dim]')
             except Exception as e:  # pragma: no cover
                 cause = getattr(e, '__cause__', None)

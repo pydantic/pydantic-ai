@@ -188,6 +188,9 @@ convention = "google"
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "typing.TypedDict".msg = "Use typing_extensions.TypedDict instead."
 "typing.assert_never".msg = "Use typing_extensions.assert_never instead."
+"asyncio.Lock".msg = "Use `anyio.Lock` instead."
+"asyncio.gather".msg = "Use `pydantic_ai._anyio.gather` instead."
+"asyncio.create_task".msg = "Use `anyio.create_task_group` instead."
 
 [tool.ruff.format]
 # don't format python in docstrings, pytest-examples takes care of it

@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import inspect
+import sys
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
@@ -11,6 +11,11 @@ from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 import anyio
 from pydantic import TypeAdapter
 from typing_extensions import Self, TypeIs, TypeVar, deprecated
+
+if sys.version_info >= (3, 11):
+    from builtins import BaseExceptionGroup
+else:
+    from exceptiongroup import BaseExceptionGroup
 
 from pydantic_graph import End
 
@@ -944,9 +949,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             async for event in events:
                 await send_stream.send(event)
 
-        async def run_agent() -> AgentRunResult[Any]:
+        agent_result: AgentRunResult[Any] | None = None
+
+        async def run_agent() -> None:
+            nonlocal agent_result
             async with send_stream:
-                return await self.run(
+                agent_result = await self.run(
                     user_prompt,
                     output_type=output_type,
                     message_history=message_history,
@@ -964,20 +972,19 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     event_stream_handler=event_stream_handler,
                 )
 
-        task = asyncio.create_task(run_agent())
-
         try:
-            async with receive_stream:
-                async for message in receive_stream:
-                    yield message
-
-            result = await task
-
-        except asyncio.CancelledError as e:
-            task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(run_agent)
+                async with receive_stream:
+                    async for message in receive_stream:
+                        yield message
+        except BaseExceptionGroup as eg:
+            if len(eg.exceptions) == 1:
+                raise eg.exceptions[0] from None
             raise
 
-        yield AgentRunResultEvent(result)
+        assert agent_result is not None
+        yield AgentRunResultEvent(agent_result)
 
     @overload
     def iter(
