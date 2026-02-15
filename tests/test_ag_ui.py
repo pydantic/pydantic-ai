@@ -12,7 +12,6 @@ from typing import Any
 import httpx
 import pytest
 from asgi_lifespan import LifespanManager
-from dirty_equals import IsStr
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
@@ -31,6 +30,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RequestUsage,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
@@ -58,7 +58,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
-from .conftest import IsDatetime, IsInt, IsSameStr, try_import
+from .conftest import IsDatetime, IsInt, IsSameStr, IsStr, try_import
 
 with try_import() as imports_successful:
     from ag_ui.core import (
@@ -2365,10 +2365,25 @@ async def test_system_prompt_with_ag_ui_adapter():
         async for _ in run_ag_ui(agent, run_input):
             pass
 
-    assert len(messages) >= 1
-    first_request = messages[0]
-    assert any(isinstance(part, SystemPromptPart) and part.content == system_prompt for part in first_request.parts), (
-        'System prompt should be included in the first message when using UI adapter'
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful assistant', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=56, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
     )
 
 
@@ -2392,15 +2407,30 @@ async def test_dynamic_system_prompt_with_ag_ui_adapter():
         async for _ in run_ag_ui(agent, run_input):
             pass
 
-    assert len(messages) >= 1
-    first_request = messages[0]
-    assert any(
-        isinstance(part, SystemPromptPart) and part.content == 'Dynamic system prompt' for part in first_request.parts
-    ), 'Dynamic system prompt should be evaluated and included in the first message'
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Dynamic system prompt', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
-async def test_system_prompt_not_repeated_with_ag_ui_history():
-    """Test that system prompts are NOT repeated when there's already a ModelResponse in history."""
+async def test_system_prompt_reinjected_with_ag_ui_history():
+    """Test that system prompts ARE reinjected on followup messages via UI adapters."""
 
     system_prompt = 'You are a helpful assistant'
     agent = Agent(model=TestModel(), system_prompt=system_prompt)
@@ -2432,12 +2462,25 @@ async def test_system_prompt_not_repeated_with_ag_ui_history():
         async for _ in run_ag_ui(agent, run_input):
             pass
 
-    # Check the last ModelRequest (which should be for "Second message")
-    last_request = next((msg for msg in reversed(messages) if hasattr(msg, 'parts')), None)
-    assert last_request is not None
-
-    # system prompt should only be in the initial history, not repeated
-    system_prompt_parts = [part for part in last_request.parts if isinstance(part, SystemPromptPart)]
-    assert len(system_prompt_parts) == 0, (
-        'System prompt should not be added again when conversation history already contains ModelResponse messages'
+    assert messages == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='First message', timestamp=IsDatetime())]),
+            ModelResponse(parts=[TextPart(content='First response')], timestamp=IsDatetime()),
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful assistant', timestamp=IsDatetime()),
+                    UserPromptPart(content='Second message', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=59, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
     )

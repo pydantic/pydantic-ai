@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RequestUsage,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -5011,10 +5012,25 @@ async def test_system_prompt_with_vercel_adapter():
             if '[DONE]' not in event:
                 events.append(json.loads(event.removeprefix('data: ')))
 
-    assert len(messages) >= 1
-    first_request = messages[0]
-    assert any(isinstance(part, SystemPromptPart) and part.content == system_prompt for part in first_request.parts), (
-        'System prompt should be included in the first message when using UI adapter'
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful assistant', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=56, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
     )
 
 
@@ -5045,16 +5061,30 @@ async def test_dynamic_system_prompt_with_vercel_adapter():
             if '[DONE]' not in event:
                 events.append(json.loads(event.removeprefix('data: ')))
 
-    assert len(messages) >= 1
-    first_request = messages[0]
-    assert any(
-        isinstance(part, SystemPromptPart) and part.content == 'Dynamic system prompt from Vercel'
-        for part in first_request.parts
-    ), 'Dynamic system prompt should be evaluated and included in the first message'
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Dynamic system prompt from Vercel', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=56, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
-async def test_system_prompt_not_repeated_with_vercel_history():
-    """Test that system prompts are NOT repeated when history contains ModelResponse."""
+async def test_system_prompt_reinjected_with_vercel_history():
+    """Test that system prompts ARE reinjected on followup messages via UI adapters."""
     system_prompt = 'You are a helpful assistant'
     agent = Agent(model=TestModel(), system_prompt=system_prompt)
 
@@ -5087,12 +5117,27 @@ async def test_system_prompt_not_repeated_with_vercel_history():
             if '[DONE]' not in event:
                 events.append(json.loads(event.removeprefix('data: ')))
 
-    last_request = next((msg for msg in reversed(messages) if hasattr(msg, 'parts')), None)
-    assert last_request is not None
-
-    system_prompt_parts = [part for part in last_request.parts if isinstance(part, SystemPromptPart)]
-    assert len(system_prompt_parts) == 0, (
-        'System prompt should NOT be added again when conversation history already contains ModelResponse messages'
+    assert messages == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='First message', timestamp=IsDatetime())]),
+            ModelResponse(parts=[TextPart(content='First response')], timestamp=IsDatetime()),
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful assistant', timestamp=IsDatetime()),
+                    UserPromptPart(content='Second message', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=59, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
     )
 
 
