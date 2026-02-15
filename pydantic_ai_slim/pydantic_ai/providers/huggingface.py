@@ -34,7 +34,13 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
 
     @property
     def base_url(self) -> str:
-        return self.client.model  # type: ignore
+        if self._client.model is not None:
+            return self._client.model
+        if self._client.provider is not None:
+            from huggingface_hub.constants import INFERENCE_PROXY_TEMPLATE
+
+            return INFERENCE_PROXY_TEMPLATE.format(provider=self._client.provider)
+        return ''
 
     @property
     def client(self) -> AsyncInferenceClient:

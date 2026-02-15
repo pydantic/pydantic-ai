@@ -66,7 +66,7 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
     for available models.
 
     Example:
-    ```python
+    ```python {test="skip"}
     from sentence_transformers import SentenceTransformer
 
     from pydantic_ai.embeddings.sentence_transformers import (

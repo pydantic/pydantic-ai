@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '138'
+      - '475'
       content-type:
       - application/json
       host:
@@ -16,13 +16,27 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: hello
+      - content: What are the first three prime numbers? Return them as a list of integers.
         name: null
         role: user
         tool_calls: null
       model: deepseek-ai/DeepSeek-R1
       stream: false
-      tools: []
+      tool_choice: required
+      tools:
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            properties:
+              response:
+                items:
+                  type: integer
+                type: array
+            required:
+            - response
+            type: object
+        type: function
     uri: https://router.huggingface.co/together/v1/chat/completions
   response:
     headers:
@@ -37,11 +51,11 @@ interactions:
       cross-origin-opener-policy:
       - same-origin
       etag:
-      - W/"586-5L+ridoNgZnVcizy49vufoA/FIU"
+      - W/"31d-KpmJ0cA6hPrRiPrfPVjrjEZ5a/g"
       referrer-policy:
       - strict-origin-when-cross-origin
       retry-after:
-      - '30'
+      - '15'
       strict-transport-security:
       - max-age=15552000; includeSubDomains
       transfer-encoding:
@@ -50,32 +64,30 @@ interactions:
       - Accept-Encoding
     parsed_body:
       choices:
-      - finish_reason: stop
+      - finish_reason: tool_calls
         index: 0
         logprobs: null
         message:
-          content: "<think>\nHmm, the user just said \"hello\". That's a simple greeting, but I need to figure out how to
-            respond appropriately.  \n\nFirst, I should acknowledge their greeting warmly since starting friendly sets a positive
-            tone. Maybe \"Hello!\" with an exclamation to show enthusiasm.  \n\nI wonder if this is just a test message or
-            if they have something specific in mind. The message is very short, so they might be:  \n- Checking if I'm active
-            \ \n- Unsure how to start  \n- Or just being polite before asking something else  \n\nSince they didn't follow
-            up immediately, I'll keep it open-ended. Adding \"How can I help you today?\" invites them to share their actual
-            need without pressure.  \n\nAlso, no emojis yet--they didn't use any, so I'll match that tone unless they show
-            preference later. Keeping it simple but friendly feels right here.\n</think>\nHello! \U0001F44B How can I help
-            you today?"
+          content: null
           role: assistant
-          tool_calls: []
-        seed: 3859899181302555600
-      created: 1769546580
-      id: oV1mmQk-28Eivz-9c4b14712ea45a45
+          tool_calls:
+          - function:
+              arguments: '{"response":[2,3,5]}'
+              name: final_result
+            id: call_7qxjvbuxpm6017n3jcq1uqwt
+            index: 0
+            type: function
+        seed: 10176929106694746000
+      created: 1769546595
+      id: oV1mqo1-28Eivz-9c4b14ce2f14c9b7
       model: deepseek-ai/DeepSeek-R1
       object: chat.completion
       prompt: []
       usage:
         cached_tokens: 0
-        completion_tokens: 197
-        prompt_tokens: 4
-        total_tokens: 201
+        completion_tokens: 29
+        prompt_tokens: 19
+        total_tokens: 48
     status:
       code: 200
       message: OK
