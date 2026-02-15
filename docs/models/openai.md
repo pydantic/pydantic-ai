@@ -453,8 +453,6 @@ Azure AI Foundry also supports the OpenAI Responses API through [`OpenAIResponse
     ])
     ```
 
-The Responses API provides the same functionality as the Chat Completions API, with additional features and better support for advanced input types. When using Azure, consider using `OpenAIResponsesModel` for the most comprehensive feature support.
-
 ### Vercel AI Gateway
 
 To use [Vercel's AI Gateway](https://vercel.com/docs/ai-gateway), first follow the [documentation](https://vercel.com/docs/ai-gateway) instructions on obtaining an API key or OIDC token.

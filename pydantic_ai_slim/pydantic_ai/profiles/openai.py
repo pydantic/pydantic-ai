@@ -118,10 +118,10 @@ class OpenAIModelProfile(ModelProfile):
     See https://github.com/pydantic/pydantic-ai/issues/3245 for more details.
     """
 
-    openai_chat_supports_file_input: bool = True
-    """Whether the Chat Completions API supports file content parts (type='file').
+    openai_chat_supports_document_input: bool = True
+    """Whether the Chat Completions API supports document content parts (type='file').
 
-    Some OpenAI-compatible providers (e.g. Azure) do not support file input via the Chat Completions API.
+    Some OpenAI-compatible providers (e.g. Azure) do not support document input via the Chat Completions API.
     """
 
     def __post_init__(self):  # pragma: no cover

@@ -67,15 +67,15 @@ class AzureProvider(Provider[AsyncOpenAI]):
 
                 # As AzureProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
                 # we need to maintain that behavior unless json_schema_transformer is set explicitly
-                # Azure Chat Completions API doesn't support file input
+                # Azure Chat Completions API doesn't support document input
                 return OpenAIModelProfile(
                     json_schema_transformer=OpenAIJsonSchemaTransformer,
-                    openai_chat_supports_file_input=False,
+                    openai_chat_supports_document_input=False,
                 ).update(profile)
 
         # OpenAI models are unprefixed
-        # Azure Chat Completions API doesn't support file input
-        return OpenAIModelProfile(openai_chat_supports_file_input=False).update(openai_model_profile(model_name))
+        # Azure Chat Completions API doesn't support document input
+        return OpenAIModelProfile(openai_chat_supports_document_input=False).update(openai_model_profile(model_name))
 
     @overload
     def __init__(self, *, openai_client: AsyncAzureOpenAI) -> None: ...
