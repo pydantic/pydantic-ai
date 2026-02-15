@@ -1489,14 +1489,16 @@ Each of these interpretations would depend on the broader context in which this 
     )
 
 
-async def test_yaml_document_url_input(allow_model_requests: None, openai_api_key: str):
+async def test_yaml_document_url_input(
+    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+):
     """Test that YAML files are treated as text-like and get inlined (not sent as file attachments)."""
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
     document_url = DocumentUrl(url='https://raw.githubusercontent.com/pydantic/pydantic-ai/main/mkdocs.yml')
 
     result = await agent.run(['What is the site_name in this YAML configuration?', document_url])
-    assert result.output == snapshot('The `site_name` in this YAML configuration is "Pydantic AI".')
+    assert result.output == snapshot('The `site_name` in the provided YAML configuration is `"Pydantic AI"`.')
 
 
 def test_is_text_like_media_type():

@@ -444,7 +444,7 @@ interactions:
       etag:
       - W/"47ff7a60801dae68c60a69f98b130a74b6dd4dfb3db1b821e16af94986ddafbd"
       expires:
-      - Sun, 15 Feb 2026 14:47:37 GMT
+      - Sun, 15 Feb 2026 15:14:24 GMT
       source-age:
       - '0'
       strict-transport-security:
@@ -901,13 +901,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '699'
+      - '709'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '3691'
+      - '504'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -923,17 +923,17 @@ interactions:
         logprobs: null
         message:
           annotations: []
-          content: The `site_name` in this YAML configuration is "Pydantic AI".
+          content: The `site_name` in the provided YAML configuration is `"Pydantic AI"`.
           refusal: null
           role: assistant
-      created: 1771166559
-      id: chatcmpl-D9XcV7X8MYnoTEGv740BJOPspzEhu
+      created: 1771168168
+      id: chatcmpl-D9Y2SGcIahjmc95USEBhPxjrIEW8c
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
       system_fingerprint: fp_009ac31db9
       usage:
-        completion_tokens: 16
+        completion_tokens: 18
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
@@ -943,7 +943,7 @@ interactions:
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 3168
+        total_tokens: 3170
     status:
       code: 200
       message: OK
