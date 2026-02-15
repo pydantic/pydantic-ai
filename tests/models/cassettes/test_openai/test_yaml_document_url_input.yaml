@@ -5,7 +5,7 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       host:
@@ -35,7 +35,7 @@ interactions:
 
           - Documentation:
               - Core Concepts:
-                  - agents.md
+                  - Agents: agent.md
                   - dependencies.md
                   - tools.md
                   - output.md
@@ -87,12 +87,14 @@ interactions:
                   - Built-in Evaluators: evals/evaluators/built-in.md
                   - LLM Judge: evals/evaluators/llm-judge.md
                   - Custom Evaluators: evals/evaluators/custom.md
+                  - Report Evaluators: evals/evaluators/report-evaluators.md
                   - Span-Based: evals/evaluators/span-based.md
               - How-To Guides:
                   - Logfire Integration: evals/how-to/logfire-integration.md
                   - Dataset Management: evals/how-to/dataset-management.md
                   - Dataset Serialization: evals/how-to/dataset-serialization.md
                   - Concurrency & Performance: evals/how-to/concurrency.md
+                  - Multi-Run Evaluation: evals/how-to/multi-run.md
                   - Retry Strategies: evals/how-to/retry-strategies.md
                   - Metrics & Attributes: evals/how-to/metrics-attributes.md
               - Examples:
@@ -121,7 +123,7 @@ interactions:
               - Agent2Agent (A2A): a2a.md
 
           - Related Packages:
-              - Clai: cli.md
+              - clai: cli.md
 
           - Examples:
               - Setup: examples/setup.md
@@ -152,6 +154,7 @@ interactions:
                   - api/agent.md
                   - api/builtin_tools.md
                   - api/common_tools.md
+                  - api/concurrency.md
                   - api/direct.md
                   - api/durable_exec.md
                   - api/embeddings.md
@@ -375,7 +378,7 @@ interactions:
                 Concepts documentation:
                   - a2a.md
                   - ag-ui.md
-                  - agents.md
+                  - Agents: agent.md
                   - builtin-tools.md
                   - dependencies.md
                   - deferred-tools.md
@@ -431,7 +434,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '12341'
+      - '12515'
       content-security-policy:
       - default-src 'none'; style-src 'unsafe-inline'; sandbox
       content-type:
@@ -439,9 +442,9 @@ interactions:
       cross-origin-resource-policy:
       - cross-origin
       etag:
-      - W/"a1f4b21a42a2e50b30927c6bd5a6ae545769a06485a08a4641877fa9988e1aa0"
+      - W/"47ff7a60801dae68c60a69f98b130a74b6dd4dfb3db1b821e16af94986ddafbd"
       expires:
-      - Sun, 25 Jan 2026 18:53:53 GMT
+      - Sun, 15 Feb 2026 14:47:37 GMT
       source-age:
       - '0'
       strict-transport-security:
@@ -456,11 +459,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '13054'
+      - '13250'
       content-type:
       - application/json
       host:
@@ -493,7 +496,7 @@ interactions:
 
               - Documentation:
                   - Core Concepts:
-                      - agents.md
+                      - Agents: agent.md
                       - dependencies.md
                       - tools.md
                       - output.md
@@ -545,12 +548,14 @@ interactions:
                       - Built-in Evaluators: evals/evaluators/built-in.md
                       - LLM Judge: evals/evaluators/llm-judge.md
                       - Custom Evaluators: evals/evaluators/custom.md
+                      - Report Evaluators: evals/evaluators/report-evaluators.md
                       - Span-Based: evals/evaluators/span-based.md
                   - How-To Guides:
                       - Logfire Integration: evals/how-to/logfire-integration.md
                       - Dataset Management: evals/how-to/dataset-management.md
                       - Dataset Serialization: evals/how-to/dataset-serialization.md
                       - Concurrency & Performance: evals/how-to/concurrency.md
+                      - Multi-Run Evaluation: evals/how-to/multi-run.md
                       - Retry Strategies: evals/how-to/retry-strategies.md
                       - Metrics & Attributes: evals/how-to/metrics-attributes.md
                   - Examples:
@@ -579,7 +584,7 @@ interactions:
                   - Agent2Agent (A2A): a2a.md
 
               - Related Packages:
-                  - Clai: cli.md
+                  - clai: cli.md
 
               - Examples:
                   - Setup: examples/setup.md
@@ -610,6 +615,7 @@ interactions:
                       - api/agent.md
                       - api/builtin_tools.md
                       - api/common_tools.md
+                      - api/concurrency.md
                       - api/direct.md
                       - api/durable_exec.md
                       - api/embeddings.md
@@ -833,7 +839,7 @@ interactions:
                     Concepts documentation:
                       - a2a.md
                       - ag-ui.md
-                      - agents.md
+                      - Agents: agent.md
                       - builtin-tools.md
                       - dependencies.md
                       - deferred-tools.md
@@ -895,13 +901,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '868'
+      - '699'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '484'
+      - '3691'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -920,12 +926,12 @@ interactions:
           content: The `site_name` in this YAML configuration is "Pydantic AI".
           refusal: null
           role: assistant
-      created: 1769366934
-      id: chatcmpl-D1zSILjl5z1hFkmrAutDxWj80Vv7j
+      created: 1771166559
+      id: chatcmpl-D9XcV7X8MYnoTEGv740BJOPspzEhu
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_deacdd5f6f
+      system_fingerprint: fp_009ac31db9
       usage:
         completion_tokens: 16
         completion_tokens_details:
@@ -933,11 +939,11 @@ interactions:
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 3108
+        prompt_tokens: 3152
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 3124
+        total_tokens: 3168
     status:
       code: 200
       message: OK
