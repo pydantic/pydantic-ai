@@ -2534,9 +2534,6 @@ async def test_google_url_input(
     )
 
 
-@pytest.mark.skipif(
-    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
-)
 @pytest.mark.vcr()
 async def test_google_url_input_force_download(
     allow_model_requests: None, vertex_provider: GoogleProvider, disable_ssrf_protection_for_vcr: None
@@ -2578,7 +2575,9 @@ async def test_google_url_input_force_download(
     )
 
 
-async def test_google_gs_url_force_download_raises_user_error(allow_model_requests: None) -> None:
+async def test_google_gs_url_force_download_raises_user_error(
+    allow_model_requests: None, disable_ssrf_protection_for_vcr: None
+) -> None:
     provider = GoogleProvider(project='pydantic-ai', location='us-central1')
     m = GoogleModel('gemini-2.0-flash', provider=provider)
     agent = Agent(m)
@@ -4833,12 +4832,14 @@ async def test_gcs_video_url_with_vendor_metadata_on_google_vertex(mocker: Mocke
     }
 
 
-async def test_gcs_video_url_raises_error_on_google_gla():
+async def test_gcs_video_url_raises_error_on_google_gla(disable_ssrf_protection_for_vcr: None):
     """GCS URIs on google-gla fall through to FileUrl and raise a clear error.
 
     google-gla cannot access GCS buckets, so attempting to use gs:// URLs
     should fail with a helpful error message rather than a cryptic API error.
-    SSRF protection now catches non-http(s) protocols first.
+    Even without force_download, google-gla always downloads non-YouTube URLs
+    (see google.py _map_user_prompt FileUrl branch), so the gs:// protocol
+    hits SSRF validation which rejects it — hence disable_ssrf_protection_for_vcr.
     """
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
     # google-gla is the default for GoogleProvider with api_key, but be explicit

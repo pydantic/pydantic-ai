@@ -15,6 +15,7 @@ from functools import cached_property
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -561,11 +562,13 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
 
 
 @pytest.fixture()
-async def vertex_provider(vertex_provider_auth: None):  # pragma: lax no cover
-    # NOTE: You need to comment out this line to rewrite the cassettes locally.
-    if not os.getenv('CI', False):
-        pytest.skip('Requires properly configured local google vertex config to pass')
+def skip_unless_vertex():  # pragma: lax no cover
+    if not os.getenv('CI', False) and not os.getenv('ENABLE_VERTEX', False):
+        pytest.skip('Set ENABLE_VERTEX=1 or run in CI to enable vertex tests')
 
+
+@pytest.fixture()
+async def vertex_provider(vertex_provider_auth: None, skip_unless_vertex: None):  # pragma: lax no cover
     try:
         from pydantic_ai.providers.google import GoogleProvider, VertexAILocation
     except ImportError:  # pragma: lax no cover
@@ -681,8 +684,6 @@ def disable_ssrf_protection_for_vcr():
     This fixture patches validate_and_resolve_url to return the hostname in place
     of the resolved IP, allowing the request URL to use the original hostname.
     """
-    from unittest.mock import patch
-
     from pydantic_ai._ssrf import ResolvedUrl, extract_host_and_port
 
     async def mock_validate_and_resolve(url: str, allow_local: bool) -> ResolvedUrl:
@@ -691,4 +692,25 @@ def disable_ssrf_protection_for_vcr():
         return ResolvedUrl(resolved_ip=hostname, hostname=hostname, port=port, is_https=is_https, path=path)
 
     with patch('pydantic_ai._ssrf.validate_and_resolve_url', mock_validate_and_resolve):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _guard_ssrf_in_vcr_tests(request: pytest.FixtureRequest):
+    """Fail fast if a VCR test triggers SSRF validation without the disable fixture."""
+    if request.node.get_closest_marker('vcr') is None:
+        yield
+        return
+    if 'disable_ssrf_protection_for_vcr' in request.fixturenames:
+        yield
+        return
+
+    async def guarded_validate(*args: Any, **kwargs: Any):
+        raise RuntimeError(
+            'SSRF protection was called in a VCR test without the '
+            "'disable_ssrf_protection_for_vcr' fixture. "
+            'Add it to your test parameters.'
+        )
+
+    with patch('pydantic_ai._ssrf.validate_and_resolve_url', guarded_validate):
         yield
