@@ -708,6 +708,9 @@ async def main():
 2. The [`Agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] method is used to start a streamed run, this method returns a context manager so the connection can be closed when the stream completes.
 3. Each item yield by [`StreamedRunResult.stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] is the complete text response, extended as new data is received.
 
+!!! note "Stream consumption and output tools"
+    When using `run_stream()`, the output tools or processors (including those used for structured output validation) are only executed when the stream is actually consumed (e.g., by calling `stream_text()`, `stream_output()`, or `get_output()`). If the `async with` block is exited without consuming the stream, no output processing will occur.
+
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 We can also stream text as deltas rather than the entire text in each item:
