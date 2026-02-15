@@ -6,12 +6,12 @@ Below are suggestions on how to fix some common errors you might encounter while
 
 ### `RuntimeError: This event loop is already running`
 
-**Modern Jupyter/IPython (7.0+)**: This environment supports top-level `await` natively. You can use [`Agent.run()`][pydantic_ai.Agent.run] directly in notebook cells without additional setup:
+**Modern Jupyter/IPython (7.0+)**: This environment supports top-level `await` natively. You can use [`Agent.run()`][pydantic_ai.agent.Agent.run] directly in notebook cells without additional setup:
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5.2')
 result = await agent.run('Who let the dogs out?')
 ```
 
@@ -24,7 +24,7 @@ from pydantic_ai import Agent
 
 nest_asyncio.apply()
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5.2')
 result = agent.run_sync('Who let the dogs out?')
 ```
 

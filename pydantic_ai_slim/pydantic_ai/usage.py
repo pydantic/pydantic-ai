@@ -236,7 +236,9 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
     slf.output_tokens += incr_usage.output_tokens
 
     for key, value in incr_usage.details.items():
-        slf.details[key] = slf.details.get(key, 0) + value
+        # Note: value can be None at runtime from model responses despite the type annotation
+        if isinstance(value, (int, float)):
+            slf.details[key] = slf.details.get(key, 0) + value
 
 
 @dataclass(repr=False, kw_only=True)
@@ -344,8 +346,8 @@ class UsageLimits:
     ):
         self.request_limit = request_limit
         self.tool_calls_limit = tool_calls_limit
-        self.input_tokens_limit = input_tokens_limit or request_tokens_limit
-        self.output_tokens_limit = output_tokens_limit or response_tokens_limit
+        self.input_tokens_limit = input_tokens_limit if input_tokens_limit is not None else request_tokens_limit
+        self.output_tokens_limit = output_tokens_limit if output_tokens_limit is not None else response_tokens_limit
         self.total_tokens_limit = total_tokens_limit
         self.count_tokens_before_request = count_tokens_before_request
 
