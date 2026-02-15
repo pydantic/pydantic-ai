@@ -9,6 +9,7 @@ from typing import Any, Literal
 from pydantic_core import to_json
 
 from ...messages import (
+    RETURN_VALUE_KEY,
     BaseToolReturnPart,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
@@ -28,6 +29,7 @@ from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT
 from .. import UIEventStream
+from .._event_stream import describe_file
 from ._utils import dump_provider_metadata, iter_metadata_chunks
 from .request_types import RequestData
 from .response_types import (
@@ -264,5 +266,20 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
 
     def _tool_return_output(self, part: BaseToolReturnPart) -> Any:
         output = part.model_response_object()
-        # Unwrap the return value from the output dictionary if it exists
-        return output.get('return_value', output)
+        result = output[RETURN_VALUE_KEY] if len(output) == 1 and RETURN_VALUE_KEY in output else output
+
+        if not part.files:
+            return result
+
+        file_descriptions = [describe_file(f) for f in part.files]
+
+        if not result and not isinstance(result, dict | list):
+            return '\n'.join(file_descriptions)
+        elif isinstance(result, str):
+            return result + '\n' + '\n'.join(file_descriptions)
+        elif isinstance(result, dict):
+            return [result, file_descriptions]
+        elif isinstance(result, list):
+            return [*result, *file_descriptions]
+        else:
+            return str(result) + '\n' + '\n'.join(file_descriptions)

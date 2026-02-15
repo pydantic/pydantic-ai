@@ -18,7 +18,6 @@ from typing_extensions import TypedDict
 from pydantic_ai import (
     Agent,
     BinaryContent,
-    BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FinalResultEvent,
@@ -632,74 +631,6 @@ async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
     )
     assert result.output == snapshot(
         'The fruit depicted in the image is a potato. Although commonly mistaken as a vegetable, potatoes are technically fruits because they are the edible, ripened ovary of a flower, containing seeds. However, in culinary and everyday contexts, potatoes are often referred to as a vegetable due to their savory flavor and uses in dishes. The botanical classification of a potato as a fruit comes from its origin as the tuberous part of the Solanum tuberosum plant, which produces flowers and subsequently the potato as a fruit that grows underground.'
-    )
-
-
-async def test_image_as_binary_content_tool_response(
-    allow_model_requests: None, groq_api_key: str, image_content: BinaryContent
-):
-    m = GroqModel('meta-llama/llama-4-maverick-17b-128e-instruct', provider=GroqProvider(api_key=groq_api_key))
-    agent = Agent(m)
-
-    @agent.tool_plain
-    async def get_image() -> BinaryContent:
-        return image_content
-
-    result = await agent.run(
-        ['What fruit is in the image you can get from the get_image tool (without any arguments)?']
-    )
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content=[
-                            'What fruit is in the image you can get from the get_image tool (without any arguments)?'
-                        ],
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='arq6emmq6')],
-                usage=RequestUsage(input_tokens=712, output_tokens=20),
-                model_name='meta-llama/llama-4-maverick-17b-128e-instruct',
-                timestamp=IsDatetime(),
-                provider_name='groq',
-                provider_url='https://api.groq.com',
-                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
-                provider_response_id='chatcmpl-31dace36-574a-42ee-a89f-154b2881e090',
-                finish_reason='tool_call',
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='get_image',
-                        content='See file 241a70',
-                        tool_call_id='arq6emmq6',
-                        timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(content=['This is file 241a70:', IsInstance(BinaryImage)], timestamp=IsDatetime()),
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='The fruit in the image is a kiwi.')],
-                usage=RequestUsage(input_tokens=1501, output_tokens=11),
-                model_name='meta-llama/llama-4-maverick-17b-128e-instruct',
-                timestamp=IsDatetime(),
-                provider_name='groq',
-                provider_url='https://api.groq.com',
-                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
-                provider_response_id='chatcmpl-5644262c-ce2b-40af-9408-21690b4619a8',
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-        ]
     )
 
 

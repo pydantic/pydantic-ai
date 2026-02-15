@@ -7,14 +7,14 @@ import os
 import re
 import secrets
 import sys
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
 
 import httpx
 import pytest
@@ -25,6 +25,21 @@ from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
+from pydantic_ai.messages import (
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
+    FilePart,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    SystemPromptPart,
+    TextPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import Model
 
 __all__ = (
@@ -55,6 +70,7 @@ if TYPE_CHECKING:
 
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.xai import XaiProvider
+    from tests.cassette_utils import CassetteContext
 
     T = TypeVar('T')
 
@@ -125,7 +141,7 @@ def sanitize_filename(name: str, max_len: int) -> str:
 
 
 @customize_repr
-def _(value: bytes):  # pragma: no cover
+def _(value: bytes):
     """Use IsBytes() for large byte sequences in snapshots."""
     if len(value) > SNAPSHOT_BYTES_COLLAPSE_THRESHOLD:
         return 'IsBytes()'
@@ -472,11 +488,15 @@ def xai_api_key() -> str:
 
 
 @pytest.fixture(scope='function')  # Needs to be function scoped to get the request node name
-def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider]:
+def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider | None]:
     """xAI provider fixture backed by protobuf cassettes.
 
     Mirrors the `bedrock_provider` pattern: yields a provider, and callers can use `provider.client`.
+    Returns None for non-xAI tests to avoid loading cassettes unnecessarily.
     """
+    if 'xai' not in request.node.name:
+        yield None
+        return
 
     try:
         from pydantic_ai.providers.xai import XaiProvider
@@ -485,7 +505,8 @@ def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider]:
         pytest.skip('xai_sdk not installed')
 
     cassette_name = sanitize_filename(request.node.name, 240)
-    cassette_path = Path(__file__).parent / 'models' / 'cassettes' / 'test_xai' / f'{cassette_name}.xai.yaml'
+    test_module = cast(str, request.node.fspath.basename.replace('.py', ''))
+    cassette_path = Path(__file__).parent / 'models' / 'cassettes' / test_module / f'{cassette_name}.xai.yaml'
     record_mode: str | None
     try:
         # Provided by `pytest-recording` as `--record-mode=...` (dest is typically `record_mode`).
@@ -503,6 +524,33 @@ def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider]:
         yield provider
     finally:
         session.dump_if_recording()
+
+
+@pytest.fixture(scope='function')
+def cassette_ctx(request: pytest.FixtureRequest, vcr: Any) -> CassetteContext | None:
+    """Unified cassette verification context for tests with a 'provider' parameter.
+
+    Returns None if the test doesn't have a 'provider' parameter (not a matrix test).
+
+    Note: In CI playback mode, vcr is None so this returns None. Cassette verification
+    (`if cassette_ctx:` blocks) only runs locally during recording. Use `# pragma: no branch`
+    on these checks since the branch is intentionally not taken in CI.
+    """
+    from tests.cassette_utils import CassetteContext
+
+    if not (callspec := getattr(request.node, 'callspec', None)):  # pragma: no cover
+        return None
+    params = cast(dict[str, object], callspec.params)
+    provider = params.get('provider')
+    if not isinstance(provider, str):  # pragma: no cover
+        return None
+    test_module = cast(str, request.node.fspath.basename.replace('.py', ''))
+    return CassetteContext(
+        provider=provider,
+        vcr=vcr,
+        test_name=request.node.name,
+        test_module=test_module,
+    )
 
 
 @pytest.fixture(scope='session')
@@ -692,3 +740,42 @@ def disable_ssrf_protection_for_vcr():
 
     with patch('pydantic_ai._ssrf.validate_and_resolve_url', mock_validate_and_resolve):
         yield
+
+
+_RequestPartT = TypeVar('_RequestPartT', bound=SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart)
+_ResponsePartT = TypeVar(
+    '_ResponsePartT',
+    bound=TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart,
+)
+
+
+@overload
+def iter_message_parts(
+    messages: Sequence[ModelMessage],
+    message_type: type[ModelRequest],
+    part_type: type[_RequestPartT],
+) -> Iterator[_RequestPartT]: ...
+
+
+@overload
+def iter_message_parts(
+    messages: Sequence[ModelMessage],
+    message_type: type[ModelResponse],
+    part_type: type[_ResponsePartT],
+) -> Iterator[_ResponsePartT]: ...
+
+
+def iter_message_parts(
+    messages: Sequence[ModelMessage],
+    message_type: type[ModelRequest] | type[ModelResponse],
+    part_type: type[_RequestPartT] | type[_ResponsePartT],
+) -> Iterator[_RequestPartT | _ResponsePartT]:
+    """Iterate over all parts of a given type in messages of a given type."""
+    for msg in messages:  # pragma: no branch
+        if isinstance(msg, message_type):
+            for part in msg.parts:
+                if isinstance(part, part_type):
+                    yield part
+
+
+# endregion

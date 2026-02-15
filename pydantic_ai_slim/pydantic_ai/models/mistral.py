@@ -13,8 +13,9 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._run_context import RunContext
 from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
-from ..exceptions import ModelAPIError
+from ..exceptions import ModelAPIError, UserError
 from ..messages import (
+    AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
@@ -33,6 +34,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
     VideoUrl,
 )
@@ -497,15 +499,18 @@ class MistralModel(Model):
         raise NotImplementedError('Timeout object is not yet supported for MistralModel.')
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[MistralMessages]:
+        file_content: list[UserContent] = []
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 yield MistralSystemMessage(content=part.content)
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
+                tool_text, files = await self._map_tool_return(part)
+                file_content.extend(files)
                 yield MistralToolMessage(
                     tool_call_id=part.tool_call_id,
-                    content=part.model_response_str(),
+                    content=tool_text,
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
@@ -517,6 +522,52 @@ class MistralModel(Model):
                     )
             else:
                 assert_never(part)
+        if file_content:
+            yield await self._map_user_prompt(UserPromptPart(content=file_content))
+
+    async def _map_tool_return(self, part: ToolReturnPart) -> tuple[str, list[UserContent]]:
+        """Map a ToolReturnPart to a text string and any file content for a trailing user message.
+
+        Mistral's ToolMessage only accepts string content, so multimodal files are extracted
+        and sent in a separate user message via the fallback pattern.
+        """
+        tool_content_parts: list[str] = []
+        file_content: list[UserContent] = []
+
+        for item in part.content_items(mode='str'):
+            if isinstance(item, ImageUrl):
+                tool_content_parts.append(f'See file {item.identifier}.')
+                file_content.append(f'This is file {item.identifier}:')
+                if item.force_download:
+                    downloaded = await download_item(item, data_format='bytes')
+                    file_content.append(BinaryContent(data=downloaded['data'], media_type=downloaded['data_type']))
+                else:
+                    file_content.append(item)
+            elif isinstance(item, BinaryContent):
+                if item.is_image or item.media_type == 'application/pdf':
+                    tool_content_parts.append(f'See file {item.identifier}.')
+                    file_content.append(f'This is file {item.identifier}:')
+                    file_content.append(item)
+                else:
+                    raise UserError(f'Unsupported binary content type for Mistral tool returns: {item.media_type}')
+            elif isinstance(item, DocumentUrl):
+                if item.media_type == 'application/pdf':
+                    tool_content_parts.append(f'See file {item.identifier}.')
+                    file_content.append(f'This is file {item.identifier}:')
+                    if item.force_download:
+                        downloaded = await download_item(item, data_format='bytes')
+                        file_content.append(BinaryContent(data=downloaded['data'], media_type=downloaded['data_type']))
+                    else:
+                        file_content.append(item)
+                else:
+                    raise UserError('DocumentUrl other than PDF is not supported for Mistral tool returns.')
+            elif isinstance(item, (AudioUrl, VideoUrl)):
+                raise UserError(f'{type(item).__name__} is not supported for Mistral tool returns.')
+            else:
+                assert isinstance(item, str)
+                tool_content_parts.append(item)
+
+        return '\n'.join(tool_content_parts) if tool_content_parts else '', file_content
 
     async def _map_messages(  # noqa: C901
         self, messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters
@@ -607,7 +658,7 @@ class MistralModel(Model):
                         raise RuntimeError('DocumentUrl other than PDF is not supported in Mistral.')
                 elif isinstance(item, VideoUrl):
                     raise RuntimeError('VideoUrl is not supported in Mistral.')
-                else:  # pragma: no cover
+                else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')
         return MistralUserMessage(content=content)
 

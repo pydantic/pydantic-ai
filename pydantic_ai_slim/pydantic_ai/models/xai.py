@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, cast
 
-from typing_extensions import assert_never
+from typing_extensions import Never, assert_never
 
 from .. import _utils
 from .._output import OutputObjectDefinition
@@ -37,6 +37,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
     VideoUrl,
 )
@@ -267,9 +268,18 @@ class XaiModel(Model):
         if tool_results:
             order = {id: i for i, id in enumerate(pending_tool_call_ids)}
             tool_results.sort(key=lambda p: order.get(p.tool_call_id, float('inf')))
+            file_content: list[UserContent] = []
             for part in tool_results:
-                text = part.model_response_str() if isinstance(part, ToolReturnPart) else part.model_response()
-                xai_messages.append(tool_result(text))
+                if isinstance(part, ToolReturnPart):
+                    text, files = await self._map_tool_return_output(part)
+                    xai_messages.append(tool_result(text))
+                    file_content.extend(files)
+                else:
+                    xai_messages.append(tool_result(part.model_response()))
+            if file_content and (
+                user_msg := await self._map_user_prompt(UserPromptPart(content=file_content))
+            ):  # pragma: no branch
+                xai_messages.append(user_msg)
 
         return xai_messages
 
@@ -448,16 +458,18 @@ class XaiModel(Model):
                         image_detail = item.vendor_metadata['detail']
                     content_items.append(image(item.data_uri, detail=image_detail))
                 elif item.is_audio:
-                    raise NotImplementedError('AudioUrl/BinaryContent with audio is not supported by xAI SDK')
+                    _raise_unsupported_media_type('AudioUrl/BinaryContent with audio')
                 elif item.is_document:
                     # Upload document to xAI files API and reference it
                     filename = item.identifier or f'document.{item.format}'
                     file_id = await self._upload_file_to_xai(item.data, filename)
                     content_items.append(file(file_id))
-                else:
+                elif item.is_video:
+                    _raise_unsupported_media_type('VideoUrl/BinaryContent with video')
+                else:  # pragma: no cover
                     raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
             elif isinstance(item, AudioUrl):
-                raise NotImplementedError('AudioUrl is not supported by xAI SDK')
+                _raise_unsupported_media_type('AudioUrl')
             elif isinstance(item, DocumentUrl):
                 # Download and upload to xAI files API
                 downloaded = await download_item(item, data_format='bytes')
@@ -469,7 +481,7 @@ class XaiModel(Model):
                 file_id = await self._upload_file_to_xai(downloaded['data'], filename)
                 content_items.append(file(file_id))
             elif isinstance(item, VideoUrl):
-                raise NotImplementedError('VideoUrl is not supported by xAI SDK')
+                _raise_unsupported_media_type('VideoUrl')
             elif isinstance(item, CachePoint):
                 # xAI doesn't support prompt caching via CachePoint, so we filter it out
                 pass
@@ -480,6 +492,37 @@ class XaiModel(Model):
             return user(*content_items)
 
         return None
+
+    async def _map_tool_return_output(self, part: ToolReturnPart) -> tuple[str, list[UserContent]]:
+        """Map a `ToolReturnPart` to xAI tool_result format, handling multimodal content.
+
+        xAI tool_result only accepts text strings, so multimodal files are extracted
+        and returned for sending as a separate user message.
+
+        Returns:
+            Tuple of (tool_result_text, file_content_for_user_message)
+        """
+        tool_content_parts: list[str] = []
+        file_content: list[UserContent] = []
+
+        for item in part.content_items(mode='str'):
+            if isinstance(item, (BinaryContent, ImageUrl, DocumentUrl)):
+                if isinstance(item, BinaryContent) and item.is_audio:
+                    _raise_unsupported_media_type('AudioUrl/BinaryContent with audio')
+                if isinstance(item, BinaryContent) and item.is_video:
+                    _raise_unsupported_media_type('VideoUrl/BinaryContent with video')
+                tool_content_parts.append(f'See file {item.identifier}.')
+                file_content.append(f'This is file {item.identifier}:')
+                file_content.append(item)
+            elif isinstance(item, AudioUrl):
+                _raise_unsupported_media_type('AudioUrl')
+            elif isinstance(item, VideoUrl):
+                _raise_unsupported_media_type('VideoUrl')
+            else:
+                assert isinstance(item, str)
+                tool_content_parts.append(item)
+
+        return '\n'.join(tool_content_parts) if tool_content_parts else '', file_content
 
     async def _create_chat(
         self,
@@ -896,6 +939,10 @@ class XaiStreamedResponse(StreamedResponse):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
+
+
+def _raise_unsupported_media_type(source: str) -> Never:
+    raise NotImplementedError(f'{source} is not supported by xAI SDK')
 
 
 def _map_json_schema(o: OutputObjectDefinition) -> chat_pb2.ResponseFormat:

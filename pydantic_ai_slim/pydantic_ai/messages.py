@@ -11,7 +11,7 @@ from datetime import datetime
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, TypeGuard, cast, get_args, overload
 from urllib.parse import urlparse
 
 import pydantic
@@ -666,13 +666,19 @@ class CachePoint:
     * Anthropic (automatically omitted for Bedrock, as it does not support explicit TTL). See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
 
 
-MULTI_MODAL_CONTENT_TYPES = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent)
-"""Tuple of multi-modal content types for use with isinstance() checks."""
-
 MultiModalContent = Annotated[
     ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent, pydantic.Discriminator('kind')
 ]
 """Union of all multi-modal content types with a discriminator for Pydantic validation."""
+
+MULTI_MODAL_CONTENT_TYPES: tuple[type, ...] = get_args(get_args(MultiModalContent)[0])
+"""Tuple of multi-modal content types for use with isinstance() checks, derived from `MultiModalContent`."""
+
+
+def is_multi_modal_content(obj: Any) -> TypeGuard[MultiModalContent]:
+    """Check if obj is a MultiModalContent type, enabling type narrowing."""
+    return isinstance(obj, MULTI_MODAL_CONTENT_TYPES)
+
 
 UserContent: TypeAlias = str | MultiModalContent | CachePoint
 
@@ -682,9 +688,9 @@ class ToolReturn:
     """A structured return value for tools that need to provide both a return value and custom content to the model.
 
     This class allows tools to return complex responses that include:
-    - A return value for actual tool return
-    - Custom content (including multi-modal content) to be sent to the model as a UserPromptPart
-    - Optional metadata for application use
+    - A `return_value` for the actual tool return
+    - Custom `content` (including multi-modal content) to be sent to the model as a `UserPromptPart`
+    - Optional `metadata` for application use
     """
 
     return_value: ToolReturnContent
@@ -693,7 +699,7 @@ class ToolReturn:
     _: KW_ONLY
 
     content: str | Sequence[UserContent] | None = None
-    """The content to be sent to the model as a UserPromptPart."""
+    """The content to be sent to the model as a `UserPromptPart`."""
 
     metadata: Any = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
@@ -801,6 +807,9 @@ class UserPromptPart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+RETURN_VALUE_KEY = 'return_value'
+"""Key used to wrap non-dict tool return values in `model_response_object()`."""
+
 tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
     Any, config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )
@@ -841,21 +850,105 @@ class BaseToolReturnPart:
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
 
-    def model_response_str(self) -> str:
-        """Return a string representation of the content for the model."""
-        if isinstance(self.content, str):
-            return self.content
+    def _split_content(self) -> tuple[list[Any], list[MultiModalContent]]:
+        """Split content into non-file and file parts."""
+        if is_multi_modal_content(self.content):
+            return [], [self.content]
+        elif isinstance(self.content, list):
+            non_files: list[Any] = []
+            files: list[MultiModalContent] = []
+            for p in self.content:  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+                if is_multi_modal_content(p):
+                    files.append(p)
+                else:
+                    non_files.append(p)
+            return non_files, files
+        return [self.content], []
+
+    @property
+    def files(self) -> list[MultiModalContent]:
+        """The multimodal file parts from `content`.
+
+        Returns only `MultiModalContent` objects (`ImageUrl`, `AudioUrl`, `DocumentUrl`,
+        `VideoUrl`, `BinaryContent`), filtering out any text/json parts.
+
+        This allows model implementations to handle files separately from data, sending
+        files natively where supported or as separate user messages when needed.
+        """
+        return self._split_content()[1]
+
+    @property
+    def _content_excluding_files(self) -> list[Any]:
+        return self._split_content()[0]
+
+    def content_items(self, *, mode: Literal['raw', 'str', 'json'] = 'raw') -> list[ToolReturnContent]:
+        """Return content as a flat list for iteration, with optional serialization.
+
+        Args:
+            mode: Controls serialization of non-file items:
+                - `'raw'`: No serialization. Returns items as-is.
+                - `'str'`: Non-file items are serialized to strings via `tool_return_ta`.
+                  File items (`MultiModalContent`) pass through unchanged.
+                - `'json'`: Non-file items are serialized to JSON-compatible Python objects
+                  via `tool_return_ta`. File items pass through unchanged.
+        """
+        items: list[ToolReturnContent]
+        if isinstance(self.content, list):
+            items = self.content  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
         else:
-            return tool_return_ta.dump_json(self.content).decode()
+            items = [self.content]
+
+        if mode == 'raw':
+            return items
+
+        result: list[ToolReturnContent] = []
+        for item in items:
+            if is_multi_modal_content(item):
+                result.append(item)
+            elif mode == 'str':
+                result.append(item if isinstance(item, str) else tool_return_ta.dump_json(item).decode())
+            else:
+                result.append(item if isinstance(item, str) else tool_return_ta.dump_python(item, mode='json'))
+        return result
+
+    def model_response_str(self) -> str:
+        """Return a string representation of the data content for the model.
+
+        This excludes multimodal files - use `.files` to get those separately.
+        """
+        data = self._content_excluding_files
+        if not data:
+            return ''
+        # Unwrap single-item list when content was scalar or when files were filtered out,
+        # since the list may have only existed to bundle data alongside files
+        if len(data) == 1 and (not isinstance(self.content, list) or self.files):
+            value = data[0]
+        else:
+            value = data
+        if isinstance(value, str):
+            return value
+        return tool_return_ta.dump_json(value).decode()
 
     def model_response_object(self) -> dict[str, Any]:
-        """Return a dictionary representation of the content, wrapping non-dict types appropriately."""
-        # gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict
-        json_content = tool_return_ta.dump_python(self.content, mode='json')
-        if isinstance(json_content, dict):
-            return json_content  # type: ignore[reportUnknownReturn]
+        """Return a dictionary representation of the data content, wrapping non-dict types appropriately.
+
+        This excludes multimodal files - use `files` to get those separately.
+        Gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict.
+        """
+        data = self._content_excluding_files
+        if not data:
+            return {}
+        # Unwrap single-item list when content was scalar or when files were filtered out,
+        # since the list may have only existed to bundle data alongside files
+        if len(data) == 1 and (not isinstance(self.content, list) or self.files):
+            value = data[0]
         else:
-            return {'return_value': json_content}
+            value = data
+        json_content = tool_return_ta.dump_python(value, mode='json')
+        if _utils.is_str_dict(json_content):
+            return json_content
+        else:
+            return {RETURN_VALUE_KEY: json_content}
 
     def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
         body: AnyValue = {
@@ -1479,6 +1572,8 @@ class ModelResponse:
         return result
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        from .models.instrumented import InstrumentedModel
+
         parts: list[_otel_messages.MessagePart] = []
         for part in self.parts:
             if isinstance(part, TextPart):
@@ -1505,8 +1600,6 @@ class ModelResponse:
                 if isinstance(part, BuiltinToolCallPart):
                     call_part['builtin'] = True
                 if settings.include_content and part.args is not None:
-                    from .models.instrumented import InstrumentedModel
-
                     if isinstance(part.args, str):
                         call_part['arguments'] = part.args
                     else:
@@ -1521,8 +1614,6 @@ class ModelResponse:
                     builtin=True,
                 )
                 if settings.include_content and part.content is not None:  # pragma: no branch
-                    from .models.instrumented import InstrumentedModel
-
                     return_part['result'] = InstrumentedModel.serialize_any(part.content)
 
                 parts.append(return_part)

@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
 from botocore.exceptions import ClientError
-from typing_extensions import ParamSpec, assert_never
+from typing_extensions import ParamSpec, TypedDict, assert_never
 
 from pydantic_ai import (
     AudioUrl,
@@ -53,7 +53,12 @@ if TYPE_CHECKING:
     from botocore.client import BaseClient
     from botocore.eventstream import EventStream
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
-    from mypy_boto3_bedrock_runtime.literals import StopReasonType
+    from mypy_boto3_bedrock_runtime.literals import (
+        DocumentFormatType,
+        ImageFormatType,
+        StopReasonType,
+        VideoFormatType,
+    )
     from mypy_boto3_bedrock_runtime.type_defs import (
         ContentBlockOutputTypeDef,
         ContentBlockUnionTypeDef,
@@ -78,6 +83,7 @@ if TYPE_CHECKING:
         ToolChoiceTypeDef,
         ToolConfigurationTypeDef,
         ToolResultBlockOutputTypeDef,
+        ToolResultContentBlockOutputTypeDef,
         ToolSpecificationTypeDef,
         ToolTypeDef,
         ToolUseBlockOutputTypeDef,
@@ -164,6 +170,32 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'stop_sequence': 'stop',
     'tool_use': 'tool_call',
 }
+
+# These match ImageFormatType, DocumentFormatType, VideoFormatType from mypy_boto3_bedrock_runtime.literals
+_BEDROCK_IMAGE_FORMATS = ('gif', 'jpeg', 'png', 'webp')
+_BEDROCK_DOCUMENT_FORMATS = ('csv', 'doc', 'docx', 'html', 'md', 'pdf', 'txt', 'xls', 'xlsx')
+_BEDROCK_VIDEO_FORMATS = ('flv', 'mkv', 'mov', 'mp4', 'mpeg', 'mpg', 'three_gp', 'webm', 'wmv')
+_BEDROCK_FORMATS: dict[str, tuple[str, ...]] = {
+    'image': _BEDROCK_IMAGE_FORMATS,
+    'document': _BEDROCK_DOCUMENT_FORMATS,
+    'video': _BEDROCK_VIDEO_FORMATS,
+}
+
+
+class _ImageFileBlock(TypedDict):
+    image: ImageBlockTypeDef
+
+
+class _DocumentFileBlock(TypedDict):
+    document: DocumentBlockTypeDef
+
+
+class _VideoFileBlock(TypedDict):
+    video: VideoBlockTypeDef
+
+
+# subset of mypy_boto3_bedrock_runtime.type_defs.ToolResultContentBlockTypeDef
+_FileContentBlock = _ImageFileBlock | _DocumentFileBlock | _VideoFileBlock
 
 
 def _insert_cache_point_before_trailing_documents(
@@ -678,24 +710,62 @@ class BedrockConverseModel(Model):
                         )
                     elif isinstance(part, ToolReturnPart):
                         assert part.tool_call_id is not None
-                        bedrock_messages.append(
-                            {
-                                'role': 'user',
-                                'content': [
-                                    {
-                                        'toolResult': {
-                                            'toolUseId': part.tool_call_id,
-                                            'content': [
-                                                {'text': part.model_response_str()}
-                                                if profile.bedrock_tool_result_format == 'text'
-                                                else {'json': part.model_response_object()}
-                                            ],
-                                            'status': 'success',
-                                        }
-                                    }
-                                ],
-                            }
+                        tool_result_content: list[Any] = []
+                        sibling_content: list[ContentBlockUnionTypeDef] = []
+
+                        content_mode: Literal['str', 'json'] = (
+                            'str' if profile.bedrock_tool_result_format == 'text' else 'json'
                         )
+                        for item in part.content_items(mode=content_mode):
+                            if isinstance(item, (BinaryContent, ImageUrl, DocumentUrl, VideoUrl)):
+                                file_block = await self._map_file_to_content_block(item, document_count)
+                                if file_block is not None:
+                                    kind = next(k for k in ('image', 'document', 'video') if k in file_block)
+                                    if kind in profile.bedrock_supported_types_in_tool_returns:
+                                        tool_result_content.append(file_block)
+                                    elif 'image' in file_block:  # pragma: no cover
+                                        tool_result_content.append({'text': f'See file {item.identifier}.'})
+                                        sibling_content.append({'text': f'This is file {item.identifier}:'})
+                                        sibling_content.append({'image': file_block['image']})
+                                    elif 'document' in file_block:
+                                        tool_result_content.append({'text': f'See file {item.identifier}.'})
+                                        sibling_content.append({'text': f'This is file {item.identifier}:'})
+                                        sibling_content.append({'document': file_block['document']})
+                                    elif 'video' in file_block:
+                                        tool_result_content.append({'text': f'See file {item.identifier}.'})
+                                        sibling_content.append({'text': f'This is file {item.identifier}:'})
+                                        sibling_content.append({'video': file_block['video']})
+                                    else:
+                                        assert_never(file_block)
+                                elif isinstance(item, BinaryContent):
+                                    raise NotImplementedError(
+                                        f'Unsupported binary content type for Bedrock tool returns: {item.media_type}'
+                                    )
+                            elif isinstance(item, AudioUrl):
+                                raise NotImplementedError('AudioUrl is not supported for Bedrock tool returns')
+                            elif content_mode == 'str':
+                                assert isinstance(item, str)
+                                tool_result_content.append({'text': item})
+                            else:
+                                tool_result_content.append({'json': item})
+
+                        if not tool_result_content:
+                            if profile.bedrock_tool_result_format == 'text':
+                                tool_result_content.append({'text': ''})
+                            else:  # pragma: no cover
+                                tool_result_content.append({'json': {}})
+
+                        user_content: list[ContentBlockUnionTypeDef] = [
+                            {
+                                'toolResult': {
+                                    'toolUseId': part.tool_call_id,
+                                    'content': tool_result_content,
+                                    'status': 'success',
+                                }
+                            }
+                        ]
+                        user_content.extend(sibling_content)
+                        bedrock_messages.append({'role': 'user', 'content': user_content})
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
                             bedrock_messages.append({'role': 'user', 'content': [{'text': part.model_response()}]})
@@ -756,9 +826,12 @@ class BedrockConverseModel(Model):
                     elif isinstance(item, BuiltinToolReturnPart):
                         if item.provider_name == self.system:
                             if item.tool_name == CodeExecutionTool.kind:
+                                result_content: list[ToolResultContentBlockOutputTypeDef] = [
+                                    {'json': cast(dict[str, Any], item.content)}
+                                ]
                                 tool_result: ToolResultBlockOutputTypeDef = {
                                     'toolUseId': _utils.guard_tool_call_id(t=item),
-                                    'content': [{'json': cast(Any, item.content)}] if item.content else [],
+                                    'content': result_content,
                                     'type': 'nova_code_interpreter_result',
                                 }
                                 if item.provider_details and 'status' in item.provider_details:
@@ -832,7 +905,62 @@ class BedrockConverseModel(Model):
         return content
 
     @staticmethod
-    async def _map_user_prompt(  # noqa: C901
+    async def _map_file_to_content_block(
+        file: ImageUrl | DocumentUrl | VideoUrl | AudioUrl | BinaryContent,
+        document_count: Iterator[int],
+    ) -> _FileContentBlock | None:
+        """Map a multimodal file directly to a Bedrock content block for tool results."""
+        if isinstance(file, AudioUrl):  # pragma: no cover
+            return None
+
+        # Resolve content kind
+        kind: Literal['image', 'document', 'video']
+        if isinstance(file, BinaryContent):
+            if file.is_image:
+                kind = 'image'
+            elif file.is_document:
+                kind = 'document'
+            elif file.is_video:
+                kind = 'video'
+            else:
+                return None
+        elif isinstance(file, ImageUrl):
+            kind = 'image'
+        elif isinstance(file, DocumentUrl):
+            kind = 'document'
+        else:
+            kind = 'video'
+
+        # Validate format
+        format = file.format
+        valid_formats = _BEDROCK_FORMATS[kind]
+        if format not in valid_formats:  # pragma: no cover
+            raise ValueError(f'Unsupported {kind} format for Bedrock: {format!r}. Supported: {valid_formats}')
+
+        # Resolve source
+        if isinstance(file, BinaryContent):
+            source: DocumentSourceTypeDef = {'bytes': file.data}
+        elif file.url.startswith('s3://'):
+            parsed = urlparse(file.url)
+            s3_location: S3LocationTypeDef = {'uri': f'{parsed.scheme}://{parsed.netloc}{parsed.path}'}
+            if bucket_owner := parse_qs(parsed.query).get('bucketOwner', [None])[0]:
+                s3_location['bucketOwner'] = bucket_owner
+            source = {'s3Location': s3_location}
+        else:
+            downloaded = await download_item(file, data_format='bytes', type_format='extension')
+            source = {'bytes': downloaded['data']}
+
+        # Build typed block — format is runtime-validated above, cast to satisfy Literal types
+        if kind == 'image':
+            return {'image': {'format': cast('ImageFormatType', format), 'source': source}}
+        elif kind == 'document':
+            name = f'Document {next(document_count)}'
+            return {'document': {'name': name, 'format': cast('DocumentFormatType', format), 'source': source}}
+        else:
+            return {'video': {'format': cast('VideoFormatType', format), 'source': source}}
+
+    @staticmethod
+    async def _map_user_prompt(
         part: UserPromptPart,
         document_count: Iterator[int],
         supports_prompt_caching: bool,
@@ -844,63 +972,14 @@ class BedrockConverseModel(Model):
             for item in part.content:
                 if isinstance(item, str):
                     content.append({'text': item})
-                elif isinstance(item, BinaryContent):
-                    format = item.format
-                    if item.is_document:
-                        name = f'Document {next(document_count)}'
-                        assert format in ('pdf', 'txt', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'md')
-                        content.append({'document': {'name': name, 'format': format, 'source': {'bytes': item.data}}})
-                    elif item.is_image:
-                        assert format in ('jpeg', 'png', 'gif', 'webp')
-                        content.append({'image': {'format': format, 'source': {'bytes': item.data}}})
-                    elif item.is_video:
-                        assert format in ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
-                        content.append({'video': {'format': format, 'source': {'bytes': item.data}}})
-                    else:
-                        raise NotImplementedError('Binary content is not supported yet.')
-                elif isinstance(item, ImageUrl | DocumentUrl | VideoUrl):
-                    source: DocumentSourceTypeDef
-                    if item.url.startswith('s3://'):
-                        parsed = urlparse(item.url)
-                        s3_location: S3LocationTypeDef = {'uri': f'{parsed.scheme}://{parsed.netloc}{parsed.path}'}
-                        if bucket_owner := parse_qs(parsed.query).get('bucketOwner', [None])[0]:
-                            s3_location['bucketOwner'] = bucket_owner
-                        source = {'s3Location': s3_location}
-                    else:
-                        downloaded_item = await download_item(item, data_format='bytes', type_format='extension')
-                        source = {'bytes': downloaded_item['data']}
-
-                    if item.kind == 'image-url':
-                        format = item.media_type.split('/')[1]
-                        assert format in ('jpeg', 'png', 'gif', 'webp'), f'Unsupported image format: {format}'
-                        image: ImageBlockTypeDef = {'format': format, 'source': source}
-                        content.append({'image': image})
-
-                    elif item.kind == 'document-url':
-                        name = f'Document {next(document_count)}'
-                        document: DocumentBlockTypeDef = {
-                            'name': name,
-                            'format': item.format,
-                            'source': source,
-                        }
-                        content.append({'document': document})
-
-                    elif item.kind == 'video-url':  # pragma: no branch
-                        format = item.media_type.split('/')[1]
-                        assert format in (
-                            'mkv',
-                            'mov',
-                            'mp4',
-                            'webm',
-                            'flv',
-                            'mpeg',
-                            'mpg',
-                            'wmv',
-                            'three_gp',
-                        ), f'Unsupported video format: {format}'
-                        video: VideoBlockTypeDef = {'format': format, 'source': source}
-                        content.append({'video': video})
-                elif isinstance(item, AudioUrl):  # pragma: no cover
+                elif isinstance(item, (BinaryContent, ImageUrl, DocumentUrl, VideoUrl)):
+                    file_block = await BedrockConverseModel._map_file_to_content_block(item, document_count)
+                    if file_block is None:
+                        raise NotImplementedError(
+                            f'Unsupported content type for Bedrock user prompts: {type(item).__name__}'
+                        )
+                    content.append(file_block)  # pyright: ignore[reportArgumentType]
+                elif isinstance(item, AudioUrl):
                     raise NotImplementedError('Audio is not supported yet.')
                 elif isinstance(item, CachePoint):
                     if not supports_prompt_caching:
