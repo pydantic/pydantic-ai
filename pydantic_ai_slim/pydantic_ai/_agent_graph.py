@@ -1,10 +1,9 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import dataclasses
 import inspect
+import sys
 import uuid
-from asyncio import Task
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
@@ -13,8 +12,14 @@ from copy import deepcopy
 from dataclasses import field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
+import anyio
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
+
+if sys.version_info >= (3, 11):
+    from builtins import BaseExceptionGroup
+else:
+    from exceptiongroup import BaseExceptionGroup
 
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
@@ -1094,79 +1099,122 @@ async def _call_tools(  # noqa: C901
         },
     ):
 
-        async def handle_call_or_result(
-            coro_or_task: Awaitable[
-                tuple[
-                    _messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None
-                ]
+        def handle_result(
+            result: tuple[
+                _messages.ToolReturnPart | _messages.RetryPromptPart,
+                str | Sequence[_messages.UserContent] | None,
             ]
-            | Task[
-                tuple[
-                    _messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None
-                ]
-            ],
+            | exceptions.CallDeferred
+            | exceptions.ApprovalRequired,
             index: int,
         ) -> _messages.HandleResponseEvent | None:
-            try:
-                tool_part, tool_user_content = (
-                    (await coro_or_task) if inspect.isawaitable(coro_or_task) else coro_or_task.result()
-                )
-            except exceptions.CallDeferred as e:
+            if isinstance(result, exceptions.CallDeferred):
                 deferred_calls_by_index[index] = 'external'
-                deferred_metadata_by_index[index] = e.metadata
-            except exceptions.ApprovalRequired as e:
+                deferred_metadata_by_index[index] = result.metadata
+                return None
+            elif isinstance(result, exceptions.ApprovalRequired):
                 deferred_calls_by_index[index] = 'unapproved'
-                deferred_metadata_by_index[index] = e.metadata
+                deferred_metadata_by_index[index] = result.metadata
+                return None
             else:
+                tool_part, tool_user_content = result
                 tool_parts_by_index[index] = tool_part
                 if tool_user_content:
                     user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
-
                 return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
+
+        async def call_tool_safe(
+            call: _messages.ToolCallPart,
+        ) -> (
+            tuple[
+                _messages.ToolReturnPart | _messages.RetryPromptPart,
+                str | Sequence[_messages.UserContent] | None,
+            ]
+            | exceptions.CallDeferred
+            | exceptions.ApprovalRequired
+        ):
+            try:
+                return await _call_tool(
+                    tool_manager, call, tool_call_results.get(call.tool_call_id), tool_call_metadata
+                )
+            except (exceptions.CallDeferred, exceptions.ApprovalRequired) as e:
+                return e
 
         parallel_execution_mode = tool_manager.get_parallel_execution_mode(tool_calls)
         if parallel_execution_mode == 'sequential':
             for index, call in enumerate(tool_calls):
-                if event := await handle_call_or_result(
-                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), tool_call_metadata),
-                    index,
-                ):
+                result = await call_tool_safe(call)
+                if event := handle_result(result, index):
+                    yield event
+
+        elif parallel_execution_mode == 'parallel_ordered_events':
+            # Run all tool calls concurrently, then yield events in original order.
+            results: dict[
+                int,
+                tuple[
+                    _messages.ToolReturnPart | _messages.RetryPromptPart,
+                    str | Sequence[_messages.UserContent] | None,
+                ]
+                | exceptions.CallDeferred
+                | exceptions.ApprovalRequired,
+            ] = {}
+
+            async def run_tool_ordered(idx: int, call: _messages.ToolCallPart) -> None:
+                results[idx] = await call_tool_safe(call)
+
+            try:
+                async with anyio.create_task_group() as tg:
+                    for idx, call in enumerate(tool_calls):
+                        tg.start_soon(run_tool_ordered, idx, call)
+            except BaseExceptionGroup as eg:
+                if len(eg.exceptions) == 1:
+                    raise eg.exceptions[0] from None
+                raise
+
+            for idx in range(len(tool_calls)):
+                if event := handle_result(results[idx], idx):
                     yield event
 
         else:
-            # TODO: Replace with `anyio.create_task_group` once `anyio.as_completed()` is available.
-            # See https://github.com/agronholm/anyio/pull/890
-            tasks = [
-                asyncio.create_task(  # noqa: TID251
-                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), tool_call_metadata),
-                    name=call.tool_name,
-                )
-                for call in tool_calls
-            ]
+            # Run all tool calls concurrently, yield events as each completes.
+            send_stream, receive_stream = anyio.create_memory_object_stream[
+                tuple[
+                    int,
+                    tuple[
+                        _messages.ToolReturnPart | _messages.RetryPromptPart,
+                        str | Sequence[_messages.UserContent] | None,
+                    ]
+                    | exceptions.CallDeferred
+                    | exceptions.ApprovalRequired,
+                ]
+            ]()
+
+            async def run_tool_unordered(idx: int, call: _messages.ToolCallPart) -> None:
+                await send_stream.send((idx, await call_tool_safe(call)))
+
             try:
-                if parallel_execution_mode == 'parallel_ordered_events':
-                    # Wait for all tasks to complete before yielding any events
-                    await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
-                    for index, task in enumerate(tasks):
-                        if event := await handle_call_or_result(coro_or_task=task, index=index):
-                            yield event
-                else:
-                    pending: set[
-                        asyncio.Task[
-                            tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]
-                        ]
-                    ] = set(tasks)  # pyright: ignore[reportAssignmentType]
-                    while pending:
-                        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                        for task in done:
-                            index = tasks.index(task)  # pyright: ignore[reportArgumentType]
-                            if event := await handle_call_or_result(coro_or_task=task, index=index):  # pyright: ignore[reportArgumentType]
+                async with anyio.create_task_group() as tg:
+
+                    async def run_all_tools() -> None:
+                        async with send_stream:
+                            try:
+                                async with anyio.create_task_group() as inner_tg:
+                                    for idx, call in enumerate(tool_calls):
+                                        inner_tg.start_soon(run_tool_unordered, idx, call)
+                            except BaseExceptionGroup as eg:
+                                if len(eg.exceptions) == 1:
+                                    raise eg.exceptions[0] from None
+                                raise
+
+                    tg.start_soon(run_all_tools)
+
+                    async with receive_stream:
+                        async for idx, result in receive_stream:
+                            if event := handle_result(result, idx):
                                 yield event
-
-            except asyncio.CancelledError as e:
-                for task in tasks:
-                    task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
-
+            except BaseExceptionGroup as eg:
+                if len(eg.exceptions) == 1:
+                    raise eg.exceptions[0] from None
                 raise
 
     # We append the results at the end, rather than as they are received, to retain a consistent ordering

@@ -31,6 +31,23 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
 
 
+@pytest.fixture(autouse=True)
+def _reset_sniffio() -> None:
+    """Reset sniffio's async library detection so ``anyio.run()`` works in sync tests.
+
+    pytest-anyio's async autouse fixtures (e.g. ``close_cached_httpx_client``)
+    cause sniffio to report an active async library even inside sync tests.
+    The event loop is NOT actually running, but ``anyio.run()`` refuses to
+    start because sniffio says otherwise.  Resetting the context variable
+    fixes the false positive.
+    """
+    import sniffio
+
+    token = sniffio.current_async_library_cvar.set(None)
+    yield  # type: ignore[func-returns-value]
+    sniffio.current_async_library_cvar.reset(token)
+
+
 def test_cli_version(capfd: CaptureFixture[str]):
     assert cli(['--version']) == 0
     assert capfd.readouterr().out.startswith('clai - Pydantic AI CLI')
@@ -71,8 +88,9 @@ def test_agent_flag(
     test_agent = Agent(TestModel(custom_output_text='Hello from custom agent'))
     create_test_module(custom_agent=test_agent)
 
-    # Mock ask_agent to avoid actual execution but capture the agent
-    mock_ask = mocker.patch('pydantic_ai._cli.ask_agent')
+    # Mock anyio.run to avoid actual event loop creation in test context,
+    # and to capture the function and args passed to it.
+    mock_run = mocker.patch('pydantic_ai._cli.anyio.run')
 
     # Test CLI with custom agent
     assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 0
@@ -80,9 +98,12 @@ def test_agent_flag(
     # Verify the output contains the custom agent message
     assert 'using custom agent test_module:custom_agent' in capfd.readouterr().out.replace('\n', '')
 
-    # Verify ask_agent was called with our custom agent
-    mock_ask.assert_called_once()
-    assert mock_ask.call_args[0][0] is test_agent
+    # Verify anyio.run was called with ask_agent and our custom agent as the first arg
+    mock_run.assert_called_once()
+    from pydantic_ai._cli import ask_agent
+
+    assert mock_run.call_args[0][0] is ask_agent
+    assert mock_run.call_args[0][1] is test_agent
 
 
 def test_agent_flag_no_model(env: TestEnv, create_test_module: Callable[..., None]):
@@ -107,7 +128,7 @@ def test_agent_flag_set_model(
     custom_agent = Agent(TestModel(custom_output_text='Hello from custom agent'))
     create_test_module(custom_agent=custom_agent)
 
-    mocker.patch('pydantic_ai._cli.ask_agent')
+    mocker.patch('pydantic_ai._cli.anyio.run')
 
     assert cli(['--agent', 'test_module:custom_agent', '--model', 'openai:gpt-4o', 'hello']) == 0
 

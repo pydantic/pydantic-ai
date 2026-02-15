@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import argparse
-import asyncio
 import sys
 from collections.abc import Sequence
 from contextlib import ExitStack
@@ -308,13 +307,13 @@ def _run_chat_command(
 
     if args.prompt:
         try:
-            asyncio.run(ask_agent(agent, args.prompt, stream, console, code_theme))
+            anyio.run(ask_agent, agent, args.prompt, stream, console, code_theme)
         except KeyboardInterrupt:
             pass
         return 0
 
     try:
-        return asyncio.run(run_chat(stream, agent, console, code_theme, prog_name))
+        return anyio.run(run_chat, stream, agent, console, code_theme, prog_name)
     except KeyboardInterrupt:  # pragma: no cover
         return 0
 

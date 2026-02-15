@@ -197,7 +197,9 @@ async def group_by_temporal(
         yield async_iter_groups_noop()
         return
 
-    # we might wait for the next item more than once, so we store the task to await next time
+    # We use asyncio.create_task and asyncio.wait here (not anyio) because this
+    # async generator is consumed by sync_async_iterator via loop.run_until_complete(),
+    # which is incompatible with anyio cancel scopes that span across yield points.
     task: asyncio.Task[T] | None = None
 
     async def async_iter_groups() -> AsyncIterator[list[T]]:
