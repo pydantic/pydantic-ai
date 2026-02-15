@@ -26,6 +26,7 @@ from pydantic_ai import (
     CombinedToolset,
     DocumentUrl,
     ExternalToolset,
+    FilePart,
     FunctionToolset,
     ImageUrl,
     IncompleteToolCall,
@@ -2990,7 +2991,7 @@ def test_unknown_tool():
     agent = Agent(FunctionModel(empty))
 
     with capture_run_messages() as messages:
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for output validation'):
+        with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 1"):
             agent.run_sync('Hello')
     assert messages == snapshot(
         [
@@ -3086,7 +3087,7 @@ def test_unknown_tool_multiple_retries():
     agent = Agent(FunctionModel(empty), retries=num_retries)
 
     with capture_run_messages() as messages:
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(2\) for output validation'):
+        with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 2"):
             agent.run_sync('Hello')
     assert messages == snapshot(
         [
@@ -7736,3 +7737,94 @@ async def test_central_content_filter_with_partial_content():
     # Should NOT raise ContentFilterError
     result = await agent.run('Trigger filter')
     assert result.output == 'Partially generated content...'
+
+
+async def test_image_output_validators_run():
+    """Test that output validators are called when the model returns an image."""
+    validator_called = False
+
+    def return_image(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[FilePart(content=BinaryImage(data=b'fake-png', media_type='image/png'))])
+
+    image_profile = ModelProfile(supports_image_output=True)
+    agent = Agent(FunctionModel(return_image, profile=image_profile), output_type=BinaryImage)
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], output: BinaryImage) -> BinaryImage:
+        nonlocal validator_called
+        validator_called = True
+        return output
+
+    result = await agent.run('Give me an image')
+    assert isinstance(result.output, BinaryImage)
+    assert validator_called, 'output_validator was not called for image output'
+
+
+async def test_unknown_tool_with_valid_tool_does_not_exhaust_retries():
+    """Test that an unknown tool call mixed with a valid tool doesn't prematurely exhaust retries.
+
+    When a model returns both an unknown tool and a valid tool on consecutive calls,
+    the valid tool should still execute even on the second call.
+    With the old code, the global retry counter was prematurely incremented for unknown
+    tools BEFORE valid tools could execute, causing the run to fail with
+    'Exceeded maximum retries' when the model returned unknown tools repeatedly.
+    """
+    call_count = 0
+
+    def return_mixed_tools(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if call_count < 2:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('unknown_tool', '{}'),
+                    ToolCallPart('valid_tool', '{"x": 1}'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(return_mixed_tools), retries=2)
+
+    @agent.tool_plain
+    def valid_tool(x: int) -> str:
+        nonlocal call_count
+        call_count += 1
+        return f'result: {x}'
+
+    result = await agent.run('test mixed tools')
+    assert result.output == 'done'
+    assert call_count == 2, f'valid_tool should have been called twice, was called {call_count} times'
+
+
+async def test_parallel_tool_tasks_cancelled_on_exception():
+    """Test that parallel tool tasks are cancelled when a sibling task raises a non-CancelledError.
+
+    Uses a short sleep so the orphaned task would complete if not properly cancelled.
+    """
+    slow_tool_completed = False
+
+    def return_parallel_tools(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart('failing_tool', '{}'),
+                ToolCallPart('slow_tool', '{}'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(return_parallel_tools))
+
+    @agent.tool_plain
+    def failing_tool() -> str:
+        raise RuntimeError('tool exploded')
+
+    @agent.tool_plain
+    async def slow_tool() -> str:
+        nonlocal slow_tool_completed
+        await asyncio.sleep(0.05)
+        slow_tool_completed = True
+        return 'done'
+
+    with pytest.raises(RuntimeError, match='tool exploded'):
+        await agent.run('run parallel tools')
+
+    # Wait long enough for the orphaned task to complete if it wasn't cancelled
+    await asyncio.sleep(0.2)
+    assert not slow_tool_completed, 'slow_tool task was not cancelled and completed as an orphan'

@@ -214,7 +214,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 )
             return cast(OutputDataT, deferred_tool_requests)
         elif self._output_schema.allows_image and message.images:
-            return cast(OutputDataT, message.images[0])
+            result_data = cast(OutputDataT, message.images[0])
+            for validator in self._output_validators:
+                result_data = await validator.validate(
+                    result_data, replace(self._run_ctx, partial_output=allow_partial)
+                )
+            return result_data
         elif text_processor := self._output_schema.text_processor:
             text = ''
             for part in message.parts:

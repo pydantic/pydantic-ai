@@ -806,7 +806,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         image: _messages.BinaryImage,
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
+        run_context = build_run_context(ctx)
         result_data = cast(NodeRunEndT, image)
+        for validator in ctx.deps.output_validators:
+            result_data = await validator.validate(result_data, run_context)
         return self._handle_final_result(ctx, result.FinalResult(result_data), [])
 
     def _handle_final_result(
@@ -981,10 +984,10 @@ async def process_tool_calls(  # noqa: C901
     else:
         calls_to_run.extend(tool_calls_by_kind['function'])
 
-    # Then, we handle unknown tool calls
+    # Then, we handle unknown tool calls (per-tool retry is handled in _call_tool)
     if tool_calls_by_kind['unknown']:
-        ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.deps.model_settings)
-        calls_to_run.extend(tool_calls_by_kind['unknown'])
+        _check_incomplete_tool_calls(ctx.state.message_history, ctx.deps.model_settings)
+    calls_to_run.extend(tool_calls_by_kind['unknown'])
 
     calls_to_run_results: dict[str, DeferredToolResult] = {}
     if tool_call_results is not None:
@@ -1161,9 +1164,9 @@ async def _call_tools(  # noqa: C901
                             if event := await handle_call_or_result(coro_or_task=task, index=index):  # pyright: ignore[reportArgumentType]
                                 yield event
 
-            except asyncio.CancelledError as e:
+            except BaseException:
                 for task in tasks:
-                    task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
+                    task.cancel()
 
                 raise
 
@@ -1175,6 +1178,27 @@ async def _call_tools(  # noqa: C901
     _populate_deferred_calls(
         tool_calls, deferred_calls_by_index, deferred_metadata_by_index, output_deferred_calls, output_deferred_metadata
     )
+
+
+def _check_incomplete_tool_calls(
+    message_history: list[_messages.ModelMessage],
+    model_settings: ModelSettings | None,
+) -> None:
+    """Raise `IncompleteToolCall` if the last response was truncated with malformed tool call args."""
+    if (
+        message_history
+        and isinstance(model_response := message_history[-1], _messages.ModelResponse)
+        and model_response.finish_reason == 'length'
+        and model_response.parts
+        and isinstance(tool_call := model_response.parts[-1], _messages.ToolCallPart)
+    ):
+        try:
+            tool_call.args_as_dict()
+        except Exception:
+            max_tokens = model_settings.get('max_tokens') if model_settings else None
+            raise exceptions.IncompleteToolCall(
+                f'Model token limit ({max_tokens or "provider default"}) exceeded while generating a tool call, resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
+            )
 
 
 def _populate_deferred_calls(
