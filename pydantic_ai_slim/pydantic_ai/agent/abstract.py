@@ -964,7 +964,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     event_stream_handler=event_stream_handler,
                 )
 
-        task = asyncio.create_task(run_agent())
+        task = asyncio.create_task(run_agent())  # noqa: TID251
 
         try:
             async with receive_stream:

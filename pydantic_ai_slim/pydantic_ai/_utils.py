@@ -220,7 +220,7 @@ async def group_by_temporal(
             if task is None:
                 # anext(aiter) returns an Awaitable[T], not a Coroutine which asyncio.create_task expects
                 # so far, this doesn't seem to be a problem
-                task = asyncio.create_task(anext(aiterator))  # pyright: ignore[reportArgumentType,reportUnknownVariableType]
+                task = asyncio.create_task(anext(aiterator))  # noqa: TID251  # pyright: ignore[reportArgumentType,reportUnknownVariableType]
 
             # we use asyncio.wait to avoid cancelling the coroutine if it's not done
             done, _ = await asyncio.wait((task,), timeout=wait_time)

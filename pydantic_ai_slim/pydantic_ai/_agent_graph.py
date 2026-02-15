@@ -1134,8 +1134,10 @@ async def _call_tools(  # noqa: C901
                     yield event
 
         else:
+            # TODO: Replace with `anyio.create_task_group` once `anyio.as_completed()` is available.
+            # See https://github.com/agronholm/anyio/pull/890
             tasks = [
-                asyncio.create_task(
+                asyncio.create_task(  # noqa: TID251
                     _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), tool_call_metadata),
                     name=call.tool_name,
                 )
