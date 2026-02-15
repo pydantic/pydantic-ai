@@ -227,8 +227,6 @@ def _map_usage(
     if response.embeddings:  # pragma: no branch
         for emb in response.embeddings:
             if emb.statistics and emb.statistics.token_count:
-                total_tokens += int(emb.statistics.token_count)
+                total_tokens += int(emb.statistics.token_count)  # pragma: lax no cover -- requires vertexai
 
-    if total_tokens > 0:
-        return RequestUsage(input_tokens=total_tokens)
-    return RequestUsage()
+    return RequestUsage(input_tokens=total_tokens)

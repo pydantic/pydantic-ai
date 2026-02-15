@@ -1,6 +1,6 @@
 # Dependencies
 
-Pydantic AI uses a dependency injection system to provide data and services to your agent's [system prompts](agents.md#system-prompts), [tools](tools.md) and [output validators](output.md#output-validator-functions).
+Pydantic AI uses a dependency injection system to provide data and services to your agent's [system prompts](agent.md#system-prompts), [tools](tools.md) and [output validators](output.md#output-validator-functions).
 
 Matching Pydantic AI's design philosophy, our dependency system tries to use existing best practice in Python development rather than inventing esoteric "magic", this should make dependencies type-safe, understandable, easier to test, and ultimately easier to deploy in production.
 
@@ -27,7 +27,7 @@ class MyDeps:  # (1)!
 
 
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     deps_type=MyDeps,  # (2)!
 )
 
@@ -68,7 +68,7 @@ class MyDeps:
 
 
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     deps_type=MyDeps,
 )
 
@@ -100,7 +100,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 ### Asynchronous vs. Synchronous dependencies
 
-[System prompt functions](agents.md#system-prompts), [function tools](tools.md) and [output validators](output.md#output-validator-functions) are all run in the async context of an agent run.
+[System prompt functions](agent.md#system-prompts), [function tools](tools.md) and [output validators](output.md#output-validator-functions) are all run in the async context of an agent run.
 
 If these functions are not coroutines (e.g. `async def`) they are called with
 [`run_in_executor`][asyncio.loop.run_in_executor] in a thread pool. It's therefore marginally preferable
@@ -126,7 +126,7 @@ class MyDeps:
 
 
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     deps_type=MyDeps,
 )
 
@@ -174,7 +174,7 @@ class MyDeps:
 
 
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     deps_type=MyDeps,
 )
 
@@ -251,7 +251,7 @@ class MyDeps:
         return f'Prompt: {response.text}'
 
 
-joke_agent = Agent('openai:gpt-5', deps_type=MyDeps)
+joke_agent = Agent('openai:gpt-5.2', deps_type=MyDeps)
 
 
 @joke_agent.system_prompt

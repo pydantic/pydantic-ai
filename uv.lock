@@ -273,7 +273,7 @@ wheels = [
 
 [[package]]
 name = "anthropic"
-version = "0.75.0"
+version = "0.78.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -285,9 +285,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/04/1f/08e95f4b7e2d35205ae5dcbb4ae97e7d477fc521c275c02609e2931ece2d/anthropic-0.75.0.tar.gz", hash = "sha256:e8607422f4ab616db2ea5baacc215dd5f028da99ce2f022e33c7c535b29f3dfb", size = 439565, upload-time = "2025-11-24T20:41:45.28Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ec/51/32849a48f9b1cfe80a508fd269b20bd8f0b1357c70ba092890fde5a6a10b/anthropic-0.78.0.tar.gz", hash = "sha256:55fd978ab9b049c61857463f4c4e9e092b24f892519c6d8078cee1713d8af06e", size = 509136, upload-time = "2026-02-05T17:52:04.986Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/60/1c/1cd02b7ae64302a6e06724bf80a96401d5313708651d277b1458504a1730/anthropic-0.75.0-py3-none-any.whl", hash = "sha256:ea8317271b6c15d80225a9f3c670152746e88805a7a61e14d4a374577164965b", size = 388164, upload-time = "2025-11-24T20:41:43.587Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/03/2f50931a942e5e13f80e24d83406714672c57964be593fc046d81369335b/anthropic-0.78.0-py3-none-any.whl", hash = "sha256:2a9887d2e99d1b0f9fe08857a1e9fe5d2d4030455dbf9ac65aab052e2efaeac4", size = 405485, upload-time = "2026-02-05T17:52:03.674Z" },
 ]
 
 [[package]]
@@ -1469,7 +1469,7 @@ wheels = [
 
 [[package]]
 name = "dbos"
-version = "2.7.0"
+version = "2.10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "psycopg", extra = ["binary"] },
@@ -1479,9 +1479,9 @@ dependencies = [
     { name = "typer-slim" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1a/46/1159b06dfd1dd0407e188174a8e42f796daa8c4393654e8f956048c8574e/dbos-2.7.0.tar.gz", hash = "sha256:0ad5a9bf33be2c403946603c3d980f59dd4ca2858d393c912305e471575fd978", size = 219458, upload-time = "2025-12-11T15:58:25.112Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a2/06/77ff1a7af60589875b9352f9e64824374c9f3620a741d59e99f3ac8ae189/dbos-2.10.0.tar.gz", hash = "sha256:5bb12ba64c8ddf5d2c0e0906681f34604054940c67ea7778d74a42039b515631", size = 232118, upload-time = "2026-01-26T17:30:18.296Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/49/57/80c23cc65a6af2c740096b1a15544dd299e8fd4ab942846ad8c7938f9b9d/dbos-2.7.0-py3-none-any.whl", hash = "sha256:70cd823de89e6cb99031ddf02c2750ed4ef9dfc207ad3a36fd7f2e3e507c5195", size = 139958, upload-time = "2025-12-11T15:58:23.153Z" },
+    { url = "https://files.pythonhosted.org/packages/7d/99/3cca8a35151eec46aa049129ccfe47dcee87398cea01abd6fb83c5a7ada0/dbos-2.10.0-py3-none-any.whl", hash = "sha256:da5c752e3bac323e31458fcafe7149934816529b971b70a5a715b0e5e324ae50", size = 145363, upload-time = "2026-01-26T17:30:16.939Z" },
 ]
 
 [[package]]
@@ -6530,11 +6530,11 @@ xai = [
 [package.metadata]
 requires-dist = [
     { name = "ag-ui-protocol", marker = "extra == 'ag-ui'", specifier = ">=0.1.10" },
-    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.75.0" },
+    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.78.0" },
     { name = "argcomplete", marker = "extra == 'cli'", specifier = ">=3.5.0" },
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.42.14" },
     { name = "cohere", marker = "sys_platform != 'emscripten' and extra == 'cohere'", specifier = ">=5.18.0" },
-    { name = "dbos", marker = "extra == 'dbos'", specifier = ">=1.14.0" },
+    { name = "dbos", marker = "extra == 'dbos'", specifier = ">=2.10.0" },
     { name = "ddgs", marker = "extra == 'duckduckgo'", specifier = ">=9.0.0" },
     { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.0.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.2.2" },
