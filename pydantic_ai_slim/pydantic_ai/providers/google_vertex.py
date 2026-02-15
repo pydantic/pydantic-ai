@@ -1,11 +1,11 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import functools
 from collections.abc import AsyncGenerator, Mapping
 from pathlib import Path
 from typing import Literal, overload
 
+import anyio
 import anyio.to_thread
 import httpx
 from typing_extensions import deprecated
@@ -119,7 +119,7 @@ class GoogleVertexProvider(Provider[httpx.AsyncClient]):
 class _VertexAIAuth(httpx.Auth):
     """Auth class for Vertex AI API."""
 
-    _refresh_lock: asyncio.Lock = asyncio.Lock()  # noqa: TID251
+    _refresh_lock: anyio.Lock = anyio.Lock()
 
     credentials: BaseCredentials | ServiceAccountCredentials | None
 
