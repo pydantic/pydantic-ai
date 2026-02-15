@@ -48,6 +48,7 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, merge_model_settings
+from ..thinking import resolve_thinking_config
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
@@ -298,6 +299,34 @@ class AnthropicModel(Model):
         """The set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 
+    def _resolve_thinking_config(self, model_settings: AnthropicModelSettings) -> BetaThinkingConfigParam | None:
+        """Resolve thinking configuration from unified or provider-specific settings.
+
+        Provider-specific `anthropic_thinking` takes precedence over unified `thinking`.
+        """
+        # Provider-specific setting takes precedence
+        if 'anthropic_thinking' in model_settings:
+            return model_settings['anthropic_thinking']
+
+        thinking = model_settings.get('thinking')
+        if thinking is None:
+            return None
+
+        resolved = resolve_thinking_config(thinking, self.profile, self.model_name)
+        if resolved is None:  # pragma: no cover
+            return None
+        if not resolved.enabled:
+            return {'type': 'disabled'}
+
+        # Derive budget from effort if not explicitly set
+        budget_tokens = resolved.budget_tokens
+        if budget_tokens is None and resolved.effort and self.profile.effort_to_budget_map:
+            budget_tokens = self.profile.effort_to_budget_map.get(resolved.effort)
+        if budget_tokens is None:
+            budget_tokens = self.profile.default_thinking_budget or 4096
+
+        return {'type': 'enabled', 'budget_tokens': budget_tokens}
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -355,11 +384,12 @@ class AnthropicModel(Model):
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         settings = merge_model_settings(self.settings, model_settings)
+        # Resolve thinking config from unified or provider-specific settings
+        thinking_config = self._resolve_thinking_config(cast(AnthropicModelSettings, settings or {}))
         if (
             model_request_parameters.output_tools
-            and settings
-            and (thinking := settings.get('anthropic_thinking'))
-            and thinking.get('type') in ('enabled', 'adaptive')
+            and thinking_config
+            and thinking_config.get('type') in ('enabled', 'adaptive')
         ):
             if model_request_parameters.output_mode == 'auto':
                 output_mode = 'native' if self.profile.supports_json_schema_output else 'prompted'
@@ -439,7 +469,7 @@ class AnthropicModel(Model):
                 output_config=output_config or OMIT,
                 betas=sorted(betas) or OMIT,
                 stream=stream,
-                thinking=model_settings.get('anthropic_thinking', OMIT),
+                thinking=self._resolve_thinking_config(model_settings) or OMIT,
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
                 temperature=model_settings.get('temperature', OMIT),
                 top_p=model_settings.get('top_p', OMIT),
@@ -527,7 +557,7 @@ class AnthropicModel(Model):
                 mcp_servers=mcp_servers or OMIT,
                 betas=sorted(betas) or OMIT,
                 output_config=output_config or OMIT,
-                thinking=model_settings.get('anthropic_thinking', OMIT),
+                thinking=self._resolve_thinking_config(model_settings) or OMIT,
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),

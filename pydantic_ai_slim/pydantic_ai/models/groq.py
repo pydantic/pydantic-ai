@@ -42,6 +42,7 @@ from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.groq import GroqModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
+from ..thinking import resolve_thinking_config
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -157,6 +158,63 @@ class GroqModel(Model):
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
+
+    def prepare_request(
+        self,
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
+        merged_settings = cast(GroqModelSettings, merged_settings or {})
+
+        # Apply unified thinking config if no provider-specific setting
+        if 'groq_reasoning_format' not in merged_settings:
+            reasoning_format = self._resolve_reasoning_format(merged_settings)
+            if reasoning_format is not None:
+                merged_settings['groq_reasoning_format'] = reasoning_format  # pragma: no cover
+
+        return merged_settings, customized_parameters
+
+    def _resolve_reasoning_format(self, model_settings: GroqModelSettings) -> Literal['hidden', 'raw', 'parsed'] | None:
+        """Resolve unified thinking settings to Groq reasoning format.
+
+        Args:
+            model_settings: The model settings to check.
+
+        Returns:
+            Groq reasoning format string, or None if not specified.
+
+        Raises:
+            UserError: If thinking is requested but the model doesn't support it.
+        """
+        thinking = model_settings.get('thinking')
+        if thinking is None:
+            return None
+
+        resolved = resolve_thinking_config(thinking, self.profile, self._model_name)
+        if resolved is None or not resolved.enabled:
+            return None
+
+        # Warn about ignored settings (Groq doesn't support fine-grained control)
+        ignored: list[str] = []
+        if resolved.budget_tokens is not None:
+            ignored.append('budget_tokens')
+        if resolved.effort is not None:
+            ignored.append('effort')
+
+        if ignored:
+            from ._warnings import warn_settings_ignored_batch
+
+            warn_settings_ignored_batch(
+                setting_names=ignored,
+                provider_name='Groq',
+                reason='Groq reasoning models do not support fine-grained control. Reasoning will be enabled with default behavior',
+            )
+
+        # Map include_in_response to reasoning format
+        if resolved.include_in_response is False:
+            return 'hidden'
+        return 'parsed'
 
     @property
     def base_url(self) -> str:
