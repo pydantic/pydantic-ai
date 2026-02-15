@@ -4,22 +4,21 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '138'
+      - '125'
       content-type:
       - application/json
       host:
       - router.huggingface.co
     method: POST
     parsed_body:
+      max_tokens: 100
       messages:
       - content: hello
-        name: null
         role: user
-        tool_calls: null
       model: deepseek-ai/DeepSeek-R1
       stream: false
       tools: []
@@ -37,11 +36,11 @@ interactions:
       cross-origin-opener-policy:
       - same-origin
       etag:
-      - W/"659-lxG/VJZlTgu7SSQY43D1wzNMgZg"
+      - W/"3d6-xZqmbyjU+0Iao7wGadd1wZ2hUQY"
       referrer-policy:
       - strict-origin-when-cross-origin
       retry-after:
-      - '9'
+      - '30'
       strict-transport-security:
       - max-age=15552000; includeSubDomains
       transfer-encoding:
@@ -50,33 +49,28 @@ interactions:
       - Accept-Encoding
     parsed_body:
       choices:
-      - finish_reason: stop
+      - finish_reason: length
         index: 0
         logprobs: null
         message:
-          content: "<think>\nHmm, the user just said \"hello\". That's a simple greeting, but I need to figure out how to
-            respond appropriately. \n\nFirst, I should acknowledge their greeting warmly since starting with a friendly tone
-            sets a positive interaction. The user might be testing if I'm responsive, or they could be preparing to ask something
-            more complex. \n\nI notice they didn't provide any context - no name, no question, just a bare greeting. That
-            makes me think either: \n- They're new to chatting with AIs and testing the waters \n- They're distracted or typing
-            slowly \n- Or they expect me to take initiative in the conversation \n\nGiven that, my response should be open-ended
-            to encourage them to share their needs. Adding a smiley face \U0001F60A makes it feel more human and approachable.
-            \n\nI'll keep it simple but inviting - \"Hello! How can I help you today?\" covers all bases: acknowledges them,
-            shows readiness, and leaves the door open for anything from casual chat to serious requests. \n\nNo need to overthink
-            this one - short and warm is perfect here.\n</think>\nHello! \U0001F60A How can I help you today?"
+          content: "<think>\nHmm, the user just said \"hello\". Such a simple greeting but it makes me smile. \n\nFirst thought:
+            This could be anyone - maybe someone testing the waters, or just being polite before asking something deeper.
+            The lack of context is interesting. \n\nI notice they didn't use any emojis or exclamation marks, so probably
+            neutral mood. But since they initiated, I should match their tone while keeping it warm. \n\nKey goals in response:
+            \n- Acknowledge"
           role: assistant
           tool_calls: []
-        seed: 2051143124256602600
-      created: 1769546608
-      id: oV1mujC-zqrih-9c4b15208b343f0b
+        seed: 14836394043272784000
+      created: 1771167110
+      id: oXUyQTv-28Eivz-9ce5a0296c7de93c
       model: deepseek-ai/DeepSeek-R1
       object: chat.completion
       prompt: []
       usage:
         cached_tokens: 0
-        completion_tokens: 238
+        completion_tokens: 100
         prompt_tokens: 4
-        total_tokens: 242
+        total_tokens: 104
     status:
       code: 200
       message: OK

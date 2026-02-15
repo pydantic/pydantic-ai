@@ -242,6 +242,7 @@ class HuggingFaceModel(Model):
                 tools=tools,
                 tool_choice=tool_choice or None,
                 stream=stream,
+                max_tokens=model_settings.get('max_tokens', None),
                 stop=model_settings.get('stop_sequences', None),
                 temperature=model_settings.get('temperature', None),
                 top_p=model_settings.get('top_p', None),

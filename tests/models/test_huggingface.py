@@ -759,6 +759,8 @@ async def test_max_completion_tokens(allow_model_requests: None, huggingface_api
 
     result = await agent.run('hello')
     assert result.output == IsStr()
+    assert result.usage().output_tokens is not None
+    assert result.usage().output_tokens <= 100
 
 
 def test_system_property():

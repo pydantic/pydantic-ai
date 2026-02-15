@@ -157,6 +157,14 @@ def test_huggingface_provider_base_url_from_provider_name():
     assert provider.base_url == 'https://router.huggingface.co/together'
 
 
+def test_huggingface_provider_base_url_fallback():
+    mock_client = Mock(spec=AsyncInferenceClient)
+    mock_client.model = None
+    mock_client.provider = None
+    provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
+    assert provider.base_url == ''
+
+
 def test_huggingface_provider_model_profile(mocker: MockerFixture):
     mock_client = Mock(spec=AsyncInferenceClient)
     provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
