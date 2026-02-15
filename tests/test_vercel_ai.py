@@ -2974,6 +2974,33 @@ async def test_adapter_dump_load_roundtrip_without_timestamps():
     assert len(reloaded_messages) == len(original_messages)
 
 
+async def test_adapter_dump_messages_deterministic_ids():
+    """Test that dump_messages produces deterministic IDs for the same messages.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4263
+    """
+    messages = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='You are a helpful assistant.'),
+                UserPromptPart(content='Hello!'),
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(content='Hi there!'),
+            ]
+        ),
+    ]
+
+    result1 = VercelAIAdapter.dump_messages(messages)
+    result2 = VercelAIAdapter.dump_messages(messages)
+
+    assert result1[0].id == result2[0].id
+    assert result1[1].id == result2[1].id
+    assert result1[2].id == result2[2].id
+
+
 async def test_adapter_dump_messages_text_before_thinking():
     """Test dumping messages where text precedes a thinking part."""
     messages = [
