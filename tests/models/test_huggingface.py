@@ -190,6 +190,7 @@ Hello! 👋 How can I help you today?\
             provider_url='https://router.huggingface.co/together',
             provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
             provider_response_id='oV1mmQk-28Eivz-9c4b14712ea45a45',
+            finish_reason='stop',
             run_id=IsStr(),
         )
     )
@@ -356,6 +357,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     'timestamp': IsDatetime(),
                 },
                 provider_response_id='123',
+                finish_reason='stop',
                 run_id=IsStr(),
             ),
             ModelRequest(
@@ -388,6 +390,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     'timestamp': IsDatetime(),
                 },
                 provider_response_id='123',
+                finish_reason='stop',
                 run_id=IsStr(),
             ),
             ModelRequest(
@@ -413,6 +416,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     'timestamp': IsDatetime(),
                 },
                 provider_response_id='123',
+                finish_reason='stop',
                 run_id=IsStr(),
             ),
         ]
@@ -658,6 +662,7 @@ async def test_image_url_input(allow_model_requests: None, huggingface_api_key: 
                     'timestamp': IsDatetime(),
                 },
                 provider_response_id='chatcmpl-d68e3c40c98e4d3f8ab4ff4cbf81c544',
+                finish_reason='stop',
                 run_id=IsStr(),
             ),
         ]
@@ -743,6 +748,7 @@ That's correct! Paris is not only the political center but also the cultural, ec
                     'timestamp': IsDatetime(),
                 },
                 provider_response_id='oV1mrRW-28Eivz-9c4b14db295620a5',
+                finish_reason='stop',
                 run_id=IsStr(),
             ),
         ]
@@ -846,6 +852,7 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
                     'timestamp': IsDatetime(),
                 },
                 provider_response_id='123',
+                finish_reason='stop',
                 run_id=IsStr(),
             ),
             ModelRequest(
@@ -870,6 +877,7 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
                     'timestamp': IsDatetime(),
                 },
                 provider_response_id='123',
+                finish_reason='stop',
                 run_id=IsStr(),
             ),
         ]
@@ -978,6 +986,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                     'timestamp': IsDatetime(),
                 },
                 provider_response_id='oV1mwwj-28Eivz-9c4b154f3b427f82',
+                finish_reason='stop',
                 run_id=IsStr(),
             ),
         ]
@@ -1018,6 +1027,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                     'timestamp': IsDatetime(),
                 },
                 provider_response_id='oV1n6B7-zqrih-9c4b15fafffad6d3',
+                finish_reason='stop',
                 run_id=IsStr(),
             ),
         ]
@@ -1065,6 +1075,7 @@ async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingfa
                     'timestamp': IsDatetime(),
                 },
                 provider_response_id='oV1nHvx-28Eivz-9c4b16f37c27e605',
+                finish_reason='stop',
                 run_id=IsStr(),
             ),
         ]

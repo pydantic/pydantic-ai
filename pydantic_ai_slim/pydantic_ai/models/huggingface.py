@@ -96,10 +96,14 @@ HuggingFaceModelName = str | LatestHuggingFaceModelNames
 You can browse available models [here](https://huggingface.co/models?pipeline_tag=text-generation&inference_provider=all&sort=trending).
 """
 
-_FINISH_REASON_MAP: dict[TextGenerationOutputFinishReason, FinishReason] = {
+HuggingFaceFinishReason = Literal['stop', 'tool_calls'] | TextGenerationOutputFinishReason
+
+_FINISH_REASON_MAP: dict[HuggingFaceFinishReason, FinishReason] = {
     'length': 'length',
     'eos_token': 'stop',
     'stop_sequence': 'stop',
+    'stop': 'stop',
+    'tool_calls': 'tool_call',
 }
 
 
@@ -285,7 +289,7 @@ class HuggingFaceModel(Model):
         provider_details: dict[str, Any] = {'finish_reason': raw_finish_reason}
         if response.created:  # pragma: no branch
             provider_details['timestamp'] = datetime.fromtimestamp(response.created, tz=timezone.utc)
-        finish_reason = _FINISH_REASON_MAP.get(cast(TextGenerationOutputFinishReason, raw_finish_reason), None)
+        finish_reason = _FINISH_REASON_MAP.get(cast(HuggingFaceFinishReason, raw_finish_reason), None)
 
         return ModelResponse(
             parts=items,
@@ -485,9 +489,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
 
             if raw_finish_reason := choice.finish_reason:
                 self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
-                self.finish_reason = _FINISH_REASON_MAP.get(
-                    cast(TextGenerationOutputFinishReason, raw_finish_reason), None
-                )
+                self.finish_reason = _FINISH_REASON_MAP.get(cast(HuggingFaceFinishReason, raw_finish_reason), None)
 
             # Handle the text part of the response
             content = choice.delta.content
