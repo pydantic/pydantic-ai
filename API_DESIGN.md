@@ -63,6 +63,9 @@ class ModelSettings(TypedDict, total=False):
     * OpenRouter
     * Groq (reasoning models)
     * Cerebras (GLM, GPT-OSS)
+    * Mistral (Magistral models — always-on)
+    * Cohere (Command A Reasoning)
+    * xAI (Grok 3 Mini, Grok 4)
     """
 
     thinking_effort: Literal['low', 'medium', 'high']
@@ -84,6 +87,7 @@ class ModelSettings(TypedDict, total=False):
     * Gemini 3 (via `thinking_level`)
     * OpenAI (o-series, GPT-5+ via `reasoning_effort`)
     * OpenRouter (via `reasoning.effort`)
+    * xAI (Grok 3 Mini only, via `reasoning_effort`)
     """
 ```
 
@@ -96,6 +100,10 @@ class ModelSettings(TypedDict, total=False):
 | `summary` | OpenAI-only feature (`reasoning_summary`). No second provider supports it. | `openai_reasoning` dict |
 | `reasoning_format` | Output formatting concern (Groq/Cerebras), not thinking control. | `groq_reasoning_format`, Cerebras `extra_body` |
 | `max` / `xhigh` / `minimal` / `none` effort | Provider-specific granularity beyond the common `low/medium/high` set. | Provider-specific settings |
+| `token_budget` | Cohere-only budget control. No effort levels available. | `cohere_thinking` (future provider-specific field) |
+| `prompt_mode` | Mistral-only. Controls system prompt, not thinking behavior. | `mistral_prompt_mode` (future provider-specific field) |
+| `encrypted_content` | xAI ZDR privacy feature, grok-4 only. | `xai_include_encrypted_content` |
+| `xai_reasoning_effort` (2 levels) | Only `"low"` / `"high"`, only grok-3-mini. Too narrow for unified API. | `xai_reasoning_effort` (future provider-specific field) |
 
 ---
 
@@ -357,6 +365,38 @@ Maps to OpenRouter's `reasoning` object, letting OpenRouter handle per-provider 
 | `thinking=False` | `disable_reasoning: true` | Lowest effort | Silent ignore (can only `hidden`) |
 | `effort` | Silent ignore (no effort control) | `reasoning_effort` passthrough | Silent ignore |
 
+### Mistral (Magistral)
+
+| Input | Mapping |
+|-------|---------|
+| `thinking=True` | No-op (Magistral always thinks) |
+| `thinking=False` | Silently ignored (thinking cannot be disabled) |
+| `effort` | Silently ignored (no effort control in Mistral API) |
+
+**Note**: Magistral is the simplest provider — zero API parameters for thinking control. The model always produces `ThinkChunk` output. `prompt_mode: "reasoning"` controls the system prompt, not thinking behavior, and stays provider-specific. Most similar to DeepSeek R1.
+
+### Cohere (Command A Reasoning)
+
+| Input | Mapping |
+|-------|---------|
+| `thinking=True` | `Thinking(type='enabled')` or no-op (default enabled) |
+| `thinking=False` | `Thinking(type='disabled')` |
+| `effort` | Silently ignored (Cohere has no effort/level control) |
+
+**Note**: Cohere's `token_budget` stays provider-specific since the unified API is effort-only. Users who need budget control can use `cohere_thinking: Thinking(type='enabled', token_budget=N)` directly. No temperature or tool constraints documented (unique among providers).
+
+### xAI / Grok
+
+| Input | grok-3-mini | grok-4 / reasoning variants | non-reasoning variants |
+|-------|------------|----------------------------|----------------------|
+| `thinking=True` | No-op | No-op (always on) | Silently ignored |
+| `thinking=False` | Silently ignored | Silently ignored | No-op (already off) |
+| `effort='low'` | `reasoning_effort: "low"` | Silently ignored | Silently ignored |
+| `effort='medium'` | `reasoning_effort: "low"` (downmap) | Silently ignored | Silently ignored |
+| `effort='high'` | `reasoning_effort: "high"` | Silently ignored | Silently ignored |
+
+**Note**: xAI uses a unique model-variant pattern — `grok-4-fast-reasoning` vs `grok-4-fast-non-reasoning` are separate model names, not a parameter toggle. Only `grok-3-mini` has `reasoning_effort` with 2 levels (`"low"` / `"high"`). Our 3-level `low/medium/high` maps conservatively: `low`+`medium` → `"low"`, `high` → `"high"`. `encrypted_content` stays in `XaiModelSettings` (ZDR privacy feature, grok-4 only).
+
 ---
 
 ## 8. Terminology
@@ -392,12 +432,18 @@ Use **"thinking"** consistently in all user-facing text (settings, docstrings, e
 - [ ] OpenRouter: map to `reasoning` object, let OpenRouter handle translation
 - [ ] Groq: enable/disable via `reasoning_format`, silent drop for effort
 - [ ] Cerebras: model-family dispatch, silent drop for unsupported features
+- [ ] Mistral: no-op (always-on, no config params to send)
+- [ ] Cohere: map to `cohere.Thinking(type=..., token_budget=...)`, silent drop for effort
+- [ ] xAI: `reasoning_effort` for grok-3-mini (low+medium→low, high→high), silent drop for others
 
 ### Profile Updates
 - [ ] All profile files: use `in` instead of `startswith` for model name checks
 - [ ] Remove `effort_to_budget_map` and `default_thinking_budget` from all profiles
 - [ ] Remove `supports_thinking_level` from Google profiles
 - [ ] Keep `supports_thinking` and `thinking_always_enabled` accurate per model
+- [ ] `profiles/mistral.py`: Add `thinking_always_enabled=True` for Magistral
+- [ ] `profiles/cohere.py`: Add `supports_thinking=True` for `command-a-reasoning`
+- [ ] `profiles/grok.py`: Add `supports_thinking`, `thinking_always_enabled` based on model variant
 
 ### Tests
 - [ ] Remove all `UserError` assertion tests for unsupported thinking combos
