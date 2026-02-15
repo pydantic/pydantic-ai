@@ -534,6 +534,34 @@ agent = Agent(model)
 ...
 ```
 
+### Forge
+
+[Forge](https://github.com/TensorBlock/forge) is an open-source LLM router that provides unified access to 40+ AI providers through a single API. Create an API key at [forge.tensorblock.co](https://forge.tensorblock.co). Model names use the format `Provider/model-name` (e.g., `OpenAI/gpt-4o`).
+
+You can set the `FORGE_API_KEY` environment variable and use [`ForgeProvider`][pydantic_ai.providers.forge.ForgeProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('forge:OpenAI/gpt-4o')
+...
+```
+
+Or initialise the model and provider directly:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.forge import ForgeProvider
+
+model = OpenAIChatModel(
+    'OpenAI/gpt-4o',
+    provider=ForgeProvider(api_key='your-forge-api-key'),
+)
+agent = Agent(model)
+...
+```
+
 ### Fireworks AI
 
 Go to [Fireworks.AI](https://fireworks.ai/) and create an API key in your account settings.

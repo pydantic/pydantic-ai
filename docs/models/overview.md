@@ -23,6 +23,7 @@ In addition, many providers are compatible with the OpenAI API, and can be used 
 - [Azure AI Foundry](openai.md#azure-ai-foundry)
 - [DeepSeek](openai.md#deepseek)
 - [Fireworks AI](openai.md#fireworks-ai)
+- [Forge](openai.md#forge)
 - [GitHub Models](openai.md#github-models)
 - [Heroku](openai.md#heroku-ai)
 - [LiteLLM](openai.md#litellm)

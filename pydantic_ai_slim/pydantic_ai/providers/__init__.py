@@ -157,6 +157,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .sambanova import SambaNovaProvider
 
         return SambaNovaProvider
+    elif provider == 'forge':
+        from .forge import ForgeProvider
+
+        return ForgeProvider
     elif provider == 'outlines':
         from .outlines import OutlinesProvider
 
