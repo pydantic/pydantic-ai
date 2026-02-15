@@ -2,7 +2,7 @@ Small but complete example of using Pydantic AI to build a support agent for a b
 
 Demonstrates:
 
-- [dynamic system prompt](../agents.md#system-prompts)
+- [dynamic system prompt](../agent.md#system-prompts)
 - [structured `output_type`](../output.md#structured-output)
 - [tools](../tools.md)
 
@@ -14,7 +14,7 @@ With [dependencies installed and environment variables set](./setup.md#usage), r
 python/uv-run -m pydantic_ai_examples.bank_support
 ```
 
-(or `PYDANTIC_AI_MODEL=gemini-2.5-flash ...`)
+(or `PYDANTIC_AI_MODEL=gemini-3-flash-preview ...`)
 
 ## Example Code
 
