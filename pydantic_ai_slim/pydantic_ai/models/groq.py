@@ -41,6 +41,7 @@ from ..messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    is_multi_modal_content,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.groq import GroqModelProfile
@@ -483,30 +484,10 @@ class GroqModel(Model):
                 tool_content_parts: list[str] = []
 
                 for item in part.content_items(mode='str'):
-                    if isinstance(item, (BinaryContent, ImageUrl)):
-                        if isinstance(item, BinaryContent) and not item.is_image:
-                            raise NotImplementedError('Only images are supported for binary content in Groq.')
+                    if is_multi_modal_content(item):
                         tool_content_parts.append(f'See file {item.identifier}.')
                         file_content.append(f'This is file {item.identifier}:')
-                        if isinstance(item, ImageUrl) and item.force_download:
-                            downloaded = await download_item(item, data_format='bytes')
-                            file_content.append(
-                                BinaryContent(data=downloaded['data'], media_type=downloaded['data_type'])
-                            )
-                        else:
-                            file_content.append(item)
-                    elif isinstance(item, AudioUrl):
-                        raise NotImplementedError(
-                            'Only images are supported for multimodal content in Groq tool returns.'
-                        )
-                    elif isinstance(item, VideoUrl):
-                        raise NotImplementedError(
-                            'Only images are supported for multimodal content in Groq tool returns.'
-                        )
-                    elif isinstance(item, DocumentUrl):
-                        raise NotImplementedError(
-                            'Only images are supported for multimodal content in Groq tool returns.'
-                        )
+                        file_content.append(item)
                     else:
                         assert isinstance(item, str)
                         tool_content_parts.append(item)

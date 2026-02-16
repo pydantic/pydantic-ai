@@ -5189,6 +5189,13 @@ def test_tool_return_part_binary_content_serialization():
     assert tool_return.model_response_object() == snapshot({})
 
 
+def test_multi_modal_content_types_matches_union():
+    """Verify MULTI_MODAL_CONTENT_TYPES derived from get_args matches the expected set of types."""
+    from pydantic_ai.messages import MULTI_MODAL_CONTENT_TYPES
+
+    assert set(MULTI_MODAL_CONTENT_TYPES) == {ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent}
+
+
 def test_tool_return_part_list_structure_preserved():
     """Test that model_response_object preserves list structure when content is a list."""
     single_dict = {'result': 'found'}
@@ -5235,33 +5242,29 @@ def test_tool_return_part_content_items():
 
     # Multimodal-only content
     p_file = ToolReturnPart(tool_name='t', content=img, tool_call_id='c4')
-    assert p_file.content_items(mode='str') == snapshot(
-        [ImageUrl(url='https://example.com/img.png', media_type='image/jpeg')]
-    )
-    assert p_file.content_items(mode='json') == snapshot(
-        [ImageUrl(url='https://example.com/img.png', media_type='image/jpeg')]
-    )
+    assert p_file.content_items(mode='str') == snapshot([ImageUrl(url='https://example.com/img.png')])
+    assert p_file.content_items(mode='json') == snapshot([ImageUrl(url='https://example.com/img.png')])
 
     # Mixed content (data + files in a list)
     p_mixed = ToolReturnPart(tool_name='t', content=['text result', img, binary], tool_call_id='c5')
     assert p_mixed.content_items() == snapshot(
         [
             'text result',
-            ImageUrl(url='https://example.com/img.png', media_type='image/jpeg'),
+            ImageUrl(url='https://example.com/img.png'),
             BinaryContent(data=b'\x89PNG', media_type='image/png'),
         ]
     )
     assert p_mixed.content_items(mode='str') == snapshot(
         [
             'text result',
-            ImageUrl(url='https://example.com/img.png', media_type='image/jpeg'),
+            ImageUrl(url='https://example.com/img.png'),
             BinaryContent(data=b'\x89PNG', media_type='image/png'),
         ]
     )
     assert p_mixed.content_items(mode='json') == snapshot(
         [
             'text result',
-            ImageUrl(url='https://example.com/img.png', media_type='image/jpeg'),
+            ImageUrl(url='https://example.com/img.png'),
             BinaryContent(data=b'\x89PNG', media_type='image/png'),
         ]
     )
@@ -5270,6 +5273,38 @@ def test_tool_return_part_content_items():
     p_list = ToolReturnPart(tool_name='t', content=[{'a': 1}, {'b': 2}], tool_call_id='c6')
     assert p_list.content_items(mode='str') == snapshot(['{"a":1}', '{"b":2}'])
     assert p_list.content_items(mode='json') == snapshot([{'a': 1}, {'b': 2}])
+
+
+def test_tool_return_part_files_property():
+    """Test ToolReturnPart.files extracts multimodal content from different content types."""
+    img = ImageUrl(url='https://example.com/img.png')
+    audio = AudioUrl(url='https://example.com/audio.mp3')
+    binary = BinaryContent(data=b'\x89PNG', media_type='image/png')
+
+    # Scalar content has no files
+    p_str = ToolReturnPart(tool_name='t', content='hello', tool_call_id='c1')
+    assert p_str.files == snapshot([])
+
+    p_dict = ToolReturnPart(tool_name='t', content={'key': 'val'}, tool_call_id='c2')
+    assert p_dict.files == snapshot([])
+
+    # Single file content
+    p_file = ToolReturnPart(tool_name='t', content=img, tool_call_id='c3')
+    assert p_file.files == snapshot([ImageUrl(url='https://example.com/img.png')])
+
+    # Mixed content extracts only files
+    p_mixed = ToolReturnPart(tool_name='t', content=['text', img, {'data': 1}, audio, binary], tool_call_id='c4')
+    assert p_mixed.files == snapshot(
+        [
+            ImageUrl(url='https://example.com/img.png'),
+            AudioUrl(url='https://example.com/audio.mp3'),
+            BinaryContent(data=b'\x89PNG', media_type='image/png'),
+        ]
+    )
+
+    # List with no files
+    p_no_files = ToolReturnPart(tool_name='t', content=['a', 'b'], tool_call_id='c5')
+    assert p_no_files.files == snapshot([])
 
 
 def test_tool_return_part_response_methods_with_files():

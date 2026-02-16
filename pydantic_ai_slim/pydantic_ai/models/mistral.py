@@ -13,9 +13,8 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._run_context import RunContext
 from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
-from ..exceptions import ModelAPIError, UserError
+from ..exceptions import ModelAPIError
 from ..messages import (
-    AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
@@ -37,6 +36,7 @@ from ..messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    is_multi_modal_content,
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
@@ -529,40 +529,17 @@ class MistralModel(Model):
         """Map a ToolReturnPart to a text string and any file content for a trailing user message.
 
         Mistral's ToolMessage only accepts string content, so multimodal files are extracted
-        and sent in a separate user message via the fallback pattern.
+        and sent in a separate user message via the fallback pattern. Validation of supported
+        file types is handled by `_map_user_prompt`.
         """
         tool_content_parts: list[str] = []
         file_content: list[UserContent] = []
 
         for item in part.content_items(mode='str'):
-            if isinstance(item, ImageUrl):
+            if is_multi_modal_content(item):
                 tool_content_parts.append(f'See file {item.identifier}.')
                 file_content.append(f'This is file {item.identifier}:')
-                if item.force_download:
-                    downloaded = await download_item(item, data_format='bytes')
-                    file_content.append(BinaryContent(data=downloaded['data'], media_type=downloaded['data_type']))
-                else:
-                    file_content.append(item)
-            elif isinstance(item, BinaryContent):
-                if item.is_image or item.media_type == 'application/pdf':
-                    tool_content_parts.append(f'See file {item.identifier}.')
-                    file_content.append(f'This is file {item.identifier}:')
-                    file_content.append(item)
-                else:
-                    raise UserError(f'Unsupported binary content type for Mistral tool returns: {item.media_type}')
-            elif isinstance(item, DocumentUrl):
-                if item.media_type == 'application/pdf':
-                    tool_content_parts.append(f'See file {item.identifier}.')
-                    file_content.append(f'This is file {item.identifier}:')
-                    if item.force_download:
-                        downloaded = await download_item(item, data_format='bytes')
-                        file_content.append(BinaryContent(data=downloaded['data'], media_type=downloaded['data_type']))
-                    else:
-                        file_content.append(item)
-                else:
-                    raise UserError('DocumentUrl other than PDF is not supported for Mistral tool returns.')
-            elif isinstance(item, (AudioUrl, VideoUrl)):
-                raise UserError(f'{type(item).__name__} is not supported for Mistral tool returns.')
+                file_content.append(item)
             else:
                 assert isinstance(item, str)
                 tool_content_parts.append(item)

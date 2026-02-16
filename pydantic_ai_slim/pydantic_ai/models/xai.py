@@ -40,6 +40,7 @@ from ..messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    is_multi_modal_content,
 )
 from ..models import (
     Model,
@@ -497,7 +498,8 @@ class XaiModel(Model):
         """Map a `ToolReturnPart` to xAI tool_result format, handling multimodal content.
 
         xAI tool_result only accepts text strings, so multimodal files are extracted
-        and returned for sending as a separate user message.
+        and returned for sending as a separate user message. Validation of supported
+        file types is handled by `_map_user_prompt`.
 
         Returns:
             Tuple of (tool_result_text, file_content_for_user_message)
@@ -506,18 +508,10 @@ class XaiModel(Model):
         file_content: list[UserContent] = []
 
         for item in part.content_items(mode='str'):
-            if isinstance(item, (BinaryContent, ImageUrl, DocumentUrl)):
-                if isinstance(item, BinaryContent) and item.is_audio:
-                    _raise_unsupported_media_type('AudioUrl/BinaryContent with audio')
-                if isinstance(item, BinaryContent) and item.is_video:
-                    _raise_unsupported_media_type('VideoUrl/BinaryContent with video')
+            if is_multi_modal_content(item):
                 tool_content_parts.append(f'See file {item.identifier}.')
                 file_content.append(f'This is file {item.identifier}:')
                 file_content.append(item)
-            elif isinstance(item, AudioUrl):
-                _raise_unsupported_media_type('AudioUrl')
-            elif isinstance(item, VideoUrl):
-                _raise_unsupported_media_type('VideoUrl')
             else:
                 assert isinstance(item, str)
                 tool_content_parts.append(item)

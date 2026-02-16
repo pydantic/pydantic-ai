@@ -721,22 +721,12 @@ class BedrockConverseModel(Model):
                                 file_block = await self._map_file_to_content_block(item, document_count)
                                 if file_block is not None:
                                     kind = next(k for k in ('image', 'document', 'video') if k in file_block)
-                                    if kind in profile.bedrock_supported_types_in_tool_returns:
+                                    if kind in profile.bedrock_supported_media_kinds_in_tool_returns:
                                         tool_result_content.append(file_block)
-                                    elif 'image' in file_block:  # pragma: no cover
-                                        tool_result_content.append({'text': f'See file {item.identifier}.'})
-                                        sibling_content.append({'text': f'This is file {item.identifier}:'})
-                                        sibling_content.append({'image': file_block['image']})
-                                    elif 'document' in file_block:
-                                        tool_result_content.append({'text': f'See file {item.identifier}.'})
-                                        sibling_content.append({'text': f'This is file {item.identifier}:'})
-                                        sibling_content.append({'document': file_block['document']})
-                                    elif 'video' in file_block:
-                                        tool_result_content.append({'text': f'See file {item.identifier}.'})
-                                        sibling_content.append({'text': f'This is file {item.identifier}:'})
-                                        sibling_content.append({'video': file_block['video']})
                                     else:
-                                        assert_never(file_block)
+                                        tool_result_content.append({'text': f'See file {item.identifier}.'})
+                                        sibling_content.append({'text': f'This is file {item.identifier}:'})
+                                        sibling_content.append(file_block)  # pyright: ignore[reportArgumentType]
                                 elif isinstance(item, BinaryContent):
                                     raise NotImplementedError(
                                         f'Unsupported binary content type for Bedrock tool returns: {item.media_type}'

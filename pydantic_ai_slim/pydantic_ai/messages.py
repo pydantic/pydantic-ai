@@ -878,7 +878,7 @@ class BaseToolReturnPart:
         return self._split_content()[1]
 
     @property
-    def _content_excluding_files(self) -> list[Any]:
+    def _non_file_content(self) -> list[Any]:
         return self._split_content()[0]
 
     def content_items(self, *, mode: Literal['raw', 'str', 'json'] = 'raw') -> list[ToolReturnContent]:
@@ -916,7 +916,7 @@ class BaseToolReturnPart:
 
         This excludes multimodal files - use `.files` to get those separately.
         """
-        data = self._content_excluding_files
+        data = self._non_file_content
         if not data:
             return ''
         # Unwrap single-item list when content was scalar or when files were filtered out,
@@ -935,7 +935,7 @@ class BaseToolReturnPart:
         This excludes multimodal files - use `files` to get those separately.
         Gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict.
         """
-        data = self._content_excluding_files
+        data = self._non_file_content
         if not data:
             return {}
         # Unwrap single-item list when content was scalar or when files were filtered out,

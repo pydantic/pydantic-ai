@@ -61,6 +61,7 @@ from ..messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    is_multi_modal_content,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
@@ -1139,7 +1140,7 @@ class OpenAIChatModel(Model):
                 tool_content_parts: list[str] = []
 
                 for item in part.content_items(mode='str'):
-                    if isinstance(item, (BinaryContent, ImageUrl, AudioUrl, DocumentUrl, VideoUrl)):
+                    if is_multi_modal_content(item):
                         tool_content_parts.append(f'See file {item.identifier}.')
                         file_content.append(f'This is file {item.identifier}:')
                         file_content.append(item)

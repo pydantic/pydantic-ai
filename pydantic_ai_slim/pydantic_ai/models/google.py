@@ -699,7 +699,7 @@ class GoogleModel(Model):
         For Gemini 3+ models with supported MIME types, files are sent inside
         `function_response.parts` for efficiency. Unsupported types become separate
         parts after the function_response (fallback strategy).
-        See: https://ai.google.dev/gemini-api/docs/function-calling#multimodal
+        See: https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#multimodal
         """
         supported_mime_types = GoogleModelProfile.from_profile(self.profile).google_supported_mime_types_in_tool_returns
 

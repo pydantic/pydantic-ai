@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from vcr.cassette import Cassette
 
 from pydantic_ai import Agent, BinaryContent, BinaryImage
-from pydantic_ai.exceptions import ModelHTTPError, UserError
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     AudioUrl,
     DocumentUrl,
@@ -93,10 +93,18 @@ ProviderName = Literal[
     'mistral',
     'xai',
 ]
+PROVIDERS = [pytest.param(name, id=name) for name in ProviderName.__args__]
+
 FileType = Literal['image', 'document', 'audio', 'video']
+FILE_TYPES = [pytest.param(t, id=t) for t in FileType.__args__]
+
 ContentSource = Literal['binary', 'url', 'url_force_download']
+CONTENT_SOURCES = [pytest.param(s, id=s) for s in ContentSource.__args__]
+
 ReturnStyle = Literal['direct', 'tool_return_content']
 """Return style: 'direct' = returns file directly, 'tool_return_content' = via ToolReturn.content."""
+RETURN_STYLES = [pytest.param(s, id=s) for s in ReturnStyle.__args__]
+
 Expectation = Literal['native', 'fallback']
 """Expected behavior: 'native' = in tool_result, 'fallback' = separate user msg, 'error' = raises."""
 
@@ -162,15 +170,17 @@ SUPPORT_MATRIX: dict[tuple[ProviderName, FileType], Expectation | ExpectError] =
     ('xai', 'audio'): ExpectError(NotImplementedError, r'(?i)not supported by xAI'),
     ('xai', 'video'): ExpectError(NotImplementedError, r'(?i)not supported by xAI'),
     # Groq: images via fallback, everything else unsupported
+    # Unsupported types are delegated to _map_user_prompt which raises RuntimeError
     ('groq', 'image'): 'fallback',
-    ('groq', 'document'): ExpectError(NotImplementedError, r'images are supported'),
-    ('groq', 'audio'): ExpectError(NotImplementedError, r'images are supported'),
-    ('groq', 'video'): ExpectError(NotImplementedError, r'images are supported'),
+    ('groq', 'document'): ExpectError(RuntimeError, r'(?:DocumentUrl|images are supported).*(?:Groq|binary content)'),
+    ('groq', 'audio'): ExpectError(RuntimeError, r'(?:AudioUrl|images are supported).*(?:Groq|binary content)'),
+    ('groq', 'video'): ExpectError(RuntimeError, r'(?:VideoUrl|images are supported).*(?:Groq|binary content)'),
     # Mistral: images and documents via fallback, audio/video unsupported
+    # Unsupported types are delegated to _map_user_prompt which raises RuntimeError
     ('mistral', 'image'): 'fallback',
     ('mistral', 'document'): 'fallback',
-    ('mistral', 'audio'): ExpectError(UserError, r'(?i)audio.*mistral|mistral.*audio'),
-    ('mistral', 'video'): ExpectError(UserError, r'(?i)video.*mistral|mistral.*video'),
+    ('mistral', 'audio'): ExpectError(RuntimeError, r'(?:Unsupported content type|not supported in Mistral)'),
+    ('mistral', 'video'): ExpectError(RuntimeError, r'(?:VideoUrl|not supported in Mistral)'),
 }
 
 # Overrides for specific (provider, file_type, content_source, return_style) combos where
@@ -191,23 +201,8 @@ ERROR_OVERRIDES: dict[tuple[ProviderName, FileType, ContentSource | None, Return
     ),
     ('openai_responses', 'audio', 'url', None): ExpectError(ModelHTTPError, r'unsupported'),
     ('openai_responses', 'audio', 'url_force_download', None): ExpectError(ModelHTTPError, r'unsupported'),
-    # Groq: tool_return_content non-image falls back to user prompt → RuntimeError
-    ('groq', 'document', None, 'tool_return_content'): ExpectError(
-        RuntimeError, r'(?:images are supported|DocumentUrl is not supported)'
-    ),
-    ('groq', 'audio', None, 'tool_return_content'): ExpectError(
-        RuntimeError, r'(?:images are supported|AudioUrl is not supported)'
-    ),
-    ('groq', 'video', None, 'tool_return_content'): ExpectError(
-        RuntimeError, r'(?:images are supported|VideoUrl is not supported)'
-    ),
-    # Mistral: tool_return_content non-image/pdf falls back to user prompt → RuntimeError
-    ('mistral', 'audio', None, 'tool_return_content'): ExpectError(
-        RuntimeError, r'(?:BinaryContent|AudioUrl|Unsupported content type).*'
-    ),
-    ('mistral', 'video', None, 'tool_return_content'): ExpectError(
-        RuntimeError, r'(?:BinaryContent|VideoUrl|Unsupported content type).*'
-    ),
+    # Groq: tool_return_content errors match the base SUPPORT_MATRIX (all go through _map_user_prompt)
+    # Mistral: tool_return_content errors match the base SUPPORT_MATRIX (all go through _map_user_prompt)
 }
 
 
@@ -518,27 +513,6 @@ def api_keys(
     }
 
 
-PROVIDERS = [pytest.param(name, id=name) for name in MODEL_CONFIGS]
-
-FILE_TYPES = [
-    pytest.param('image', id='image'),
-    pytest.param('document', id='document'),
-    pytest.param('audio', id='audio'),
-    pytest.param('video', id='video'),
-]
-
-CONTENT_SOURCES = [
-    pytest.param('binary', id='binary'),
-    pytest.param('url', id='url'),
-    pytest.param('url_force_download', id='url_force_download'),
-]
-
-RETURN_STYLES = [
-    pytest.param('direct', id='direct'),
-    pytest.param('tool_return_content', id='tool_return_content'),
-]
-
-
 @pytest.mark.parametrize('provider', PROVIDERS)
 @pytest.mark.parametrize('file_type', FILE_TYPES)
 @pytest.mark.parametrize('content_source', CONTENT_SOURCES)
@@ -585,6 +559,8 @@ async def test_multimodal_tool_return_matrix(
         assert_multimodal_result(result.all_messages(), file_type, return_style)
         if cassette_ctx and (pattern := get_cassette_pattern(provider, file_type, content_source)):  # pragma: no branch
             cassette_ctx.verify_contains(pattern)
+        if SUPPORT_MATRIX[(provider, file_type)] == 'fallback' and return_style == 'direct' and cassette_ctx:
+            cassette_ctx.verify_contains('See file')
 
 
 @pytest.mark.parametrize('provider', PROVIDERS)
@@ -611,9 +587,6 @@ async def test_mixed_content_ordering(
         pytest.skip(f'{provider} dependencies not installed')
 
     image_support = SUPPORT_MATRIX[(provider, 'image')]
-    if isinstance(image_support, ExpectError):  # pragma: no cover
-        pytest.skip(f'{provider} does not support images')
-
     model = create_model(provider, api_keys, bedrock_provider, xai_provider, vertex_provider)
     image = make_image_binary(assets_path)
 
@@ -639,6 +612,7 @@ async def test_mixed_content_ordering(
         else:
             cassette_ctx.verify_ordering('Here is the image:', 'metadata')
             cassette_ctx.verify_contains(('/9j/', '_9j_'))
+            cassette_ctx.verify_contains('See file')
 
 
 @pytest.mark.parametrize('provider', PROVIDERS)
@@ -680,9 +654,12 @@ async def test_model_sees_multiple_images(
         usage_limits=UsageLimits(output_tokens_limit=100000),
     )
     assert 'kiwi' in result.output.lower(), f'Model should identify kiwi fruit, got: {result.output}'
+    image_support = SUPPORT_MATRIX[(provider, 'image')]
     if cassette_ctx:  # pragma: no branch
         cassette_ctx.verify_contains(('/9j/', '_9j_'))
         cassette_ctx.verify_contains(('UklGR', 'iVBOR', 'gstatic.com/webp/gallery3/1.png'))
+        if image_support == 'fallback':
+            cassette_ctx.verify_contains('See file')
 
 
 @pytest.mark.skipif(not openai_available(), reason='openai dependencies not installed')
@@ -700,7 +677,7 @@ async def test_vendor_metadata_detail(
         vendor_metadata={'detail': 'high'},
     )
     image_url = ImageUrl(
-        url='https://www.gstatic.com/webp/gallery3/1.png',
+        url=make_image_url().url,
         vendor_metadata={'detail': 'low'},
     )
 
@@ -716,6 +693,7 @@ async def test_vendor_metadata_detail(
     )
     assert result.output, 'Expected non-empty response from model'
     if vcr:  # pragma: no branch
+        # Can't use cassette_ctx fixture here: it requires a 'provider' parametrize arg
         ctx = CassetteContext('openai_responses', vcr, 'test_vendor_metadata_detail', 'test_multimodal_tool_returns')
         ctx.verify_contains('"detail": "high"', '"detail": "low"')
 
@@ -745,6 +723,7 @@ async def test_text_plain_document_anthropic(
         usage_limits=UsageLimits(output_tokens_limit=100000),
     )
     assert result.output, 'Expected non-empty response from model'
+    # Can't use cassette_ctx fixture here: it requires a 'provider' parametrize arg
     ctx = CassetteContext('anthropic', vcr, 'test_text_plain_document_anthropic', 'test_multimodal_tool_returns')
     ctx.verify_contains('Dummy TXT file')
 
@@ -754,7 +733,7 @@ async def test_non_pdf_document_url_error(
     mistral_api_key: str,
     allow_model_requests: None,
 ):
-    """Test that Mistral raises UserError for non-PDF DocumentUrl in tool returns."""
+    """Test that Mistral raises RuntimeError for non-PDF DocumentUrl in tool returns."""
     model = MistralModel('mistral-medium-latest', provider=MistralProvider(api_key=mistral_api_key))
     agent: Agent[None, str] = Agent(model)
 
@@ -762,7 +741,7 @@ async def test_non_pdf_document_url_error(
     def get_file() -> DocumentUrl:
         return DocumentUrl(url='https://example.com/file.txt', media_type='text/plain')
 
-    with pytest.raises(UserError, match='DocumentUrl other than PDF is not supported for Mistral tool returns'):
+    with pytest.raises(RuntimeError, match='DocumentUrl other than PDF is not supported in Mistral'):
         await agent.run(
             'Use the get_file tool to retrieve a file.',
             usage_limits=UsageLimits(output_tokens_limit=100000),
