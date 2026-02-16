@@ -103,6 +103,7 @@ def _find_resources(*, query: str, limit: int = 10) -> list[_Resource]:
     return []
 
 
+# TODO (Douwe): this doesn't actually work :)
 # Both have __name__ == 'Item' to test dedup when different tools share a type name
 class _SearchItem(TypedDict):
     name: str
@@ -168,7 +169,7 @@ The runtime uses a restricted Python subset:
 The last expression evaluated is the return value.
 
 To run independent calls concurrently, fire them first, then `await`, or use `asyncio.gather`:
-```python test="skip" lint="skip"
+```python
 # starts immediately:
 items_future = get_items()
 users_future = get_users()
@@ -188,6 +189,7 @@ items, users = await asyncio.gather(items_future, users_future)
 # Available types:
 
 class _Tag(TypedDict):
+    """A key-value tag."""
     key: str
     value: str
 

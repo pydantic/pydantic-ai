@@ -721,7 +721,8 @@ def _build_type_signature(
             description=desc,
         )
 
-    return TypeSignature(name=name, fields=fields)
+    docstring = schema.get('description') or None
+    return TypeSignature(name=name, docstring=docstring, fields=fields)
 
 
 # =============================================================================

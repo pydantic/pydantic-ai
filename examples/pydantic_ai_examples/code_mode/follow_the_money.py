@@ -1238,7 +1238,7 @@ def _compute_ground_truth() -> list[tuple[str, str, int, float]]:
                             next_layer.append(d)
         current_layer = next_layer
 
-    convergence = []
+    convergence: list[tuple[str, str, int, float]] = []
     for acct_id, srcs in sources.items():
         if len(srcs) >= 2:
             name = _ACCOUNT_NAMES.get(acct_id, acct_id)
@@ -1530,9 +1530,9 @@ async def run_code_mode(toolset: FunctionToolset[None]) -> RunMetrics:
 def verify_results(mode: str) -> None:
     """Check flagged accounts against ground truth and log to logfire."""
     flagged_ids = {r['account_id'] for r in _flagged_accounts}
-    correct = set()
-    missed = set()
-    spurious = set()
+    correct: set[str] = set()
+    missed: set[str] = set()
+    spurious: set[str] = set()
     for fid in flagged_ids:
         if fid in EXPECTED_FLAG_IDS:
             correct.add(fid)
