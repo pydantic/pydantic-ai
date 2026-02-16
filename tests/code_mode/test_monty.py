@@ -138,24 +138,41 @@ async def test_full_description_snapshot():
     description = tools['run_code_with_tools'].tool_def.description
     assert description == snapshot('''\
 
-Use `run_code_with_tools` to write Python code that calls the available functions. You can make a single call or combine multiple steps in a script — use your judgment based on the task.
+Use this tool to run Python code that can call other tools as functions, also known as "code mode" or "programmatic tool calling".
+
+You can use it to:
+- filter tool return data to save context,
+- perform complex operations that would take many model calls using standard tool calling, or
+- pass the result of one tool to another without it entering your context window.
 
 Execution model:
-- Each `run_code_with_tools` call runs in an isolated environment — variables don't persist between calls
-- Functions are async — call with `await`, e.g. `result = await get_items()`
-- To run independent calls concurrently, fire them first, then await:
-  ```python
-  future_a = get_items()    # starts immediately
-  future_b = get_users()    # starts immediately
-  items = await future_a    # wait for results
-  users = await future_b
-  ```
-- The last expression evaluated is the return value
-- Return raw data when it answers the question directly; extract or transform when needed
+- Each call to this tool runs in an isolated environment — variables don't persist between calls
+- All functions are async. You can create new functions for convenience.
 
 
-Syntax note: the runtime uses a restricted Python subset.
-- Imports are not available — use the provided functions and builtins (len, sum, str, etc.) or define your own helpers.
+
+The runtime uses a restricted Python subset:
+- you cannot use the standard library except builtin functions and the following modules: `sys`, `typing`, `asyncio`
+- you cannot use third party libraries
+- you cannot define classes
+
+The last expression evaluated is the return value.
+
+To run independent calls concurrently, fire them first, then `await`, or use `asyncio.gather`:
+```python
+# starts immediately:
+items_future = get_items()
+users_future = get_users()
+
+# wait for results:
+items = await items_future
+users = await users_future
+
+# or equivalently:
+import asyncio
+items, users = await asyncio.gather(items_future, users_future)
+```
+
 
 ```python
 
