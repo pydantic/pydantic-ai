@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import base64
-from asyncio import Lock
 from contextlib import AsyncExitStack
 from dataclasses import KW_ONLY, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+import anyio
 from pydantic import AnyUrl
 from typing_extensions import Self, assert_never
 
@@ -101,7 +101,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         self.max_retries = max_retries
         self.tool_error_behavior = tool_error_behavior
 
-        self._enter_lock: Lock = Lock()
+        self._enter_lock: anyio.Lock = anyio.Lock()
         self._running_count: int = 0
         self._exit_stack: AsyncExitStack | None = None
 
