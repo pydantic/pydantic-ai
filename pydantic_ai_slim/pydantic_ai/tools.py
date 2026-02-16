@@ -544,7 +544,12 @@ class ToolDefinition:
     """
 
     return_schema: ObjectJsonSchema | None = None
-    """The JSON schema for the tool's return value."""
+    """The JSON schema for the tool's return value.
+
+    For models that natively support return schemas, this is passed as a structured field
+    in the tool definition. For other models, it is appended to the tool's description as JSON text.
+    This field is only included when `include_return_schema` resolves to True.
+    """
 
     include_return_schema: bool | None = None
     """Whether to include the return schema in the tool definition sent to the model.

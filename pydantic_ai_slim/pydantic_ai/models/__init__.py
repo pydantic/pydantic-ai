@@ -727,11 +727,12 @@ class Model(ABC):
 
         # For models that don't natively support tool return schemas,
         # inject the return schema as JSON text into the tool description as a fallback
-        if not self.profile.supports_tool_return_schema:
-            params = replace(
-                params,
-                function_tools=[_inject_return_schema_in_description(t) for t in params.function_tools],
-            )
+        if any(t.return_schema is not None for t in params.function_tools):
+            if not self.profile.supports_tool_return_schema:
+                params = replace(
+                    params,
+                    function_tools=[_inject_return_schema_in_description(t) for t in params.function_tools],
+                )
 
         if builtin_tools := params.builtin_tools:
             # Deduplicate builtin tools
@@ -1389,7 +1390,7 @@ def _inject_return_schema_in_description(tool_def: ToolDefinition) -> ToolDefini
     parts.append('Return schema:')
     parts.append(json.dumps(tool_def.return_schema, indent=2))
     description = '\n\n'.join(parts)
-    return replace(tool_def, description=description)
+    return replace(tool_def, description=description, return_schema=None)
 
 
 def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestParameters) -> FinalResultEvent | None:

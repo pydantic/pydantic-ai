@@ -2885,6 +2885,10 @@ def test_tool_return_schema():
         return ToolReturn(return_value='hello', content=[ImageUrl(url='https://example.com/image.jpg')])
 
     @agent.tool_plain
+    def tool_with_return_tool_return_any() -> ToolReturn[Any]:  # pragma: no cover
+        return ToolReturn(return_value='hello')
+
+    @agent.tool_plain
     def tool_with_deferred_return() -> DeferredToolResult:  # pragma: no cover
         return ToolApproved()
 
@@ -2892,7 +2896,7 @@ def test_tool_return_schema():
     def tool_with_return_schema_opted_out() -> int:  # pragma: no cover
         return 42
 
-    with pytest.warns(UserWarning, match=r"Tool 'tool_with_return_tool_return' has `include_return_schema` enabled"):
+    with pytest.warns(UserWarning, match=r"Tool 'tool_with_return_tool_return.*' has `include_return_schema` enabled"):
         result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
     assert json_schema == snapshot(
@@ -3304,6 +3308,19 @@ distinguish multiple files.\
             },
             {
                 'name': 'tool_with_return_tool_return',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': None,
+                'include_return_schema': True,
+            },
+            {
+                'name': 'tool_with_return_tool_return_any',
                 'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
                 'description': None,
                 'outer_typed_dict_key': None,
