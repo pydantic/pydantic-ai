@@ -57,6 +57,9 @@ __all__ = (
     'ResourceAnnotations',
     'ResourceTemplate',
     'ServerCapabilities',
+    'Prompt',
+    'PromptArgument',
+    'Icon',
 )
 
 
@@ -213,19 +216,7 @@ class ResourceTemplate(BaseResource):
         )
 
 
-@dataclass(repr=False, kw_only=True)
-class BasePrompt(ABC):
-    """Base class for MCP prompts."""
-
-    name: str
-    """The programmatic name of the prompt."""
-
-    title: str | None = None
-    """Human-readable title for prompt."""
-
-
-@dataclass(repr=False, kw_only=True)
-class PromptArgument(ABC):
+class PromptArgument(BaseModel):
     """An argument for a prompt template."""
 
     name: str
@@ -235,8 +226,7 @@ class PromptArgument(ABC):
     required: bool | None = None
 
 
-@dataclass(repr=False, kw_only=True)
-class Icon(ABC):
+class Icon(BaseModel):
     """An icon for display in user interfaces."""
 
     src: str
@@ -248,20 +238,26 @@ class Icon(ABC):
     sizes: list[str] | None = None
     """Optional list of strings specifying icon dimensions (e.g., ["48x48", "96x96"])."""
 
-    model_config = ConfigDict(extra='allow')
 
-
-@dataclass(repr=False, kw_only=True)
-class Prompt(BasePrompt):
+class Prompt(BaseModel):
     """A prompt or prompt template that the server offers."""
+
+    name: str
+    """The programmatic name of the prompt."""
+
+    title: str | None = None
+    """Human-readable title for prompt."""
 
     description: str | None = None
     """An optional description of what this prompt provides."""
+
     arguments: list[PromptArgument] | None = None
     """A list of arguments to use for templating the prompt."""
+
     icons: list[Icon] | None = None
     """An optional list of icons for this prompt."""
-    meta: dict[str, Any] | None = Field(alias='_meta', default=None)
+
+    meta: dict[str, Any] | None = None
     """
     See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
     for notes on _meta usage.
