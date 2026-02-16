@@ -101,20 +101,7 @@ class GraphAgentState:
     ) -> None:
         self.retries += 1
         if self.retries > max_result_retries:
-            if (
-                self.message_history
-                and isinstance(model_response := self.message_history[-1], _messages.ModelResponse)
-                and model_response.finish_reason == 'length'
-                and model_response.parts
-                and isinstance(tool_call := model_response.parts[-1], _messages.ToolCallPart)
-            ):
-                try:
-                    tool_call.args_as_dict()
-                except Exception:
-                    max_tokens = model_settings.get('max_tokens') if model_settings else None
-                    raise exceptions.IncompleteToolCall(
-                        f'Model token limit ({max_tokens or "provider default"}) exceeded while generating a tool call, resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
-                    )
+            _check_incomplete_tool_calls(self.message_history, model_settings)
             message = f'Exceeded maximum retries ({max_result_retries}) for output validation'
             if error:
                 if isinstance(error, exceptions.UnexpectedModelBehavior) and error.__cause__ is not None:
@@ -975,6 +962,9 @@ async def process_tool_calls(  # noqa: C901
                 if not final_result:
                     final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
 
+    # Check for incomplete tool calls from truncated responses before processing
+    _check_incomplete_tool_calls(ctx.state.message_history, ctx.deps.model_settings)
+
     # Then, we handle function tool calls
     calls_to_run: list[_messages.ToolCallPart] = []
     if final_result and ctx.deps.end_strategy == 'early':
@@ -991,8 +981,7 @@ async def process_tool_calls(  # noqa: C901
 
     # Then, we handle unknown tool calls (per-tool retry is handled in _call_tool)
     if tool_calls_by_kind['unknown']:
-        _check_incomplete_tool_calls(ctx.state.message_history, ctx.deps.model_settings)
-    calls_to_run.extend(tool_calls_by_kind['unknown'])
+        calls_to_run.extend(tool_calls_by_kind['unknown'])
 
     calls_to_run_results: dict[str, DeferredToolResult] = {}
     if tool_call_results is not None:
@@ -1169,10 +1158,13 @@ async def _call_tools(  # noqa: C901
                             if event := await handle_call_or_result(coro_or_task=task, index=index):  # pyright: ignore[reportArgumentType]
                                 yield event
 
-            except BaseException:
+            except asyncio.CancelledError as e:
+                for task in tasks:
+                    task.cancel(msg=e.args[0] if e.args else None)
+                raise
+            except Exception:
                 for task in tasks:
                     task.cancel()
-
                 raise
 
     # We append the results at the end, rather than as they are received, to retain a consistent ordering

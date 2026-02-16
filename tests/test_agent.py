@@ -7783,6 +7783,8 @@ async def test_image_output_validators_run_stream():
     """Test that output validators are called when streaming a model image response."""
     validator_called = False
 
+    # FunctionModel's stream_function only supports str | DeltaToolCalls | DeltaThinkingCalls,
+    # so we need custom Model/StreamedResponse subclasses to stream a FilePart.
     class ImageStreamedResponse(StreamedResponse):
         async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
             self._usage = RequestUsage()
