@@ -586,7 +586,6 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
         'azure',
         'deepseek',
         'fireworks',
-        'forge',
         'grok',
         'nebius',
         'openrouter',

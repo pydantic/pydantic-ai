@@ -185,6 +185,7 @@ def test_docs_examples(
     env.set('OVHCLOUD_API_KEY', 'testing')
     env.set('ALIBABA_API_KEY', 'testing')
     env.set('SAMBANOVA_API_KEY', 'testing')
+    env.set('FORGE_API_KEY', 'testing')
     env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'testing')
     env.set('VOYAGE_API_KEY', 'testing')
     env.set('XAI_API_KEY', 'testing')

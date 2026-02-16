@@ -21,6 +21,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.fireworks import FireworksProvider
+    from pydantic_ai.providers.forge import ForgeProvider
     from pydantic_ai.providers.github import GitHubProvider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.groq import GroqProvider
@@ -53,6 +54,7 @@ with try_import() as imports_successful:
         ('xai', XaiProvider, 'XAI_API_KEY'),
         ('moonshotai', MoonshotAIProvider, 'MOONSHOTAI_API_KEY'),
         ('fireworks', FireworksProvider, 'FIREWORKS_API_KEY'),
+        ('forge', ForgeProvider, 'FORGE_API_KEY'),
         ('together', TogetherProvider, 'TOGETHER_API_KEY'),
         ('heroku', HerokuProvider, 'HEROKU_INFERENCE_KEY'),
         ('github', GitHubProvider, 'GITHUB_API_KEY'),

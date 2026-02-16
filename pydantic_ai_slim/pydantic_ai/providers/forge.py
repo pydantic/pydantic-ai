@@ -7,7 +7,14 @@ import httpx
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+from pydantic_ai.profiles.anthropic import anthropic_model_profile
+from pydantic_ai.profiles.deepseek import deepseek_model_profile
+from pydantic_ai.profiles.google import google_model_profile
+from pydantic_ai.profiles.grok import grok_model_profile
+from pydantic_ai.profiles.meta import meta_model_profile
+from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -39,7 +46,30 @@ class ForgeProvider(Provider[AsyncOpenAI]):
         return self._client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
-        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
+        """Get model profile based on the provider prefix in the model name.
+
+        Forge model names use the format `Provider/model-name` (e.g., `OpenAI/gpt-4o`).
+        The provider prefix is used to delegate to the appropriate profile function.
+        """
+        provider_to_profile = {
+            'openai': openai_model_profile,
+            'anthropic': anthropic_model_profile,
+            'google': google_model_profile,
+            'mistralai': mistral_model_profile,
+            'meta-llama': meta_model_profile,
+            'deepseek': deepseek_model_profile,
+            'x-ai': grok_model_profile,
+            'qwen': qwen_model_profile,
+        }
+
+        profile = None
+        if '/' in model_name:
+            provider, model = model_name.split('/', 1)
+            provider_lower = provider.lower()
+            if provider_lower in provider_to_profile:
+                profile = provider_to_profile[provider_lower](model)
+
+        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
 
     def __init__(
         self,
