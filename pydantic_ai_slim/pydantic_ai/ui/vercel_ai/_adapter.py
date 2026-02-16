@@ -88,7 +88,7 @@ def _safe_args_as_dict(part: ToolCallPart | BuiltinToolCallPart) -> dict[str, An
     """
     try:
         return part.args_as_dict()
-    except Exception:
+    except (ValueError, AssertionError):
         return part.args_as_json_str()
 
 
