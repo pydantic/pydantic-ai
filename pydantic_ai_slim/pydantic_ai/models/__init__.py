@@ -1111,12 +1111,18 @@ _LEGACY_MODEL_PREFIXES: dict[str, str] = {
 
 
 def parse_model_id(model: str) -> tuple[str | None, str]:
-    """Parse a model id into (provider_name, model_name).
+    """Parse a model id string into its provider and model name components.
 
     Handles both the modern `provider:model` format and legacy model names
-    that start with known prefixes (e.g., `gpt-4`, `claude-3`). If the
-    provider can't be inferred, returns `(None, model)` so callers can decide
-    how to handle unknown providers.
+    that start with known prefixes (e.g., `gpt-4`, `claude-3`).
+
+    Args:
+        model: A model identifier string, either `provider:model_name` or a legacy
+            prefix-based name.
+
+    Returns:
+        A tuple of `(provider_name, model_name)`. If the provider can't be inferred,
+        returns `(None, model)` so callers can decide how to handle unknown providers.
     """
     if ':' in model:
         provider_name, model_name = model.split(':', maxsplit=1)
@@ -1132,13 +1138,31 @@ def parse_model_id(model: str) -> tuple[str | None, str]:
 
 
 def infer_model_profile(model: str) -> ModelProfile:
-    """Infer the model profile without constructing a provider."""
+    """Infer the model profile from a model id string without constructing a provider.
+
+    Uses `Provider.model_profile` class methods to look up the profile for the given model.
+    Returns `DEFAULT_PROFILE` for unknown or unrecognized providers.
+
+    Note: This returns the raw provider profile **without** intersecting with
+    `Model.supported_builtin_tools()`, unlike `Model.profile`. This means the returned
+    profile may claim support for builtin tools that a specific `Model` subclass doesn't
+    implement. This is acceptable for best-effort scenarios (e.g. `TemporalModel` with
+    unregistered model strings) where the actual `Model` class isn't available.
+
+    Args:
+        model: A model identifier string (e.g. `'openai:gpt-5'`, `'anthropic:claude-sonnet-4-5'`).
+
+    Returns:
+        The inferred `ModelProfile`, or `DEFAULT_PROFILE` if the provider is unknown.
+    """
     provider, model_name = parse_model_id(model)
     if provider is None:
         return DEFAULT_PROFILE
 
     if provider == 'vertexai':  # pragma: no cover
         provider = 'google-vertex'
+    elif provider == 'google':
+        provider = 'google-gla'
 
     if provider.startswith('gateway/'):
         from ..providers.gateway import normalize_gateway_provider

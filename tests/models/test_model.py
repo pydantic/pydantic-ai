@@ -297,6 +297,7 @@ def test_parse_model_id(model_id: str, expected: tuple[str | None, str]):
         pytest.param('unknown-provider:some-model', True, id='unknown-provider'),
         pytest.param('unknown-model', True, id='unknown-no-prefix'),
         pytest.param('nebius:model-without-slash', False, id='provider-unknown-model'),
+        pytest.param('google:gemini-2.0-flash', False, id='google-shorthand'),
     ],
 )
 def test_infer_model_profile(model_id: str, is_default: bool):
@@ -307,10 +308,36 @@ def test_infer_model_profile(model_id: str, is_default: bool):
         assert profile is not DEFAULT_PROFILE
 
 
-def test_infer_model_profile_matches_provider():
+@pytest.mark.parametrize(
+    ('model_id', 'provider_path', 'model_name'),
+    [
+        pytest.param('openai:gpt-5', 'pydantic_ai.providers.openai.OpenAIProvider', 'gpt-5', id='openai'),
+        pytest.param(
+            'anthropic:claude-sonnet-4-5',
+            'pydantic_ai.providers.anthropic.AnthropicProvider',
+            'claude-sonnet-4-5',
+            id='anthropic',
+        ),
+        pytest.param(
+            'google-gla:gemini-2.0-flash',
+            'pydantic_ai.providers.google.GoogleProvider',
+            'gemini-2.0-flash',
+            id='google-gla',
+        ),
+        pytest.param(
+            'google:gemini-2.0-flash',
+            'pydantic_ai.providers.google.GoogleProvider',
+            'gemini-2.0-flash',
+            id='google-shorthand',
+        ),
+    ],
+)
+def test_infer_model_profile_matches_provider(model_id: str, provider_path: str, model_name: str):
     """Verify infer_model_profile returns the same profile as the provider's model_profile."""
-    from pydantic_ai.providers.openai import OpenAIProvider
+    module_path, class_name = provider_path.rsplit('.', 1)
+    module = import_module(module_path)
+    provider_class = getattr(module, class_name)
 
-    profile = infer_model_profile('openai:gpt-5')
-    provider_profile = OpenAIProvider.model_profile('gpt-5')
+    profile = infer_model_profile(model_id)
+    provider_profile = provider_class.model_profile(model_name)
     assert profile == provider_profile
