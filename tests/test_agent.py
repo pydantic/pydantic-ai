@@ -7910,7 +7910,7 @@ async def test_parallel_tool_tasks_cancelled_on_exception():
         raise RuntimeError('tool exploded')
 
     @agent.tool_plain
-    async def slow_tool() -> str:  # pragma: no cover
+    async def slow_tool() -> str:
         nonlocal slow_tool_completed
         await asyncio.sleep(0.05)
         slow_tool_completed = True
