@@ -68,7 +68,8 @@ You can use it to:
 - pass the result of one tool to another without it entering your context window.
 
 Execution model:
-- Each call to this tool runs in an isolated environment — variables don't persist between calls
+- Each call to this tool runs in a completely isolated environment — variables don't persist between calls
+- If a previous call failed, you must rewrite the entire program from scratch — you cannot reference variables or results from a failed attempt
 - All functions are async. You can create new functions for convenience.
 """
 
