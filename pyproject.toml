@@ -248,6 +248,7 @@ filterwarnings = [
     "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
     # random resource warnings; I suspect these are coming from vendor SDKs when running examples..
     "ignore:unclosed <socket:ResourceWarning",
+    "ignore:unclosed <ssl.SSLSocket:ResourceWarning",
     "ignore:unclosed event loop:ResourceWarning",
 ]
 
