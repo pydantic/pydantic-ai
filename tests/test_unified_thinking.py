@@ -309,14 +309,11 @@ class TestGoogleUnifiedThinking:
 
         assert result == {'thinking_level': ThinkingLevel.LOW, 'include_thoughts': False}
 
-    @pytest.mark.parametrize(
-        'effort,expected_level',
-        [('low', ThinkingLevel.LOW), ('medium', ThinkingLevel.MEDIUM), ('high', ThinkingLevel.HIGH)],
-    )
-    def test_effort_maps_to_level_gemini3(
-        self, google_thinking_profile: ModelProfile, effort: str, expected_level: ThinkingLevel
-    ):
+    @pytest.mark.parametrize('effort', ['low', 'medium', 'high'])
+    def test_effort_maps_to_level_gemini3(self, google_thinking_profile: ModelProfile, effort: str):
         """thinking_effort maps to thinking_level on Gemini 3."""
+        expected_level = {'low': ThinkingLevel.LOW, 'medium': ThinkingLevel.MEDIUM, 'high': ThinkingLevel.HIGH}[effort]
+
         model = GoogleModel.__new__(GoogleModel)
         model._model_name = 'gemini-3-flash'
         model._profile = google_thinking_profile
