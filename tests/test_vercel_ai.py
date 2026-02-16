@@ -3518,6 +3518,75 @@ async def test_adapter_dump_messages_deterministic_ids():
     assert result1[2].id == result2[2].id
 
 
+async def test_adapter_dump_messages_custom_id_generator():
+    """Test that dump_messages accepts a custom message ID generator."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='System'),
+                UserPromptPart(content='User'),
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(content='Assistant'),
+            ]
+        ),
+    ]
+
+    generated_ids: list[str] = []
+
+    def custom_id_generator(msg: ModelRequest | ModelResponse, suffix: str) -> str:
+        msg_id = f'custom-{msg.kind}-{suffix or "default"}'
+        generated_ids.append(msg_id)
+        return msg_id
+
+    ui_messages = VercelAIAdapter.dump_messages(messages, generate_message_id=custom_id_generator)
+
+    assert len(ui_messages) == 3
+    assert ui_messages[0].id == 'custom-request-system'
+    assert ui_messages[1].id == 'custom-request-user'
+    assert ui_messages[2].id == 'custom-response-default'
+    assert generated_ids == ['custom-request-system', 'custom-request-user', 'custom-response-default']
+
+
+async def test_adapter_dump_messages_with_invalid_json_args():
+    """Test that dump_messages handles invalid JSON args gracefully."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='test',
+                    args='{invalid json',
+                    tool_call_id='call_1',
+                ),
+            ]
+        ),
+    ]
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {
+                        'type': 'tool-test',
+                        'tool_call_id': 'call_1',
+                        'state': 'input-available',
+                        'provider_executed': False,
+                        'input': '{invalid json',
+                        'call_provider_metadata': None,
+                    }
+                ],
+            }
+        ]
+    )
+
+
 async def test_adapter_dump_messages_text_before_thinking():
     """Test dumping messages where text precedes a thinking part."""
     messages = [

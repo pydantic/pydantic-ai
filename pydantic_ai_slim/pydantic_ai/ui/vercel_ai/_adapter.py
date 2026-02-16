@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -504,11 +504,17 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     def dump_messages(
         cls,
         messages: Sequence[ModelMessage],
+        *,
+        generate_message_id: Callable[[ModelRequest | ModelResponse, str], str] | None = None,
     ) -> list[UIMessage]:
         """Transform Pydantic AI messages into Vercel AI messages.
 
         Args:
             messages: A sequence of ModelMessage objects to convert
+            generate_message_id: Optional custom function to generate message IDs. If provided,
+                it receives the message and a suffix (e.g., 'system', 'user', or empty string
+                for assistant messages) and should return a unique string ID. If not provided,
+                uses a deterministic UUID5-based generator.
 
         Returns:
             A list of UIMessage objects in Vercel AI format
@@ -523,23 +529,24 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     elif isinstance(part, RetryPromptPart) and part.tool_name:
                         tool_results[part.tool_call_id] = part
 
+        id_generator = generate_message_id or _message_id
         result: list[UIMessage] = []
 
         for msg in messages:
             if isinstance(msg, ModelRequest):
                 system_ui_parts, user_ui_parts = cls._dump_request_message(msg)
                 if system_ui_parts:
-                    result.append(UIMessage(id=_message_id(msg, 'system'), role='system', parts=system_ui_parts))
+                    result.append(UIMessage(id=id_generator(msg, 'system'), role='system', parts=system_ui_parts))
 
                 if user_ui_parts:
-                    result.append(UIMessage(id=_message_id(msg, 'user'), role='user', parts=user_ui_parts))
+                    result.append(UIMessage(id=id_generator(msg, 'user'), role='user', parts=user_ui_parts))
 
             elif isinstance(  # pragma: no branch
                 msg, ModelResponse
             ):
                 ui_parts: list[UIMessagePart] = cls._dump_response_message(msg, tool_results)
                 if ui_parts:  # pragma: no branch
-                    result.append(UIMessage(id=_message_id(msg), role='assistant', parts=ui_parts))
+                    result.append(UIMessage(id=id_generator(msg, ''), role='assistant', parts=ui_parts))
             else:
                 assert_never(msg)
 
