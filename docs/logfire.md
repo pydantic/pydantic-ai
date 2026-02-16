@@ -278,13 +278,13 @@ To better align with the GenAI semantic conventions for multimodal inputs (as sp
 
 **URL-based media (ImageUrl, AudioUrl, VideoUrl):**
 
-- Old (v1-3): `{"type": "image-url", "url": "..."}`
-- New (v4): `{"type": "uri", "modality": "image", "uri": "...", "mime_type": "..."}`
+- Old (v1-3) – `{"type": "image-url", "url": "..."}`
+- New (v4) – Uses type='uri' with mime_type fields (and modality for image/audio/video) `{"type": "uri", "modality": "image", "uri": "...", "mime_type": "..."}`
 
 **Inline binary content (BinaryContent, FilePart):**
 
-- Old (v1-3): `{"type": "binary", "media_type": "...", "content": "..."}`
-- New (v4): `{"type": "blob", "modality": "image", "mime_type": "...", "content": "..."}`
+- Old (v1-3) – `{"type": "binary", "media_type": "...", "content": "..."}`
+- New (v4) – Uses type='blob' with mime_type and content fields (and modality for image/audio/video): `{"type": "blob", "modality": "image", "mime_type": "...", "content": "..."}`
 
 To use [OpenTelemetry semantic conventions version 1.36.0](https://github.com/open-telemetry/semantic-conventions/blob/v1.36.0/docs/gen-ai/README.md) or older, pass [`InstrumentationSettings(version=1)`][pydantic_ai.models.instrumented.InstrumentationSettings]. Moreover, those semantic conventions specify that messages should be captured as individual events (logs) that are children of the request span, whereas by default, Pydantic AI instead collects these events into a JSON array which is set as a single large attribute called `events` on the request span. To change this, use `event_mode='logs'`:
 
