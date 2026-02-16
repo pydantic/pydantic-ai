@@ -3,7 +3,7 @@
 
 import re
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any, TypeAlias
 
@@ -305,9 +305,7 @@ def greet(name: str) -> str:
 
 
 async def prepare_greet(ctx: RunContext[str], tool_def: ToolDefinition) -> ToolDefinition | None:
-    d = f'Name of the {ctx.deps} to greet.'
-    tool_def.parameters_json_schema['properties']['name']['description'] = d
-    return tool_def
+    return replace(tool_def, description=f'Greet a {ctx.deps} by name.')
 
 
 greet_tool = Tool(greet, prepare=prepare_greet)
