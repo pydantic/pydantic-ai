@@ -41,8 +41,9 @@ from pydantic_ai import (
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.exceptions import ContentFilterError
-from pydantic_ai.messages import SystemPromptPart
+from pydantic_ai.messages import SystemPromptPart, VideoUrl
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.result import RunUsage
@@ -1453,6 +1454,89 @@ async def test_text_document_as_binary_content_input(
     assert result.output == snapshot(
         'The main content of the document is simply the text "Dummy TXT file." It does not appear to contain any other detailed information.'
     )
+
+
+async def test_yaml_document_as_binary_content_input(allow_model_requests: None, openai_api_key: str):
+    yaml_content = BinaryContent(
+        data=b'version: "3"\nservices:\n  web:\n    image: nginx', media_type='application/yaml'
+    )
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(['What type of configuration is this?', yaml_content])
+    assert result.output == snapshot(
+        'The configuration you provided is a YAML file for Docker Compose. Docker Compose is a tool used for defining and running multi-container Docker applications. In this specific configuration, the YAML file is specifying a single service called `web`, which uses the `nginx` Docker image. The file starts with specifying the Compose file version as "3", indicating the format version used for composing the services.'
+    )
+
+
+async def test_x_yaml_document_as_binary_content_input(allow_model_requests: None, openai_api_key: str):
+    x_yaml_content = BinaryContent(data=b'name: test\nversion: 1.0.0', media_type='application/x-yaml')
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(['What does this YAML describe?', x_yaml_content])
+    assert result.output == snapshot(
+        """\
+The provided YAML snippet is a basic descriptor for something labeled with the name "test" and a version number "1.0.0". Without additional context or accompanying fields, it's difficult to definitively say what specific application or resource this is describing. In a general sense, such a YAML configuration could be used for various purposes, including but not limited to:
+
+1. **Software/Application:** It could describe a software application or component called "test" with version 1.0.0.
+2. **Configuration Management:** It might be a part of a configuration management system for managing different versions of a service or application.
+3. **Package Information:** If used in a package management context, it might represent metadata for a package or library.
+4. **Service Definition:** It could represent a service or microservice within a larger system.
+
+Each of these interpretations would depend on the broader context in which this YAML file is used. Further fields in the YAML file would provide more specificity about its purpose and functionality.\
+"""
+    )
+
+
+async def test_yaml_document_url_input(
+    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+):
+    """Test that YAML files are treated as text-like and get inlined (not sent as file attachments)."""
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+    document_url = DocumentUrl(url='https://raw.githubusercontent.com/pydantic/pydantic-ai/main/mkdocs.yml')
+
+    result = await agent.run(['What is the site_name in this YAML configuration?', document_url])
+    assert result.output == snapshot('The `site_name` in the provided YAML configuration is `"Pydantic AI"`.')
+
+
+def test_is_text_like_media_type():
+    """Test _is_text_like_media_type method for branch coverage."""
+    _is_text_like_media_type = OpenAIChatModel._is_text_like_media_type  # pyright: ignore[reportPrivateUsage]
+
+    assert _is_text_like_media_type('text/plain') is True
+    assert _is_text_like_media_type('text/html') is True
+    assert _is_text_like_media_type('application/json') is True
+    assert _is_text_like_media_type('application/xml') is True
+    assert _is_text_like_media_type('application/yaml') is True
+    assert _is_text_like_media_type('application/x-yaml') is True
+    assert _is_text_like_media_type('application/ld+json') is True
+    assert _is_text_like_media_type('application/soap+xml') is True
+    assert _is_text_like_media_type('application/pdf') is False
+    assert _is_text_like_media_type('image/png') is False
+
+
+async def test_video_url_not_supported(allow_model_requests: None):
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+    agent = Agent(m)
+    with pytest.raises(NotImplementedError, match='VideoUrl is not supported for OpenAI'):
+        await agent.run(['Describe this video', VideoUrl(url='https://example.com/video.mp4')])
+
+
+async def test_document_url_input_not_supported(allow_model_requests: None):
+    m = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(api_key='test'),
+        profile=OpenAIModelProfile(openai_chat_supports_document_input=False),
+    )
+    agent = Agent(m)
+
+    with pytest.raises(
+        UserError,
+        match="'openai' provider does not support document input via the Chat Completions API",
+    ):
+        await agent.run(['Summarize this document', DocumentUrl(url='https://example.com/test.pdf')])
 
 
 async def test_document_as_binary_content_input_with_tool(

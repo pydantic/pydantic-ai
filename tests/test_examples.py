@@ -577,6 +577,8 @@ async def model_logic(  # noqa: C901
             return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
         elif isinstance(m.content, list) and m.content[0] == 'This is file c6720d:':
             return ModelResponse(parts=[TextPart('The document contains just the text "Dummy PDF file."')])
+        elif isinstance(m.content, list) and m.content[0] == 'Summarize this document':
+            return ModelResponse(parts=[TextPart('This document outlines the PDF specification version 1.4.')])
 
         assert isinstance(m.content, str)
         if m.content == 'Tell me a joke.' and any(t.name == 'joke_factory' for t in info.function_tools):
