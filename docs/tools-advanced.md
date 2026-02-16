@@ -372,8 +372,8 @@ Pydantic AI distinguishes between **[function tools](tools.md)** (tools you regi
 |-------|-------------|
 | `'auto'` (default) | Model decides whether to use tools. All tools available. |
 | `'none'` | Disable function tools. Model can respond with text or use output tools. |
-| `'required'` | Force the model to use a tool. All tools remain available. |
-| `['tool_a', ...]` | Restrict to specific tools by name (can include output tool names). |
+| `'required'` | Force the model to use a function tool. Only for [direct model requests](direct.md); raises an error in `agent.run()`. |
+| `['tool_a', ...]` | Restrict to specific tools by name. Only for [direct model requests](direct.md); raises an error in `agent.run()`. |
 | [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput]`(function_tools=['...'])` | Restrict function tools while auto-including all output tools. |
 
 ### Example
@@ -416,6 +416,8 @@ All providers support `'auto'` and `'none'`. Key differences for other options:
 | Google | ✓ | ✓ | |
 | Bedrock | ✓ | Single only | Multiple tools fall back to 'any' mode |
 | Groq/HuggingFace | ✓ | Single only | Multiple tools fall back to 'required' mode |
+| Mistral | ✓ | ✓ | Maps `'required'` to `'any'` mode |
+| xAI | ✓ | ✓ | Some models may not support forcing; falls back to 'auto' |
 
 ## Tool Execution and Retries {#tool-retries}
 

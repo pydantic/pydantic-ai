@@ -149,6 +149,7 @@ class ModelSettings(TypedDict, total=False):
     * Mistral
     * HuggingFace
     * Bedrock
+    * xAI
     """
 
     seed: int

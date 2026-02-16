@@ -550,18 +550,16 @@ class XaiModel(Model):
         tools_param = tools if tools else None
 
         # Determine final tool_choice
-        profile = GrokModelProfile.from_profile(self.profile)
         tool_choice: Literal['none', 'required', 'auto'] | chat_pb2.ToolChoice | None
         if resolved_tool_choice is not None:
             tool_choice = resolved_tool_choice
-        elif not tools_param:
-            tool_choice = None
-        elif not model_request_parameters.allow_text_output and profile.grok_supports_tool_choice_required:
-            tool_choice = 'required'  # pragma: no cover
-        else:
+        elif tools_param:
             tool_choice = 'auto'
+        else:
+            tool_choice = None
 
         # Set response_format based on the output_mode
+        profile = GrokModelProfile.from_profile(self.profile)
         response_format: chat_pb2.ResponseFormat | None = None
         if model_request_parameters.output_mode == 'native':
             output_object = model_request_parameters.output_object

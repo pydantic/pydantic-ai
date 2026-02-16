@@ -915,7 +915,7 @@ class OpenAIChatModel(Model):
             tool_choice = 'required' if supports else 'auto'
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            if len(tool_names) == 1:
+            if tool_choice_mode == 'required' and len(tool_names) == 1:
                 tool_choice = {'type': 'function', 'function': {'name': next(iter(tool_names))}}
             else:
                 # Breaks caching, but OpenAI Chat doesn't support limiting tools via API arg
@@ -1758,7 +1758,7 @@ class OpenAIResponsesModel(Model):
             tool_choice = 'required' if supports else 'auto'
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            if len(tool_names) == 1:
+            if tool_choice_mode == 'required' and len(tool_names) == 1:
                 tool_choice = ToolChoiceFunctionParam(type='function', name=next(iter(tool_names)))
             else:
                 tool_choice = ToolChoiceAllowedParam(
