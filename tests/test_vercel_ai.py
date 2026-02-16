@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from collections.abc import AsyncIterator, MutableMapping
 from typing import Any, cast
 
@@ -3494,25 +3495,34 @@ async def test_adapter_dump_load_roundtrip_without_timestamps():
 async def test_adapter_dump_messages_deterministic_ids():
     """Test that dump_messages produces deterministic IDs for the same messages.
 
+    Uses provider_response_id for responses and run_id-based IDs for requests.
     Regression test for https://github.com/pydantic/pydantic-ai/issues/4263
     """
-    messages = [
+    messages: list[ModelMessage] = [
         ModelRequest(
             parts=[
                 SystemPromptPart(content='You are a helpful assistant.'),
                 UserPromptPart(content='Hello!'),
-            ]
+            ],
+            run_id='run-abc',
         ),
         ModelResponse(
             parts=[
                 TextPart(content='Hi there!'),
-            ]
+            ],
+            provider_response_id='resp-123',
         ),
     ]
 
     result1 = VercelAIAdapter.dump_messages(messages)
     result2 = VercelAIAdapter.dump_messages(messages)
 
+    # run_id-based IDs for request parts (output_index 0 and 1)
+    assert result1[0].id == 'run-abc-0'
+    assert result1[1].id == 'run-abc-1'
+    # provider_response_id used directly for response
+    assert result1[2].id == 'resp-123'
+    # Deterministic across calls
     assert result1[0].id == result2[0].id
     assert result1[1].id == result2[1].id
     assert result1[2].id == result2[2].id
@@ -3536,8 +3546,8 @@ async def test_adapter_dump_messages_custom_id_generator():
 
     generated_ids: list[str] = []
 
-    def custom_id_generator(msg: ModelRequest | ModelResponse, suffix: str, index: int) -> str:
-        msg_id = f'custom-{index}-{msg.kind}-{suffix or "default"}'
+    def custom_id_generator(msg: ModelRequest | ModelResponse, role: str, output_index: int) -> str:
+        msg_id = f'custom-{output_index}-{msg.kind}-{role}'
         generated_ids.append(msg_id)
         return msg_id
 
@@ -3545,9 +3555,44 @@ async def test_adapter_dump_messages_custom_id_generator():
 
     assert len(ui_messages) == 3
     assert ui_messages[0].id == 'custom-0-request-system'
-    assert ui_messages[1].id == 'custom-0-request-user'
-    assert ui_messages[2].id == 'custom-1-response-default'
-    assert generated_ids == ['custom-0-request-system', 'custom-0-request-user', 'custom-1-response-default']
+    assert ui_messages[1].id == 'custom-1-request-user'
+    assert ui_messages[2].id == 'custom-2-response-assistant'
+    assert generated_ids == [
+        'custom-0-request-system',
+        'custom-1-request-user',
+        'custom-2-response-assistant',
+    ]
+
+
+async def test_adapter_dump_messages_id_fallback():
+    """Test that messages without run_id or provider_response_id get deterministic UUID5 IDs."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='System'),
+                UserPromptPart(content='User'),
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(content='Assistant'),
+            ]
+        ),
+    ]
+
+    result1 = VercelAIAdapter.dump_messages(messages)
+    result2 = VercelAIAdapter.dump_messages(messages)
+
+    # All IDs should be valid UUID strings (UUID5 fallback)
+    for msg in result1:
+        uuid.UUID(msg.id)
+
+    # Deterministic across calls
+    assert [m.id for m in result1] == [m.id for m in result2]
+
+    # Each ID should be unique
+    ids = [m.id for m in result1]
+    assert len(ids) == len(set(ids))
 
 
 async def test_adapter_dump_messages_with_invalid_json_args():

@@ -68,16 +68,21 @@ __all__ = ['VercelAIAdapter']
 request_data_ta: TypeAdapter[RequestData] = TypeAdapter(RequestData)
 
 
-def _message_id(msg: ModelRequest | ModelResponse, suffix: str, index: int) -> str:
+def _generate_message_id(msg: ModelRequest | ModelResponse, role: str, output_index: int) -> str:
     """Generate a deterministic message ID based on message content and position.
 
-    Uses uuid5 with the message timestamp, kind, suffix, and positional index to produce
-    consistent IDs across multiple calls with the same messages. The index prevents
-    collisions when multiple messages share the same timestamp and kind.
+    Priority order:
+    1. For `ModelResponse` with `provider_response_id` set, use it directly.
+    2. For any message with run_id set, use '{run_id}-{output_index}'.
+    3. Fallback: UUID5 from 'timestamp-kind-role-output_index'.
     """
+    if isinstance(msg, ModelResponse) and msg.provider_response_id:
+        return msg.provider_response_id
+    if msg.run_id:
+        return f'{msg.run_id}-{output_index}'
     ts = getattr(msg, 'timestamp', None)
     ts_str = ts.isoformat() if ts else ''
-    return str(uuid.uuid5(uuid.NAMESPACE_OID, f'{ts_str}-{msg.kind}-{suffix}-{index}'))
+    return str(uuid.uuid5(uuid.NAMESPACE_OID, f'{ts_str}-{msg.kind}-{role}-{output_index}'))
 
 
 def _safe_args_as_dict(part: ToolCallPart | BuiltinToolCallPart) -> dict[str, Any] | str:
@@ -513,10 +518,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         Args:
             messages: A sequence of ModelMessage objects to convert
             generate_message_id: Optional custom function to generate message IDs. If provided,
-                it receives the message, a suffix (e.g., 'system', 'user', or empty string
-                for assistant messages), and the message index in the input sequence, and should
-                return a unique string ID. If not provided, uses a deterministic UUID5-based
-                generator.
+                it receives the message, the role ('system', 'user', or 'assistant'), and the
+                output position index (incremented per UIMessage appended), and should return
+                a unique string ID. If not provided, uses `provider_response_id` for responses,
+                run_id-based IDs for messages with run_id, or a deterministic UUID5 fallback.
 
         Returns:
             A list of UIMessage objects in Vercel AI format
@@ -531,26 +536,34 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     elif isinstance(part, RetryPromptPart) and part.tool_name:
                         tool_results[part.tool_call_id] = part
 
-        id_generator = generate_message_id or _message_id
+        id_generator = generate_message_id or _generate_message_id
         result: list[UIMessage] = []
+        output_index = 0
 
-        for index, msg in enumerate(messages):
+        for msg in messages:
             if isinstance(msg, ModelRequest):
                 system_ui_parts, user_ui_parts = cls._dump_request_message(msg)
                 if system_ui_parts:
                     result.append(
-                        UIMessage(id=id_generator(msg, 'system', index), role='system', parts=system_ui_parts)
+                        UIMessage(id=id_generator(msg, 'system', output_index), role='system', parts=system_ui_parts)
                     )
+                    output_index += 1
 
                 if user_ui_parts:
-                    result.append(UIMessage(id=id_generator(msg, 'user', index), role='user', parts=user_ui_parts))
+                    result.append(
+                        UIMessage(id=id_generator(msg, 'user', output_index), role='user', parts=user_ui_parts)
+                    )
+                    output_index += 1
 
             elif isinstance(  # pragma: no branch
                 msg, ModelResponse
             ):
                 ui_parts: list[UIMessagePart] = cls._dump_response_message(msg, tool_results)
                 if ui_parts:  # pragma: no branch
-                    result.append(UIMessage(id=id_generator(msg, '', index), role='assistant', parts=ui_parts))
+                    result.append(
+                        UIMessage(id=id_generator(msg, 'assistant', output_index), role='assistant', parts=ui_parts)
+                    )
+                    output_index += 1
             else:
                 assert_never(msg)
 
