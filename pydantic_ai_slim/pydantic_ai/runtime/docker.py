@@ -339,9 +339,7 @@ class DockerRuntime(DriverBasedRuntime):
             await asyncio.wait_for(rm_proc.wait(), timeout=self.setup_timeout)
         except asyncio.TimeoutError:
             rm_proc.kill()
-            raise RuntimeError(
-                f'Driver cleanup in container {self.container_id} timed out after {self.setup_timeout}s'
-            )
+            raise RuntimeError(f'Driver cleanup in container {self.container_id} timed out after {self.setup_timeout}s')
 
         driver_src = Path(__file__).parent / '_driver.py'
         driver_content = driver_src.read_bytes()
@@ -359,9 +357,7 @@ class DockerRuntime(DriverBasedRuntime):
             await asyncio.wait_for(proc.communicate(input=driver_content), timeout=self.setup_timeout)
         except asyncio.TimeoutError:
             proc.kill()
-            raise RuntimeError(
-                f'Driver copy to container {self.container_id} timed out after {self.setup_timeout}s'
-            )
+            raise RuntimeError(f'Driver copy to container {self.container_id} timed out after {self.setup_timeout}s')
         if proc.returncode != 0:
             raise RuntimeError(f'Failed to copy driver to container {self.container_id}')
 
