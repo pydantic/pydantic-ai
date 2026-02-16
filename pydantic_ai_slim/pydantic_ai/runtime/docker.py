@@ -142,6 +142,27 @@ class DockerRuntime(DriverBasedRuntime):
     container_id: str | None = None
     """Docker container ID or name. ``None`` enables managed mode."""
 
+    docker_cmd: tuple[str, ...] = ('docker',)
+    """Command (and optional flags) used to invoke the container CLI.
+
+    The default ``('docker',)`` uses the ``docker`` binary on ``$PATH``.
+    The CLI inherits the process environment, so ``DOCKER_HOST``,
+    ``DOCKER_TLS_VERIFY``, ``DOCKER_CERT_PATH``, and Docker contexts
+    all work automatically.
+
+    Override to target a different daemon, use an alternative runtime,
+    or adjust invocation::
+
+        # Podman
+        DockerRuntime(docker_cmd=('podman',))
+
+        # Remote daemon
+        DockerRuntime(docker_cmd=('docker', '-H', 'tcp://remote:2375'))
+
+        # Custom binary path
+        DockerRuntime(docker_cmd=('/usr/local/bin/docker',))
+    """
+
     image: str = 'python:3.12-slim'
     """Docker image for managed containers."""
 
@@ -211,7 +232,7 @@ class DockerRuntime(DriverBasedRuntime):
             )
 
         proc = await asyncio.create_subprocess_exec(
-            'docker',
+            *self.docker_cmd,
             'exec',
             '-i',
             self.container_id,
@@ -230,7 +251,7 @@ class DockerRuntime(DriverBasedRuntime):
     def _build_docker_run_cmd(self) -> list[str]:
         """Assemble the ``docker run`` command with all security flags."""
         sec = self.security
-        cmd = ['docker', 'run', '-d', '--init']
+        cmd = [*self.docker_cmd, 'run', '-d', '--init']
 
         # Network isolation
         if not sec.network:
@@ -326,7 +347,7 @@ class DockerRuntime(DriverBasedRuntime):
         # Remove any existing driver file (e.g. placed by a prior docker cp)
         # so that tee can create a fresh file owned by the container user.
         rm_proc = await asyncio.create_subprocess_exec(
-            'docker',
+            *self.docker_cmd,
             'exec',
             self.container_id,
             'rm',
@@ -344,7 +365,7 @@ class DockerRuntime(DriverBasedRuntime):
         driver_src = Path(__file__).parent / '_driver.py'
         driver_content = driver_src.read_bytes()
         proc = await asyncio.create_subprocess_exec(
-            'docker',
+            *self.docker_cmd,
             'exec',
             '-i',
             self.container_id,
@@ -369,7 +390,7 @@ class DockerRuntime(DriverBasedRuntime):
                 '`async with DockerRuntime() as runtime:`'
             )
         proc = await asyncio.create_subprocess_exec(
-            'docker',
+            *self.docker_cmd,
             'rm',
             '-f',
             self.container_id,
