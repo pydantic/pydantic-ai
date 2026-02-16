@@ -9,10 +9,7 @@ from typing_extensions import NotRequired, TypedDict
 try:
     from pydantic_monty import Monty
 
-    from pydantic_ai.runtime.monty import (
-        MontyRuntime,
-        _build_type_check_prefix,  # pyright: ignore[reportPrivateUsage]
-    )
+    from pydantic_ai.runtime.monty import MontyRuntime
 except ImportError:  # pragma: lax no cover
     pytest.skip('pydantic-monty is not installed', allow_module_level=True)
 
@@ -45,7 +42,8 @@ async def test_generated_signatures_are_valid_python():
     _, tools = await build_code_mode_toolset(MontyRuntime(), (add, False))
 
     tool = tools['run_code_with_tools']
-    prefix = _build_type_check_prefix(tool.cached_signatures)
+    runtime = MontyRuntime()
+    prefix = runtime._build_type_check_prefix(tool.signatures, tool.referenced_types)  # pyright: ignore[reportPrivateUsage]
 
     # `...` and `pass` are not valid for Monty/ty type checking — ty is intentionally
     # stricter than pyright here. See https://github.com/astral-sh/ty/issues/1922
@@ -73,7 +71,8 @@ async def test_signatures_use_ellipsis_monty_converts_for_type_check():
     assert 'raise NotImplementedError()' not in description
 
     # But when Monty builds the type-check prefix, it converts to 'raise NotImplementedError()'
-    prefix = _build_type_check_prefix(tool.cached_signatures)
+    runtime = MontyRuntime()
+    prefix = runtime._build_type_check_prefix(tool.signatures, tool.referenced_types)  # pyright: ignore[reportPrivateUsage]
     assert 'raise NotImplementedError()' in prefix
     assert '    ...' not in prefix
 
