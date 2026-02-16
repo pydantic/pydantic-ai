@@ -1796,6 +1796,15 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
 
 
 async def test_builtin_tool_call() -> None:
+    """Test back-to-back builtin tool calls share the same parent_message_id.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4098:
+    When a model performs multiple builtin tool calls (e.g. web searches) in
+    the same response, the BuiltinToolReturn handling would mutate the shared
+    message_id, causing subsequent tool calls to reference a non-existent
+    parent message.
+    """
+
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[BuiltinToolCallsReturns | DeltaToolCalls | str]:
@@ -1828,6 +1837,29 @@ async def test_builtin_tool_call() -> None:
                 provider_name='function',
             )
         }
+        yield {
+            2: BuiltinToolCallPart(
+                tool_name=WebSearchTool.kind,
+                args='{"query": "Hello world history"}',
+                tool_call_id='search_2',
+                provider_name='function',
+            )
+        }
+        yield {
+            3: BuiltinToolReturnPart(
+                tool_name=WebSearchTool.kind,
+                content={
+                    'results': [
+                        {
+                            'title': 'History of Hello World',
+                            'url': 'https://en.wikipedia.org/wiki/Hello_World_history',
+                        }
+                    ]
+                },
+                tool_call_id='search_2',
+                provider_name='function',
+            )
+        }
         yield 'A "Hello, World!" program is usually a simple computer program that emits (or displays) to the screen (often the console) a message similar to "Hello, World!". '
 
     agent = Agent(
@@ -1855,7 +1887,7 @@ async def test_builtin_tool_call() -> None:
                 'timestamp': IsInt(),
                 'toolCallId': 'pyd_ai_builtin|function|search_1',
                 'toolCallName': 'web_search',
-                'parentMessageId': IsStr(),
+                'parentMessageId': (parent_message_id := IsSameStr()),
             },
             {
                 'type': 'TOOL_CALL_ARGS',
@@ -1876,6 +1908,28 @@ async def test_builtin_tool_call() -> None:
                 'messageId': IsStr(),
                 'toolCallId': 'pyd_ai_builtin|function|search_1',
                 'content': '{"results":[{"title":"\\"Hello, World!\\" program","url":"https://en.wikipedia.org/wiki/%22Hello,_World!%22_program"}]}',
+                'role': 'tool',
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
+                'toolCallId': 'pyd_ai_builtin|function|search_2',
+                'toolCallName': 'web_search',
+                'parentMessageId': parent_message_id,
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': 'pyd_ai_builtin|function|search_2',
+                'delta': '{"query": "Hello world history"}',
+            },
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': 'pyd_ai_builtin|function|search_2'},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'toolCallId': 'pyd_ai_builtin|function|search_2',
+                'content': '{"results":[{"title":"History of Hello World","url":"https://en.wikipedia.org/wiki/Hello_World_history"}]}',
                 'role': 'tool',
             },
             {
