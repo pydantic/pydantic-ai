@@ -586,7 +586,7 @@ def _type_to_expr(
 ) -> TypeExpr:
     """Convert a schema type to a TypeExpr."""
     # Simple types — use shared mapping, skip compound types handled below
-    if schema_type in _JSON_TYPE_TO_PYTHON and schema_type not in ('array', 'object'):
+    if isinstance(schema_type, str) and schema_type in _JSON_TYPE_TO_PYTHON and schema_type not in ('array', 'object'):
         return _JSON_TYPE_TO_PYTHON[schema_type]
 
     # Array type

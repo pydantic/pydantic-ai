@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Optional, Union
+
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 
 try:
     from pydantic_monty import Monty
@@ -22,10 +25,13 @@ from pydantic_ai._python_signature import (
     _to_pascal_case,  # pyright: ignore[reportPrivateUsage]
     collect_unique_referenced_types,
     dedup_referenced_types,
+    function_to_signature,
     render_type_expr,
     schema_to_signature,
 )
+from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.tools import FunctionToolDefinition
 
 from .conftest import WeatherResult, build_code_mode_toolset, get_weather, run_code_with_tools
 
@@ -463,3 +469,368 @@ def test_function_tool_definition_fallback_without_original_func():
     assert sig.name == 'schema_tool'
     assert 'q' in sig.params
     assert sig.params['q'].type == 'str'
+
+
+# =============================================================================
+# Function signature edge cases
+# =============================================================================
+
+
+def test_function_signature_special_params():
+    """RunContext skipped, unannotated → Any."""
+
+    def with_ctx(ctx: RunContext[None], x: int) -> int:
+        return x
+
+    assert str(function_to_signature(with_ctx, name='with_ctx')) == snapshot("""\
+async def with_ctx(*, x: int) -> int:
+    ...\
+""")
+
+    def no_annot(x):  # pyright: ignore[reportUnknownParameterType,reportMissingParameterType]
+        return x  # pyright: ignore[reportUnknownVariableType]
+
+    assert str(
+        function_to_signature(no_annot, name='no_annot')  # pyright: ignore[reportUnknownArgumentType]
+    ) == snapshot("""\
+async def no_annot(*, x: Any) -> Any:
+    ...\
+""")
+
+
+class _UserInfo(BaseModel):
+    name: str
+
+
+def test_function_signature_union_and_model_types():
+    """Unions, optionals, and model types render correct signatures."""
+
+    def complex_func(
+        a: Union[int, str],  # noqa: UP007 — testing Union[] code path
+        b: int | str,
+        c: Optional[int] = None,  # noqa: UP045 — testing Optional[] code path
+        d: _UserInfo | None = None,
+    ) -> _UserInfo: ...
+
+    sig = function_to_signature(complex_func, name='complex_func')
+    assert str(sig) == snapshot("""\
+async def complex_func(*, a: int | str, b: int | str, c: int | None = None, d: _UserInfo | None = None) -> _UserInfo:
+    ...\
+""")
+    assert [str(t) for t in sig.referenced_types] == snapshot(
+        [
+            """\
+class _UserInfo(TypedDict):
+    name: str\
+"""
+        ]
+    )
+
+
+def test_type_signature_docstring_and_structural_equality():
+    """Docstring rendering and structural equality with different required."""
+    ts = TypeSignature(name='Documented', docstring='A documented empty type')
+    assert str(ts) == snapshot('''\
+class Documented(TypedDict):
+    """A documented empty type"""\
+''')
+
+    ts_a = TypeSignature(
+        name='A',
+        fields={'x': TypeFieldSignature(name='x', type='int', required=True, description=None)},
+    )
+    ts_b = TypeSignature(
+        name='B',
+        fields={'x': TypeFieldSignature(name='x', type='int', required=False, description=None)},
+    )
+    assert not ts_a.structurally_equal(ts_b)
+
+
+# =============================================================================
+# Schema signature edge cases
+# =============================================================================
+
+
+def test_schema_signature_union_ref_allof():
+    """oneOf, allOf, $ref variants produce correct signatures."""
+    sig_oneof = schema_to_signature(
+        'my_tool',
+        {
+            'type': 'object',
+            'properties': {'value': {'oneOf': [{'type': 'string'}, {'type': 'integer'}]}},
+            'required': ['value'],
+        },
+    )
+    assert str(sig_oneof) == snapshot("""\
+async def my_tool(*, value: str | int) -> Any:
+    ...\
+""")
+
+    sig_allof_single = schema_to_signature(
+        'tool2',
+        {
+            'type': 'object',
+            'properties': {'x': {'allOf': [{'type': 'string'}]}},
+            'required': ['x'],
+        },
+    )
+    assert str(sig_allof_single) == snapshot("""\
+async def tool2(*, x: str) -> Any:
+    ...\
+""")
+
+    sig_allof_multi = schema_to_signature(
+        'tool3',
+        {
+            'type': 'object',
+            'properties': {'x': {'allOf': [{'type': 'string'}, {'type': 'integer'}]}},
+            'required': ['x'],
+        },
+    )
+    assert str(sig_allof_multi) == snapshot("""\
+async def tool3(*, x: Any) -> Any:
+    ...\
+""")
+
+    sig_ref = schema_to_signature(
+        'tool4',
+        {
+            'type': 'object',
+            'properties': {'user': {'$ref': '#/$defs/User'}},
+            'required': ['user'],
+            '$defs': {'User': {'type': 'object', 'properties': {'name': {'type': 'string'}}, 'required': ['name']}},
+        },
+    )
+    assert str(sig_ref) == snapshot("""\
+async def tool4(*, user: User) -> Any:
+    ...\
+""")
+    assert [str(t) for t in sig_ref.referenced_types] == snapshot(
+        [
+            """\
+class User(TypedDict):
+    name: str\
+"""
+        ]
+    )
+
+    sig_ref_nonobj = schema_to_signature(
+        'tool5',
+        {
+            'type': 'object',
+            'properties': {'x': {'$ref': '#/$defs/StringAlias'}},
+            'required': ['x'],
+            '$defs': {'StringAlias': {'type': 'string'}},
+        },
+    )
+    assert str(sig_ref_nonobj) == snapshot("""\
+async def tool5(*, x: StringAlias) -> Any:
+    ...\
+""")
+
+
+def test_schema_signature_array_object_typelist():
+    """Arrays, objects, additionalProperties, and type lists."""
+    # Tuple array
+    assert str(
+        schema_to_signature(
+            't1',
+            {
+                'type': 'object',
+                'properties': {'coords': {'type': 'array', 'items': [{'type': 'number'}, {'type': 'number'}]}},
+                'required': ['coords'],
+            },
+        )
+    ) == snapshot("""\
+async def t1(*, coords: tuple[float, float]) -> Any:
+    ...\
+""")
+
+    # Empty array
+    assert str(
+        schema_to_signature(
+            't2',
+            {
+                'type': 'object',
+                'properties': {'data': {'type': 'array'}},
+                'required': ['data'],
+            },
+        )
+    ) == snapshot("""\
+async def t2(*, data: list[Any]) -> Any:
+    ...\
+""")
+
+    # additionalProperties: true
+    assert str(
+        schema_to_signature(
+            't3',
+            {
+                'type': 'object',
+                'properties': {'meta': {'type': 'object', 'additionalProperties': True}},
+                'required': ['meta'],
+            },
+        )
+    ) == snapshot("""\
+async def t3(*, meta: dict[str, Any]) -> Any:
+    ...\
+""")
+
+    # Typed additionalProperties
+    assert str(
+        schema_to_signature(
+            't4',
+            {
+                'type': 'object',
+                'properties': {'tags': {'type': 'object', 'additionalProperties': {'type': 'string'}}},
+                'required': ['tags'],
+            },
+        )
+    ) == snapshot("""\
+async def t4(*, tags: dict[str, str]) -> Any:
+    ...\
+""")
+
+    # Type list ['string', 'null']
+    assert str(
+        schema_to_signature(
+            't5',
+            {
+                'type': 'object',
+                'properties': {'name': {'type': ['string', 'null']}},
+                'required': ['name'],
+            },
+        )
+    ) == snapshot("""\
+async def t5(*, name: str | None) -> Any:
+    ...\
+""")
+
+    # Type list multi
+    assert str(
+        schema_to_signature(
+            't6',
+            {
+                'type': 'object',
+                'properties': {'value': {'type': ['string', 'integer', 'boolean']}},
+                'required': ['value'],
+            },
+        )
+    ) == snapshot("""\
+async def t6(*, value: str | int | bool) -> Any:
+    ...\
+""")
+
+    # Object type list with null
+    sig = schema_to_signature(
+        't7',
+        {
+            'type': 'object',
+            'properties': {
+                'config': {
+                    'type': ['object', 'null'],
+                    'properties': {'enabled': {'type': 'boolean'}},
+                    'required': ['enabled'],
+                },
+            },
+            'required': ['config'],
+        },
+    )
+    assert str(sig) == snapshot("""\
+async def t7(*, config: T7Config | None) -> Any:
+    ...\
+""")
+    assert [str(t) for t in sig.referenced_types] == snapshot(
+        [
+            """\
+class T7Config(TypedDict):
+    enabled: bool\
+"""
+        ]
+    )
+
+
+def test_schema_signature_optional_params_and_return():
+    """Optional params, return schema edge cases, anyOf dedup."""
+    # Optional already nullable
+    assert str(
+        schema_to_signature(
+            't1',
+            {
+                'type': 'object',
+                'properties': {'x': {'type': ['string', 'null']}},
+            },
+        )
+    ) == snapshot("""\
+async def t1(*, x: str | None = None) -> Any:
+    ...\
+""")
+
+    # Optional not nullable → adds | None
+    assert str(
+        schema_to_signature(
+            't2',
+            {
+                'type': 'object',
+                'properties': {'x': {'type': 'string'}},
+            },
+        )
+    ) == snapshot("""\
+async def t2(*, x: str | None = None) -> Any:
+    ...\
+""")
+
+    # Unresolvable return_schema → JSON blob in description
+    sig3 = schema_to_signature(
+        't3',
+        {'type': 'object', 'properties': {'x': {'type': 'string'}}, 'required': ['x']},
+        description='A tool',
+        return_schema={},
+    )
+    assert str(sig3) == snapshot('''\
+async def t3(*, x: str) -> Any:
+    """
+    A tool
+
+    Return schema:
+    {}
+    """
+    ...\
+''')
+
+    # Return schema with $defs
+    sig4 = schema_to_signature(
+        't4',
+        {'type': 'object', 'properties': {'x': {'type': 'string'}}, 'required': ['x']},
+        return_schema={
+            '$ref': '#/$defs/Result',
+            '$defs': {'Result': {'type': 'object', 'properties': {'v': {'type': 'integer'}}, 'required': ['v']}},
+        },
+    )
+    assert str(sig4) == snapshot("""\
+async def t4(*, x: str) -> Result:
+    ...\
+""")
+    assert [str(t) for t in sig4.referenced_types] == snapshot(
+        [
+            """\
+class Result(TypedDict):
+    v: int\
+"""
+        ]
+    )
+
+    # anyOf with duplicates → deduplicated
+    assert str(
+        schema_to_signature(
+            't5',
+            {
+                'type': 'object',
+                'properties': {'x': {'anyOf': [{'type': 'string'}, {'type': 'string'}, {'type': 'null'}]}},
+                'required': ['x'],
+            },
+        )
+    ) == snapshot("""\
+async def t5(*, x: str | None) -> Any:
+    ...\
+""")

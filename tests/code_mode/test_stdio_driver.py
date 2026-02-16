@@ -365,3 +365,97 @@ async def test_mixed_positional_and_keyword_args():
 
     proc.kill()
     await proc.wait()
+
+
+async def test_stderr_redirect_all_properties():
+    """StderrRedirect stream properties are accessible from user code."""
+    code = (
+        'import sys\n'
+        '{\n'
+        '    "isatty": sys.stdout.isatty(),\n'
+        '    "writable": sys.stdout.writable(),\n'
+        '    "readable": sys.stdout.readable(),\n'
+        '    "closed": sys.stdout.closed,\n'
+        '    "fileno_works": isinstance(sys.stdout.fileno(), int),\n'
+        '    "has_encoding": isinstance(sys.stdout.encoding, str),\n'
+        '}'
+    )
+    proc = await start_driver(code)
+    msg = await read_msg(proc)
+    assert msg == {
+        'type': 'complete',
+        'result': {
+            'isatty': False,
+            'writable': True,
+            'readable': False,
+            'closed': False,
+            'fileno_works': True,
+            'has_encoding': True,
+        },
+    }
+    proc.kill()
+    await proc.wait()
+
+
+async def test_code_ending_with_assignment():
+    """Code ending with assignment returns None (not the assigned value)."""
+    proc = await start_driver('x = 42')
+    msg = await read_msg(proc)
+    assert msg['type'] == 'complete'
+    assert msg['result'] is None
+    proc.kill()
+    await proc.wait()
+
+
+async def test_runtime_syntax_error_in_eval():
+    """SyntaxError raised at runtime (e.g. in eval) is reported as syntax error."""
+    proc = await start_driver('eval("def while")')
+    msg = await read_msg(proc)
+    assert msg['type'] == 'error'
+    assert msg['error_type'] == 'syntax'
+    proc.kill()
+    await proc.wait()
+
+
+async def _start_raw_driver() -> asyncio.subprocess.Process:
+    """Start driver without sending init — for testing init error paths."""
+    return await asyncio.create_subprocess_exec(
+        sys.executable,
+        '-u',
+        str(DRIVER_PATH),
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+
+async def test_main_error_paths():
+    """Driver handles missing/invalid/wrong-type init messages."""
+    # No init (close stdin)
+    proc = await _start_raw_driver()
+    assert proc.stdin is not None
+    proc.stdin.close()
+    msg = await read_msg(proc)
+    assert 'No init message' in str(msg['error'])
+    proc.kill()
+    await proc.wait()
+
+    # Invalid JSON
+    proc = await _start_raw_driver()
+    assert proc.stdin is not None
+    proc.stdin.write(b'not json\n')
+    await proc.stdin.drain()
+    msg = await read_msg(proc)
+    assert 'Invalid init message' in str(msg['error'])
+    proc.kill()
+    await proc.wait()
+
+    # Wrong type
+    proc = await _start_raw_driver()
+    assert proc.stdin is not None
+    proc.stdin.write(json.dumps({'type': 'wrong'}).encode() + b'\n')
+    await proc.stdin.drain()
+    msg = await read_msg(proc)
+    assert 'Expected init message' in str(msg['error'])
+    proc.kill()
+    await proc.wait()

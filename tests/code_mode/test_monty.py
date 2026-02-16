@@ -13,9 +13,12 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('pydantic-monty is not installed', allow_module_level=True)
 
+from pydantic_ai._python_signature import FunctionSignature, TypeSignature
 from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.toolsets.code_mode import CodeModeToolset
+from pydantic_ai.toolsets.function import FunctionToolset
 
-from .conftest import build_code_mode_toolset, run_code_with_tools
+from .conftest import build_code_mode_toolset, build_run_context, run_code_with_tools
 
 pytestmark = pytest.mark.anyio
 
@@ -222,3 +225,41 @@ async def _tag_resource(*, resource_name: str, tag: _Tag) -> bool:
 
 ```\
 ''')
+
+
+async def test_monty_runtime_error_raises_model_retry():
+    """MontyRuntimeError during execution is surfaced as ModelRetry."""
+    with pytest.raises(ModelRetry, match='Runtime error in generated code'):
+        await run_code_with_tools('1 / 0', MontyRuntime(), (add, False))
+
+
+# =============================================================================
+# CodeModeToolset description customization
+# =============================================================================
+
+
+def _tool_alpha(*, x: int) -> int:
+    """Tool alpha."""
+    return x
+
+
+async def test_custom_description_string():
+    """A custom string replaces the default preamble."""
+    ts: FunctionToolset[None] = FunctionToolset()
+    ts.add_function(_tool_alpha, takes_ctx=False)
+    cm = CodeModeToolset(ts, runtime=MontyRuntime(), description='My preamble')
+    tools = await cm.get_tools(build_run_context())
+    assert 'My preamble' in (tools['run_code_with_tools'].tool_def.description or '')
+
+
+async def test_custom_description_callback():
+    """A callback gets full control over the description."""
+
+    def my_desc(sigs: list[FunctionSignature], types: list[TypeSignature], instructions: str | None) -> str:
+        return f'{len(sigs)} tools'
+
+    ts: FunctionToolset[None] = FunctionToolset()
+    ts.add_function(_tool_alpha, takes_ctx=False)
+    cm = CodeModeToolset(ts, runtime=MontyRuntime(), description=my_desc)
+    tools = await cm.get_tools(build_run_context())
+    assert tools['run_code_with_tools'].tool_def.description == '1 tools'

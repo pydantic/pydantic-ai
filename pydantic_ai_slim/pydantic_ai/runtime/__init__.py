@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 from typing_extensions import assert_never
 
@@ -15,9 +15,14 @@ from .abstract import (
     FunctionCall,
     ToolCallback,
 )
+from .docker import DockerRuntime, DockerSecuritySettings
+
+try:
+    from .monty import MontyRuntime
+except ImportError:
+    pass
 
 if TYPE_CHECKING:
-    from .docker import DockerRuntime, DockerSecuritySettings
     from .monty import MontyRuntime
 
 __all__ = (
@@ -37,18 +42,6 @@ __all__ = (
 )
 
 
-def __getattr__(name: str) -> Any:
-    if name == 'MontyRuntime':
-        from .monty import MontyRuntime
-
-        return MontyRuntime
-    if name in ('DockerRuntime', 'DockerSecuritySettings'):
-        from . import docker
-
-        return getattr(docker, name)
-    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
-
-
 RuntimeName = Literal['monty', 'docker']
 
 
@@ -58,8 +51,6 @@ def get_runtime(name: RuntimeName) -> CodeRuntime:
 
         return MontyRuntime()
     elif name == 'docker':
-        from .docker import DockerRuntime
-
         return DockerRuntime()
     else:
         assert_never(name)
