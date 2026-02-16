@@ -763,13 +763,7 @@ def _infer_modality_from_media_type(media_type: str) -> Literal['image', 'audio'
 def _convert_binary_to_otel_part(
     media_type: str, base64_content: Callable[[], str], settings: InstrumentationSettings
 ) -> _otel_messages.BlobPart | _otel_messages.BinaryDataPart:
-    """Convert binary content to OTel message part based on version.
-
-    Args:
-        media_type: The MIME type of the binary content.
-        base64_content: A callable that returns the base64-encoded content (only called if needed).
-        settings: The instrumentation settings.
-    """
+    """Convert binary content to OTel message part based on version."""
     if settings.version >= 4:
         blob_part = _otel_messages.BlobPart(type='blob', mime_type=media_type)
         modality = _infer_modality_from_media_type(media_type)
