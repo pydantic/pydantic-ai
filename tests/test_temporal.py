@@ -501,12 +501,6 @@ async def test_complex_agent_run_in_workflow(
                             ],
                         ),
                         BasicSpan(
-                            content='StartActivity:agent__complex_agent__mcp_server__mcp__get_tools',
-                            children=[
-                                BasicSpan(content='RunActivity:agent__complex_agent__mcp_server__mcp__get_tools')
-                            ],
-                        ),
-                        BasicSpan(
                             content='chat gpt-4o',
                             children=[
                                 BasicSpan(
@@ -592,12 +586,6 @@ async def test_complex_agent_run_in_workflow(
                                         )
                                     ],
                                 ),
-                            ],
-                        ),
-                        BasicSpan(
-                            content='StartActivity:agent__complex_agent__mcp_server__mcp__get_tools',
-                            children=[
-                                BasicSpan(content='RunActivity:agent__complex_agent__mcp_server__mcp__get_tools')
                             ],
                         ),
                         BasicSpan(
@@ -751,6 +739,56 @@ async def test_complex_agent_run_in_workflow(
             ],
         )
     )
+
+
+async def test_mcp_tools_cached_across_activities(allow_model_requests: None, client: Client):
+    """Verify that MCP tool caching reduces server round-trips across activities.
+
+    The complex agent makes 3 model requests, each preceded by a get_tools activity.
+    With caching at the TemporalMCPServer wrapper level, only the first get_tools activity
+    actually runs (opening an MCP connection and calling `tools/list`). Subsequent get_tools
+    calls return the wrapper's cached tool definitions without scheduling an activity at all.
+    """
+    from unittest.mock import patch
+
+    from mcp.client.session import ClientSession
+
+    # Clear any cached tool defs from previous tests (e.g. test_complex_agent_run_in_workflow)
+    # that share the same module-level complex_temporal_agent.
+    temporal_mcp_toolset = next(t for t in complex_temporal_agent.toolsets if isinstance(t, TemporalMCPServer))
+    temporal_mcp_toolset._cached_tool_defs = None  # pyright: ignore[reportPrivateUsage]
+
+    original_send_request = ClientSession.send_request
+    methods_called: list[str] = []
+
+    async def tracking_send_request(self_: Any, *args: Any, **kwargs: Any) -> Any:
+        request = args[0] if args else kwargs.get('request')
+        if request is not None and hasattr(request, 'root') and hasattr(request.root, 'method'):
+            methods_called.append(request.root.method)
+        return await original_send_request(self_, *args, **kwargs)
+
+    with patch.object(ClientSession, 'send_request', tracking_send_request):
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[ComplexAgentWorkflow],
+            plugins=[AgentPlugin(complex_temporal_agent)],
+        ):
+            output = await client.execute_workflow(
+                ComplexAgentWorkflow.run,
+                args=[
+                    'Tell me: the capital of the country; the weather there; the product name',
+                    Deps(country='Mexico'),
+                ],
+                id=f'{ComplexAgentWorkflow.__name__}_cache_test',
+                task_queue=TASK_QUEUE,
+            )
+        assert output is not None
+
+    # 3 get_tools calls are made, but only 1 results in an actual tools/list MCP request
+    assert methods_called.count('tools/list') == 1
+    # call_tool should still make a request each time (not cached)
+    assert methods_called.count('tools/call') == 1
 
 
 async def test_complex_agent_run(allow_model_requests: None):

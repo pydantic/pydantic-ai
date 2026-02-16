@@ -248,12 +248,10 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
             'complex_agent__mcp_server__mcp.call_tool',
             'event_stream_handler',
             'event_stream_handler',
-            'complex_agent__mcp_server__mcp.get_tools',
             'complex_agent__model.request_stream',
             'event_stream_handler',
             'get_weather',
             'event_stream_handler',
-            'complex_agent__mcp_server__mcp.get_tools',
             'complex_agent__model.request_stream',
         ]
     )
@@ -368,7 +366,6 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                 ),
                             ],
                         ),
-                        BasicSpan(content='complex_agent__mcp_server__mcp.get_tools'),
                         BasicSpan(
                             content='chat gpt-4o',
                             children=[
@@ -432,7 +429,6 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                 ),
                             ],
                         ),
-                        BasicSpan(content='complex_agent__mcp_server__mcp.get_tools'),
                         BasicSpan(
                             content='chat gpt-4o',
                             children=[
@@ -610,12 +606,10 @@ async def test_complex_agent_run_sequential_tool(allow_model_requests: None, dbo
             'event_stream_handler',
             'seq_complex_agent__mcp_server__mcp.call_tool',
             'event_stream_handler',
-            'seq_complex_agent__mcp_server__mcp.get_tools',
             'seq_complex_agent__model.request_stream',
             'event_stream_handler',
             'get_weather',
             'event_stream_handler',
-            'seq_complex_agent__mcp_server__mcp.get_tools',
             'seq_complex_agent__model.request_stream',
         ]
     )
