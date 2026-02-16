@@ -12,13 +12,13 @@ def mistral_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Mistral model."""
     model_lower = model_name.lower()
 
-    # Magistral models are Mistral's reasoning models with chain-of-thought capabilities
+    # Magistral models are Mistral's reasoning models with always-on chain-of-thought
     is_reasoning = any(name in model_lower for name in _MISTRAL_REASONING_MODELS)
 
     if is_reasoning:
         return ModelProfile(
             supports_thinking=True,
-            # Magistral supports reasoning levels (low/medium/high) but thinking can be controlled
+            thinking_always_enabled=True,
         )
 
     return None

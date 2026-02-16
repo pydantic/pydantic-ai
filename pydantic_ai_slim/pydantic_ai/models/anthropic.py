@@ -52,6 +52,23 @@ from ..thinking import resolve_thinking_config
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
+# Effort-to-budget mapping for non-adaptive thinking models (Claude 3.7, Sonnet 4, Opus 4)
+_ANTHROPIC_EFFORT_TO_BUDGET: dict[str, int] = {
+    'low': 1024,
+    'medium': 4096,
+    'high': 16384,
+}
+_DEFAULT_THINKING_BUDGET = 4096
+
+# Models that support adaptive thinking (type: "adaptive" with output_config.effort)
+# These are Claude 4.5+ models; older thinking models use type: "enabled" with budget_tokens
+_ADAPTIVE_THINKING_MODELS = (
+    'claude-opus-4-5',
+    'claude-opus-4-6',
+    'claude-sonnet-4-5',
+    'claude-haiku-4-5',
+)
+
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
     'compaction': 'stop',
     'end_turn': 'stop',
@@ -303,29 +320,32 @@ class AnthropicModel(Model):
         """Resolve thinking configuration from unified or provider-specific settings.
 
         Provider-specific `anthropic_thinking` takes precedence over unified `thinking`.
+        Uses silent-drop semantics for unsupported settings.
         """
         # Provider-specific setting takes precedence
         if 'anthropic_thinking' in model_settings:
             return model_settings['anthropic_thinking']
 
-        thinking = model_settings.get('thinking')
-        if thinking is None:
+        resolved = resolve_thinking_config(model_settings)
+        if resolved is None:
             return None
 
-        resolved = resolve_thinking_config(thinking, self.profile, self.model_name)
-        if resolved is None:  # pragma: no cover
+        # Silent drop: model doesn't support thinking
+        if not self.profile.supports_thinking:
             return None
+
         if not resolved.enabled:
             return {'type': 'disabled'}
 
-        # Derive budget from effort if not explicitly set
-        budget_tokens = resolved.budget_tokens
-        if budget_tokens is None and resolved.effort and self.profile.effort_to_budget_map:
-            budget_tokens = self.profile.effort_to_budget_map.get(resolved.effort)
-        if budget_tokens is None:
-            budget_tokens = self.profile.default_thinking_budget or 4096
+        # Adaptive models (Claude 4.5+): effort flows through output_config, not thinking config
+        if any(name in self.model_name for name in _ADAPTIVE_THINKING_MODELS):
+            return {'type': 'adaptive'}
 
-        return {'type': 'enabled', 'budget_tokens': budget_tokens}
+        # Budget-based models (Claude 3.7, Sonnet 4, Opus 4): map effort to budget_tokens
+        budget = _DEFAULT_THINKING_BUDGET
+        if resolved.effort:
+            budget = _ANTHROPIC_EFFORT_TO_BUDGET.get(resolved.effort, _DEFAULT_THINKING_BUDGET)
+        return {'type': 'enabled', 'budget_tokens': budget}
 
     async def request(
         self,
@@ -1177,9 +1197,8 @@ class AnthropicModel(Model):
             tool_param['strict'] = f.strict
         return tool_param
 
-    @staticmethod
     def _build_output_config(
-        model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
+        self, model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
     ) -> BetaOutputConfigParam | None:
         output_format: BetaJSONOutputFormatParam | None = None
         if model_request_parameters.output_mode == 'native':
@@ -1187,6 +1206,12 @@ class AnthropicModel(Model):
             output_format = {'type': 'json_schema', 'schema': model_request_parameters.output_object.json_schema}
 
         effort = model_settings.get('anthropic_effort')
+
+        # For adaptive models, map unified thinking_effort to output_config.effort
+        if effort is None and any(name in self.model_name for name in _ADAPTIVE_THINKING_MODELS):
+            resolved = resolve_thinking_config(model_settings)
+            if resolved and resolved.enabled and resolved.effort:
+                effort = resolved.effort
 
         if output_format is None and effort is None:
             return None

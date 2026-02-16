@@ -2862,13 +2862,10 @@ async def test_bedrock_unified_thinking_config_in_request_params(bedrock_provide
     from types import SimpleNamespace
 
     from pydantic_ai.profiles import ModelProfile
-    from pydantic_ai.profiles.anthropic import ANTHROPIC_EFFORT_TO_BUDGET
 
     # Create a thinking-capable profile
     thinking_profile = ModelProfile(
         supports_thinking=True,
-        default_thinking_budget=4096,
-        effort_to_budget_map=ANTHROPIC_EFFORT_TO_BUDGET,
     )
 
     # Track the parameters passed to converse

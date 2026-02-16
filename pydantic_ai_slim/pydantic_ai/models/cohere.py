@@ -30,6 +30,7 @@ from ..messages import (
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
+from ..thinking import resolve_thinking_config
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, check_allow_model_requests
 
@@ -42,6 +43,7 @@ try:
         ChatMessageV2,
         SystemChatMessageV2,
         TextAssistantMessageV2ContentItem,
+        Thinking,
         ThinkingAssistantMessageV2ContentItem,
         ToolCallV2,
         ToolCallV2Function,
@@ -167,6 +169,25 @@ class CohereModel(Model):
         model_response = self._process_response(response)
         return model_response
 
+    def _resolve_thinking_config(self, model_settings: CohereModelSettings) -> Thinking | None:
+        """Resolve unified thinking settings to Cohere Thinking config.
+
+        Uses silent-drop semantics: effort is silently ignored (Cohere has no effort control).
+        """
+        resolved = resolve_thinking_config(model_settings)
+        if resolved is None:
+            return None
+
+        # Silent drop: model doesn't support thinking
+        if not self.profile.supports_thinking:
+            return None
+
+        if not resolved.enabled:
+            return Thinking(type='disabled')
+
+        # Effort is silently ignored (Cohere has no effort/level control)
+        return Thinking(type='enabled')
+
     async def _chat(
         self,
         messages: list[ModelMessage],
@@ -181,6 +202,7 @@ class CohereModel(Model):
                 model=self._model_name,
                 messages=cohere_messages,
                 tools=tools or OMIT,
+                thinking=self._resolve_thinking_config(model_settings) or OMIT,
                 max_tokens=model_settings.get('max_tokens', OMIT),
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
                 temperature=model_settings.get('temperature', OMIT),

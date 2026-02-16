@@ -51,6 +51,7 @@ from ..profiles import ModelProfileSpec
 from ..profiles.grok import GrokModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
+from ..thinking import resolve_thinking_config
 from ..usage import RequestUsage
 
 try:
@@ -59,6 +60,7 @@ try:
     from xai_sdk.chat import assistant, file, image, system, tool, tool_result, user
     from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
     from xai_sdk.tools import code_execution, get_tool_call_type, mcp, web_search  # x_search not yet supported
+    from xai_sdk.types.chat import ReasoningEffort
     from xai_sdk.types.model import ChatModel
 except ImportError as _import_error:
     raise ImportError(
@@ -481,6 +483,36 @@ class XaiModel(Model):
 
         return None
 
+    # xAI only supports 2 levels; our 3-level unified API downmaps medium→low.
+    _XAI_EFFORT_MAP: dict[str, ReasoningEffort] = {'low': 'low', 'medium': 'low', 'high': 'high'}
+
+    def _resolve_reasoning_effort(self, model_settings: XaiModelSettings) -> ReasoningEffort | None:
+        """Resolve unified thinking settings to xAI reasoning_effort.
+
+        Only grok-3-mini supports reasoning_effort with 2 levels ("low", "high").
+        Maps: low→"low", medium→"low" (downmap), high→"high".
+        Silent drop for all other models.
+        """
+        resolved = resolve_thinking_config(model_settings)
+        if resolved is None:
+            return None
+
+        # Silent drop: model doesn't support thinking
+        if not self.profile.supports_thinking:
+            return None
+
+        # Only grok-3-mini has tunable effort; other models use model-name variants
+        if 'grok-3-mini' not in self.model_name:
+            return None
+
+        if not resolved.enabled:
+            return None  # grok-3-mini reasoning can't be disabled via API
+
+        if resolved.effort:
+            return self._XAI_EFFORT_MAP.get(resolved.effort)
+
+        return None
+
     async def _create_chat(
         self,
         messages: list[ModelMessage],
@@ -540,6 +572,9 @@ class XaiModel(Model):
         if model_settings.get('xai_include_mcp_output'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT)
 
+        # Resolve unified thinking settings to xAI reasoning_effort
+        reasoning_effort = self._resolve_reasoning_effort(model_settings)
+
         # Create and return chat instance
         return self._provider.client.chat.create(
             model=self._model_name,
@@ -549,6 +584,7 @@ class XaiModel(Model):
             response_format=response_format,
             use_encrypted_content=use_encrypted_content,
             include=include,
+            **(dict(reasoning_effort=reasoning_effort) if reasoning_effort is not None else {}),
             **xai_settings,
         )
 

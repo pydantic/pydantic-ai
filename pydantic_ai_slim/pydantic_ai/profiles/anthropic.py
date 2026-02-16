@@ -2,13 +2,6 @@ from __future__ import annotations as _annotations
 
 from . import ModelProfile
 
-# Anthropic effort-to-budget mapping aligns with TOKEN_HISTOGRAM_BOUNDARIES
-ANTHROPIC_EFFORT_TO_BUDGET: dict[str, int] = {
-    'low': 1024,
-    'medium': 4096,
-    'high': 16384,
-}
-
 # Models that support extended thinking
 _THINKING_MODELS = (
     'claude-3-7',
@@ -31,15 +24,13 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     # TODO update when new models are released that support structured outputs
     # https://docs.claude.com/en/docs/build-with-claude/structured-outputs#example-usage
 
-    supports_json_schema_output = model_name.startswith(models_that_support_json_schema_output)
+    supports_json_schema_output = any(name in model_name for name in models_that_support_json_schema_output)
 
     # Check if model supports extended thinking
-    supports_thinking = model_name.startswith(_THINKING_MODELS)
+    supports_thinking = any(name in model_name for name in _THINKING_MODELS)
 
     return ModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
         supports_json_schema_output=supports_json_schema_output,
         supports_thinking=supports_thinking,
-        default_thinking_budget=4096 if supports_thinking else None,
-        effort_to_budget_map=ANTHROPIC_EFFORT_TO_BUDGET if supports_thinking else None,
     )

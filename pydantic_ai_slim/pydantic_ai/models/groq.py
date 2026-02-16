@@ -178,42 +178,20 @@ class GroqModel(Model):
     def _resolve_reasoning_format(self, model_settings: GroqModelSettings) -> Literal['hidden', 'raw', 'parsed'] | None:
         """Resolve unified thinking settings to Groq reasoning format.
 
-        Args:
-            model_settings: The model settings to check.
-
-        Returns:
-            Groq reasoning format string, or None if not specified.
-
-        Raises:
-            UserError: If thinking is requested but the model doesn't support it.
+        Uses silent-drop semantics: effort is silently ignored (Groq has no effort control).
         """
-        thinking = model_settings.get('thinking')
-        if thinking is None:
+        resolved = resolve_thinking_config(model_settings)
+        if resolved is None:
             return None
 
-        resolved = resolve_thinking_config(thinking, self.profile, self._model_name)
-        if resolved is None or not resolved.enabled:
+        # Silent drop: model doesn't support thinking
+        if not self.profile.supports_thinking:
             return None
 
-        # Warn about ignored settings (Groq doesn't support fine-grained control)
-        ignored: list[str] = []
-        if resolved.budget_tokens is not None:
-            ignored.append('budget_tokens')
-        if resolved.effort is not None:
-            ignored.append('effort')
-
-        if ignored:
-            from ._warnings import warn_settings_ignored_batch
-
-            warn_settings_ignored_batch(
-                setting_names=ignored,
-                provider_name='Groq',
-                reason='Groq reasoning models do not support fine-grained control. Reasoning will be enabled with default behavior',
-            )
-
-        # Map include_in_response to reasoning format
-        if resolved.include_in_response is False:
+        if not resolved.enabled:
             return 'hidden'
+
+        # Effort is silently ignored (Groq SDK lacks reasoning_effort support)
         return 'parsed'
 
     @property

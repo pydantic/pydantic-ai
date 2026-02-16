@@ -59,7 +59,7 @@ from ..messages import (
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings, ThinkingConfig
+from ..settings import ModelSettings
 from ..thinking import resolve_thinking_config
 from ..tools import ToolDefinition
 from . import (
@@ -594,18 +594,24 @@ class OpenAIChatModel(Model):
         """Resolve reasoning effort from unified or provider-specific settings.
 
         Provider-specific `openai_reasoning_effort` takes precedence over unified `thinking`.
+        Uses silent-drop semantics for unsupported settings.
         """
         # Provider-specific setting takes precedence
         if 'openai_reasoning_effort' in model_settings:
             return model_settings['openai_reasoning_effort']
 
-        thinking = model_settings.get('thinking')
-        if thinking is None:
+        resolved = resolve_thinking_config(model_settings)
+        if resolved is None:
             return None
 
-        resolved = resolve_thinking_config(thinking, self.profile, self.model_name)
-        if resolved is None or not resolved.enabled:
+        # Silent drop: model doesn't support reasoning
+        if not self.profile.supports_thinking:
             return None
+
+        if not resolved.enabled:
+            return None
+
+        # Direct 1:1 mapping — OpenAI's reasoning_effort aligns with our thinking_effort
         return resolved.effort or 'medium'
 
     def prepare_request(
@@ -1736,58 +1742,25 @@ class OpenAIResponsesModel(Model):
         reasoning_effort: ReasoningEffort | None,
         reasoning_summary: Literal['detailed', 'concise', 'auto'] | None,
     ) -> tuple[ReasoningEffort | None, Literal['detailed', 'concise', 'auto'] | None]:
-        """Apply unified thinking settings to reasoning effort and summary."""
-        thinking = model_settings.get('thinking')
-        if thinking is None:
+        """Apply unified thinking settings to reasoning effort and summary.
+
+        Uses silent-drop semantics for unsupported settings.
+        """
+        resolved = resolve_thinking_config(model_settings)
+        if resolved is None:
             return reasoning_effort, reasoning_summary
 
-        # Validate that the model supports thinking
+        # Silent drop: model doesn't support thinking
         if not self.profile.supports_thinking:
-            raise UserError(
-                f'Model {self.model_name!r} does not support thinking/reasoning. '
-                f'Remove the `thinking` setting or use a model that supports thinking.'
-            )
-
-        if thinking is False:
-            if self.profile.thinking_always_enabled:
-                raise UserError(
-                    f'Model {self.model_name!r} has reasoning always enabled and cannot be disabled. '
-                    f'Remove the `thinking=False` setting.'
-                )
             return reasoning_effort, reasoning_summary
 
-        if thinking is True:
-            return reasoning_effort or 'medium', reasoning_summary
-
-        # Handle ThinkingConfig dict
-        config: ThinkingConfig = thinking
-        if config.get('enabled') is False:
-            if self.profile.thinking_always_enabled:
-                raise UserError(
-                    f'Model {self.model_name!r} has reasoning always enabled and cannot be disabled. '
-                    f"Remove the `thinking={{'enabled': False}}` setting."
-                )
+        if not resolved.enabled:
+            # Silent ignore on always-on models; no-op on models with thinking off by default
             return reasoning_effort, reasoning_summary
 
-        # Warn about ignored budget_tokens setting
-        if config.get('budget_tokens') is not None:
-            from ._warnings import warn_setting_ignored
-
-            # Determine what effort level will be used
-            effective_effort = config.get('effort', 'medium')
-            warn_setting_ignored(
-                setting_name='budget_tokens',
-                provider_name=self.system,
-                reason=f"OpenAI reasoning models use effort levels instead of token budgets. Reasoning will use effort='{effective_effort}'",
-                alternative="Use effort='low', 'medium', or 'high' to control reasoning depth",
-            )
-
-        # Apply effort and summary from config
+        # Apply effort from unified settings if provider-specific not set
         if reasoning_effort is None:
-            reasoning_effort = config.get('effort', 'medium')
-        if reasoning_summary is None:
-            summary = config.get('summary')
-            reasoning_summary = self._map_summary_to_openai(summary)
+            reasoning_effort = resolved.effort or 'medium'
 
         return reasoning_effort, reasoning_summary
 

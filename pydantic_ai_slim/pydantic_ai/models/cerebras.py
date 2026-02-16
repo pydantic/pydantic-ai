@@ -107,42 +107,21 @@ class CerebrasModel(OpenAIChatModel):
     def _resolve_reasoning_config(self, model_settings: CerebrasModelSettings) -> bool | None:
         """Resolve unified thinking settings to Cerebras disable_reasoning config.
 
-        Args:
-            model_settings: The model settings to check.
-
-        Returns:
-            True to disable reasoning, None to leave default behavior.
-
-        Raises:
-            UserError: If thinking is requested but the model doesn't support it.
+        Returns True to disable reasoning, None to leave default behavior.
+        Uses silent-drop semantics: effort is silently ignored (Cerebras has no effort control).
         """
-        thinking = model_settings.get('thinking')
-        if thinking is None:
+        resolved = resolve_thinking_config(model_settings)
+        if resolved is None:
             return None
 
-        resolved = resolve_thinking_config(thinking, self.profile, self._model_name)
-        if resolved is None:  # pragma: no cover
+        # Silent drop: model doesn't support thinking
+        if not self.profile.supports_thinking:
             return None
+
         if not resolved.enabled:
             return True  # disable_reasoning=True
 
-        # Warn about ignored settings (Cerebras only supports enable/disable)
-        ignored: list[str] = []
-        for setting in ('budget_tokens', 'effort', 'include_in_response', 'summary'):
-            value = getattr(resolved, setting, None)
-            if value is not None and (setting != 'include_in_response' or value is not True):
-                ignored.append(setting)
-
-        if ignored:
-            from ._warnings import warn_settings_ignored_batch
-
-            warn_settings_ignored_batch(
-                setting_names=ignored,
-                provider_name='Cerebras',
-                model_name=self._model_name,
-                reason='Cerebras reasoning can only be enabled or disabled. Reasoning will be enabled with default behavior',
-            )
-
+        # Effort is silently ignored (Cerebras only supports enable/disable)
         return None  # Don't set disable_reasoning (use default enabled behavior)
 
 

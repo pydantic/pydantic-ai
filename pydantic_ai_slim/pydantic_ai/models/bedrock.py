@@ -373,25 +373,25 @@ class BedrockConverseModel(Model):
 
         For Claude models on Bedrock, thinking is passed via additionalModelRequestFields.
         Returns the thinking config dict in Anthropic format, or None if not enabled.
+        Uses silent-drop semantics for unsupported settings.
         """
-        thinking = model_settings.get('thinking')
-        if thinking is None:
+        resolved = resolve_thinking_config(model_settings)
+        if resolved is None:
             return None
 
-        resolved = resolve_thinking_config(thinking, self.profile, self.model_name)
-        if resolved is None:  # pragma: no cover
+        # Silent drop: model doesn't support thinking or is not a Claude model
+        if not self.profile.supports_thinking:
             return None
+
         if not resolved.enabled:
             return {'type': 'disabled'}
 
-        # Derive budget from effort if not explicitly set
-        budget_tokens = resolved.budget_tokens
-        if budget_tokens is None and resolved.effort and self.profile.effort_to_budget_map:
-            budget_tokens = self.profile.effort_to_budget_map.get(resolved.effort)
-        if budget_tokens is None:
-            budget_tokens = self.profile.default_thinking_budget or 4096
-
-        return {'type': 'enabled', 'budget_tokens': budget_tokens}
+        # Bedrock routes to Claude — use same effort-to-budget mapping as Anthropic
+        budget = 4096
+        if resolved.effort:
+            effort_to_budget: dict[str, int] = {'low': 1024, 'medium': 4096, 'high': 16384}
+            budget = effort_to_budget.get(resolved.effort, 4096)
+        return {'type': 'enabled', 'budget_tokens': budget}
 
     async def request(
         self,

@@ -79,19 +79,10 @@ class ModelProfile:
 
     # Thinking/reasoning capabilities
     supports_thinking: bool = False
-    """Whether the model supports thinking/reasoning features."""
+    """Whether the model supports thinking/reasoning capabilities."""
 
     thinking_always_enabled: bool = False
-    """Whether thinking cannot be disabled (e.g., DeepSeek R1). If True, thinking=False raises UserError."""
-
-    supports_thinking_level: bool = False
-    """Whether the model uses thinking_level instead of thinking_budget (Gemini 3+)."""
-
-    default_thinking_budget: int | None = None
-    """Default thinking budget if not specified. For Anthropic, defaults to 4096."""
-
-    effort_to_budget_map: dict[str, int] | None = None
-    """Custom effort-to-budget mapping for this model (Gemini 2.5, Anthropic)."""
+    """Whether thinking is always on and cannot be disabled (e.g., o-series, GPT-5, DeepSeek R1)."""
 
     @classmethod
     def from_profile(cls, profile: ModelProfile | None) -> Self:

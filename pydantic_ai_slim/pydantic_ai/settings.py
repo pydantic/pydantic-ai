@@ -6,54 +6,6 @@ from httpx import Timeout
 from typing_extensions import TypedDict
 
 
-class ThinkingConfig(TypedDict, total=False):
-    """Unified configuration for model thinking/reasoning.
-
-    This provides a provider-agnostic way to configure thinking features across
-    different LLM providers. The settings are mapped to provider-specific
-    configurations automatically.
-    """
-
-    enabled: bool
-    """Whether thinking is enabled. Defaults to True if ThinkingConfig is provided."""
-
-    budget_tokens: int
-    """Maximum tokens allocated for thinking.
-
-    Mapped to:
-    - Anthropic: budget_tokens
-    - Google: thinking_budget
-    - OpenAI: (not directly supported, use effort instead)
-    - Bedrock (Claude): budget_tokens
-    """
-
-    effort: Literal['low', 'medium', 'high']
-    """Thinking effort level. Alternative to budget_tokens.
-
-    Mapped to:
-    - OpenAI: reasoning_effort ('low', 'medium', 'high')
-    - Anthropic: budget_tokens (low=1024, medium=4096, high=16384)
-    - Google: thinking_budget (low=1024, medium=8192, high=32768)
-    """
-
-    include_in_response: bool
-    """Whether to include thinking content in the response. Defaults to True.
-
-    Mapped to:
-    - Google: include_thoughts
-    - Groq: reasoning_format ('parsed' vs 'hidden')
-    - Others: Always included when thinking is enabled
-    """
-
-    summary: Literal['none', 'concise', 'detailed', 'auto'] | bool
-    """Request a summary of the thinking process.
-
-    Mapped to:
-    - OpenAI: reasoning_summary
-    - Others: Not directly supported (thinking content is returned)
-    """
-
-
 class ModelSettings(TypedDict, total=False):
     """Settings to configure an LLM.
 
@@ -232,24 +184,55 @@ class ModelSettings(TypedDict, total=False):
     * Outlines (all providers)
     """
 
-    thinking: bool | ThinkingConfig
-    """Enable or configure thinking/reasoning for the model.
+    thinking: bool
+    """Enable or disable thinking/reasoning.
 
-    Basic usage:
-    - `thinking=True`: Enable thinking with provider defaults
-    - `thinking=False`: Disable thinking (if provider enables by default)
-    - `thinking={'budget_tokens': 2048}`: Enable with specific budget
-    - `thinking={'effort': 'high'}`: Enable with effort level
+    - `True`: Enable thinking. Provider picks the best mode automatically
+      (adaptive for Anthropic Opus 4.6, enabled for older Anthropic,
+      default-on for OpenAI o-series, etc.)
+    - `False`: Disable thinking. Silently ignored on models where
+      thinking cannot be disabled (o-series, DeepSeek R1, etc.)
+    - Omitted: Use provider default behavior.
 
-    Provider-specific settings (e.g., `anthropic_thinking`) take precedence
-    when specified alongside this unified setting.
+    When `thinking` is `False`, `thinking_effort` is ignored.
+
+    Provider-specific settings (e.g. `anthropic_thinking`, `openai_reasoning_effort`)
+    always take precedence over this unified field.
 
     Supported by:
 
-    * Anthropic
-    * Google (Gemini)
-    * OpenAI (reasoning models)
+    * Anthropic (Claude 3.7+)
+    * Gemini (2.5+)
+    * OpenAI (o-series, GPT-5+)
     * Bedrock (Claude models)
+    * OpenRouter
+    * Groq (reasoning models)
+    * Cerebras (GLM, GPT-OSS)
+    * Mistral (Magistral models — always-on)
+    * Cohere (Command A Reasoning)
+    * xAI (Grok 3 Mini, Grok 4)
+    """
+
+    thinking_effort: Literal['low', 'medium', 'high']
+    """Control the depth of thinking/reasoning.
+
+    - `'low'`: Minimal thinking, faster responses, lower cost
+    - `'medium'`: Balanced thinking depth (typical default)
+    - `'high'`: Deep thinking, most thorough analysis
+
+    Setting `thinking_effort` without `thinking` implicitly enables thinking.
+    Silently ignored on models that don't support effort control.
+
+    Provider-specific effort levels (OpenAI's `xhigh`/`minimal`,
+    Anthropic's `max`) are available through provider-specific settings.
+
+    Supported by:
+
+    * Anthropic (Opus 4.5+ via `output_config.effort`)
+    * Gemini 3 (via `thinking_level`)
+    * OpenAI (o-series, GPT-5+ via `reasoning_effort`)
+    * OpenRouter (via `reasoning.effort`)
+    * xAI (Grok 3 Mini only, via `reasoning_effort`)
     """
 
 
@@ -258,14 +241,14 @@ def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | 
 
     A common use case is: merge_model_settings(<agent settings>, <run settings>)
 
-    For nested dict values (like `thinking` or `extra_headers`), performs a shallow merge
+    For nested dict values (like `extra_headers`), performs a shallow merge
     so that override fields are applied on top of base fields rather than replacing entirely.
     """
     if base and overrides:
         result = dict(base)
         for key, override_value in overrides.items():
             base_value = result.get(key)
-            # Shallow merge for nested dicts (e.g., thinking, extra_headers)
+            # Shallow merge for nested dicts (e.g., extra_headers)
             if isinstance(base_value, dict) and isinstance(override_value, dict):
                 result[key] = base_value | override_value
             else:

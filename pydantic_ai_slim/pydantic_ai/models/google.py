@@ -261,67 +261,50 @@ class GoogleModel(Model):
         """Resolve thinking configuration from unified or provider-specific settings.
 
         Provider-specific `google_thinking_config` takes precedence over unified `thinking`.
-        For Gemini 3+, uses `thinking_level` instead of `thinking_budget`.
+        Uses silent-drop semantics for unsupported settings.
         """
         # Provider-specific setting takes precedence
         if 'google_thinking_config' in model_settings:
             return model_settings['google_thinking_config']
 
-        thinking = model_settings.get('thinking')
-        if thinking is None:
+        resolved = resolve_thinking_config(model_settings)
+        if resolved is None:
             return None
 
-        resolved = resolve_thinking_config(thinking, self.profile, self.model_name)
-        if resolved is None:  # pragma: no cover
+        # Silent drop: model doesn't support thinking
+        if not self.profile.supports_thinking:
             return None
 
-        uses_thinking_level = self.profile.supports_thinking_level
+        # Determine Gemini 3 vs 2.5 internally (not a profile concern)
+        uses_thinking_level = 'gemini-3' in self.model_name
 
         if not resolved.enabled:
             if uses_thinking_level:
                 return {'thinking_level': ThinkingLevel.LOW, 'include_thoughts': False}
-            else:
-                return {'thinking_budget': 0}
+            return {'thinking_budget': 0}
 
         result: ThinkingConfigDict = {}
 
         if uses_thinking_level:
             # Gemini 3+: Map effort to thinking_level
-            effort_to_level = {
-                'low': ThinkingLevel.LOW,
-                'medium': ThinkingLevel.MEDIUM,
-                'high': ThinkingLevel.HIGH,
-            }
-
             if resolved.effort:
-                # Check for Pro model medium→high mapping
-                is_pro = 'pro' in self.model_name.lower()
-                if resolved.effort == 'medium' and is_pro:
-                    from ._warnings import warn_setting_mapped
-
-                    warn_setting_mapped(
-                        setting_name='effort',
-                        setting_value='medium',
-                        provider_name='Google',
-                        model_name=self.model_name,
-                        mapped_to='high',
-                        reason="Gemini 3 Pro only supports 'low' and 'high' effort levels. Thinking will use 'high' effort",
-                    )
-                    result['thinking_level'] = ThinkingLevel.HIGH
-                else:
-                    result['thinking_level'] = effort_to_level.get(resolved.effort, ThinkingLevel.HIGH)
+                effort_to_level: dict[str, ThinkingLevel] = {
+                    'low': ThinkingLevel.LOW,
+                    'medium': ThinkingLevel.MEDIUM,
+                    'high': ThinkingLevel.HIGH,
+                }
+                result['thinking_level'] = effort_to_level.get(resolved.effort, ThinkingLevel.HIGH)
             else:
                 result['thinking_level'] = ThinkingLevel.HIGH
-        else:
-            # Gemini 2.5: Use thinking_budget
-            budget_tokens = resolved.budget_tokens
-            if budget_tokens is None and resolved.effort and self.profile.effort_to_budget_map:
-                budget_tokens = self.profile.effort_to_budget_map.get(resolved.effort)
-            if budget_tokens is not None:
-                result['thinking_budget'] = budget_tokens
-
-        # Handle include_in_response → include_thoughts
-        result['include_thoughts'] = resolved.include_in_response
+        elif resolved.effort:
+            # Gemini 2.5: Map effort to thinking_budget
+            effort_to_budget: dict[str, int] = {
+                'low': 1024,
+                'medium': 8192,
+                'high': 32768,
+            }
+            if budget := effort_to_budget.get(resolved.effort):
+                result['thinking_budget'] = budget
 
         return result if result else None
 

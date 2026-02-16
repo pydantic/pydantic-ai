@@ -559,22 +559,13 @@ class OpenRouterModel(OpenAIChatModel):
     def _resolve_reasoning_config(self, model_settings: OpenRouterModelSettings) -> OpenRouterReasoning | None:
         """Resolve unified thinking settings to OpenRouter reasoning config.
 
-        Args:
-            model_settings: The model settings to check.
-
-        Returns:
-            OpenRouter reasoning config dict, or None if not specified.
-
-        Raises:
-            UserError: If thinking is requested but the model doesn't support it.
+        OpenRouter handles per-provider translation, so we pass effort through directly.
+        Uses silent-drop semantics for unsupported settings.
         """
-        thinking = model_settings.get('thinking')
-        if thinking is None:
+        resolved = resolve_thinking_config(model_settings)
+        if resolved is None:
             return None
 
-        resolved = resolve_thinking_config(thinking, self.profile, self._model_name)
-        if resolved is None:  # pragma: no cover
-            return None
         if not resolved.enabled:
             return {'enabled': False}
 
@@ -583,14 +574,6 @@ class OpenRouterModel(OpenAIChatModel):
         # Map effort directly (OpenRouter uses same values)
         if resolved.effort:
             result['effort'] = resolved.effort
-
-        # Map budget_tokens to max_tokens
-        if resolved.budget_tokens:
-            result['max_tokens'] = resolved.budget_tokens
-
-        # Map include_in_response=False to exclude=True
-        if resolved.include_in_response is False:
-            result['exclude'] = True
 
         # If no specific settings, just enable
         if not result:
