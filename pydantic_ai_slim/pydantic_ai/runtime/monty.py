@@ -188,6 +188,10 @@ class MontyRuntime(CodeRuntime):
 
                     try:
                         task_results = await asyncio.gather(*pending_tasks)
+                    except BaseException:
+                        for t in pending_tasks:
+                            t.cancel()
+                        raise
                     finally:
                         for call_id in pending_call_ids:
                             del tasks[call_id]
