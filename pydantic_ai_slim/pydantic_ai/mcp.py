@@ -573,7 +573,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
         mcp_tools = await self.list_tools()
 
-        if self._cached_tool_defs is None:
+        if self._cached_tool_defs is None or not self.cache_tools:
             self._cached_tool_defs = {}
             for mcp_tool in mcp_tools:
                 name = f'{self.tool_prefix}_{mcp_tool.name}' if self.tool_prefix else mcp_tool.name
