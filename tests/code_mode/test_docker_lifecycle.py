@@ -58,6 +58,9 @@ async def test_managed_lifecycle_security_flags():
         host = info['HostConfig']
         config = info['Config']
 
+        # Init (tini) for zombie reaping
+        assert host['Init'] is True
+
         # Network isolation
         assert host['NetworkMode'] == 'none'
 

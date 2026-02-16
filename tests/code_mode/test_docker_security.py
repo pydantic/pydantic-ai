@@ -123,6 +123,14 @@ async def test_pids_limit_enforced():
         assert 'PASS' in result
 
 
+async def test_empty_user_raises_valueerror():
+    """Setting user='' raises ValueError to prevent silent root execution."""
+    runtime = DockerRuntime(security=DockerSecuritySettings(user=''))
+    with pytest.raises(ValueError, match='must not be empty'):
+        async with runtime:
+            pass
+
+
 async def test_custom_security_settings():
     """Overriding security defaults actually changes container configuration."""
     runtime = DockerRuntime(security=DockerSecuritySettings(network=True))

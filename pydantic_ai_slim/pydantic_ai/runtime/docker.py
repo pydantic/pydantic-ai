@@ -159,6 +159,12 @@ class DockerRuntime(DriverBasedRuntime):
     security: DockerSecuritySettings = field(default_factory=DockerSecuritySettings)
     """Security settings for managed containers. Ignored in unmanaged mode."""
 
+    setup_timeout: float | None = 120.0
+    """Timeout in seconds for container creation and driver setup. Default ``120.0``.
+
+    Covers image pull, container start, and driver copy. Set to ``None`` to disable.
+    """
+
     _managed: bool = field(default=False, init=False, repr=False)
     _running_count: int = field(default=0, init=False, repr=False)
     _enter_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
@@ -224,7 +230,7 @@ class DockerRuntime(DriverBasedRuntime):
     def _build_docker_run_cmd(self) -> list[str]:
         """Assemble the ``docker run`` command with all security flags."""
         sec = self.security
-        cmd = ['docker', 'run', '-d']
+        cmd = ['docker', 'run', '-d', '--init']
 
         # Network isolation
         if not sec.network:
@@ -243,6 +249,11 @@ class DockerRuntime(DriverBasedRuntime):
             cmd.extend(['--security-opt', 'no-new-privileges'])
 
         # User
+        if sec.user == '':
+            raise ValueError(
+                'DockerSecuritySettings.user must not be empty — '
+                'the container would run as root. Use "nobody" (default) or an explicit username/UID.'
+            )
         if sec.user:
             cmd.extend(['--user', sec.user])
 
@@ -283,7 +294,14 @@ class DockerRuntime(DriverBasedRuntime):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await proc.communicate()
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=self.setup_timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise RuntimeError(
+                f'Docker container creation timed out after {self.setup_timeout}s '
+                f'(image pull for {self.image!r} may be slow — increase setup_timeout or pull the image first)'
+            )
         if proc.returncode != 0:
             raise RuntimeError(f'Failed to create Docker container: {stderr.decode().strip()}')
         self.container_id = stdout.decode().strip()[:12]
@@ -317,7 +335,13 @@ class DockerRuntime(DriverBasedRuntime):
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        await rm_proc.wait()
+        try:
+            await asyncio.wait_for(rm_proc.wait(), timeout=self.setup_timeout)
+        except asyncio.TimeoutError:
+            rm_proc.kill()
+            raise RuntimeError(
+                f'Driver cleanup in container {self.container_id} timed out after {self.setup_timeout}s'
+            )
 
         driver_src = Path(__file__).parent / '_driver.py'
         driver_content = driver_src.read_bytes()
@@ -331,7 +355,13 @@ class DockerRuntime(DriverBasedRuntime):
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.DEVNULL,
         )
-        await proc.communicate(input=driver_content)
+        try:
+            await asyncio.wait_for(proc.communicate(input=driver_content), timeout=self.setup_timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise RuntimeError(
+                f'Driver copy to container {self.container_id} timed out after {self.setup_timeout}s'
+            )
         if proc.returncode != 0:
             raise RuntimeError(f'Failed to copy driver to container {self.container_id}')
 
