@@ -13,11 +13,12 @@ using mock clients, ensuring unified settings translate to correct native API pa
 
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.profiles import ModelProfile
 
 from .conftest import try_import
@@ -43,6 +44,7 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
     from pydantic_ai.models.xai import XaiModel, XaiModelSettings
+    from pydantic_ai.profiles.anthropic import AnthropicModelProfile
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -151,11 +153,11 @@ class TestAnthropicUnifiedThinking:
 
         assert result == {'type': 'enabled', 'budget_tokens': 4096}
 
-    def test_thinking_true_adaptive_model(self, thinking_profile: ModelProfile):
+    def test_thinking_true_adaptive_model(self):
         """thinking=True on adaptive model → type: adaptive."""
         model = AnthropicModel.__new__(AnthropicModel)
         model._model_name = 'claude-sonnet-4-5'
-        model._profile = thinking_profile
+        model._profile = AnthropicModelProfile(supports_thinking=True, anthropic_supports_adaptive_thinking=True)
 
         settings: AnthropicModelSettings = {'thinking': True}
         result = model._resolve_thinking_config(settings)
@@ -188,11 +190,11 @@ class TestAnthropicUnifiedThinking:
 
         assert result == {'type': 'enabled', 'budget_tokens': expected_budget}
 
-    def test_effort_on_adaptive_model_returns_adaptive(self, thinking_profile: ModelProfile):
+    def test_effort_on_adaptive_model_returns_adaptive(self):
         """thinking_effort on adaptive model → type: adaptive (effort flows through output_config)."""
         model = AnthropicModel.__new__(AnthropicModel)
         model._model_name = 'claude-opus-4-5'
-        model._profile = thinking_profile
+        model._profile = AnthropicModelProfile(supports_thinking=True, anthropic_supports_adaptive_thinking=True)
 
         settings: AnthropicModelSettings = {'thinking_effort': 'high'}
         result = model._resolve_thinking_config(settings)
@@ -204,14 +206,18 @@ class TestAnthropicUnifiedThinking:
         model = AnthropicModel.__new__(AnthropicModel)
         model._model_name = 'claude-sonnet-4'
         model._profile = thinking_profile
+        model._settings = None
 
         settings: AnthropicModelSettings = {
             'thinking': True,
             'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 5000},
         }
-        result = model._resolve_thinking_config(settings)
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
 
-        assert result == {'type': 'enabled', 'budget_tokens': 5000}
+        assert cast(AnthropicModelSettings, merged).get('anthropic_thinking') == {
+            'type': 'enabled',
+            'budget_tokens': 5000,
+        }
 
     def test_empty_settings_returns_none(self, thinking_profile: ModelProfile):
         """No thinking fields → None."""
@@ -328,14 +334,15 @@ class TestGoogleUnifiedThinking:
         model = GoogleModel.__new__(GoogleModel)
         model._model_name = 'gemini-2.5-flash'
         model._profile = google_thinking_profile
+        model._settings = None
 
         settings: GoogleModelSettings = {
             'thinking': True,
             'google_thinking_config': {'thinking_budget': 5000},
         }
-        result = model._resolve_thinking_config(settings)
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
 
-        assert result == {'thinking_budget': 5000}
+        assert cast(GoogleModelSettings, merged).get('google_thinking_config') == {'thinking_budget': 5000}
 
     def test_silent_drop_unsupported_model(self, non_thinking_profile: ModelProfile):
         """thinking=True on unsupported model → None (silent drop)."""
@@ -401,14 +408,15 @@ class TestOpenAIChatUnifiedThinking:
         model = OpenAIChatModel.__new__(OpenAIChatModel)
         model._model_name = 'o3'
         model._profile = openai_reasoning_profile
+        model._settings = None
 
         settings: OpenAIChatModelSettings = {
             'thinking_effort': 'low',
             'openai_reasoning_effort': 'high',
         }
-        result = model._resolve_thinking_config(settings)
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
 
-        assert result == 'high'
+        assert cast(OpenAIChatModelSettings, merged).get('openai_reasoning_effort') == 'high'
 
     def test_silent_drop_unsupported_model(self, non_thinking_profile: ModelProfile):
         """thinking=True on unsupported model → None (silent drop)."""
@@ -437,7 +445,10 @@ class TestOpenAIChatUnifiedThinking:
 
 
 class TestOpenAIResponsesUnifiedThinking:
-    """Tests for unified thinking settings on OpenAI Responses API models."""
+    """Tests for unified thinking settings on OpenAI Responses API models.
+
+    Resolution happens in prepare_request(), so tests verify the merged settings.
+    """
 
     @pytest.fixture
     def openai_responses_reasoning_profile(self) -> ModelProfile:
@@ -451,12 +462,12 @@ class TestOpenAIResponsesUnifiedThinking:
         model = OpenAIResponsesModel.__new__(OpenAIResponsesModel)
         model._model_name = 'o3'
         model._profile = openai_responses_reasoning_profile
+        model._settings = None
 
         settings: OpenAIResponsesModelSettings = {'thinking': True}
-        effort, summary = model._resolve_thinking_config(settings, None, None)
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
 
-        assert effort == 'medium'
-        assert summary is None
+        assert cast(OpenAIResponsesModelSettings, merged).get('openai_reasoning_effort') == 'medium'
 
     def test_effort_direct_mapping(self, openai_responses_reasoning_profile: ModelProfile):
         """thinking_effort maps 1:1 to reasoning effort."""
@@ -465,11 +476,12 @@ class TestOpenAIResponsesUnifiedThinking:
         model = OpenAIResponsesModel.__new__(OpenAIResponsesModel)
         model._model_name = 'o3'
         model._profile = openai_responses_reasoning_profile
+        model._settings = None
 
         settings: OpenAIResponsesModelSettings = {'thinking_effort': 'high'}
-        effort, _ = model._resolve_thinking_config(settings, None, None)
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
 
-        assert effort == 'high'
+        assert cast(OpenAIResponsesModelSettings, merged).get('openai_reasoning_effort') == 'high'
 
     def test_thinking_false_silent_drop(self, openai_responses_reasoning_profile: ModelProfile):
         """thinking=False on always-on model → no change (silent drop)."""
@@ -478,12 +490,12 @@ class TestOpenAIResponsesUnifiedThinking:
         model = OpenAIResponsesModel.__new__(OpenAIResponsesModel)
         model._model_name = 'o3'
         model._profile = openai_responses_reasoning_profile
+        model._settings = None
 
         settings: OpenAIResponsesModelSettings = {'thinking': False}
-        effort, summary = model._resolve_thinking_config(settings, None, None)
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
 
-        assert effort is None
-        assert summary is None
+        assert cast(OpenAIResponsesModelSettings, merged).get('openai_reasoning_effort') is None
 
     def test_preserves_existing_reasoning_effort(self, openai_responses_reasoning_profile: ModelProfile):
         """Provider-specific reasoning_effort is preserved when unified also set."""
@@ -492,12 +504,13 @@ class TestOpenAIResponsesUnifiedThinking:
         model = OpenAIResponsesModel.__new__(OpenAIResponsesModel)
         model._model_name = 'o3'
         model._profile = openai_responses_reasoning_profile
+        model._settings = None
 
-        settings: OpenAIResponsesModelSettings = {'thinking_effort': 'low'}
-        effort, _ = model._resolve_thinking_config(settings, 'high', None)
+        settings: OpenAIResponsesModelSettings = {'thinking_effort': 'low', 'openai_reasoning_effort': 'high'}
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
 
         # Existing 'high' should be preserved
-        assert effort == 'high'
+        assert cast(OpenAIResponsesModelSettings, merged).get('openai_reasoning_effort') == 'high'
 
     def test_silent_drop_unsupported_model(self, non_thinking_profile: ModelProfile):
         """thinking=True on unsupported model → no change (silent drop)."""
@@ -506,12 +519,12 @@ class TestOpenAIResponsesUnifiedThinking:
         model = OpenAIResponsesModel.__new__(OpenAIResponsesModel)
         model._model_name = 'gpt-4o'
         model._profile = non_thinking_profile
+        model._settings = None
 
         settings: OpenAIResponsesModelSettings = {'thinking': True}
-        effort, summary = model._resolve_thinking_config(settings, None, None)
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
 
-        assert effort is None
-        assert summary is None
+        assert cast(OpenAIResponsesModelSettings, merged).get('openai_reasoning_effort') is None
 
 
 # ============================================================================
@@ -631,6 +644,33 @@ class TestOpenRouterUnifiedThinking:
         result = model._resolve_openrouter_thinking({})
         assert result is None
 
+    def test_prepare_request_sets_openrouter_reasoning(self):
+        """prepare_request() stores resolved config in extra_body.reasoning."""
+        model = OpenRouterModel.__new__(OpenRouterModel)
+        model._model_name = 'anthropic/claude-sonnet-4-5'
+        model._profile = ModelProfile(supports_thinking=True)
+        model._settings = None
+
+        settings: OpenRouterModelSettings = {'thinking': True}
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+
+        # _openrouter_settings_to_openai_settings pops openrouter_reasoning into extra_body
+        assert merged is not None
+        assert cast(dict[str, Any], merged).get('extra_body', {}).get('reasoning') == {'enabled': True}
+
+    def test_provider_specific_takes_precedence(self):
+        """openrouter_reasoning takes precedence over unified fields."""
+        model = OpenRouterModel.__new__(OpenRouterModel)
+        model._model_name = 'anthropic/claude-sonnet-4-5'
+        model._profile = ModelProfile(supports_thinking=True)
+        model._settings = None
+
+        settings: OpenRouterModelSettings = {'thinking': True, 'openrouter_reasoning': {'enabled': False}}
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+
+        assert merged is not None
+        assert cast(dict[str, Any], merged).get('extra_body', {}).get('reasoning') == {'enabled': False}
+
 
 # ============================================================================
 # Groq unified thinking tests
@@ -694,6 +734,30 @@ class TestGroqUnifiedThinking:
         result = model._resolve_thinking_config({})
         assert result is None
 
+    def test_prepare_request_sets_groq_reasoning_format(self, thinking_profile: ModelProfile):
+        """prepare_request() stores resolved config in groq_reasoning_format."""
+        model = GroqModel.__new__(GroqModel)
+        model._model_name = 'deepseek-r1-distill-llama-70b'
+        model._profile = thinking_profile
+        model._settings = None
+
+        settings: GroqModelSettings = {'thinking': True}
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+
+        assert cast(GroqModelSettings, merged).get('groq_reasoning_format') == 'parsed'
+
+    def test_provider_specific_takes_precedence(self, thinking_profile: ModelProfile):
+        """groq_reasoning_format takes precedence over unified fields."""
+        model = GroqModel.__new__(GroqModel)
+        model._model_name = 'deepseek-r1-distill-llama-70b'
+        model._profile = thinking_profile
+        model._settings = None
+
+        settings: GroqModelSettings = {'thinking': True, 'groq_reasoning_format': 'raw'}
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+
+        assert cast(GroqModelSettings, merged).get('groq_reasoning_format') == 'raw'
+
 
 # ============================================================================
 # Cerebras unified thinking tests
@@ -756,6 +820,33 @@ class TestCerebrasUnifiedThinking:
 
         result = model._resolve_cerebras_thinking({})
         assert result is None
+
+    def test_prepare_request_sets_cerebras_disable_reasoning(self, thinking_profile: ModelProfile):
+        """prepare_request() stores resolved config in extra_body.disable_reasoning."""
+        model = CerebrasModel.__new__(CerebrasModel)
+        model._model_name = 'zai-glm-4.6'
+        model._profile = thinking_profile
+        model._settings = None
+
+        settings: CerebrasModelSettings = {'thinking': False}
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+
+        # _cerebras_settings_to_openai_settings pops cerebras_disable_reasoning into extra_body
+        assert merged is not None
+        assert cast(dict[str, Any], merged).get('extra_body', {}).get('disable_reasoning') is True
+
+    def test_provider_specific_takes_precedence(self, thinking_profile: ModelProfile):
+        """cerebras_disable_reasoning takes precedence over unified fields."""
+        model = CerebrasModel.__new__(CerebrasModel)
+        model._model_name = 'zai-glm-4.6'
+        model._profile = thinking_profile
+        model._settings = None
+
+        settings: CerebrasModelSettings = {'thinking': True, 'cerebras_disable_reasoning': True}
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+
+        assert merged is not None
+        assert cast(dict[str, Any], merged).get('extra_body', {}).get('disable_reasoning') is True
 
 
 # ============================================================================
@@ -1353,6 +1444,67 @@ class TestOpenAIChatIntegration:
 
         kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
         assert kwargs['reasoning_effort'] == 'medium'
+
+    @pytest.mark.anyio
+    @pytest.mark.filterwarnings('ignore:Sampling parameters.*not supported when reasoning is enabled:UserWarning')
+    async def test_thinking_true_drops_sampling_params(self, allow_model_requests: None):
+        """thinking=True + temperature on GPT-5.1+ → temperature dropped, reasoning_effort sent.
+
+        Regression test: before prepare_request() resolved unified thinking, the
+        _drop_sampling_params_for_reasoning() function wouldn't see reasoning_effort
+        and would incorrectly preserve sampling params.
+        """
+        from tests.models.mock_openai import (
+            MockOpenAI,
+            completion_message as oai_completion,
+            get_mock_chat_completion_kwargs,
+        )
+
+        c = oai_completion(ChatCompletionMessage(content='dropped', role='assistant'))
+        mock_client = MockOpenAI.create_mock(c)
+        m = OpenAIChatModel('gpt-5.1', provider=OpenAIProvider(openai_client=mock_client))
+        agent = Agent(m)
+
+        result = await agent.run(
+            'hello',
+            model_settings=OpenAIChatModelSettings(thinking=True, temperature=0.5),
+        )
+        assert result.output == 'dropped'
+
+        kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+        assert kwargs['reasoning_effort'] == 'medium'
+        # temperature should be dropped when reasoning is active
+        assert 'temperature' not in kwargs
+
+    @pytest.mark.anyio
+    async def test_no_thinking_preserves_sampling_params(self, allow_model_requests: None):
+        """No thinking + temperature on GPT-5.1+ → temperature preserved, no reasoning_effort.
+
+        GPT-5.1+ defaults to reasoning_effort='none' which allows sampling params.
+        Without unified thinking settings, sampling params should pass through unchanged.
+        """
+        from tests.models.mock_openai import (
+            MockOpenAI,
+            completion_message as oai_completion,
+            get_mock_chat_completion_kwargs,
+        )
+
+        c = oai_completion(ChatCompletionMessage(content='preserved', role='assistant'))
+        mock_client = MockOpenAI.create_mock(c)
+        m = OpenAIChatModel('gpt-5.1', provider=OpenAIProvider(openai_client=mock_client))
+        agent = Agent(m)
+
+        result = await agent.run(
+            'hello',
+            model_settings=OpenAIChatModelSettings(temperature=0.5),
+        )
+        assert result.output == 'preserved'
+
+        kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+        # No reasoning_effort should be set (model defaults to 'none')
+        assert 'reasoning_effort' not in kwargs
+        # temperature should be preserved when no thinking is active
+        assert kwargs['temperature'] == 0.5
 
 
 class TestOpenAIResponsesIntegration:

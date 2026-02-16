@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
 from botocore.exceptions import ClientError
-from typing_extensions import ParamSpec, assert_never
+from typing_extensions import ParamSpec, assert_never, override
 
 from pydantic_ai import (
     AudioUrl,
@@ -44,10 +44,11 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
+from pydantic_ai.profiles.anthropic import DEFAULT_THINKING_BUDGET, EFFORT_TO_BUDGET
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.thinking import DEFAULT_THINKING_BUDGET, EFFORT_TO_BUDGET, resolve_with_profile
+from pydantic_ai.thinking import resolve_with_profile
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
@@ -368,6 +369,29 @@ class BedrockConverseModel(Model):
 
         return {'toolSpec': tool_spec}
 
+    @override
+    def prepare_request(
+        self,
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
+        merged_settings = cast(BedrockModelSettings, merged_settings or {})
+
+        # Only inject unified thinking for Claude models.
+        # Other Bedrock families (Meta, Cohere, Mistral) use different
+        # additionalModelRequestFields formats — use
+        # bedrock_additional_model_requests_fields for those.
+        if 'anthropic' in self.model_name:
+            additional = dict(merged_settings.get('bedrock_additional_model_requests_fields') or {})
+            if 'thinking' not in additional:
+                thinking_config = self._resolve_thinking_config(merged_settings)
+                if thinking_config is not None:
+                    additional['thinking'] = thinking_config
+                    merged_settings['bedrock_additional_model_requests_fields'] = additional
+
+        return merged_settings, customized_parameters
+
     def _resolve_thinking_config(self, model_settings: BedrockModelSettings) -> dict[str, Any] | None:
         """Resolve thinking configuration from unified settings for Bedrock.
 
@@ -596,14 +620,8 @@ class BedrockConverseModel(Model):
             'bedrock_additional_model_response_fields_paths', None
         ):
             params['additionalModelResponseFieldPaths'] = additional_model_response_fields_paths
-        # Handle additionalModelRequestFields with unified thinking support
-        additional_model_requests_fields = dict(settings.get('bedrock_additional_model_requests_fields', None) or {})
-        # Add thinking config from unified settings if not already set via additional_model_requests_fields
-        if 'thinking' not in additional_model_requests_fields:
-            thinking_config = self._resolve_thinking_config(settings)
-            if thinking_config is not None:
-                additional_model_requests_fields['thinking'] = thinking_config
-        if additional_model_requests_fields:
+        # Thinking config is already resolved in prepare_request() for Claude models
+        if additional_model_requests_fields := settings.get('bedrock_additional_model_requests_fields', None):
             params['additionalModelRequestFields'] = additional_model_requests_fields
         if prompt_variables := settings.get('bedrock_prompt_variables', None):
             params['promptVariables'] = prompt_variables

@@ -258,15 +258,10 @@ class GoogleModel(Model):
         return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, WebFetchTool, ImageGenerationTool})
 
     def _resolve_thinking_config(self, model_settings: GoogleModelSettings) -> ThinkingConfigDict | None:
-        """Resolve thinking configuration from unified or provider-specific settings.
+        """Resolve unified thinking settings to Google thinking config.
 
-        Provider-specific `google_thinking_config` takes precedence over unified `thinking`.
         Uses silent-drop semantics for unsupported settings.
         """
-        # Provider-specific setting takes precedence
-        if 'google_thinking_config' in model_settings:
-            return model_settings['google_thinking_config']
-
         resolved = resolve_with_profile(model_settings, self.profile)
         if resolved is None:
             return None
@@ -321,7 +316,16 @@ class GoogleModel(Model):
                 raise UserError(
                     f'Google does not support output tools and built-in tools at the same time. Use `output_type={output_mode}(...)` instead.'
                 )
-        return super().prepare_request(model_settings, model_request_parameters)
+        merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
+        merged_settings = cast(GoogleModelSettings, merged_settings or {})
+
+        # Apply unified thinking config if no provider-specific setting
+        if 'google_thinking_config' not in merged_settings:
+            thinking_config = self._resolve_thinking_config(merged_settings)
+            if thinking_config is not None:
+                merged_settings['google_thinking_config'] = thinking_config
+
+        return merged_settings, customized_parameters
 
     async def request(
         self,
@@ -595,7 +599,7 @@ class GoogleModel(Model):
             frequency_penalty=model_settings.get('frequency_penalty'),
             seed=model_settings.get('seed'),
             safety_settings=model_settings.get('google_safety_settings'),
-            thinking_config=self._resolve_thinking_config(model_settings),
+            thinking_config=model_settings.get('google_thinking_config'),
             labels=model_settings.get('google_labels'),
             media_resolution=model_settings.get('google_video_resolution'),
             cached_content=model_settings.get('google_cached_content'),

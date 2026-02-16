@@ -13,7 +13,7 @@ from typing import Any, Literal, cast, overload
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
-from typing_extensions import assert_never, deprecated
+from typing_extensions import assert_never, deprecated, override
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
@@ -591,15 +591,10 @@ class OpenAIChatModel(Model):
         return OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role
 
     def _resolve_thinking_config(self, model_settings: OpenAIChatModelSettings) -> ReasoningEffort | None:
-        """Resolve reasoning effort from unified or provider-specific settings.
+        """Resolve unified thinking settings to OpenAI reasoning_effort.
 
-        Provider-specific `openai_reasoning_effort` takes precedence over unified `thinking`.
         Uses silent-drop semantics for unsupported settings.
         """
-        # Provider-specific setting takes precedence
-        if 'openai_reasoning_effort' in model_settings:
-            return model_settings['openai_reasoning_effort']
-
         resolved = resolve_with_profile(model_settings, self.profile)
         if resolved is None:
             return None
@@ -624,7 +619,16 @@ class OpenAIChatModel(Model):
                 f'WebSearchTool is not supported with `OpenAIChatModel` and model {self.model_name!r}. '
                 f'Please use `OpenAIResponsesModel` instead.'
             )
-        return super().prepare_request(model_settings, model_request_parameters)
+        merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
+        merged_settings = cast(OpenAIChatModelSettings, merged_settings or {})
+
+        # Apply unified thinking config if no provider-specific setting
+        if 'openai_reasoning_effort' not in merged_settings:
+            reasoning_effort = self._resolve_thinking_config(merged_settings)
+            if reasoning_effort is not None:
+                merged_settings['openai_reasoning_effort'] = reasoning_effort
+
+        return merged_settings, customized_parameters
 
     async def request(
         self,
@@ -737,7 +741,7 @@ class OpenAIChatModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 response_format=response_format or OMIT,
                 seed=model_settings.get('seed', OMIT),
-                reasoning_effort=self._resolve_thinking_config(model_settings) or OMIT,
+                reasoning_effort=model_settings.get('openai_reasoning_effort', OMIT),
                 user=model_settings.get('openai_user', OMIT),
                 web_search_options=web_search_options or OMIT,
                 service_tier=model_settings.get('openai_service_tier', OMIT),
@@ -1368,6 +1372,23 @@ class OpenAIResponsesModel(Model):
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool})
 
+    @override
+    def prepare_request(
+        self,
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
+        merged_settings = cast(OpenAIResponsesModelSettings, merged_settings or {})
+
+        # Apply unified thinking config if no provider-specific setting
+        if 'openai_reasoning_effort' not in merged_settings:
+            resolved = resolve_with_profile(merged_settings, self.profile)
+            if resolved is not None and resolved.enabled:
+                merged_settings['openai_reasoning_effort'] = resolved.effort or 'medium'
+
+        return merged_settings, customized_parameters
+
     async def request(
         self,
         messages: list[ModelRequest | ModelResponse],
@@ -1705,6 +1726,7 @@ class OpenAIResponsesModel(Model):
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
     def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | Omit:
+        # Reasoning effort is resolved in prepare_request()
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)
         reasoning_summary = model_settings.get('openai_reasoning_summary', None)
         reasoning_generate_summary = model_settings.get('openai_reasoning_generate_summary', None)
@@ -1719,42 +1741,12 @@ class OpenAIResponsesModel(Model):
             )
             reasoning_summary = reasoning_generate_summary
 
-        # Check for unified thinking setting if provider-specific is not set
-        if reasoning_effort is None or reasoning_summary is None:
-            reasoning_effort, reasoning_summary = self._resolve_thinking_config(
-                model_settings, reasoning_effort, reasoning_summary
-            )
-
         reasoning: Reasoning = {}
         if reasoning_effort:
             reasoning['effort'] = reasoning_effort
         if reasoning_summary:
             reasoning['summary'] = reasoning_summary
         return reasoning or OMIT
-
-    def _resolve_thinking_config(
-        self,
-        model_settings: OpenAIResponsesModelSettings,
-        reasoning_effort: ReasoningEffort | None,
-        reasoning_summary: Literal['detailed', 'concise', 'auto'] | None,
-    ) -> tuple[ReasoningEffort | None, Literal['detailed', 'concise', 'auto'] | None]:
-        """Apply unified thinking settings to reasoning effort and summary.
-
-        Uses silent-drop semantics for unsupported settings.
-        """
-        resolved = resolve_with_profile(model_settings, self.profile)
-        if resolved is None:
-            return reasoning_effort, reasoning_summary
-
-        if not resolved.enabled:
-            # Silent ignore on always-on models; no-op on models with thinking off by default
-            return reasoning_effort, reasoning_summary
-
-        # Apply effort from unified settings if provider-specific not set
-        if reasoning_effort is None:
-            reasoning_effort = resolved.effort or 'medium'
-
-        return reasoning_effort, reasoning_summary
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]

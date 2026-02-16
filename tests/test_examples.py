@@ -354,6 +354,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Explain?': 'This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
     'What is the weather in Tokyo?': 'As of 7:48 AM on Wednesday, April 2, 2025, in Tokyo, Japan, the weather is cloudy with a temperature of 53°F (12°C).',
     'What is the capital of France?': 'The capital of France is Paris.',
+    'What is the meaning of life?': '42.',
     'What is the capital of Italy?': 'The capital of Italy is Rome.',
     'What is the capital of the UK?': 'The capital of the UK is London.',
     'What is the capital of Mexico?': 'The capital of Mexico is Mexico City.',

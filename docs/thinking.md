@@ -14,6 +14,8 @@ Pydantic AI provides two provider-agnostic settings in [`ModelSettings`][pydanti
 
 These settings are automatically translated into each provider's native API format. For example, `thinking_effort='high'` becomes `budget_tokens=16384` on Anthropic, `reasoning_effort='high'` on OpenAI, and `thinking_level=HIGH` on Gemini 3.
 
+Here is how to enable thinking with high effort on an Anthropic model:
+
 ```python {title="unified_thinking.py"}
 from pydantic_ai import Agent
 

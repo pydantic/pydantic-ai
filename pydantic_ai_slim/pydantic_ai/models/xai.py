@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, cast
 
-from typing_extensions import assert_never
+from typing_extensions import assert_never, override
 
 from .. import _utils
 from .._output import OutputObjectDefinition
@@ -138,6 +138,13 @@ class XaiModelSettings(ModelSettings, total=False):
     """Whether to include the MCP results in the response.
 
     Corresponds to the `mcp_call.outputs` value of the `include` parameter in the Responses API.
+    """
+
+    xai_reasoning_effort: ReasoningEffort
+    """Reasoning effort for Grok models that support it.
+
+    Only grok-3-mini supports reasoning_effort with 2 levels ("low", "high").
+    See [the xAI docs](https://docs.x.ai/docs) for more details.
     """
 
 
@@ -568,8 +575,8 @@ class XaiModel(Model):
         if model_settings.get('xai_include_mcp_output'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT)
 
-        # Resolve unified thinking settings to xAI reasoning_effort
-        reasoning_effort = self._resolve_thinking_config(model_settings)
+        # Reasoning effort is resolved in prepare_request()
+        reasoning_effort = model_settings.get('xai_reasoning_effort')
 
         # Create and return chat instance
         return self._provider.client.chat.create(
@@ -583,6 +590,23 @@ class XaiModel(Model):
             **(dict(reasoning_effort=reasoning_effort) if reasoning_effort is not None else {}),
             **xai_settings,
         )
+
+    @override
+    def prepare_request(
+        self,
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
+        merged_settings = cast(XaiModelSettings, merged_settings or {})
+
+        # Apply unified thinking config if no provider-specific setting
+        if 'xai_reasoning_effort' not in merged_settings:
+            reasoning_effort = self._resolve_thinking_config(merged_settings)
+            if reasoning_effort is not None:
+                merged_settings['xai_reasoning_effort'] = reasoning_effort
+
+        return merged_settings, customized_parameters
 
     async def request(
         self,

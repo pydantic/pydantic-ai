@@ -45,21 +45,13 @@ from ..messages import (
     UserPromptPart,
 )
 from ..profiles import ModelProfileSpec
+from ..profiles.anthropic import DEFAULT_THINKING_BUDGET, EFFORT_TO_BUDGET, AnthropicModelProfile
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, merge_model_settings
-from ..thinking import DEFAULT_THINKING_BUDGET, EFFORT_TO_BUDGET, resolve_with_profile
+from ..thinking import resolve_with_profile
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
-
-# Models that support adaptive thinking (type: "adaptive" with output_config.effort).
-# Older thinking models use type: "enabled" with budget_tokens.
-_ADAPTIVE_THINKING_MODELS = (
-    'claude-opus-4-5',
-    'claude-opus-4-6',
-    'claude-sonnet-4-5',
-    'claude-haiku-4-5',
-)
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
     'compaction': 'stop',
@@ -308,19 +300,11 @@ class AnthropicModel(Model):
         """The set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 
-    def _is_adaptive_model(self) -> bool:
-        """Whether this model supports adaptive thinking (Claude 4.5+)."""
-        return any(name in self.model_name for name in _ADAPTIVE_THINKING_MODELS)
-
     def _resolve_thinking_config(self, model_settings: AnthropicModelSettings) -> BetaThinkingConfigParam | None:
-        """Resolve thinking configuration from unified or provider-specific settings.
+        """Resolve unified thinking settings to Anthropic thinking config.
 
-        Provider-specific `anthropic_thinking` takes precedence over unified `thinking`.
+        Uses silent-drop semantics for unsupported settings.
         """
-        # Provider-specific setting takes precedence
-        if 'anthropic_thinking' in model_settings:
-            return model_settings['anthropic_thinking']
-
         resolved = resolve_with_profile(model_settings, self.profile)
         if resolved is None:
             return None
@@ -329,7 +313,7 @@ class AnthropicModel(Model):
             return {'type': 'disabled'}
 
         # Adaptive models (Claude 4.5+): effort flows through output_config, not thinking config
-        if self._is_adaptive_model():
+        if AnthropicModelProfile.from_profile(self.profile).anthropic_supports_adaptive_thinking:
             return {'type': 'adaptive'}
 
         # Budget-based models (Claude 3.7, Sonnet 4, Opus 4): map effort to budget_tokens
@@ -394,9 +378,16 @@ class AnthropicModel(Model):
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        settings = merge_model_settings(self.settings, model_settings)
-        # Resolve thinking config from unified or provider-specific settings
-        thinking_config = self._resolve_thinking_config(cast(AnthropicModelSettings, settings or {}))
+        # Merge settings early to resolve thinking config for validation
+        merged_settings = cast(AnthropicModelSettings, merge_model_settings(self.settings, model_settings) or {})
+
+        # Resolve thinking config (provider-specific takes precedence)
+        if 'anthropic_thinking' not in merged_settings:
+            thinking_config = self._resolve_thinking_config(merged_settings)
+            if thinking_config is not None:
+                merged_settings['anthropic_thinking'] = thinking_config
+
+        thinking_config = merged_settings.get('anthropic_thinking')
         if (
             model_request_parameters.output_tools
             and thinking_config
@@ -423,7 +414,8 @@ class AnthropicModel(Model):
             model_request_parameters = replace(
                 model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
             )
-        return super().prepare_request(model_settings, model_request_parameters)
+        # Pass merged_settings so super() picks up the resolved anthropic_thinking
+        return super().prepare_request(merged_settings, model_request_parameters)
 
     @overload
     async def _messages_create(
@@ -480,7 +472,7 @@ class AnthropicModel(Model):
                 output_config=output_config or OMIT,
                 betas=sorted(betas) or OMIT,
                 stream=stream,
-                thinking=self._resolve_thinking_config(model_settings) or OMIT,
+                thinking=model_settings.get('anthropic_thinking', OMIT),
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
                 temperature=model_settings.get('temperature', OMIT),
                 top_p=model_settings.get('top_p', OMIT),
@@ -568,7 +560,7 @@ class AnthropicModel(Model):
                 mcp_servers=mcp_servers or OMIT,
                 betas=sorted(betas) or OMIT,
                 output_config=output_config or OMIT,
-                thinking=self._resolve_thinking_config(model_settings) or OMIT,
+                thinking=model_settings.get('anthropic_thinking', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
@@ -1199,7 +1191,7 @@ class AnthropicModel(Model):
         effort = model_settings.get('anthropic_effort')
 
         # For adaptive models, map unified thinking_effort to output_config.effort
-        if effort is None and self._is_adaptive_model():
+        if effort is None and AnthropicModelProfile.from_profile(self.profile).anthropic_supports_adaptive_thinking:
             resolved = resolve_with_profile(model_settings, self.profile)
             if resolved and resolved.enabled and resolved.effort:
                 effort = resolved.effort

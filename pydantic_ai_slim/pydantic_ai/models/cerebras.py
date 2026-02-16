@@ -99,7 +99,7 @@ class CerebrasModel(OpenAIChatModel):
         if 'cerebras_disable_reasoning' not in merged_settings:
             disable_reasoning = self._resolve_cerebras_thinking(merged_settings)
             if disable_reasoning is not None:
-                merged_settings['cerebras_disable_reasoning'] = disable_reasoning  # pragma: no cover
+                merged_settings['cerebras_disable_reasoning'] = disable_reasoning
 
         new_settings = _cerebras_settings_to_openai_settings(merged_settings)
         return new_settings, customized_parameters

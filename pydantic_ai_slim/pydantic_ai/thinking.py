@@ -18,16 +18,6 @@ if TYPE_CHECKING:
     from .settings import ModelSettings
 
 
-# Effort-to-budget mapping for Anthropic-style models (Claude on Anthropic and Bedrock).
-# Budget-based thinking uses a token budget instead of effort levels.
-EFFORT_TO_BUDGET: dict[str, int] = {
-    'low': 1024,
-    'medium': 4096,
-    'high': 16384,
-}
-DEFAULT_THINKING_BUDGET = 4096
-
-
 @dataclass
 class ResolvedThinkingConfig:
     """Normalized thinking configuration after input parsing.

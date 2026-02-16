@@ -171,7 +171,7 @@ class GroqModel(Model):
         if 'groq_reasoning_format' not in merged_settings:
             reasoning_format = self._resolve_thinking_config(merged_settings)
             if reasoning_format is not None:
-                merged_settings['groq_reasoning_format'] = reasoning_format  # pragma: no cover
+                merged_settings['groq_reasoning_format'] = reasoning_format
 
         return merged_settings, customized_parameters
 
@@ -184,6 +184,9 @@ class GroqModel(Model):
         if resolved is None:
             return None
 
+        # Always-on models (DeepSeek R1, QwQ) are handled by resolve_with_profile's
+        # thinking_always_enabled guard, which returns None for thinking=False.
+        # So 'hidden' only applies to models where thinking can actually be toggled.
         if not resolved.enabled:
             return 'hidden'
 
