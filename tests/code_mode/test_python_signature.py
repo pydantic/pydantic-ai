@@ -417,7 +417,7 @@ async def test_dedup_correctness_after_cache_backed_deepcopy():
 def test_function_tool_definition_produces_same_signature_as_function_based():
     """FunctionToolDefinition.python_signature matches the old FunctionToolsetTool approach."""
     from pydantic_ai._python_signature import function_to_signature
-    from pydantic_ai.tools import FunctionToolDefinition, Tool
+    from pydantic_ai.tools import Tool
 
     def my_tool(x: int, y: str = 'hello') -> bool:
         """A test tool."""
@@ -457,7 +457,6 @@ def test_tool_definition_cached_property_reset_on_replace():
 
 def test_function_tool_definition_fallback_without_original_func():
     """FunctionToolDefinition falls back to schema-based signature when original_func is None."""
-    from pydantic_ai.tools import FunctionToolDefinition
 
     td = FunctionToolDefinition(
         name='schema_tool',
