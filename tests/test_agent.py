@@ -3,9 +3,10 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncIterable, Callable
+from collections.abc import AsyncIterable, AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
-from datetime import timezone
+from datetime import datetime, timezone
 from typing import Any, Generic, Literal, TypeVar, Union
 
 import pytest
@@ -66,6 +67,8 @@ from pydantic_ai.builtin_tools import (
     WebSearchUserLocation,
 )
 from pydantic_ai.exceptions import ContentFilterError
+from pydantic_ai.messages import ModelResponseStreamEvent
+from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
@@ -3158,6 +3161,22 @@ def test_tool_exceeds_token_limit_error():
         match=r'Model token limit \(10\) exceeded while generating a tool call, resulting in incomplete arguments.',
     ):
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
+
+    with pytest.raises(
+        IncompleteToolCall,
+        match=r'Model token limit \(provider default\) exceeded while generating a tool call, resulting in incomplete arguments.',
+    ):
+        agent.run_sync('Hello')
+
+
+def test_output_tool_exceeds_token_limit_error():
+    def return_incomplete_output_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools
+        resp = ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args='{"response": "bar",')])
+        resp.finish_reason = 'length'
+        return resp
+
+    agent = Agent(FunctionModel(return_incomplete_output_tool), output_type=tuple[str, str], retries=0)
 
     with pytest.raises(
         IncompleteToolCall,
@@ -7760,6 +7779,81 @@ async def test_image_output_validators_run():
     assert validator_called, 'output_validator was not called for image output'
 
 
+async def test_image_output_validators_run_stream():
+    """Test that output validators are called when streaming a model image response."""
+    validator_called = False
+
+    class ImageStreamedResponse(StreamedResponse):
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            self._usage = RequestUsage()
+            yield self._parts_manager.handle_part(
+                vendor_part_id=0,
+                part=FilePart(content=BinaryImage(data=b'fake-png', media_type='image/png')),
+            )
+
+        @property
+        def model_name(self) -> str:
+            return 'image-model'
+
+        @property
+        def provider_name(self) -> str:
+            return 'test'
+
+        @property
+        def provider_url(self) -> str:
+            return 'https://test.example.com'
+
+        @property
+        def timestamp(self) -> datetime:
+            return datetime(2024, 1, 1)
+
+    class ImageStreamModel(Model):
+        @property
+        def system(self) -> str:  # pragma: no cover
+            return 'test'
+
+        @property
+        def model_name(self) -> str:
+            return 'image-model'
+
+        @property
+        def base_url(self) -> str:  # pragma: no cover
+            return 'https://test.example.com'
+
+        async def request(  # pragma: no cover
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            return ModelResponse(parts=[FilePart(content=BinaryImage(data=b'fake-png', media_type='image/png'))])
+
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: RunContext | None = None,
+        ) -> AsyncIterator[StreamedResponse]:
+            yield ImageStreamedResponse(model_request_parameters=model_request_parameters)
+
+    image_profile = ModelProfile(supports_image_output=True)
+    agent = Agent(ImageStreamModel(profile=image_profile), output_type=BinaryImage)
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], output: BinaryImage) -> BinaryImage:
+        nonlocal validator_called
+        validator_called = True
+        return output
+
+    async with agent.run_stream('Give me an image') as stream:
+        result = await stream.get_output()
+
+    assert isinstance(result, BinaryImage)
+    assert validator_called, 'output_validator was not called for streamed image output'
+
+
 async def test_unknown_tool_with_valid_tool_does_not_exhaust_retries():
     """Test that an unknown tool call mixed with a valid tool doesn't prematurely exhaust retries.
 
@@ -7816,7 +7910,7 @@ async def test_parallel_tool_tasks_cancelled_on_exception():
         raise RuntimeError('tool exploded')
 
     @agent.tool_plain
-    async def slow_tool() -> str:
+    async def slow_tool() -> str:  # pragma: no cover
         nonlocal slow_tool_completed
         await asyncio.sleep(0.05)
         slow_tool_completed = True
