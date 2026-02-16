@@ -21,7 +21,7 @@ node_modules/
 /test_tmp/
 .mcp.json
 .claude/*
-!.claude/skills/
+!.claude/skills/address-pr-review
 .github/.review-context/
 /.cursor/
 /.devcontainer/

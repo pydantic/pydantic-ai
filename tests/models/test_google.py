@@ -3639,7 +3639,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Please return text or call a tool.',
+                        content='Please return text.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
