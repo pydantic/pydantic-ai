@@ -16,7 +16,9 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('pydantic-monty is not installed', allow_module_level=True)
 
+from pydantic_ai._tool_manager import _parallel_execution_mode_ctx_var  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.tools import Tool
 
 from .conftest import build_code_mode_toolset, run_code_with_tools
 
@@ -152,7 +154,7 @@ You can use it to:
 Execution model:
 - Each call to this tool runs in a completely isolated environment — variables don't persist between calls
 - If a previous call failed, you must rewrite the entire program from scratch — you cannot reference variables or results from a failed attempt
-- All functions are async. You can create new functions for convenience.
+- You can create new functions for convenience.
 - This tool is for calling and chaining tools programmatically — don't use it just to format or print your final analysis. Write your report as regular text in your response.
 
 
@@ -298,3 +300,128 @@ async def test_build_type_check_prefix_empty_lists():
     runtime = MontyRuntime()
     prefix = runtime._build_type_check_prefix([], [])  # pyright: ignore[reportPrivateUsage]
     assert prefix == 'from typing import Any, TypedDict, NotRequired, Literal'
+
+
+# --- Sequential tool tests ---
+
+
+def sync_add(*, x: int, y: int) -> int:
+    """Add two integers synchronously."""
+    return x + y
+
+
+async def test_sequential_tool_renders_as_def():
+    """A sequential tool renders as `def` (not `async def`) in description and type-check prefix."""
+    _, tools = await build_code_mode_toolset(
+        MontyRuntime(),
+        Tool(sync_add, takes_ctx=False, sequential=True),
+    )
+    tool = tools['run_code_with_tools']
+
+    # Description shows `def`, not `async def`
+    description = tool.tool_def.description or ''
+    assert 'def sync_add(' in description
+    assert 'async def sync_add(' not in description
+
+    # Type-check prefix also uses `def`
+    runtime = MontyRuntime()
+    prefix = runtime._build_type_check_prefix(tool.signatures, tool.referenced_types)  # pyright: ignore[reportPrivateUsage]
+    assert 'def sync_add(' in prefix
+    assert 'async def sync_add(' not in prefix
+
+
+async def test_sequential_tool_execution():
+    """Sequential tool is called as `result = my_tool(x=1)` (no `await`)."""
+    result = await run_code_with_tools(
+        'sync_add(x=3, y=4)',
+        MontyRuntime(),
+        Tool(sync_add, takes_ctx=False, sequential=True),
+    )
+    assert result == 7
+
+
+async def test_mixed_sync_async_execution():
+    """Both async (fire-then-await) and sync tools work in the same code block."""
+    code = 'f = add(x=1, y=2)\nsum_result = sync_add(x=10, y=20)\nawaited = await f\n[awaited, sum_result]'
+    result = await run_code_with_tools(
+        code,
+        MontyRuntime(),
+        (add, False),
+        Tool(sync_add, takes_ctx=False, sequential=True),
+    )
+    assert result == [3, 30]
+
+
+async def test_sequential_drain_behavior():
+    """Firing an async tool then calling a sequential tool drains the async task first."""
+    call_order: list[str] = []
+
+    def fire_tool(*, name: str) -> str:
+        """An async tool."""
+        call_order.append(f'async:{name}')
+        return f'async:{name}'
+
+    def seq_tool(*, name: str) -> str:
+        """A sequential tool."""
+        call_order.append(f'seq:{name}')
+        return f'seq:{name}'
+
+    code = 'f = fire_tool(name="first")\nresult = seq_tool(name="second")\nawaited = await f\n[awaited, result]'
+    result = await run_code_with_tools(
+        code,
+        MontyRuntime(),
+        (fire_tool, False),
+        Tool(seq_tool, takes_ctx=False, sequential=True),
+    )
+    assert result == ['async:first', 'seq:second']
+    # The async tool must complete before the sequential tool starts
+    assert call_order == ['async:first', 'seq:second']
+
+
+async def test_await_on_sync_tool_is_type_error():
+    """`await sync_tool()` raises ModelRetry from Monty's type checker."""
+    with pytest.raises(ModelRetry, match='Type error in generated code'):
+        await run_code_with_tools(
+            'await sync_add(x=1, y=2)',
+            MontyRuntime(),
+            Tool(sync_add, takes_ctx=False, sequential=True),
+        )
+
+
+async def test_global_sequential_mode():
+    """Setting _parallel_execution_mode_ctx_var to 'sequential' makes all tools render as `def`."""
+    token = _parallel_execution_mode_ctx_var.set('sequential')
+    try:
+        _, tools = await build_code_mode_toolset(
+            MontyRuntime(),
+            (add, False),
+        )
+        tool = tools['run_code_with_tools']
+        description = tool.tool_def.description or ''
+        assert 'def add(' in description
+        assert 'async def add(' not in description
+    finally:
+        _parallel_execution_mode_ctx_var.reset(token)
+
+
+async def test_global_parallel_ordered_events_mode():
+    """Setting _parallel_execution_mode_ctx_var to 'parallel_ordered_events' makes all tools render as `def`."""
+    token = _parallel_execution_mode_ctx_var.set('parallel_ordered_events')
+    try:
+        _, tools = await build_code_mode_toolset(
+            MontyRuntime(),
+            (add, False),
+        )
+        tool = tools['run_code_with_tools']
+        description = tool.tool_def.description or ''
+        assert 'def add(' in description
+        assert 'async def add(' not in description
+    finally:
+        _parallel_execution_mode_ctx_var.reset(token)
+
+
+async def test_description_no_all_functions_are_async():
+    """The prompt no longer says 'All functions are async'."""
+    _, tools = await build_code_mode_toolset(MontyRuntime(), (add, False))
+    description = tools['run_code_with_tools'].tool_def.description or ''
+    assert 'All functions are async' not in description

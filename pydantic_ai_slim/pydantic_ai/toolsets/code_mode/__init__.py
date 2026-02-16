@@ -31,7 +31,7 @@ from ..._python_signature import (
     dedup_referenced_types,
 )
 from ..._run_context import AgentDepsT, RunContext
-from ..._tool_manager import ToolManager
+from ..._tool_manager import ToolManager, _parallel_execution_mode_ctx_var  # pyright: ignore[reportPrivateUsage]
 from ...exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from ...messages import ToolCallPart
 from ...tools import ToolDefinition
@@ -70,7 +70,7 @@ You can use it to:
 Execution model:
 - Each call to this tool runs in a completely isolated environment — variables don't persist between calls
 - If a previous call failed, you must rewrite the entire program from scratch — you cannot reference variables or results from a failed attempt
-- All functions are async. You can create new functions for convenience.
+- You can create new functions for convenience.
 - This tool is for calling and chaining tools programmatically — don't use it just to format or print your final analysis. Write your report as regular text in your response.
 """
 # TODO (Douwe): dynamic based on whether a toolset is mounted (codemode) or not (regular code execution)
@@ -210,10 +210,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 counter += 1
             name_map[sanitized] = original_name
 
+        global_sequential = _parallel_execution_mode_ctx_var.get() in ('sequential', 'parallel_ordered_events')
+
         signatures: list[FunctionSignature] = []
         for sanitized_name, original_name in name_map.items():
             sig = copy.deepcopy(tools[original_name].python_signature)
             sig.name = sanitized_name
+            sig.is_async = not (global_sequential or tools[original_name].tool_def.sequential)
             signatures.append(sig)
 
         dedup_referenced_types(signatures)

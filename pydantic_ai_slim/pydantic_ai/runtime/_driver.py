@@ -191,6 +191,11 @@ async def _execute(init_msg: dict[str, Any], reader: asyncio.StreamReader) -> No
     """Parse code, build proxies, execute, and report the result."""
     code: str = init_msg.get('code', '')
     functions: list[str] = init_msg.get('functions', [])
+    # TODO(sequential): Read `sequential_functions` from init_msg and build sync proxies
+    # for them. Sequential proxies should either (a) be async coroutines that await their
+    # result future inline rather than returning it eagerly, or (b) send a special
+    # `sync_call` message type where the driver blocks until the result arrives before
+    # continuing code execution. See MontyRuntime._execution_loop for reference.
     result_cache: dict[str, Any] = init_msg.get('result_cache', {})
 
     if not code.strip():

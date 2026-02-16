@@ -87,7 +87,7 @@ class MontyRuntime(CodeRuntime):
                 ResourceLimits(max_duration_secs=self.execution_timeout) if self.execution_timeout is not None else None
             )
             monty_state = monty.start(limits=limits)
-            monty_state = await self._execution_loop(monty_state, call_tool)
+            monty_state = await self._execution_loop(monty_state, call_tool, functions=functions)
         except MontyRuntimeError as e:
             self._raise_if_timeout(e)
             raise CodeRuntimeError(e.display()) from e
@@ -163,6 +163,8 @@ class MontyRuntime(CodeRuntime):
     async def _execution_loop(
         monty_state: MontyComplete | MontyFutureSnapshot | MontySnapshot,
         call_tool: ToolCallback,
+        *,
+        functions: dict[str, FunctionSignature],
     ) -> MontyComplete:
         tasks: dict[int, asyncio.Task[Any]] = {}
         try:
@@ -174,9 +176,18 @@ class MontyRuntime(CodeRuntime):
                         args=monty_state.args,
                         kwargs=monty_state.kwargs,
                     )
-                    tasks[monty_state.call_id] = asyncio.ensure_future(call_tool(call))
+                    sig = functions.get(monty_state.function_name)
 
-                    monty_state = monty_state.resume(future=...)
+                    if sig and not sig.is_async:
+                        # Sequential: drain pending async tasks, then call synchronously
+                        if tasks:
+                            await asyncio.gather(*tasks.values())
+                        result = await call_tool(call)
+                        monty_state = monty_state.resume(return_value=result)
+                    else:
+                        # Async: fire and defer (existing behavior)
+                        tasks[monty_state.call_id] = asyncio.ensure_future(call_tool(call))
+                        monty_state = monty_state.resume(future=...)
                 elif isinstance(monty_state, MontyFutureSnapshot):
                     pending_call_ids = monty_state.pending_call_ids
                     if not pending_call_ids:

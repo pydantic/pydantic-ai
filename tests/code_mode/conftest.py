@@ -17,6 +17,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.runtime.abstract import CodeRuntime, ToolCallback
 from pydantic_ai.runtime.docker import DockerRuntime
+from pydantic_ai.tools import Tool
 from pydantic_ai.toolsets.code_mode import CodeModeToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage
@@ -69,27 +70,31 @@ def build_run_context() -> RunContext[None]:
 
 async def build_code_mode_toolset(
     runtime: CodeRuntime,
-    *tool_specs: tuple[Callable[..., Any], bool],
+    *tools: Tool[Any] | tuple[Callable[..., Any], bool],
 ) -> tuple[CodeModeToolset[None], dict[str, Any]]:
     """Build and initialize a CodeModeToolset, returning it along with its tools dict."""
     toolset: FunctionToolset[None] = FunctionToolset()
-    for func, takes_ctx in tool_specs:
-        toolset.add_function(func, takes_ctx=takes_ctx)
+    for tool in tools:
+        if isinstance(tool, Tool):
+            toolset.add_tool(tool)
+        else:
+            func, takes_ctx = tool
+            toolset.add_function(func, takes_ctx=takes_ctx)
     code_mode = CodeModeToolset(toolset, runtime=runtime)
     ctx = build_run_context()
-    tools = await code_mode.get_tools(ctx)
-    return code_mode, tools
+    tool_defs = await code_mode.get_tools(ctx)
+    return code_mode, tool_defs
 
 
 async def run_code_with_tools(
     code: str,
     runtime: CodeRuntime,
-    *tool_specs: tuple[Callable[..., Any], bool],
+    *tools: Tool[Any] | tuple[Callable[..., Any], bool],
 ) -> Any:
-    """Run code through CodeModeToolset. Each tool_spec is (function, takes_ctx)."""
-    code_mode, tools = await build_code_mode_toolset(runtime, *tool_specs)
+    """Run code through CodeModeToolset. Each tool is a Tool object or (function, takes_ctx) tuple."""
+    code_mode, tool_defs = await build_code_mode_toolset(runtime, *tools)
     ctx = build_run_context()
-    return await code_mode.call_tool('run_code_with_tools', {'code': code}, ctx, tools['run_code_with_tools'])
+    return await code_mode.call_tool('run_code_with_tools', {'code': code}, ctx, tool_defs['run_code_with_tools'])
 
 
 class StubRuntime(CodeRuntime):

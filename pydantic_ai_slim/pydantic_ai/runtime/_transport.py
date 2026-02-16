@@ -105,6 +105,11 @@ class DriverBasedRuntime(CodeRuntime):
         functions: dict[str, FunctionSignature],
         referenced_types: list[TypeSignature],
     ) -> Any:
+        # TODO(sequential): Include sequential function names in init_msg so the driver
+        # can build sync proxies for them. The host-side execution loop should drain
+        # pending tasks and wait for the result before sending further messages when a
+        # `sync_call` message arrives from the driver. See MontyRuntime._execution_loop
+        # for the reference implementation of drain-then-call-synchronously.
         init_msg: dict[str, Any] = {
             'type': 'init',
             'code': code,
