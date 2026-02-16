@@ -110,7 +110,7 @@ class MontyRuntime(CodeRuntime):
             The last expression evaluated is the return value.
 
             To run independent calls concurrently, fire them first, then `await`, or use `asyncio.gather`:
-            ```python test="skip" lint="skip"
+            ```python
             # starts immediately:
             items_future = get_items()
             users_future = get_users()

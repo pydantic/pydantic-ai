@@ -1183,7 +1183,7 @@ _flagged_accounts: list[dict[str, Any]] = []
 # =============================================================================
 
 
-def _compute_ground_truth() -> list[tuple[str, str, int, float]]:
+def _compute_ground_truth() -> list[tuple[str, str, int, float]]:  # noqa: C901
     """BFS from ACC-001 up to 3 hops, return convergence points.
 
     Only follows outgoing transactions >= AMOUNT_THRESHOLD (in USD).

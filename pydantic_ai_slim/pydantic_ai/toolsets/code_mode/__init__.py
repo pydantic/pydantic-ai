@@ -73,6 +73,7 @@ Execution model:
 - All functions are async. You can create new functions for convenience.
 - This tool is for calling and chaining tools programmatically — don't use it just to format or print your final analysis. Write your report as regular text in your response.
 """
+# TODO (Douwe): dynamic based on whether a toolset is mounted (codemode) or not (regular code execution)
 
 
 DescriptionFunc: TypeAlias = Callable[[list[FunctionSignature], list[TypeSignature], str | None], str]

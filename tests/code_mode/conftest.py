@@ -12,9 +12,10 @@ from typing import Any
 import pytest
 from typing_extensions import TypedDict
 
+from pydantic_ai._python_signature import FunctionSignature, TypeSignature
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.runtime.abstract import CodeRuntime
+from pydantic_ai.runtime.abstract import CodeRuntime, ToolCallback
 from pydantic_ai.runtime.docker import DockerRuntime
 from pydantic_ai.toolsets.code_mode import CodeModeToolset
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -89,6 +90,20 @@ async def run_code_with_tools(
     code_mode, tools = await build_code_mode_toolset(runtime, *tool_specs)
     ctx = build_run_context()
     return await code_mode.call_tool('run_code_with_tools', {'code': code}, ctx, tools['run_code_with_tools'])
+
+
+class StubRuntime(CodeRuntime):
+    """Minimal CodeRuntime for testing CodeModeToolset logic without pydantic-monty."""
+
+    async def run(
+        self,
+        code: str,
+        call_tool: ToolCallback,
+        *,
+        functions: dict[str, FunctionSignature],
+        referenced_types: list[TypeSignature],
+    ) -> Any:
+        raise NotImplementedError('StubRuntime does not execute code')
 
 
 def _docker_is_available() -> bool:

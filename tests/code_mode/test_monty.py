@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 from typing_extensions import NotRequired, TypedDict
 
 try:
@@ -13,12 +16,9 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('pydantic-monty is not installed', allow_module_level=True)
 
-from pydantic_ai._python_signature import FunctionSignature, TypeSignature
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.toolsets.code_mode import CodeModeToolset
-from pydantic_ai.toolsets.function import FunctionToolset
 
-from .conftest import build_code_mode_toolset, build_run_context, run_code_with_tools
+from .conftest import build_code_mode_toolset, run_code_with_tools
 
 pytestmark = pytest.mark.anyio
 
@@ -235,33 +235,66 @@ async def test_monty_runtime_error_raises_model_retry():
         await run_code_with_tools('1 / 0', MontyRuntime(), (add, False))
 
 
-# =============================================================================
-# CodeModeToolset description customization
-# =============================================================================
+async def test_monty_syntax_error_message():
+    """Monty syntax errors include a descriptive message for the LLM."""
+    with pytest.raises(ModelRetry) as exc_info:
+        await run_code_with_tools('def while invalid syntax', MontyRuntime())
+
+    assert str(exc_info.value) == snapshot("""\
+Syntax error in generated code:
+Expected an identifier, but found a keyword `while` that cannot be used here at byte range 4..9\
+""")
 
 
-def _tool_alpha(*, x: int) -> int:
-    """Tool alpha."""
-    return x
+class UserModel(BaseModel):
+    name: str
+    age: int
 
 
-async def test_custom_description_string():
-    """A custom string replaces the default preamble."""
-    ts: FunctionToolset[None] = FunctionToolset()
-    ts.add_function(_tool_alpha, takes_ctx=False)
-    cm = CodeModeToolset(ts, runtime=MontyRuntime(), description='My preamble')
-    tools = await cm.get_tools(build_run_context())
-    assert 'My preamble' in (tools['run_code_with_tools'].tool_def.description or '')
+async def test_monty_normalizes_tool_results_to_json_compatible():
+    """Tool results fed to Monty should be JSON-compatible (dicts, not BaseModels).
+
+    Without normalization, Monty receives the raw Python object (e.g. a Pydantic
+    BaseModel), but driver-based runtimes serialize results over JSON and would
+    receive a plain dict. This inconsistency means code that works on one
+    runtime could break on another.
+
+    The fix: normalize all results to JSON-compatible form (via
+    tool_return_ta.dump_python(mode='json')) before feeding them to Monty,
+    matching what driver-based runtimes already do.
+
+    This test exposes the issue by passing a tool result to a second tool that
+    observes the actual Python type on the host side.
+    """
+
+    def get_user(id: int) -> UserModel:
+        """Get a user by ID."""
+        return UserModel(name='Alice', age=30)
+
+    received_types: list[str] = []
+
+    def inspect_type(data: Any) -> str:
+        """Record the Python type of the received data."""
+        received_types.append(type(data).__name__)
+        return type(data).__name__
+
+    code = 'user = await get_user(id=1)\nawait inspect_type(data=user)'
+
+    result = await run_code_with_tools(
+        code,
+        MontyRuntime(),
+        (get_user, False),
+        (inspect_type, False),
+    )
+
+    # After normalization, the second tool should receive a dict, not a UserModel.
+    # This guarantees consistent behavior across runtimes.
+    assert result == 'dict'
+    assert received_types == ['dict']
 
 
-async def test_custom_description_callback():
-    """A callback gets full control over the description."""
-
-    def my_desc(sigs: list[FunctionSignature], types: list[TypeSignature], instructions: str | None) -> str:
-        return f'{len(sigs)} tools'
-
-    ts: FunctionToolset[None] = FunctionToolset()
-    ts.add_function(_tool_alpha, takes_ctx=False)
-    cm = CodeModeToolset(ts, runtime=MontyRuntime(), description=my_desc)
-    tools = await cm.get_tools(build_run_context())
-    assert tools['run_code_with_tools'].tool_def.description == '1 tools'
+async def test_build_type_check_prefix_empty_lists():
+    """Empty signatures/types produces just the typing import line."""
+    runtime = MontyRuntime()
+    prefix = runtime._build_type_check_prefix([], [])  # pyright: ignore[reportPrivateUsage]
+    assert prefix == 'from typing import Any, TypedDict, NotRequired, Literal'

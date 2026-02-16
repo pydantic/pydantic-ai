@@ -6,13 +6,24 @@ code mode tool routing, tool execution, and result handling.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.usage import RequestUsage
 
 try:
     from pydantic_ai.runtime import monty  # pyright: ignore[reportUnusedImport] # noqa: F401
@@ -20,6 +31,8 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('pydantic-monty is not installed', allow_module_level=True)
 from pydantic_ai.toolsets.code_mode import CodeModeToolset
 from pydantic_ai.toolsets.function import FunctionToolset
+
+from ..conftest import IsDatetime, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -133,3 +146,125 @@ async def test_agent_code_error_triggers_retry():
     result = await agent.run('Add 1 and 2')
     assert result.output == 'The answer is 3.'
     assert call_count == 3
+
+
+async def test_concurrent_agent_runs_on_shared_toolset():
+    """Two concurrent agent.run() calls sharing a CodeModeToolset produce correct independent results."""
+
+    def add(x: int, y: int) -> int:
+        return x + y
+
+    def mul(x: int, y: int) -> int:
+        return x * y
+
+    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset.add_function(add, takes_ctx=False)
+    toolset.add_function(mul, takes_ctx=False)
+
+    shared_toolset = CodeModeToolset(toolset)
+
+    def add_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if not any(isinstance(m, ModelResponse) for m in messages):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='run_code_with_tools', args={'code': 'await add(x=1, y=2)'})]
+            )
+        return ModelResponse(parts=[TextPart('3')])
+
+    def mul_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if not any(isinstance(m, ModelResponse) for m in messages):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='run_code_with_tools', args={'code': 'await mul(x=3, y=4)'})]
+            )
+        return ModelResponse(parts=[TextPart('12')])
+
+    agent_add = Agent(FunctionModel(add_model), toolsets=[shared_toolset])
+    agent_mul = Agent(FunctionModel(mul_model), toolsets=[shared_toolset])
+
+    r1, r2 = await asyncio.gather(
+        agent_add.run('add 1 and 2'),
+        agent_mul.run('multiply 3 and 4'),
+    )
+    assert r1.output == '3'
+    assert r2.output == '12'
+    assert r1.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='add 1 and 2', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='run_code_with_tools',
+                        args={'code': 'await add(x=1, y=2)'},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=54, output_tokens=7),
+                model_name='function:add_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='run_code_with_tools',
+                        content=3,
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='3')],
+                usage=RequestUsage(input_tokens=55, output_tokens=8),
+                model_name='function:add_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+    assert r2.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='multiply 3 and 4', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='run_code_with_tools',
+                        args={'code': 'await mul(x=3, y=4)'},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=54, output_tokens=7),
+                model_name='function:mul_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='run_code_with_tools',
+                        content=12,
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='12')],
+                usage=RequestUsage(input_tokens=55, output_tokens=8),
+                model_name='function:mul_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )

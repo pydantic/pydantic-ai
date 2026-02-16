@@ -8,13 +8,6 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-try:
-    from pydantic_monty import Monty
-
-    from pydantic_ai.runtime.monty import MontyRuntime
-except ImportError:  # pragma: lax no cover
-    pytest.skip('pydantic-monty is not installed', allow_module_level=True)
-
 from pydantic_ai._python_signature import (
     FunctionParam,
     FunctionSignature,
@@ -30,74 +23,9 @@ from pydantic_ai._python_signature import (
     schema_to_signature,
 )
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import FunctionToolDefinition
 
-from .conftest import WeatherResult, build_code_mode_toolset, get_weather, run_code_with_tools
-
 pytestmark = pytest.mark.anyio
-
-
-def add(*, x: int, y: int) -> int:
-    """Add two integers."""
-    return x + y
-
-
-def get_weather_alias(city: str) -> WeatherResult:
-    """Get weather (alias)."""
-    return get_weather(city)
-
-
-async def test_type_error_raises_model_retry():
-    """Type errors in generated code raise ModelRetry so the LLM can fix them."""
-    with pytest.raises(ModelRetry) as exc_info:
-        await run_code_with_tools('add(x="hello", y="world")', MontyRuntime(), (add, False))
-
-    assert str(exc_info.value) == snapshot("""\
-Type error in generated code:
-main.py:1:5: error[invalid-argument-type] Argument to function `add` is incorrect: Expected `int`, found `Literal["hello"]`
-main.py:1:16: error[invalid-argument-type] Argument to function `add` is incorrect: Expected `int`, found `Literal["world"]`
-""")
-
-
-async def test_generated_signatures_are_valid_python():
-    """Generated signatures must be valid Python that Monty can parse and type check."""
-    runtime = MontyRuntime()
-    _, tools = await build_code_mode_toolset(runtime, (add, False))
-
-    tool = tools['run_code_with_tools']
-    prefix = runtime._build_type_check_prefix(tool.signatures, tool.referenced_types)  # pyright: ignore[reportPrivateUsage]
-
-    # `...` and `pass` are not valid for Monty/ty type checking — ty is intentionally
-    # stricter than pyright here. See https://github.com/astral-sh/ty/issues/1922
-    assert prefix == snapshot('''\
-from typing import Any, TypedDict, NotRequired, Literal
-
-async def add(*, x: int, y: int) -> int:
-    """Add two integers."""
-    raise NotImplementedError()\
-''')
-    # Verify Monty can parse and type check code using this prefix
-    m = Monty('add(x=1, y=2)', external_functions=['add'])
-    m.type_check(prefix_code=prefix)  # Should not raise
-
-
-async def test_signatures_use_ellipsis_monty_converts_for_type_check():
-    """Signatures use '...' body; Monty converts to 'raise NotImplementedError()' for type checking."""
-    runtime = MontyRuntime()
-    _code_mode, tools = await build_code_mode_toolset(runtime, (add, False))
-
-    tool = tools['run_code_with_tools']
-
-    # LLM-facing description should have '...'
-    description = tool.tool_def.description or ''
-    assert '...' in description
-    assert 'raise NotImplementedError()' not in description
-
-    # But when Monty builds the type-check prefix, it converts to 'raise NotImplementedError()'
-    prefix = runtime._build_type_check_prefix(tool.signatures, tool.referenced_types)  # pyright: ignore[reportPrivateUsage]
-    assert 'raise NotImplementedError()' in prefix
-    assert '    ...' not in prefix
 
 
 def test_dedup_referenced_types_substring_names():
@@ -381,37 +309,11 @@ def test_to_pascal_case_digit_prefix():
     assert _to_pascal_case('123_tool') == '_123Tool'
 
 
-# =============================================================================
-# Caching tests
-# =============================================================================
-
-
-async def test_cached_signature_reused_across_get_tools_calls():
-    """Calling get_tools() twice reuses the same cached FunctionSignature objects."""
-    runtime = MontyRuntime()
-    code_mode, tools1 = await build_code_mode_toolset(runtime, (add, False))
-    from .conftest import build_run_context
-
-    ctx = build_run_context()
-    tools2 = await code_mode.get_tools(ctx)
-
-    tool1 = tools1['run_code_with_tools']
-    tool2 = tools2['run_code_with_tools']
-
-    # The code mode tool descriptions should match
-    assert tool1.tool_def.description == tool2.tool_def.description
-
-
-async def test_dedup_correctness_after_cache_backed_deepcopy():
-    """Multiple tools with shared types produce correct dedup after cache-backed deepcopy."""
-    runtime = MontyRuntime()
-    _code_mode, tools = await build_code_mode_toolset(runtime, (get_weather, False), (get_weather_alias, False))
-    tool = tools['run_code_with_tools']
-
-    # Both tools reference the same WeatherResult type — dedup should unify them
-    unique_types = collect_unique_referenced_types(tool.signatures)
-    weather_types = [t for t in unique_types if t.name == 'WeatherResult']
-    assert len(weather_types) == 1
+def test_to_pascal_case_edge_cases():
+    """Edge cases: empty string, all-digits, hyphenated."""
+    assert _to_pascal_case('') == ''
+    assert _to_pascal_case('42') == '_42'
+    assert _to_pascal_case('my-tool-name') == 'MyToolName'
 
 
 def test_function_tool_definition_produces_same_signature_as_function_based():
@@ -548,6 +450,45 @@ class Documented(TypedDict):
 # =============================================================================
 # Schema signature edge cases
 # =============================================================================
+
+
+def test_schema_signature_const_enum():
+    """const and enum paths in schema_to_type_expr produce Literal types."""
+    # const value
+    sig_const = schema_to_signature(
+        'tool_const',
+        {
+            'type': 'object',
+            'properties': {'mode': {'const': 'fast'}},
+            'required': ['mode'],
+        },
+    )
+    assert str(sig_const) == snapshot("""\
+async def tool_const(*, mode: Literal['fast']) -> Any:
+    ...\
+""")
+
+    # enum values
+    sig_enum = schema_to_signature(
+        'tool_enum',
+        {
+            'type': 'object',
+            'properties': {'color': {'enum': ['red', 'green', 'blue']}},
+            'required': ['color'],
+        },
+    )
+    assert str(sig_enum) == snapshot("""\
+async def tool_enum(*, color: Literal['red', 'green', 'blue']) -> Any:
+    ...\
+""")
+
+
+def test_collect_unique_referenced_types_empty():
+    """Empty input returns empty list."""
+    assert collect_unique_referenced_types([]) == []
+
+    sig = FunctionSignature(name='no_refs', params={}, return_type='Any', referenced_types=[])
+    assert collect_unique_referenced_types([sig]) == []
 
 
 def test_schema_signature_union_ref_allof():

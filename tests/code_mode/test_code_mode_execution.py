@@ -1,40 +1,14 @@
 """Test basic code mode execution: tool calls, parallelism, and error handling.
 
-Parameterized across all CodeRuntime implementations (Monty, stdio subprocess).
+Parameterized across all CodeRuntime implementations (Monty, Docker).
 """
 
 from __future__ import annotations
 
-import asyncio
-from typing import Any
-
 import pytest
-from inline_snapshot import snapshot
-from pydantic import BaseModel
 
-from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import (
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    TextPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-)
-from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.runtime.abstract import CodeRuntime
-from pydantic_ai.toolsets.code_mode import CodeModeToolset
-from pydantic_ai.toolsets.function import FunctionToolset
-from pydantic_ai.usage import RequestUsage
-
-from ..conftest import IsDatetime, IsStr
-
-try:
-    from pydantic_ai.runtime.monty import MontyRuntime
-except ImportError:  # pragma: lax no cover
-    pytest.skip('pydantic-monty is not installed', allow_module_level=True)
 
 from .conftest import run_code_with_tools
 
@@ -74,68 +48,10 @@ async def test_syntax_error_raises_model_retry(code_runtime: CodeRuntime):
         await run_code_with_tools('def while invalid', code_runtime)
 
 
-async def test_monty_syntax_error_message():
-    """Monty syntax errors include a descriptive message for the LLM."""
-    with pytest.raises(ModelRetry) as exc_info:
-        await run_code_with_tools('def while invalid syntax', MontyRuntime())
-
-    assert str(exc_info.value) == snapshot("""\
-Syntax error in generated code:
-Expected an identifier, but found a keyword `while` that cannot be used here at byte range 4..9\
-""")
-
-
 async def test_runtime_error_raises_model_retry(code_runtime: CodeRuntime):
     """Runtime exceptions raise ModelRetry so the LLM can fix them."""
     with pytest.raises(ModelRetry):
         await run_code_with_tools('1 / 0', code_runtime)
-
-
-class UserModel(BaseModel):
-    name: str
-    age: int
-
-
-async def test_monty_normalizes_tool_results_to_json_compatible():
-    """Tool results fed to Monty should be JSON-compatible (dicts, not BaseModels).
-
-    Without normalization, Monty receives the raw Python object (e.g. a Pydantic
-    BaseModel), but driver-based runtimes serialize results over JSON and would
-    receive a plain dict. This inconsistency means code that works on one
-    runtime could break on another.
-
-    The fix: normalize all results to JSON-compatible form (via
-    tool_return_ta.dump_python(mode='json')) before feeding them to Monty,
-    matching what driver-based runtimes already do.
-
-    This test exposes the issue by passing a tool result to a second tool that
-    observes the actual Python type on the host side.
-    """
-
-    def get_user(id: int) -> UserModel:
-        """Get a user by ID."""
-        return UserModel(name='Alice', age=30)
-
-    received_types: list[str] = []
-
-    def inspect_type(data: Any) -> str:
-        """Record the Python type of the received data."""
-        received_types.append(type(data).__name__)
-        return type(data).__name__
-
-    code = 'user = await get_user(id=1)\nawait inspect_type(data=user)'
-
-    result = await run_code_with_tools(
-        code,
-        MontyRuntime(),
-        (get_user, False),
-        (inspect_type, False),
-    )
-
-    # After normalization, the second tool should receive a dict, not a UserModel.
-    # This guarantees consistent behavior across runtimes.
-    assert result == 'dict'
-    assert received_types == ['dict']
 
 
 async def test_tool_exception_propagates(code_runtime: CodeRuntime):
@@ -155,123 +71,16 @@ async def test_execution_timeout_raises_model_retry(code_runtime: CodeRuntime):
         await run_code_with_tools('while True: pass', code_runtime)
 
 
-async def test_concurrent_agent_runs_on_shared_toolset():
-    """Two concurrent agent.run() calls sharing a CodeModeToolset produce correct independent results."""
+async def test_positional_args_raise_model_retry(code_runtime: CodeRuntime):
+    """Positional arguments in code mode tool calls raise ModelRetry.
+
+    Monty catches this at type-check time (too many positional arguments);
+    Docker catches it at call_tool_callback time (positional args not supported).
+    Either way the LLM gets a ModelRetry.
+    """
 
     def add(x: int, y: int) -> int:
         return x + y
 
-    def mul(x: int, y: int) -> int:
-        return x * y
-
-    toolset: FunctionToolset[None] = FunctionToolset()
-    toolset.add_function(add, takes_ctx=False)
-    toolset.add_function(mul, takes_ctx=False)
-
-    shared_toolset = CodeModeToolset(toolset, runtime=MontyRuntime())
-
-    def add_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if not any(isinstance(m, ModelResponse) for m in messages):
-            return ModelResponse(
-                parts=[ToolCallPart(tool_name='run_code_with_tools', args={'code': 'await add(x=1, y=2)'})]
-            )
-        return ModelResponse(parts=[TextPart('3')])
-
-    def mul_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if not any(isinstance(m, ModelResponse) for m in messages):
-            return ModelResponse(
-                parts=[ToolCallPart(tool_name='run_code_with_tools', args={'code': 'await mul(x=3, y=4)'})]
-            )
-        return ModelResponse(parts=[TextPart('12')])
-
-    agent_add = Agent(FunctionModel(add_model), toolsets=[shared_toolset])
-    agent_mul = Agent(FunctionModel(mul_model), toolsets=[shared_toolset])
-
-    r1, r2 = await asyncio.gather(
-        agent_add.run('add 1 and 2'),
-        agent_mul.run('multiply 3 and 4'),
-    )
-    assert r1.output == '3'
-    assert r2.output == '12'
-    assert r1.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='add 1 and 2', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='run_code_with_tools',
-                        args={'code': 'await add(x=1, y=2)'},
-                        tool_call_id=IsStr(),
-                    )
-                ],
-                usage=RequestUsage(input_tokens=54, output_tokens=7),
-                model_name='function:add_model:',
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='run_code_with_tools',
-                        content=3,
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='3')],
-                usage=RequestUsage(input_tokens=55, output_tokens=8),
-                model_name='function:add_model:',
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-        ]
-    )
-    assert r2.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='multiply 3 and 4', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='run_code_with_tools',
-                        args={'code': 'await mul(x=3, y=4)'},
-                        tool_call_id=IsStr(),
-                    )
-                ],
-                usage=RequestUsage(input_tokens=54, output_tokens=7),
-                model_name='function:mul_model:',
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='run_code_with_tools',
-                        content=12,
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='12')],
-                usage=RequestUsage(input_tokens=55, output_tokens=8),
-                model_name='function:mul_model:',
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-        ]
-    )
+    with pytest.raises(ModelRetry):
+        await run_code_with_tools('await add(1, 2)', code_runtime, (add, False))
