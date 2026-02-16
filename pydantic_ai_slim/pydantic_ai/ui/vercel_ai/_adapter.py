@@ -109,21 +109,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         sdk_version: Literal[5, 6] = 5,
         **kwargs: Any,
     ) -> VercelAIAdapter[AgentDepsT, OutputDataT]:
-        """Create a Vercel AI adapter from a request.
-
-        Args:
-            request: The incoming Starlette/FastAPI request.
-            agent: The Pydantic AI agent to run.
-            sdk_version: Vercel AI SDK version. Set to 6 to enable tool approval streaming.
-            **kwargs: Additional keyword arguments forwarded to the adapter constructor.
-        """
-        return cls(
-            agent=agent,
-            run_input=cls.build_run_input(await request.body()),
-            accept=request.headers.get('accept'),
-            sdk_version=sdk_version,
-            **kwargs,
-        )
+        """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with the `sdk_version` parameter."""
+        return await super().from_request(request, agent=agent, sdk_version=sdk_version, **kwargs)
 
     @classmethod
     async def dispatch_request(

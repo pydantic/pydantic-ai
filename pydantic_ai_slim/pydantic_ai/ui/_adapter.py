@@ -17,7 +17,7 @@ from typing import (
 )
 
 from pydantic import BaseModel, ValidationError
-from typing_extensions import TypeVar
+from typing_extensions import Self, TypeVar
 
 from pydantic_ai import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.agent import AbstractAgent
@@ -128,7 +128,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     @classmethod
     async def from_request(
         cls, request: Request, *, agent: AbstractAgent[AgentDepsT, OutputDataT], **kwargs: Any
-    ) -> UIAdapter[RunInputT, MessageT, EventT, AgentDepsT, OutputDataT]:
+    ) -> Self:
         """Create an adapter from a request.
 
         Extra keyword arguments are forwarded to the adapter constructor, allowing subclasses
