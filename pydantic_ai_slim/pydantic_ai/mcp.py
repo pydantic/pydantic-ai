@@ -982,7 +982,7 @@ class MCPServerStdio(MCPServer):
     server = MCPServerStdio(  # (1)!
         'uv', args=['run', 'mcp-run-python', 'stdio'], timeout=10
     )
-    agent = Agent('openai:gpt-4o', toolsets=[server])
+    agent = Agent('openai:gpt-5.2', toolsets=[server])
     ```
 
     1. See [MCP Run Python](https://github.com/pydantic/mcp-run-python) for more information.
@@ -1300,7 +1300,7 @@ class MCPServerSSE(_MCPServerHTTP):
     from pydantic_ai.mcp import MCPServerSSE
 
     server = MCPServerSSE('http://localhost:3001/sse')
-    agent = Agent('openai:gpt-4o', toolsets=[server])
+    agent = Agent('openai:gpt-5.2', toolsets=[server])
     ```
     """
 
@@ -1381,7 +1381,7 @@ class MCPServerHTTP(MCPServerSSE):
     from pydantic_ai.mcp import MCPServerHTTP
 
     server = MCPServerHTTP('http://localhost:3001/sse')
-    agent = Agent('openai:gpt-4o', toolsets=[server])
+    agent = Agent('openai:gpt-5.2', toolsets=[server])
     ```
     """
 
@@ -1402,7 +1402,7 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
     from pydantic_ai.mcp import MCPServerStreamableHTTP
 
     server = MCPServerStreamableHTTP('http://localhost:8000/mcp')
-    agent = Agent('openai:gpt-4o', toolsets=[server])
+    agent = Agent('openai:gpt-5.2', toolsets=[server])
     ```
     """
 

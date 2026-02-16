@@ -92,7 +92,7 @@ from pydantic_ai.durable_exec.temporal import (
 )
 
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     instructions="You're an expert in geography.",
     name='geography',  # (10)!
 )
@@ -169,7 +169,7 @@ As workflows and activities run in separate processes, any values passed between
 
 To account for these limitations, tool functions and the [event stream handler](#streaming) running inside activities receive a limited version of the agent's [`RunContext`][pydantic_ai.tools.RunContext], and it's your responsibility to make sure that the [dependencies](../dependencies.md) object provided to [`TemporalAgent.run()`][pydantic_ai.durable_exec.temporal.TemporalAgent.run] can be serialized using Pydantic.
 
-Specifically, only the `deps`, `run_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `retry`, `max_retries`, `run_step`, `usage`, and `partial_output` fields are available by default, and trying to access `model`, `prompt`, `messages`, or `tracer` will raise an error.
+Specifically, only the `deps`, `run_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `usage`, and `partial_output` fields are available by default, and trying to access `model`, `prompt`, `messages`, or `tracer` will raise an error.
 If you need one or more of these attributes to be available inside activities, you can create a [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] subclass with custom `serialize_run_context` and `deserialize_run_context` class methods and pass it to [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] as `run_context_type`.
 
 ### Streaming
@@ -177,7 +177,7 @@ If you need one or more of these attributes to be available inside activities, y
 Because Temporal activities cannot stream output directly to the activity call site, [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream], [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events], and [`Agent.iter()`][pydantic_ai.agent.Agent.iter] are not supported.
 
 Instead, you can implement streaming by setting an [`event_stream_handler`][pydantic_ai.agent.EventStreamHandler] on the `Agent` or `TemporalAgent` instance and using [`TemporalAgent.run()`][pydantic_ai.durable_exec.temporal.TemporalAgent.run] inside the workflow.
-The event stream handler function will receive the agent [run context][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools. For examples, see the [streaming docs](../agents.md#streaming-all-events).
+The event stream handler function will receive the agent [run context][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools. For examples, see the [streaming docs](../agent.md#streaming-all-events).
 
 As the streaming model request activity, workflow, and workflow execution call all take place in separate processes, passing data between them requires some care:
 
@@ -218,7 +218,7 @@ class Deps:
 # Create models from different providers
 default_model = OpenAIResponsesModel('gpt-5.2')
 fast_model = AnthropicModel('claude-sonnet-4-5')
-reasoning_model = GoogleModel('gemini-2.5-pro')
+reasoning_model = GoogleModel('gemini-3-pro-preview')
 
 
 # Optional: provider factory for dynamic model configuration
@@ -260,7 +260,7 @@ class MultiModelWorkflow:
             result = await temporal_agent.run(prompt, model=fast_model)
         else:
             # Or pass a model string (uses provider_factory if set)
-            result = await temporal_agent.run(prompt, model='openai:gpt-4.1-mini')
+            result = await temporal_agent.run(prompt, model='openai:gpt-5-mini')
         return result.output
 ```
 

@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '388'
+      - '421'
       content-type:
       - application/json
       host:
@@ -41,7 +41,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1804'
+      - '1851'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -50,19 +52,19 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - signature: ErAECkYIBhgCKkDXWAAC20zE7J5mkGHtALn3NgWU3ZoKFCe1V3U7bjWMNcGudiauKS55nBp+BwjiEcaewtuOv3xzoY+nU5eayMzbEgzV3i7LXZe0XYX8LLoaDLSTqAggpSVuxTeNvyIwOOhIgzsXvx47YkE0qL+oU2axkJnBmwVvtY1pWzhguYxGFS0xUMkeZ05orojMtzkoKpcDmEzezNUVqAMfPX9LHiuq7IgKxbBI0s7Q0y730La7ZSILhykbg0NgTTSHapazI8DyqjqLcxyLB9FrksCa5mID+lhHcuOmnAKdyTpi67ycXbTgDzomU8XciTq65VeS3NTMBjnKub5chcVXfWS7WtK8PzDafQW+1Dy1NTAGkJ+qGti7fjm5jx4XVU5rTAYLBs2AlmX+hlm/MkDT36Av42y7KFMJCbTPJ8Gqr42K/IWugS0wuJniiQHDHjoiVNLFxhyexyzJ/nfK2PrBHFUUnSJWqwMMdAy1vL3g/u3RXrX6lpbMrORIoZJBUU8z/5lg6xOsRZ657rgCiF3He7va+N/+DWpwBXwXMW+pNCOm8lw8DX8HJCh/dfikAKCt9U0rEYY5l+SKhE9t32t6026Gzy1ttnhwM8e9kKN7PmIKex85jldsSkHdI1vcAwC+kdatVCo6JePX5pGvSwUoMCXeXy/CCXZ9+C6ivxD177GnfhHXAPJpMo1c76Ez6rlM1YGL5+bDooPRTpqcGPChJXOT7lVfwoGfj4cZmycYAQ==
+      - signature: EqEECkYICxgCKkAo3UA4WwDbB8ihhpykVCsPx6iMzwNTNP8dePIgYjNpu2EWrt5JbApWWONEZaf5w46939Vu1SDU1//mDyr2/Vw+EgzsGM/71Y3P0MXKjXUaDHkHCRdukfBjp1m8TSIwzpBcCTBuNvX8NFjVMEou+UuHA4AtNJpahNT/iGfsTwwon4x/mlYNE+EZSDRaLY+jKogD7Bi7ls1t/hhZPrU6wxlcKv6qqXXkGdFSSyrRFvRgG9325pNIk9Dwc/GJriXjj+nGkaNWMfNLdWHtCj/5fTw+qZQCeeyoxzZAG+3Nxp1d694aCO/DkbTUf2B0JcCKVQBgyeTXmCDkZvSLwdalOb3Al4zV3H0ejqF++8r+5p8f67O2MOrxVQHNhJGpIaynvlouJP++FQdTCxUDFlyuvyGYqpijxFFSY0yaZe4KpOaTv4XLZiDwd5WohnKB3JUQnh0S5xY7AjDqPccxo0c88qO4XLRAa0TiDO6dP6o9SXz9zUiPxsBwAHymsZL/iomyZqKRJ3AMjKo8cLFWwxWHq8HsCqrikq/HZ1R8tr2PpMIBH+TJ0FyFMGCYkVqfH0/HzEqGGre8iOA11XCU3r5dwHXHfh4qgRP2lxTrGR7RcSGkNfmdTtziti2whEAWKhN0dcgNmRfJ2sKKSo/sNcTAcxOBUgJMB5L0B/ze9H9oDR9WtGspFUsKYkAHvHeBlXKVa+SkcXhw9EK5/JwYAQ==
         thinking: |-
-          The user is asking about the largest city in "the user country". To answer this question, I first need to determine what country the user is in. I have access to a function called "get_user_country" that can help me determine the user's country. Once I know the country, I can then provide information about the largest city in that country.
+          The user is asking about the largest city in "the user country". To answer this question, I first need to determine what country the user is from. I have access to a function called "get_user_country" that can help me find out the user's country. Once I know the country, I can then provide information about its largest city.
 
           Let me call the get_user_country function first.
         type: thinking
-      - text: I'll help you find the largest city in your country. First, let me determine which country you're in.
+      - text: I'll help you find the largest city in your country. First, let me determine which country you're from.
         type: text
-      - id: toolu_0173T64tx6e3FE4qvC3hF4yN
+      - id: toolu_01YGzqpRE16Vricda3Aqcejo
         input: {}
         name: get_user_country
         type: tool_use
-      id: msg_015Jj4Jvy6ZnS7VYHdCR6AQw
+      id: msg_01WvueFjZVbHcj4H4zUzeGv2
       model: claude-sonnet-4-20250514
       role: assistant
       stop_reason: tool_use
@@ -74,8 +76,9 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 397
-        output_tokens: 158
+        inference_geo: not_available
+        input_tokens: 398
+        output_tokens: 155
         service_tier: standard
     status:
       code: 200
@@ -85,11 +88,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '1979'
+      - '2011'
       content-type:
       - application/json
       host:
@@ -103,15 +106,15 @@ interactions:
           type: text
         role: user
       - content:
-        - signature: ErAECkYIBhgCKkDXWAAC20zE7J5mkGHtALn3NgWU3ZoKFCe1V3U7bjWMNcGudiauKS55nBp+BwjiEcaewtuOv3xzoY+nU5eayMzbEgzV3i7LXZe0XYX8LLoaDLSTqAggpSVuxTeNvyIwOOhIgzsXvx47YkE0qL+oU2axkJnBmwVvtY1pWzhguYxGFS0xUMkeZ05orojMtzkoKpcDmEzezNUVqAMfPX9LHiuq7IgKxbBI0s7Q0y730La7ZSILhykbg0NgTTSHapazI8DyqjqLcxyLB9FrksCa5mID+lhHcuOmnAKdyTpi67ycXbTgDzomU8XciTq65VeS3NTMBjnKub5chcVXfWS7WtK8PzDafQW+1Dy1NTAGkJ+qGti7fjm5jx4XVU5rTAYLBs2AlmX+hlm/MkDT36Av42y7KFMJCbTPJ8Gqr42K/IWugS0wuJniiQHDHjoiVNLFxhyexyzJ/nfK2PrBHFUUnSJWqwMMdAy1vL3g/u3RXrX6lpbMrORIoZJBUU8z/5lg6xOsRZ657rgCiF3He7va+N/+DWpwBXwXMW+pNCOm8lw8DX8HJCh/dfikAKCt9U0rEYY5l+SKhE9t32t6026Gzy1ttnhwM8e9kKN7PmIKex85jldsSkHdI1vcAwC+kdatVCo6JePX5pGvSwUoMCXeXy/CCXZ9+C6ivxD177GnfhHXAPJpMo1c76Ez6rlM1YGL5+bDooPRTpqcGPChJXOT7lVfwoGfj4cZmycYAQ==
+        - signature: EqEECkYICxgCKkAo3UA4WwDbB8ihhpykVCsPx6iMzwNTNP8dePIgYjNpu2EWrt5JbApWWONEZaf5w46939Vu1SDU1//mDyr2/Vw+EgzsGM/71Y3P0MXKjXUaDHkHCRdukfBjp1m8TSIwzpBcCTBuNvX8NFjVMEou+UuHA4AtNJpahNT/iGfsTwwon4x/mlYNE+EZSDRaLY+jKogD7Bi7ls1t/hhZPrU6wxlcKv6qqXXkGdFSSyrRFvRgG9325pNIk9Dwc/GJriXjj+nGkaNWMfNLdWHtCj/5fTw+qZQCeeyoxzZAG+3Nxp1d694aCO/DkbTUf2B0JcCKVQBgyeTXmCDkZvSLwdalOb3Al4zV3H0ejqF++8r+5p8f67O2MOrxVQHNhJGpIaynvlouJP++FQdTCxUDFlyuvyGYqpijxFFSY0yaZe4KpOaTv4XLZiDwd5WohnKB3JUQnh0S5xY7AjDqPccxo0c88qO4XLRAa0TiDO6dP6o9SXz9zUiPxsBwAHymsZL/iomyZqKRJ3AMjKo8cLFWwxWHq8HsCqrikq/HZ1R8tr2PpMIBH+TJ0FyFMGCYkVqfH0/HzEqGGre8iOA11XCU3r5dwHXHfh4qgRP2lxTrGR7RcSGkNfmdTtziti2whEAWKhN0dcgNmRfJ2sKKSo/sNcTAcxOBUgJMB5L0B/ze9H9oDR9WtGspFUsKYkAHvHeBlXKVa+SkcXhw9EK5/JwYAQ==
           thinking: |-
-            The user is asking about the largest city in "the user country". To answer this question, I first need to determine what country the user is in. I have access to a function called "get_user_country" that can help me determine the user's country. Once I know the country, I can then provide information about the largest city in that country.
+            The user is asking about the largest city in "the user country". To answer this question, I first need to determine what country the user is from. I have access to a function called "get_user_country" that can help me find out the user's country. Once I know the country, I can then provide information about its largest city.
 
             Let me call the get_user_country function first.
           type: thinking
-        - text: I'll help you find the largest city in your country. First, let me determine which country you're in.
+        - text: I'll help you find the largest city in your country. First, let me determine which country you're from.
           type: text
-        - id: toolu_0173T64tx6e3FE4qvC3hF4yN
+        - id: toolu_01YGzqpRE16Vricda3Aqcejo
           input: {}
           name: get_user_country
           type: tool_use
@@ -119,7 +122,7 @@ interactions:
       - content:
         - content: Mexico
           is_error: false
-          tool_use_id: toolu_0173T64tx6e3FE4qvC3hF4yN
+          tool_use_id: toolu_01YGzqpRE16Vricda3Aqcejo
           type: tool_result
         role: user
       model: claude-sonnet-4-0
@@ -142,7 +145,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '967'
+      - '1085'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -151,13 +156,14 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - text: "Based on the information that you're in Mexico, the largest city in your country is **Mexico City** (Ciudad
+      - text: "Based on the information that you're from Mexico, the largest city in your country is **Mexico City** (Ciudad
           de México). \n\nMexico City is not only the largest city in Mexico but also one of the largest metropolitan areas
           in the world. The city proper has a population of approximately 9.2 million people, while the greater Mexico City
-          metropolitan area has over 21 million inhabitants, making it the most populous metropolitan area in North America.\n\nMexico
-          City serves as the country's capital and is the political, economic, and cultural center of Mexico."
+          metropolitan area (which includes surrounding municipalities) has over 21 million inhabitants, making it one of
+          the most populous urban agglomerations globally.\n\nMexico City serves as the country's capital and is the political,
+          economic, and cultural center of Mexico."
         type: text
-      id: msg_01Nab5wHvdEKMtQ49KQhyvWw
+      id: msg_01SZ8KP8HhB1TxP6Ybbv6iKz
       model: claude-sonnet-4-20250514
       role: assistant
       stop_reason: end_turn
@@ -169,8 +175,9 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 568
-        output_tokens: 117
+        inference_geo: not_available
+        input_tokens: 566
+        output_tokens: 126
         service_tier: standard
     status:
       code: 200
