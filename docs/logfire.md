@@ -266,14 +266,13 @@ Agent.instrument_all(InstrumentationSettings(use_aggregated_usage_attribute_name
 
 ### Configuring data format
 
-Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/). Specifically, it follows version 1.37.0 of the conventions by default, with a few exceptions. Certain span and attribute names are not spec compliant by default for compatibility reasons, but can be made compliant by passing [`InstrumentationSettings(version=3)`][pydantic_ai.models.instrumented.InstrumentationSettings] (the default is currently `version=2`). This will change the following:
+Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), specifically version 1.37.0 of the conventions. The instrumentation format can be configured using the `version` parameter of [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings].
 
-- The span name `agent run` becomes `invoke_agent {gen_ai.agent.name}` (with the agent name filled in)
-- The span name `running tool` becomes `execute_tool {gen_ai.tool.name}` (with the tool name filled in)
-- The attribute name `tool_arguments` becomes `gen_ai.tool.call.arguments`
-- The attribute name `tool_response` becomes `gen_ai.tool.call.result`
+**The default is `version=2`**, which provides a good balance between spec compliance and compatibility.
 
-To use [OpenTelemetry semantic conventions version 1.36.0](https://github.com/open-telemetry/semantic-conventions/blob/v1.36.0/docs/gen-ai/README.md) or older, pass [`InstrumentationSettings(version=1)`][pydantic_ai.models.instrumented.InstrumentationSettings]. Moreover, those semantic conventions specify that messages should be captured as individual events (logs) that are children of the request span, whereas by default, Pydantic AI instead collects these events into a JSON array which is set as a single large attribute called `events` on the request span. To change this, use `event_mode='logs'`:
+#### Version 1 (Legacy, deprecated)
+
+Based on [OpenTelemetry semantic conventions version 1.36.0](https://github.com/open-telemetry/semantic-conventions/blob/v1.36.0/docs/gen-ai/README.md) or older. Messages are captured as individual events (logs) that are children of the request span. Use `event_mode='logs'` to emit events as OpenTelemetry log-based events:
 
 ```python {title="instrumentation_settings_event_mode.py"}
 import logfire
@@ -288,7 +287,47 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
-This won't look as good in the Logfire UI, and will also be removed from Pydantic AI in a future release, but may be useful for backwards compatibility.
+This version won't look as good in the Logfire UI and will be removed from Pydantic AI in a future release, but may be useful for backwards compatibility.
+
+#### Version 2 (Default)
+
+Uses the newer OpenTelemetry GenAI spec and stores messages in the following attributes:
+
+- `gen_ai.system_instructions` for instructions passed to the agent
+- `gen_ai.input.messages` and `gen_ai.output.messages` on model request spans
+- `pydantic_ai.all_messages` on agent run spans
+
+Some span and attribute names are not fully spec-compliant for compatibility reasons. Use version 3 or 4 for better compliance.
+
+#### Version 3
+
+Builds on version 2 with the following improvements:
+
+- **Spec-compliant span names:**
+    - `agent run` becomes `invoke_agent {gen_ai.agent.name}` (with the agent name filled in)
+    - `running tool` becomes `execute_tool {gen_ai.tool.name}` (with the tool name filled in)
+- **Spec-compliant attribute names:**
+    - `tool_arguments` becomes `gen_ai.tool.call.arguments`
+    - `tool_response` becomes `gen_ai.tool.call.result`
+- **Thinking tokens support:** Captures thinking/reasoning tokens when available
+
+#### Version 4
+
+Builds on version 3 with improved multimodal content handling to better align with the [GenAI semantic conventions for multimodal inputs](https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/#multimodal-inputs-example):
+
+**URL-based media (ImageUrl, AudioUrl, VideoUrl):**
+
+- Old (v1-3): `{"type": "image-url", "url": "..."}`
+- New (v4): `{"type": "uri", "modality": "image", "uri": "...", "mime_type": "..."}`
+
+**Inline binary content (BinaryContent, FilePart):**
+
+- Old (v1-3): `{"type": "binary", "media_type": "...", "content": "..."}`
+- New (v4): `{"type": "blob", "modality": "image", "mime_type": "...", "content": "..."}`
+
+Note: The `modality` field is only included for image, audio, and video content types as specified in the OTel spec. DocumentUrl and unsupported media types omit the `modality` field.
+
+---
 
 Note that the OpenTelemetry Semantic Conventions are still experimental and are likely to change.
 
