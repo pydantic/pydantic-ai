@@ -7914,7 +7914,7 @@ async def test_parallel_tool_tasks_cancelled_on_exception():
         nonlocal slow_tool_completed
         await asyncio.sleep(0.05)
         slow_tool_completed = True
-        return 'done'
+        return 'done'  # pragma: no cover
 
     with pytest.raises(RuntimeError, match='tool exploded'):
         await agent.run('run parallel tools')
