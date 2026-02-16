@@ -231,7 +231,6 @@ Because Pydantic AI uses OpenTelemetry for observability, you can easily configu
 The following providers have dedicated documentation on Pydantic AI:
 
 <!--Feel free to add other platforms here. They MUST be added to the bottom of the list, and may only be a name with link.-->
-- [Laminar](https://docs.laminar.sh/tracing/otel)
 - [Langfuse](https://langfuse.com/docs/integrations/pydantic-ai)
 - [W&B Weave](https://weave-docs.wandb.ai/guides/integrations/pydantic_ai/)
 - [Arize](https://arize.com/docs/ax/observe/tracing-integrations-auto/pydantic-ai)
@@ -246,6 +245,7 @@ The following providers have dedicated documentation on Pydantic AI:
 - [LangWatch](https://docs.langwatch.ai/integration/python/integrations/pydantic-ai)
 - [Braintrust](https://www.braintrust.dev/docs/integrations/sdk-integrations/pydantic-ai)
 - [SigNoz](https://signoz.io/docs/pydantic-ai-observability/)
+- [Laminar](https://docs.laminar.sh/tracing/otel)
 
 ## Advanced usage
 
