@@ -225,6 +225,8 @@ class PromptArgument(BaseModel):
     """A human-readable description of the argument."""
     required: bool | None = None
 
+    model_config = ConfigDict(extra='allow')
+
 
 class Icon(BaseModel):
     """An icon for display in user interfaces."""
@@ -237,6 +239,8 @@ class Icon(BaseModel):
 
     sizes: list[str] | None = None
     """Optional list of strings specifying icon dimensions (e.g., ["48x48", "96x96"])."""
+
+    model_config = ConfigDict(extra='allow')
 
 
 class Prompt(BaseModel):
