@@ -331,8 +331,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tool_timeout: Default timeout in seconds for tool execution. If a tool takes longer than this,
                 the tool is considered to have failed and a retry prompt is returned to the model (counting towards the retry limit).
                 Individual tools can override this with their own timeout. Defaults to None (no timeout).
-            include_tool_return_schema: Whether to send tool return schemas to the model. Sets the default for all tools;
-                individual tools can override this via their own `include_return_schema` flag. Defaults to False.
+            include_tool_return_schema: Whether to include tool return schemas in the tool definitions sent to the model.
+                For models that natively support return schemas (e.g. Google Gemini), the schema is passed as a
+                structured field; for others, it's injected into the tool description as JSON text. Sets the default
+                for all tools; individual tools can override this via their own `include_return_schema` flag.
+                Defaults to False.
             max_concurrency: Optional limit on concurrent agent runs. Can be an integer for simple limiting,
                 a [`ConcurrencyLimit`][pydantic_ai.ConcurrencyLimit] for advanced configuration with backpressure,
                 a [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for sharing limits across

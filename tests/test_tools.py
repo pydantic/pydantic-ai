@@ -3849,8 +3849,8 @@ def test_return_schema_e2e():
     tool_defs = json.loads(result.output)
 
     tool_def = next(t for t in tool_defs if t['name'] == 'get_value')
-    # return_schema is still present on the ToolDefinition
-    assert tool_def['return_schema'] == {'type': 'integer'}
+    # return_schema is cleared after injection into description for non-native models
+    assert tool_def['return_schema'] is None
     # description has return schema injected as fallback text
     assert 'Return schema:' in tool_def['description']
     assert '"type": "integer"' in tool_def['description']
@@ -3858,7 +3858,7 @@ def test_return_schema_e2e():
 
     # Tool with no docstring: description is just the return schema
     tool_def_no_doc = next(t for t in tool_defs if t['name'] == 'get_value_no_docstring')
-    assert tool_def_no_doc['return_schema'] == {'type': 'integer'}
+    assert tool_def_no_doc['return_schema'] is None
     assert tool_def_no_doc['description'] == 'Return schema:\n\n{\n  "type": "integer"\n}'
 
     # --- Native model (e.g. Google): return_schema preserved, description untouched ---
