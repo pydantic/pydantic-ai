@@ -628,7 +628,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # Check for content filter on empty response
                     if self.model_response.finish_reason == 'content_filter':
                         details = self.model_response.provider_details or {}
-                        reason = details.get('finish_reason', 'content_filter')
+                        reason = (
+                            details.get('finish_reason')
+                            or details.get('block_reason')
+                            or details.get('refusal')
+                            or 'content_filter'
+                        )
 
                         body = _messages.ModelMessagesTypeAdapter.dump_json([self.model_response]).decode()
 

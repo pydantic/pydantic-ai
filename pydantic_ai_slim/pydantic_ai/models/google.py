@@ -790,6 +790,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _file_search_tool_call_id: str | None = field(default=None, init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
+    _has_content_filter: bool = field(default=False, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         if self._provider_timestamp is not None:
@@ -799,6 +800,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
             if not chunk.candidates:
                 if chunk.prompt_feedback and chunk.prompt_feedback.block_reason:
+                    self._has_content_filter = True
                     block_reason = chunk.prompt_feedback.block_reason
                     self.provider_details = {
                         **(self.provider_details or {}),
@@ -819,7 +821,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 self.provider_response_id = chunk.response_id
 
             raw_finish_reason = candidate.finish_reason
-            if raw_finish_reason:
+            if raw_finish_reason and not self._has_content_filter:
                 self.provider_details = {'finish_reason': raw_finish_reason.value}
 
                 if candidate.safety_ratings:

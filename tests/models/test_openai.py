@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
+import re
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -4418,7 +4419,10 @@ async def test_openai_chat_refusal_non_streaming(allow_model_requests: None):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(ContentFilterError, match='Content filter triggered') as exc_info:
+    with pytest.raises(
+        ContentFilterError,
+        match=re.escape("Content filter triggered. Finish reason: 'I'm sorry, I can't help with that.'"),
+    ) as exc_info:
         await agent.run('harmful prompt')
 
     assert exc_info.value.body is not None
@@ -4440,6 +4444,13 @@ async def test_openai_chat_refusal_streaming(allow_model_requests: None):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(ContentFilterError, match='Content filter triggered'):
+    with pytest.raises(ContentFilterError, match='Content filter triggered') as exc_info:
         async with agent.run_stream('harmful prompt'):
             pass
+
+    assert exc_info.value.body is not None
+    body_json = json.loads(exc_info.value.body)
+    response_msg = body_json[0]
+    assert response_msg['parts'] == []
+    assert response_msg['finish_reason'] == 'content_filter'
+    assert response_msg['provider_details']['refusal'] == "I'm sorry, I can't help with that."

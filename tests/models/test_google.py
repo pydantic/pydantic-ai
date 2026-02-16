@@ -5771,8 +5771,22 @@ async def test_google_prompt_feedback_non_streaming(
 
     agent = Agent(model=model)
 
-    with pytest.raises(ContentFilterError, match="Content filter triggered. Finish reason: 'content_filter'"):
+    with pytest.raises(
+        ContentFilterError, match="Content filter triggered. Finish reason: 'PROHIBITED_CONTENT'"
+    ) as exc_info:
         await agent.run('prohibited content')
+
+    assert exc_info.value.body is not None
+    body_json = json.loads(exc_info.value.body)
+    response_msg = body_json[0]
+    assert response_msg['parts'] == []
+    assert response_msg['finish_reason'] == 'content_filter'
+    assert response_msg['provider_details']['block_reason'] == 'PROHIBITED_CONTENT'
+    if with_details:
+        assert response_msg['provider_details']['block_reason_message'] == 'The prompt was blocked.'
+        assert response_msg['provider_details']['safety_ratings'] == [
+            {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'probability': 'HIGH', 'blocked': True}
+        ]
 
 
 @pytest.mark.parametrize('with_details', [True, False])
@@ -5817,6 +5831,20 @@ async def test_google_prompt_feedback_streaming(
 
     agent = Agent(model=model)
 
-    with pytest.raises(ContentFilterError, match="Content filter triggered. Finish reason: 'content_filter'"):
+    with pytest.raises(
+        ContentFilterError, match="Content filter triggered. Finish reason: 'PROHIBITED_CONTENT'"
+    ) as exc_info:
         async with agent.run_stream('prohibited content'):
             pass
+
+    assert exc_info.value.body is not None
+    body_json = json.loads(exc_info.value.body)
+    response_msg = body_json[0]
+    assert response_msg['parts'] == []
+    assert response_msg['finish_reason'] == 'content_filter'
+    assert response_msg['provider_details']['block_reason'] == 'PROHIBITED_CONTENT'
+    if with_details:
+        assert response_msg['provider_details']['block_reason_message'] == 'The prompt was blocked.'
+        assert response_msg['provider_details']['safety_ratings'] == [
+            {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'probability': 'HIGH', 'blocked': True}
+        ]
