@@ -41,6 +41,7 @@ from pydantic_ai import (
     RunContext,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
@@ -6522,8 +6523,6 @@ async def test_wrapper_agent():
 
 async def test_thinking_only_response_retry():
     """Test that thinking-only responses trigger a retry mechanism."""
-    from pydantic_ai import ThinkingPart
-    from pydantic_ai.models.function import FunctionModel
 
     call_count = 0
 
@@ -6590,6 +6589,33 @@ async def test_thinking_only_response_retry():
             ),
         ]
     )
+
+
+async def test_retry_message_no_tools():
+    """Test that retry message triggered by thinking-only response, does not suggest 'call a tool' when no function tools are registered."""
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+
+        if call_count == 1:
+            return ModelResponse(parts=[ThinkingPart(content='thinking...')])
+        else:
+            return ModelResponse(parts=[TextPart(content='result')])
+
+    agent = Agent(FunctionModel(model_function))
+    result = await agent.run('Hello')
+
+    retry_parts = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, RetryPromptPart)
+    ]
+    assert len(retry_parts) == 1
+    assert retry_parts[0].content == 'Please return text.'
 
 
 async def test_hitl_tool_approval():
