@@ -71,6 +71,7 @@ Execution model:
 - Each call to this tool runs in a completely isolated environment — variables don't persist between calls
 - If a previous call failed, you must rewrite the entire program from scratch — you cannot reference variables or results from a failed attempt
 - All functions are async. You can create new functions for convenience.
+- This tool is for calling and chaining tools programmatically — don't use it just to format or print your final analysis. Write your report as regular text in your response.
 """
 
 
