@@ -573,7 +573,7 @@ class FunctionToolDefinition(ToolDefinition):
     deserialization roundtrip).
     """
 
-    original_func: Callable[..., Any] | None = Field(default=None, exclude=True)
+    original_func: Callable[..., Any] | None = Field(default=None, exclude=True, repr=False)
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, ToolDefinition):

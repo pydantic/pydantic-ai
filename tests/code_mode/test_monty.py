@@ -146,20 +146,26 @@ You can use it to:
 - pass the result of one tool to another without it entering your context window.
 
 Execution model:
-- Each call to this tool runs in an isolated environment — variables don't persist between calls
+- Each call to this tool runs in a completely isolated environment — variables don't persist between calls
+- If a previous call failed, you must rewrite the entire program from scratch — you cannot reference variables or results from a failed attempt
 - All functions are async. You can create new functions for convenience.
+- This tool is for calling and chaining tools programmatically — don't use it just to format or print your final analysis. Write your report as regular text in your response.
 
 
 
 The runtime uses a restricted Python subset:
 - you cannot use the standard library except builtin functions and the following modules: `sys`, `typing`, `asyncio`
+- this means `collections`, `json`, `re`, `math`, `datetime`, `itertools`, `functools`, etc. are NOT available — use plain dicts, lists, and builtins instead
 - you cannot use third party libraries
 - you cannot define classes
+- `sorted()` and `.sort()` do not support keyword arguments (`key=`, `reverse=`) and cannot sort lists of tuples — only sort flat lists of numbers or strings. If you need a custom sort order, build the output list manually (e.g. find max in a loop)
+- chained subscript assignment like `x[a][b] = val` is NOT supported — read into a local variable, modify it, then assign back: `inner = x[a]; inner[b] = val; x[a] = inner`
+- set operators (`|`, `&`, `-`, `^`) are not supported — use `set.update()`, `set.add()`, or loop to combine sets
 
 The last expression evaluated is the return value.
 
 To run independent calls concurrently, fire them first, then `await`, or use `asyncio.gather`:
-```python
+```python test="skip" lint="skip"
 # starts immediately:
 items_future = get_items()
 users_future = get_users()

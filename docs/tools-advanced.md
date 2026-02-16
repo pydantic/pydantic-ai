@@ -243,7 +243,7 @@ print(result.output)
 print(test_model.last_model_request_parameters.function_tools)
 """
 [
-    ToolDefinition(
+    FunctionToolDefinition(
         name='greet',
         parameters_json_schema={
             'additionalProperties': False,
