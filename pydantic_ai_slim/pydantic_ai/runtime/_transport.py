@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any
 
-from pydantic_ai._python_signature import FunctionSignature
+from pydantic_ai._python_signature import FunctionSignature, TypeSignature
 from pydantic_ai.runtime.abstract import (
     CodeExecutionTimeout,
     CodeRuntime,
@@ -100,15 +100,15 @@ class DriverBasedRuntime(CodeRuntime):
     async def run(
         self,
         code: str,
-        functions: list[str],
         call_tool: ToolCallback,
         *,
-        signatures: list[FunctionSignature],
+        functions: dict[str, FunctionSignature],
+        referenced_types: list[TypeSignature],
     ) -> Any:
         init_msg: dict[str, Any] = {
             'type': 'init',
             'code': code,
-            'functions': functions,
+            'functions': list(functions),
         }
         process = await self._start_driver(init_msg)
         try:

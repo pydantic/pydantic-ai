@@ -19,6 +19,7 @@
 ::: pydantic_ai.toolsets.code_mode
     options:
         members:
-        - build_code_mode_prompt
+        - DescriptionFunc
+        - build_default_code_mode_description
 
 ::: pydantic_ai.toolsets.fastmcp

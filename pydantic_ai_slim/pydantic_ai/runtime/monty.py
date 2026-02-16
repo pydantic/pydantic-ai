@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import textwrap
 from typing import Any
 
-from pydantic_ai._python_signature import FunctionSignature, collect_unique_referenced_types
+from pydantic_ai._python_signature import FunctionSignature, TypeSignature
 from pydantic_ai.runtime.abstract import (
     CodeExecutionTimeout,
     CodeRuntime,
@@ -14,10 +15,9 @@ from pydantic_ai.runtime.abstract import (
     ToolCallback,
 )
 
-_TYPING_IMPORTS = 'from typing import Any, TypedDict, NotRequired, Literal'
-
 try:
     from pydantic_monty import (
+        ExternalReturnValue,
         Monty,
         MontyComplete,
         MontyFutureSnapshot,
@@ -34,28 +34,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-def _build_type_check_prefix(signatures: list[FunctionSignature]) -> str:
-    """Build the prefix code used for Monty type checking.
-
-    Combines standard typing imports with tool signatures to create the
-    prefix that Monty uses for type-checking LLM-generated code.
-
-    Note: Signatures use `...` as the body by default, but ty/Monty requires
-    `raise NotImplementedError()` for valid function stubs. See:
-    https://github.com/astral-sh/ty/issues/1922
-
-    Args:
-        signatures: List of Python function signatures for available tools.
-
-    Returns:
-        Complete prefix code string with imports and signatures.
-    """
-    # TODO (Douwe): Move to better place — moved to _TYPING_IMPORTS module constant for now
-    parts = [_TYPING_IMPORTS]
-    parts.extend(t.render() for t in collect_unique_referenced_types(signatures))
-    parts.extend(sig.render('raise NotImplementedError()') for sig in signatures)
-
-    return '\n\n'.join(parts)
+_TYPING_IMPORTS = 'from typing import Any, TypedDict, NotRequired, Literal'
 
 
 class MontyRuntime(CodeRuntime):
@@ -75,25 +54,26 @@ class MontyRuntime(CodeRuntime):
     async def run(
         self,
         code: str,
-        functions: list[str],
         call_tool: ToolCallback,
         *,
-        signatures: list[FunctionSignature],
+        functions: dict[str, FunctionSignature],
+        referenced_types: list[TypeSignature],
     ) -> Any:
         """Execute code in the Monty sandbox.
 
         Args:
             code: LLM-generated Python source code.
-            functions: Names of external functions (tools) the code uses.
             call_tool: Callback invoked for each external function call.
-            signatures: Function signatures for type checking.
+            functions: Mapping of function name to signature, for type checking
+                and declaring external functions.
+            referenced_types: Unique type definitions referenced by the signatures.
 
         Returns:
             The final output of the code execution.
         """
         try:
-            monty = Monty(code=code, external_functions=functions)
-            monty.type_check(_build_type_check_prefix(signatures))
+            monty = Monty(code=code, external_functions=list(functions))
+            monty.type_check(self._build_type_check_prefix(list(functions.values()), referenced_types))
         except MontyTypingError as e:
             raise CodeTypingError(e.display(format='concise')) from e
         except MontyRuntimeError as e:
@@ -102,13 +82,12 @@ class MontyRuntime(CodeRuntime):
             raise CodeSyntaxError(e.display()) from e
 
         monty_state: MontyComplete | MontyFutureSnapshot | MontySnapshot | None = None
-        tasks: dict[int, asyncio.Task[Any]] = {}
-
         try:
-            limits = self._build_resource_limits()
+            limits = (
+                ResourceLimits(max_duration_secs=self.execution_timeout) if self.execution_timeout is not None else None
+            )
             monty_state = monty.start(limits=limits)
-            monty_state = await MontyRuntime._execution_loop(monty_state, tasks, call_tool)
-
+            monty_state = await self._execution_loop(monty_state, call_tool)
         except MontyRuntimeError as e:
             self._raise_if_timeout(e)
             raise CodeRuntimeError(e.display()) from e
@@ -117,16 +96,56 @@ class MontyRuntime(CodeRuntime):
 
     @property
     def instructions(self) -> str | None:
-        return (
-            'Syntax note: the runtime uses a restricted Python subset.\n'
-            '- Imports are not available — use the provided functions and builtins (len, sum, str, etc.) or define your own helpers.'
+        return textwrap.dedent(
+            """
+            The runtime uses a restricted Python subset:
+            - you cannot use the standard library except builtin functions and the following modules: `sys`, `typing`, `asyncio`
+            - you cannot use third party libraries
+            - you cannot define classes
+
+            The last expression evaluated is the return value.
+
+            To run independent calls concurrently, fire them first, then `await`, or use `asyncio.gather`:
+            ```python
+            # starts immediately:
+            items_future = get_items()
+            users_future = get_users()
+
+            # wait for results:
+            items = await items_future
+            users = await users_future
+
+            # or equivalently:
+            import asyncio
+            items, users = await asyncio.gather(items_future, users_future)
+            ```
+            """
         )
 
-    def _build_resource_limits(self) -> ResourceLimits | None:
-        """Build Monty ResourceLimits from execution_timeout, or None if unset."""
-        if self.execution_timeout is not None:
-            return ResourceLimits(max_duration_secs=self.execution_timeout)
-        return None
+    def _build_type_check_prefix(
+        self, signatures: list[FunctionSignature], referenced_types: list[TypeSignature]
+    ) -> str:
+        """Build the prefix code used for Monty type checking.
+
+        Combines standard typing imports with tool signatures to create the
+        prefix that Monty uses for type-checking LLM-generated code.
+
+        Note: Signatures use `...` as the body by default, but ty/Monty requires
+        `raise NotImplementedError()` for valid function stubs. See:
+        https://github.com/astral-sh/ty/issues/1922
+
+        Args:
+            signatures: List of Python function signatures for available tools.
+            referenced_types: Unique type definitions referenced by the signatures.
+
+        Returns:
+            Complete prefix code string with imports and signatures.
+        """
+        parts = [_TYPING_IMPORTS]
+        parts.extend(str(t) for t in referenced_types)
+        parts.extend(sig.render('raise NotImplementedError()') for sig in signatures)
+
+        return '\n\n'.join(parts)
 
     def _raise_if_timeout(self, e: MontyRuntimeError) -> None:
         """Raise CodeExecutionTimeout if the MontyRuntimeError is a time limit violation."""
@@ -139,14 +158,14 @@ class MontyRuntime(CodeRuntime):
     @staticmethod
     async def _execution_loop(
         monty_state: MontyComplete | MontyFutureSnapshot | MontySnapshot,
-        tasks: dict[int, asyncio.Task[Any]],
         call_tool: ToolCallback,
     ) -> MontyComplete:
+        tasks: dict[int, asyncio.Task[Any]] = {}
         try:
             while not isinstance(monty_state, MontyComplete):
                 if isinstance(monty_state, MontySnapshot):
                     call = FunctionCall(
-                        call_id=str(monty_state.call_id),
+                        call_id=f'monty_{monty_state.call_id}',
                         function_name=monty_state.function_name,
                         args=monty_state.args,
                         kwargs=monty_state.kwargs,
@@ -155,30 +174,30 @@ class MontyRuntime(CodeRuntime):
 
                     monty_state = monty_state.resume(future=...)
                 elif isinstance(monty_state, MontyFutureSnapshot):
-                    pending_ids = monty_state.pending_call_ids or []
-                    missing = [cid for cid in pending_ids if cid not in tasks]
-                    if missing:
-                        raise CodeRuntimeError(f'Monty expects results for call IDs {missing} but no tasks exist')
-                    pending = [tasks[cid] for cid in pending_ids]
-                    if not pending:
-                        # No pending tasks - this can happen if all results are already available
-                        # Just provide empty results and let Monty continue
+                    pending_call_ids = monty_state.pending_call_ids
+                    if not pending_call_ids:
                         monty_state = monty_state.resume(results={})
                         continue
-                    done, _ = await asyncio.wait(pending, return_when=asyncio.ALL_COMPLETED)
-                    task_to_cid = {id(t): cid for cid, t in tasks.items()}
-                    results: dict[int, Any] = {}
-                    for task in done:
-                        cid = task_to_cid[id(task)]
-                        # The callback already serializes to JSON-compatible form,
-                        # so result is ready to use directly.
-                        results[cid] = {'return_value': task.result()}
-                        del tasks[cid]
 
-                    monty_state = monty_state.resume(results=results)
+                    try:
+                        pending_tasks = [tasks[call_id] for call_id in pending_call_ids]
+                    except KeyError as e:
+                        raise CodeRuntimeError(
+                            f'Monty expects results for call IDs {pending_call_ids} but no tasks exist'
+                        ) from e
 
-                    if isinstance(monty_state, MontyComplete):
-                        break
+                    try:
+                        task_results = await asyncio.gather(*pending_tasks)
+                    finally:
+                        for call_id in pending_call_ids:
+                            del tasks[call_id]
+
+                    monty_state = monty_state.resume(
+                        results={
+                            call_id: ExternalReturnValue(return_value=result)
+                            for call_id, result in zip(pending_call_ids, task_results)
+                        }
+                    )
         finally:
             for t in tasks.values():
                 t.cancel()

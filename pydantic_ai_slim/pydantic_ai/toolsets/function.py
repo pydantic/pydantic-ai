@@ -7,7 +7,6 @@ from typing import Any, overload
 import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
-from .._python_signature import FunctionSignature, function_to_signature
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import ModelRetry, UserError
 from ..tools import (
@@ -26,7 +25,6 @@ class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
     """A tool definition for a function toolset tool that keeps track of the function to call."""
 
     call_func: Callable[[dict[str, Any], RunContext[AgentDepsT]], Awaitable[Any]]
-    original_func: Callable[..., Any]
     is_async: bool
     timeout: float | None = None
     """Timeout in seconds for tool execution.
@@ -34,19 +32,6 @@ class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
     If the tool takes longer than this, a retry prompt is returned to the model.
     Defaults to None (no timeout).
     """
-
-    def python_signature(self, *, name_override: str | None = None) -> FunctionSignature:
-        """Generate a Python function signature from the original function's type annotations.
-
-        Overrides the base schema-based implementation to use `inspect.signature()` and
-        `get_type_hints()` for richer type information (e.g. TypedDict fields, union types).
-        Falls back to the schema-based approach if the original function isn't available.
-        """
-        return function_to_signature(
-            self.original_func,
-            name=name_override or self.tool_def.name,
-            description=self.tool_def.description,
-        )
 
 
 class FunctionToolset(AbstractToolset[AgentDepsT]):
@@ -376,7 +361,6 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 max_retries=max_retries,
                 args_validator=tool.function_schema.validator,
                 call_func=tool.function_schema.call,
-                original_func=tool.function_schema.function,
                 is_async=tool.function_schema.is_async,
                 timeout=tool_def.timeout,
             )

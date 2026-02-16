@@ -4,6 +4,13 @@ from __future__ import annotations
 
 from inline_snapshot import snapshot
 
+try:
+    from pydantic_monty import Monty
+
+    from pydantic_ai.runtime.monty import MontyRuntime
+except ImportError:  # pragma: lax no cover
+    pytest.skip('pydantic-monty is not installed', allow_module_level=True)
+
 from pydantic_ai._python_signature import (
     FunctionParam,
     FunctionSignature,
@@ -17,6 +24,73 @@ from pydantic_ai._python_signature import (
     render_type_expr,
     schema_to_signature,
 )
+from pydantic_ai.exceptions import ModelRetry
+
+from .conftest import WeatherResult, build_code_mode_toolset, get_weather, run_code_with_tools
+
+pytestmark = pytest.mark.anyio
+
+
+def add(*, x: int, y: int) -> int:
+    """Add two integers."""
+    return x + y
+
+
+def get_weather_alias(city: str) -> WeatherResult:
+    """Get weather (alias)."""
+    return get_weather(city)
+
+
+async def test_type_error_raises_model_retry():
+    """Type errors in generated code raise ModelRetry so the LLM can fix them."""
+    with pytest.raises(ModelRetry) as exc_info:
+        await run_code_with_tools('add(x="hello", y="world")', MontyRuntime(), (add, False))
+
+    assert str(exc_info.value) == snapshot("""\
+Type error in generated code:
+main.py:1:5: error[invalid-argument-type] Argument to function `add` is incorrect: Expected `int`, found `Literal["hello"]`
+main.py:1:16: error[invalid-argument-type] Argument to function `add` is incorrect: Expected `int`, found `Literal["world"]`
+""")
+
+
+async def test_generated_signatures_are_valid_python():
+    """Generated signatures must be valid Python that Monty can parse and type check."""
+    runtime = MontyRuntime()
+    _, tools = await build_code_mode_toolset(runtime, (add, False))
+
+    tool = tools['run_code_with_tools']
+    prefix = runtime._build_type_check_prefix(tool.signatures, tool.referenced_types)  # pyright: ignore[reportPrivateUsage]
+
+    # `...` and `pass` are not valid for Monty/ty type checking — ty is intentionally
+    # stricter than pyright here. See https://github.com/astral-sh/ty/issues/1922
+    assert prefix == snapshot('''\
+from typing import Any, TypedDict, NotRequired, Literal
+
+async def add(*, x: int, y: int) -> int:
+    """Add two integers."""
+    raise NotImplementedError()\
+''')
+    # Verify Monty can parse and type check code using this prefix
+    m = Monty('add(x=1, y=2)', external_functions=['add'])
+    m.type_check(prefix_code=prefix)  # Should not raise
+
+
+async def test_signatures_use_ellipsis_monty_converts_for_type_check():
+    """Signatures use '...' body; Monty converts to 'raise NotImplementedError()' for type checking."""
+    runtime = MontyRuntime()
+    _code_mode, tools = await build_code_mode_toolset(runtime, (add, False))
+
+    tool = tools['run_code_with_tools']
+
+    # LLM-facing description should have '...'
+    description = tool.tool_def.description or ''
+    assert '...' in description
+    assert 'raise NotImplementedError()' not in description
+
+    # But when Monty builds the type-check prefix, it converts to 'raise NotImplementedError()'
+    prefix = runtime._build_type_check_prefix(tool.signatures, tool.referenced_types)  # pyright: ignore[reportPrivateUsage]
+    assert 'raise NotImplementedError()' in prefix
+    assert '    ...' not in prefix
 
 
 def test_dedup_referenced_types_substring_names():
@@ -62,8 +136,8 @@ def test_dedup_referenced_types_substring_names():
     # UserMeta must be untouched
     assert user_meta.name == 'UserMeta'
     # Params render correctly
-    assert sig2.params['user'].render() == 'user: tool_b_User'
-    assert sig2.params['meta'].render() == 'meta: UserMeta'
+    assert str(sig2.params['user']) == 'user: tool_b_User'
+    assert str(sig2.params['meta']) == 'meta: UserMeta'
     assert render_type_expr(sig2.return_type) == 'UserMeta'
 
 
@@ -163,11 +237,11 @@ def test_dedup_mixed_identical_and_conflicting_from_schemas():
 
     # sig3's User was renamed to tool_c_User
     assert sig3.referenced_types[0].name == 'tool_c_User'
-    assert sig3.params['user'].render() == 'user: tool_c_User'
+    assert str(sig3.params['user']) == 'user: tool_c_User'
 
     # collect_unique_referenced_types returns exactly 2 unique types
     unique_types = collect_unique_referenced_types([sig1, sig2, sig3])
-    assert [t.render() for t in unique_types] == snapshot(
+    assert [str(t) for t in unique_types] == snapshot(
         [
             """\
 class User(TypedDict):
@@ -212,11 +286,11 @@ def test_dedup_composite_type_expr_rename_propagates():
     # user2 was renamed in place
     assert user2.name == 'tool_b_User'
     # The list[User] now renders as list[tool_b_User]
-    assert sig2.params['users'].render() == 'users: list[tool_b_User]'
+    assert str(sig2.params['users']) == 'users: list[tool_b_User]'
 
 
 def test_render_type_signature():
-    """TypeSignature.render() produces a valid TypedDict class definition."""
+    """TypeSignature renders a valid TypedDict class definition."""
     ts = TypeSignature(
         name='User',
         fields={
@@ -224,7 +298,7 @@ def test_render_type_signature():
             'age': TypeFieldSignature(name='age', type='int', required=False, description='The age'),
         },
     )
-    assert ts.render() == snapshot("""\
+    assert str(ts) == snapshot("""\
 class User(TypedDict):
     name: str
     age: NotRequired[int]
@@ -235,37 +309,37 @@ class User(TypedDict):
 def test_render_type_signature_empty():
     """Empty TypeSignature renders with pass."""
     ts = TypeSignature(name='Empty')
-    assert ts.render() == 'class Empty(TypedDict):\n    pass'
+    assert str(ts) == 'class Empty(TypedDict):\n    pass'
 
 
 def test_render_generic_type_expr():
     """GenericTypeExpr renders correctly."""
     user = TypeSignature(name='User')
     expr = GenericTypeExpr(base='list', args=[user])
-    assert expr.render() == 'list[User]'
+    assert str(expr) == 'list[User]'
 
     dict_expr = GenericTypeExpr(base='dict', args=['str', GenericTypeExpr(base='list', args=[user])])
-    assert dict_expr.render() == 'dict[str, list[User]]'
+    assert str(dict_expr) == 'dict[str, list[User]]'
 
 
 def test_render_union_type_expr():
     """UnionTypeExpr renders correctly."""
     user = TypeSignature(name='User')
     expr = UnionTypeExpr(members=[user, 'None'])
-    assert expr.render() == 'User | None'
+    assert str(expr) == 'User | None'
 
 
 def test_render_function_param():
-    """FunctionParam.render() produces correct parameter strings."""
+    """FunctionParam renders correct parameter strings."""
     p1 = FunctionParam(name='x', type='int', default=None)
-    assert p1.render() == 'x: int'
+    assert str(p1) == 'x: int'
 
     p2 = FunctionParam(name='y', type='str', default="'hello'")
-    assert p2.render() == "y: str = 'hello'"
+    assert str(p2) == "y: str = 'hello'"
 
     user = TypeSignature(name='User')
     p3 = FunctionParam(name='user', type=user, default=None)
-    assert p3.render() == 'user: User'
+    assert str(p3) == 'user: User'
 
 
 def test_structurally_equal():
@@ -298,3 +372,93 @@ def test_structurally_equal():
 def test_to_pascal_case_digit_prefix():
     """PascalCase of a name starting with digits gets a leading underscore."""
     assert _to_pascal_case('123_tool') == '_123Tool'
+
+
+# =============================================================================
+# Caching tests
+# =============================================================================
+
+
+async def test_cached_signature_reused_across_get_tools_calls():
+    """Calling get_tools() twice reuses the same cached FunctionSignature objects."""
+    runtime = MontyRuntime()
+    code_mode, tools1 = await build_code_mode_toolset(runtime, (add, False))
+    from .conftest import build_run_context
+
+    ctx = build_run_context()
+    tools2 = await code_mode.get_tools(ctx)
+
+    tool1 = tools1['run_code_with_tools']
+    tool2 = tools2['run_code_with_tools']
+
+    # The code mode tool descriptions should match
+    assert tool1.tool_def.description == tool2.tool_def.description
+
+
+async def test_dedup_correctness_after_cache_backed_deepcopy():
+    """Multiple tools with shared types produce correct dedup after cache-backed deepcopy."""
+    runtime = MontyRuntime()
+    _code_mode, tools = await build_code_mode_toolset(runtime, (get_weather, False), (get_weather_alias, False))
+    tool = tools['run_code_with_tools']
+
+    # Both tools reference the same WeatherResult type — dedup should unify them
+    unique_types = collect_unique_referenced_types(tool.signatures)
+    weather_types = [t for t in unique_types if t.name == 'WeatherResult']
+    assert len(weather_types) == 1
+
+
+def test_function_tool_definition_produces_same_signature_as_function_based():
+    """FunctionToolDefinition.python_signature matches the old FunctionToolsetTool approach."""
+    from pydantic_ai._python_signature import function_to_signature
+    from pydantic_ai.tools import FunctionToolDefinition, Tool
+
+    def my_tool(x: int, y: str = 'hello') -> bool:
+        """A test tool."""
+        return True
+
+    tool = Tool(my_tool)
+    tool_def = tool.tool_def
+    assert isinstance(tool_def, FunctionToolDefinition)
+
+    # The cached signature should match a freshly generated one
+    cached_sig = tool_def.python_signature
+    fresh_sig = function_to_signature(my_tool, name='my_tool', description=tool.description)
+
+    assert str(cached_sig) == str(fresh_sig)
+
+
+def test_tool_definition_cached_property_reset_on_replace():
+    """dataclasses.replace() on a ToolDefinition resets the cached python_signature."""
+    from dataclasses import replace
+
+    from pydantic_ai.tools import ToolDefinition
+
+    td = ToolDefinition(
+        name='test_tool',
+        parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
+        description='Original description',
+    )
+    sig1 = td.python_signature
+    assert sig1.docstring == 'Original description'
+
+    td2 = replace(td, description='New description')
+    sig2 = td2.python_signature
+    assert sig2.docstring == 'New description'
+    # Different instances
+    assert sig1 is not sig2
+
+
+def test_function_tool_definition_fallback_without_original_func():
+    """FunctionToolDefinition falls back to schema-based signature when original_func is None."""
+    from pydantic_ai.tools import FunctionToolDefinition
+
+    td = FunctionToolDefinition(
+        name='schema_tool',
+        parameters_json_schema={'type': 'object', 'properties': {'q': {'type': 'string'}}, 'required': ['q']},
+        description='A schema-based tool',
+        original_func=None,
+    )
+    sig = td.python_signature
+    assert sig.name == 'schema_tool'
+    assert 'q' in sig.params
+    assert sig.params['q'].type == 'str'
