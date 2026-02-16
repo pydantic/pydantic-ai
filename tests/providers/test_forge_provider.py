@@ -68,6 +68,12 @@ def test_unknown_model_profile():
     assert isinstance(profile, OpenAIModelProfile)
 
 
+def test_unknown_provider_model_profile():
+    provider = ForgeProvider(api_key='key')
+    profile = provider.model_profile('SomeNewProvider/some-model')
+    assert isinstance(profile, OpenAIModelProfile)
+
+
 def test_forge_provider_with_openai_client():
     client = openai.AsyncOpenAI(api_key='foo', base_url='https://api.forge.tensorblock.co/v1')
     provider = ForgeProvider(openai_client=client)
