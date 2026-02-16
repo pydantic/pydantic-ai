@@ -56,7 +56,8 @@ class ExamplePydanticFields(BaseModel):
         pytest.param('a string', snapshot('<examples>a string</examples>'), id='string'),
         pytest.param(42, snapshot('<examples>42</examples>'), id='int'),
         pytest.param(None, snapshot('<examples>null</examples>'), id='null'),
-        pytest.param(ExampleEnum.FOO, snapshot('<examples>1</examples>'), id='enum'),
+        # regression test for https://github.com/pydantic/pydantic-ai/pull/4131
+        pytest.param(ExampleEnum.FOO, snapshot('<examples>ExampleEnum.FOO</examples>'), id='enum'),
         pytest.param(ExampleStrEnum.FOO, snapshot('<examples>foo</examples>'), id='str enum'),
         pytest.param(
             ExampleDataclass(name='John', age=42),
