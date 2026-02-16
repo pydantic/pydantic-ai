@@ -704,6 +704,8 @@ class UploadedFile:
     vendor_metadata: dict[str, Any] | None = None
     """Vendor-specific metadata for the file.
 
+    The expected shape of this dictionary depends on the provider:
+
     Supported by:
     - `GoogleModel`: used as `video_metadata` for video files
     """
@@ -768,9 +770,10 @@ class UploadedFile:
 
     @property
     def format(self) -> str:
-        """The file format based on media type.
+        """A general-purpose media-type-to-format mapping.
 
-        The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
+        Maps media types to format strings (e.g. `'image/png'` -> `'png'`). Covers image, video,
+        audio, and document types. Currently used by Bedrock, which requires explicit format strings.
         """
         media_type = self.media_type
         try:
@@ -913,9 +916,6 @@ class UserPromptPart:
                 if settings.include_content and settings.include_binary_content:
                     converted_part['content'] = part.base64
                 parts.append(converted_part)
-            elif isinstance(part, CachePoint):
-                # CachePoint is a marker, not actual content - skip it for otel
-                pass
             elif isinstance(part, UploadedFile):
                 # UploadedFile references provider-hosted files by file_id (OTel GenAI spec FilePart)
                 # Infer modality from media_type - OTel spec defines: image, video, audio (or any string)
@@ -929,6 +929,9 @@ class UserPromptPart:
                     file_part['file_id'] = part.file_id
                     file_part['mime_type'] = part.media_type
                 parts.append(file_part)
+            elif isinstance(part, CachePoint):
+                # CachePoint is a marker, not actual content - skip it for otel
+                pass
             else:
                 parts.append({'type': part.kind})  # pragma: no cover
         return parts

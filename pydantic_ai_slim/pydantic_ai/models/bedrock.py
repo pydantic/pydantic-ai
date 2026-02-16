@@ -933,7 +933,7 @@ class BedrockConverseModel(Model):
                     elif item.media_type.startswith('audio/'):
                         raise UserError('Audio files are not supported for Bedrock UploadedFile')
                     else:
-                        content.append(_make_document_block(item.identifier, format, source))
+                        content.append(_make_document_block(f'Document {next(document_count)}', format, source))
                 elif isinstance(item, CachePoint):
                     if not supports_prompt_caching:
                         # Silently skip CachePoint for models that don't support prompt caching

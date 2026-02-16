@@ -138,7 +138,7 @@ Some model providers have their own file storage APIs where you can upload files
 Use [`UploadedFile`][pydantic_ai.messages.UploadedFile] to reference files that have been uploaded to a provider's file storage API.
 
 !!! tip
-    For providers that return a file URL (like Google Files API), you can also use [`DocumentUrl`][pydantic_ai.messages.DocumentUrl] directly, but we recommend using `UploadedFile` for consistent provider name validation.
+    For providers that return a file URL (like Google Files API or S3 URLs for Bedrock), you can also use [`DocumentUrl`][pydantic_ai.messages.DocumentUrl], [`ImageUrl`][pydantic_ai.messages.ImageUrl], or [`VideoUrl`][pydantic_ai.messages.VideoUrl] directly. However, we recommend using `UploadedFile` for a unified API across providers and consistent provider name validation.
 
 ### Supported Models
 
