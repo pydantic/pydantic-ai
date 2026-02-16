@@ -103,7 +103,7 @@ class MontyRuntime(CodeRuntime):
             - this means `collections`, `json`, `re`, `math`, `datetime`, `itertools`, `functools`, etc. are NOT available — use plain dicts, lists, and builtins instead
             - you cannot use third party libraries
             - you cannot define classes
-            - `sorted()` and `.sort()` do not support `reverse=True` — instead, negate numeric values for descending order, e.g. `sorted(items, key=lambda x: -x[1])`
+            - `sorted()` and `.sort()` do not support keyword arguments (`key=`, `reverse=`) — instead, negate numeric values in tuples for descending order, e.g. `sorted((-amount, name) for amount, name in items)`
             - you cannot use nested subscript assignment like `x[a][b] = val` — instead, read into a local variable, modify it, then assign back
             - set operators (`|`, `&`, `-`, `^`) are not supported — use `set.update()`, `set.add()`, or loop to combine sets
 
