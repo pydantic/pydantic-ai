@@ -1,6 +1,6 @@
 interactions:
 - request:
-    body: assertion=%5B%27scrubbed%27%5D&grant_type=%5B%27urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer%27%5D
+    body: assertion=scrubbed&grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer
     headers:
       accept:
       - '*/*'
@@ -65,7 +65,7 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1053'
+      - '1055'
       content-type:
       - application/json; charset=UTF-8
       transfer-encoding:
@@ -76,7 +76,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -1.054394245147705
+      - avgLogprobs: -0.7161864553179059
         content:
           parts:
           - text: 2 + 2 = 4
@@ -84,30 +84,30 @@ interactions:
         finishReason: STOP
         logprobsResult:
           chosenCandidates:
-          - logProbability: -0.013796607
+          - logProbability: -0.0066939937
             token: '2'
             tokenId: 236778
-          - logProbability: -0.00737431
+          - logProbability: -0.0026399216
             token: ' +'
             tokenId: 900
-          - logProbability: -2.3844768e-07
+          - logProbability: -3.5760596e-07
             token: ' '
             tokenId: 236743
-          - logProbability: -2.3844768e-07
+          - logProbability: -1.1922384e-07
             token: '2'
             tokenId: 236778
-          - logProbability: -0.015103274
+          - logProbability: -0.009400622
             token: ' ='
             tokenId: 578
-          - logProbability: -0.080776855
+          - logProbability: -0.03711015
             token: ' '
             tokenId: 236743
-          - logProbability: -6.5561944e-06
+          - logProbability: -4.529893e-06
             token: '4'
             tokenId: 236812
-      createTime: '2026-02-10T10:26:09.614158Z'
+      createTime: '2026-02-15T07:50:39.178410Z'
       modelVersion: gemini-2.5-flash
-      responseId: wQeLaY6-JYbtkcePyeWo2QY
+      responseId: T8ySaeraCrHRhcIPq6ac8QY
       usageMetadata:
         candidatesTokenCount: 7
         candidatesTokensDetails:
@@ -117,8 +117,8 @@ interactions:
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 7
-        thoughtsTokenCount: 73
-        totalTokenCount: 87
+        thoughtsTokenCount: 17
+        totalTokenCount: 31
         trafficType: ON_DEMAND
     status:
       code: 200
