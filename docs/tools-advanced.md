@@ -146,8 +146,7 @@ The return schema can be controlled at multiple levels:
 ```python {title="include_return_schema.py"}
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, FunctionToolset
-from pydantic_ai.models.test import TestModel
+from pydantic_ai import Agent
 
 
 class UserDetails(BaseModel):
@@ -158,38 +157,14 @@ class UserDetails(BaseModel):
     email: str
 
 
-toolset = FunctionToolset()
+agent = Agent('openai:gpt-4o', include_tool_return_schema=True)
 
 
-@toolset.tool
+@agent.tool_plain
 def get_user(user_id: int) -> UserDetails:
     """Get user details by ID."""
     return UserDetails(id=user_id, name='Alice', email='alice@example.com')
-
-
-test_model = TestModel()  # (1)!
-agent = Agent(test_model, toolsets=[toolset], include_tool_return_schema=True)
-result = agent.run_sync('Get user 1')
-tool_def = test_model.last_model_request_parameters.function_tools[0]
-print(tool_def.return_schema)
-"""
-{
-    'description': 'Details about a user.',
-    'properties': {
-        'id': {'type': 'integer'},
-        'name': {'type': 'string'},
-        'email': {'type': 'string'},
-    },
-    'required': ['id', 'name', 'email'],
-    'title': 'UserDetails',
-    'type': 'object',
-}
-"""
 ```
-
-1. We're using [`TestModel`][pydantic_ai.models.test.TestModel] here so we can inspect the tool definition via [`last_model_request_parameters`][pydantic_ai.models.test.TestModel.last_model_request_parameters].
-
-_(This example is complete, it can be run "as is")_
 
 The return schema is automatically generated from the function's return type annotation using Pydantic's JSON schema generation. The schema's `description` field comes from the return type's own docstring (e.g. `"""Details about a user."""` on `UserDetails` above), not from the function's `Returns:` docstring section.
 
