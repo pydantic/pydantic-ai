@@ -129,8 +129,8 @@ class InstrumentationSettings:
                     - `pydantic_ai.all_messages` on agent run spans.
                 Version 3 is the same as version 2, with additional support for thinking tokens.
                 Version 4 is the same as version 3, with GenAI semantic conventions for multimodal content:
-                    URL-based media uses type='uri' with modality, uri, and mime_type fields.
-                    Inline binary content uses type='blob' with modality, mime_type, and content fields.
+                    URL-based media uses type='uri' with uri and mime_type fields (and modality for image/audio/video).
+                    Inline binary content uses type='blob' with mime_type and content fields (and modality for image/audio/video).
                     https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/#multimodal-inputs-example
             event_mode: The mode for emitting events in version 1.
                 If `'attributes'`, events are attached to the span as attributes.

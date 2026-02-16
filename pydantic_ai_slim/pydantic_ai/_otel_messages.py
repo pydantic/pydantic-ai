@@ -43,11 +43,12 @@ class UriPart(TypedDict):
     Used in instrumentation version 4+ to align with the GenAI spec:
     https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/#multimodal-inputs-example
 
-    The modality field is always present since it's determined from the part type (ImageUrl, AudioUrl, etc.).
+    The modality field is present for supported types (ImageUrl, AudioUrl, VideoUrl) but omitted for
+    unsupported types (DocumentUrl) since the spec only defines image, audio, and video modalities.
     """
 
     type: Literal['uri']
-    modality: Literal['image', 'audio', 'video', 'document']
+    modality: NotRequired[Literal['image', 'audio', 'video']]
     uri: NotRequired[str]
     mime_type: NotRequired[str]
 
@@ -65,10 +66,11 @@ class BlobPart(TypedDict):
     https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/#multimodal-inputs-example
 
     The modality field is optional since it's inferred from media_type, which may fail for unknown MIME types.
+    Only image, audio, and video modalities are included per the spec.
     """
 
     type: Literal['blob']
-    modality: NotRequired[Literal['image', 'audio', 'video', 'document']]
+    modality: NotRequired[Literal['image', 'audio', 'video']]
     mime_type: NotRequired[str]
     content: NotRequired[str]
 

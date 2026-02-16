@@ -739,15 +739,14 @@ _video_format_lookup: dict[str, VideoFormat] = {
     'video/3gpp': 'three_gp',
 }
 
-_kind_to_modality_lookup: dict[str, Literal['image', 'audio', 'video', 'document']] = {
+_kind_to_modality_lookup: dict[str, Literal['image', 'audio', 'video']] = {
     'image-url': 'image',
     'audio-url': 'audio',
     'video-url': 'video',
-    'document-url': 'document',
 }
 
 
-def _infer_modality_from_media_type(media_type: str) -> Literal['image', 'audio', 'video', 'document'] | None:
+def _infer_modality_from_media_type(media_type: str) -> Literal['image', 'audio', 'video'] | None:
     """Infer modality from media type for OTel GenAI semantic conventions."""
     if media_type.startswith('image/'):
         return 'image'
@@ -755,8 +754,6 @@ def _infer_modality_from_media_type(media_type: str) -> Literal['image', 'audio'
         return 'audio'
     elif media_type.startswith('video/'):
         return 'video'
-    elif media_type.startswith('application/') or media_type.startswith('text/'):
-        return 'document'
     return None
 
 
@@ -820,7 +817,10 @@ class UserPromptPart:
                 )
             elif isinstance(part, ImageUrl | AudioUrl | DocumentUrl | VideoUrl):
                 if settings.version >= 4:
-                    uri_part = _otel_messages.UriPart(type='uri', modality=_kind_to_modality_lookup[part.kind])
+                    uri_part = _otel_messages.UriPart(type='uri')
+                    modality = _kind_to_modality_lookup.get(part.kind)
+                    if modality is not None:
+                        uri_part['modality'] = modality
                     try:  # don't fail the whole message if media type can't be inferred for some reason, just omit it
                         uri_part['mime_type'] = part.media_type
                     except ValueError:

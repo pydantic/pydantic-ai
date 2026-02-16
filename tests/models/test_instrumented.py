@@ -1310,7 +1310,6 @@ def test_messages_to_otel_messages_multimodal_v4():
                     },
                     {
                         'type': 'uri',
-                        'modality': 'document',
                         'uri': 'https://example.com/doc.pdf',
                         'mime_type': 'application/pdf',
                     },
@@ -1404,7 +1403,6 @@ def test_messages_to_otel_messages_binary_content_v4():
                     },
                     {
                         'type': 'blob',
-                        'modality': 'document',
                         'mime_type': 'application/pdf',
                         'content': doc_data.base64,
                     },
@@ -2004,7 +2002,6 @@ def test_messages_to_otel_messages_file_part_v4(document_content: BinaryContent)
                 'parts': [
                     {
                         'type': 'blob',
-                        'modality': 'document',
                         'mime_type': 'application/pdf',
                         'content': document_content.base64,
                     },
@@ -2032,7 +2029,7 @@ def test_messages_to_otel_messages_file_part_v4_no_content(document_content: Bin
             {
                 'role': 'assistant',
                 'parts': [
-                    {'type': 'blob', 'modality': 'document', 'mime_type': 'application/pdf'},
+                    {'type': 'blob', 'mime_type': 'application/pdf'},
                 ],
             },
         ]
@@ -2154,7 +2151,7 @@ def test_messages_to_otel_messages_file_part_v4_no_binary(document_content: Bina
             {
                 'role': 'assistant',
                 'parts': [
-                    {'type': 'blob', 'modality': 'document', 'mime_type': 'application/pdf'},
+                    {'type': 'blob', 'mime_type': 'application/pdf'},
                 ],
             },
         ]
