@@ -697,6 +697,116 @@ def test_handle_part():
     assert manager.get_parts() == snapshot([part2, part3])
 
 
+class TestArgsIncompleteProperty:
+    """Tests for args_incomplete property on tool call parts."""
+
+    def test_invalid_json_args_are_incomplete(self):
+        """Tool calls with invalid/truncated JSON args should have args_incomplete=True."""
+        manager = ModelResponsePartsManager()
+
+        # Add a tool call with truncated JSON args
+        manager.handle_tool_call_delta(vendor_part_id='tool1', tool_name='my_tool', args='{"arg1":', tool_call_id='tc1')
+
+        parts = manager.get_parts()
+        assert len(parts) == 1
+        assert isinstance(parts[0], ToolCallPart)
+        # args_incomplete is now a computed property based on JSON validity
+        assert parts[0].args_incomplete is True
+        assert parts[0].args == '{"arg1":'
+
+    def test_valid_json_args_are_not_incomplete(self):
+        """Tool calls with valid JSON args should have args_incomplete=False."""
+        manager = ModelResponsePartsManager()
+
+        # Add a tool call with valid JSON args
+        manager.handle_tool_call_delta(
+            vendor_part_id='tool1', tool_name='my_tool', args='{"arg1": "value"}', tool_call_id='tc1'
+        )
+
+        parts = manager.get_parts()
+        assert len(parts) == 1
+        assert isinstance(parts[0], ToolCallPart)
+        assert parts[0].args_incomplete is False
+        assert parts[0].args == '{"arg1": "value"}'
+
+    def test_mixed_tool_calls_args_incomplete(self):
+        """args_incomplete correctly reflects JSON validity for each tool call."""
+        manager = ModelResponsePartsManager()
+
+        # Add a tool call with valid JSON args
+        manager.handle_tool_call_delta(
+            vendor_part_id='tool1', tool_name='valid_tool', args='{"complete": true}', tool_call_id='tc1'
+        )
+
+        # Add a tool call with invalid/truncated JSON args
+        manager.handle_tool_call_delta(
+            vendor_part_id='tool2', tool_name='incomplete_tool', args='{"incomplete":', tool_call_id='tc2'
+        )
+
+        parts = manager.get_parts()
+        assert len(parts) == 2
+
+        # First tool call has valid JSON
+        assert isinstance(parts[0], ToolCallPart)
+        assert parts[0].tool_name == 'valid_tool'
+        assert parts[0].args_incomplete is False
+
+        # Second tool call has invalid JSON
+        assert isinstance(parts[1], ToolCallPart)
+        assert parts[1].tool_name == 'incomplete_tool'
+        assert parts[1].args_incomplete is True
+
+    def test_builtin_tool_call_args_incomplete(self):
+        """BuiltinToolCallPart with invalid args should have args_incomplete=True."""
+        manager = ModelResponsePartsManager()
+
+        # Add a builtin tool call with invalid args
+        part = BuiltinToolCallPart(tool_name='builtin_tool', args='{"incomplete":')
+        manager.handle_part(vendor_part_id='builtin', part=part)
+
+        parts = manager.get_parts()
+        assert len(parts) == 1
+        assert isinstance(parts[0], BuiltinToolCallPart)
+        assert parts[0].args_incomplete is True
+
+    def test_dict_args_are_not_incomplete(self):
+        """Tool calls with dict args (already parsed) should have args_incomplete=False."""
+        manager = ModelResponsePartsManager()
+
+        # Add a tool call with dict args (some providers send pre-parsed dicts)
+        manager.handle_tool_call_delta(
+            vendor_part_id='tool1', tool_name='my_tool', args={'arg1': 'value'}, tool_call_id='tc1'
+        )
+
+        parts = manager.get_parts()
+        assert len(parts) == 1
+        assert isinstance(parts[0], ToolCallPart)
+        assert parts[0].args_incomplete is False
+        assert parts[0].args == {'arg1': 'value'}
+
+    def test_non_dict_valid_json_args_are_not_incomplete(self):
+        """Tool calls with valid JSON that isn't an object should have args_incomplete=False."""
+        # A JSON array is valid JSON but not a dict — args_incomplete should still be False
+        part = ToolCallPart(tool_name='my_tool', args='[1, 2, 3]', tool_call_id='tc1')
+        assert part.args_incomplete is False
+
+        # A JSON string is valid JSON but not a dict
+        part2 = ToolCallPart(tool_name='my_tool', args='"hello"', tool_call_id='tc2')
+        assert part2.args_incomplete is False
+
+    def test_empty_args_are_not_incomplete(self):
+        """Tool calls with empty/None args should have args_incomplete=False."""
+        manager = ModelResponsePartsManager()
+
+        # Add a tool call with no args
+        manager.handle_tool_call_delta(vendor_part_id='tool1', tool_name='my_tool', args=None, tool_call_id='tc1')
+
+        parts = manager.get_parts()
+        assert len(parts) == 1
+        assert isinstance(parts[0], ToolCallPart)
+        assert parts[0].args_incomplete is False
+
+
 def test_get_part_by_vendor_id():
     manager = ModelResponsePartsManager()
 

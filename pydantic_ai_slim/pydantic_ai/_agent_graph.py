@@ -107,14 +107,12 @@ class GraphAgentState:
                 and model_response.finish_reason == 'length'
                 and model_response.parts
                 and isinstance(tool_call := model_response.parts[-1], _messages.ToolCallPart)
+                and tool_call.args_incomplete
             ):
-                try:
-                    tool_call.args_as_dict()
-                except Exception:
-                    max_tokens = model_settings.get('max_tokens') if model_settings else None
-                    raise exceptions.IncompleteToolCall(
-                        f'Model token limit ({max_tokens or "provider default"}) exceeded while generating a tool call, resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
-                    )
+                max_tokens = model_settings.get('max_tokens') if model_settings else None
+                raise exceptions.IncompleteToolCall(
+                    f'Model token limit ({max_tokens or "provider default"}) exceeded while generating a tool call, resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
+                )
             message = f'Exceeded maximum retries ({max_result_retries}) for output validation'
             if error:
                 if isinstance(error, exceptions.UnexpectedModelBehavior) and error.__cause__ is not None:
@@ -481,9 +479,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 )
                 yield agent_stream
                 # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
-                # otherwise usage won't be properly counted:
-                async for _ in agent_stream:
-                    pass
+                # otherwise usage won't be properly counted. Skip draining if cancelled.
+                if not agent_stream.is_cancelled:
+                    async for _ in agent_stream:
+                        pass
 
         model_response = streamed_response.get()
 
@@ -1405,10 +1404,62 @@ async def _process_message_history(
     return messages
 
 
+def _filter_incomplete_tool_calls(
+    response: _messages.ModelResponse, processed_tool_call_ids: set[str]
+) -> _messages.ModelResponse:
+    """Filter out unprocessed tool call parts from an incomplete response.
+
+    When a streaming response is cancelled/interrupted, tool calls in that response
+    without corresponding tool results should be filtered out to allow continuation.
+    Tool calls with matching results are preserved.
+
+    Args:
+        response: The model response to filter.
+        processed_tool_call_ids: Set of tool call IDs that have corresponding tool results.
+    """
+    if not response.interrupted:
+        return response
+
+    filtered_parts = [
+        part
+        for part in response.parts
+        if not isinstance(part, _messages.BaseToolCallPart) or part.tool_call_id in processed_tool_call_ids
+    ]
+
+    if len(filtered_parts) == len(response.parts):
+        return response
+
+    return replace(response, parts=filtered_parts)
+
+
 def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
-    """Clean the message history by merging consecutive messages of the same type."""
+    """Clean the message history.
+
+    Filters unprocessed tool calls from interrupted responses and merges consecutive messages of the same type.
+    """
+    # First, collect all tool return IDs so we know which tool calls have been processed
+    processed_tool_call_ids: set[str] = set()
+    for message in messages:
+        if isinstance(message, _messages.ModelRequest):
+            for part in message.parts:
+                if isinstance(part, (_messages.ToolReturnPart, _messages.RetryPromptPart)) and part.tool_call_id:
+                    processed_tool_call_ids.add(part.tool_call_id)
+        elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
+            for part in message.parts:
+                if isinstance(part, _messages.BuiltinToolReturnPart) and part.tool_call_id:
+                    processed_tool_call_ids.add(part.tool_call_id)
+
     clean_messages: list[_messages.ModelMessage] = []
     for message in messages:
+        # Filter unprocessed tool calls from interrupted responses.
+        # If the interrupted response has no parts left after filtering, drop it entirely —
+        # an empty assistant message is invalid for most provider APIs (e.g. OpenAI, Mistral)
+        # and an interrupted response with no usable content carries no information.
+        if isinstance(message, _messages.ModelResponse):
+            message = _filter_incomplete_tool_calls(message, processed_tool_call_ids)
+            if message.interrupted and not message.parts:
+                continue
+
         last_message = clean_messages[-1] if len(clean_messages) > 0 else None
 
         if isinstance(message, _messages.ModelRequest):

@@ -878,6 +878,7 @@ class OpenAIChatModel(Model):
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
             _provider_timestamp=number_to_datetime(first_chunk.created) if first_chunk.created else None,
+            _stream_to_close=response,
             _model_settings=model_settings,
         )
 
@@ -1563,6 +1564,7 @@ class OpenAIResponsesModel(Model):
             _provider_timestamp=number_to_datetime(first_chunk.response.created_at)
             if first_chunk.response.created_at
             else None,
+            _stream_to_close=response,
         )
 
     @overload
@@ -2211,7 +2213,14 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
+    _stream_to_close: AsyncStream[ChatCompletionChunk] | None = field(default=None)
     _model_settings: OpenAIChatModelSettings | None = None
+
+    async def cancel(self) -> None:
+        """Cancel the streaming response and close the underlying HTTP connection."""
+        await super().cancel()
+        if self._stream_to_close is not None:
+            await self._stream_to_close.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         if self._provider_timestamp is not None:  # pragma: no branch
@@ -2382,6 +2391,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
+    _stream_to_close: AsyncStream[responses.ResponseStreamEvent] | None = field(default=None)
+
+    async def cancel(self) -> None:
+        """Cancel the streaming response and close the underlying HTTP connection."""
+        await super().cancel()
+        if self._stream_to_close is not None:
+            await self._stream_to_close.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         # Track annotations by item_id and content_index

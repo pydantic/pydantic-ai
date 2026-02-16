@@ -1000,6 +1000,12 @@ class BedrockStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _provider_response_id: str | None = None
 
+    async def cancel(self) -> None:
+        """Cancel the streaming response and close the underlying HTTP connection."""
+        await super().cancel()
+        # boto3's EventStream.close() is synchronous; boto3 does not provide async I/O.
+        self._event_stream.close()
+
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         """Return an async iterator of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
 
