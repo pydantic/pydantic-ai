@@ -1448,6 +1448,138 @@ async def test_fallback_streaming_pinned_continuation_fails_falls_back() -> None
     assert resp2.parts[0].content == 'fallback response 1'  # type: ignore[union-attr]
 
 
+async def test_fallback_streaming_pinned_continuation_non_fallback_error_propagates() -> None:
+    """Streaming: pinned model raises a non-fallback exception while opening the stream.
+    The error propagates without trying fallback models."""
+    primary_call_count = 0
+    fallback_calls = 0
+
+    async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal primary_call_count
+        primary_call_count += 1
+        if primary_call_count == 1:
+            yield 'partial'
+            return
+        raise PotatoException('not a fallback error')
+        yield ''  # pragma: no cover
+
+    async def fallback_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        yield 'fallback response'
+
+    primary_inner = FunctionModel(stream_function=primary_stream, model_name='primary')
+    primary_model = _ContinuationModel(_inner=primary_inner, _stream_state=['suspended'])
+    fallback_inner = FunctionModel(stream_function=fallback_stream, model_name='fallback')
+    fallback_model = _ContinuationModel(_inner=fallback_inner)
+    model = FallbackModel(primary_model, fallback_model)
+
+    run_id = 'test-stream-non-fallback'
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')], run_id=run_id)]
+    params = ModelRequestParameters()
+
+    async with model.request_stream(messages, None, params) as streamed_response:
+        async for _ in streamed_response:
+            pass
+
+    messages.append(streamed_response.get())
+    messages.append(ModelRequest(parts=[], run_id=run_id))
+
+    with pytest.raises(PotatoException, match='not a fallback error'):
+        async with model.request_stream(messages, None, params) as streamed_response:
+            async for _ in streamed_response:
+                pass
+
+    assert primary_call_count == 2
+    assert fallback_calls == 0
+
+
+async def test_fallback_streaming_rewind_without_trailing_request() -> None:
+    """Pinned fallback rewind works when history ends with a suspended response (no continuation request yet)."""
+    primary_calls = 0
+    fallback_calls = 0
+
+    async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal primary_calls
+        primary_calls += 1
+        raise ModelHTTPError(status_code=500, model_name='primary', body='continuation error')
+        yield ''  # pragma: no cover
+
+    async def fallback_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        yield 'fallback response'
+
+    primary_inner = FunctionModel(stream_function=primary_stream, model_name='primary')
+    primary_model = _ContinuationModel(_inner=primary_inner)
+    fallback_inner = FunctionModel(stream_function=fallback_stream, model_name='fallback')
+    fallback_model = _ContinuationModel(_inner=fallback_inner)
+    model = FallbackModel(primary_model, fallback_model)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='test')]),
+        ModelResponse(
+            parts=[TextPart('paused')],
+            state='suspended',
+            finish_reason='incomplete',
+            provider_details={'fallback_model_name': 'primary'},
+        ),
+    ]
+
+    async with model.request_stream(messages, None, ModelRequestParameters()) as streamed_response:
+        async for _ in streamed_response:
+            pass
+
+    assert primary_calls == 2
+    assert fallback_calls == 1
+    response = streamed_response.get()
+    assert response.parts[0].content == 'fallback response'  # type: ignore[union-attr]
+
+
+async def test_fallback_streaming_rewind_with_extra_trailing_request() -> None:
+    """Pinned fallback rewind handles malformed history with multiple trailing continuation requests."""
+    primary_calls = 0
+    fallback_calls = 0
+
+    async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal primary_calls
+        primary_calls += 1
+        raise ModelHTTPError(status_code=500, model_name='primary', body='continuation error')
+        yield ''  # pragma: no cover
+
+    async def fallback_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        yield 'fallback response'
+
+    primary_inner = FunctionModel(stream_function=primary_stream, model_name='primary')
+    primary_model = _ContinuationModel(_inner=primary_inner)
+    fallback_inner = FunctionModel(stream_function=fallback_stream, model_name='fallback')
+    fallback_model = _ContinuationModel(_inner=fallback_inner)
+    model = FallbackModel(primary_model, fallback_model)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='test')]),
+        ModelResponse(
+            parts=[TextPart('paused')],
+            state='suspended',
+            finish_reason='incomplete',
+            provider_details={'fallback_model_name': 'primary'},
+        ),
+        ModelRequest(parts=[]),
+        ModelRequest(parts=[]),
+    ]
+
+    async with model.request_stream(messages, None, ModelRequestParameters()) as streamed_response:
+        async for _ in streamed_response:
+            pass
+
+    assert primary_calls == 2
+    assert fallback_calls == 1
+    response = streamed_response.get()
+    assert response.parts[0].content == 'fallback response'  # type: ignore[union-attr]
+
+
 async def test_fallback_continuation_without_stamp_falls_through() -> None:
     """When state='suspended' but provider_details lacks fallback_model_name,
     normal fallback chain is used (no pinning)."""

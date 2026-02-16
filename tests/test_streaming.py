@@ -20,6 +20,7 @@ from pydantic_ai import (
     AgentRunResult,
     AgentRunResultEvent,
     AgentStreamEvent,
+    BuiltinToolCallPart,
     ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -2363,6 +2364,44 @@ async def test_iter_stream_output():
             'The bat sat on the mat.',
         ]
     )
+
+
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+)
+async def test_continuation_node_cached_run_reused_with_builtin_events() -> None:
+    request_calls = 0
+
+    def continuation_with_builtin_events(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal request_calls
+        request_calls += 1
+        if request_calls == 1:
+            return ModelResponse(parts=[TextPart('paused')], state='suspended', finish_reason='incomplete')
+        if request_calls == 2:
+            return ModelResponse(
+                parts=[BuiltinToolCallPart(tool_name='web_search', args={'query': 'latest weather'}, tool_call_id='w_1')],
+                state='suspended',
+                finish_reason='incomplete',
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(continuation_with_builtin_events))
+
+    async with agent.iter('test continuation cache') as run:
+        node = run.next_node
+        while not Agent.is_continuation_node(node):
+            node = await run.next(node)
+
+        primed_next_node = await node.run(run.ctx)
+        next_node = await run.next(node)
+        assert next_node is primed_next_node
+
+        while not Agent.is_end_node(next_node):
+            next_node = await run.next(next_node)
+
+    assert request_calls == 3
+    assert run.result is not None
+    assert run.result.output == 'done'
 
 
 async def test_streamed_run_result_metadata_available() -> None:
