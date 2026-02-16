@@ -81,9 +81,7 @@ ArgsValidatorFunc: TypeAlias = (
 The validator receives the same typed parameters as the tool function,
 with [`RunContext`][pydantic_ai.tools.RunContext] as the first argument for dependency access.
 
-Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure, return `None` on success.
-
-Usage `ArgsValidatorFunc[AgentDepsT, ToolParams]`.
+Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure.
 """
 ToolPrepareFunc: TypeAlias = Callable[[RunContext[AgentDepsT], 'ToolDefinition'], Awaitable['ToolDefinition | None']]
 """Definition of a function that can prepare a tool definition at call time.

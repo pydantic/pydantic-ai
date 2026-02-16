@@ -436,7 +436,7 @@ _(This example is complete, it can be run "as is")_
 
 When validation fails, the error message is sent back to the LLM as a retry prompt. This respects the `retries` setting on the tool. For [deferred tools](deferred-tools.md), validation runs at deferral time — only tool calls with valid arguments are deferred, while failed validation triggers a retry just like regular tools.
 
-The `args_validator` parameter is available on [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], [`Tool`][pydantic_ai.tools.Tool], [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema], and [`FunctionToolset`][pydantic_ai.toolsets.function.FunctionToolset]. Validators can be sync or async functions. When used with [`prepare`](#tool-prepare), the prepare function runs first to customize the tool definition, then `args_validator` runs at call time.
+The `args_validator` parameter is available on [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], [`Tool`][pydantic_ai.tools.Tool], [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema], and [`FunctionToolset`][pydantic_ai.toolsets.function.FunctionToolset]. Validators can be sync or async functions.
 
 The validation result is exposed via the `args_valid` field on [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent]: `True` means all validation passed, `False` means validation failed, and `None` means validation was not performed (e.g. for output tool calls skipped due to the `'early'` end strategy).
 
