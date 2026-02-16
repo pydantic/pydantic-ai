@@ -2579,13 +2579,8 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
                         timestamp=IsDatetime(),
                         dynamic_ref=IsStr(),
                     ),
-                    SystemPromptPart(
-                        content='System prompt: user prompt length = 3',
-                        timestamp=IsDatetime(),
-                        dynamic_ref='test_run_with_history_ending_on_model_request_and_no_user_prompt.<locals>.system_prompt',
-                    ),
                     UserPromptPart(
-                        content=['Hello', ImageUrl(url='https://example.com/image.jpg', identifier='39cfc4')],
+                        content=['Hello', ImageUrl(url='https://example.com/image.jpg')],
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
@@ -2599,7 +2594,7 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
-                usage=RequestUsage(input_tokens=68, output_tokens=4),
+                usage=RequestUsage(input_tokens=61, output_tokens=4),
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
