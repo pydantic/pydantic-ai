@@ -386,11 +386,17 @@ class BedrockConverseModel(Model):
         if not resolved.enabled:
             return {'type': 'disabled'}
 
-        # Bedrock routes to Claude — use same effort-to-budget mapping as Anthropic
-        budget = 4096
-        if resolved.effort:
-            effort_to_budget: dict[str, int] = {'low': 1024, 'medium': 4096, 'high': 16384}
-            budget = effort_to_budget.get(resolved.effort, 4096)
+        # Bedrock routes to Claude — reuse Anthropic's effort-to-budget mapping
+        from .anthropic import (
+            _ANTHROPIC_EFFORT_TO_BUDGET,  # pyright: ignore[reportPrivateUsage]
+            _DEFAULT_THINKING_BUDGET,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        budget = (
+            _ANTHROPIC_EFFORT_TO_BUDGET.get(resolved.effort, _DEFAULT_THINKING_BUDGET)
+            if resolved.effort
+            else _DEFAULT_THINKING_BUDGET
+        )
         return {'type': 'enabled', 'budget_tokens': budget}
 
     async def request(

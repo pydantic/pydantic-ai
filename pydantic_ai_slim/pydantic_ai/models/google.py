@@ -275,7 +275,9 @@ class GoogleModel(Model):
         if not self.profile.supports_thinking:
             return None
 
-        # Determine Gemini 3 vs 2.5 internally (not a profile concern)
+        # Gemini 3 uses thinking_level API while 2.5 uses thinking_budget.
+        # This check is intentionally separate from profiles/google.py — the profile
+        # tracks *capability* (supports_thinking), while this tracks *API format*.
         uses_thinking_level = 'gemini-3' in self.model_name
 
         if not resolved.enabled:

@@ -223,8 +223,11 @@ class ModelSettings(TypedDict, total=False):
     Setting `thinking_effort` without `thinking` implicitly enables thinking.
     Silently ignored on models that don't support effort control.
 
-    Provider-specific effort levels (OpenAI's `xhigh`/`minimal`,
-    Anthropic's `max`) are available through provider-specific settings.
+    Not all providers support all effort levels. xAI only supports `'low'` and
+    `'high'` — `'medium'` is mapped to `'low'`. Cohere and Groq ignore effort
+    entirely (thinking is either on or off). Provider-specific effort levels
+    (OpenAI's `xhigh`/`minimal`, Anthropic's `max`) are available through
+    provider-specific settings.
 
     Supported by:
 
@@ -232,7 +235,8 @@ class ModelSettings(TypedDict, total=False):
     * Gemini 3 (via `thinking_level`)
     * OpenAI (o-series, GPT-5+ via `reasoning_effort`)
     * OpenRouter (via `reasoning.effort`)
-    * xAI (Grok 3 Mini only, via `reasoning_effort`)
+    * Bedrock (Claude models, via `budget_tokens`)
+    * xAI (Grok 3 Mini only — `'low'` and `'high'` only)
     """
 
 

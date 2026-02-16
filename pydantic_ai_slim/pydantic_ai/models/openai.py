@@ -1764,19 +1764,6 @@ class OpenAIResponsesModel(Model):
 
         return reasoning_effort, reasoning_summary
 
-    @staticmethod
-    def _map_summary_to_openai(
-        summary: Literal['none', 'concise', 'detailed', 'auto'] | bool | None,
-    ) -> Literal['detailed', 'concise', 'auto'] | None:
-        """Map unified summary values to OpenAI values."""
-        if summary is None or summary is False or summary == 'none':
-            return None
-        if summary is True:
-            return 'auto'
-        if summary in ('concise', 'detailed', 'auto'):
-            return summary
-        return None  # pragma: no cover
-
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 

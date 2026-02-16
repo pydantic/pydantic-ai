@@ -4,20 +4,30 @@ Tests the three-layer architecture:
 1. ModelSettings (user input): `thinking: bool` + `thinking_effort: Literal['low', 'medium', 'high']`
 2. resolve_thinking_config() (pure normalization): no validation, no errors
 3. Model._resolve_*() (per-provider translation): silent-drop for unsupported settings
+
+Integration tests at the bottom verify the full Agent -> Model -> API client pipeline
+using mock clients, ensuring unified settings translate to correct native API params.
 """
 
 # pyright: reportPrivateUsage=false
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
+from pydantic_ai import Agent
 from pydantic_ai.profiles import ModelProfile
 
 from .conftest import try_import
 
 with try_import() as imports_successful:
+    from anthropic.types.beta import BetaTextBlock, BetaUsage
     from google.genai.types import ThinkingLevel
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+    from openai.types.responses.response_output_message import Content, ResponseOutputMessage
+    from openai.types.responses.response_output_text import ResponseOutputText
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
@@ -25,9 +35,16 @@ with try_import() as imports_successful:
     from pydantic_ai.models.cohere import CohereModel, CohereModelSettings
     from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
     from pydantic_ai.models.groq import GroqModel, GroqModelSettings
-    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings, OpenAIResponsesModelSettings
+    from pydantic_ai.models.openai import (
+        OpenAIChatModel,
+        OpenAIChatModelSettings,
+        OpenAIResponsesModel,
+        OpenAIResponsesModelSettings,
+    )
     from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
     from pydantic_ai.models.xai import XaiModel, XaiModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='model extras not installed')
@@ -1186,3 +1203,189 @@ class TestMergeModelSettingsThinking:
 
         result = merge_model_settings(None, None)
         assert result is None
+
+
+# ============================================================================
+# Integration tests — full Agent → Model → API client pipeline
+# ============================================================================
+
+
+class TestAnthropicIntegration:
+    """Test unified thinking flows through Agent to Anthropic API calls."""
+
+    @pytest.mark.anyio
+    async def test_thinking_enabled_high_effort_budget_model(self, allow_model_requests: None):
+        """thinking=True + effort='high' → budget_tokens=16384 on pre-adaptive Claude."""
+        from tests.models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
+
+        c = completion_message(
+            [BetaTextBlock(text='answer', type='text')],
+            BetaUsage(input_tokens=5, output_tokens=10),
+        )
+        mock_client = MockAnthropic.create_mock(c)
+        # claude-sonnet-4-0 supports thinking but uses budget-based (not adaptive)
+        m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(anthropic_client=mock_client))
+        agent = Agent(m)
+
+        result = await agent.run(
+            'hello',
+            model_settings=AnthropicModelSettings(thinking=True, thinking_effort='high'),
+        )
+        assert result.output == 'answer'
+
+        kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+        assert kwargs['thinking'] == {'type': 'enabled', 'budget_tokens': 16384}
+
+    @pytest.mark.anyio
+    async def test_thinking_enabled_adaptive_model(self, allow_model_requests: None):
+        """thinking=True on Opus 4.5+ → adaptive thinking."""
+        from tests.models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
+
+        c = completion_message(
+            [BetaTextBlock(text='deep thought', type='text')],
+            BetaUsage(input_tokens=5, output_tokens=10),
+        )
+        mock_client = MockAnthropic.create_mock(c)
+        m = AnthropicModel('claude-opus-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+        agent = Agent(m)
+
+        result = await agent.run(
+            'hello',
+            model_settings=AnthropicModelSettings(thinking=True),
+        )
+        assert result.output == 'deep thought'
+
+        kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+        assert kwargs['thinking'] == {'type': 'adaptive'}
+
+    @pytest.mark.anyio
+    async def test_thinking_disabled(self, allow_model_requests: None):
+        """thinking=False → type: disabled."""
+        from tests.models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
+
+        c = completion_message(
+            [BetaTextBlock(text='no thinking', type='text')],
+            BetaUsage(input_tokens=5, output_tokens=10),
+        )
+        mock_client = MockAnthropic.create_mock(c)
+        m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(anthropic_client=mock_client))
+        agent = Agent(m)
+
+        result = await agent.run(
+            'hello',
+            model_settings=AnthropicModelSettings(thinking=False),
+        )
+        assert result.output == 'no thinking'
+
+        kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+        assert kwargs['thinking'] == {'type': 'disabled'}
+
+    @pytest.mark.anyio
+    async def test_provider_specific_takes_precedence(self, allow_model_requests: None):
+        """anthropic_thinking overrides unified thinking."""
+        from tests.models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
+
+        c = completion_message(
+            [BetaTextBlock(text='custom', type='text')],
+            BetaUsage(input_tokens=5, output_tokens=10),
+        )
+        mock_client = MockAnthropic.create_mock(c)
+        m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(anthropic_client=mock_client))
+        agent = Agent(m)
+
+        result = await agent.run(
+            'hello',
+            model_settings=AnthropicModelSettings(
+                thinking=True,
+                thinking_effort='low',
+                anthropic_thinking={'type': 'enabled', 'budget_tokens': 9999},
+            ),
+        )
+        assert result.output == 'custom'
+
+        kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+        # Provider-specific wins
+        assert kwargs['thinking'] == {'type': 'enabled', 'budget_tokens': 9999}
+
+
+class TestOpenAIChatIntegration:
+    """Test unified thinking flows through Agent to OpenAI Chat API calls."""
+
+    @pytest.mark.anyio
+    async def test_thinking_enabled_with_effort(self, allow_model_requests: None):
+        """thinking=True + effort='high' → reasoning_effort='high' on OpenAI Chat."""
+        from tests.models.mock_openai import (
+            MockOpenAI,
+            completion_message as oai_completion,
+            get_mock_chat_completion_kwargs,
+        )
+
+        c = oai_completion(ChatCompletionMessage(content='reasoned', role='assistant'))
+        mock_client = MockOpenAI.create_mock(c)
+        m = OpenAIChatModel('o3-mini', provider=OpenAIProvider(openai_client=mock_client))
+        agent = Agent(m)
+
+        result = await agent.run(
+            'hello',
+            model_settings=OpenAIChatModelSettings(thinking=True, thinking_effort='high'),
+        )
+        assert result.output == 'reasoned'
+
+        kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+        assert kwargs['reasoning_effort'] == 'high'
+
+    @pytest.mark.anyio
+    async def test_thinking_enabled_default_effort(self, allow_model_requests: None):
+        """thinking=True without effort → reasoning_effort='medium' (default)."""
+        from tests.models.mock_openai import (
+            MockOpenAI,
+            completion_message as oai_completion,
+            get_mock_chat_completion_kwargs,
+        )
+
+        c = oai_completion(ChatCompletionMessage(content='default', role='assistant'))
+        mock_client = MockOpenAI.create_mock(c)
+        m = OpenAIChatModel('o3-mini', provider=OpenAIProvider(openai_client=mock_client))
+        agent = Agent(m)
+
+        result = await agent.run(
+            'hello',
+            model_settings=OpenAIChatModelSettings(thinking=True),
+        )
+        assert result.output == 'default'
+
+        kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+        assert kwargs['reasoning_effort'] == 'medium'
+
+
+class TestOpenAIResponsesIntegration:
+    """Test unified thinking flows through Agent to OpenAI Responses API calls."""
+
+    @pytest.mark.anyio
+    async def test_thinking_enabled_with_effort(self, allow_model_requests: None):
+        """thinking=True + effort='low' → reasoning.effort='low' on Responses API."""
+        from tests.models.mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
+
+        resp = response_message(
+            [
+                ResponseOutputMessage(
+                    id='msg-1',
+                    content=cast(list[Content], [ResponseOutputText(text='lo-fi', type='output_text', annotations=[])]),
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                )
+            ]
+        )
+        mock_client = MockOpenAIResponses.create_mock(resp)
+        m = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(openai_client=mock_client))
+        agent = Agent(m)
+
+        result = await agent.run(
+            'hello',
+            model_settings=OpenAIResponsesModelSettings(thinking=True, thinking_effort='low'),
+        )
+        assert result.output == 'lo-fi'
+
+        kwargs = get_mock_responses_kwargs(mock_client)[0]
+        assert kwargs['reasoning'] == {'effort': 'low'}
