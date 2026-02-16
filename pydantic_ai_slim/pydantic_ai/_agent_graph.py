@@ -707,7 +707,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         return
                     elif output_schema.toolset:
                         alternatives.append('include your response in a tool call')
-                    else:
+                    elif ctx.deps.tool_manager.tools is None or ctx.deps.tool_manager.tools:
+                        # tools is None when the tool manager is unprepared (e.g. UserPromptNode
+                        # skips to CallToolsNode, bypassing for_run_step); in that case we
+                        # default to suggesting tools to be safe
                         alternatives.append('call a tool')
 
                     if output_schema.allows_image:
@@ -1293,7 +1296,7 @@ _messages_ctx_var: ContextVar[_RunMessages] = ContextVar('var')
 def capture_run_messages() -> Iterator[list[_messages.ModelMessage]]:
     """Context manager to access the messages used in a [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], or [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] call.
 
-    Useful when a run may raise an exception, see [model errors](../agents.md#model-errors) for more information.
+    Useful when a run may raise an exception, see [model errors](../agent.md#model-errors) for more information.
 
     Examples:
     ```python
