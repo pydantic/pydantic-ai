@@ -51,7 +51,7 @@ from ..profiles import ModelProfileSpec
 from ..profiles.grok import GrokModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
-from ..thinking import resolve_thinking_config
+from ..thinking import resolve_with_profile
 from ..usage import RequestUsage
 
 try:
@@ -486,19 +486,15 @@ class XaiModel(Model):
     # xAI only supports 2 levels; our 3-level unified API downmaps medium→low.
     _XAI_EFFORT_MAP: dict[str, ReasoningEffort] = {'low': 'low', 'medium': 'low', 'high': 'high'}
 
-    def _resolve_reasoning_effort(self, model_settings: XaiModelSettings) -> ReasoningEffort | None:
+    def _resolve_thinking_config(self, model_settings: XaiModelSettings) -> ReasoningEffort | None:
         """Resolve unified thinking settings to xAI reasoning_effort.
 
         Only grok-3-mini supports reasoning_effort with 2 levels ("low", "high").
         Maps: low→"low", medium→"low" (downmap), high→"high".
         Silent drop for all other models.
         """
-        resolved = resolve_thinking_config(model_settings)
+        resolved = resolve_with_profile(model_settings, self.profile)
         if resolved is None:
-            return None
-
-        # Silent drop: model doesn't support thinking
-        if not self.profile.supports_thinking:
             return None
 
         # Only grok-3-mini has tunable effort; other models use model-name variants
@@ -573,7 +569,7 @@ class XaiModel(Model):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT)
 
         # Resolve unified thinking settings to xAI reasoning_effort
-        reasoning_effort = self._resolve_reasoning_effort(model_settings)
+        reasoning_effort = self._resolve_thinking_config(model_settings)
 
         # Create and return chat instance
         return self._provider.client.chat.create(

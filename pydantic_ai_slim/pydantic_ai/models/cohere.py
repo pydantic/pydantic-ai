@@ -30,7 +30,7 @@ from ..messages import (
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
-from ..thinking import resolve_thinking_config
+from ..thinking import resolve_with_profile
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, check_allow_model_requests
 
@@ -174,12 +174,8 @@ class CohereModel(Model):
 
         Uses silent-drop semantics: effort is silently ignored (Cohere has no effort control).
         """
-        resolved = resolve_thinking_config(model_settings)
+        resolved = resolve_with_profile(model_settings, self.profile)
         if resolved is None:
-            return None
-
-        # Silent drop: model doesn't support thinking
-        if not self.profile.supports_thinking:
             return None
 
         if not resolved.enabled:

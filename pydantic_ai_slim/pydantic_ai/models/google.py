@@ -49,7 +49,7 @@ from ..profiles import ModelProfileSpec
 from ..profiles.google import GoogleModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
-from ..thinking import resolve_thinking_config
+from ..thinking import resolve_with_profile
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -267,12 +267,8 @@ class GoogleModel(Model):
         if 'google_thinking_config' in model_settings:
             return model_settings['google_thinking_config']
 
-        resolved = resolve_thinking_config(model_settings)
+        resolved = resolve_with_profile(model_settings, self.profile)
         if resolved is None:
-            return None
-
-        # Silent drop: model doesn't support thinking
-        if not self.profile.supports_thinking:
             return None
 
         # Gemini 3 uses thinking_level API while 2.5 uses thinking_budget.

@@ -10,7 +10,7 @@ from typing_extensions import override
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings
-from ..thinking import resolve_thinking_config
+from ..thinking import resolve_with_profile
 from . import ModelRequestParameters
 
 try:
@@ -97,25 +97,21 @@ class CerebrasModel(OpenAIChatModel):
 
         # Apply unified thinking config if no provider-specific setting
         if 'cerebras_disable_reasoning' not in merged_settings:
-            disable_reasoning = self._resolve_reasoning_config(merged_settings)
+            disable_reasoning = self._resolve_cerebras_thinking(merged_settings)
             if disable_reasoning is not None:
                 merged_settings['cerebras_disable_reasoning'] = disable_reasoning  # pragma: no cover
 
         new_settings = _cerebras_settings_to_openai_settings(merged_settings)
         return new_settings, customized_parameters
 
-    def _resolve_reasoning_config(self, model_settings: CerebrasModelSettings) -> bool | None:
+    def _resolve_cerebras_thinking(self, model_settings: CerebrasModelSettings) -> bool | None:
         """Resolve unified thinking settings to Cerebras disable_reasoning config.
 
         Returns True to disable reasoning, None to leave default behavior.
         Uses silent-drop semantics: effort is silently ignored (Cerebras has no effort control).
         """
-        resolved = resolve_thinking_config(model_settings)
+        resolved = resolve_with_profile(model_settings, self.profile)
         if resolved is None:
-            return None
-
-        # Silent drop: model doesn't support thinking
-        if not self.profile.supports_thinking:
             return None
 
         if not resolved.enabled:

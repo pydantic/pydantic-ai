@@ -42,7 +42,7 @@ from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.groq import GroqModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
-from ..thinking import resolve_thinking_config
+from ..thinking import resolve_with_profile
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -169,23 +169,19 @@ class GroqModel(Model):
 
         # Apply unified thinking config if no provider-specific setting
         if 'groq_reasoning_format' not in merged_settings:
-            reasoning_format = self._resolve_reasoning_format(merged_settings)
+            reasoning_format = self._resolve_thinking_config(merged_settings)
             if reasoning_format is not None:
                 merged_settings['groq_reasoning_format'] = reasoning_format  # pragma: no cover
 
         return merged_settings, customized_parameters
 
-    def _resolve_reasoning_format(self, model_settings: GroqModelSettings) -> Literal['hidden', 'raw', 'parsed'] | None:
+    def _resolve_thinking_config(self, model_settings: GroqModelSettings) -> Literal['hidden', 'raw', 'parsed'] | None:
         """Resolve unified thinking settings to Groq reasoning format.
 
         Uses silent-drop semantics: effort is silently ignored (Groq has no effort control).
         """
-        resolved = resolve_thinking_config(model_settings)
+        resolved = resolve_with_profile(model_settings, self.profile)
         if resolved is None:
-            return None
-
-        # Silent drop: model doesn't support thinking
-        if not self.profile.supports_thinking:
             return None
 
         if not resolved.enabled:

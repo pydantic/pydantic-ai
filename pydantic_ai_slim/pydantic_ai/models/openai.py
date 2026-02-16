@@ -60,7 +60,7 @@ from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
-from ..thinking import resolve_thinking_config
+from ..thinking import resolve_with_profile
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -590,7 +590,7 @@ class OpenAIChatModel(Model):
     def system_prompt_role(self) -> OpenAISystemPromptRole | None:
         return OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role
 
-    def _resolve_reasoning_effort(self, model_settings: OpenAIChatModelSettings) -> ReasoningEffort | None:
+    def _resolve_thinking_config(self, model_settings: OpenAIChatModelSettings) -> ReasoningEffort | None:
         """Resolve reasoning effort from unified or provider-specific settings.
 
         Provider-specific `openai_reasoning_effort` takes precedence over unified `thinking`.
@@ -600,12 +600,8 @@ class OpenAIChatModel(Model):
         if 'openai_reasoning_effort' in model_settings:
             return model_settings['openai_reasoning_effort']
 
-        resolved = resolve_thinking_config(model_settings)
+        resolved = resolve_with_profile(model_settings, self.profile)
         if resolved is None:
-            return None
-
-        # Silent drop: model doesn't support reasoning
-        if not self.profile.supports_thinking:
             return None
 
         if not resolved.enabled:
@@ -741,7 +737,7 @@ class OpenAIChatModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 response_format=response_format or OMIT,
                 seed=model_settings.get('seed', OMIT),
-                reasoning_effort=self._resolve_reasoning_effort(model_settings) or OMIT,
+                reasoning_effort=self._resolve_thinking_config(model_settings) or OMIT,
                 user=model_settings.get('openai_user', OMIT),
                 web_search_options=web_search_options or OMIT,
                 service_tier=model_settings.get('openai_service_tier', OMIT),
@@ -1725,7 +1721,7 @@ class OpenAIResponsesModel(Model):
 
         # Check for unified thinking setting if provider-specific is not set
         if reasoning_effort is None or reasoning_summary is None:
-            reasoning_effort, reasoning_summary = self._apply_unified_thinking(
+            reasoning_effort, reasoning_summary = self._resolve_thinking_config(
                 model_settings, reasoning_effort, reasoning_summary
             )
 
@@ -1736,7 +1732,7 @@ class OpenAIResponsesModel(Model):
             reasoning['summary'] = reasoning_summary
         return reasoning or OMIT
 
-    def _apply_unified_thinking(
+    def _resolve_thinking_config(
         self,
         model_settings: OpenAIResponsesModelSettings,
         reasoning_effort: ReasoningEffort | None,
@@ -1746,12 +1742,8 @@ class OpenAIResponsesModel(Model):
 
         Uses silent-drop semantics for unsupported settings.
         """
-        resolved = resolve_thinking_config(model_settings)
+        resolved = resolve_with_profile(model_settings, self.profile)
         if resolved is None:
-            return reasoning_effort, reasoning_summary
-
-        # Silent drop: model doesn't support thinking
-        if not self.profile.supports_thinking:
             return reasoning_effort, reasoning_summary
 
         if not resolved.enabled:

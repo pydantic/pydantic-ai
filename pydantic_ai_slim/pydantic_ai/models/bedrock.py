@@ -47,7 +47,7 @@ from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, 
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.thinking import resolve_thinking_config
+from pydantic_ai.thinking import DEFAULT_THINKING_BUDGET, EFFORT_TO_BUDGET, resolve_with_profile
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
@@ -375,27 +375,17 @@ class BedrockConverseModel(Model):
         Returns the thinking config dict in Anthropic format, or None if not enabled.
         Uses silent-drop semantics for unsupported settings.
         """
-        resolved = resolve_thinking_config(model_settings)
+        resolved = resolve_with_profile(model_settings, self.profile)
         if resolved is None:
-            return None
-
-        # Silent drop: model doesn't support thinking or is not a Claude model
-        if not self.profile.supports_thinking:
             return None
 
         if not resolved.enabled:
             return {'type': 'disabled'}
 
-        # Bedrock routes to Claude — reuse Anthropic's effort-to-budget mapping
-        from .anthropic import (
-            _ANTHROPIC_EFFORT_TO_BUDGET,  # pyright: ignore[reportPrivateUsage]
-            _DEFAULT_THINKING_BUDGET,  # pyright: ignore[reportPrivateUsage]
-        )
-
         budget = (
-            _ANTHROPIC_EFFORT_TO_BUDGET.get(resolved.effort, _DEFAULT_THINKING_BUDGET)
+            EFFORT_TO_BUDGET.get(resolved.effort, DEFAULT_THINKING_BUDGET)
             if resolved.effort
-            else _DEFAULT_THINKING_BUDGET
+            else DEFAULT_THINKING_BUDGET
         )
         return {'type': 'enabled', 'budget_tokens': budget}
 

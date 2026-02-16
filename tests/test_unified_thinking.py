@@ -369,7 +369,7 @@ class TestOpenAIChatUnifiedThinking:
         model._profile = openai_reasoning_profile
 
         settings: OpenAIChatModelSettings = {'thinking': True}
-        result = model._resolve_reasoning_effort(settings)
+        result = model._resolve_thinking_config(settings)
 
         assert result == 'medium'
 
@@ -381,7 +381,7 @@ class TestOpenAIChatUnifiedThinking:
         model._profile = openai_reasoning_profile
 
         settings: OpenAIChatModelSettings = {'thinking_effort': effort}  # type: ignore[typeddict-item]
-        result = model._resolve_reasoning_effort(settings)
+        result = model._resolve_thinking_config(settings)
 
         assert result == effort
 
@@ -392,7 +392,7 @@ class TestOpenAIChatUnifiedThinking:
         model._profile = openai_reasoning_profile
 
         settings: OpenAIChatModelSettings = {'thinking': False}
-        result = model._resolve_reasoning_effort(settings)
+        result = model._resolve_thinking_config(settings)
 
         assert result is None
 
@@ -406,7 +406,7 @@ class TestOpenAIChatUnifiedThinking:
             'thinking_effort': 'low',
             'openai_reasoning_effort': 'high',
         }
-        result = model._resolve_reasoning_effort(settings)
+        result = model._resolve_thinking_config(settings)
 
         assert result == 'high'
 
@@ -417,7 +417,7 @@ class TestOpenAIChatUnifiedThinking:
         model._profile = non_thinking_profile
 
         settings: OpenAIChatModelSettings = {'thinking': True}
-        result = model._resolve_reasoning_effort(settings)
+        result = model._resolve_thinking_config(settings)
 
         assert result is None
 
@@ -427,7 +427,7 @@ class TestOpenAIChatUnifiedThinking:
         model._model_name = 'o3'
         model._profile = openai_reasoning_profile
 
-        result = model._resolve_reasoning_effort({})
+        result = model._resolve_thinking_config({})
         assert result is None
 
 
@@ -453,7 +453,7 @@ class TestOpenAIResponsesUnifiedThinking:
         model._profile = openai_responses_reasoning_profile
 
         settings: OpenAIResponsesModelSettings = {'thinking': True}
-        effort, summary = model._apply_unified_thinking(settings, None, None)
+        effort, summary = model._resolve_thinking_config(settings, None, None)
 
         assert effort == 'medium'
         assert summary is None
@@ -467,7 +467,7 @@ class TestOpenAIResponsesUnifiedThinking:
         model._profile = openai_responses_reasoning_profile
 
         settings: OpenAIResponsesModelSettings = {'thinking_effort': 'high'}
-        effort, _ = model._apply_unified_thinking(settings, None, None)
+        effort, _ = model._resolve_thinking_config(settings, None, None)
 
         assert effort == 'high'
 
@@ -480,7 +480,7 @@ class TestOpenAIResponsesUnifiedThinking:
         model._profile = openai_responses_reasoning_profile
 
         settings: OpenAIResponsesModelSettings = {'thinking': False}
-        effort, summary = model._apply_unified_thinking(settings, None, None)
+        effort, summary = model._resolve_thinking_config(settings, None, None)
 
         assert effort is None
         assert summary is None
@@ -494,7 +494,7 @@ class TestOpenAIResponsesUnifiedThinking:
         model._profile = openai_responses_reasoning_profile
 
         settings: OpenAIResponsesModelSettings = {'thinking_effort': 'low'}
-        effort, _ = model._apply_unified_thinking(settings, 'high', None)
+        effort, _ = model._resolve_thinking_config(settings, 'high', None)
 
         # Existing 'high' should be preserved
         assert effort == 'high'
@@ -508,7 +508,7 @@ class TestOpenAIResponsesUnifiedThinking:
         model._profile = non_thinking_profile
 
         settings: OpenAIResponsesModelSettings = {'thinking': True}
-        effort, summary = model._apply_unified_thinking(settings, None, None)
+        effort, summary = model._resolve_thinking_config(settings, None, None)
 
         assert effort is None
         assert summary is None
@@ -595,7 +595,7 @@ class TestOpenRouterUnifiedThinking:
         model._profile = ModelProfile(supports_thinking=True)
 
         settings: OpenRouterModelSettings = {'thinking': True}
-        result = model._resolve_reasoning_config(settings)
+        result = model._resolve_openrouter_thinking(settings)
 
         assert result == {'enabled': True}
 
@@ -606,7 +606,7 @@ class TestOpenRouterUnifiedThinking:
         model._profile = ModelProfile(supports_thinking=True)
 
         settings: OpenRouterModelSettings = {'thinking': False}
-        result = model._resolve_reasoning_config(settings)
+        result = model._resolve_openrouter_thinking(settings)
 
         assert result == {'enabled': False}
 
@@ -618,7 +618,7 @@ class TestOpenRouterUnifiedThinking:
         model._profile = ModelProfile(supports_thinking=True)
 
         settings: OpenRouterModelSettings = {'thinking_effort': effort}  # type: ignore[typeddict-item]
-        result = model._resolve_reasoning_config(settings)
+        result = model._resolve_openrouter_thinking(settings)
 
         assert result == {'effort': effort}
 
@@ -628,7 +628,7 @@ class TestOpenRouterUnifiedThinking:
         model._model_name = 'openai/o3'
         model._profile = ModelProfile(supports_thinking=True)
 
-        result = model._resolve_reasoning_config({})
+        result = model._resolve_openrouter_thinking({})
         assert result is None
 
 
@@ -647,7 +647,7 @@ class TestGroqUnifiedThinking:
         model._profile = thinking_profile
 
         settings: GroqModelSettings = {'thinking': True}
-        result = model._resolve_reasoning_format(settings)
+        result = model._resolve_thinking_config(settings)
 
         assert result == 'parsed'
 
@@ -658,7 +658,7 @@ class TestGroqUnifiedThinking:
         model._profile = thinking_profile
 
         settings: GroqModelSettings = {'thinking': False}
-        result = model._resolve_reasoning_format(settings)
+        result = model._resolve_thinking_config(settings)
 
         assert result == 'hidden'
 
@@ -669,7 +669,7 @@ class TestGroqUnifiedThinking:
         model._profile = thinking_profile
 
         settings: GroqModelSettings = {'thinking_effort': 'high'}
-        result = model._resolve_reasoning_format(settings)
+        result = model._resolve_thinking_config(settings)
 
         # Effort triggers enable, but effort value itself is dropped
         assert result == 'parsed'
@@ -681,7 +681,7 @@ class TestGroqUnifiedThinking:
         model._profile = non_thinking_profile
 
         settings: GroqModelSettings = {'thinking': True}
-        result = model._resolve_reasoning_format(settings)
+        result = model._resolve_thinking_config(settings)
 
         assert result is None
 
@@ -691,7 +691,7 @@ class TestGroqUnifiedThinking:
         model._model_name = 'deepseek-r1-distill-llama-70b'
         model._profile = thinking_profile
 
-        result = model._resolve_reasoning_format({})
+        result = model._resolve_thinking_config({})
         assert result is None
 
 
@@ -710,7 +710,7 @@ class TestCerebrasUnifiedThinking:
         model._profile = thinking_profile
 
         settings: CerebrasModelSettings = {'thinking': True}
-        result = model._resolve_reasoning_config(settings)
+        result = model._resolve_cerebras_thinking(settings)
 
         assert result is None
 
@@ -721,7 +721,7 @@ class TestCerebrasUnifiedThinking:
         model._profile = thinking_profile
 
         settings: CerebrasModelSettings = {'thinking': False}
-        result = model._resolve_reasoning_config(settings)
+        result = model._resolve_cerebras_thinking(settings)
 
         assert result is True
 
@@ -732,7 +732,7 @@ class TestCerebrasUnifiedThinking:
         model._profile = thinking_profile
 
         settings: CerebrasModelSettings = {'thinking_effort': 'high'}
-        result = model._resolve_reasoning_config(settings)
+        result = model._resolve_cerebras_thinking(settings)
 
         # Enabled (None → don't set disable_reasoning), effort is dropped
         assert result is None
@@ -744,7 +744,7 @@ class TestCerebrasUnifiedThinking:
         model._profile = non_thinking_profile
 
         settings: CerebrasModelSettings = {'thinking': True}
-        result = model._resolve_reasoning_config(settings)
+        result = model._resolve_cerebras_thinking(settings)
 
         assert result is None
 
@@ -754,7 +754,7 @@ class TestCerebrasUnifiedThinking:
         model._model_name = 'zai-glm-4.6'
         model._profile = thinking_profile
 
-        result = model._resolve_reasoning_config({})
+        result = model._resolve_cerebras_thinking({})
         assert result is None
 
 
@@ -852,7 +852,7 @@ class TestXaiUnifiedThinking:
         model._profile = grok3_mini_profile
 
         settings: XaiModelSettings = {'thinking_effort': 'low'}
-        result = model._resolve_reasoning_effort(settings)
+        result = model._resolve_thinking_config(settings)
 
         assert result == 'low'
 
@@ -863,7 +863,7 @@ class TestXaiUnifiedThinking:
         model._profile = grok3_mini_profile
 
         settings: XaiModelSettings = {'thinking_effort': 'medium'}
-        result = model._resolve_reasoning_effort(settings)
+        result = model._resolve_thinking_config(settings)
 
         assert result == 'low'
 
@@ -874,7 +874,7 @@ class TestXaiUnifiedThinking:
         model._profile = grok3_mini_profile
 
         settings: XaiModelSettings = {'thinking_effort': 'high'}
-        result = model._resolve_reasoning_effort(settings)
+        result = model._resolve_thinking_config(settings)
 
         assert result == 'high'
 
@@ -885,7 +885,7 @@ class TestXaiUnifiedThinking:
         model._profile = grok3_mini_profile
 
         settings: XaiModelSettings = {'thinking': True}
-        result = model._resolve_reasoning_effort(settings)
+        result = model._resolve_thinking_config(settings)
 
         assert result is None
 
@@ -896,7 +896,7 @@ class TestXaiUnifiedThinking:
         model._profile = grok3_mini_profile
 
         settings: XaiModelSettings = {'thinking': False}
-        result = model._resolve_reasoning_effort(settings)
+        result = model._resolve_thinking_config(settings)
 
         assert result is None
 
@@ -907,7 +907,7 @@ class TestXaiUnifiedThinking:
         model._profile = grok4_profile
 
         settings: XaiModelSettings = {'thinking_effort': 'high'}
-        result = model._resolve_reasoning_effort(settings)
+        result = model._resolve_thinking_config(settings)
 
         assert result is None
 
@@ -918,7 +918,7 @@ class TestXaiUnifiedThinking:
         model._profile = non_thinking_profile
 
         settings: XaiModelSettings = {'thinking': True}
-        result = model._resolve_reasoning_effort(settings)
+        result = model._resolve_thinking_config(settings)
 
         assert result is None
 
@@ -928,7 +928,7 @@ class TestXaiUnifiedThinking:
         model._model_name = 'grok-3-mini'
         model._profile = grok3_mini_profile
 
-        result = model._resolve_reasoning_effort({})
+        result = model._resolve_thinking_config({})
         assert result is None
 
 
@@ -1091,21 +1091,21 @@ class TestCrossProviderPortability:
         openai_model = OpenAIChatModel.__new__(OpenAIChatModel)
         openai_model._model_name = 'o3'
         openai_model._profile = ModelProfile(supports_thinking=True, thinking_always_enabled=True)
-        result = openai_model._resolve_reasoning_effort(OpenAIChatModelSettings(thinking=True, thinking_effort='high'))
+        result = openai_model._resolve_thinking_config(OpenAIChatModelSettings(thinking=True, thinking_effort='high'))
         assert result == 'high'
 
         # Groq (effort silently ignored)
         groq_model = GroqModel.__new__(GroqModel)
         groq_model._model_name = 'deepseek-r1-distill-llama-70b'
         groq_model._profile = ModelProfile(supports_thinking=True)
-        result = groq_model._resolve_reasoning_format(GroqModelSettings(thinking=True, thinking_effort='high'))
+        result = groq_model._resolve_thinking_config(GroqModelSettings(thinking=True, thinking_effort='high'))
         assert result == 'parsed'
 
         # Cerebras (effort silently ignored)
         cerebras_model = CerebrasModel.__new__(CerebrasModel)
         cerebras_model._model_name = 'zai-glm-4.6'
         cerebras_model._profile = ModelProfile(supports_thinking=True)
-        result = cerebras_model._resolve_reasoning_config(CerebrasModelSettings(thinking=True, thinking_effort='high'))
+        result = cerebras_model._resolve_cerebras_thinking(CerebrasModelSettings(thinking=True, thinking_effort='high'))
         assert result is None  # enabled is default, effort dropped
 
     def test_settings_on_unsupported_models_silently_dropped(self):
@@ -1125,14 +1125,14 @@ class TestCrossProviderPortability:
         openai_model._model_name = 'gpt-4o'
         openai_model._profile = non_thinking
         assert (
-            openai_model._resolve_reasoning_effort(OpenAIChatModelSettings(thinking=True, thinking_effort='high'))
+            openai_model._resolve_thinking_config(OpenAIChatModelSettings(thinking=True, thinking_effort='high'))
             is None
         )
 
         groq_model = GroqModel.__new__(GroqModel)
         groq_model._model_name = 'llama-3.1-8b'
         groq_model._profile = non_thinking
-        assert groq_model._resolve_reasoning_format(GroqModelSettings(thinking=True, thinking_effort='high')) is None
+        assert groq_model._resolve_thinking_config(GroqModelSettings(thinking=True, thinking_effort='high')) is None
 
 
 # ============================================================================

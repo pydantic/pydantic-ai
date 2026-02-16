@@ -14,7 +14,18 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from .profiles import ModelProfile
     from .settings import ModelSettings
+
+
+# Effort-to-budget mapping for Anthropic-style models (Claude on Anthropic and Bedrock).
+# Budget-based thinking uses a token budget instead of effort levels.
+EFFORT_TO_BUDGET: dict[str, int] = {
+    'low': 1024,
+    'medium': 4096,
+    'high': 16384,
+}
+DEFAULT_THINKING_BUDGET = 4096
 
 
 @dataclass
@@ -55,3 +66,31 @@ def resolve_thinking_config(
         enabled=True,
         effort=effort,
     )
+
+
+def resolve_with_profile(
+    model_settings: ModelSettings,
+    profile: ModelProfile,
+) -> ResolvedThinkingConfig | None:
+    """Resolve and guard unified thinking settings against model profile capabilities.
+
+    This centralizes the common pattern used across all providers:
+    1. Resolve unified settings into canonical form
+    2. Silent-drop if the model doesn't support thinking
+    3. Silent-ignore `thinking=False` on always-on models
+
+    Returns None if thinking settings are not applicable.
+    Provider-specific translation of the returned config is each model's responsibility.
+    """
+    resolved = resolve_thinking_config(model_settings)
+    if resolved is None:
+        return None
+
+    if not profile.supports_thinking:
+        return None
+
+    # thinking=False on always-on models → no-op (silent ignore)
+    if not resolved.enabled and profile.thinking_always_enabled:
+        return None
+
+    return resolved

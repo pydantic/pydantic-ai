@@ -48,20 +48,12 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, merge_model_settings
-from ..thinking import resolve_thinking_config
+from ..thinking import DEFAULT_THINKING_BUDGET, EFFORT_TO_BUDGET, resolve_with_profile
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
-# Effort-to-budget mapping for non-adaptive thinking models (Claude 3.7, Sonnet 4, Opus 4)
-_ANTHROPIC_EFFORT_TO_BUDGET: dict[str, int] = {
-    'low': 1024,
-    'medium': 4096,
-    'high': 16384,
-}
-_DEFAULT_THINKING_BUDGET = 4096
-
-# Models that support adaptive thinking (type: "adaptive" with output_config.effort)
-# These are Claude 4.5+ models; older thinking models use type: "enabled" with budget_tokens
+# Models that support adaptive thinking (type: "adaptive" with output_config.effort).
+# Older thinking models use type: "enabled" with budget_tokens.
 _ADAPTIVE_THINKING_MODELS = (
     'claude-opus-4-5',
     'claude-opus-4-6',
@@ -316,35 +308,34 @@ class AnthropicModel(Model):
         """The set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 
+    def _is_adaptive_model(self) -> bool:
+        """Whether this model supports adaptive thinking (Claude 4.5+)."""
+        return any(name in self.model_name for name in _ADAPTIVE_THINKING_MODELS)
+
     def _resolve_thinking_config(self, model_settings: AnthropicModelSettings) -> BetaThinkingConfigParam | None:
         """Resolve thinking configuration from unified or provider-specific settings.
 
         Provider-specific `anthropic_thinking` takes precedence over unified `thinking`.
-        Uses silent-drop semantics for unsupported settings.
         """
         # Provider-specific setting takes precedence
         if 'anthropic_thinking' in model_settings:
             return model_settings['anthropic_thinking']
 
-        resolved = resolve_thinking_config(model_settings)
+        resolved = resolve_with_profile(model_settings, self.profile)
         if resolved is None:
-            return None
-
-        # Silent drop: model doesn't support thinking
-        if not self.profile.supports_thinking:
             return None
 
         if not resolved.enabled:
             return {'type': 'disabled'}
 
         # Adaptive models (Claude 4.5+): effort flows through output_config, not thinking config
-        if any(name in self.model_name for name in _ADAPTIVE_THINKING_MODELS):
+        if self._is_adaptive_model():
             return {'type': 'adaptive'}
 
         # Budget-based models (Claude 3.7, Sonnet 4, Opus 4): map effort to budget_tokens
-        budget = _DEFAULT_THINKING_BUDGET
+        budget = DEFAULT_THINKING_BUDGET
         if resolved.effort:
-            budget = _ANTHROPIC_EFFORT_TO_BUDGET.get(resolved.effort, _DEFAULT_THINKING_BUDGET)
+            budget = EFFORT_TO_BUDGET.get(resolved.effort, DEFAULT_THINKING_BUDGET)
         return {'type': 'enabled', 'budget_tokens': budget}
 
     async def request(
@@ -1208,8 +1199,8 @@ class AnthropicModel(Model):
         effort = model_settings.get('anthropic_effort')
 
         # For adaptive models, map unified thinking_effort to output_config.effort
-        if effort is None and any(name in self.model_name for name in _ADAPTIVE_THINKING_MODELS):
-            resolved = resolve_thinking_config(model_settings)
+        if effort is None and self._is_adaptive_model():
+            resolved = resolve_with_profile(model_settings, self.profile)
             if resolved and resolved.enabled and resolved.effort:
                 effort = resolved.effort
 
