@@ -103,8 +103,8 @@ class MontyRuntime(CodeRuntime):
             - this means `collections`, `json`, `re`, `math`, `datetime`, `itertools`, `functools`, etc. are NOT available — use plain dicts, lists, and builtins instead
             - you cannot use third party libraries
             - you cannot define classes
-            - `sorted()` and `.sort()` do not support keyword arguments (`key=`, `reverse=`) — instead, negate numeric values in tuples for descending order, e.g. `sorted((-amount, name) for amount, name in items)`
-            - subscript assignment targets must be simple: `x[name] = val` where `name` is a variable. `x[a][b] = val` and `x[expr["key"]] = val` are NOT supported — extract the index into a variable first, e.g. `key = expr["key"]; x[key] = val`
+            - `sorted()` and `.sort()` do not support keyword arguments (`key=`, `reverse=`) and cannot sort lists of tuples — only sort flat lists of numbers or strings. If you need a custom sort order, build the output list manually (e.g. find max in a loop)
+            - chained subscript assignment like `x[a][b] = val` is NOT supported — read into a local variable, modify it, then assign back: `inner = x[a]; inner[b] = val; x[a] = inner`
             - set operators (`|`, `&`, `-`, `^`) are not supported — use `set.update()`, `set.add()`, or loop to combine sets
 
             The last expression evaluated is the return value.
