@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal
 
+from typing_extensions import assert_never
+
 from ._transport import DriverBasedRuntime, DriverTransport
 from .abstract import (
     CodeExecutionError,
@@ -13,10 +15,9 @@ from .abstract import (
     FunctionCall,
     ToolCallback,
 )
-from .docker import DockerRuntime, DockerSecuritySettings
 
 if TYPE_CHECKING:
-    from .modal import ModalRuntime
+    from .docker import DockerRuntime, DockerSecuritySettings
     from .monty import MontyRuntime
 
 __all__ = (
@@ -31,7 +32,6 @@ __all__ = (
     'DriverBasedRuntime',
     'DriverTransport',
     'FunctionCall',
-    'ModalRuntime',
     'MontyRuntime',
     'ToolCallback',
 )
@@ -42,14 +42,14 @@ def __getattr__(name: str) -> Any:
         from .monty import MontyRuntime
 
         return MontyRuntime
-    if name == 'ModalRuntime':
-        from .modal import ModalRuntime
+    if name in ('DockerRuntime', 'DockerSecuritySettings'):
+        from . import docker
 
-        return ModalRuntime
+        return getattr(docker, name)
     raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
 
 
-RuntimeName = Literal['monty', 'docker', 'modal']
+RuntimeName = Literal['monty', 'docker']
 
 
 def get_runtime(name: RuntimeName) -> CodeRuntime:
@@ -61,9 +61,5 @@ def get_runtime(name: RuntimeName) -> CodeRuntime:
         from .docker import DockerRuntime
 
         return DockerRuntime()
-    elif name == 'modal':
-        from .modal import ModalRuntime
-
-        return ModalRuntime()
     else:
-        raise ValueError(f'Invalid runtime: {name}')
+        assert_never(name)

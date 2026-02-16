@@ -140,7 +140,7 @@ sequenceDiagram
 
 ## Runtimes
 
-Code mode uses a pluggable runtime to execute generated code. You can pass a runtime instance or a string shorthand (`'monty'`, `'docker'`, or `'modal'`) to [`CodeModeToolset`][pydantic_ai.toolsets.code_mode.CodeModeToolset]:
+Code mode uses a pluggable runtime to execute generated code. You can pass a runtime instance or a string shorthand (`'monty'` or `'docker'`) to [`CodeModeToolset`][pydantic_ai.toolsets.code_mode.CodeModeToolset]:
 
 ```python {test="skip" lint="skip"}
 # These are equivalent:
@@ -176,33 +176,6 @@ Because Monty runs a restricted Python subset, the runtime automatically instruc
 ### Driver-Based Runtimes
 
 For environments that need full CPython compatibility (arbitrary imports, C extensions) or stronger isolation guarantees, the [`DriverBasedRuntime`][pydantic_ai.runtime.DriverBasedRuntime] base class supports executing code in any sandbox that can run a Python process. It uses a lightweight [driver script](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/runtime/_driver.py) that communicates over stdin/stdout.
-
-#### Modal
-
-[`ModalRuntime`][pydantic_ai.runtime.ModalRuntime] runs code in [Modal](https://modal.com/) cloud sandboxes with gVisor isolation. This is a good choice when you need full CPython or are running untrusted code.
-
-```bash
-pip/uv-add "pydantic-ai-slim[modal]"
-```
-
-You'll also need a Modal account and API key — see the [Modal Sandboxes guide](https://modal.com/docs/guide/sandboxes) for setup.
-
-```python {test="skip" lint="skip"}
-from pydantic_ai.runtime import ModalRuntime
-from pydantic_ai.toolsets import CodeModeToolset, FunctionToolset
-
-tools = FunctionToolset(tools=[...])
-toolset = CodeModeToolset(
-    tools,
-    runtime=ModalRuntime(
-        app_name='my-code-agent',  # (1)!
-        timeout=300,  # (2)!
-    ),
-)
-```
-
-1. Modal app name (created if it doesn't exist). Defaults to `'pydantic-ai-code-runtime'`.
-2. Maximum sandbox lifetime in seconds. Modal sandboxes are ephemeral — a fresh isolated environment is created per execution. You can provide a custom `image` to pre-install dependencies.
 
 #### Docker
 

@@ -6219,9 +6219,6 @@ dbos = [
 examples = [
     { name = "pydantic-ai-examples" },
 ]
-modal = [
-    { name = "pydantic-ai-slim", extra = ["modal"] },
-]
 monty = [
     { name = "pydantic-ai-slim", extra = ["monty"] },
 ]
@@ -6302,7 +6299,6 @@ requires-dist = [
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
     { name = "pydantic-ai-slim", extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "monty", "openai", "retries", "temporal", "ui", "vertexai", "xai"], editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["dbos"], marker = "extra == 'dbos'", editable = "pydantic_ai_slim" },
-    { name = "pydantic-ai-slim", extras = ["modal"], marker = "extra == 'modal'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["monty"], marker = "extra == 'monty'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["outlines-llamacpp"], marker = "extra == 'outlines-llamacpp'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["outlines-mlxlm"], marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'outlines-mlxlm'", editable = "pydantic_ai_slim" },
@@ -6313,7 +6309,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["sentence-transformers"], marker = "extra == 'sentence-transformers'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["voyageai"], marker = "extra == 'voyageai'", editable = "pydantic_ai_slim" },
 ]
-provides-extras = ["a2a", "dbos", "examples", "modal", "monty", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "sentence-transformers", "voyageai"]
+provides-extras = ["a2a", "dbos", "examples", "monty", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "sentence-transformers", "voyageai"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -6471,9 +6467,6 @@ mcp = [
 mistral = [
     { name = "mistralai" },
 ]
-modal = [
-    { name = "modal" },
-]
 monty = [
     { name = "pydantic-monty" },
 ]
@@ -6565,7 +6558,6 @@ requires-dist = [
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.16.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.25.0,<2.0" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.9.11" },
-    { name = "modal", marker = "extra == 'modal'" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=2.11.0" },
     { name = "openai", marker = "extra == 'openrouter'", specifier = ">=2.8.0" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
@@ -6581,7 +6573,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.10" },
     { name = "pydantic-evals", marker = "extra == 'evals'", editable = "pydantic_evals" },
     { name = "pydantic-graph", editable = "pydantic_graph" },
-    { name = "pydantic-monty", marker = "extra == 'monty'" },
+    { name = "pydantic-monty", marker = "extra == 'monty'", specifier = ">=0.0.4" },
     { name = "pyperclip", marker = "extra == 'cli'", specifier = ">=1.9.0" },
     { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.2" },
     { name = "rich", marker = "extra == 'cli'", specifier = ">=13" },
@@ -6602,7 +6594,7 @@ requires-dist = [
     { name = "voyageai", marker = "extra == 'voyageai'", specifier = ">=0.3.2" },
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.5.0" },
 ]
-provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "modal", "monty", "openai", "openrouter", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "retries", "sentence-transformers", "tavily", "temporal", "ui", "vertexai", "voyageai", "web", "xai"]
+provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "monty", "openai", "openrouter", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "retries", "sentence-transformers", "tavily", "temporal", "ui", "vertexai", "voyageai", "web", "xai"]
 
 [[package]]
 name = "pydantic-core"

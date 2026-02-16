@@ -24,7 +24,7 @@ class FunctionCall:
     call_id: str
     function_name: str
     args: tuple[Any, ...] = ()
-    kwargs: dict[str, Any] = field(default_factory=lambda: {})
+    kwargs: dict[str, Any] = field(default_factory=dict[str, Any])
 
 
 class CodeExecutionError(Exception):

@@ -149,7 +149,12 @@ class DockerRuntime(DriverBasedRuntime):
     """Path to the Python interpreter inside the container."""
 
     driver_path: str = '/tmp/pydantic_ai_driver.py'
-    """Path where the driver script is installed inside the container."""
+    """Path where the driver script is installed inside the container.
+
+    Must be on a writable filesystem. In managed mode the default ``/tmp``
+    is a tmpfs mount, which is writable even when the root filesystem is
+    read-only.
+    """
 
     security: DockerSecuritySettings = field(default_factory=DockerSecuritySettings)
     """Security settings for managed containers. Ignored in unmanaged mode."""

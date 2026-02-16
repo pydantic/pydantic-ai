@@ -8,7 +8,6 @@
         - DriverBasedRuntime
         - DriverTransport
         - DockerRuntime
-        - ModalRuntime
         - FunctionCall
         - CodeExecutionError
         - CodeSyntaxError

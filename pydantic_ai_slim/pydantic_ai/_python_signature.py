@@ -195,6 +195,7 @@ class FunctionSignature:
 
         return_str = render_type_expr(self.return_type)
         if params_str:
+            # Force keyword-only params so LLMs always use named arguments
             parts = [f'{prefix} {self.name}(*, {params_str}) -> {return_str}:']
         else:
             parts = [f'{prefix} {self.name}() -> {return_str}:']
@@ -356,7 +357,7 @@ def function_to_signature(
 
     try:
         type_hints = get_type_hints(func, include_extras=True)
-    except Exception:
+    except (NameError, TypeError, AttributeError):
         type_hints = {}
 
     referenced_types: dict[str, TypeSignature] = {}
