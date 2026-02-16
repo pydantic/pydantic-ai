@@ -3536,18 +3536,18 @@ async def test_adapter_dump_messages_custom_id_generator():
 
     generated_ids: list[str] = []
 
-    def custom_id_generator(msg: ModelRequest | ModelResponse, suffix: str) -> str:
-        msg_id = f'custom-{msg.kind}-{suffix or "default"}'
+    def custom_id_generator(msg: ModelRequest | ModelResponse, suffix: str, index: int) -> str:
+        msg_id = f'custom-{index}-{msg.kind}-{suffix or "default"}'
         generated_ids.append(msg_id)
         return msg_id
 
     ui_messages = VercelAIAdapter.dump_messages(messages, generate_message_id=custom_id_generator)
 
     assert len(ui_messages) == 3
-    assert ui_messages[0].id == 'custom-request-system'
-    assert ui_messages[1].id == 'custom-request-user'
-    assert ui_messages[2].id == 'custom-response-default'
-    assert generated_ids == ['custom-request-system', 'custom-request-user', 'custom-response-default']
+    assert ui_messages[0].id == 'custom-0-request-system'
+    assert ui_messages[1].id == 'custom-0-request-user'
+    assert ui_messages[2].id == 'custom-1-response-default'
+    assert generated_ids == ['custom-0-request-system', 'custom-0-request-user', 'custom-1-response-default']
 
 
 async def test_adapter_dump_messages_with_invalid_json_args():

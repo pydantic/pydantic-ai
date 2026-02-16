@@ -68,15 +68,16 @@ __all__ = ['VercelAIAdapter']
 request_data_ta: TypeAdapter[RequestData] = TypeAdapter(RequestData)
 
 
-def _message_id(msg: ModelRequest | ModelResponse, suffix: str = '') -> str:
-    """Generate a deterministic message ID based on message content.
+def _message_id(msg: ModelRequest | ModelResponse, suffix: str, index: int) -> str:
+    """Generate a deterministic message ID based on message content and position.
 
-    Uses uuid5 with the message timestamp, kind, and an optional suffix to produce
-    consistent IDs across multiple calls with the same messages.
+    Uses uuid5 with the message timestamp, kind, suffix, and positional index to produce
+    consistent IDs across multiple calls with the same messages. The index prevents
+    collisions when multiple messages share the same timestamp and kind.
     """
     ts = getattr(msg, 'timestamp', None)
     ts_str = ts.isoformat() if ts else ''
-    return str(uuid.uuid5(uuid.NAMESPACE_OID, f'{ts_str}-{msg.kind}-{suffix}'))
+    return str(uuid.uuid5(uuid.NAMESPACE_OID, f'{ts_str}-{msg.kind}-{suffix}-{index}'))
 
 
 def _safe_args_as_dict(part: ToolCallPart | BuiltinToolCallPart) -> dict[str, Any] | str:
@@ -505,16 +506,17 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         cls,
         messages: Sequence[ModelMessage],
         *,
-        generate_message_id: Callable[[ModelRequest | ModelResponse, str], str] | None = None,
+        generate_message_id: Callable[[ModelRequest | ModelResponse, str, int], str] | None = None,
     ) -> list[UIMessage]:
         """Transform Pydantic AI messages into Vercel AI messages.
 
         Args:
             messages: A sequence of ModelMessage objects to convert
             generate_message_id: Optional custom function to generate message IDs. If provided,
-                it receives the message and a suffix (e.g., 'system', 'user', or empty string
-                for assistant messages) and should return a unique string ID. If not provided,
-                uses a deterministic UUID5-based generator.
+                it receives the message, a suffix (e.g., 'system', 'user', or empty string
+                for assistant messages), and the message index in the input sequence, and should
+                return a unique string ID. If not provided, uses a deterministic UUID5-based
+                generator.
 
         Returns:
             A list of UIMessage objects in Vercel AI format
@@ -532,21 +534,23 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         id_generator = generate_message_id or _message_id
         result: list[UIMessage] = []
 
-        for msg in messages:
+        for index, msg in enumerate(messages):
             if isinstance(msg, ModelRequest):
                 system_ui_parts, user_ui_parts = cls._dump_request_message(msg)
                 if system_ui_parts:
-                    result.append(UIMessage(id=id_generator(msg, 'system'), role='system', parts=system_ui_parts))
+                    result.append(
+                        UIMessage(id=id_generator(msg, 'system', index), role='system', parts=system_ui_parts)
+                    )
 
                 if user_ui_parts:
-                    result.append(UIMessage(id=id_generator(msg, 'user'), role='user', parts=user_ui_parts))
+                    result.append(UIMessage(id=id_generator(msg, 'user', index), role='user', parts=user_ui_parts))
 
             elif isinstance(  # pragma: no branch
                 msg, ModelResponse
             ):
                 ui_parts: list[UIMessagePart] = cls._dump_response_message(msg, tool_results)
                 if ui_parts:  # pragma: no branch
-                    result.append(UIMessage(id=id_generator(msg, ''), role='assistant', parts=ui_parts))
+                    result.append(UIMessage(id=id_generator(msg, '', index), role='assistant', parts=ui_parts))
             else:
                 assert_never(msg)
 
