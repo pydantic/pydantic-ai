@@ -5369,7 +5369,6 @@ async def test_anthropic_code_execution_tool_without_file_ids():
 
 async def test_anthropic_container_upload_blocks_in_messages():
     """Test that container_upload blocks are added to the first user message."""
-    from pydantic_ai.messages import ModelRequest, UserPromptPart
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -5385,10 +5384,10 @@ async def test_anthropic_container_upload_blocks_in_messages():
     model_settings = AnthropicModelSettings()
 
     # Create test messages
-    messages = [ModelRequest(parts=[UserPromptPart(content='Test message')])]
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Test message')])]
 
     # Call _map_message with file_ids
-    system_prompt, anthropic_messages = await m._map_message(  # pyright: ignore[reportPrivateUsage]
+    _, anthropic_messages = await m._map_message(  # pyright: ignore[reportPrivateUsage]
         messages, model_request_parameters, model_settings, container_file_ids=['file_abc', 'file_xyz']
     )
 
@@ -5404,14 +5403,20 @@ async def test_anthropic_container_upload_blocks_in_messages():
     assert len(content) == 3
 
     # First should be the text
-    assert content[0]['type'] == 'text'
-    assert content[0]['text'] == 'Test message'
+    text_block = content[0]
+    assert isinstance(text_block, dict)
+    assert text_block['type'] == 'text'
+    assert text_block['text'] == 'Test message'
 
     # Next two should be container_upload blocks
-    assert content[1]['type'] == 'container_upload'
-    assert content[1]['file_id'] == 'file_abc'
-    assert content[2]['type'] == 'container_upload'
-    assert content[2]['file_id'] == 'file_xyz'
+    upload_block_1 = content[1]
+    assert isinstance(upload_block_1, dict)
+    assert upload_block_1['type'] == 'container_upload'
+    assert upload_block_1['file_id'] == 'file_abc'
+    upload_block_2 = content[2]
+    assert isinstance(upload_block_2, dict)
+    assert upload_block_2['type'] == 'container_upload'
+    assert upload_block_2['file_id'] == 'file_xyz'
 
 
 @pytest.mark.vcr()
