@@ -620,6 +620,224 @@ class TestBedrockUnifiedThinking:
         result = model._resolve_thinking_config({})
         assert result is None
 
+    def test_prepare_request_dispatches_claude(self, thinking_profile: ModelProfile):
+        """prepare_request injects 'thinking' key for Claude models."""
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._model_name = 'us.anthropic.claude-sonnet-4-5-20250514-v1:0'
+        model._profile = thinking_profile
+        model._settings = None
+
+        settings: BedrockModelSettings = {'thinking': True}
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+
+        additional = cast(BedrockModelSettings, merged).get('bedrock_additional_model_requests_fields')
+        assert additional is not None
+        assert 'thinking' in additional
+        assert additional['thinking'] == {'type': 'enabled', 'budget_tokens': 4096}
+
+    def test_prepare_request_preserves_existing_additional(self, thinking_profile: ModelProfile):
+        """prepare_request merges into existing additionalModelRequestFields."""
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._model_name = 'us.anthropic.claude-sonnet-4-5-20250514-v1:0'
+        model._profile = thinking_profile
+        model._settings = None
+
+        settings: BedrockModelSettings = {
+            'thinking': True,
+            'bedrock_additional_model_requests_fields': {'custom_key': 'custom_value'},
+        }
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+
+        additional = cast(BedrockModelSettings, merged).get('bedrock_additional_model_requests_fields')
+        assert additional is not None
+        assert additional.get('custom_key') == 'custom_value'
+        assert 'thinking' in additional
+
+    def test_prepare_request_skips_when_thinking_key_exists(self, thinking_profile: ModelProfile):
+        """prepare_request doesn't overwrite existing 'thinking' in additional fields."""
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._model_name = 'us.anthropic.claude-sonnet-4-5-20250514-v1:0'
+        model._profile = thinking_profile
+        model._settings = None
+
+        settings: BedrockModelSettings = {
+            'thinking': True,
+            'bedrock_additional_model_requests_fields': {
+                'thinking': {'type': 'enabled', 'budget_tokens': 9999},
+            },
+        }
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+
+        additional = cast(BedrockModelSettings, merged).get('bedrock_additional_model_requests_fields')
+        assert additional is not None
+        assert additional['thinking'] == {'type': 'enabled', 'budget_tokens': 9999}
+
+
+class TestBedrockDeepSeekThinking:
+    """Tests for unified thinking settings on DeepSeek R1 via Bedrock."""
+
+    def test_thinking_true_uses_deepseek_budget(self, thinking_profile: ModelProfile):
+        """thinking=True on DeepSeek R1 → enabled with DeepSeek default budget (4096)."""
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._model_name = 'us.deepseek.deepseek-r1-v1:0'
+        model._profile = thinking_profile
+
+        settings: BedrockModelSettings = {'thinking': True}
+        result = model._resolve_thinking_config(settings)
+
+        assert result == {'type': 'enabled', 'budget_tokens': 4096}
+
+    def test_thinking_false_disables(self, thinking_profile: ModelProfile):
+        """thinking=False on DeepSeek R1 → type: disabled."""
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._model_name = 'us.deepseek.deepseek-r1-v1:0'
+        model._profile = thinking_profile
+
+        settings: BedrockModelSettings = {'thinking': False}
+        result = model._resolve_thinking_config(settings)
+
+        assert result == {'type': 'disabled'}
+
+    @pytest.mark.parametrize(
+        'effort,expected_budget',
+        [('low', 1024), ('medium', 4096), ('high', 8192)],
+    )
+    def test_effort_maps_to_deepseek_budget(self, thinking_profile: ModelProfile, effort: str, expected_budget: int):
+        """thinking_effort maps to DeepSeek-specific budget_tokens (8192 max)."""
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._model_name = 'us.deepseek.deepseek-r1-v1:0'
+        model._profile = thinking_profile
+
+        settings: BedrockModelSettings = {'thinking_effort': effort}  # type: ignore[typeddict-item]
+        result = model._resolve_thinking_config(settings)
+
+        assert result == {'type': 'enabled', 'budget_tokens': expected_budget}
+
+    def test_prepare_request_dispatches_deepseek(self, thinking_profile: ModelProfile):
+        """prepare_request injects 'thinking' key for DeepSeek models."""
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._model_name = 'us.deepseek.deepseek-r1-v1:0'
+        model._profile = thinking_profile
+        model._settings = None
+
+        settings: BedrockModelSettings = {'thinking_effort': 'high'}
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+
+        additional = cast(BedrockModelSettings, merged).get('bedrock_additional_model_requests_fields')
+        assert additional is not None
+        assert 'thinking' in additional
+        assert additional['thinking'] == {'type': 'enabled', 'budget_tokens': 8192}
+
+
+class TestBedrockNovaThinking:
+    """Tests for unified thinking settings on Amazon Nova 2 via Bedrock."""
+
+    @pytest.fixture
+    def nova_thinking_profile(self) -> ModelProfile:
+        """A profile for Nova 2 models that support reasoning."""
+        return ModelProfile(supports_thinking=True)
+
+    def test_thinking_true_enables_reasoning(self, nova_thinking_profile: ModelProfile):
+        """thinking=True on Nova 2 → reasoningConfig with type: enabled."""
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._model_name = 'us.amazon.nova-2-lite-v1:0'
+        model._profile = nova_thinking_profile
+
+        settings: BedrockModelSettings = {'thinking': True}
+        result = model._resolve_nova_thinking_config(settings)
+
+        assert result == {'type': 'enabled'}
+
+    def test_thinking_false_disables(self, nova_thinking_profile: ModelProfile):
+        """thinking=False on Nova 2 → reasoningConfig with type: disabled."""
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._model_name = 'us.amazon.nova-2-lite-v1:0'
+        model._profile = nova_thinking_profile
+
+        settings: BedrockModelSettings = {'thinking': False}
+        result = model._resolve_nova_thinking_config(settings)
+
+        assert result == {'type': 'disabled'}
+
+    @pytest.mark.parametrize('effort', ['low', 'medium', 'high'])
+    def test_effort_maps_directly(self, nova_thinking_profile: ModelProfile, effort: str):
+        """thinking_effort passes through 1:1 to maxReasoningEffort."""
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._model_name = 'us.amazon.nova-2-lite-v1:0'
+        model._profile = nova_thinking_profile
+
+        settings: BedrockModelSettings = {'thinking_effort': effort}  # type: ignore[typeddict-item]
+        result = model._resolve_nova_thinking_config(settings)
+
+        assert result == {'type': 'enabled', 'maxReasoningEffort': effort}
+
+    def test_silent_drop_unsupported_nova(self, non_thinking_profile: ModelProfile):
+        """thinking=True on non-reasoning Nova (e.g., Nova Micro) → None."""
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._model_name = 'us.amazon.nova-micro-v1:0'
+        model._profile = non_thinking_profile
+
+        settings: BedrockModelSettings = {'thinking': True}
+        result = model._resolve_nova_thinking_config(settings)
+
+        assert result is None
+
+    def test_prepare_request_dispatches_nova(self, nova_thinking_profile: ModelProfile):
+        """prepare_request injects 'reasoningConfig' key for Amazon models."""
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._model_name = 'us.amazon.nova-2-lite-v1:0'
+        model._profile = nova_thinking_profile
+        model._settings = None
+
+        settings: BedrockModelSettings = {'thinking': True, 'thinking_effort': 'high'}
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+
+        additional = cast(BedrockModelSettings, merged).get('bedrock_additional_model_requests_fields')
+        assert additional is not None
+        assert 'reasoningConfig' in additional
+        assert additional['reasoningConfig'] == {'type': 'enabled', 'maxReasoningEffort': 'high'}
+
+    def test_prepare_request_skips_when_reasoning_config_exists(self, nova_thinking_profile: ModelProfile):
+        """prepare_request doesn't overwrite existing 'reasoningConfig'."""
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._model_name = 'us.amazon.nova-2-lite-v1:0'
+        model._profile = nova_thinking_profile
+        model._settings = None
+
+        settings: BedrockModelSettings = {
+            'thinking': True,
+            'bedrock_additional_model_requests_fields': {
+                'reasoningConfig': {'type': 'enabled', 'maxReasoningEffort': 'low'},
+            },
+        }
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+
+        additional = cast(BedrockModelSettings, merged).get('bedrock_additional_model_requests_fields')
+        assert additional is not None
+        assert additional['reasoningConfig'] == {'type': 'enabled', 'maxReasoningEffort': 'low'}
+
+    def test_prepare_request_no_inject_for_non_amazon(self, non_thinking_profile: ModelProfile):
+        """prepare_request doesn't inject reasoning for non-Amazon/non-Claude/non-DeepSeek models."""
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._model_name = 'us.meta.llama3-3-70b-instruct-v1:0'
+        model._profile = non_thinking_profile
+        model._settings = None
+
+        settings: BedrockModelSettings = {'thinking': True}
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+
+        additional = cast(BedrockModelSettings, merged).get('bedrock_additional_model_requests_fields')
+        assert additional is None
+
+    def test_empty_settings_returns_none(self, nova_thinking_profile: ModelProfile):
+        """No thinking fields → None."""
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._model_name = 'us.amazon.nova-2-lite-v1:0'
+        model._profile = nova_thinking_profile
+
+        result = model._resolve_nova_thinking_config({})
+        assert result is None
+
 
 # ============================================================================
 # OpenRouter unified thinking tests
@@ -1245,6 +1463,25 @@ class TestProfileThinkingCapabilities:
 
         # non-reasoning variant: no thinking
         profile = grok_model_profile('grok-4-fast-non-reasoning')
+        assert profile is not None
+        assert profile.supports_thinking is False
+
+    def test_amazon_profile_thinking_support(self):
+        """Amazon profiles correctly detect Nova 2 reasoning models."""
+        from pydantic_ai.profiles.amazon import amazon_model_profile
+
+        # Nova 2 Lite supports reasoning
+        profile = amazon_model_profile('nova-2-lite')
+        assert profile is not None
+        assert profile.supports_thinking is True
+
+        # Non-Nova 2 models don't support reasoning
+        profile = amazon_model_profile('nova-pro')
+        assert profile is not None
+        assert profile.supports_thinking is False
+
+        # Titan models don't support reasoning
+        profile = amazon_model_profile('titan-text-express')
         assert profile is not None
         assert profile.supports_thinking is False
 

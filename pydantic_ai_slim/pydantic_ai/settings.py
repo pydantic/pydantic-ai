@@ -204,7 +204,7 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic (Claude 3.7+)
     * Gemini (2.5+)
     * OpenAI (o-series, GPT-5+)
-    * Bedrock (Claude models)
+    * Bedrock (Claude, DeepSeek R1, and Amazon Nova 2)
     * OpenRouter
     * Groq (reasoning models)
     * Cerebras (GLM, GPT-OSS)
@@ -238,7 +238,7 @@ class ModelSettings(TypedDict, total=False):
     * Gemini 3 (via `thinking_level`)
     * OpenAI (o-series, GPT-5+ via `reasoning_effort`)
     * OpenRouter (via `reasoning.effort`)
-    * Bedrock (Claude models, via `budget_tokens`)
+    * Bedrock (Claude and DeepSeek R1 via `budget_tokens`, Nova 2 via `maxReasoningEffort`)
     * xAI (Grok 3 Mini only — `'low'` and `'high'` only)
     """
 

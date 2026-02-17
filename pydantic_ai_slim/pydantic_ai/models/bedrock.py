@@ -89,6 +89,16 @@ if TYPE_CHECKING:
         VideoBlockTypeDef,
     )
 
+# DeepSeek R1 on Bedrock uses the same thinking API format as Claude
+# (additionalModelRequestFields.thinking) but with a lower recommended
+# budget ceiling (8192 max — quality degrades above this).
+_DEEPSEEK_EFFORT_TO_BUDGET: dict[str, int] = {
+    'low': 1024,
+    'medium': 4096,
+    'high': 8192,
+}
+_DEEPSEEK_DEFAULT_THINKING_BUDGET = 4096
+
 
 LatestBedrockModelNames = Literal[
     'amazon.titan-tg1-large',
@@ -381,30 +391,37 @@ class BedrockConverseModel(Model):
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
         merged_settings = cast(BedrockModelSettings, merged_settings or {})
 
-        # Only inject unified thinking for Claude models on Bedrock.
-        # Claude uses additionalModelRequestFields.thinking with
-        # {'type': 'enabled', 'budget_tokens': N} or {'type': 'disabled'}.
-        #
-        # Non-Claude models (e.g. Meta Llama, DeepSeek) may support reasoning
-        # via different additionalModelRequestFields keys (e.g. reasoning_config).
-        # Use bedrock_additional_model_requests_fields for those.
-        # The profile's supports_thinking flag is only set for Claude models.
-        if 'anthropic' in self.model_name:
-            additional = dict(merged_settings.get('bedrock_additional_model_requests_fields') or {})
-            if 'thinking' not in additional:
-                thinking_config = self._resolve_thinking_config(merged_settings)
-                if thinking_config is not None:
-                    additional['thinking'] = thinking_config
-                    merged_settings['bedrock_additional_model_requests_fields'] = additional
+        # Inject unified thinking via additionalModelRequestFields.
+        # Each model family uses a different key and format:
+        #   - Claude/DeepSeek R1: 'thinking' → {'type': 'enabled', 'budget_tokens': N}
+        #   - Amazon Nova 2:     'reasoningConfig' → {'type': 'enabled', 'maxReasoningEffort': '...'}
+        additional = dict(merged_settings.get('bedrock_additional_model_requests_fields') or {})
+        thinking_key, thinking_value = self._resolve_bedrock_thinking(merged_settings)
+        if thinking_key and thinking_key not in additional and thinking_value is not None:
+            additional[thinking_key] = thinking_value
+            merged_settings['bedrock_additional_model_requests_fields'] = additional
 
         return merged_settings, customized_parameters
 
-    def _resolve_thinking_config(self, model_settings: BedrockModelSettings) -> dict[str, Any] | None:
-        """Resolve thinking configuration from unified settings for Bedrock.
+    def _resolve_bedrock_thinking(
+        self, model_settings: BedrockModelSettings
+    ) -> tuple[str | None, dict[str, Any] | None]:
+        """Dispatch thinking resolution to the appropriate model-family handler.
 
-        For Claude models on Bedrock, thinking is passed via additionalModelRequestFields.
-        Returns the thinking config dict in Anthropic format, or None if not enabled.
-        Uses silent-drop semantics for unsupported settings.
+        Returns (key, config) where key is the additionalModelRequestFields key
+        to use, or (None, None) if no thinking should be injected.
+        """
+        if 'anthropic' in self.model_name or 'deepseek' in self.model_name:
+            return 'thinking', self._resolve_thinking_config(model_settings)
+        elif 'amazon' in self.model_name:
+            return 'reasoningConfig', self._resolve_nova_thinking_config(model_settings)
+        return None, None
+
+    def _resolve_thinking_config(self, model_settings: BedrockModelSettings) -> dict[str, Any] | None:
+        """Resolve unified thinking to Claude/DeepSeek format.
+
+        Both use additionalModelRequestFields.thinking with budget_tokens,
+        but DeepSeek R1 has a lower recommended budget ceiling (8192 max).
         """
         resolved = _resolve_thinking_config(model_settings, self.profile)
         if resolved is None:
@@ -413,12 +430,32 @@ class BedrockConverseModel(Model):
         if not resolved.enabled:
             return {'type': 'disabled'}
 
-        budget = (
-            _EFFORT_TO_BUDGET.get(resolved.effort, _DEFAULT_THINKING_BUDGET)
-            if resolved.effort
-            else _DEFAULT_THINKING_BUDGET
-        )
+        # Select model-appropriate budget mapping
+        if 'deepseek' in self.model_name:
+            effort_to_budget, default_budget = _DEEPSEEK_EFFORT_TO_BUDGET, _DEEPSEEK_DEFAULT_THINKING_BUDGET
+        else:
+            effort_to_budget, default_budget = _EFFORT_TO_BUDGET, _DEFAULT_THINKING_BUDGET
+
+        budget = effort_to_budget.get(resolved.effort, default_budget) if resolved.effort else default_budget
         return {'type': 'enabled', 'budget_tokens': budget}
+
+    def _resolve_nova_thinking_config(self, model_settings: BedrockModelSettings) -> dict[str, Any] | None:
+        """Resolve unified thinking to Amazon Nova's reasoningConfig format.
+
+        Nova uses additionalModelRequestFields.reasoningConfig with maxReasoningEffort
+        which maps 1:1 to our unified thinking_effort levels.
+        """
+        resolved = _resolve_thinking_config(model_settings, self.profile)
+        if resolved is None:
+            return None
+
+        if not resolved.enabled:
+            return {'type': 'disabled'}
+
+        result: dict[str, Any] = {'type': 'enabled'}
+        if resolved.effort:
+            result['maxReasoningEffort'] = resolved.effort
+        return result
 
     async def request(
         self,
@@ -627,7 +664,7 @@ class BedrockConverseModel(Model):
             'bedrock_additional_model_response_fields_paths', None
         ):
             params['additionalModelResponseFieldPaths'] = additional_model_response_fields_paths
-        # Thinking config is already resolved in prepare_request() for Claude models
+        # Thinking/reasoning config is already resolved in prepare_request()
         if additional_model_requests_fields := settings.get('bedrock_additional_model_requests_fields', None):
             params['additionalModelRequestFields'] = additional_model_requests_fields
         if prompt_variables := settings.get('bedrock_prompt_variables', None):

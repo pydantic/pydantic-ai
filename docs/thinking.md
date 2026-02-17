@@ -53,7 +53,7 @@ Settings that a provider doesn't support are silently ignored, so you can write 
 | Anthropic | ✅ | ✅ | Claude 3.7+. Effort maps to `budget_tokens` or `output_config.effort`. |
 | OpenAI | ✅ | ✅ | o-series, GPT-5+. Maps to `reasoning_effort`. |
 | Gemini | ✅ | ✅ | 2.5+. Effort maps to `thinking_level` (Gemini 3). |
-| Bedrock | ✅ | ✅ | Claude models only. Effort maps to `budget_tokens`. |
+| Bedrock | ✅ | ✅ | Claude/DeepSeek R1 (`budget_tokens`), Nova 2 (`maxReasoningEffort`). |
 | OpenRouter | ✅ | ✅ | Passes through to underlying provider. |
 | xAI | ✅ | ✅ | Grok 3 Mini (`'low'`/`'high'` only), Grok 4 (always-on). |
 | Groq | ✅ | -- | DeepSeek R1, QwQ — always-on, no effort control. |
