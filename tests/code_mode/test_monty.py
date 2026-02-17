@@ -170,20 +170,7 @@ The runtime uses a restricted Python subset:
 
 The last expression evaluated is the return value.
 
-To run independent calls concurrently, fire them first, then `await`, or use `asyncio.gather`:
-```python
-# starts immediately:
-items_future = get_items()
-users_future = get_users()
-
-# wait for results:
-items = await items_future
-users = await users_future
-
-# or equivalently:
-import asyncio
-items, users = await asyncio.gather(items_future, users_future)
-```
+You can `await` async functions, and use `asyncio.gather` to await multiple async functions at the same time.
 
 
 ```python

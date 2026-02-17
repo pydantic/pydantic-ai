@@ -98,10 +98,8 @@ class MontyRuntime(CodeRuntime):
 
     @property
     def instructions(self) -> str | None:
-        # f-string with `{""}` breaks up the triple backticks so pytest-examples
-        # doesn't pick up the code block as a testable example.
         return textwrap.dedent(
-            f"""
+            """
             The runtime uses a restricted Python subset:
             - you cannot use the standard library except builtin functions and the following modules: `sys`, `typing`, `asyncio`
             - this means `collections`, `json`, `re`, `math`, `datetime`, `itertools`, `functools`, etc. are NOT available — use plain dicts, lists, and builtins instead
@@ -113,20 +111,7 @@ class MontyRuntime(CodeRuntime):
 
             The last expression evaluated is the return value.
 
-            To run independent calls concurrently, fire them first, then `await`, or use `asyncio.gather`:
-            `{''}``python
-            # starts immediately:
-            items_future = get_items()
-            users_future = get_users()
-
-            # wait for results:
-            items = await items_future
-            users = await users_future
-
-            # or equivalently:
-            import asyncio
-            items, users = await asyncio.gather(items_future, users_future)
-            `{''}``
+            You can `await` async functions, and use `asyncio.gather` to await multiple async functions at the same time.
             """
         )
 
