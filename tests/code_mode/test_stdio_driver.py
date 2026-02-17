@@ -13,6 +13,15 @@ from pathlib import Path
 
 import pytest
 
+from pydantic_ai.runtime._driver import (
+    _build_proxy,  # pyright: ignore[reportPrivateUsage]
+    _compile_code,  # pyright: ignore[reportPrivateUsage]
+    _execute,  # pyright: ignore[reportPrivateUsage]
+    _StderrRedirect,  # pyright: ignore[reportPrivateUsage]
+    _stdin_reader,  # pyright: ignore[reportPrivateUsage]
+    _transform_last_expr,  # pyright: ignore[reportPrivateUsage]
+)
+
 DRIVER_PATH = Path(__file__).parents[2] / 'pydantic_ai_slim' / 'pydantic_ai' / 'runtime' / '_driver.py'
 
 pytestmark = pytest.mark.anyio
@@ -459,3 +468,152 @@ async def test_main_error_paths():
     assert 'Expected init message' in str(msg['error'])
     proc.kill()
     await proc.wait()
+
+
+# =============================================================================
+# In-process unit tests — import driver functions directly so coverage tracks them
+# =============================================================================
+
+
+class TestStderrRedirect:
+    """Test _StderrRedirect stream methods via direct import."""
+
+    def test_write(self, capsys: pytest.CaptureFixture[str]) -> None:
+        r = _StderrRedirect()
+        r.write('hello')
+        assert capsys.readouterr().err == 'hello'
+
+    def test_fileno(self) -> None:
+        r = _StderrRedirect()
+        assert r.fileno() == sys.stderr.fileno()
+
+    def test_isatty(self) -> None:
+        assert _StderrRedirect().isatty() is False
+
+    def test_writable(self) -> None:
+        assert _StderrRedirect().writable() is True
+
+    def test_readable(self) -> None:
+        assert _StderrRedirect().readable() is False
+
+    def test_encoding(self) -> None:
+        assert _StderrRedirect().encoding == sys.stderr.encoding
+
+    def test_errors(self) -> None:
+        assert _StderrRedirect().errors == sys.stderr.errors
+
+    def test_closed(self) -> None:
+        assert _StderrRedirect().closed is False
+
+
+def test_transform_last_expr_assignment():
+    """Code ending in assignment has no return added."""
+    result = _transform_last_expr('x = 42')
+    assert 'return' not in result
+
+
+def test_compile_code_syntax_error(monkeypatch: pytest.MonkeyPatch):
+    """_compile_code with invalid code sends error and returns None."""
+    messages: list[dict[str, object]] = []
+    monkeypatch.setattr('pydantic_ai.runtime._driver._write_msg', messages.append)
+    result = _compile_code('def while', {})
+    assert result is None
+    assert messages[0]['error_type'] == 'syntax'
+
+
+async def test_build_proxy_cache_hit():
+    """Proxy with a cache hit returns an already-resolved future."""
+    loop = asyncio.get_running_loop()
+    call_counter: list[int] = [0]
+    pending: dict[int, asyncio.Future[object]] = {}
+    cache: dict[str, object] = {'1': 42}
+    handle: list[asyncio.Handle | None] = [None]
+
+    proxy = _build_proxy('tool', loop, call_counter, pending, cache, handle)
+    future = proxy()
+    assert future.done()
+    assert future.result() == 42
+
+
+async def test_stdin_reader_eof():
+    """EOF on reader exits cleanly."""
+    reader = asyncio.StreamReader()
+    reader.feed_eof()
+    pending: dict[int, asyncio.Future[object]] = {}
+    await _stdin_reader(reader, pending)  # should return without error
+
+
+async def test_stdin_reader_malformed_json(capsys: pytest.CaptureFixture[str]):
+    """Malformed JSON produces a warning and continues to EOF."""
+    reader = asyncio.StreamReader()
+    reader.feed_data(b'not json\n')
+    reader.feed_eof()
+    pending: dict[int, asyncio.Future[object]] = {}
+    await _stdin_reader(reader, pending)
+    assert 'malformed JSON' in capsys.readouterr().err
+
+
+async def test_stdin_reader_error_message():
+    """Error message sets exception on the pending future."""
+    reader = asyncio.StreamReader()
+    reader.feed_data(json.dumps({'type': 'error', 'id': 1, 'error': 'fail'}).encode() + b'\n')
+    reader.feed_eof()
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[object] = loop.create_future()
+    pending: dict[int, asyncio.Future[object]] = {1: future}
+    await _stdin_reader(reader, pending)
+    with pytest.raises(RuntimeError, match='fail'):
+        future.result()
+
+
+async def test_stdin_reader_result_message():
+    """Result message sets the value on the pending future."""
+    reader = asyncio.StreamReader()
+    reader.feed_data(json.dumps({'type': 'result', 'id': 1, 'result': 99}).encode() + b'\n')
+    reader.feed_eof()
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[object] = loop.create_future()
+    pending: dict[int, asyncio.Future[object]] = {1: future}
+    await _stdin_reader(reader, pending)
+    assert future.result() == 99
+
+
+async def test_execute_empty_code(monkeypatch: pytest.MonkeyPatch):
+    """Empty code sends complete with None."""
+    messages: list[dict[str, object]] = []
+    monkeypatch.setattr('pydantic_ai.runtime._driver._write_msg', messages.append)
+    reader = asyncio.StreamReader()
+    reader.feed_eof()
+    await _execute({'code': '', 'functions': []}, reader)
+    assert messages == [{'type': 'complete', 'result': None}]
+
+
+async def test_execute_syntax_error(monkeypatch: pytest.MonkeyPatch):
+    """Syntax error in code sends error and returns."""
+    messages: list[dict[str, object]] = []
+    monkeypatch.setattr('pydantic_ai.runtime._driver._write_msg', messages.append)
+    reader = asyncio.StreamReader()
+    reader.feed_eof()
+    await _execute({'code': 'def while', 'functions': []}, reader)
+    assert messages[0]['error_type'] == 'syntax'
+
+
+async def test_execute_runtime_error(monkeypatch: pytest.MonkeyPatch):
+    """Runtime error sends error with traceback."""
+    messages: list[dict[str, object]] = []
+    monkeypatch.setattr('pydantic_ai.runtime._driver._write_msg', messages.append)
+    reader = asyncio.StreamReader()
+    reader.feed_eof()
+    await _execute({'code': '1 / 0', 'functions': []}, reader)
+    assert messages[0]['error_type'] == 'runtime'
+    assert 'ZeroDivisionError' in str(messages[0]['error'])
+
+
+async def test_execute_runtime_syntax_error(monkeypatch: pytest.MonkeyPatch):
+    """SyntaxError at runtime (e.g. eval) is reported as syntax."""
+    messages: list[dict[str, object]] = []
+    monkeypatch.setattr('pydantic_ai.runtime._driver._write_msg', messages.append)
+    reader = asyncio.StreamReader()
+    reader.feed_eof()
+    await _execute({'code': 'eval("def while")', 'functions': []}, reader)
+    assert messages[0]['error_type'] == 'syntax'

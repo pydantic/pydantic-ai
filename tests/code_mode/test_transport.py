@@ -26,7 +26,7 @@ class _MockTransport(DriverTransport):
         self._stderr = stderr
 
     async def read_line(self) -> bytes:
-        return b''
+        return b''  # pragma: no cover
 
     async def write_line(self, data: bytes) -> None:
         pass
@@ -73,3 +73,38 @@ async def test_handle_stdout_unknown_msg_type():
     """Unknown message type returns CONTINUE."""
     result = await _handle(json.dumps({'type': 'unknown'}).encode() + b'\n')
     assert result == _StdoutSignal.CONTINUE
+
+
+class _ErrorTransport(DriverTransport):
+    """Transport that raises TypeError on read_line."""
+
+    async def read_line(self) -> bytes:
+        raise TypeError('bad read')
+
+    async def write_line(self, data: bytes) -> None:
+        pass  # pragma: no cover
+
+    async def read_stderr(self) -> bytes:
+        return b''  # pragma: no cover
+
+    async def kill(self) -> None:
+        pass
+
+
+class _ErrorRuntime(DriverBasedRuntime):
+    """Runtime that uses _ErrorTransport."""
+
+    async def _start_driver(self, init_msg: dict[str, Any]) -> DriverTransport:
+        return _ErrorTransport()
+
+
+async def test_run_catches_non_standard_exception():
+    """Non-standard exceptions from transport are wrapped in CodeRuntimeError."""
+    runtime = _ErrorRuntime()
+    with pytest.raises(CodeRuntimeError, match='Driver communication error.*bad read'):
+        await runtime.run(
+            'x = 1',
+            AsyncMock(),
+            functions={},
+            referenced_types=[],
+        )

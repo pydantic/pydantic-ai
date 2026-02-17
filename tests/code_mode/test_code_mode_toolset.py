@@ -5,6 +5,8 @@ Uses StubRuntime so these tests don't require pydantic-monty or Docker.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from pydantic_ai._python_signature import FunctionSignature, TypeSignature, collect_unique_referenced_types
@@ -19,12 +21,12 @@ pytestmark = pytest.mark.anyio
 
 def _add(*, x: int, y: int) -> int:
     """Add two integers."""
-    return x + y
+    return x + y  # pragma: no cover
 
 
 def _get_weather_alias(city: str) -> WeatherResult:
     """Get weather (alias)."""
-    return get_weather(city)
+    return get_weather(city)  # pragma: no cover
 
 
 async def test_get_tools_produces_single_code_tool():
@@ -81,7 +83,7 @@ async def test_name_collision_counter():
 
     def my_tool(*, x: int) -> int:
         """First."""
-        return x
+        return x  # pragma: no cover
 
     # These have different __name__ but sanitize to same snake_case
     # Build toolset manually with colliding sanitized names
@@ -120,3 +122,83 @@ async def test_dedup_correctness_after_cache_backed_deepcopy():
     unique_types = collect_unique_referenced_types(tool.signatures)
     weather_types = [t for t in unique_types if t.name == 'WeatherResult']
     assert len(weather_types) == 1
+
+
+async def test_aenter_cleanup_on_wrapped_failure():
+    """If wrapped toolset's __aenter__ raises, runtime is cleaned up."""
+    from pydantic_ai.toolsets.abstract import AbstractToolset
+
+    class FailingToolset(AbstractToolset[None]):
+        @property
+        def id(self) -> str | None:
+            return None
+
+        async def __aenter__(self) -> Any:
+            raise RuntimeError('wrapped failed')
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass  # pragma: no cover
+
+        async def get_tools(self, ctx: Any) -> dict[str, Any]:
+            return {}  # pragma: no cover
+
+        async def call_tool(self, name: str, tool_args: Any, ctx: Any, tool: Any) -> None:
+            pass  # pragma: no cover
+
+    enter_count = 0
+    exit_count = 0
+
+    class TrackingRuntime(StubRuntime):
+        async def __aenter__(self) -> Any:
+            nonlocal enter_count
+            enter_count += 1
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            nonlocal exit_count
+            exit_count += 1
+
+    cm = CodeModeToolset(FailingToolset(), runtime=TrackingRuntime())
+    with pytest.raises(RuntimeError, match='wrapped failed'):
+        await cm.__aenter__()
+    assert enter_count == 1
+    assert exit_count == 1  # runtime was cleaned up
+
+
+async def test_call_deferred_during_execution(monkeypatch: pytest.MonkeyPatch):
+    """CallDeferred during tool execution raises UserError."""
+    from pydantic_ai.exceptions import CallDeferred, UserError
+    from pydantic_ai.runtime.abstract import CodeRuntimeError, FunctionCall
+
+    call_made = False
+
+    class ExecutingRuntime(StubRuntime):
+        async def run(self, code: str, call_tool: Any, *, functions: Any, referenced_types: Any) -> Any:
+            nonlocal call_made
+            call = FunctionCall(call_id='1', function_name='_add', args=(), kwargs={'x': 1, 'y': 2})
+            try:
+                await call_tool(call)
+            except UserError:
+                call_made = True
+                raise CodeRuntimeError('deferred')
+
+    ts: FunctionToolset[None] = FunctionToolset()
+    ts.add_function(_add, takes_ctx=False)
+    cm = CodeModeToolset(ts, runtime=ExecutingRuntime())
+    ctx = build_run_context()
+    tools = await cm.get_tools(ctx)
+    tool = tools['run_code_with_tools']
+
+    # Monkeypatch handle_call to raise CallDeferred
+    from pydantic_ai._tool_manager import ToolManager
+
+    async def raising_handle(self: Any, tool_call: Any, **kwargs: Any) -> Any:
+        raise CallDeferred()
+
+    monkeypatch.setattr(ToolManager, 'handle_call', raising_handle)
+
+    from pydantic_ai.exceptions import ModelRetry
+
+    with pytest.raises(ModelRetry):
+        await cm.call_tool('run_code_with_tools', {'code': 'await _add(x=1, y=2)'}, ctx, tool)
+    assert call_made

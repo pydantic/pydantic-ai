@@ -275,8 +275,7 @@ class DockerRuntime(DriverBasedRuntime):
                 'DockerSecuritySettings.user must not be empty — '
                 'the container would run as root. Use "nobody" (default) or an explicit username/UID.'
             )
-        if sec.user:
-            cmd.extend(['--user', sec.user])
+        cmd.extend(['--user', sec.user])
 
         # Memory limits
         if sec.memory:

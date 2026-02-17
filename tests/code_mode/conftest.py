@@ -5,7 +5,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import uuid
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -52,7 +52,7 @@ def get_weather(city: str) -> WeatherResult:
     Returns:
         Weather data including temperature and conditions.
     """
-    data = _WEATHER_DATA.get(city, {'temperature': 20.0, 'conditions': 'unknown'})
+    data = _WEATHER_DATA.get(city, {'temperature': 20.0, 'conditions': 'unknown'})  # pragma: no cover
     return {'city': city, 'temperature': data['temperature'], 'unit': 'celsius', 'conditions': data['conditions']}
 
 
@@ -113,13 +113,13 @@ class StubRuntime(CodeRuntime):
 
 def _docker_is_available() -> bool:
     """Check whether Docker is installed and the daemon is reachable."""
-    if not shutil.which('docker'):
+    if not shutil.which('docker'):  # pragma: lax no cover
         return False
     try:
-        subprocess.run(['docker', 'info'], check=True, capture_output=True)
-    except (subprocess.CalledProcessError, FileNotFoundError):
+        subprocess.run(['docker', 'info'], check=True, capture_output=True)  # pragma: lax no cover
+    except (subprocess.CalledProcessError, FileNotFoundError):  # pragma: lax no cover
         return False
-    return True
+    return True  # pragma: lax no cover
 
 
 @pytest.fixture(scope='session')
@@ -145,14 +145,6 @@ def _docker_container() -> Iterator[str]:
     subprocess.run(['docker', 'rm', '-f', container_name], capture_output=True)
 
 
-@pytest.fixture
-async def managed_docker_runtime() -> AsyncIterator[DockerRuntime]:
-    """A managed DockerRuntime that creates and destroys its own container."""
-    runtime = DockerRuntime()
-    async with runtime:
-        yield runtime
-
-
 @pytest.fixture(params=['monty', 'docker'])
 def code_runtime(request: pytest.FixtureRequest) -> CodeRuntime:
     """Parameterized fixture providing each CodeRuntime implementation."""
@@ -164,10 +156,10 @@ def code_runtime(request: pytest.FixtureRequest) -> CodeRuntime:
 
         return MontyRuntime()
 
-    if not _docker_is_available():
+    if not _docker_is_available():  # pragma: lax no cover
         pytest.skip('Docker is not available')
 
-    container_id: str = request.getfixturevalue('_docker_container')
+    container_id: str = request.getfixturevalue('_docker_container')  # pragma: lax no cover
     return DockerRuntime(
         container_id=container_id,
         python_path='python3',

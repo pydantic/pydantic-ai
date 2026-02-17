@@ -151,7 +151,7 @@ def _compile_code(code: str, code_globals: dict[str, Any]) -> Any | None:
 
     try:
         compiled = compile(func_code, '<code>', 'exec')
-    except SyntaxError as e:
+    except SyntaxError as e:  # pragma: no cover
         _write_msg({'type': 'error', 'error': str(e), 'error_type': 'syntax'})
         return None
 
@@ -240,17 +240,17 @@ async def _main() -> None:
     await loop.connect_read_pipe(lambda: protocol, sys.stdin.buffer)
 
     line = await reader.readline()
-    if not line:
+    if not line:  # pragma: lax no cover
         _write_msg({'type': 'error', 'error': 'No init message received', 'error_type': 'runtime'})
         return
 
     try:
         init_msg = json.loads(line)
-    except json.JSONDecodeError as e:
+    except json.JSONDecodeError as e:  # pragma: lax no cover
         _write_msg({'type': 'error', 'error': f'Invalid init message: {e}', 'error_type': 'runtime'})
         return
 
-    if init_msg.get('type') != 'init':
+    if init_msg.get('type') != 'init':  # pragma: lax no cover
         _write_msg(
             {
                 'type': 'error',

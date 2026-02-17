@@ -32,7 +32,7 @@ def _docker_inspect(container_id: str) -> dict[str, Any]:
         capture_output=True,
         text=True,
     )
-    if result.returncode != 0:
+    if result.returncode != 0:  # pragma: no cover
         raise RuntimeError(f'docker inspect failed: {result.stderr}')
     return json.loads(result.stdout)[0]
 
