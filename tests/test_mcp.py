@@ -10,7 +10,6 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_ai import (
     BinaryContent,
@@ -44,6 +43,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
 
+from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:

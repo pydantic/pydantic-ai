@@ -11,7 +11,6 @@ from unittest.mock import patch
 
 import httpx
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
@@ -48,6 +47,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.output import NativeOutput, PromptedOutput
 from pydantic_ai.usage import RequestUsage, RunUsage
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsInstance, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 

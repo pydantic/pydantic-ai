@@ -6,7 +6,6 @@ from typing import Any, cast
 from unittest.mock import Mock
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai._utils import is_str_dict
@@ -71,6 +70,7 @@ from pydantic_ai.ui.vercel_ai.response_types import (
     ToolInputStartChunk,
 )
 
+from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsSameStr, IsStr, try_import
 
 with try_import() as starlette_import_successful:

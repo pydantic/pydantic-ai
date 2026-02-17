@@ -12,7 +12,6 @@ from typing import Any
 import httpx
 import pytest
 from asgi_lifespan import LifespanManager
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -56,6 +55,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
+from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsSameStr, IsStr, try_import
 
 with try_import() as imports_successful:

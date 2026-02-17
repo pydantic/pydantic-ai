@@ -16,13 +16,13 @@ from typing import TYPE_CHECKING, Annotated
 
 import httpx
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.output import NativeOutput
 
+from ..._inline_snapshot import snapshot
 from ...conftest import try_import
 from ..test_anthropic import MockAnthropic, get_mock_chat_completion_kwargs
 

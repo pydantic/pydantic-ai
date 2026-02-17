@@ -7,7 +7,6 @@ from functools import cache
 from typing import Union
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_graph import (
     BaseNode,
@@ -22,6 +21,7 @@ from pydantic_graph import (
     SimpleStatePersistence,
 )
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsFloat, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio

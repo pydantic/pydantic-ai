@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
 import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
-from inline_snapshot import customize_repr  # pyright: ignore[reportUnknownVariableType]
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 
@@ -41,6 +40,8 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import Model
+
+from ._inline_snapshot import customize_repr  # pyright: ignore[reportUnknownVariableType]
 
 __all__ = (
     'IsDatetime',
