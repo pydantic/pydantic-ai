@@ -360,9 +360,10 @@ _(This example is complete, it can be run "as is")_
 When the model calls other tools in parallel with an output tool, you can control how tool calls are executed by setting the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy]:
 
 - `'early'` (default): Output tools are executed first. Once a valid final result is found, remaining function and output tool calls are skipped
+- `'complete'`: Output tools are executed first. Once a valid final result is found, remaining output tool calls are skipped, but function tools are still executed
 - `'exhaustive'`: Output tools are executed first, then all function tools are executed. The first valid output tool result becomes the final output
 
-The `'exhaustive'` strategy is useful when tools have important side effects (like logging, sending notifications, or updating metrics) that should always execute.
+The `'complete'` and `'exhaustive'` strategies are useful when function tools have important side effects (like logging, sending notifications, or updating metrics) that should always execute. Use `'complete'` over `'exhaustive'` when output tools may also have side effects that should not be triggered unnecessarily.
 
 !!! warning "Priority of output and deferred tools in streaming methods"
     The [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] methods will consider the first output that matches the [output type](output.md#structured-output) (which could be text, an [output tool](output.md#tool-output) call, or a [deferred](deferred-tools.md) tool call) to be the final output of the agent run, even when the model generates (additional) tool calls after this "final" output.

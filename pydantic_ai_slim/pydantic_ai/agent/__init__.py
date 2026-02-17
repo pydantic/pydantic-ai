@@ -129,6 +129,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     """The strategy for handling multiple tool calls when a final result is found.
 
     - `'early'` (default): Output tools are executed first. Once a valid final result is found, remaining function and output tool calls are skipped
+    - `'complete'`: Output tools are executed first. Once a valid final result is found, remaining output tool calls are skipped, but function tools are still executed
     - `'exhaustive'`: Output tools are executed first, then all function tools are executed. The first valid output tool result becomes the final output
     """
 
