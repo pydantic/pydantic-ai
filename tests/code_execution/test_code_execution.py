@@ -1,4 +1,4 @@
-"""Test basic code mode execution: tool calls, parallelism, and error handling.
+"""Test basic code execution: tool calls, parallelism, and error handling.
 
 Parameterized across all CodeRuntime implementations (Monty, Docker).
 """
@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.runtime.abstract import CodeRuntime
+from pydantic_ai.toolsets.code_execution._abstract import CodeRuntime
 
 from .conftest import run_code_with_tools
 

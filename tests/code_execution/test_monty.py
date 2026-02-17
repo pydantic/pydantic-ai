@@ -12,7 +12,7 @@ from typing_extensions import NotRequired, TypedDict
 try:
     from pydantic_monty import Monty
 
-    from pydantic_ai.runtime.monty import MontyRuntime
+    from pydantic_ai.toolsets.code_execution.monty import MontyRuntime
 except ImportError:  # pragma: lax no cover
     pytest.skip('pydantic-monty is not installed', allow_module_level=True)
 
@@ -20,7 +20,7 @@ from pydantic_ai._tool_manager import _parallel_execution_mode_ctx_var  # pyrigh
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import Tool
 
-from .conftest import build_code_mode_toolset, run_code_with_tools
+from .conftest import build_code_execution_toolset, run_code_with_tools
 
 pytestmark = pytest.mark.anyio
 
@@ -44,9 +44,9 @@ main.py:1:16: error[invalid-argument-type] Argument to function `add` is incorre
 
 async def test_generated_signatures_are_valid_python():
     """Generated signatures must be valid Python that Monty can parse and type check."""
-    _, tools = await build_code_mode_toolset(MontyRuntime(), (add, False))
+    _, tools = await build_code_execution_toolset(MontyRuntime(), (add, False))
 
-    tool = tools['run_code_with_tools']
+    tool = tools['run_code']
     runtime = MontyRuntime()
     prefix = runtime._build_type_check_prefix(tool.signatures, tool.referenced_types)  # pyright: ignore[reportPrivateUsage]
 
@@ -66,9 +66,9 @@ async def add(*, x: int, y: int) -> int:
 
 async def test_signatures_use_ellipsis_monty_converts_for_type_check():
     """Signatures use '...' body; Monty converts to 'raise NotImplementedError()' for type checking."""
-    _code_mode, tools = await build_code_mode_toolset(MontyRuntime(), (add, False))
+    _code_execution, tools = await build_code_execution_toolset(MontyRuntime(), (add, False))
 
-    tool = tools['run_code_with_tools']
+    tool = tools['run_code']
 
     # LLM-facing description should have '...'
     description = tool.tool_def.description or ''
@@ -133,18 +133,18 @@ def _tag_resource(*, resource_name: str, tag: _Tag) -> bool:
 
 
 async def test_full_description_snapshot():
-    """Snapshot the full run_code_with_tools description with shared types, conflicts, and nesting."""
-    _, tools = await build_code_mode_toolset(
+    """Snapshot the full run_code description with shared types, conflicts, and nesting."""
+    _, tools = await build_code_execution_toolset(
         MontyRuntime(),
         (_find_resources, False),
         (_search_items, False),
         (_get_item, False),
         (_tag_resource, False),
     )
-    description = tools['run_code_with_tools'].tool_def.description
+    description = tools['run_code'].tool_def.description
     assert description == snapshot('''\
 
-Use this tool to run Python code that can call other tools as functions, also known as "code mode" or "programmatic tool calling".
+Use this tool to run Python code that can call other tools as functions.
 
 You can use it to:
 - filter tool return data to save context,
@@ -312,11 +312,11 @@ def sync_add(*, x: int, y: int) -> int:
 
 async def test_sequential_tool_renders_as_def():
     """A sequential tool renders as `def` (not `async def`) in description and type-check prefix."""
-    _, tools = await build_code_mode_toolset(
+    _, tools = await build_code_execution_toolset(
         MontyRuntime(),
         Tool(sync_add, takes_ctx=False, sequential=True),
     )
-    tool = tools['run_code_with_tools']
+    tool = tools['run_code']
 
     # Description shows `def`, not `async def`
     description = tool.tool_def.description or ''
@@ -392,11 +392,11 @@ async def test_global_sequential_mode():
     """Setting _parallel_execution_mode_ctx_var to 'sequential' makes all tools render as `def`."""
     token = _parallel_execution_mode_ctx_var.set('sequential')
     try:
-        _, tools = await build_code_mode_toolset(
+        _, tools = await build_code_execution_toolset(
             MontyRuntime(),
             (add, False),
         )
-        tool = tools['run_code_with_tools']
+        tool = tools['run_code']
         description = tool.tool_def.description or ''
         assert 'def add(' in description
         assert 'async def add(' not in description
@@ -408,11 +408,11 @@ async def test_global_parallel_ordered_events_mode():
     """Setting _parallel_execution_mode_ctx_var to 'parallel_ordered_events' makes all tools render as `def`."""
     token = _parallel_execution_mode_ctx_var.set('parallel_ordered_events')
     try:
-        _, tools = await build_code_mode_toolset(
+        _, tools = await build_code_execution_toolset(
             MontyRuntime(),
             (add, False),
         )
-        tool = tools['run_code_with_tools']
+        tool = tools['run_code']
         description = tool.tool_def.description or ''
         assert 'def add(' in description
         assert 'async def add(' not in description
@@ -422,6 +422,6 @@ async def test_global_parallel_ordered_events_mode():
 
 async def test_description_no_all_functions_are_async():
     """The prompt no longer says 'All functions are async'."""
-    _, tools = await build_code_mode_toolset(MontyRuntime(), (add, False))
-    description = tools['run_code_with_tools'].tool_def.description or ''
+    _, tools = await build_code_execution_toolset(MontyRuntime(), (add, False))
+    description = tools['run_code'].tool_def.description or ''
     assert 'All functions are async' not in description

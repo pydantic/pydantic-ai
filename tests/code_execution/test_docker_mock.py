@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai.runtime.docker import DockerRuntime, DockerSecuritySettings
+from pydantic_ai.toolsets.code_execution.docker import DockerRuntime, DockerSecuritySettings
 
 pytestmark = pytest.mark.anyio
 

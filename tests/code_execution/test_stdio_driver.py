@@ -13,7 +13,9 @@ from pathlib import Path
 
 import pytest
 
-DRIVER_PATH = Path(__file__).parents[2] / 'pydantic_ai_slim' / 'pydantic_ai' / 'runtime' / '_driver.py'
+DRIVER_PATH = (
+    Path(__file__).parents[2] / 'pydantic_ai_slim' / 'pydantic_ai' / 'toolsets' / 'code_execution' / '_driver.py'
+)
 
 pytestmark = pytest.mark.anyio
 

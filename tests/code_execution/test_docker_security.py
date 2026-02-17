@@ -12,7 +12,7 @@ import textwrap
 
 import pytest
 
-from pydantic_ai.runtime.docker import DockerRuntime, DockerSecuritySettings
+from pydantic_ai.toolsets.code_execution.docker import DockerRuntime, DockerSecuritySettings
 
 from .conftest import _docker_is_available, run_code_with_tools  # pyright: ignore[reportPrivateUsage]
 

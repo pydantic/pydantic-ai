@@ -15,13 +15,13 @@ from .renamed import RenamedToolset
 from .wrapper import WrapperToolset
 
 if TYPE_CHECKING:
-    from .code_mode import CodeModeToolset
+    from .code_execution import CodeExecutionToolset
 
 __all__ = (
     'AbstractToolset',
     'ToolsetFunc',
     'ToolsetTool',
-    'CodeModeToolset',
+    'CodeExecutionToolset',
     'CombinedToolset',
     'ExternalToolset',
     'DeferredToolset',
@@ -36,8 +36,8 @@ __all__ = (
 
 
 def __getattr__(name: str) -> Any:
-    if name == 'CodeModeToolset':
-        from .code_mode import CodeModeToolset
+    if name == 'CodeExecutionToolset':
+        from .code_execution import CodeExecutionToolset
 
-        return CodeModeToolset
+        return CodeExecutionToolset
     raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

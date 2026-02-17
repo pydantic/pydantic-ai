@@ -37,7 +37,7 @@ from typing import Any
 
 from typing_extensions import Self
 
-from pydantic_ai.runtime._transport import DriverBasedRuntime, DriverTransport
+from ._transport import DriverBasedRuntime, DriverTransport
 
 
 @dataclass(frozen=True)

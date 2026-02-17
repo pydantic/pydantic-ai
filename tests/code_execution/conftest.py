@@ -1,4 +1,4 @@
-"""Shared fixtures and test tools for code mode tests."""
+"""Shared fixtures and test tools for code execution tests."""
 
 from __future__ import annotations
 
@@ -15,10 +15,10 @@ from typing_extensions import TypedDict
 from pydantic_ai._python_signature import FunctionSignature, TypeSignature
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.runtime.abstract import CodeRuntime, ToolCallback
-from pydantic_ai.runtime.docker import DockerRuntime
 from pydantic_ai.tools import Tool
-from pydantic_ai.toolsets.code_mode import CodeModeToolset
+from pydantic_ai.toolsets.code_execution import CodeExecutionToolset
+from pydantic_ai.toolsets.code_execution._abstract import CodeRuntime, ToolCallback
+from pydantic_ai.toolsets.code_execution.docker import DockerRuntime
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage
 
@@ -68,11 +68,11 @@ def build_run_context() -> RunContext[None]:
     )
 
 
-async def build_code_mode_toolset(
+async def build_code_execution_toolset(
     runtime: CodeRuntime,
     *tools: Tool[Any] | tuple[Callable[..., Any], bool],
-) -> tuple[CodeModeToolset[None], dict[str, Any]]:
-    """Build and initialize a CodeModeToolset, returning it along with its tools dict."""
+) -> tuple[CodeExecutionToolset[None], dict[str, Any]]:
+    """Build and initialize a CodeExecutionToolset, returning it along with its tools dict."""
     toolset: FunctionToolset[None] = FunctionToolset()
     for tool in tools:
         if isinstance(tool, Tool):
@@ -80,10 +80,10 @@ async def build_code_mode_toolset(
         else:
             func, takes_ctx = tool
             toolset.add_function(func, takes_ctx=takes_ctx)
-    code_mode = CodeModeToolset(toolset, runtime=runtime)
+    code_execution = CodeExecutionToolset(toolset, runtime=runtime)
     ctx = build_run_context()
-    tool_defs = await code_mode.get_tools(ctx)
-    return code_mode, tool_defs
+    tool_defs = await code_execution.get_tools(ctx)
+    return code_execution, tool_defs
 
 
 async def run_code_with_tools(
@@ -91,14 +91,14 @@ async def run_code_with_tools(
     runtime: CodeRuntime,
     *tools: Tool[Any] | tuple[Callable[..., Any], bool],
 ) -> Any:
-    """Run code through CodeModeToolset. Each tool is a Tool object or (function, takes_ctx) tuple."""
-    code_mode, tool_defs = await build_code_mode_toolset(runtime, *tools)
+    """Run code through CodeExecutionToolset. Each tool is a Tool object or (function, takes_ctx) tuple."""
+    code_execution, tool_defs = await build_code_execution_toolset(runtime, *tools)
     ctx = build_run_context()
-    return await code_mode.call_tool('run_code_with_tools', {'code': code}, ctx, tool_defs['run_code_with_tools'])
+    return await code_execution.call_tool('run_code', {'code': code}, ctx, tool_defs['run_code'])
 
 
 class StubRuntime(CodeRuntime):
-    """Minimal CodeRuntime for testing CodeModeToolset logic without pydantic-monty."""
+    """Minimal CodeRuntime for testing CodeExecutionToolset logic without pydantic-monty."""
 
     async def run(
         self,
@@ -135,7 +135,9 @@ def _docker_container() -> Iterator[str]:
         check=True,
         capture_output=True,
     )
-    driver_src = Path(__file__).parents[2] / 'pydantic_ai_slim' / 'pydantic_ai' / 'runtime' / '_driver.py'
+    driver_src = (
+        Path(__file__).parents[2] / 'pydantic_ai_slim' / 'pydantic_ai' / 'toolsets' / 'code_execution' / '_driver.py'
+    )
     subprocess.run(
         ['docker', 'cp', str(driver_src), f'{container_name}:/tmp/pydantic_ai_driver.py'],
         check=True,
@@ -158,7 +160,7 @@ def code_runtime(request: pytest.FixtureRequest) -> CodeRuntime:
     """Parameterized fixture providing each CodeRuntime implementation."""
     if request.param == 'monty':
         try:
-            from pydantic_ai.runtime.monty import MontyRuntime
+            from pydantic_ai.toolsets.code_execution.monty import MontyRuntime
         except ImportError:
             pytest.skip('pydantic-monty is not installed')
 

@@ -5,7 +5,8 @@ import textwrap
 from typing import Any
 
 from pydantic_ai._python_signature import FunctionSignature, TypeSignature
-from pydantic_ai.runtime.abstract import (
+
+from ._abstract import (
     CodeExecutionTimeout,
     CodeRuntime,
     CodeRuntimeError,

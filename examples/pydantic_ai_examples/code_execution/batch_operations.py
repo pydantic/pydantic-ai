@@ -1,11 +1,11 @@
-"""CodeMode Example: Batch Calendar Event Creation.
+"""Code Execution Example: Batch Calendar Event Creation.
 
-This example shows how code mode reduces LLM roundtrips when creating multiple
+This example shows how code execution reduces LLM roundtrips when creating multiple
 calendar events. With traditional tool calling, each event requires a separate
-roundtrip. With code mode, the LLM writes a loop that creates all events in one go.
+roundtrip. With code execution, the LLM writes a loop that creates all events in one go.
 
 Run:
-    uv run -m pydantic_ai_examples.code_mode.batch_operations
+    uv run -m pydantic_ai_examples.code_execution.batch_operations
 """
 
 from __future__ import annotations
@@ -19,9 +19,9 @@ import logfire
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse, RetryPromptPart
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.runtime.monty import MontyRuntime
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai.toolsets.code_mode import CodeModeToolset
+from pydantic_ai.toolsets.code_execution import CodeExecutionToolset
+from pydantic_ai.toolsets.code_execution.monty import MontyRuntime
 
 # =============================================================================
 # Configuration
@@ -95,11 +95,11 @@ def create_tool_calling_agent(toolset: FunctionToolset[None]) -> Agent[None, str
     )
 
 
-def create_code_mode_agent(toolset: FunctionToolset[None]) -> Agent[None, str]:
-    """Create agent with CodeMode (tools as Python functions)."""
+def create_code_execution_agent(toolset: FunctionToolset[None]) -> Agent[None, str]:
+    """Create agent with code execution (tools as Python functions)."""
     runtime = MontyRuntime()
-    code_toolset: CodeModeToolset[None] = CodeModeToolset(
-        wrapped=toolset,
+    code_toolset: CodeExecutionToolset[None] = CodeExecutionToolset(
+        toolset,
         max_retries=MAX_RETRIES,
         runtime=runtime,
     )
@@ -174,17 +174,17 @@ async def run_tool_calling(toolset: FunctionToolset[None]) -> RunMetrics:
     return extract_metrics(result, 'tool_calling')
 
 
-async def run_code_mode(toolset: FunctionToolset[None]) -> RunMetrics:
-    """Run with CodeMode tool calling."""
+async def run_code_execution(toolset: FunctionToolset[None]) -> RunMetrics:
+    """Run with code execution tool calling."""
     global _calendar_events
     _calendar_events = []  # Reset calendar
 
-    with logfire.span('code_mode_tool_calling'):
-        agent = create_code_mode_agent(toolset)
+    with logfire.span('code_execution_tool_calling'):
+        agent = create_code_execution_agent(toolset)
         code_toolset = agent.toolsets[0]
         async with code_toolset:
             result = await agent.run(PROMPT)
-    return extract_metrics(result, 'code_mode')
+    return extract_metrics(result, 'code_execution')
 
 
 # =============================================================================
@@ -206,7 +206,7 @@ def log_metrics(metrics: RunMetrics) -> None:
 
 
 async def main() -> None:
-    logfire.configure(service_name='code-mode-batch-demo')
+    logfire.configure(service_name='code-execution-batch-demo')
     logfire.instrument_pydantic_ai()
 
     toolset = create_toolset()
@@ -215,8 +215,8 @@ async def main() -> None:
         trad = await run_tool_calling(toolset)
     log_metrics(trad)
 
-    with logfire.span('demo_code_mode'):
-        code = await run_code_mode(toolset)
+    with logfire.span('demo_code_execution'):
+        code = await run_code_execution(toolset)
     log_metrics(code)
 
     print('View traces: https://logfire.pydantic.dev')
