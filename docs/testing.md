@@ -289,7 +289,7 @@ interactions and replays them in subsequent test runs.
 
 ### Setting Up VCR with Pydantic AI
 
-Pydantic AI provides a custom serializer in [`pydantic_ai.testing`][pydantic_ai.testing]
+Pydantic AI provides a custom serializer in `pydantic_ai.testing`
 that makes VCR cassettes more readable and maintainable:
 
 ```bash
@@ -343,7 +343,7 @@ pytest test_integration.py --record-mode=once
 
 ### What the Serializer Does
 
-The [`vcr_yaml_serializer`][pydantic_ai.testing.vcr_yaml_serializer] module:
+The `vcr_yaml_serializer` module:
 
 1. **Parses JSON bodies**: Stores response bodies as structured YAML instead of escaped strings
 2. **Decompresses responses**: Handles gzip and Brotli encoding transparently
