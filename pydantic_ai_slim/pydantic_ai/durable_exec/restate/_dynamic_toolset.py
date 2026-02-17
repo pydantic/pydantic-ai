@@ -111,6 +111,8 @@ class RestateDynamicToolset(WrapperToolset[AgentDepsT]):
             # Re-instantiate the dynamic toolset inside the durable step so any underlying I/O happens
             # within `ctx.run_typed(...)`, and ensure resources are cleaned up afterwards.
             async with self._dynamic_toolset:
+                # Re-resolve tools for each call; dynamic toolsets may legitimately change over time.
+                # If resolution is expensive, the underlying toolset implementation is responsible for caching.
                 tools = await self._dynamic_toolset.get_tools(ctx)
                 real_tool = tools.get(name)
                 if real_tool is None:

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from typing_extensions import Self
 
 from pydantic_ai import ToolDefinition
+from pydantic_ai.mcp import MCPServer, ToolResult
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
@@ -17,12 +18,6 @@ from ._toolset import (
     run_get_tools_step,
     run_tool_call_step,
 )
-
-if TYPE_CHECKING:
-    from pydantic_ai.mcp import MCPServer, ToolResult
-else:
-    MCPServer = Any
-    ToolResult = Any
 
 
 class RestateMCPServer(WrapperToolset[Any]):
@@ -52,6 +47,7 @@ class RestateMCPServer(WrapperToolset[Any]):
     def visit_and_replace(
         self, visitor: Callable[[AbstractToolset[Any]], AbstractToolset[Any]]
     ) -> AbstractToolset[Any]:
+        # Restate-wrapped toolsets are sealed after wrapping and should not be replaced.
         return self
 
     async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:

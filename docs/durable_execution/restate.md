@@ -154,4 +154,5 @@ Restate does not allow nested context operations inside `ctx.run_typed(...)`, so
 
 In that mode, model calls (and MCP/FastMCP tool calls, if used) are still wrapped, but function tools (including those coming from dynamic toolsets like `@agent.toolset(...)`) are not.
 For dynamic function tools, toolset resolution and arg validation also run outside `ctx.run_typed(...)`.
-When `disable_auto_wrapping_tools=True`, the original `event_stream_handler` runs inside the durable model step and may be replayed on retries.
+When `disable_auto_wrapping_tools=True`, the agent-level per-event handler wrapper is disabled and the original `event_stream_handler` is passed through directly.
+Model-stream handler calls still run inside the durable model step and may be replayed on retries.

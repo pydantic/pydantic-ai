@@ -47,6 +47,7 @@ class RestateFastMCPToolset(WrapperToolset[AgentDepsT]):
     def visit_and_replace(
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
     ) -> AbstractToolset[AgentDepsT]:
+        # Restate-wrapped toolsets are sealed after wrapping and should not be replaced.
         return self
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:

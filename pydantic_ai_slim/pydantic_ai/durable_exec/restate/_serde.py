@@ -10,6 +10,8 @@ class PydanticTypeAdapter(Serde[T]):
         self._type_adapter = TypeAdapter(model_type)
 
     def deserialize(self, buf: bytes) -> T | None:
+        # `b''` is reserved as the sentinel for `None` in `serialize()` below.
+        # Pydantic JSON payloads are never empty (`null` is `b'null'`), so this is safe.
         if not buf:
             return None
         return self._type_adapter.validate_json(buf)

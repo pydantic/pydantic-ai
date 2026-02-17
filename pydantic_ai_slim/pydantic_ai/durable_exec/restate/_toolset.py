@@ -50,11 +50,13 @@ def unwrap_context_run_result(res: RestateContextRunResult) -> Any:
     elif res.kind == 'approval_required':
         raise ApprovalRequired(metadata=res.metadata)
     elif res.kind == 'model_retry':
-        assert res.error is not None
+        if res.error is None:
+            raise RuntimeError('Invalid tool call result: `error` must be set when `kind` is `model_retry`.')
         raise ModelRetry(res.error)
-    else:
-        assert res.kind == 'output'
+    elif res.kind == 'output':
         return res.output
+    else:
+        raise RuntimeError(f'Invalid tool call result kind: {res.kind!r}')
 
 
 async def wrap_tool_call_result(action: Callable[[], Awaitable[Any]]) -> RestateContextRunResult:
@@ -114,4 +116,5 @@ class RestateContextRunToolset(WrapperToolset[AgentDepsT]):
     def visit_and_replace(
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
     ) -> AbstractToolset[AgentDepsT]:
+        # Restate-wrapped toolsets are sealed after wrapping and should not be replaced.
         return self

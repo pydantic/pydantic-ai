@@ -158,12 +158,12 @@ async def test_restate_model_wrapper_request_and_request_stream_errors():
     assert fake_ctx.calls == ['Model call']
     assert res.parts
 
-    with pytest.raises(UserError, match='requires a `run_context`'):
+    with pytest.raises(TerminalError, match='requires a `run_context`'):
         async with wrapped.request_stream([], None, mrp, run_context=None):
             pass
 
     ctx = _run_ctx()
-    with pytest.raises(UserError, match='requires an `event_stream_handler`'):
+    with pytest.raises(TerminalError, match='requires an `event_stream_handler`'):
         async with wrapped.request_stream([], None, mrp, run_context=ctx):
             pass
 
@@ -366,12 +366,10 @@ async def test_restate_agent_restrictions():
 
 @pytest.mark.anyio
 async def test_restate_mcp_server_wrapping_and_agent_mcp_wrapping():
-    from pydantic_ai.durable_exec.restate._mcp_server import RestateMCPServer
+    pytest.importorskip('pydantic_ai.mcp')
 
-    try:
-        from pydantic_ai.mcp import MCPServer
-    except ImportError:  # pragma: no cover
-        pytest.skip('mcp not installed')
+    from pydantic_ai.durable_exec.restate._mcp_server import RestateMCPServer
+    from pydantic_ai.mcp import MCPServer
 
     # Create a minimal concrete MCPServer that doesn't actually connect anywhere.
     class FakeMCPServer(MCPServer):
@@ -850,13 +848,7 @@ async def test_restate_agent_disable_auto_wrapping_tools_does_not_wrap_dynamic_f
 
 
 @pytest.mark.anyio
-async def test_restate_agent_properties_and_wrapped_event_handler_noop():
-    from pydantic_ai.messages import AgentStreamEvent
-
-    async def empty_stream() -> AsyncIterable[AgentStreamEvent]:
-        if False:  # pragma: no cover
-            yield
-
+async def test_restate_agent_properties_without_event_handler():
     fake_ctx = FakeRestateContext()
     agent = Agent(TestModel(call_tools=[]))
     restate_agent = RestateAgent(agent, fake_ctx)
@@ -866,7 +858,8 @@ async def test_restate_agent_properties_and_wrapped_event_handler_noop():
     _ = restate_agent.toolsets
 
     assert restate_agent.event_stream_handler is None
-    await cast(Any, restate_agent)._wrapped_event_stream_handler(_run_ctx(), empty_stream())
+    await restate_agent.run('go')
+    assert not any(call.startswith('handle event: ') for call in fake_ctx.calls)
 
 
 @pytest.mark.anyio

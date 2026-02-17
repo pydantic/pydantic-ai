@@ -122,6 +122,8 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     @contextmanager
     def _restate_overrides(self) -> Iterator[None]:
         with (
+            # Function tools are already included in `self._toolsets` (wrapped where needed),
+            # so pass `tools=[]` to avoid double-registration from the wrapped agent.
             super().override(model=self._restate_model, toolsets=self._toolsets, tools=[]),
             # Restate tool calls use `ctx.run_typed(...)`, which should not be executed concurrently within a handler.
             self.parallel_tool_call_execution_mode('sequential'),
@@ -149,7 +151,8 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[AgentStreamEvent]
     ) -> None:
         handler = self._event_stream_handler or super().event_stream_handler
-        if handler is None:
+        # `_wrapped_event_stream_handler` is only used when a handler exists.
+        if handler is None:  # pragma: no cover
             return
         async for event in stream:
             event_kind = event.event_kind

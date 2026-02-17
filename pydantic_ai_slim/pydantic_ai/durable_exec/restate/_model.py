@@ -89,13 +89,13 @@ class RestateModelWrapper(WrapperModel):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         if run_context is None:
-            raise UserError(
+            raise TerminalError(
                 'A model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
             )
 
         fn = self._event_stream_handler
         if fn is None:
-            raise UserError(
+            raise TerminalError(
                 'A Restate model requires an `event_stream_handler` to be set on `RestateAgent` at creation time. '
                 'Set `event_stream_handler=...` on the agent and use `agent.run()` instead.'
             )
