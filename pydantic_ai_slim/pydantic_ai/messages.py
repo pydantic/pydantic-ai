@@ -1185,7 +1185,7 @@ class FilePart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass(repr=False)
+@pydantic_dataclass(repr=False)
 class BaseToolCallPart:
     """A tool call from a model."""
 
@@ -1227,7 +1227,9 @@ class BaseToolCallPart:
     When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
-    otel_metadata: _otel_messages.ToolCallPartOtelMetadata | None = field(default=None, init=False, repr=False)
+    otel_metadata: Annotated[
+        _otel_messages.ToolCallPartOtelMetadata | None, pydantic.Field(default=None, exclude=True)
+    ] = field(default=None, init=False, repr=False, compare=False)
     """Metadata from the tool definition to include in OpenTelemetry tool call events.
 
     This is populated by the instrumentation layer from [`ToolDefinition.metadata`][pydantic_ai.tools.ToolDefinition.metadata]
