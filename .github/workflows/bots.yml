@@ -150,10 +150,7 @@ jobs:
     needs: [size-label, category-label]
     if: >-
       !failure() && !cancelled() &&
-      (
-        (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'auto-review')) ||
-        (github.event.action == 'labeled' && github.event.label.name == 'auto-review')
-      )
+      github.event.action == 'labeled' && github.event.label.name == 'auto-review'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

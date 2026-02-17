@@ -100,6 +100,34 @@ def test_restate_agent_cannot_wrap_restate_agent():
 
 
 @pytest.mark.anyio
+async def test_restate_agent_context_manager_is_noop():
+    class InstrumentedFunctionToolset(FunctionToolset[Any]):
+        def __init__(self, *args: Any, **kwargs: Any):
+            super().__init__(*args, **kwargs)
+            self.enter_calls = 0
+            self.exit_calls = 0
+
+        async def __aenter__(self):
+            self.enter_calls += 1
+            return await super().__aenter__()
+
+        async def __aexit__(self, *args: Any) -> bool | None:
+            self.exit_calls += 1
+            return await super().__aexit__(*args)
+
+    toolset = InstrumentedFunctionToolset(id='instrumented')
+    fake_ctx = FakeRestateContext()
+    agent = Agent(TestModel(call_tools=[]), toolsets=[toolset])
+    restate_agent = RestateAgent(agent, fake_ctx)
+
+    async with restate_agent as entered:
+        assert entered is restate_agent
+
+    assert toolset.enter_calls == 0
+    assert toolset.exit_calls == 0
+
+
+@pytest.mark.anyio
 async def test_fake_restate_context_run_typed_sync_fn():
     fake_ctx = FakeRestateContext()
     result = await fake_ctx.run_typed('sync', lambda: 'ok')

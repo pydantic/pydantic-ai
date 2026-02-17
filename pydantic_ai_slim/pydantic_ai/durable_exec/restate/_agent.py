@@ -137,6 +137,14 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     def restate_context(self) -> Context:
         return self._restate_context
 
+    async def __aenter__(self) -> AbstractAgent[AgentDepsT, OutputDataT]:
+        """No-op: entering wrapped toolsets outside durable steps breaks Restate guarantees."""
+        return self
+
+    async def __aexit__(self, *args: Any) -> bool | None:
+        """No-op: toolset cleanup should happen inside durable steps."""
+        return None
+
     @property
     def model(self) -> models.Model | models.KnownModelName | str | None:
         return self._restate_model
