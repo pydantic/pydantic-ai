@@ -4840,6 +4840,15 @@ async def test_uploaded_file_wrong_provider(allow_model_requests: None):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')])
 
 
+async def test_uploaded_file_invalid_file_id(allow_model_requests: None):
+    """Test that UploadedFile with a non-URI file_id raises an error in GoogleModel."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='must use a file URI from the Google Files API'):
+        await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='google-gla')])
+
+
 async def test_uploaded_file_with_vendor_metadata():
     """Test that UploadedFile with vendor_metadata includes video_metadata."""
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
