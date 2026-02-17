@@ -3058,7 +3058,7 @@ async def test_docker_process_returncode_from_inspect() -> None:
         pytest.skip('docker package not installed')
 
     container = MockContainer()
-    container.client.api.exec_inspect.return_value = {'ExitCode': 42}
+    container.client.api.exec_inspect.return_value = {'ExitCode': 42, 'Running': False}
     proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
     proc._exec_id = 'exec-123'
 
@@ -3067,14 +3067,15 @@ async def test_docker_process_returncode_from_inspect() -> None:
 
 
 async def test_docker_process_returncode_still_running() -> None:
-    """DockerSandboxProcess.returncode returns None when process is running."""
+    """DockerSandboxProcess.returncode returns None when process is running (ExitCode=0, Running=True)."""
     try:
         from pydantic_ai.environments.docker import DockerSandboxProcess
     except ImportError:
         pytest.skip('docker package not installed')
 
     container = MockContainer()
-    container.client.api.exec_inspect.return_value = {'ExitCode': -1}
+    # Docker returns ExitCode=0 + Running=True for still-running processes
+    container.client.api.exec_inspect.return_value = {'ExitCode': 0, 'Running': True}
     proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
     proc._exec_id = 'exec-123'
 
@@ -3843,11 +3844,11 @@ async def test_docker_process_wait_poll_loop() -> None:
         pytest.skip('docker package not installed')
 
     container = MockContainer()
-    # First call returns running (-1), second returns exit code
+    # First two calls return still running, third returns exited
     container.client.api.exec_inspect.side_effect = [
-        {'ExitCode': -1},
-        {'ExitCode': -1},
-        {'ExitCode': 0},
+        {'ExitCode': 0, 'Running': True},
+        {'ExitCode': 0, 'Running': True},
+        {'ExitCode': 0, 'Running': False},
     ]
     proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
     proc._exec_id = 'exec-poll'

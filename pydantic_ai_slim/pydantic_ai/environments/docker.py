@@ -234,7 +234,7 @@ class DockerSandboxProcess(ExecutionProcess):
             client: Any = self._container.client
             info = client.api.exec_inspect(self._exec_id)
             rc = info.get('ExitCode')
-            if rc is not None and rc != -1:  # -1 means still running in docker
+            if not info.get('Running', False) and rc is not None:
                 self._returncode = rc
                 return rc
         except (DockerException, OSError):

@@ -287,7 +287,9 @@ class ExecutionEnvironment(ABC):
 
         Args:
             command: The shell command to execute.
-            timeout: Maximum seconds to wait for completion. None means no timeout.
+            timeout: Maximum seconds to wait for completion.
+                Pass `None` to disable the timeout. Must be a positive number
+                when set; behavior for zero or negative values is undefined.
             env: Additional environment variables for this command.
                 Merged with (and overrides) any baseline environment variables.
 
