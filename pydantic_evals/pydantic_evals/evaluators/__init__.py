@@ -31,7 +31,6 @@ __all__ = (
     'EvaluatorFailure',
     'EvaluatorOutput',
     'EvaluatorSpec',
-    'EvaluationReason',
     'EvaluationResult',
     # report evaluators
     'ReportEvaluator',

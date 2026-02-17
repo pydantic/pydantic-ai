@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Iterator
+from contextlib import aclosing
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -283,22 +284,23 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     yield '\n\n', event.index
                     last_text_index = None
 
-        async def _stream_text_deltas() -> AsyncIterator[str]:
+        async def _stream_text_deltas() -> AsyncGenerator[str, None]:
             async with _utils.group_by_temporal(_stream_text_deltas_ungrouped(), debounce_by) as group_iter:
                 async for items in group_iter:
                     # Note: we are currently just dropping the part index on the group here
                     yield ''.join([content for content, _ in items])
 
-        if delta:
-            async for text in _stream_text_deltas():
-                yield text
-        else:
-            # a quick benchmark shows it's faster to build up a string with concat when we're
-            # yielding at each step
-            deltas: list[str] = []
-            async for text in _stream_text_deltas():
-                deltas.append(text)
-                yield ''.join(deltas)
+        async with aclosing(_stream_text_deltas()) as deltas_iter:
+            if delta:
+                async for text in deltas_iter:
+                    yield text
+            else:
+                # a quick benchmark shows it's faster to build up a string with concat when we're
+                # yielding at each step
+                deltas: list[str] = []
+                async for text in deltas_iter:
+                    deltas.append(text)
+                    yield ''.join(deltas)
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Stream [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""
