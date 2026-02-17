@@ -42,7 +42,7 @@ async def test_parallel_execution_gather(code_runtime: CodeRuntime):
     def slow_op(name: str) -> str:
         return f'done:{name}'
 
-    code = 'import asyncio\nresults = await asyncio.gather(slow_op(name="a"), slow_op(name="b"))\nlist(results)'
+    code = 'results = await asyncio.gather(slow_op(name="a"), slow_op(name="b"))\nlist(results)'
     result = await run_code_with_tools(code, code_runtime, (slow_op, False))
     assert result == ['done:a', 'done:b']
 

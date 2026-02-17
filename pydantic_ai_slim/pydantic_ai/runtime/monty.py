@@ -74,7 +74,7 @@ class MontyRuntime(CodeRuntime):
             The final output of the code execution.
         """
         try:
-            monty = Monty(code=code, external_functions=list(functions))
+            monty = Monty(code=f'import asyncio\n{code}', external_functions=list(functions))
             monty.type_check(self._build_type_check_prefix(list(functions.values()), referenced_types))
         except MontyTypingError as e:
             raise CodeTypingError(e.display(format='concise')) from e
