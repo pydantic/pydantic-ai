@@ -636,7 +636,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                             message = f"Content filter triggered. Block reason: '{reason}'"
                         elif refusal := details.get('refusal'):
                             message = f'Content filter triggered. Refusal: {refusal!r}'
-                        else:
+                        else:  # pragma: no cover
                             message = 'Content filter triggered.'
 
                         raise exceptions.ContentFilterError(message, body=body)
