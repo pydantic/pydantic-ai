@@ -5258,7 +5258,7 @@ async def test_anthropic_web_fetch_tool_with_parameters():
     )
 
     # Get tools from model
-    tools, _, _ = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+    tools, _, _, _ = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
 
     # Find the web_fetch tool
     web_fetch_tool_param = next((t for t in tools if t.get('name') == 'web_fetch'), None)
@@ -5291,7 +5291,7 @@ async def test_anthropic_web_fetch_tool_domain_filtering():
     )
 
     # Get tools from model
-    tools, _, _ = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+    tools, _, _, _ = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
 
     # Find the web_fetch tool
     web_fetch_tool_param = next((t for t in tools if t.get('name') == 'web_fetch'), None)
@@ -5300,6 +5300,123 @@ async def test_anthropic_web_fetch_tool_domain_filtering():
     # Verify blocked_domains is passed correctly
     assert web_fetch_tool_param.get('blocked_domains') == ['private.example.com', 'internal.example.com']
     assert web_fetch_tool_param.get('allowed_domains') is None
+
+
+async def test_anthropic_code_execution_tool_with_file_ids():
+    """Test that CodeExecutionTool with file_ids adds container_upload blocks and files-api beta."""
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    # Create a model instance
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key='test-key'))
+
+    # Create CodeExecutionTool with file_ids
+    code_exec_tool = CodeExecutionTool(file_ids=['file_123', 'file_456'])
+
+    model_request_parameters = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[code_exec_tool],
+        output_tools=[],
+    )
+
+    # Get tools from model
+    tools, _, betas, container_file_ids = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+
+    # Verify code_execution tool is present
+    code_exec_tool_param = next((t for t in tools if t.get('name') == 'code_execution'), None)
+    assert code_exec_tool_param is not None
+    assert code_exec_tool_param.get('type') == 'code_execution_20250825'
+
+    # Verify betas include both code execution and files API
+    assert 'code-execution-2025-08-25' in betas
+    assert 'files-api-2025-04-14' in betas
+
+    # Verify file_ids are returned
+    assert container_file_ids == ['file_123', 'file_456']
+
+
+async def test_anthropic_code_execution_tool_without_file_ids():
+    """Test that CodeExecutionTool without file_ids doesn't add files-api beta."""
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    # Create a model instance
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key='test-key'))
+
+    # Create CodeExecutionTool without file_ids
+    code_exec_tool = CodeExecutionTool()
+
+    model_request_parameters = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[code_exec_tool],
+        output_tools=[],
+    )
+
+    # Get tools from model
+    tools, _, betas, container_file_ids = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+
+    # Verify code_execution tool is present
+    code_exec_tool_param = next((t for t in tools if t.get('name') == 'code_execution'), None)
+    assert code_exec_tool_param is not None
+
+    # Verify only code execution beta is present, not files API
+    assert 'code-execution-2025-08-25' in betas
+    assert 'files-api-2025-04-14' not in betas
+
+    # Verify no file_ids are returned
+    assert container_file_ids == []
+
+
+async def test_anthropic_container_upload_blocks_in_messages():
+    """Test that container_upload blocks are added to the first user message."""
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    # Create a model instance
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key='test-key'))
+
+    model_request_parameters = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[],
+        output_tools=[],
+    )
+
+    model_settings = AnthropicModelSettings()
+
+    # Create test messages
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Test message')])]
+
+    # Call _map_message with file_ids
+    _, anthropic_messages = await m._map_message(  # pyright: ignore[reportPrivateUsage]
+        messages, model_request_parameters, model_settings, container_file_ids=['file_abc', 'file_xyz']
+    )
+
+    # Verify container_upload blocks are in the user message content
+    assert len(anthropic_messages) == 1
+    user_message = anthropic_messages[0]
+    assert user_message['role'] == 'user'
+
+    content = user_message['content']
+    assert isinstance(content, list)
+
+    # Should have: 2 container_upload blocks + text block
+    assert len(content) == 3
+
+    # First two should be container_upload blocks (prepended before user content)
+    upload_block_1 = content[0]
+    assert isinstance(upload_block_1, dict)
+    assert upload_block_1['type'] == 'container_upload'
+    assert upload_block_1['file_id'] == 'file_abc'
+    upload_block_2 = content[1]
+    assert isinstance(upload_block_2, dict)
+    assert upload_block_2['type'] == 'container_upload'
+    assert upload_block_2['file_id'] == 'file_xyz'
+
+    # Last should be the text
+    text_block = content[2]
+    assert isinstance(text_block, dict)
+    assert text_block['type'] == 'text'
+    assert text_block['text'] == 'Test message'
 
 
 @pytest.mark.vcr()
