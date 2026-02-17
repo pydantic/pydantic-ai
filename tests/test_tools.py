@@ -2141,9 +2141,7 @@ def test_unapproved_tool_invalid_args_retry():
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            return ModelResponse(
-                parts=[ToolCallPart('my_tool', {'x': 'not_an_int'}, tool_call_id='t1')]
-            )
+            return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 'not_an_int'}, tool_call_id='t1')])
         else:
             return ModelResponse(parts=[TextPart('done')])
 
@@ -2170,9 +2168,7 @@ def test_unapproved_tool_invalid_args_max_retries_exceeded():
     """Test that invalid args on an unapproved tool raises UnexpectedModelBehavior when retries exhausted."""
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(
-            parts=[ToolCallPart('my_tool', {'x': 'not_an_int'}, tool_call_id='t1')]
-        )
+        return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 'not_an_int'}, tool_call_id='t1')])
 
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
@@ -2180,7 +2176,7 @@ def test_unapproved_tool_invalid_args_max_retries_exceeded():
     def my_tool(x: int) -> int:
         return x  # pragma: no cover
 
-    with pytest.raises(UnexpectedModelBehavior, match="exceeded max retries count of 0"):
+    with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 0'):
         agent.run_sync('test')
 
 
