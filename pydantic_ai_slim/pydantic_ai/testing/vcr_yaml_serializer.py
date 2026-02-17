@@ -104,7 +104,7 @@ class _LiteralDumper(Dumper):
     """A custom dumper that will represent multi-line strings using literal style."""
 
 
-def _str_presenter(dumper: Dumper, data: str):
+def _str_presenter(dumper: Dumper, data: str) -> yaml.ScalarNode:
     """If the string contains newlines, represent it as a literal block."""
     if '\n' in data:
         return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='|')
