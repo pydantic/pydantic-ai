@@ -1172,6 +1172,14 @@ def infer_model(  # noqa: C901
 
         return OpenAIResponsesModel(model_name, provider=provider)
     elif model_kind in ('google', 'google-gla', 'google-vertex'):
+        # Claude models on google-vertex via gateway need Anthropic format
+        if model_kind == 'google-vertex' and provider_name.startswith('gateway/') and model_name.startswith('claude'):
+            from ..providers.gateway import gateway_provider as _gw_provider
+            from .anthropic import AnthropicModel
+
+            anthropic_provider = _gw_provider('anthropic', route='google-vertex')
+            return AnthropicModel(model_name, provider=anthropic_provider)
+
         from .google import GoogleModel
 
         return GoogleModel(model_name, provider=provider)

@@ -196,6 +196,29 @@ async def test_gateway_provider_routing_group(gateway_api_key: str):
     assert provider.client.base_url.path.endswith('/potato/')
 
 
+@patch.dict(
+    os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL}
+)
+def test_infer_model_gateway_vertex_claude_returns_anthropic_model():
+    """Claude models on gateway/google-vertex should use AnthropicModel with the google-vertex route."""
+    from pydantic_ai.models import infer_model
+
+    model = infer_model('gateway/google-vertex:claude-sonnet-4')
+    assert isinstance(model, AnthropicModel)
+    assert 'google-vertex' in model._provider.base_url  # type: ignore[reportPrivateUsage]
+
+
+@patch.dict(
+    os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL}
+)
+def test_infer_model_gateway_vertex_gemini_returns_google_model():
+    """Gemini models on gateway/google-vertex should still use GoogleModel."""
+    from pydantic_ai.models import infer_model
+
+    model = infer_model('gateway/google-vertex:gemini-2.5-flash')
+    assert isinstance(model, GoogleModel)
+
+
 @pytest.mark.parametrize(
     'api_key, expected_base_url',
     [
