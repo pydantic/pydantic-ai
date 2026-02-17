@@ -37,8 +37,8 @@ async def test_type_error_raises_model_retry():
 
     assert str(exc_info.value) == snapshot("""\
 Type error in generated code:
-main.py:1:5: error[invalid-argument-type] Argument to function `add` is incorrect: Expected `int`, found `Literal["hello"]`
-main.py:1:16: error[invalid-argument-type] Argument to function `add` is incorrect: Expected `int`, found `Literal["world"]`
+main.py:2:5: error[invalid-argument-type] Argument to function `add` is incorrect: Expected `int`, found `Literal["hello"]`
+main.py:2:16: error[invalid-argument-type] Argument to function `add` is incorrect: Expected `int`, found `Literal["world"]`
 """)
 
 
@@ -244,7 +244,7 @@ async def test_monty_syntax_error_message():
 
     assert str(exc_info.value) == snapshot("""\
 Syntax error in generated code:
-Expected an identifier, but found a keyword `while` that cannot be used here at byte range 4..9\
+Expected an identifier, but found a keyword `while` that cannot be used here at byte range 19..24\
 """)
 
 
