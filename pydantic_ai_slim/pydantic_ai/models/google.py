@@ -523,9 +523,10 @@ class GoogleModel(Model):
         if self.profile.supports_image_output:
             modalities.append(Modality.IMAGE.value)
 
-        http_options: HttpOptionsDict = {
-            'headers': {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
-        }
+        headers: dict[str, str] = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
+        if extra_headers := model_settings.get('extra_headers'):
+            headers.update(extra_headers)
+        http_options: HttpOptionsDict = {'headers': headers}
         if timeout := model_settings.get('timeout'):
             if isinstance(timeout, int | float):
                 http_options['timeout'] = int(1000 * timeout)
@@ -558,17 +559,14 @@ class GoogleModel(Model):
         return contents, config
 
     def _process_response(self, response: GenerateContentResponse) -> ModelResponse:
-        if not response.candidates:
-            raise UnexpectedModelBehavior('Expected at least one candidate in Gemini response')  # pragma: no cover
-
-        candidate = response.candidates[0]
+        candidate = response.candidates[0] if response.candidates else None
 
         vendor_id = response.response_id
         finish_reason: FinishReason | None = None
         vendor_details: dict[str, Any] = {}
 
-        raw_finish_reason = candidate.finish_reason
-        if raw_finish_reason:  # pragma: no branch
+        raw_finish_reason = candidate.finish_reason if candidate else None
+        if raw_finish_reason and candidate:  # pragma: no branch
             vendor_details = {'finish_reason': raw_finish_reason.value}
             # Add safety ratings to provider details
             if candidate.safety_ratings:
@@ -578,15 +576,18 @@ class GoogleModel(Model):
         if response.create_time is not None:  # pragma: no branch
             vendor_details['timestamp'] = response.create_time
 
-        if candidate.content is None or candidate.content.parts is None:
+        if candidate is None or candidate.content is None or candidate.content.parts is None:
             parts = []
         else:
             parts = candidate.content.parts or []
 
         usage = _metadata_as_usage(response, provider=self._provider.name, provider_url=self._provider.base_url)
+        grounding_metadata = candidate.grounding_metadata if candidate else None
+        url_context_metadata = candidate.url_context_metadata if candidate else None
+
         return _process_response_from_parts(
             parts,
-            candidate.grounding_metadata,
+            grounding_metadata,
             response.model_version or self._model_name,
             self._provider.name,
             self._provider.base_url,
@@ -594,7 +595,7 @@ class GoogleModel(Model):
             vendor_id=vendor_id,
             vendor_details=vendor_details or None,
             finish_reason=finish_reason,
-            url_context_metadata=candidate.url_context_metadata,
+            url_context_metadata=url_context_metadata,
         )
 
     async def _process_streamed_response(
@@ -662,7 +663,7 @@ class GoogleModel(Model):
                 # We build `message_parts` first, then split into multiple content objects whenever we transition
                 # between function_response and non-function_response parts.
                 #
-                # TODO: Remove workaround when https://github.com/pydantic/pydantic-ai/issues/3763 is resolved
+                # TODO: Remove workaround when https://github.com/pydantic/pydantic-ai/issues/4210 is resolved
                 if message_parts:
                     content_parts: list[PartDict] = []
 
@@ -685,9 +686,10 @@ class GoogleModel(Model):
             else:
                 assert_never(m)
 
-        # Google GenAI requires at least one part in the message.
-        if not contents:
-            contents = [{'role': 'user', 'parts': [{'text': ''}]}]
+        # Google GenAI requires at least one user part in the message, and that function call turns
+        # come immediately after a user turn or after a function response turn.
+        if not contents or contents[0].get('role') == 'model':  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+            contents.insert(0, {'role': 'user', 'parts': [{'text': ''}]})
 
         if instructions := self._get_instructions(messages, model_request_parameters):
             system_parts.append({'text': instructions})

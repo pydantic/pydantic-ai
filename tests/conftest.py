@@ -520,7 +520,7 @@ def bedrock_provider():
             )
             yield provider
             provider.client.close()
-        else:
+        else:  # pragma: lax no cover
             bedrock_client = boto3.client(
                 'bedrock-runtime',
                 region_name=os.getenv('AWS_REGION', 'us-east-1'),
@@ -668,3 +668,27 @@ def mock_snapshot_id(mocker: MockerFixture):
         return f'{node_id}:{i}'
 
     return mocker.patch('pydantic_graph.nodes.generate_snapshot_id', side_effect=generate_snapshot_id)
+
+
+@pytest.fixture
+def disable_ssrf_protection_for_vcr():
+    """Disable SSRF protection for VCR compatibility.
+
+    VCR cassettes record requests with the original hostname. Since SSRF protection
+    resolves hostnames to IPs before making requests, we need to disable the validation
+    for VCR tests to match the pre-recorded cassettes.
+
+    This fixture patches validate_and_resolve_url to return the hostname in place
+    of the resolved IP, allowing the request URL to use the original hostname.
+    """
+    from unittest.mock import patch
+
+    from pydantic_ai._ssrf import ResolvedUrl, extract_host_and_port
+
+    async def mock_validate_and_resolve(url: str, allow_local: bool) -> ResolvedUrl:
+        hostname, path, port, is_https = extract_host_and_port(url)
+        # Return hostname in place of resolved IP - this allows VCR matching
+        return ResolvedUrl(resolved_ip=hostname, hostname=hostname, port=port, is_https=is_https, path=path)
+
+    with patch('pydantic_ai._ssrf.validate_and_resolve_url', mock_validate_and_resolve):
+        yield
