@@ -6,11 +6,13 @@ Runs commands directly on the host machine within a specified root directory.
 
 from __future__ import annotations
 
-import asyncio
 import re
+import subprocess
 from pathlib import Path
 from typing import Any, Literal
 
+import anyio
+import anyio.abc
 from typing_extensions import Self
 
 from ._base import (
@@ -26,33 +28,40 @@ from ._base import (
 
 
 class LocalEnvironmentProcess(ExecutionProcess):
-    """Interactive process backed by `asyncio.subprocess`."""
+    """Interactive process backed by `anyio.abc.Process`."""
 
-    def __init__(self, proc: asyncio.subprocess.Process) -> None:
+    def __init__(self, proc: anyio.abc.Process) -> None:
         self._proc = proc
 
     async def send(self, data: bytes) -> None:
         stdin = self._proc.stdin
         if stdin is None:
             raise RuntimeError('Process stdin is not available.')
-        stdin.write(data)
-        await stdin.drain()
+        await stdin.send(data)
 
     async def recv(self, timeout: float | None = None) -> bytes:
         stdout = self._proc.stdout
         if stdout is None:
             raise RuntimeError('Process stdout is not available.')
-        if timeout is not None:
-            return await asyncio.wait_for(stdout.read(8192), timeout=timeout)
-        return await stdout.read(8192)
+        try:
+            if timeout is not None:
+                with anyio.fail_after(timeout):
+                    return await stdout.receive(8192)
+            return await stdout.receive(8192)
+        except anyio.EndOfStream:
+            return b''
 
     async def recv_stderr(self, timeout: float | None = None) -> bytes:
         stderr = self._proc.stderr
         if stderr is None:
             raise RuntimeError('Process stderr is not available.')
-        if timeout is not None:
-            return await asyncio.wait_for(stderr.read(8192), timeout=timeout)
-        return await stderr.read(8192)
+        try:
+            if timeout is not None:
+                with anyio.fail_after(timeout):
+                    return await stderr.receive(8192)
+            return await stderr.receive(8192)
+        except anyio.EndOfStream:
+            return b''
 
     @property
     def returncode(self) -> int | None:
@@ -60,19 +69,16 @@ class LocalEnvironmentProcess(ExecutionProcess):
 
     async def wait(self, timeout: float | None = None) -> int:
         if timeout is not None:
-            await asyncio.wait_for(self._proc.wait(), timeout=timeout)
-        else:
-            await self._proc.wait()
-        rc = self._proc.returncode
-        assert rc is not None
-        return rc
+            with anyio.fail_after(timeout):
+                return await self._proc.wait()
+        return await self._proc.wait()
 
     async def kill(self) -> None:
         try:
             self._proc.kill()
         except ProcessLookupError:
             pass
-        await self._proc.wait()
+        await self._proc.aclose()
 
 
 class LocalEnvironment(ExecutionEnvironment):
@@ -143,11 +149,11 @@ class LocalEnvironment(ExecutionEnvironment):
         *,
         env: dict[str, str] | None = None,
     ) -> ExecutionProcess:
-        proc = await asyncio.create_subprocess_shell(
+        proc = await anyio.open_process(
             command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             cwd=self._root_dir,
             env=self._build_env(env),
         )
@@ -161,33 +167,35 @@ class LocalEnvironment(ExecutionEnvironment):
         env: dict[str, str] | None = None,
     ) -> ExecuteResult:
         """Execute a command using subprocess for simplicity and reliability."""
-        proc = await asyncio.create_subprocess_shell(
-            command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            cwd=self._root_dir,
-            env=self._build_env(env),
-        )
         try:
             if timeout is not None:
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+                with anyio.fail_after(timeout):
+                    completed = await anyio.run_process(
+                        command,
+                        stderr=subprocess.STDOUT,
+                        cwd=self._root_dir,
+                        env=self._build_env(env),
+                        check=False,
+                    )
             else:
-                stdout, _ = await proc.communicate()
-        except (
-            TimeoutError,
-            asyncio.TimeoutError,
-        ):  # asyncio.TimeoutError is not a subclass of TimeoutError on Python 3.10
-            proc.kill()
-            await proc.wait()
+                completed = await anyio.run_process(
+                    command,
+                    stderr=subprocess.STDOUT,
+                    cwd=self._root_dir,
+                    env=self._build_env(env),
+                    check=False,
+                )
+        except TimeoutError:
             return ExecuteResult(output='[Command timed out]', exit_code=-1)
 
+        stdout = completed.stdout or b''
         output = stdout.decode('utf-8', errors='replace')
         truncated = len(output) > MAX_OUTPUT_CHARS
         if truncated:
             output = output[:MAX_OUTPUT_CHARS]
         return ExecuteResult(
             output=output,
-            exit_code=proc.returncode if proc.returncode is not None else 0,
+            exit_code=completed.returncode,
             truncated=truncated,
         )
 

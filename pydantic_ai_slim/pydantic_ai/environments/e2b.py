@@ -17,9 +17,10 @@ unknown member types, etc.) that cannot be worked around without pervasive casts
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any, Literal
 
+import anyio
+from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from typing_extensions import Self
 
 from ._base import (
@@ -54,15 +55,19 @@ class E2BSandboxProcess(ExecutionProcess):
         self._command = command
         self._env = env
         self._proc: Any = None
-        self._stdout_queue: asyncio.Queue[bytes] = asyncio.Queue()
-        self._stderr_queue: asyncio.Queue[bytes] = asyncio.Queue()
+        self._stdout_send: MemoryObjectSendStream[bytes]
+        self._stdout_recv: MemoryObjectReceiveStream[bytes]
+        self._stdout_send, self._stdout_recv = anyio.create_memory_object_stream[bytes](max_buffer_size=float('inf'))
+        self._stderr_send: MemoryObjectSendStream[bytes]
+        self._stderr_recv: MemoryObjectReceiveStream[bytes]
+        self._stderr_send, self._stderr_recv = anyio.create_memory_object_stream[bytes](max_buffer_size=float('inf'))
         self._returncode: int | None = None
 
     async def _start(self) -> None:
         """Start the command in the sandbox (called from __aenter__)."""
         kwargs: dict[str, Any] = {
-            'on_stdout': lambda data: self._stdout_queue.put_nowait(data.line.encode() + b'\n'),
-            'on_stderr': lambda data: self._stderr_queue.put_nowait(data.line.encode() + b'\n'),
+            'on_stdout': lambda data: self._stdout_send.send_nowait(data.line.encode() + b'\n'),
+            'on_stderr': lambda data: self._stderr_send.send_nowait(data.line.encode() + b'\n'),
             'on_exit': lambda exit_code: self._on_exit(exit_code),
         }
         if self._env:
@@ -85,13 +90,15 @@ class E2BSandboxProcess(ExecutionProcess):
 
     async def recv(self, timeout: float | None = None) -> bytes:
         if timeout is not None:
-            return await asyncio.wait_for(self._stdout_queue.get(), timeout=timeout)
-        return await self._stdout_queue.get()
+            with anyio.fail_after(timeout):
+                return await self._stdout_recv.receive()
+        return await self._stdout_recv.receive()
 
     async def recv_stderr(self, timeout: float | None = None) -> bytes:
         if timeout is not None:
-            return await asyncio.wait_for(self._stderr_queue.get(), timeout=timeout)
-        return await self._stderr_queue.get()
+            with anyio.fail_after(timeout):
+                return await self._stderr_recv.receive()
+        return await self._stderr_recv.receive()
 
     @property
     def returncode(self) -> int | None:
@@ -100,11 +107,12 @@ class E2BSandboxProcess(ExecutionProcess):
     async def wait(self, timeout: float | None = None) -> int:
         async def _poll() -> int:
             while self._returncode is None:
-                await asyncio.sleep(0.1)
+                await anyio.sleep(0.1)
             return self._returncode
 
         if timeout is not None:
-            return await asyncio.wait_for(_poll(), timeout=timeout)
+            with anyio.fail_after(timeout):
+                return await _poll()
         return await _poll()
 
     async def kill(self) -> None:

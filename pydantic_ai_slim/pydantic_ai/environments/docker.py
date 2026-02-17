@@ -5,7 +5,6 @@ Requires the `docker` package: `pip install pydantic-ai-slim[docker-sandbox]`
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import io
 import struct
@@ -14,6 +13,8 @@ from collections.abc import Sequence
 from pathlib import PurePosixPath
 from typing import Any, Literal, cast
 
+import anyio
+import anyio.to_thread
 from typing_extensions import Self
 
 from ._base import (
@@ -108,7 +109,6 @@ class DockerSandboxProcess(ExecutionProcess):
 
     async def _start(self) -> None:
         """Start the exec and open the socket (called from __aenter__)."""
-        loop = asyncio.get_running_loop()
 
         def _do_start() -> tuple[str, Any]:
             client: Any = self._container.client
@@ -130,7 +130,7 @@ class DockerSandboxProcess(ExecutionProcess):
             raw = getattr(sock, '_sock', sock)
             return exec_id, raw
 
-        self._exec_id, self._socket = await loop.run_in_executor(None, _do_start)
+        self._exec_id, self._socket = await anyio.to_thread.run_sync(_do_start)
 
     async def __aenter__(self) -> Self:
         if self._exec_id is None:
@@ -138,18 +138,13 @@ class DockerSandboxProcess(ExecutionProcess):
         return self
 
     async def send(self, data: bytes) -> None:
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self._socket.sendall, data)
+        await anyio.to_thread.run_sync(self._socket.sendall, data)
 
     async def recv(self, timeout: float | None = None) -> bytes:
-        loop = asyncio.get_running_loop()
-
-        async def _read() -> bytes:
-            return await loop.run_in_executor(None, self._read_chunk)
-
         if timeout is not None:
-            return await asyncio.wait_for(_read(), timeout=timeout)
-        return await _read()
+            with anyio.fail_after(timeout):
+                return await anyio.to_thread.run_sync(self._read_chunk, abandon_on_cancel=True)
+        return await anyio.to_thread.run_sync(self._read_chunk)
 
     def _read_chunk(self) -> bytes:
         """Read a chunk from the Docker multiplexed stream.
@@ -210,10 +205,11 @@ class DockerSandboxProcess(ExecutionProcess):
                 rc = self.returncode
                 if rc is not None:
                     return rc
-                await asyncio.sleep(0.1)
+                await anyio.sleep(0.1)
 
         if timeout is not None:
-            return await asyncio.wait_for(_poll(), timeout=timeout)
+            with anyio.fail_after(timeout):
+                return await _poll()
         return await _poll()
 
     async def kill(self) -> None:
@@ -287,8 +283,7 @@ class DockerSandbox(ExecutionEnvironment):
         self._container: Container | None = None
 
     async def __aenter__(self) -> Self:
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self._setup)
+        await anyio.to_thread.run_sync(self._setup)
         return self
 
     def _setup(self) -> None:
@@ -354,8 +349,7 @@ class DockerSandbox(ExecutionEnvironment):
 
     async def __aexit__(self, *_args: Any) -> None:
         if self._container is not None:
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, self._teardown)
+            await anyio.to_thread.run_sync(self._teardown)
 
     def _teardown(self) -> None:
         """Stop and remove container (sync, runs in executor)."""
@@ -394,38 +388,32 @@ class DockerSandbox(ExecutionEnvironment):
         env: dict[str, str] | None = None,
     ) -> ExecuteResult:
         """Execute a command in the container."""
-        loop = asyncio.get_running_loop()
 
-        async def _run() -> ExecuteResult:
-            def _exec() -> tuple[int, bytes]:
-                if timeout is not None:
-                    wrapped = f'timeout {int(timeout)} sh -c {shell_escape(command)}'
-                else:
-                    wrapped = command
-                exec_kwargs: dict[str, Any] = {'workdir': self._work_dir}
-                if env:
-                    exec_kwargs['environment'] = env
-                exit_code, output = self.container.exec_run(
-                    ['sh', '-c', wrapped],
-                    **exec_kwargs,
-                )
-                return exit_code, output
+        def _exec() -> tuple[int, bytes]:
+            if timeout is not None:
+                wrapped = f'timeout {int(timeout)} sh -c {shell_escape(command)}'
+            else:
+                wrapped = command
+            exec_kwargs: dict[str, Any] = {'workdir': self._work_dir}
+            if env:
+                exec_kwargs['environment'] = env
+            exit_code, output = self.container.exec_run(
+                ['sh', '-c', wrapped],
+                **exec_kwargs,
+            )
+            return exit_code, output
 
-            exit_code, output_bytes = await loop.run_in_executor(None, _exec)
-            output = output_bytes.decode('utf-8', errors='replace')
-            truncated = len(output) > MAX_OUTPUT_CHARS
-            if truncated:
-                output = output[:MAX_OUTPUT_CHARS]
-            # timeout command returns 124 on timeout
-            if exit_code == 124 and timeout is not None:
-                output += '\n[Command timed out]'
-            return ExecuteResult(output=output, exit_code=exit_code, truncated=truncated)
-
-        return await _run()
+        exit_code, output_bytes = await anyio.to_thread.run_sync(_exec)
+        output = output_bytes.decode('utf-8', errors='replace')
+        truncated = len(output) > MAX_OUTPUT_CHARS
+        if truncated:
+            output = output[:MAX_OUTPUT_CHARS]
+        # timeout command returns 124 on timeout
+        if exit_code == 124 and timeout is not None:
+            output += '\n[Command timed out]'
+        return ExecuteResult(output=output, exit_code=exit_code, truncated=truncated)
 
     async def read_file(self, path: str, *, offset: int = 0, limit: int = 2000) -> str:
-        loop = asyncio.get_running_loop()
-
         def _read() -> str:
             cmd = build_read_file_cmd(path, offset=offset, limit=limit)
             exit_code, output = self.container.exec_run(['sh', '-c', cmd], workdir=self._work_dir)
@@ -433,11 +421,10 @@ class DockerSandbox(ExecutionEnvironment):
                 raise FileNotFoundError(f'File not found or not readable: {path}')
             return output.decode('utf-8', errors='replace')
 
-        return await loop.run_in_executor(None, _read)
+        return await anyio.to_thread.run_sync(_read)
 
     async def read_file_bytes(self, path: str) -> bytes:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._read_file_bytes_sync, path)
+        return await anyio.to_thread.run_sync(self._read_file_bytes_sync, path)
 
     def _read_file_bytes_sync(self, path: str) -> bytes:
         """Read raw file bytes using Docker's get_archive API."""
@@ -454,8 +441,6 @@ class DockerSandbox(ExecutionEnvironment):
             return extracted.read()
 
     async def write_file(self, path: str, content: str | bytes) -> None:
-        loop = asyncio.get_running_loop()
-
         def _write() -> None:
             # Ensure parent directory exists
             parent = str(PurePosixPath(path).parent)
@@ -464,7 +449,7 @@ class DockerSandbox(ExecutionEnvironment):
             data = content.encode('utf-8') if isinstance(content, str) else content
             _put_file(self.container, path, data)
 
-        await loop.run_in_executor(None, _write)
+        await anyio.to_thread.run_sync(_write)
 
     async def edit_file(
         self,
@@ -474,8 +459,6 @@ class DockerSandbox(ExecutionEnvironment):
         *,
         replace_all: bool = False,
     ) -> int:
-        loop = asyncio.get_running_loop()
-
         def _edit() -> int:
             raw = self._read_file_bytes_sync(path)
             text = raw.decode('utf-8')
@@ -483,11 +466,9 @@ class DockerSandbox(ExecutionEnvironment):
             _put_file(self.container, path, new_text.encode('utf-8'))
             return count
 
-        return await loop.run_in_executor(None, _edit)
+        return await anyio.to_thread.run_sync(_edit)
 
     async def ls(self, path: str = '.') -> list[FileInfo]:
-        loop = asyncio.get_running_loop()
-
         def _ls() -> list[FileInfo]:
             cmd = f'ls -la {shell_escape(path)}'
             exit_code, output = self.container.exec_run(['sh', '-c', cmd], workdir=self._work_dir)
@@ -512,17 +493,15 @@ class DockerSandbox(ExecutionEnvironment):
                 entries.append(FileInfo(name=name, path=entry_path, is_dir=is_dir, size=size))
             return entries
 
-        return await loop.run_in_executor(None, _ls)
+        return await anyio.to_thread.run_sync(_ls)
 
     async def glob(self, pattern: str, *, path: str = '.') -> list[str]:
-        loop = asyncio.get_running_loop()
-
         def _glob() -> list[str]:
             cmd = build_glob_cmd(pattern, path=path)
             _, output = self.container.exec_run(['sh', '-c', cmd], workdir=self._work_dir)
             return parse_glob_output(output.decode('utf-8', errors='replace'))
 
-        return await loop.run_in_executor(None, _glob)
+        return await anyio.to_thread.run_sync(_glob)
 
     async def grep(
         self,
@@ -532,8 +511,6 @@ class DockerSandbox(ExecutionEnvironment):
         glob_pattern: str | None = None,
         output_mode: Literal['content', 'files_with_matches', 'count'] = 'content',
     ) -> str:
-        loop = asyncio.get_running_loop()
-
         def _grep() -> str:
             cmd = build_grep_cmd(pattern, path=path, glob_pattern=glob_pattern, output_mode=output_mode)
             _, output = self.container.exec_run(['sh', '-c', cmd], workdir=self._work_dir)
@@ -542,7 +519,7 @@ class DockerSandbox(ExecutionEnvironment):
                 text = filter_grep_count_output(text)
             return text
 
-        return await loop.run_in_executor(None, _grep)
+        return await anyio.to_thread.run_sync(_grep)
 
     @property
     def system_prompt(self) -> str:
@@ -560,7 +537,6 @@ class DockerSandbox(ExecutionEnvironment):
         """
         if self._container is None:
             return False
-        loop = asyncio.get_running_loop()
 
         def _check() -> bool:
             assert self._container is not None
@@ -570,4 +546,4 @@ class DockerSandbox(ExecutionEnvironment):
             except Exception:
                 return False
 
-        return await loop.run_in_executor(None, _check)
+        return await anyio.to_thread.run_sync(_check)
