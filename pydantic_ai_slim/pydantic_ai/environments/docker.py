@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import math
 import struct
 import tarfile
 from collections.abc import Sequence
@@ -78,7 +79,10 @@ def _config_hash(
     setup_commands: Sequence[str],
 ) -> str:
     """Deterministic hash for image caching."""
-    key = f'{image}|{"|".join(packages)}|{package_manager}|{"|".join(setup_commands)}'
+    sep = '\0'
+    pkg_str = sep.join(packages)
+    cmd_str = sep.join(setup_commands)
+    key = f'{image}{sep}{pkg_str}{sep}{sep}{package_manager}{sep}{sep}{cmd_str}'
     return hashlib.md5(key.encode()).hexdigest()[:12]
 
 
@@ -451,6 +455,17 @@ class DockerSandbox(ExecutionEnvironment):
             raise RuntimeError('DockerSandbox not started. Use `async with DockerSandbox(...) as sandbox:`')
         return self._container
 
+    def _resolve_path(self, path: str) -> str:
+        """Resolve a path relative to work_dir for Docker API calls.
+
+        Docker API methods like ``put_archive`` and ``get_archive`` resolve
+        paths against the container root ``/``, not the working directory.
+        This helper ensures relative paths are resolved against ``work_dir``.
+        """
+        if not path.startswith('/'):
+            return f'{self._work_dir}/{path}'
+        return path
+
     async def create_process(
         self,
         command: str,
@@ -470,7 +485,7 @@ class DockerSandbox(ExecutionEnvironment):
 
         def _exec() -> tuple[int, bytes]:
             if timeout is not None:
-                wrapped = f'timeout {int(timeout)} sh -c {shell_escape(command)}'
+                wrapped = f'timeout {math.ceil(timeout)} sh -c {shell_escape(command)}'
             else:
                 wrapped = command
             exec_kwargs: dict[str, Any] = {'workdir': self._work_dir}
@@ -507,7 +522,7 @@ class DockerSandbox(ExecutionEnvironment):
 
     def _read_file_bytes_sync(self, path: str) -> bytes:
         """Read raw file bytes using Docker's get_archive API."""
-        bits, _ = self.container.get_archive(path)
+        bits, _ = self.container.get_archive(self._resolve_path(path))
         # get_archive returns a tar stream
         tar_bytes = b''.join(bits)
         with tarfile.open(fileobj=io.BytesIO(tar_bytes)) as tar:
@@ -521,12 +536,13 @@ class DockerSandbox(ExecutionEnvironment):
 
     async def write_file(self, path: str, content: str | bytes) -> None:
         def _write() -> None:
+            full_path = self._resolve_path(path)
             # Ensure parent directory exists
-            parent = str(PurePosixPath(path).parent)
-            self.container.exec_run(['mkdir', '-p', parent], workdir=self._work_dir)
+            parent = str(PurePosixPath(full_path).parent)
+            self.container.exec_run(['mkdir', '-p', parent])
 
             data = content.encode('utf-8') if isinstance(content, str) else content
-            _put_file(self.container, path, data)
+            _put_file(self.container, full_path, data)
 
         await anyio.to_thread.run_sync(_write)
 
@@ -542,7 +558,7 @@ class DockerSandbox(ExecutionEnvironment):
             raw = self._read_file_bytes_sync(path)
             text = raw.decode('utf-8')
             new_text, count = apply_edit(text, old_string, new_string, path, replace_all=replace_all)
-            _put_file(self.container, path, new_text.encode('utf-8'))
+            _put_file(self.container, self._resolve_path(path), new_text.encode('utf-8'))
             return count
 
         return await anyio.to_thread.run_sync(_edit)

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import io
 import os
+import struct
+import tarfile
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from inline_snapshot import snapshot
@@ -13,6 +17,17 @@ from pydantic_ai import ToolCallPart
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.environments import ExecuteResult, ExecutionToolset, FileInfo
+from pydantic_ai.environments._base import (
+    apply_edit,
+    build_glob_cmd,
+    build_grep_cmd,
+    build_read_file_cmd,
+    filter_grep_count_output,
+    format_lines,
+    glob_match,
+    parse_glob_output,
+    shell_escape,
+)
 from pydantic_ai.environments.local import LocalEnvironment
 from pydantic_ai.environments.memory import MemoryEnvironment
 from pydantic_ai.exceptions import UnexpectedModelBehavior
@@ -1287,3 +1302,2667 @@ async def test_agent_with_execution_toolset():
         result = await agent.run('Read the file data.txt')
         # The TestModel will call tools and we verify it completes without error
         assert result.output is not None
+
+
+# pyright: reportPrivateUsage=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false
+
+
+# --- _base.py helper functions ---
+
+
+def test_shell_escape():
+    assert shell_escape('hello') == "'hello'"
+    assert shell_escape("it's") == "'it'\\''s'"
+    assert shell_escape('') == "''"
+    assert shell_escape('a b c') == "'a b c'"
+
+
+def test_format_lines_empty_file():
+    """format_lines on empty string returns just a newline."""
+    result = format_lines('', 0, 2000)
+    assert result == '\n'
+
+
+def test_format_lines_trailing_newline():
+    """format_lines adds trailing newline when text doesn't end with one."""
+    result = format_lines('no trailing newline', 0, 2000)
+    assert result.endswith('\n')
+    assert '1\tno trailing newline' in result
+
+
+def test_glob_match_simple():
+    assert glob_match('foo.py', '*.py') is True
+    assert glob_match('foo.txt', '*.py') is False
+
+
+def test_glob_match_double_star():
+    """glob_match with ** patterns for recursive matching."""
+    assert glob_match('src/main.py', '**/*.py') is True
+    assert glob_match('deep/nested/dir/file.py', '**/*.py') is True
+    assert glob_match('file.py', '**/*.py') is True
+    assert glob_match('src/main.txt', '**/*.py') is False
+
+
+def test_glob_match_double_star_prefix():
+    """glob_match with **/ prefix."""
+    assert glob_match('a/b/c.txt', '**/c.txt') is True
+    assert glob_match('c.txt', '**/c.txt') is True
+
+
+def test_glob_match_double_star_suffix():
+    """glob_match with ** at end."""
+    assert glob_match('src/foo/bar', 'src/**') is True
+
+
+def test_glob_match_question_mark():
+    """glob_match with ? wildcard."""
+    assert glob_match('test.py', 'tes?.py') is True
+    assert glob_match('test.py', 'te??.py') is True
+    assert glob_match('test.py', 't???.py') is True  # t + 3 chars (est) + .py
+    assert glob_match('test.py', 't????.py') is False  # needs 4 chars between t and .py
+
+
+def test_build_read_file_cmd_default():
+    cmd = build_read_file_cmd('test.txt')
+    assert 'awk' in cmd
+    assert "'test.txt'" in cmd
+    assert 'NR>=1' in cmd
+    assert 'NR<=2000' in cmd
+
+
+def test_build_read_file_cmd_with_offset():
+    cmd = build_read_file_cmd('file.py', offset=10, limit=50)
+    assert 'NR>=11' in cmd
+    assert 'NR<=60' in cmd
+    assert "'file.py'" in cmd
+
+
+def test_build_read_file_cmd_continuation_hint():
+    """build_read_file_cmd includes a continuation hint in the awk END block."""
+    cmd = build_read_file_cmd('file.py', offset=0, limit=10)
+    assert 'more lines' in cmd
+    assert 'offset=10' in cmd
+
+
+def test_build_grep_cmd_content():
+    cmd = build_grep_cmd('pattern')
+    assert 'grep -rI' in cmd
+    assert '-n' in cmd
+    assert "'pattern'" in cmd
+    assert "'.'" in cmd
+
+
+def test_build_grep_cmd_files_with_matches():
+    cmd = build_grep_cmd('pat', output_mode='files_with_matches')
+    assert '-l' in cmd
+    assert '-n' not in cmd
+
+
+def test_build_grep_cmd_count():
+    cmd = build_grep_cmd('pat', output_mode='count')
+    assert '-c' in cmd
+
+
+def test_build_grep_cmd_with_path():
+    cmd = build_grep_cmd('pat', path='src')
+    assert "'src'" in cmd
+
+
+def test_build_grep_cmd_with_glob_pattern():
+    """glob_pattern is shell-escaped to prevent injection."""
+    cmd = build_grep_cmd('pat', glob_pattern='*.py')
+    assert '--include' in cmd
+    assert "'*.py'" in cmd
+
+
+def test_build_grep_cmd_glob_pattern_escaping():
+    """Verify glob_pattern with special chars is properly shell-escaped."""
+    cmd = build_grep_cmd('pat', glob_pattern='*.py')
+    # The glob pattern should be shell-escaped (wrapped in single quotes)
+    assert "--include '*.py'" in cmd
+
+    # Even a malicious glob_pattern gets safely escaped
+    cmd2 = build_grep_cmd('pat', glob_pattern='$(evil)')
+    assert '$(evil)' not in cmd2.replace("'$(evil)'", '')  # Only appears inside quotes
+
+
+def test_build_glob_cmd():
+    cmd = build_glob_cmd('*.py')
+    assert 'find' in cmd
+    assert "'*.py'" in cmd
+    assert "'.'" in cmd
+
+
+def test_build_glob_cmd_with_path():
+    cmd = build_glob_cmd('*.py', path='src')
+    assert "'src'" in cmd
+
+
+def test_parse_glob_output_empty():
+    assert parse_glob_output('') == []
+    assert parse_glob_output('  ') == []
+    assert parse_glob_output('\n') == []
+
+
+def test_parse_glob_output_multiline():
+    assert parse_glob_output('a.py\nb.py\nc.py\n') == ['a.py', 'b.py', 'c.py']
+
+
+def test_filter_grep_count_output():
+    text = 'a.py:3\nb.py:0\nc.py:1'
+    result = filter_grep_count_output(text)
+    assert result == 'a.py:3\nc.py:1'
+
+
+def test_filter_grep_count_output_all_zero():
+    text = 'a.py:0\nb.py:0'
+    result = filter_grep_count_output(text)
+    assert result == ''
+
+
+def test_apply_edit_basic():
+    new_text, count = apply_edit('hello world', 'world', 'earth', 'test.txt', replace_all=False)
+    assert new_text == 'hello earth'
+    assert count == 1
+
+
+def test_apply_edit_replace_all():
+    new_text, count = apply_edit('aaa bbb aaa', 'aaa', 'xxx', 'test.txt', replace_all=True)
+    assert new_text == 'xxx bbb xxx'
+    assert count == 2
+
+
+def test_apply_edit_not_found():
+    with pytest.raises(ValueError, match='not found'):
+        apply_edit('hello', 'missing', 'x', 'test.txt', replace_all=False)
+
+
+def test_apply_edit_ambiguous():
+    with pytest.raises(ValueError, match='2 times'):
+        apply_edit('aa bb aa', 'aa', 'x', 'test.txt', replace_all=False)
+
+
+# --- LocalEnvironment: additional edge cases ---
+
+
+async def test_local_execute_no_timeout(tmp_path: Path):
+    """execute() with timeout=None completes without timeout."""
+    async with LocalEnvironment(tmp_path) as env:
+        result = await env.execute('echo no_timeout', timeout=None)
+        assert result.exit_code == 0
+        assert 'no_timeout' in result.output
+
+
+async def test_local_read_file_bytes_directory(tmp_path: Path):
+    """read_file_bytes on a directory raises FileNotFoundError."""
+    async with LocalEnvironment(tmp_path) as env:
+        (tmp_path / 'adir').mkdir()
+        with pytest.raises(FileNotFoundError, match='is a directory'):
+            await env.read_file_bytes('adir')
+
+
+async def test_local_read_file_bytes_nonexistent(tmp_path: Path):
+    """read_file_bytes on a nonexistent file raises FileNotFoundError."""
+    async with LocalEnvironment(tmp_path) as env:
+        with pytest.raises(FileNotFoundError):
+            await env.read_file_bytes('nope.bin')
+
+
+async def test_local_grep_specific_file(tmp_path: Path):
+    """grep targeting a specific file works."""
+    async with LocalEnvironment(tmp_path) as env:
+        await env.write_file('target.py', 'findme = True\n')
+        await env.write_file('other.py', 'findme = False\n')
+
+        result = await env.grep('findme', path='target.py')
+        assert 'target.py' in result
+        assert 'other.py' not in result
+
+
+# --- MemoryEnvironment: additional edge cases ---
+
+
+async def test_memory_normalize_paths():
+    """MemoryEnvironment normalizes paths correctly."""
+    async with MemoryEnvironment() as env:
+        await env.write_file('./test.txt', 'content')
+        content = await env.read_file('test.txt')
+        assert 'content' in content
+
+
+async def test_memory_normalize_leading_slash():
+    """MemoryEnvironment strips leading slashes."""
+    async with MemoryEnvironment() as env:
+        await env.write_file('/test.txt', 'content')
+        content = await env.read_file('test.txt')
+        assert 'content' in content
+
+
+async def test_memory_read_file_bytes_text():
+    """read_file_bytes on text file returns encoded bytes."""
+    env = MemoryEnvironment(files={'text.txt': 'hello'})
+    async with env:
+        result = await env.read_file_bytes('text.txt')
+        assert result == b'hello'
+
+
+async def test_memory_read_file_bytes_not_found():
+    """read_file_bytes on missing file raises FileNotFoundError."""
+    async with MemoryEnvironment() as env:
+        with pytest.raises(FileNotFoundError):
+            await env.read_file_bytes('missing.txt')
+
+
+async def test_memory_edit_binary():
+    """edit_file works on binary content."""
+    env = MemoryEnvironment(files={'data.txt': b'hello world'})
+    async with env:
+        count = await env.edit_file('data.txt', 'world', 'earth')
+        assert count == 1
+
+
+async def test_memory_grep_exact_path():
+    """grep with path= targeting an exact file."""
+    env = MemoryEnvironment(
+        files={
+            'src/a.py': 'target\n',
+            'src/b.py': 'target\n',
+        }
+    )
+    async with env:
+        result = await env.grep('target', path='src/a.py')
+        assert 'src/a.py' in result
+        assert 'src/b.py' not in result
+
+
+async def test_memory_grep_no_text_content():
+    """grep with text bytes (non-binary) works."""
+    env = MemoryEnvironment(files={'data.txt': b'findme in bytes'})
+    async with env:
+        result = await env.grep('findme')
+        assert 'data.txt' in result
+
+
+async def test_memory_glob_recursive():
+    """glob with ** pattern."""
+    env = MemoryEnvironment(
+        files={
+            'src/a.py': '',
+            'src/sub/b.py': '',
+            'other.txt': '',
+        }
+    )
+    async with env:
+        matches = await env.glob('**/*.py')
+        assert 'src/a.py' in matches
+        assert 'src/sub/b.py' in matches
+        assert 'other.txt' not in matches
+
+
+async def test_memory_glob_in_subdirectory():
+    """glob with path= restricts to subdirectory."""
+    env = MemoryEnvironment(
+        files={
+            'src/a.py': '',
+            'lib/b.py': '',
+        }
+    )
+    async with env:
+        matches = await env.glob('*.py', path='src')
+        assert 'src/a.py' in matches
+        assert 'lib/b.py' not in matches
+
+
+async def test_memory_ls_with_bytes():
+    """ls reports size correctly for bytes content."""
+    env = MemoryEnvironment(files={'data.bin': b'\x00\x01\x02'})
+    async with env:
+        entries = await env.ls('.')
+        assert len(entries) == 1
+        assert entries[0].size == 3
+        assert entries[0].is_dir is False
+
+
+# --- ExecutionToolset: additional coverage ---
+
+
+async def test_toolset_bash_truncated(tmp_path: Path):
+    """bash tool truncation message when output exceeds limit."""
+    env = LocalEnvironment(tmp_path)
+    toolset = ExecutionToolset(env)
+    ctx = build_run_context(None)
+    manager = await ToolManager[None](toolset).for_run_step(ctx)
+
+    async with env:
+        # Generate output longer than MAX_OUTPUT_CHARS (100_000)
+        result = await manager.handle_call(
+            ToolCallPart(tool_name='bash', args={'command': 'python3 -c "print(\'x\' * 200000)"'})
+        )
+        assert '[output truncated]' in str(result)
+        assert 'Exit code: 0' in str(result)
+
+
+async def test_toolset_image_too_large(tmp_path: Path):
+    """read_file on an image that's too large returns error string."""
+    env = LocalEnvironment(tmp_path)
+    toolset = ExecutionToolset(env, max_image_bytes=10)  # Very small limit
+    ctx = build_run_context(None)
+    manager = await ToolManager[None](toolset).for_run_step(ctx)
+
+    async with env:
+        # Write a PNG file that exceeds the limit
+        await env.write_file('big.png', b'\x89PNG\r\n\x1a\n' + b'\x00' * 100)
+        result = await manager.handle_call(ToolCallPart(tool_name='read_file', args={'path': 'big.png'}))
+        assert 'Image too large' in str(result)
+
+
+async def test_toolset_image_read(tmp_path: Path):
+    """read_file on an image returns BinaryContent."""
+    from pydantic_ai.messages import BinaryContent
+
+    env = LocalEnvironment(tmp_path)
+    toolset = ExecutionToolset(env)
+    ctx = build_run_context(None)
+    manager = await ToolManager[None](toolset).for_run_step(ctx)
+
+    async with env:
+        png_data = (
+            b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01'
+            b'\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89'
+            b'\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01'
+            b'\r\n\xb4\x00\x00\x00\x00IEND\xaeB`\x82'
+        )
+        await env.write_file('img.png', png_data)
+        result = await manager.handle_call(ToolCallPart(tool_name='read_file', args={'path': 'img.png'}))
+        assert isinstance(result, BinaryContent)
+        assert result.media_type == 'image/png'
+
+
+async def test_toolset_grep_no_matches(tmp_path: Path):
+    """grep with no matches returns 'No matches found.'."""
+    env = LocalEnvironment(tmp_path)
+    toolset = ExecutionToolset(env)
+    ctx = build_run_context(None)
+    manager = await ToolManager[None](toolset).for_run_step(ctx)
+
+    async with env:
+        await env.write_file('test.txt', 'nothing relevant\n')
+        result = await manager.handle_call(ToolCallPart(tool_name='grep', args={'pattern': 'nonexistent_xyz'}))
+        assert result == snapshot('No matches found.')
+
+
+async def test_toolset_glob_no_matches(tmp_path: Path):
+    """glob with no matches returns 'No files found.'."""
+    env = LocalEnvironment(tmp_path)
+    toolset = ExecutionToolset(env)
+    ctx = build_run_context(None)
+    manager = await ToolManager[None](toolset).for_run_step(ctx)
+
+    async with env:
+        result = await manager.handle_call(ToolCallPart(tool_name='glob', args={'pattern': '*.nonexistent'}))
+        assert result == snapshot('No files found.')
+
+
+async def test_toolset_edit_success(tmp_path: Path):
+    """edit_file tool returns success message."""
+    env = LocalEnvironment(tmp_path)
+    toolset = ExecutionToolset(env)
+    ctx = build_run_context(None)
+    manager = await ToolManager[None](toolset).for_run_step(ctx)
+
+    async with env:
+        await env.write_file('code.py', 'old_value = 1\n')
+        result = await manager.handle_call(
+            ToolCallPart(
+                tool_name='edit_file',
+                args={'path': 'code.py', 'old_string': 'old_value', 'new_string': 'new_value'},
+            )
+        )
+        assert result == snapshot('Replaced 1 occurrence in code.py.')
+
+
+async def test_toolset_system_prompt_with_env_prompt():
+    """system_prompt includes environment-specific additions."""
+
+    class CustomEnv(MemoryEnvironment):
+        @property
+        def system_prompt(self) -> str:
+            return 'Custom environment note.\n'
+
+    toolset = ExecutionToolset(CustomEnv())
+    prompt = toolset.system_prompt
+    assert 'bash' in prompt
+    assert 'Custom environment note.' in prompt
+
+
+async def test_toolset_system_prompt_no_env():
+    """system_prompt without environment."""
+    toolset = ExecutionToolset()
+    prompt = toolset.system_prompt
+    assert 'bash' in prompt
+
+
+async def test_toolset_lifecycle_ref_counting(tmp_path: Path):
+    """Multiple context manager entries share the environment."""
+    env = LocalEnvironment(tmp_path)
+    toolset = ExecutionToolset(env)
+
+    async with toolset:
+        async with toolset:
+            # Both entries active
+            result = await env.execute('echo shared')
+            assert 'shared' in result.output
+        # Still alive after one exit
+        result = await env.execute('echo still_alive')
+        assert 'still_alive' in result.output
+
+
+# --- DockerSandbox: mocked tests ---
+
+
+def _make_tar(filename: str, data: bytes) -> bytes:
+    """Create a tar archive with a single file."""
+    f = io.BytesIO()
+    with tarfile.open(fileobj=f, mode='w') as tar:
+        info = tarfile.TarInfo(name=filename)
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+    f.seek(0)
+    return f.read()
+
+
+class MockContainer:
+    """Mock Docker container for testing."""
+
+    def __init__(self) -> None:
+        self._files: dict[str, bytes] = {}
+        self.id = 'mock-container-id'
+        self.status = 'running'
+        self.client = MagicMock()
+
+    def exec_run(
+        self,
+        cmd: list[str] | str,
+        workdir: str | None = None,
+        environment: dict[str, str] | None = None,
+        **kwargs: Any,
+    ) -> tuple[int, bytes]:
+        """Simulate exec_run by executing simple commands."""
+        if isinstance(cmd, list):
+            cmd_str = ' '.join(cmd)
+        else:
+            cmd_str = cmd
+
+        # Handle mkdir -p
+        if 'mkdir -p' in cmd_str:
+            return 0, b''
+
+        # Handle awk (read_file)
+        if 'awk' in cmd_str:
+            # Try to find the file by matching path in the awk command.
+            # The path is shell-escaped (e.g. 'test.txt'), so check both
+            # the full path and relative to workdir.
+            for fpath, data in self._files.items():
+                # Check if the filename or path appears in the command
+                name = fpath.rsplit('/', 1)[-1] if '/' in fpath else fpath
+                if name in cmd_str or fpath in cmd_str:
+                    text = data.decode('utf-8', errors='replace')
+                    lines = text.splitlines(keepends=True)
+                    numbered = [f'{i:>6}\t{line}' for i, line in enumerate(lines, start=1)]
+                    return 0, ''.join(numbered).encode('utf-8')
+            return 1, b'File not found'
+
+        # Handle ls -la
+        if 'ls -la' in cmd_str:
+            output_lines = ['total 0']
+            for path, data in sorted(self._files.items()):
+                name = path.rsplit('/', 1)[-1] if '/' in path else path
+                output_lines.append(f'-rw-r--r-- 1 root root {len(data)} Jan  1 00:00 {name}')
+            return 0, '\n'.join(output_lines).encode('utf-8')
+
+        # Handle find (glob)
+        if 'find' in cmd_str:
+            matches = []
+            for path in sorted(self._files):
+                matches.append(path)
+            return 0, '\n'.join(matches).encode('utf-8')
+
+        # Handle grep
+        if 'grep' in cmd_str:
+            return 0, b'match:1:result'
+
+        # Handle general commands
+        if 'echo' in cmd_str:
+            # Extract the echo argument
+            msg = cmd_str.split('echo ', 1)[-1] if 'echo ' in cmd_str else ''
+            return 0, (msg + '\n').encode('utf-8')
+
+        if 'exit' in cmd_str:
+            return 1, b''
+
+        return 0, b''
+
+    def put_archive(self, path: str, data: Any) -> bool:
+        """Simulate file upload by extracting tar data."""
+        tar_data = data.read() if hasattr(data, 'read') else data
+        with tarfile.open(fileobj=io.BytesIO(tar_data)) as tar:
+            for member in tar.getmembers():
+                extracted = tar.extractfile(member)
+                if extracted:
+                    full_path = f'{path}/{member.name}' if path != '.' else member.name
+                    self._files[full_path] = extracted.read()
+        return True
+
+    def get_archive(self, path: str) -> tuple[list[bytes], dict[str, Any]]:
+        """Simulate file download."""
+        if path not in self._files:
+            # Check if file exists at resolved path
+            for fpath, data in self._files.items():
+                if fpath.endswith(path) or path.endswith(fpath.split('/')[-1]):
+                    return [_make_tar(fpath.split('/')[-1], data)], {}
+            from docker.errors import NotFound  # pragma: lax no cover
+
+            raise NotFound('File not found')  # pragma: lax no cover
+        data = self._files[path]
+        return [_make_tar(path.split('/')[-1], data)], {}
+
+    def stop(self, timeout: int = 5) -> None:
+        self.status = 'stopped'
+
+    def remove(self, force: bool = False) -> None:
+        pass
+
+    def reload(self) -> None:
+        pass
+
+
+@pytest.fixture
+def mock_container() -> MockContainer:
+    return MockContainer()
+
+
+@pytest.fixture
+def mock_docker_sandbox(mock_container: MockContainer) -> Any:
+    """Create a DockerSandbox with a mock container."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandbox
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    sandbox = DockerSandbox(image='python:3.12-slim')
+    sandbox._container = mock_container  # type: ignore[assignment]
+    sandbox._client = MagicMock()
+    return sandbox
+
+
+async def test_docker_execute(mock_docker_sandbox: Any) -> None:
+    """DockerSandbox.execute runs commands in container."""
+    result = await mock_docker_sandbox.execute('echo hello')
+    assert result.exit_code == 0
+    assert isinstance(result.output, str)
+
+
+async def test_docker_execute_timeout(mock_docker_sandbox: Any) -> None:
+    """DockerSandbox.execute wraps command with timeout."""
+    result = await mock_docker_sandbox.execute('echo test', timeout=30)
+    assert result.exit_code == 0
+
+
+async def test_docker_execute_no_timeout(mock_docker_sandbox: Any) -> None:
+    """DockerSandbox.execute with timeout=None."""
+    result = await mock_docker_sandbox.execute('echo test', timeout=None)
+    assert result.exit_code == 0
+
+
+async def test_docker_execute_with_env(mock_docker_sandbox: Any) -> None:
+    """DockerSandbox.execute passes env vars."""
+    result = await mock_docker_sandbox.execute('echo test', env={'KEY': 'value'})
+    assert result.exit_code == 0
+
+
+async def test_docker_write_read_file(mock_docker_sandbox: Any) -> None:
+    """DockerSandbox write and read files."""
+    await mock_docker_sandbox.write_file('test.txt', 'hello world\n')
+    content = await mock_docker_sandbox.read_file('test.txt')
+    assert isinstance(content, str)
+
+
+async def test_docker_write_file_binary(mock_docker_sandbox: Any) -> None:
+    """DockerSandbox write binary file."""
+    await mock_docker_sandbox.write_file('data.bin', b'\x00\x01\x02')
+
+
+async def test_docker_read_file_not_found(mock_docker_sandbox: Any) -> None:
+    """DockerSandbox.read_file on missing file raises FileNotFoundError."""
+    with pytest.raises(FileNotFoundError):
+        await mock_docker_sandbox.read_file('nonexistent.txt')
+
+
+async def test_docker_read_file_bytes(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+    """DockerSandbox.read_file_bytes returns raw bytes."""
+    mock_container._files['/workspace/test.txt'] = b'raw content'
+    result = await mock_docker_sandbox.read_file_bytes('test.txt')
+    assert isinstance(result, bytes)
+    assert result == b'raw content'
+
+
+async def test_docker_edit_file(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+    """DockerSandbox.edit_file replaces text."""
+    mock_container._files['/workspace/code.py'] = b'old_value = 1'
+    count = await mock_docker_sandbox.edit_file('code.py', 'old_value', 'new_value')
+    assert count == 1
+
+
+async def test_docker_ls(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+    """DockerSandbox.ls returns file entries."""
+    mock_container._files['test.txt'] = b'hello'
+    entries = await mock_docker_sandbox.ls('.')
+    assert isinstance(entries, list)
+
+
+async def test_docker_glob(mock_docker_sandbox: Any) -> None:
+    """DockerSandbox.glob returns matching paths."""
+    matches = await mock_docker_sandbox.glob('*.py')
+    assert isinstance(matches, list)
+
+
+async def test_docker_grep(mock_docker_sandbox: Any) -> None:
+    """DockerSandbox.grep returns matches."""
+    result = await mock_docker_sandbox.grep('pattern')
+    assert isinstance(result, str)
+
+
+async def test_docker_grep_with_options(mock_docker_sandbox: Any) -> None:
+    """DockerSandbox.grep with output_mode and glob_pattern."""
+    result = await mock_docker_sandbox.grep('pattern', glob_pattern='*.py', output_mode='files_with_matches')
+    assert isinstance(result, str)
+
+
+async def test_docker_grep_count(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+    """DockerSandbox.grep count mode filters zero-count results."""
+    # Override exec_run to return count-style output
+    original_exec_run = mock_container.exec_run
+
+    def count_exec_run(cmd: Any, **kwargs: Any) -> tuple[int, bytes]:
+        if isinstance(cmd, list) and 'sh' in cmd[0]:
+            cmd_str = cmd[-1] if len(cmd) > 1 else ''
+            if 'grep' in cmd_str and '-c' in cmd_str:
+                return 0, b'a.py:3\nb.py:0\nc.py:1'
+        return original_exec_run(cmd, **kwargs)
+
+    mock_container.exec_run = count_exec_run  # type: ignore[assignment]
+    result = await mock_docker_sandbox.grep('pattern', output_mode='count')
+    assert 'b.py:0' not in result
+
+
+async def test_docker_container_property(mock_docker_sandbox: Any) -> None:
+    """DockerSandbox.container raises when not started."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandbox
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    sandbox = DockerSandbox()
+    with pytest.raises(RuntimeError, match='not started'):
+        _ = sandbox.container
+
+
+async def test_docker_create_process(mock_docker_sandbox: Any) -> None:
+    """DockerSandbox.create_process returns a DockerSandboxProcess."""
+    proc = await mock_docker_sandbox.create_process('echo test')
+    assert proc is not None
+
+
+async def test_docker_system_prompt(mock_docker_sandbox: Any) -> None:
+    """DockerSandbox.system_prompt describes Docker environment."""
+    prompt = mock_docker_sandbox.system_prompt
+    assert 'Docker' in prompt
+    assert 'POSIX' in prompt
+
+
+async def test_docker_is_alive(mock_docker_sandbox: Any) -> None:
+    """DockerSandbox.is_alive checks container status."""
+    result = await mock_docker_sandbox.is_alive()
+    assert result is True
+
+
+async def test_docker_is_alive_not_started() -> None:
+    """DockerSandbox.is_alive returns False when not started."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandbox
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    sandbox = DockerSandbox()
+    result = await sandbox.is_alive()
+    assert result is False
+
+
+async def test_docker_resolve_path(mock_docker_sandbox: Any) -> None:
+    """DockerSandbox._resolve_path resolves relative paths."""
+    assert mock_docker_sandbox._resolve_path('test.txt') == '/workspace/test.txt'
+    assert mock_docker_sandbox._resolve_path('/abs/path') == '/abs/path'
+    assert mock_docker_sandbox._resolve_path('sub/dir/file.py') == '/workspace/sub/dir/file.py'
+
+
+def test_docker_build_dockerfile() -> None:
+    """_build_dockerfile generates correct Dockerfiles."""
+    try:
+        from pydantic_ai.environments.docker import _build_dockerfile
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    # pip
+    result = _build_dockerfile('python:3.12-slim', ['numpy', 'pandas'], 'pip', [])
+    assert 'FROM python:3.12-slim' in result
+    assert 'pip install' in result
+    assert '"numpy"' in result
+
+    # apt
+    result = _build_dockerfile('ubuntu:22.04', ['curl', 'wget'], 'apt', [])
+    assert 'apt-get install' in result
+
+    # npm
+    result = _build_dockerfile('node:20', ['express'], 'npm', [])
+    assert 'npm install -g' in result
+
+    # setup commands
+    result = _build_dockerfile('python:3.12-slim', [], 'pip', ['echo setup', 'ls -la'])
+    assert 'RUN echo setup' in result
+    assert 'RUN ls -la' in result
+
+    # no packages, no commands
+    result = _build_dockerfile('python:3.12-slim', [], 'pip', [])
+    assert result == 'FROM python:3.12-slim'
+
+
+def test_docker_config_hash() -> None:
+    """_config_hash produces deterministic, collision-resistant hashes."""
+    try:
+        from pydantic_ai.environments.docker import _config_hash
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    h1 = _config_hash('python:3.12', ['numpy', 'pandas'], 'pip', [])
+    h2 = _config_hash('python:3.12', ['numpy', 'pandas'], 'pip', [])
+    assert h1 == h2
+
+    # Different configs produce different hashes
+    h3 = _config_hash('python:3.12', ['numpy'], 'pip', [])
+    assert h1 != h3
+
+    # Using \0 separator prevents confusion between
+    # packages=['numpy|pandas'] and packages=['numpy', 'pandas']
+    h4 = _config_hash('python:3.12', ['numpy|pandas'], 'pip', [])
+    h5 = _config_hash('python:3.12', ['numpy', 'pandas'], 'pip', [])
+    assert h4 != h5
+
+
+def test_docker_put_file() -> None:
+    """_put_file creates a tar archive and uploads it."""
+    try:
+        from pydantic_ai.environments.docker import _put_file
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    _put_file(container, '/workspace/test.txt', b'hello')  # type: ignore[arg-type]
+    assert '/workspace/test.txt' in container._files
+    assert container._files['/workspace/test.txt'] == b'hello'
+
+
+def test_docker_sandbox_process_read_frame() -> None:
+    """DockerSandboxProcess._read_frame parses multiplexed stream frames."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+
+    # Create a mock socket with a multiplexed frame
+    stdout_data = b'hello from stdout'
+    header = struct.pack('>BxxxI', 1, len(stdout_data))  # stream_type=1 (stdout)
+
+    mock_socket = MagicMock()
+    mock_socket.recv.side_effect = [header, stdout_data]
+    proc._socket = mock_socket
+
+    stream_type, data = proc._read_frame()
+    assert stream_type == 1
+    assert data == stdout_data
+
+
+def test_docker_sandbox_process_read_frame_stderr() -> None:
+    """DockerSandboxProcess._read_frame handles stderr frames."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+
+    stderr_data = b'error output'
+    header = struct.pack('>BxxxI', 2, len(stderr_data))  # stream_type=2 (stderr)
+
+    mock_socket = MagicMock()
+    mock_socket.recv.side_effect = [header, stderr_data]
+    proc._socket = mock_socket
+
+    stream_type, data = proc._read_frame()
+    assert stream_type == 2
+    assert data == stderr_data
+
+
+def test_docker_sandbox_process_read_frame_eof() -> None:
+    """DockerSandboxProcess._read_frame returns empty on EOF."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+
+    mock_socket = MagicMock()
+    mock_socket.recv.return_value = b''  # EOF
+    proc._socket = mock_socket
+
+    stream_type, data = proc._read_frame()
+    assert stream_type == 0
+    assert data == b''
+    assert proc._eof is True
+
+
+def test_docker_sandbox_process_read_frame_zero_size() -> None:
+    """DockerSandboxProcess._read_frame handles zero-size frames."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+
+    header = struct.pack('>BxxxI', 1, 0)  # zero size
+
+    mock_socket = MagicMock()
+    mock_socket.recv.return_value = header
+    proc._socket = mock_socket
+
+    stream_type, data = proc._read_frame()
+    assert stream_type == 1
+    assert data == b''
+
+
+def test_docker_sandbox_process_already_eof() -> None:
+    """DockerSandboxProcess._read_frame returns empty when already at EOF."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc._eof = True
+
+    stream_type, data = proc._read_frame()
+    assert stream_type == 0
+    assert data == b''
+
+
+# --- E2BSandbox: mocked tests ---
+
+
+def _make_mock_e2b_sandbox() -> Any:
+    """Create a mock E2B sandbox with AsyncMock for all async methods."""
+    mock_sandbox = MagicMock()
+
+    # Mock commands.run (async)
+    mock_result = MagicMock()
+    mock_result.stdout = 'output\n'
+    mock_result.stderr = ''
+    mock_result.exit_code = 0
+    mock_sandbox.commands.run = AsyncMock(return_value=mock_result)
+
+    # Mock commands.start (async) — returns a process-like object
+    mock_proc = MagicMock()
+    mock_proc.send_stdin = AsyncMock()
+    mock_proc.kill = AsyncMock()
+    mock_sandbox.commands.start = AsyncMock(return_value=mock_proc)
+
+    # Mock files (async)
+    mock_sandbox.files.read = AsyncMock(return_value='file content')
+    mock_sandbox.files.write = AsyncMock()
+    mock_sandbox.files.list = AsyncMock(return_value=[])
+
+    # Mock close (async)
+    mock_sandbox.close = AsyncMock()
+
+    return mock_sandbox
+
+
+@pytest.fixture
+def mock_e2b_sandbox() -> Any:
+    """Create an E2BSandbox with mocked internals."""
+    try:
+        from pydantic_ai.environments.e2b import E2BSandbox
+    except ImportError:
+        pytest.skip('e2b-code-interpreter package not installed')
+
+    sandbox = E2BSandbox(template='base', api_key='test-key')
+    sandbox._sandbox = _make_mock_e2b_sandbox()
+    return sandbox
+
+
+async def test_e2b_execute(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox.execute runs commands."""
+    result = await mock_e2b_sandbox.execute('echo hello')
+    assert result.exit_code == 0
+    assert isinstance(result.output, str)
+
+
+async def test_e2b_execute_with_env(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox.execute passes merged env vars."""
+    result = await mock_e2b_sandbox.execute('echo test', env={'KEY': 'val'})
+    assert result.exit_code == 0
+
+
+async def test_e2b_execute_truncation(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox.execute truncates long output."""
+    mock_result = MagicMock()
+    mock_result.stdout = 'x' * 200_000
+    mock_result.stderr = ''
+    mock_result.exit_code = 0
+    mock_e2b_sandbox.sandbox.commands.run.return_value = mock_result
+
+    result = await mock_e2b_sandbox.execute('long command')
+    assert result.truncated is True
+    assert len(result.output) == 100_000
+
+
+async def test_e2b_read_file(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox.read_file returns content."""
+    # The mock commands.run returns mock_result with stdout
+    content = await mock_e2b_sandbox.read_file('test.txt')
+    assert isinstance(content, str)
+
+
+async def test_e2b_read_file_not_found(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox.read_file raises on missing files."""
+    mock_result = MagicMock()
+    mock_result.exit_code = 1
+    mock_result.stdout = ''
+    mock_e2b_sandbox.sandbox.commands.run.return_value = mock_result
+
+    with pytest.raises(FileNotFoundError):
+        await mock_e2b_sandbox.read_file('missing.txt')
+
+
+async def test_e2b_read_file_bytes(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox.read_file_bytes returns raw bytes."""
+    mock_e2b_sandbox.sandbox.files.read.return_value = b'raw bytes'
+    result = await mock_e2b_sandbox.read_file_bytes('data.bin')
+    assert result == b'raw bytes'
+
+
+async def test_e2b_write_file(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox.write_file creates files."""
+    await mock_e2b_sandbox.write_file('test.txt', 'content')
+    mock_e2b_sandbox.sandbox.files.write.assert_called()
+
+
+async def test_e2b_write_file_binary(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox.write_file handles binary content."""
+    await mock_e2b_sandbox.write_file('data.bin', b'\x00\x01\x02')
+    mock_e2b_sandbox.sandbox.files.write.assert_called()
+
+
+async def test_e2b_write_file_with_parent_dir(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox.write_file creates parent directories."""
+    await mock_e2b_sandbox.write_file('sub/dir/file.txt', 'content')
+    # Should have run mkdir -p for the parent
+    mock_e2b_sandbox.sandbox.commands.run.assert_called()
+
+
+async def test_e2b_edit_file(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox.edit_file replaces text."""
+    mock_e2b_sandbox.sandbox.files.read.return_value = 'old_value = 1'
+    count = await mock_e2b_sandbox.edit_file('code.py', 'old_value', 'new_value')
+    assert count == 1
+    mock_e2b_sandbox.sandbox.files.write.assert_called()
+
+
+async def test_e2b_edit_file_bytes(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox.edit_file handles bytes content."""
+    mock_e2b_sandbox.sandbox.files.read.return_value = b'old bytes data'
+    count = await mock_e2b_sandbox.edit_file('data.txt', 'old', 'new')
+    assert count == 1
+
+
+async def test_e2b_ls(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox.ls returns entries."""
+    mock_entry = MagicMock()
+    mock_entry.name = 'test.txt'
+    mock_entry.type = 'file'
+    mock_e2b_sandbox.sandbox.files.list.return_value = [mock_entry]
+
+    entries = await mock_e2b_sandbox.ls('.')
+    assert len(entries) == 1
+    assert entries[0].name == 'test.txt'
+    assert entries[0].is_dir is False
+
+
+async def test_e2b_ls_dir(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox.ls handles directories."""
+    mock_entry = MagicMock()
+    mock_entry.name = 'subdir'
+    mock_entry.type = 'dir'
+    mock_e2b_sandbox.sandbox.files.list.return_value = [mock_entry]
+
+    entries = await mock_e2b_sandbox.ls('src')
+    assert len(entries) == 1
+    assert entries[0].is_dir is True
+    assert entries[0].path == 'src/subdir'
+
+
+async def test_e2b_glob(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox.glob returns matches."""
+    mock_result = MagicMock()
+    mock_result.stdout = 'a.py\nb.py\n'
+    mock_e2b_sandbox.sandbox.commands.run.return_value = mock_result
+
+    matches = await mock_e2b_sandbox.glob('*.py')
+    assert matches == ['a.py', 'b.py']
+
+
+async def test_e2b_grep(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox.grep returns matches."""
+    mock_result = MagicMock()
+    mock_result.stdout = 'file.py:1:match\n'
+    mock_e2b_sandbox.sandbox.commands.run.return_value = mock_result
+
+    result = await mock_e2b_sandbox.grep('pattern')
+    assert 'match' in result
+
+
+async def test_e2b_grep_count(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox.grep count mode filters zeros."""
+    mock_result = MagicMock()
+    mock_result.stdout = 'a.py:3\nb.py:0\n'
+    mock_e2b_sandbox.sandbox.commands.run.return_value = mock_result
+
+    result = await mock_e2b_sandbox.grep('pattern', output_mode='count')
+    assert 'a.py:3' in result
+    assert 'b.py:0' not in result
+
+
+async def test_e2b_system_prompt(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox.system_prompt describes E2B environment."""
+    prompt = mock_e2b_sandbox.system_prompt
+    assert 'E2B' in prompt
+    assert 'POSIX' in prompt
+
+
+async def test_e2b_sandbox_property() -> None:
+    """E2BSandbox.sandbox raises when not started."""
+    try:
+        from pydantic_ai.environments.e2b import E2BSandbox
+    except ImportError:
+        pytest.skip('e2b-code-interpreter package not installed')
+
+    sandbox = E2BSandbox(api_key='test')
+    with pytest.raises(RuntimeError, match='not started'):
+        _ = sandbox.sandbox
+
+
+async def test_e2b_merge_env(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox._merge_env merges baseline and per-call env."""
+    mock_e2b_sandbox._env_vars = {'BASE': 'val'}
+    merged = mock_e2b_sandbox._merge_env({'EXTRA': 'extra'})
+    assert merged == {'BASE': 'val', 'EXTRA': 'extra'}
+
+
+async def test_e2b_merge_env_override(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox._merge_env per-call overrides baseline."""
+    mock_e2b_sandbox._env_vars = {'KEY': 'old'}
+    merged = mock_e2b_sandbox._merge_env({'KEY': 'new'})
+    assert merged == {'KEY': 'new'}
+
+
+async def test_e2b_merge_env_empty(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox._merge_env returns None when nothing to merge."""
+    mock_e2b_sandbox._env_vars = {}
+    result = mock_e2b_sandbox._merge_env(None)
+    assert result is None
+
+
+async def test_e2b_create_process(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox.create_process returns an E2BSandboxProcess."""
+    from pydantic_ai.environments.e2b import E2BSandboxProcess
+
+    proc = await mock_e2b_sandbox.create_process('echo test')
+    assert isinstance(proc, E2BSandboxProcess)
+
+    # Clean up the memory streams created in __init__ to avoid ResourceWarning
+    await proc._stdout_send.aclose()
+    await proc._stdout_recv.aclose()
+    await proc._stderr_send.aclose()
+    await proc._stderr_recv.aclose()
+
+
+# --- Additional coverage: _base.py ---
+
+
+async def test_glob_match_question_mark_in_doublestar_pattern():
+    """glob_match with ? inside a ** pattern."""
+    assert glob_match('a/b/test.py', '**/?est.py') is True
+    assert glob_match('test.py', '?est.py') is True
+
+
+async def test_execution_environment_aenter_aexit():
+    """ExecutionEnvironment base __aenter__/__aexit__ are exercised by subclasses."""
+    # MemoryEnvironment exercises the base class path
+    env = MemoryEnvironment()
+    async with env:
+        pass
+
+
+# --- Additional coverage: _toolset.py ---
+
+
+async def test_toolset_bash_empty_output(tmp_path: Path):
+    """ExecutionToolset bash returns just exit code when no output."""
+    env = LocalEnvironment(tmp_path)
+    toolset = ExecutionToolset(env)
+    ctx = build_run_context()
+    manager = await ToolManager[None](toolset).for_run_step(ctx)
+
+    async with env:
+        result = await manager.handle_call(ToolCallPart(tool_name='bash', args={'command': 'true'}))
+        assert 'Exit code: 0' in str(result)
+
+
+async def test_toolset_glob_truncation(tmp_path: Path):
+    """ExecutionToolset glob truncates after 100 matches."""
+    env = LocalEnvironment(tmp_path)
+    # Create 110 files
+    for i in range(110):
+        (tmp_path / f'file_{i:03d}.txt').write_text(f'content {i}')
+
+    toolset = ExecutionToolset(env)
+    ctx = build_run_context()
+    manager = await ToolManager[None](toolset).for_run_step(ctx)
+
+    async with env:
+        result = await manager.handle_call(ToolCallPart(tool_name='glob', args={'pattern': '*.txt'}))
+        assert 'truncated' in str(result)
+
+
+async def test_toolset_grep_no_matches_returns_message(tmp_path: Path):
+    """ExecutionToolset grep returns message when no matches."""
+    (tmp_path / 'test.txt').write_text('hello world')
+    env = LocalEnvironment(tmp_path)
+    toolset = ExecutionToolset(env)
+    ctx = build_run_context()
+    manager = await ToolManager[None](toolset).for_run_step(ctx)
+
+    async with env:
+        result = await manager.handle_call(ToolCallPart(tool_name='grep', args={'pattern': 'zzz_nonexistent'}))
+        assert 'No matches' in str(result)
+
+
+async def test_toolset_lifecycle_error(tmp_path: Path):
+    """ExecutionToolset handles environment startup failures."""
+
+    class FailingEnv(LocalEnvironment):
+        async def __aenter__(self):
+            raise RuntimeError('Setup failed')
+
+    env = FailingEnv(tmp_path)
+    toolset = ExecutionToolset(env)
+    with pytest.raises(RuntimeError, match='Setup failed'):
+        async with toolset:
+            pass
+
+
+# --- Additional coverage: local.py ---
+
+
+async def test_local_process_stdin_not_available():
+    """LocalEnvironmentProcess.send raises when stdin is None."""
+    from pydantic_ai.environments.local import LocalEnvironmentProcess
+
+    mock_proc = MagicMock()
+    mock_proc.stdin = None
+    proc = LocalEnvironmentProcess(mock_proc)
+    with pytest.raises(RuntimeError, match='stdin'):
+        await proc.send(b'data')
+
+
+async def test_local_process_stdout_not_available():
+    """LocalEnvironmentProcess.recv raises when stdout is None."""
+    from pydantic_ai.environments.local import LocalEnvironmentProcess
+
+    mock_proc = MagicMock()
+    mock_proc.stdout = None
+    proc = LocalEnvironmentProcess(mock_proc)
+    with pytest.raises(RuntimeError, match='stdout'):
+        await proc.recv()
+
+
+async def test_local_process_stderr_not_available():
+    """LocalEnvironmentProcess.recv_stderr raises when stderr is None."""
+    from pydantic_ai.environments.local import LocalEnvironmentProcess
+
+    mock_proc = MagicMock()
+    mock_proc.stderr = None
+    proc = LocalEnvironmentProcess(mock_proc)
+    with pytest.raises(RuntimeError, match='stderr'):
+        await proc.recv_stderr()
+
+
+async def test_local_process_recv_stderr_timeout(tmp_path: Path):
+    """LocalEnvironmentProcess.recv_stderr with timeout."""
+    env = LocalEnvironment(tmp_path)
+    proc = await env.create_process('python -c "import sys; sys.stderr.write(\'err\\n\')"')
+    async with proc:
+        data = await proc.recv_stderr(timeout=5.0)
+        assert b'err' in data
+
+
+async def test_local_process_recv_stderr_eof(tmp_path: Path):
+    """LocalEnvironmentProcess.recv_stderr returns empty on EOF."""
+    env = LocalEnvironment(tmp_path)
+    proc = await env.create_process('echo done')
+    async with proc:
+        await proc.wait(timeout=5.0)
+        # After process exits, stderr should return empty
+        data = await proc.recv_stderr()
+        assert data == b''
+
+
+async def test_local_process_kill_terminates_sleep(tmp_path: Path):
+    """LocalEnvironmentProcess.kill terminates process."""
+    env = LocalEnvironment(tmp_path)
+    proc = await env.create_process('sleep 60')
+    async with proc:
+        await proc.kill()
+        # After kill, returncode should be set
+
+
+async def test_local_read_file_bytes_directory_raises_error(tmp_path: Path):
+    """LocalEnvironment.read_file_bytes raises on directory."""
+    (tmp_path / 'subdir').mkdir()
+    env = LocalEnvironment(tmp_path)
+    with pytest.raises(FileNotFoundError, match='directory'):
+        await env.read_file_bytes('subdir')
+
+
+async def test_local_read_file_bytes_not_found(tmp_path: Path):
+    """LocalEnvironment.read_file_bytes raises on missing file."""
+    env = LocalEnvironment(tmp_path)
+    with pytest.raises(FileNotFoundError, match='not found'):
+        await env.read_file_bytes('nonexistent.txt')
+
+
+async def test_local_grep_on_file(tmp_path: Path):
+    """LocalEnvironment.grep on a specific file path."""
+    (tmp_path / 'target.py').write_text('found = True\nmissed = False\n')
+    env = LocalEnvironment(tmp_path)
+    result = await env.grep('found', path='target.py')
+    assert 'found' in result
+    assert 'missed' not in result
+
+
+async def test_local_grep_with_glob_pattern_filters_by_extension(tmp_path: Path):
+    """LocalEnvironment.grep with glob filtering."""
+    (tmp_path / 'a.py').write_text('match_here\n')
+    (tmp_path / 'b.txt').write_text('match_here\n')
+    env = LocalEnvironment(tmp_path)
+    result = await env.grep('match_here', glob_pattern='*.py')
+    assert 'a.py' in result
+    assert 'b.txt' not in result
+
+
+async def test_local_grep_skips_binary_files_with_null_bytes(tmp_path: Path):
+    """LocalEnvironment.grep skips files with null bytes."""
+    (tmp_path / 'binary.bin').write_bytes(b'\x00binary content')
+    (tmp_path / 'text.txt').write_text('searchable\n')
+    env = LocalEnvironment(tmp_path)
+    result = await env.grep('searchable')
+    assert 'text.txt' in result
+    assert 'binary' not in result
+
+
+async def test_local_grep_skips_hidden_files_in_hidden_dirs(tmp_path: Path):
+    """LocalEnvironment.grep skips hidden files/dirs."""
+    hidden_dir = tmp_path / '.hidden'
+    hidden_dir.mkdir()
+    (hidden_dir / 'secret.txt').write_text('findme\n')
+    (tmp_path / 'visible.txt').write_text('findme\n')
+    env = LocalEnvironment(tmp_path)
+    result = await env.grep('findme')
+    assert 'visible.txt' in result
+    assert '.hidden' not in result
+
+
+async def test_local_execute_output_truncation(tmp_path: Path):
+    """LocalEnvironment.execute truncates long output."""
+    # Write a script that outputs lots of text
+    script = tmp_path / 'big.py'
+    script.write_text("print('x' * 200000)")
+    env = LocalEnvironment(tmp_path)
+    result = await env.execute(f'python {script}')
+    assert result.truncated is True
+    assert len(result.output) == 100_000
+
+
+# --- Additional coverage: memory.py ---
+
+
+async def test_memory_normalize_leading_slash_in_constructor():
+    """MemoryEnvironment normalizes paths with leading /."""
+    env = MemoryEnvironment(files={'/abs/path.txt': 'content'})
+    content = await env.read_file('abs/path.txt')
+    assert 'content' in content
+
+
+async def test_memory_read_file_directory_error():
+    """MemoryEnvironment.read_file raises on directory paths."""
+    env = MemoryEnvironment(files={'dir/file.txt': 'content'})
+    with pytest.raises(FileNotFoundError, match='directory'):
+        await env.read_file('dir')
+
+
+async def test_memory_read_file_bytes_not_found_raises_error():
+    """MemoryEnvironment.read_file_bytes raises on missing file."""
+    env = MemoryEnvironment()
+    with pytest.raises(FileNotFoundError):
+        await env.read_file_bytes('missing.txt')
+
+
+async def test_memory_ls_non_root_directory():
+    """MemoryEnvironment.ls lists files in a subdirectory."""
+    env = MemoryEnvironment(files={'sub/a.txt': 'a', 'sub/b.txt': 'b', 'other.txt': 'c'})
+    entries = await env.ls('sub')
+    assert len(entries) == 2
+    names = {e.name for e in entries}
+    assert names == {'a.txt', 'b.txt'}
+
+
+async def test_memory_ls_with_subdirs():
+    """MemoryEnvironment.ls shows directories in listing."""
+    env = MemoryEnvironment(files={'dir/sub/file.txt': 'content'})
+    entries = await env.ls('dir')
+    assert len(entries) == 1
+    assert entries[0].name == 'sub'
+    assert entries[0].is_dir is True
+
+
+async def test_memory_ls_skips_non_children():
+    """MemoryEnvironment.ls skips files not under the directory."""
+    env = MemoryEnvironment(files={'a/b.txt': 'x', 'c/d.txt': 'y'})
+    entries = await env.ls('a')
+    assert len(entries) == 1
+    assert entries[0].name == 'b.txt'
+
+
+async def test_memory_grep_binary_skip():
+    """MemoryEnvironment.grep skips binary files."""
+    env = MemoryEnvironment(files={'binary.bin': b'\x00binary data', 'text.txt': 'findme'})
+    result = await env.grep('findme')
+    assert 'text.txt' in result
+    assert 'binary' not in result
+
+
+async def test_memory_grep_path_filter():
+    """MemoryEnvironment.grep filters by exact file path."""
+    env = MemoryEnvironment(files={'sub/target.py': 'match_here', 'other.py': 'match_here'})
+    result = await env.grep('match_here', path='sub')
+    assert 'sub/target.py' in result
+    assert 'other.py' not in result
+
+
+async def test_memory_glob_in_subdirectory_with_path_filter():
+    """MemoryEnvironment.glob works with path parameter."""
+    env = MemoryEnvironment(files={'src/a.py': 'a', 'src/b.txt': 'b', 'other.py': 'c'})
+    matches = await env.glob('*.py', path='src')
+    assert 'src/a.py' in matches
+    assert 'other.py' not in matches
+
+
+# --- Additional Docker coverage: lifecycle, process, truncation ---
+
+
+async def test_docker_execute_truncation(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+    """DockerSandbox.execute truncates long output."""
+    original = mock_container.exec_run
+
+    def big_output(cmd: Any, **kwargs: Any) -> tuple[int, bytes]:
+        if isinstance(cmd, list) and 'echo' in str(cmd):
+            return 0, b'x' * 200_000
+        return original(cmd, **kwargs)
+
+    mock_container.exec_run = big_output  # type: ignore[assignment]
+    result = await mock_docker_sandbox.execute('echo big')
+    assert result.truncated is True
+    assert len(result.output) == 100_000
+
+
+async def test_docker_execute_timeout_exit_code(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+    """DockerSandbox.execute handles timeout exit code 124."""
+
+    def timeout_result(cmd: Any, **kwargs: Any) -> tuple[int, bytes]:
+        return 124, b'partial output'
+
+    mock_container.exec_run = timeout_result  # type: ignore[assignment]
+    result = await mock_docker_sandbox.execute('sleep 999', timeout=1)
+    assert result.exit_code == 124
+    assert '[Command timed out]' in result.output
+
+
+async def test_docker_setup_teardown() -> None:
+    """DockerSandbox._setup and _teardown with mocked Docker client."""
+    try:
+        from unittest.mock import patch as mock_patch
+
+        from pydantic_ai.environments.docker import DockerSandbox
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    sandbox = DockerSandbox(image='python:3.12-slim')
+
+    mock_client = MagicMock()
+    mock_container_obj = MagicMock()
+    mock_client.containers.run.return_value = mock_container_obj
+
+    with mock_patch('pydantic_ai.environments.docker.docker') as mock_docker:
+        mock_docker.from_env.return_value = mock_client
+        sandbox._setup()
+        assert sandbox._container is not None
+
+    # Teardown
+    sandbox._teardown()
+    mock_container_obj.stop.assert_called()
+    mock_container_obj.remove.assert_called()
+    assert sandbox._container is None
+
+
+async def test_docker_teardown_cleanup_errors() -> None:
+    """DockerSandbox._teardown handles exceptions gracefully."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandbox
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    sandbox = DockerSandbox()
+    mock_container = MagicMock()
+    mock_container.stop.side_effect = Exception('stop failed')
+    mock_container.remove.side_effect = Exception('remove failed')
+    sandbox._container = mock_container
+
+    # Should not raise
+    sandbox._teardown()
+    assert sandbox._container is None
+
+
+async def test_docker_resolve_image_no_packages() -> None:
+    """DockerSandbox._resolve_image returns base image when no packages."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandbox
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    sandbox = DockerSandbox(image='python:3.12-slim')
+    sandbox._client = MagicMock()
+    result = sandbox._resolve_image()
+    assert result == 'python:3.12-slim'
+
+
+async def test_docker_resolve_image_with_cache() -> None:
+    """DockerSandbox._resolve_image returns cached image if it exists."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandbox
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    sandbox = DockerSandbox(image='python:3.12-slim', packages=['numpy'])
+    mock_client = MagicMock()
+    mock_client.images.get.return_value = MagicMock()  # Image exists
+    sandbox._client = mock_client
+
+    result = sandbox._resolve_image()
+    assert result.startswith('pydantic-ai-sandbox:')
+    mock_client.images.build.assert_not_called()
+
+
+async def test_docker_resolve_image_build_new() -> None:
+    """DockerSandbox._resolve_image builds when cache miss."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandbox, ImageNotFound
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    sandbox = DockerSandbox(image='python:3.12-slim', packages=['numpy'])
+    mock_client = MagicMock()
+    mock_client.images.get.side_effect = ImageNotFound('not found')
+    mock_client.images.build.return_value = (MagicMock(), [])
+    sandbox._client = mock_client
+
+    result = sandbox._resolve_image()
+    assert result.startswith('pydantic-ai-sandbox:')
+    mock_client.images.build.assert_called_once()
+
+
+async def test_docker_resolve_image_no_cache() -> None:
+    """DockerSandbox._resolve_image skips cache check when disabled."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandbox
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    sandbox = DockerSandbox(image='python:3.12-slim', packages=['numpy'], cache_built_image=False)
+    mock_client = MagicMock()
+    mock_client.images.build.return_value = (MagicMock(), [])
+    sandbox._client = mock_client
+
+    result = sandbox._resolve_image()
+    assert result.startswith('pydantic-ai-sandbox:')
+    mock_client.images.get.assert_not_called()
+    mock_client.images.build.assert_called_once()
+
+
+async def test_docker_setup_with_all_options() -> None:
+    """DockerSandbox._setup passes all container options."""
+    try:
+        from unittest.mock import patch as mock_patch
+
+        from pydantic_ai.environments.docker import DockerSandbox
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    sandbox = DockerSandbox(
+        image='python:3.12-slim',
+        env_vars={'KEY': 'val'},
+        volumes={'/host': {'bind': '/container', 'mode': 'rw'}},
+        memory_limit='512m',
+        cpu_limit=1.0,
+        pids_limit=256,
+        network_disabled=True,
+        read_only=True,
+        cap_drop=['ALL'],
+        security_opt=['no-new-privileges'],
+        user='nobody',
+        tmpfs={'/tmp': 'noexec,nosuid,size=64m'},
+        init=True,
+    )
+
+    mock_client = MagicMock()
+    mock_container = MagicMock()
+    mock_client.containers.run.return_value = mock_container
+
+    with mock_patch('pydantic_ai.environments.docker.docker') as mock_docker:
+        mock_docker.from_env.return_value = mock_client
+        sandbox._setup()
+
+    call_kwargs = mock_client.containers.run.call_args[1]
+    assert call_kwargs['volumes'] == {'/host': {'bind': '/container', 'mode': 'rw'}}
+    assert call_kwargs['mem_limit'] == '512m'
+    assert call_kwargs['nano_cpus'] == int(1e9)
+    assert call_kwargs['pids_limit'] == 256
+    assert call_kwargs['network_disabled'] is True
+    assert call_kwargs['read_only'] is True
+    assert call_kwargs['cap_drop'] == ['ALL']
+    assert call_kwargs['security_opt'] == ['no-new-privileges']
+    assert call_kwargs['user'] == 'nobody'
+    assert call_kwargs['tmpfs'] == {'/tmp': 'noexec,nosuid,size=64m'}
+    assert call_kwargs['init'] is True
+
+
+async def test_docker_process_recv_with_buffered_data() -> None:
+    """DockerSandboxProcess.recv returns buffered stdout data first."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc._stdout_buffer.append(b'buffered data')
+
+    result = await proc.recv()
+    assert result == b'buffered data'
+    assert proc._stdout_buffer == []
+
+
+async def test_docker_process_recv_stderr_with_buffered_data() -> None:
+    """DockerSandboxProcess.recv_stderr returns buffered stderr data first."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc._stderr_buffer.append(b'buffered error')
+
+    result = await proc.recv_stderr()
+    assert result == b'buffered error'
+    assert proc._stderr_buffer == []
+
+
+async def test_docker_process_recv_stream_buffers_other() -> None:
+    """DockerSandboxProcess._recv_stream buffers frames for the other stream."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+
+    # First frame is stderr (type 2), second is stdout (type 1)
+    stderr_data = b'error output'
+    stdout_data = b'stdout output'
+    stderr_header = struct.pack('>BxxxI', 2, len(stderr_data))
+    stdout_header = struct.pack('>BxxxI', 1, len(stdout_data))
+
+    mock_socket = MagicMock()
+    mock_socket.recv.side_effect = [stderr_header, stderr_data, stdout_header, stdout_data]
+    proc._socket = mock_socket
+
+    # Requesting stdout should buffer stderr and return stdout
+    result = await proc.recv()
+    assert result == stdout_data
+    assert proc._stderr_buffer == [stderr_data]
+
+
+async def test_docker_process_recv_stream_eof() -> None:
+    """DockerSandboxProcess._recv_stream returns empty on EOF."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+
+    mock_socket = MagicMock()
+    mock_socket.recv.return_value = b''  # EOF
+    proc._socket = mock_socket
+
+    result = await proc.recv()
+    assert result == b''
+
+
+async def test_docker_process_kill() -> None:
+    """DockerSandboxProcess.kill closes the socket."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    mock_socket = MagicMock()
+    proc._socket = mock_socket
+
+    await proc.kill()
+    mock_socket.close.assert_called_once()
+
+
+async def test_docker_process_kill_oserror() -> None:
+    """DockerSandboxProcess.kill handles OSError."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    mock_socket = MagicMock()
+    mock_socket.close.side_effect = OSError('socket error')
+    proc._socket = mock_socket
+
+    # Should not raise
+    await proc.kill()
+
+
+async def test_docker_process_returncode() -> None:
+    """DockerSandboxProcess.returncode checks exec status."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+
+    # No exec_id means returncode is None
+    assert proc.returncode is None
+
+    # With exec_id and cached returncode
+    proc._exec_id = 'exec-123'
+    proc._returncode = 0
+    assert proc.returncode == 0
+
+
+async def test_docker_process_returncode_from_inspect() -> None:
+    """DockerSandboxProcess.returncode polls Docker API."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    container.client.api.exec_inspect.return_value = {'ExitCode': 42}
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc._exec_id = 'exec-123'
+
+    assert proc.returncode == 42
+    assert proc._returncode == 42
+
+
+async def test_docker_process_returncode_still_running() -> None:
+    """DockerSandboxProcess.returncode returns None when process is running."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    container.client.api.exec_inspect.return_value = {'ExitCode': -1}
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc._exec_id = 'exec-123'
+
+    assert proc.returncode is None
+
+
+async def test_docker_process_returncode_inspect_error() -> None:
+    """DockerSandboxProcess.returncode handles API errors."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    container.client.api.exec_inspect.side_effect = OSError('connection failed')
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc._exec_id = 'exec-123'
+
+    assert proc.returncode is None
+
+
+async def test_docker_process_send() -> None:
+    """DockerSandboxProcess.send writes to socket."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    mock_socket = MagicMock()
+    proc._socket = mock_socket
+
+    await proc.send(b'hello')
+    mock_socket.sendall.assert_called_once_with(b'hello')
+
+
+async def test_docker_process_recv_with_timeout() -> None:
+    """DockerSandboxProcess.recv with timeout."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+
+    stdout_data = b'data'
+    header = struct.pack('>BxxxI', 1, len(stdout_data))
+    mock_socket = MagicMock()
+    mock_socket.recv.side_effect = [header, stdout_data]
+    proc._socket = mock_socket
+
+    result = await proc.recv(timeout=5.0)
+    assert result == stdout_data
+
+
+async def test_docker_process_recv_stderr_with_timeout() -> None:
+    """DockerSandboxProcess.recv_stderr with timeout."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+
+    stderr_data = b'error'
+    header = struct.pack('>BxxxI', 2, len(stderr_data))
+    mock_socket = MagicMock()
+    mock_socket.recv.side_effect = [header, stderr_data]
+    proc._socket = mock_socket
+
+    result = await proc.recv_stderr(timeout=5.0)
+    assert result == stderr_data
+
+
+async def test_docker_read_frame_data_eof_during_read() -> None:
+    """DockerSandboxProcess._read_frame handles EOF during data read."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+
+    # Header says 100 bytes but socket returns less then EOF
+    header = struct.pack('>BxxxI', 1, 100)
+    mock_socket = MagicMock()
+    mock_socket.recv.side_effect = [header, b'partial', b'']  # EOF during data
+    proc._socket = mock_socket
+
+    stream_type, data = proc._read_frame()
+    assert stream_type == 1
+    assert data == b'partial'
+    assert proc._eof is True
+
+
+async def test_docker_process_start_with_env() -> None:
+    """DockerSandboxProcess._do_start passes env to exec_create."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    container.client.api.exec_create.return_value = {'Id': 'exec-test'}
+    mock_sock = MagicMock()
+    container.client.api.exec_start.return_value = mock_sock
+
+    proc = DockerSandboxProcess(
+        container,  # type: ignore[arg-type]
+        'echo test',
+        '/workspace',
+        env={'FOO': 'bar'},
+    )
+    await proc._start()
+
+    assert proc._exec_id == 'exec-test'
+    call_kwargs = container.client.api.exec_create.call_args[1]
+    assert call_kwargs['environment'] == {'FOO': 'bar'}
+
+
+async def test_docker_process_aenter() -> None:
+    """DockerSandboxProcess.__aenter__ starts the process."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    container.client.api.exec_create.return_value = {'Id': 'exec-aenter'}
+    mock_sock = MagicMock()
+    container.client.api.exec_start.return_value = mock_sock
+
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    entered = await proc.__aenter__()
+    assert entered is proc
+    assert proc._exec_id == 'exec-aenter'
+
+
+async def test_docker_ls_not_found(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+    """DockerSandbox.ls raises NotADirectoryError on missing dirs."""
+    original = mock_container.exec_run
+
+    def fail_ls(cmd: Any, **kwargs: Any) -> tuple[int, bytes]:
+        if isinstance(cmd, list) and 'ls -la' in ' '.join(cmd):
+            return 1, b'ls: cannot access: No such file or directory'
+        return original(cmd, **kwargs)
+
+    mock_container.exec_run = fail_ls  # type: ignore[assignment]
+    with pytest.raises(NotADirectoryError):
+        await mock_docker_sandbox.ls('nonexistent')
+
+
+async def test_docker_read_file_bytes_not_found(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+    """DockerSandbox.read_file_bytes raises FileNotFoundError for missing files."""
+    try:
+        from docker.errors import NotFound
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    def fail_get_archive(path: str) -> Any:
+        raise NotFound('File not found')
+
+    mock_container.get_archive = fail_get_archive
+    with pytest.raises(NotFound):
+        await mock_docker_sandbox.read_file_bytes('missing.txt')
+
+
+# --- Additional E2B coverage: process methods, lifecycle ---
+
+
+async def test_e2b_process_start_with_env() -> None:
+    """E2BSandboxProcess._start passes env to commands.start."""
+    try:
+        from pydantic_ai.environments.e2b import E2BSandboxProcess
+    except ImportError:
+        pytest.skip('e2b-code-interpreter package not installed')
+
+    mock_sandbox = MagicMock()
+    mock_proc = MagicMock()
+    mock_proc.send_stdin = AsyncMock()
+    mock_proc.kill = AsyncMock()
+    mock_sandbox.commands.start = AsyncMock(return_value=mock_proc)
+
+    proc = E2BSandboxProcess(mock_sandbox, 'echo test', env={'KEY': 'val'})
+    await proc._start()
+
+    mock_sandbox.commands.start.assert_called_once()
+    call_kwargs = mock_sandbox.commands.start.call_args[1]
+    assert call_kwargs['envs'] == {'KEY': 'val'}
+    assert proc._proc is mock_proc
+
+    # Clean up
+    await proc._stdout_send.aclose()
+    await proc._stdout_recv.aclose()
+    await proc._stderr_send.aclose()
+    await proc._stderr_recv.aclose()
+
+
+async def test_e2b_process_aenter() -> None:
+    """E2BSandboxProcess.__aenter__ starts the process."""
+    try:
+        from pydantic_ai.environments.e2b import E2BSandboxProcess
+    except ImportError:
+        pytest.skip('e2b-code-interpreter package not installed')
+
+    mock_sandbox = MagicMock()
+    mock_proc = MagicMock()
+    mock_sandbox.commands.start = AsyncMock(return_value=mock_proc)
+
+    proc = E2BSandboxProcess(mock_sandbox, 'echo test')
+    entered = await proc.__aenter__()
+    assert entered is proc
+    assert proc._proc is mock_proc
+
+    # Clean up
+    await proc._stdout_send.aclose()
+    await proc._stdout_recv.aclose()
+    await proc._stderr_send.aclose()
+    await proc._stderr_recv.aclose()
+
+
+async def test_e2b_process_send() -> None:
+    """E2BSandboxProcess.send writes to process stdin."""
+    try:
+        from pydantic_ai.environments.e2b import E2BSandboxProcess
+    except ImportError:
+        pytest.skip('e2b-code-interpreter package not installed')
+
+    mock_sandbox = MagicMock()
+    mock_proc = MagicMock()
+    mock_proc.send_stdin = AsyncMock()
+    mock_sandbox.commands.start = AsyncMock(return_value=mock_proc)
+
+    proc = E2BSandboxProcess(mock_sandbox, 'cat')
+    await proc._start()
+    await proc.send(b'hello\n')
+    mock_proc.send_stdin.assert_called_once_with('hello\n')
+
+    # Clean up
+    await proc._stdout_send.aclose()
+    await proc._stdout_recv.aclose()
+    await proc._stderr_send.aclose()
+    await proc._stderr_recv.aclose()
+
+
+async def test_e2b_process_recv() -> None:
+    """E2BSandboxProcess.recv reads from stdout stream."""
+    try:
+        from pydantic_ai.environments.e2b import E2BSandboxProcess
+    except ImportError:
+        pytest.skip('e2b-code-interpreter package not installed')
+
+    mock_sandbox = MagicMock()
+    proc = E2BSandboxProcess(mock_sandbox, 'echo test')
+
+    # Simulate stdout callback
+    proc._stdout_send.send_nowait(b'hello\n')
+    data = await proc.recv(timeout=1.0)
+    assert data == b'hello\n'
+
+    # Clean up
+    await proc._stdout_send.aclose()
+    await proc._stdout_recv.aclose()
+    await proc._stderr_send.aclose()
+    await proc._stderr_recv.aclose()
+
+
+async def test_e2b_process_recv_no_timeout() -> None:
+    """E2BSandboxProcess.recv without timeout."""
+    try:
+        from pydantic_ai.environments.e2b import E2BSandboxProcess
+    except ImportError:
+        pytest.skip('e2b-code-interpreter package not installed')
+
+    mock_sandbox = MagicMock()
+    proc = E2BSandboxProcess(mock_sandbox, 'echo test')
+
+    proc._stdout_send.send_nowait(b'data\n')
+    data = await proc.recv()
+    assert data == b'data\n'
+
+    # Clean up
+    await proc._stdout_send.aclose()
+    await proc._stdout_recv.aclose()
+    await proc._stderr_send.aclose()
+    await proc._stderr_recv.aclose()
+
+
+async def test_e2b_process_recv_stderr() -> None:
+    """E2BSandboxProcess.recv_stderr reads from stderr stream."""
+    try:
+        from pydantic_ai.environments.e2b import E2BSandboxProcess
+    except ImportError:
+        pytest.skip('e2b-code-interpreter package not installed')
+
+    mock_sandbox = MagicMock()
+    proc = E2BSandboxProcess(mock_sandbox, 'echo test')
+
+    proc._stderr_send.send_nowait(b'error\n')
+    data = await proc.recv_stderr(timeout=1.0)
+    assert data == b'error\n'
+
+    # Clean up
+    await proc._stdout_send.aclose()
+    await proc._stdout_recv.aclose()
+    await proc._stderr_send.aclose()
+    await proc._stderr_recv.aclose()
+
+
+async def test_e2b_process_recv_stderr_no_timeout() -> None:
+    """E2BSandboxProcess.recv_stderr without timeout."""
+    try:
+        from pydantic_ai.environments.e2b import E2BSandboxProcess
+    except ImportError:
+        pytest.skip('e2b-code-interpreter package not installed')
+
+    mock_sandbox = MagicMock()
+    proc = E2BSandboxProcess(mock_sandbox, 'echo test')
+
+    proc._stderr_send.send_nowait(b'err\n')
+    data = await proc.recv_stderr()
+    assert data == b'err\n'
+
+    # Clean up
+    await proc._stdout_send.aclose()
+    await proc._stdout_recv.aclose()
+    await proc._stderr_send.aclose()
+    await proc._stderr_recv.aclose()
+
+
+async def test_e2b_process_returncode() -> None:
+    """E2BSandboxProcess.returncode reflects exit status."""
+    try:
+        from pydantic_ai.environments.e2b import E2BSandboxProcess
+    except ImportError:
+        pytest.skip('e2b-code-interpreter package not installed')
+
+    mock_sandbox = MagicMock()
+    proc = E2BSandboxProcess(mock_sandbox, 'echo test')
+
+    assert proc.returncode is None
+    proc._on_exit(42)
+    assert proc.returncode == 42
+
+    # Clean up
+    await proc._stdout_send.aclose()
+    await proc._stdout_recv.aclose()
+    await proc._stderr_send.aclose()
+    await proc._stderr_recv.aclose()
+
+
+async def test_e2b_process_wait() -> None:
+    """E2BSandboxProcess.wait returns exit code."""
+    try:
+        from pydantic_ai.environments.e2b import E2BSandboxProcess
+    except ImportError:
+        pytest.skip('e2b-code-interpreter package not installed')
+
+    mock_sandbox = MagicMock()
+    proc = E2BSandboxProcess(mock_sandbox, 'echo test')
+
+    # Simulate immediate exit
+    proc._on_exit(0)
+    exit_code = await proc.wait(timeout=1.0)
+    assert exit_code == 0
+
+    # Clean up
+    await proc._stdout_send.aclose()
+    await proc._stdout_recv.aclose()
+    await proc._stderr_send.aclose()
+    await proc._stderr_recv.aclose()
+
+
+async def test_e2b_process_wait_no_timeout() -> None:
+    """E2BSandboxProcess.wait without timeout."""
+    try:
+        from pydantic_ai.environments.e2b import E2BSandboxProcess
+    except ImportError:
+        pytest.skip('e2b-code-interpreter package not installed')
+
+    mock_sandbox = MagicMock()
+    proc = E2BSandboxProcess(mock_sandbox, 'echo test')
+
+    proc._on_exit(1)
+    exit_code = await proc.wait()
+    assert exit_code == 1
+
+    # Clean up
+    await proc._stdout_send.aclose()
+    await proc._stdout_recv.aclose()
+    await proc._stderr_send.aclose()
+    await proc._stderr_recv.aclose()
+
+
+async def test_e2b_process_kill() -> None:
+    """E2BSandboxProcess.kill terminates the process."""
+    try:
+        from pydantic_ai.environments.e2b import E2BSandboxProcess
+    except ImportError:
+        pytest.skip('e2b-code-interpreter package not installed')
+
+    mock_sandbox = MagicMock()
+    mock_proc = MagicMock()
+    mock_proc.kill = AsyncMock()
+    mock_sandbox.commands.start = AsyncMock(return_value=mock_proc)
+
+    proc = E2BSandboxProcess(mock_sandbox, 'sleep 60')
+    await proc._start()
+    await proc.kill()
+    mock_proc.kill.assert_called_once()
+
+    # Clean up
+    await proc._stdout_send.aclose()
+    await proc._stdout_recv.aclose()
+    await proc._stderr_send.aclose()
+    await proc._stderr_recv.aclose()
+
+
+async def test_e2b_process_kill_not_started() -> None:
+    """E2BSandboxProcess.kill does nothing when process not started."""
+    try:
+        from pydantic_ai.environments.e2b import E2BSandboxProcess
+    except ImportError:
+        pytest.skip('e2b-code-interpreter package not installed')
+
+    mock_sandbox = MagicMock()
+    proc = E2BSandboxProcess(mock_sandbox, 'echo test')
+    # _proc is None, should not raise
+    await proc.kill()
+
+    # Clean up
+    await proc._stdout_send.aclose()
+    await proc._stdout_recv.aclose()
+    await proc._stderr_send.aclose()
+    await proc._stderr_recv.aclose()
+
+
+async def test_e2b_process_kill_error() -> None:
+    """E2BSandboxProcess.kill handles exceptions gracefully."""
+    try:
+        from pydantic_ai.environments.e2b import E2BSandboxProcess
+    except ImportError:
+        pytest.skip('e2b-code-interpreter package not installed')
+
+    mock_sandbox = MagicMock()
+    mock_proc = MagicMock()
+    mock_proc.kill = AsyncMock(side_effect=Exception('kill failed'))
+    mock_sandbox.commands.start = AsyncMock(return_value=mock_proc)
+
+    proc = E2BSandboxProcess(mock_sandbox, 'sleep 60')
+    await proc._start()
+    # Should not raise
+    await proc.kill()
+
+    # Clean up
+    await proc._stdout_send.aclose()
+    await proc._stdout_recv.aclose()
+    await proc._stderr_send.aclose()
+    await proc._stderr_recv.aclose()
+
+
+async def test_e2b_write_file_with_parent_creates_dir(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox.write_file calls mkdir for parent directories."""
+    await mock_e2b_sandbox.write_file('deep/nested/file.txt', 'content')
+    # Should have called commands.run for mkdir -p
+    calls = mock_e2b_sandbox.sandbox.commands.run.call_args_list
+    mkdir_call = next(c for c in calls if 'mkdir' in str(c))
+    assert 'deep/nested' in str(mkdir_call)
+
+
+async def test_e2b_write_file_no_parent_dir(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox.write_file skips mkdir for root-level files."""
+    await mock_e2b_sandbox.write_file('root_file.txt', 'content')
+    mock_e2b_sandbox.sandbox.files.write.assert_called()
+
+
+async def test_e2b_execute_with_timeout(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox.execute passes timeout to commands.run."""
+    result = await mock_e2b_sandbox.execute('echo test', timeout=30)
+    assert result.exit_code == 0
+    call_kwargs = mock_e2b_sandbox.sandbox.commands.run.call_args[1]
+    assert call_kwargs['timeout'] == 30
+
+
+async def test_e2b_execute_no_timeout(mock_e2b_sandbox: Any) -> None:
+    """E2BSandbox.execute with timeout=None."""
+    result = await mock_e2b_sandbox.execute('echo test', timeout=None)
+    assert result.exit_code == 0
+    call_kwargs = mock_e2b_sandbox.sandbox.commands.run.call_args
+    assert 'timeout' not in call_kwargs[1]
+
+
+# --- Final coverage gap tests ---
+
+
+async def test_docker_process_recv_stderr_no_timeout_no_buffer() -> None:
+    """DockerSandboxProcess.recv_stderr without timeout and no buffer hits line 175."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+
+    stderr_data = b'stderr output'
+    header = struct.pack('>BxxxI', 2, len(stderr_data))
+    mock_socket = MagicMock()
+    mock_socket.recv.side_effect = [header, stderr_data]
+    proc._socket = mock_socket
+
+    # No timeout, no buffer -> hits line 175
+    result = await proc.recv_stderr()
+    assert result == stderr_data
+
+
+async def test_docker_process_recv_stream_buffers_stdout_for_stderr() -> None:
+    """DockerSandboxProcess._recv_stream buffers stdout when requesting stderr (line 187)."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+
+    # First frame is stdout (type 1), second is stderr (type 2)
+    stdout_data = b'stdout first'
+    stderr_data = b'stderr second'
+    stdout_header = struct.pack('>BxxxI', 1, len(stdout_data))
+    stderr_header = struct.pack('>BxxxI', 2, len(stderr_data))
+
+    mock_socket = MagicMock()
+    mock_socket.recv.side_effect = [stdout_header, stdout_data, stderr_header, stderr_data]
+    proc._socket = mock_socket
+
+    # Requesting stderr should buffer stdout and return stderr
+    result = await proc.recv_stderr()
+    assert result == stderr_data
+    assert proc._stdout_buffer == [stdout_data]
+
+
+async def test_docker_process_wait_with_timeout() -> None:
+    """DockerSandboxProcess.wait with timeout (lines 247-257)."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    container.client.api.exec_inspect.return_value = {'ExitCode': 0}
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc._exec_id = 'exec-wait'
+
+    exit_code = await proc.wait(timeout=5.0)
+    assert exit_code == 0
+
+
+async def test_docker_process_wait_no_timeout() -> None:
+    """DockerSandboxProcess.wait without timeout (line 257)."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    container.client.api.exec_inspect.return_value = {'ExitCode': 1}
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc._exec_id = 'exec-wait-2'
+
+    exit_code = await proc.wait()
+    assert exit_code == 1
+
+
+async def test_docker_aenter_aexit() -> None:
+    """DockerSandbox.__aenter__ and __aexit__ (lines 355-356, 434-435)."""
+    try:
+        from unittest.mock import patch as mock_patch
+
+        from pydantic_ai.environments.docker import DockerSandbox
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    sandbox = DockerSandbox(image='python:3.12-slim')
+
+    mock_client = MagicMock()
+    mock_container_obj = MagicMock()
+    mock_client.containers.run.return_value = mock_container_obj
+
+    with mock_patch('pydantic_ai.environments.docker.docker') as mock_docker:
+        mock_docker.from_env.return_value = mock_client
+        async with sandbox:
+            assert sandbox._container is not None
+
+    assert sandbox._container is None
+
+
+async def test_docker_read_file_bytes_empty_tar(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+    """DockerSandbox.read_file_bytes raises on empty tar (line 531)."""
+    # Create an empty tar
+    f = io.BytesIO()
+    with tarfile.open(fileobj=f, mode='w'):
+        pass  # empty tar
+    f.seek(0)
+    empty_tar = f.read()
+
+    def empty_get_archive(path: str) -> tuple[list[bytes], dict[str, Any]]:
+        return [empty_tar], {}
+
+    mock_container.get_archive = empty_get_archive
+    with pytest.raises(FileNotFoundError, match='not found'):
+        await mock_docker_sandbox.read_file_bytes('empty.txt')
+
+
+async def test_docker_read_file_bytes_directory_tar(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+    """DockerSandbox.read_file_bytes raises when tar contains a directory (line 534)."""
+    f = io.BytesIO()
+    with tarfile.open(fileobj=f, mode='w') as tar:
+        info = tarfile.TarInfo(name='somedir')
+        info.type = tarfile.DIRTYPE
+        tar.addfile(info)
+    f.seek(0)
+    dir_tar = f.read()
+
+    def dir_get_archive(path: str) -> tuple[list[bytes], dict[str, Any]]:
+        return [dir_tar], {}
+
+    mock_container.get_archive = dir_get_archive
+    with pytest.raises(FileNotFoundError, match='Cannot read'):
+        await mock_docker_sandbox.read_file_bytes('somedir')
+
+
+async def test_docker_ls_short_lines(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+    """DockerSandbox.ls skips short lines (line 580) and handles non-numeric size (585-586)."""
+    original = mock_container.exec_run
+
+    def custom_ls(cmd: Any, **kwargs: Any) -> tuple[int, bytes]:
+        if isinstance(cmd, list) and 'ls -la' in ' '.join(cmd):
+            output = (
+                'total 8\n'
+                '-rw-r--r-- 1 root root 42 Jan  1 00:00 normal.txt\n'
+                'short\n'  # short line, < 9 parts -> skipped
+                'drwxr-xr-x 2 root root 4096 Jan  1 00:00 subdir\n'
+            )
+            return 0, output.encode()
+        return original(cmd, **kwargs)
+
+    mock_container.exec_run = custom_ls  # type: ignore[assignment]
+    entries = await mock_docker_sandbox.ls('.')
+    names = {e.name for e in entries}
+    assert 'normal.txt' in names
+    assert 'subdir' in names
+
+
+async def test_docker_is_alive_exception(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+    """DockerSandbox.is_alive returns False on exception (lines 641-642)."""
+    mock_container.reload = MagicMock(side_effect=Exception('connection lost'))
+    result = await mock_docker_sandbox.is_alive()
+    assert result is False
+
+
+async def test_local_process_recv_with_timeout(tmp_path: Path):
+    """LocalEnvironmentProcess.recv with timeout (lines 50-52)."""
+    env = LocalEnvironment(tmp_path)
+    proc = await env.create_process('echo hello')
+    async with proc:
+        data = await proc.recv(timeout=5.0)
+        assert b'hello' in data
+
+
+async def test_local_process_kill_process_lookup_error(tmp_path: Path):
+    """LocalEnvironmentProcess.kill handles ProcessLookupError (line 74)."""
+    env = LocalEnvironment(tmp_path)
+    proc = await env.create_process('echo done')
+    async with proc:
+        await proc.wait(timeout=5.0)
+        # Process already exited, kill should handle ProcessLookupError
+        await proc.kill()
+
+
+async def test_local_grep_oserror(tmp_path: Path):
+    """LocalEnvironment.grep handles OSError when reading files (lines 325-326)."""
+    # Create a file, then make it unreadable
+    target = tmp_path / 'unreadable.txt'
+    target.write_text('findme\n')
+    target.chmod(0o000)
+
+    env = LocalEnvironment(tmp_path)
+    # Should not raise, just skip the unreadable file
+    result = await env.grep('findme')
+    # Should be empty since the only file is unreadable
+    assert result == '' or 'findme' not in result
+
+    # Restore permissions for cleanup
+    target.chmod(0o644)
+
+
+async def test_local_grep_truncation(tmp_path: Path):
+    """LocalEnvironment.grep truncates at 1000 matches (lines 337-338)."""
+    # Create a file with > 1000 matching lines
+    content = '\n'.join(f'match_{i}' for i in range(1100))
+    (tmp_path / 'big.txt').write_text(content)
+
+    env = LocalEnvironment(tmp_path)
+    result = await env.grep('match_', output_mode='content')
+    assert 'truncated' in result
+
+
+async def test_memory_normalize_slash():
+    """MemoryEnvironment normalizes / to empty (line 76 edge case)."""
+    env = MemoryEnvironment()
+    # The normalize function strips leading / but posixpath.normpath('/') = '/'
+    # so '/' becomes '' after stripping
+    normalized = env._normalize('/')
+    assert normalized in ('', '.')
+
+
+async def test_memory_ls_deduplicate():
+    """MemoryEnvironment.ls deduplicates directory entries (line 184)."""
+    env = MemoryEnvironment(files={'dir/a.txt': 'a', 'dir/b.txt': 'b'})
+    entries = await env.ls('.')
+    # Should show 'dir' only once, not twice
+    dir_entries = [e for e in entries if e.name == 'dir']
+    assert len(dir_entries) == 1
+
+
+async def test_memory_grep_truncation():
+    """MemoryEnvironment.grep truncates at 1000 matches (lines 265-266)."""
+    # Create files with many matching lines
+    content = '\n'.join(f'match_{i}' for i in range(600))
+    env = MemoryEnvironment(files={'a.txt': content, 'b.txt': content})
+
+    result = await env.grep('match_', output_mode='content')
+    assert 'truncated' in result
+
+
+async def test_local_process_recv_no_timeout(tmp_path: Path):
+    """LocalEnvironmentProcess.recv without timeout (line 50)."""
+    env = LocalEnvironment(tmp_path)
+    proc = await env.create_process('echo hello')
+    async with proc:
+        data = await proc.recv()  # no timeout
+        assert b'hello' in data
+
+
+async def test_local_process_recv_eof(tmp_path: Path):
+    """LocalEnvironmentProcess.recv returns empty on EndOfStream (lines 51-52)."""
+    env = LocalEnvironment(tmp_path)
+    proc = await env.create_process('true')
+    async with proc:
+        await proc.wait(timeout=5.0)
+        # After process exits and stdout is drained, should get empty bytes
+        data = await proc.recv()
+        assert data == b''
+
+
+async def test_docker_process_wait_poll_loop() -> None:
+    """DockerSandboxProcess.wait poll loop (line 252)."""
+    try:
+        from pydantic_ai.environments.docker import DockerSandboxProcess
+    except ImportError:
+        pytest.skip('docker package not installed')
+
+    container = MockContainer()
+    # First call returns running (-1), second returns exit code
+    container.client.api.exec_inspect.side_effect = [
+        {'ExitCode': -1},
+        {'ExitCode': -1},
+        {'ExitCode': 0},
+    ]
+    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc._exec_id = 'exec-poll'
+
+    exit_code = await proc.wait(timeout=5.0)
+    assert exit_code == 0
+
+
+async def test_docker_ls_size_value_error(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+    """DockerSandbox.ls handles non-numeric size (lines 585-586)."""
+    original = mock_container.exec_run
+
+    def custom_ls(cmd: Any, **kwargs: Any) -> tuple[int, bytes]:
+        if isinstance(cmd, list) and 'ls -la' in ' '.join(cmd):
+            output = 'total 8\n-rw-r--r-- 1 root root NaN Jan  1 00:00 weird.txt\n'
+            return 0, output.encode()
+        return original(cmd, **kwargs)
+
+    mock_container.exec_run = custom_ls  # type: ignore[assignment]
+    entries = await mock_docker_sandbox.ls('.')
+    assert len(entries) == 1
+    assert entries[0].name == 'weird.txt'
+    assert entries[0].size is None  # NaN couldn't be parsed
+
+
+async def test_e2b_lifecycle() -> None:
+    """E2BSandbox.__aenter__ and __aexit__ (lines 166-186)."""
+    try:
+        from unittest.mock import patch as mock_patch
+
+        from pydantic_ai.environments.e2b import E2BSandbox
+    except ImportError:
+        pytest.skip('e2b-code-interpreter package not installed')
+
+    mock_sandbox_instance = MagicMock()
+    mock_sandbox_instance.close = AsyncMock()
+
+    with mock_patch('pydantic_ai.environments.e2b.E2BAsyncSandbox') as MockSandboxClass:
+        MockSandboxClass.create = AsyncMock(return_value=mock_sandbox_instance)
+
+        sandbox = E2BSandbox(
+            template='test', api_key='test-key', timeout=60, metadata={'env': 'test'}, env_vars={'KEY': 'val'}
+        )
+        async with sandbox:
+            assert sandbox._sandbox is mock_sandbox_instance
+
+        # After exit, sandbox should be None and close called
+        assert sandbox._sandbox is None
+        mock_sandbox_instance.close.assert_called_once()
+
+
+async def test_e2b_lifecycle_close_error() -> None:
+    """E2BSandbox.__aexit__ handles close errors gracefully (lines 183-185)."""
+    try:
+        from unittest.mock import patch as mock_patch
+
+        from pydantic_ai.environments.e2b import E2BSandbox
+    except ImportError:
+        pytest.skip('e2b-code-interpreter package not installed')
+
+    mock_sandbox_instance = MagicMock()
+    mock_sandbox_instance.close = AsyncMock(side_effect=Exception('close failed'))
+
+    with mock_patch('pydantic_ai.environments.e2b.E2BAsyncSandbox') as MockSandboxClass:
+        MockSandboxClass.create = AsyncMock(return_value=mock_sandbox_instance)
+
+        sandbox = E2BSandbox(template='test', api_key='test-key')
+        async with sandbox:
+            pass
+        # Should not raise despite close failure
+        assert sandbox._sandbox is None
+
+
+async def test_e2b_process_wait_polls() -> None:
+    """E2BSandboxProcess.wait polls until exit code appears (line 110)."""
+    try:
+        from pydantic_ai.environments.e2b import E2BSandboxProcess
+    except ImportError:
+        pytest.skip('e2b-code-interpreter package not installed')
+
+    import anyio
+
+    mock_sandbox = MagicMock()
+    proc = E2BSandboxProcess(mock_sandbox, 'sleep 1')
+
+    # Simulate delayed exit: set returncode after a short delay
+    async def delayed_exit():
+        await anyio.sleep(0.2)
+        proc._on_exit(0)
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(delayed_exit)
+        exit_code = await proc.wait(timeout=5.0)
+
+    assert exit_code == 0
+
+    # Clean up
+    await proc._stdout_send.aclose()
+    await proc._stdout_recv.aclose()
+    await proc._stderr_send.aclose()
+    await proc._stderr_recv.aclose()
+
+
+async def test_local_process_wait_no_timeout(tmp_path: Path):
+    """LocalEnvironmentProcess.wait without timeout (line 74)."""
+    env = LocalEnvironment(tmp_path)
+    proc = await env.create_process('true')
+    async with proc:
+        exit_code = await proc.wait()  # no timeout
+        assert exit_code == 0
+
+
+async def test_memory_normalize_absolute_path():
+    """MemoryEnvironment._normalize strips leading / (line 76)."""
+    env = MemoryEnvironment(files={'path.txt': 'content'})
+    # Normalize /path.txt should strip leading /
+    normalized = env._normalize('/path.txt')
+    assert normalized == 'path.txt'

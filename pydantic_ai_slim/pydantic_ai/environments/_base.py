@@ -452,13 +452,17 @@ def build_read_file_cmd(path: str, *, offset: int = 0, limit: int = 2000) -> str
     """Build a shell command that reads a file with line numbers.
 
     Uses `awk` for reliable line numbering that handles tabs correctly.
+    Includes a continuation hint when more lines remain, consistent
+    with the `format_lines` helper used by Local/Memory environments.
     """
     escaped = shell_escape(path)
-    if offset > 0 or limit < 2000:
-        start = offset + 1
-        end = offset + limit
-        return f'awk \'NR>={start} && NR<={end} {{printf "%6d\\t%s\\n", NR, $0}}\' {escaped}'
-    return f'awk \'{{printf "%6d\\t%s\\n", NR, $0}}\' {escaped}'
+    start = offset + 1
+    end = offset + limit
+    return (
+        f'awk \'NR>={start} && NR<={end} {{printf "%6d\\t%s\\n", NR, $0}}'
+        f' END {{if(NR>{end}) printf "... (%d more lines. Use offset={end} to continue reading.)\\n", NR-{end}}}\''
+        f' {escaped}'
+    )
 
 
 def build_grep_cmd(
@@ -477,7 +481,7 @@ def build_grep_cmd(
     else:
         parts.append('-n')
     if glob_pattern:
-        parts.extend(['--include', glob_pattern])
+        parts.extend(['--include', shell_escape(glob_pattern)])
     parts.append(shell_escape(pattern))
     parts.append(shell_escape(path or '.'))
     return ' '.join(parts)
