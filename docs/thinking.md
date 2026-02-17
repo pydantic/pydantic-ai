@@ -46,6 +46,24 @@ Settings that a provider doesn't support are silently ignored, so you can write 
 !!! note
     Not all providers support all effort levels. xAI only supports `'low'` and `'high'` (`'medium'` is mapped to `'low'`). Cohere and Groq ignore effort entirely — thinking is either on or off.
 
+### Provider Support
+
+| Provider | `thinking` | `thinking_effort` | Notes |
+|----------|:----------:|:------------------:|-------|
+| Anthropic | ✅ | ✅ | Claude 3.7+. Effort maps to `budget_tokens` or `output_config.effort`. |
+| OpenAI | ✅ | ✅ | o-series, GPT-5+. Maps to `reasoning_effort`. |
+| Gemini | ✅ | ✅ | 2.5+. Effort maps to `thinking_level` (Gemini 3). |
+| Bedrock | ✅ | ✅ | Claude models only. Effort maps to `budget_tokens`. |
+| OpenRouter | ✅ | ✅ | Passes through to underlying provider. |
+| xAI | ✅ | ✅ | Grok 3 Mini (`'low'`/`'high'` only), Grok 4 (always-on). |
+| Groq | ✅ | -- | DeepSeek R1, QwQ — always-on, no effort control. |
+| Cerebras | ✅ | -- | GLM, GPT-OSS reasoning models. |
+| Mistral | ✅ | -- | Magistral models — always-on. |
+| Cohere | ✅ | -- | Command A Reasoning. |
+| DeepSeek | ✅ | -- | R1 models. |
+| Harmony | ✅ | -- | GPT-OSS models — always-on. |
+| ZAI | ✅ | -- | GLM models. |
+
 ## Provider-Specific Settings
 
 The sections below document each provider's native thinking configuration. Use the unified API above for cross-provider code, or the provider-specific settings below when you need fine-grained control.

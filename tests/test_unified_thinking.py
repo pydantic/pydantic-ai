@@ -2,7 +2,7 @@
 
 Tests the three-layer architecture:
 1. ModelSettings (user input): `thinking: bool` + `thinking_effort: Literal['low', 'medium', 'high']`
-2. resolve_thinking_config() (pure normalization): no validation, no errors
+2. _resolve_thinking_config() (pure normalization): no validation, no errors
 3. Model._resolve_*() (per-provider translation): silent-drop for unsupported settings
 
 Integration tests at the bottom verify the full Agent -> Model -> API client pipeline
@@ -68,67 +68,61 @@ def non_thinking_profile() -> ModelProfile:
     return ModelProfile(supports_thinking=False)
 
 
-@pytest.fixture
-def always_on_thinking_profile() -> ModelProfile:
-    """A model profile where thinking is always enabled (e.g. o-series, DeepSeek R1)."""
-    return ModelProfile(supports_thinking=True, thinking_always_enabled=True)
-
-
 # ============================================================================
-# Core resolve_thinking_config() tests
+# Core _resolve_thinking_config() tests
 # ============================================================================
 
 
 class TestResolveThinkingConfig:
-    """Direct unit tests for pydantic_ai.thinking.resolve_thinking_config."""
+    """Direct unit tests for pydantic_ai.thinking._resolve_thinking_config."""
 
     def test_no_settings_returns_none(self):
         """No thinking fields set → None (provider uses defaults)."""
-        from pydantic_ai.thinking import resolve_thinking_config
+        from pydantic_ai.thinking import _resolve_thinking_config
 
-        result = resolve_thinking_config({})
+        result = _resolve_thinking_config({})
         assert result is None
 
     def test_thinking_true_enabled(self):
         """thinking=True → enabled=True, effort=None."""
-        from pydantic_ai.thinking import resolve_thinking_config
+        from pydantic_ai.thinking import _resolve_thinking_config
 
-        result = resolve_thinking_config({'thinking': True})
+        result = _resolve_thinking_config({'thinking': True})
         assert result is not None
         assert result.enabled is True
         assert result.effort is None
 
     def test_thinking_false_disabled(self):
         """thinking=False → enabled=False (effort ignored per precedence rule 2)."""
-        from pydantic_ai.thinking import resolve_thinking_config
+        from pydantic_ai.thinking import _resolve_thinking_config
 
-        result = resolve_thinking_config({'thinking': False})
+        result = _resolve_thinking_config({'thinking': False})
         assert result is not None
         assert result.enabled is False
 
     def test_effort_alone_implicit_enable(self):
         """thinking_effort without thinking → implicit enable (precedence rule 3)."""
-        from pydantic_ai.thinking import resolve_thinking_config
+        from pydantic_ai.thinking import _resolve_thinking_config
 
-        result = resolve_thinking_config({'thinking_effort': 'high'})
+        result = _resolve_thinking_config({'thinking_effort': 'high'})
         assert result is not None
         assert result.enabled is True
         assert result.effort == 'high'
 
     def test_thinking_true_with_effort(self):
         """thinking=True + thinking_effort → enabled with effort."""
-        from pydantic_ai.thinking import resolve_thinking_config
+        from pydantic_ai.thinking import _resolve_thinking_config
 
-        result = resolve_thinking_config({'thinking': True, 'thinking_effort': 'low'})
+        result = _resolve_thinking_config({'thinking': True, 'thinking_effort': 'low'})
         assert result is not None
         assert result.enabled is True
         assert result.effort == 'low'
 
     def test_thinking_false_ignores_effort(self):
         """thinking=False + thinking_effort → disabled (False overrides effort)."""
-        from pydantic_ai.thinking import resolve_thinking_config
+        from pydantic_ai.thinking import _resolve_thinking_config
 
-        result = resolve_thinking_config({'thinking': False, 'thinking_effort': 'high'})
+        result = _resolve_thinking_config({'thinking': False, 'thinking_effort': 'high'})
         assert result is not None
         assert result.enabled is False
         # Effort is not checked when disabled
@@ -218,6 +212,20 @@ class TestAnthropicUnifiedThinking:
             'type': 'enabled',
             'budget_tokens': 5000,
         }
+
+    def test_prepare_request_adaptive_effort_passthrough(self):
+        """prepare_request() maps thinking_effort → anthropic_effort for adaptive models."""
+        model = AnthropicModel.__new__(AnthropicModel)
+        model._model_name = 'claude-sonnet-4-5'
+        model._profile = AnthropicModelProfile(supports_thinking=True, anthropic_supports_adaptive_thinking=True)
+        model._settings = None
+
+        settings: AnthropicModelSettings = {'thinking_effort': 'high'}
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+
+        merged = cast(AnthropicModelSettings, merged)
+        assert merged.get('anthropic_thinking') == {'type': 'adaptive'}
+        assert merged.get('anthropic_effort') == 'high'
 
     def test_empty_settings_returns_none(self, thinking_profile: ModelProfile):
         """No thinking fields → None."""
@@ -343,6 +351,18 @@ class TestGoogleUnifiedThinking:
         merged, _ = model.prepare_request(settings, ModelRequestParameters())
 
         assert cast(GoogleModelSettings, merged).get('google_thinking_config') == {'thinking_budget': 5000}
+
+    def test_prepare_request_applies_unified_thinking(self, google_thinking_profile: ModelProfile):
+        """prepare_request() stores resolved thinking config in google_thinking_config."""
+        model = GoogleModel.__new__(GoogleModel)
+        model._model_name = 'gemini-2.5-flash'
+        model._profile = google_thinking_profile
+        model._settings = None
+
+        settings: GoogleModelSettings = {'thinking_effort': 'low'}
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+
+        assert cast(GoogleModelSettings, merged).get('google_thinking_config') == {'thinking_budget': 1024}
 
     def test_silent_drop_unsupported_model(self, non_thinking_profile: ModelProfile):
         """thinking=True on unsupported model → None (silent drop)."""
@@ -908,6 +928,38 @@ class TestCohereUnifiedThinking:
 
         assert result is None
 
+    def test_prepare_request_applies_unified_thinking(self, thinking_profile: ModelProfile):
+        """prepare_request() stores resolved thinking config in cohere_thinking."""
+        from cohere import Thinking
+
+        model = CohereModel.__new__(CohereModel)
+        model._model_name = 'command-a-reasoning'
+        model._profile = thinking_profile
+        model._settings = None
+
+        settings: CohereModelSettings = {'thinking': True}
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+
+        assert cast(CohereModelSettings, merged).get('cohere_thinking') == Thinking(type='enabled')
+
+    def test_prepare_request_skips_when_provider_set(self, thinking_profile: ModelProfile):
+        """prepare_request() skips unified thinking when cohere_thinking already set."""
+        from cohere import Thinking
+
+        model = CohereModel.__new__(CohereModel)
+        model._model_name = 'command-a-reasoning'
+        model._profile = thinking_profile
+        model._settings = None
+
+        settings: CohereModelSettings = {
+            'thinking': False,
+            'cohere_thinking': Thinking(type='enabled'),
+        }
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+
+        # Provider-specific takes precedence, unified thinking=False is ignored
+        assert cast(CohereModelSettings, merged).get('cohere_thinking') == Thinking(type='enabled')
+
     def test_empty_settings_returns_none(self, thinking_profile: ModelProfile):
         """No thinking fields → None."""
         model = CohereModel.__new__(CohereModel)
@@ -1012,6 +1064,34 @@ class TestXaiUnifiedThinking:
         result = model._resolve_thinking_config(settings)
 
         assert result is None
+
+    def test_prepare_request_applies_unified_effort(self, grok3_mini_profile: ModelProfile):
+        """prepare_request() stores resolved effort in xai_reasoning_effort."""
+        model = XaiModel.__new__(XaiModel)
+        model._model_name = 'grok-3-mini'
+        model._profile = grok3_mini_profile
+        model._settings = None
+
+        settings: XaiModelSettings = {'thinking_effort': 'high'}
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+
+        assert cast(XaiModelSettings, merged).get('xai_reasoning_effort') == 'high'
+
+    def test_prepare_request_skips_when_provider_set(self, grok3_mini_profile: ModelProfile):
+        """prepare_request() skips unified thinking when xai_reasoning_effort already set."""
+        model = XaiModel.__new__(XaiModel)
+        model._model_name = 'grok-3-mini'
+        model._profile = grok3_mini_profile
+        model._settings = None
+
+        settings: XaiModelSettings = {
+            'thinking_effort': 'low',
+            'xai_reasoning_effort': 'high',
+        }
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+
+        # Provider-specific takes precedence
+        assert cast(XaiModelSettings, merged).get('xai_reasoning_effort') == 'high'
 
     def test_empty_settings_returns_none(self, grok3_mini_profile: ModelProfile):
         """No thinking fields → None."""

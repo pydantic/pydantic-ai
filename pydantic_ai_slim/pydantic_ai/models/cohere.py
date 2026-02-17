@@ -30,7 +30,7 @@ from ..messages import (
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
-from ..thinking import resolve_with_profile
+from ..thinking import _resolve_thinking_config  # pyright: ignore[reportPrivateUsage]
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, check_allow_model_requests
 
@@ -195,7 +195,7 @@ class CohereModel(Model):
 
         Uses silent-drop semantics: effort is silently ignored (Cohere has no effort control).
         """
-        resolved = resolve_with_profile(model_settings, self.profile)
+        resolved = _resolve_thinking_config(model_settings, self.profile)
         if resolved is None:
             return None
 

@@ -44,11 +44,14 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
-from pydantic_ai.profiles.anthropic import DEFAULT_THINKING_BUDGET, EFFORT_TO_BUDGET
+from pydantic_ai.profiles.anthropic import (
+    _DEFAULT_THINKING_BUDGET,  # pyright: ignore[reportPrivateUsage]
+    _EFFORT_TO_BUDGET,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.thinking import resolve_with_profile
+from pydantic_ai.thinking import _resolve_thinking_config  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
@@ -403,7 +406,7 @@ class BedrockConverseModel(Model):
         Returns the thinking config dict in Anthropic format, or None if not enabled.
         Uses silent-drop semantics for unsupported settings.
         """
-        resolved = resolve_with_profile(model_settings, self.profile)
+        resolved = _resolve_thinking_config(model_settings, self.profile)
         if resolved is None:
             return None
 
@@ -411,9 +414,9 @@ class BedrockConverseModel(Model):
             return {'type': 'disabled'}
 
         budget = (
-            EFFORT_TO_BUDGET.get(resolved.effort, DEFAULT_THINKING_BUDGET)
+            _EFFORT_TO_BUDGET.get(resolved.effort, _DEFAULT_THINKING_BUDGET)
             if resolved.effort
-            else DEFAULT_THINKING_BUDGET
+            else _DEFAULT_THINKING_BUDGET
         )
         return {'type': 'enabled', 'budget_tokens': budget}
 

@@ -51,7 +51,7 @@ from ..profiles import ModelProfileSpec
 from ..profiles.grok import GrokModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
-from ..thinking import resolve_with_profile
+from ..thinking import _resolve_thinking_config  # pyright: ignore[reportPrivateUsage]
 from ..usage import RequestUsage
 
 try:
@@ -87,6 +87,9 @@ _FINISH_REASON_PROTO_MAP: dict[int, FinishReason] = {
     sample_pb2.FinishReason.REASON_MAX_LEN: 'length',
     sample_pb2.FinishReason.REASON_TOOL_CALLS: 'tool_call',
 }
+
+# xAI only supports 2 effort levels; our 3-level unified API downmaps medium→low.
+_XAI_EFFORT_MAP: dict[str, ReasoningEffort] = {'low': 'low', 'medium': 'low', 'high': 'high'}
 
 
 class XaiModelSettings(ModelSettings, total=False):
@@ -490,9 +493,6 @@ class XaiModel(Model):
 
         return None
 
-    # xAI only supports 2 levels; our 3-level unified API downmaps medium→low.
-    _XAI_EFFORT_MAP: dict[str, ReasoningEffort] = {'low': 'low', 'medium': 'low', 'high': 'high'}
-
     def _resolve_thinking_config(self, model_settings: XaiModelSettings) -> ReasoningEffort | None:
         """Resolve unified thinking settings to xAI reasoning_effort.
 
@@ -500,7 +500,7 @@ class XaiModel(Model):
         Maps: low→"low", medium→"low" (downmap), high→"high".
         Silent drop for all other models.
         """
-        resolved = resolve_with_profile(model_settings, self.profile)
+        resolved = _resolve_thinking_config(model_settings, self.profile)
         if resolved is None:
             return None
 
@@ -512,7 +512,7 @@ class XaiModel(Model):
             return None  # grok-3-mini reasoning can't be disabled via API
 
         if resolved.effort:
-            return self._XAI_EFFORT_MAP.get(resolved.effort)
+            return _XAI_EFFORT_MAP.get(resolved.effort)
 
         return None
 

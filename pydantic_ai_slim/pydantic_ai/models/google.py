@@ -49,7 +49,7 @@ from ..profiles import ModelProfileSpec
 from ..profiles.google import GoogleModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
-from ..thinking import resolve_with_profile
+from ..thinking import _resolve_thinking_config  # pyright: ignore[reportPrivateUsage]
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -108,6 +108,20 @@ except ImportError as _import_error:
 
 
 _FILE_SEARCH_QUERY_PATTERN = re.compile(r'file_search\.query\(query=(["\'])((?:\\.|(?!\1).)*?)\1\)')
+
+# Effort-to-thinking-level mapping for Gemini 3+ models
+_GOOGLE_EFFORT_TO_LEVEL: dict[str, ThinkingLevel] = {
+    'low': ThinkingLevel.LOW,
+    'medium': ThinkingLevel.MEDIUM,
+    'high': ThinkingLevel.HIGH,
+}
+
+# Effort-to-thinking-budget mapping for Gemini 2.5 models
+_GOOGLE_EFFORT_TO_BUDGET: dict[str, int] = {
+    'low': 1024,
+    'medium': 8192,
+    'high': 32768,
+}
 
 
 LatestGoogleModelNames = Literal[
@@ -262,7 +276,7 @@ class GoogleModel(Model):
 
         Uses silent-drop semantics for unsupported settings.
         """
-        resolved = resolve_with_profile(model_settings, self.profile)
+        resolved = _resolve_thinking_config(model_settings, self.profile)
         if resolved is None:
             return None
 
@@ -281,22 +295,12 @@ class GoogleModel(Model):
         if uses_thinking_level:
             # Gemini 3+: Map effort to thinking_level
             if resolved.effort:
-                effort_to_level: dict[str, ThinkingLevel] = {
-                    'low': ThinkingLevel.LOW,
-                    'medium': ThinkingLevel.MEDIUM,
-                    'high': ThinkingLevel.HIGH,
-                }
-                result['thinking_level'] = effort_to_level.get(resolved.effort, ThinkingLevel.HIGH)
+                result['thinking_level'] = _GOOGLE_EFFORT_TO_LEVEL.get(resolved.effort, ThinkingLevel.HIGH)
             else:
                 result['thinking_level'] = ThinkingLevel.HIGH
         elif resolved.effort:
             # Gemini 2.5: Map effort to thinking_budget
-            effort_to_budget: dict[str, int] = {
-                'low': 1024,
-                'medium': 8192,
-                'high': 32768,
-            }
-            if budget := effort_to_budget.get(resolved.effort):
+            if budget := _GOOGLE_EFFORT_TO_BUDGET.get(resolved.effort):
                 result['thinking_budget'] = budget
 
         return result if result else None

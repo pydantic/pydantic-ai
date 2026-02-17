@@ -42,7 +42,7 @@ from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.groq import GroqModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
-from ..thinking import resolve_with_profile
+from ..thinking import _resolve_thinking_config  # pyright: ignore[reportPrivateUsage]
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -180,11 +180,11 @@ class GroqModel(Model):
 
         Uses silent-drop semantics: effort is silently ignored (Groq has no effort control).
         """
-        resolved = resolve_with_profile(model_settings, self.profile)
+        resolved = _resolve_thinking_config(model_settings, self.profile)
         if resolved is None:
             return None
 
-        # Always-on models (DeepSeek R1, QwQ) are handled by resolve_with_profile's
+        # Always-on models (DeepSeek R1, QwQ) are handled by _resolve_thinking_config's
         # thinking_always_enabled guard, which returns None for thinking=False.
         # So 'hidden' only applies to models where thinking can actually be toggled.
         if not resolved.enabled:

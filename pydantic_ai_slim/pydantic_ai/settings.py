@@ -211,6 +211,9 @@ class ModelSettings(TypedDict, total=False):
     * Mistral (Magistral models — always-on)
     * Cohere (Command A Reasoning)
     * xAI (Grok 3 Mini, Grok 4)
+    * DeepSeek (R1 models)
+    * Harmony (GPT-OSS models — always-on)
+    * ZAI (GLM models)
     """
 
     thinking_effort: Literal['low', 'medium', 'high']
