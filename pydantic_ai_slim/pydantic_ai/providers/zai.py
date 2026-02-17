@@ -46,8 +46,6 @@ class ZaiProvider(Provider[AsyncOpenAI]):
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             supports_json_object_output=True,
-            openai_chat_thinking_field='reasoning_content',
-            openai_chat_send_back_thinking_parts='field',
         ).update(profile)
 
     @overload
