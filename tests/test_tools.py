@@ -2133,6 +2133,57 @@ def test_deferred_tool_call_approved_fails():
         )
 
 
+def test_unapproved_tool_invalid_args_retry():
+    """Test that invalid args on an unapproved tool produce a retry prompt."""
+    call_count = 0
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[ToolCallPart('my_tool', {'x': 'not_an_int'}, tool_call_id='t1')]
+            )
+        else:
+            return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(retries=1, requires_approval=True)
+    def my_tool(x: int) -> int:
+        return x  # pragma: no cover
+
+    result = agent.run_sync('test')
+    assert result.output == 'done'
+    retry_parts = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, RetryPromptPart)
+    ]
+    assert len(retry_parts) == 1
+    assert retry_parts[0].tool_name == 'my_tool'
+
+
+def test_unapproved_tool_invalid_args_max_retries_exceeded():
+    """Test that invalid args on an unapproved tool raises UnexpectedModelBehavior when retries exhausted."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[ToolCallPart('my_tool', {'x': 'not_an_int'}, tool_call_id='t1')]
+        )
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(retries=0, requires_approval=True)
+    def my_tool(x: int) -> int:
+        return x  # pragma: no cover
+
+    with pytest.raises(UnexpectedModelBehavior, match="exceeded max retries count of 0"):
+        agent.run_sync('test')
+
+
 async def test_approval_required_toolset():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
