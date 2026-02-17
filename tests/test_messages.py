@@ -881,11 +881,15 @@ def test_uploaded_file_in_otel_message_parts():
         [{'type': 'file', 'modality': 'video', 'file_id': 'video-123', 'mime_type': 'video/mp4'}]
     )
 
-    # Test without include_content (should only have type and modality)
+    # Test without include_content (should have type, modality, and mime_type but not file_id)
     settings_no_content = InstrumentationSettings(include_content=False)
     otel_parts_no_content = part.otel_message_parts(settings_no_content)
     assert otel_parts_no_content == snapshot(
-        [{'type': 'text'}, {'type': 'file', 'modality': 'document'}, {'type': 'text'}]
+        [
+            {'type': 'text'},
+            {'type': 'file', 'modality': 'document', 'mime_type': 'application/octet-stream'},
+            {'type': 'text'},
+        ]
     )
 
 

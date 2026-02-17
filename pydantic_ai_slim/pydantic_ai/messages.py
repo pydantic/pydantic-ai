@@ -970,10 +970,9 @@ class UserPromptPart:
                     modality = category
                 else:
                     modality = 'document'  # default for PDFs, text, etc.
-                file_part = _otel_messages.FilePart(type='file', modality=modality)
+                file_part = _otel_messages.FilePart(type='file', modality=modality, mime_type=part.media_type)
                 if settings.include_content:
                     file_part['file_id'] = part.file_id
-                    file_part['mime_type'] = part.media_type
                 parts.append(file_part)
             elif isinstance(part, CachePoint):
                 # CachePoint is a marker, not actual content - skip it for otel
