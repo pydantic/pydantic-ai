@@ -917,6 +917,36 @@ class TestOpenRouterUnifiedThinking:
         assert merged is not None
         assert cast(dict[str, Any], merged).get('extra_body', {}).get('reasoning') == {'enabled': False}
 
+    def test_openai_reasoning_effort_stripped(self):
+        """openai_reasoning_effort from parent is stripped — OpenRouter uses its own reasoning config."""
+        model = OpenRouterModel.__new__(OpenRouterModel)
+        model._model_name = 'openai/o3'
+        model._profile = ModelProfile(supports_thinking=True, thinking_always_enabled=True)
+        model._settings = None
+
+        settings: OpenRouterModelSettings = {'thinking': True}
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+
+        assert merged is not None
+        merged_dict = cast(dict[str, Any], merged)
+        assert 'openai_reasoning_effort' not in merged_dict
+        assert merged_dict.get('extra_body', {}).get('reasoning') == {'enabled': True}
+
+    def test_openai_reasoning_effort_stripped_with_effort(self):
+        """openai_reasoning_effort stripped even when thinking_effort set."""
+        model = OpenRouterModel.__new__(OpenRouterModel)
+        model._model_name = 'openai/o3'
+        model._profile = ModelProfile(supports_thinking=True, thinking_always_enabled=True)
+        model._settings = None
+
+        settings: OpenRouterModelSettings = {'thinking_effort': 'high'}
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+
+        assert merged is not None
+        merged_dict = cast(dict[str, Any], merged)
+        assert 'openai_reasoning_effort' not in merged_dict
+        assert merged_dict.get('extra_body', {}).get('reasoning') == {'effort': 'high'}
+
 
 # ============================================================================
 # Groq unified thinking tests
@@ -1093,6 +1123,32 @@ class TestCerebrasUnifiedThinking:
 
         assert merged is not None
         assert cast(dict[str, Any], merged).get('extra_body', {}).get('disable_reasoning') is True
+
+    def test_openai_reasoning_effort_stripped(self, thinking_profile: ModelProfile):
+        """openai_reasoning_effort from parent is stripped — Cerebras uses its own mechanism."""
+        model = CerebrasModel.__new__(CerebrasModel)
+        model._model_name = 'zai-glm-4.6'
+        model._profile = thinking_profile
+        model._settings = None
+
+        settings: CerebrasModelSettings = {'thinking': True}
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+
+        assert merged is not None
+        assert 'openai_reasoning_effort' not in cast(dict[str, Any], merged)
+
+    def test_openai_reasoning_effort_stripped_with_effort(self, thinking_profile: ModelProfile):
+        """openai_reasoning_effort stripped even when thinking_effort explicitly set."""
+        model = CerebrasModel.__new__(CerebrasModel)
+        model._model_name = 'zai-glm-4.6'
+        model._profile = thinking_profile
+        model._settings = None
+
+        settings: CerebrasModelSettings = {'thinking_effort': 'high'}
+        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+
+        assert merged is not None
+        assert 'openai_reasoning_effort' not in cast(dict[str, Any], merged)
 
 
 # ============================================================================
@@ -1670,6 +1726,62 @@ class TestMergeModelSettingsDictMerge:
         assert result is not None
         assert result.get('extra_headers') == {'X-A': '1'}
         assert result.get('temperature') == 0.5
+
+    def test_anthropic_thinking_full_replace(self):
+        """Provider config dicts are fully replaced, not shallow-merged."""
+        from pydantic_ai.settings import merge_model_settings
+
+        base: AnthropicModelSettings = {
+            'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 5000},
+        }
+        overrides: AnthropicModelSettings = {
+            'anthropic_thinking': {'type': 'adaptive'},
+        }
+
+        result = merge_model_settings(base, overrides)
+        assert result is not None
+        assert result.get('anthropic_thinking') == {'type': 'adaptive'}
+
+    def test_google_thinking_config_full_replace(self):
+        """Google thinking config is fully replaced on override."""
+        from pydantic_ai.settings import merge_model_settings
+
+        base: GoogleModelSettings = {
+            'google_thinking_config': {'thinking_budget': 8192},
+        }
+        overrides: GoogleModelSettings = {
+            'google_thinking_config': {'thinking_budget': 0},
+        }
+
+        result = merge_model_settings(base, overrides)
+        assert result is not None
+        assert result.get('google_thinking_config') == {'thinking_budget': 0}
+
+    def test_logit_bias_full_replace(self):
+        """logit_bias is fully replaced on override."""
+        from pydantic_ai.settings import ModelSettings, merge_model_settings
+
+        base = ModelSettings(logit_bias={'token_a': 1, 'token_b': -1})
+        overrides = ModelSettings(logit_bias={'token_c': 5})
+
+        result = merge_model_settings(base, overrides)
+        assert result is not None
+        assert result.get('logit_bias') == {'token_c': 5}
+
+    def test_bedrock_additional_fields_full_replace(self):
+        """Bedrock additional fields are fully replaced on override."""
+        from pydantic_ai.settings import merge_model_settings
+
+        base: BedrockModelSettings = {
+            'bedrock_additional_model_requests_fields': {'thinking': {'type': 'enabled', 'budget_tokens': 5000}},
+        }
+        overrides: BedrockModelSettings = {
+            'bedrock_additional_model_requests_fields': {'custom': 'value'},
+        }
+
+        result = merge_model_settings(base, overrides)
+        assert result is not None
+        assert result.get('bedrock_additional_model_requests_fields') == {'custom': 'value'}
 
 
 # ============================================================================

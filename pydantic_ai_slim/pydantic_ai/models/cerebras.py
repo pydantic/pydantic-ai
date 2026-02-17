@@ -95,6 +95,9 @@ class CerebrasModel(OpenAIChatModel):
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
         merged_settings = cast(CerebrasModelSettings, merged_settings or {})
 
+        # Strip OpenAI reasoning_effort injected by parent — Cerebras uses its own mechanism
+        merged_settings.pop('openai_reasoning_effort', None)
+
         # Apply unified thinking config if no provider-specific setting
         if 'cerebras_disable_reasoning' not in merged_settings:
             disable_reasoning = self._resolve_cerebras_thinking(merged_settings)

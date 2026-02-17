@@ -563,6 +563,9 @@ class OpenRouterModel(OpenAIChatModel):
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
         merged_settings = cast(OpenRouterModelSettings, merged_settings or {})
 
+        # Strip OpenAI reasoning_effort injected by parent — OpenRouter uses its own reasoning config
+        merged_settings.pop('openai_reasoning_effort', None)
+
         # Apply unified thinking config if no provider-specific setting
         if 'openrouter_reasoning' not in merged_settings:
             reasoning_config = self._resolve_openrouter_thinking(merged_settings)

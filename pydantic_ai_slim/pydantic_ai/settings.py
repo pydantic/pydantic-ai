@@ -243,20 +243,30 @@ class ModelSettings(TypedDict, total=False):
     """
 
 
+_SHALLOW_MERGE_KEYS: frozenset[str] = frozenset({'extra_headers'})
+"""Keys whose dict values should be shallow-merged (additive) instead of replaced.
+
+Only `extra_headers` uses additive semantics because HTTP headers from different
+layers (agent, run) should combine. All other dict-typed fields (e.g.,
+`anthropic_thinking`, `google_thinking_config`, `logit_bias`) represent complete
+configuration objects where the override should fully replace the base value.
+"""
+
+
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:
     """Merge two sets of model settings, preferring the overrides.
 
     A common use case is: merge_model_settings(<agent settings>, <run settings>)
 
-    For nested dict values (like `extra_headers`), performs a shallow merge
-    so that override fields are applied on top of base fields rather than replacing entirely.
+    For `extra_headers`, performs a shallow merge so that override headers are applied
+    on top of base headers. All other fields (including dict-typed provider configs)
+    are fully replaced by the override value.
     """
     if base and overrides:
         result = dict(base)
         for key, override_value in overrides.items():
             base_value = result.get(key)
-            # Shallow merge for nested dicts (e.g., extra_headers)
-            if isinstance(base_value, dict) and isinstance(override_value, dict):
+            if key in _SHALLOW_MERGE_KEYS and isinstance(base_value, dict) and isinstance(override_value, dict):
                 result[key] = base_value | override_value
             else:
                 result[key] = override_value
